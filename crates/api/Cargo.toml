@@ -1,0 +1,25 @@
+[package]
+name = "synveil-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "API composition boundary for Synveil runtime work"
+
+[dependencies]
+axum.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+synveil-core.workspace = true
+synveil-platform.workspace = true
+synveil-storage.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+bytes.workspace = true
+http-body-util.workspace = true
+tower.workspace = true

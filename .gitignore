@@ -1,0 +1,21 @@
+/target/
+
+# Python package and tooling output
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# JavaScript package and build output
+node_modules/
+dist/
+coverage/
+
+# Local environment and editor files
+.env
+.env.*
+!.env.example
+.DS_Store
+.idea/
+.vscode/

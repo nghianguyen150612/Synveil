@@ -1,0 +1,6 @@
+[project]
+name = "synveil-ai"
+version = "0.1.0"
+description = "Reserved package boundary for the optional Synveil AI worker"
+requires-python = ">=3.11"
+dependencies = []

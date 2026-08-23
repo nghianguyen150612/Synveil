@@ -1,0 +1,49 @@
+[workspace]
+members = [
+    "crates/core",
+    "crates/auth",
+    "crates/platform",
+    "crates/metadata",
+    "crates/object-store",
+    "crates/storage",
+    "crates/api",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+# Keep dependency declarations in one place. External dependencies are added
+# here only when an active crate has an immediate, reviewed consumer. Core
+# currently consumes UUIDv7 generation and RFC 3339 timestamp support. SQLx and
+# Tokio stay in the metadata adapter boundary rather than entering core.
+[workspace.dependencies]
+axum = { version = "0.8", features = ["macros"] }
+bytes = "1"
+http-body-util = "0.1"
+synveil-core = { path = "crates/core" }
+synveil-auth = { path = "crates/auth" }
+synveil-platform = { path = "crates/platform" }
+synveil-metadata = { path = "crates/metadata" }
+synveil-object-store = { path = "crates/object-store" }
+synveil-storage = { path = "crates/storage" }
+time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing"] }
+uuid = { version = "1", default-features = false, features = ["std", "rng", "v7"] }
+async-trait = "0.1"
+futures-core = "0.3"
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+subtle = "2"
+sqlx = { version = "0.8", default-features = false, features = ["macros", "postgres", "runtime-tokio", "migrate", "time", "uuid"] }
+argon2 = "0.5"
+tokio = { version = "1", default-features = false, features = ["macros", "net", "rt-multi-thread", "time"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["limit", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+zeroize = "1"

@@ -1,0 +1,11 @@
+[package]
+name = "synveil-platform"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Portable platform runtime contracts and safe adapter boundaries for Synveil"
+
+[dependencies]
+synveil-core.workspace = true
+synveil-object-store.workspace = true

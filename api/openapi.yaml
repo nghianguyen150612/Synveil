@@ -1,0 +1,365 @@
+openapi: 3.1.0
+info:
+  title: Synveil API
+  version: 0.1.0-blueprint
+  summary: Phase 0 transport-contract skeleton
+  description: |
+    This is the checked-in Phase 0 OpenAPI skeleton for Synveil. It records
+    transport-wide conventions, foundation health routes, security schemes,
+    and shared response shapes. Product operations remain PLANNED until their
+    domain/protocol contract, examples, implementation, tests, operations
+    evidence, and bilingual documentation pass the applicable gate.
+
+    This file is the reviewed transport contract. The foundation implements the
+    bounded health routes documented below; product operations remain contract
+    artifacts until their domain/protocol evidence passes the applicable gate.
+    Domain and protocol specifications remain authoritative for semantics.
+  contact:
+    name: Synveil Architecture / Contracts
+  license:
+    name: MIT
+    identifier: MIT
+  x-synveil-status: PLANNED
+  x-synveil-gate: SYNVEIL_CONTRACTS_READY
+  x-synveil-next-step: |
+    Add an operation only with a reviewed owner, authorization action,
+    idempotency/conditional behavior, limits, error details, examples, and
+    matching English/Vietnamese specification updates.
+servers:
+  - url: /
+    description: Deployment-relative base URL; TLS is supplied by the supported proxy topology.
+tags:
+  - name: Operations
+    description: Foundation liveness/readiness probes and restricted health.
+  - name: Bootstrap
+    description: Planned one-time setup status; not product implementation evidence.
+paths:
+  /health/live:
+    get:
+      tags: [Operations]
+      operationId: getLiveness
+      summary: Return process liveness
+      x-synveil-status: SKELETON_IMPLEMENTED
+      x-synveil-owner: DevOps / Release
+      description: |
+        An unversioned, unauthenticated deployment probe. It must not expose
+        dependency, version, topology, configuration, or user-data details.
+      security: []
+      responses:
+        '200':
+          description: The process can answer requests.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveProbe'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /health/ready:
+    get:
+      tags: [Operations]
+      operationId: getReadiness
+      summary: Return bounded service readiness
+      x-synveil-status: SKELETON_IMPLEMENTED
+      x-synveil-owner: DevOps / Release
+      description: |
+        An unversioned deployment probe. A not-ready response is safe and
+        intentionally coarse; detailed authenticated health belongs under the
+        foundation /api/v1/system/health operation.
+      security: []
+      responses:
+        '200':
+          description: Required configured dependencies passed their bounded readiness checks.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadyProbe'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /live:
+    get:
+      tags: [Operations]
+      operationId: getShortLiveness
+      summary: Return process liveness through the short probe alias
+      x-synveil-status: SKELETON_IMPLEMENTED
+      x-synveil-owner: DevOps / Release
+      description: Compatibility alias for the canonical `/health/live` probe.
+      security: []
+      responses:
+        '200':
+          description: The process can answer requests.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveProbe'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /ready:
+    get:
+      tags: [Operations]
+      operationId: getShortReadiness
+      summary: Return bounded service readiness through the short probe alias
+      x-synveil-status: SKELETON_IMPLEMENTED
+      x-synveil-owner: DevOps / Release
+      description: Compatibility alias for the canonical `/health/ready` probe.
+      security: []
+      responses:
+        '200':
+          description: Required configured dependencies passed their bounded readiness checks.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadyProbe'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/system/health:
+    get:
+      tags: [Operations]
+      operationId: getSystemHealth
+      summary: Return restricted bounded system health
+      x-synveil-status: SKELETON_IMPLEMENTED
+      x-synveil-owner: Rust Backend / Operations
+      description: |
+        Foundation transport route for a richer health representation. The
+        route is fail-closed until an authenticated system-health authorizer is
+        supplied. It exposes bounded component states only; paths, provider
+        URLs, credentials, stack traces, and topology details are excluded.
+      security:
+        - BrowserSession: []
+        - DeviceBearer: []
+      responses:
+        '200':
+          description: Authorized bounded system health.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemHealthResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/system/bootstrap-status:
+    get:
+      tags: [Bootstrap]
+      operationId: getBootstrapStatus
+      summary: Report whether first-run setup is still required
+      x-synveil-status: PLANNED
+      x-synveil-owner: Auth / Security, Rust Backend
+      description: |
+        Planned public setup probe. It exposes only the minimum state needed
+        to render first-run UX and never returns secrets, database details, or
+        administrator identity. The exact authorization/rate-limit policy is
+        finalized with the bootstrap contract before implementation.
+      security: []
+      responses:
+        '200':
+          description: Current one-time bootstrap eligibility.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BootstrapStatusResponse'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+components:
+  securitySchemes:
+    BrowserSession:
+      type: apiKey
+      in: cookie
+      name: synveil_session
+      description: Opaque Secure/HttpOnly browser session; only its verifier is stored server-side.
+    DeviceBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: Scoped, rotatable, revocable device credential; never a password or URL parameter.
+    PublicShareContext:
+      type: apiKey
+      in: cookie
+      name: synveil_share
+      description: Separate bounded public-share context; never promoted to a user session.
+  headers:
+    XRequestId:
+      description: Trusted diagnostic request identifier echoed in the JSON envelope.
+      schema:
+        $ref: '#/components/schemas/OpaqueRequestId'
+    ETag:
+      description: Opaque quoted resource revision used by conditional mutation.
+      schema:
+        type: string
+        minLength: 3
+        maxLength: 256
+    RetryAfter:
+      description: Seconds or HTTP date for bounded retry backoff.
+      schema:
+        type: string
+  responses:
+    Unauthorized:
+      description: Authentication is required for the requested restricted operation.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RateLimited:
+      description: The request exceeded a bounded abuse or concurrency limit.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ServiceUnavailable:
+      description: The process or a required operation dependency is unavailable.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    OpaqueRequestId:
+      type: string
+      minLength: 8
+      maxLength: 128
+      pattern: '^[A-Za-z0-9._~-]+$'
+      description: Diagnostic identifier; not an idempotency key or credential.
+    OpaqueId:
+      type: string
+      format: uuid
+      pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      description: Opaque lowercase UUIDv7 public identifier.
+    U64Decimal:
+      type: string
+      pattern: '^(0|[1-9][0-9]*)$'
+      description: Non-negative integer serialized as canonical decimal text.
+    Hash:
+      type: string
+      pattern: '^sha256:[0-9a-f]{64}$'
+      description: Algorithm-qualified canonical integrity hash.
+    LiveProbe:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: live
+    ReadyProbe:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ready]
+    SystemHealthResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/SystemHealthData'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    SystemHealthData:
+      type: object
+      additionalProperties: false
+      required: [status, liveness, readiness, components]
+      properties:
+        status:
+          type: string
+          enum: [HEALTHY, DEGRADED, UNAVAILABLE, UNKNOWN]
+        liveness:
+          type: boolean
+        readiness:
+          type: boolean
+        components:
+          type: array
+          items:
+            $ref: '#/components/schemas/ComponentHealth'
+    ComponentHealth:
+      type: object
+      additionalProperties: false
+      required: [name, status]
+      properties:
+        name:
+          type: string
+          enum: [runtime, paths, storage_discovery, secret_store, service_lifecycle]
+        status:
+          type: string
+          enum: [HEALTHY, DEGRADED, UNAVAILABLE, UNKNOWN]
+    BootstrapStatusResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [setup_required]
+          properties:
+            setup_required:
+              type: boolean
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    ResponseMeta:
+      type: object
+      additionalProperties: false
+      required: [request_id]
+      properties:
+        request_id:
+          $ref: '#/components/schemas/OpaqueRequestId'
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/Error'
+    Error:
+      type: object
+      additionalProperties: false
+      required: [code, message, request_id, retryable]
+      properties:
+        code:
+          type: string
+          pattern: '^[a-z][a-z0-9_]{1,63}$'
+          description: Stable machine-readable error code from the reviewed registry.
+        message:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: Safe human-readable message; clients must not branch on it.
+        request_id:
+          $ref: '#/components/schemas/OpaqueRequestId'
+        retryable:
+          type: boolean
+        details:
+          type: object
+          description: Operation-specific allow-listed details; never stack traces, paths, secrets, or content.
+          additionalProperties: true
