@@ -1,9 +1,10 @@
 use async_trait::async_trait;
+use bytes::Bytes;
 
 use crate::{
     ByteRange, ByteStream, DeleteOutcome, IntegrityExpectation, ObjectKey, ObjectMetadata,
     ObjectRead, ObjectStoreError, ObjectVersion, PromotionReceipt, PutRequest, StagedMetadata,
-    StagingHandle, StorageCapabilities,
+    StagingHandle, StagingProgress, StorageCapabilities,
 };
 
 /// Replaceable, backend-neutral binary object store port.
@@ -28,6 +29,33 @@ pub trait ObjectStore: Send + Sync {
         &self,
         handle: &StagingHandle,
         body: ByteStream,
+        integrity: IntegrityExpectation,
+    ) -> Result<StagedMetadata, ObjectStoreError>;
+
+    /// Append one bounded chunk at an explicit offset to a still-open staging
+    /// handle. The adapter must compare the offset against its durable current
+    /// length before writing; it must never silently fill a gap or duplicate a
+    /// replayed chunk.
+    async fn append_staged(
+        &self,
+        handle: &StagingHandle,
+        expected_offset: u64,
+        chunk: Bytes,
+        maximum_length: u64,
+    ) -> Result<StagingProgress, ObjectStoreError>;
+
+    /// Inspect durable staging progress after reconnect or process restart.
+    /// The result contains only an opaque handle and length/checksum evidence.
+    async fn staging_progress(
+        &self,
+        handle: &StagingHandle,
+    ) -> Result<StagingProgress, ObjectStoreError>;
+
+    /// Verify and freeze an append-built staging handle so it can be promoted.
+    /// Repeating this operation with the same expectation is idempotent.
+    async fn finalize_staged(
+        &self,
+        handle: &StagingHandle,
         integrity: IntegrityExpectation,
     ) -> Result<StagedMetadata, ObjectStoreError>;
 

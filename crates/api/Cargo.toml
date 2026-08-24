@@ -8,9 +8,16 @@ description = "API composition boundary for Synveil runtime work"
 
 [dependencies]
 axum.workspace = true
+async-trait.workspace = true
+futures-util.workspace = true
+hmac.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+synveil-auth.workspace = true
 synveil-core.workspace = true
+synveil-metadata.workspace = true
 synveil-platform.workspace = true
 synveil-storage.workspace = true
 tokio.workspace = true

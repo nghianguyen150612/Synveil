@@ -1,6 +1,9 @@
 # Storage, object lifecycle, versions, and trash
 
-Status: **PLANNED normative blueprint**
+Status: **ObjectStore contract VALIDATED; in-memory adapter VALIDATED; local
+filesystem adapter IMPLEMENTED/VALIDATED; persisted upload-session and
+application-service subset IMPLEMENTED/VALIDATED; exact-offset HTTP upload
+transport IMPLEMENTED; higher-level lifecycle PLANNED**
 
 This document specifies Synveil's canonical byte-storage contract and the
 logical lifecycle that sits above it. It is subordinate to accepted ADRs and
@@ -8,7 +11,24 @@ uses the entity meanings in [DOMAIN_MODEL.md](DOMAIN_MODEL.md). Upload protocol
 details are in [UPLOADS.md](UPLOADS.md), client synchronization is in
 [SYNC.md](SYNC.md), and protected backup history is in [BACKUP.md](BACKUP.md).
 
-Nothing in this document is an implementation-status claim.
+The status table below is the implementation boundary for this repository. The
+remaining lifecycle, upload, retention, reconciliation, and backend sections
+are still normative planning material unless explicitly marked otherwise.
+
+| Capability | Current repository status |
+|---|---|
+| `ObjectStore` contract | `VALIDATED` |
+| in-memory adapter | `VALIDATED` |
+| local filesystem adapter | `IMPLEMENTED/VALIDATED` |
+| persisted upload-session state | `IMPLEMENTED/VALIDATED` |
+| transport-neutral resumable upload service | `IMPLEMENTED/VALIDATED` |
+| exact-offset HTTP byte upload transport | `IMPLEMENTED` |
+| production download path | `PLANNED` |
+| GC | `PLANNED` |
+| compression | `PLANNED` |
+| filesystem optimizations | `PLANNED` |
+| sync | `PLANNED` |
+| backup | `PLANNED` |
 
 ## Scope and ownership
 
@@ -207,36 +227,62 @@ production writes.
 
 ## Local filesystem adapter
 
-The local adapter is the initial implementation target. Its safety contract is:
+The first production adapter is implemented in
+`crates/storage/src/local.rs` and re-exported through the storage composition
+crate. Its explicit-root safety contract is validated on the current host and
+uses portable Rust/Tokio filesystem primitives:
 
-- Resolve and validate the configured storage root at startup. The root has a
-  Synveil storage-identity marker tied to `StorageBackend`; an absent or
-  unexpected marker fails readiness rather than treating all objects as lost.
-- Never concatenate a user file name, path, MIME type, or public ID into a
-  filesystem path. Generated relative key components are validated again at
-  the adapter boundary.
-- Open staging and final files exclusively. Refuse symlinks, junction-like
-  redirects, non-regular targets, or traversal outside the owned root. Use
-  descriptor-relative/no-follow operations where the platform permits rather
-  than canonicalize-after-open checks with race windows.
-- Place promotion temporary data on the same filesystem as its final key.
-  Stream to a temporary file, verify length/checksum, flush file data and
-  required metadata, promote without replacement, then flush the containing
-  directory according to the selected durability profile.
-- Never expose a growing file at a final key. A crash before promotion leaves
-  only staging; a crash after promotion leaves either the complete immutable
-  file or a receipt that recovery can reconstruct with `HEAD` and hashing.
-- Treat short writes, `ENOSPC`, quota errors, read-only mounts, I/O errors, and
-  flush failures as storage failures. Do not record the affected part/object as
-  verified.
-- Do not assume every NAS-mounted filesystem provides local atomic-rename or
-  `fsync` semantics. A NAS path is accepted only after the same adapter
-  conformance and crash tests, with limitations surfaced in health output.
+- `LocalFilesystemObjectStore::open` accepts only an explicit absolute root,
+  retains its canonical resolved form, creates a Synveil layout marker plus
+  `objects/` and `staging/`, rejects a filesystem root, user home/profile,
+  current-directory root, and the build-time source-workspace root, and never
+  recursively cleans unknown content. The marker proves the expected local
+  adapter/layout version; binding it to a persisted `StorageBackend` record
+  remains higher-level work.
+- Physical paths are derived from the SHA-256 of an already validated opaque
+  `ObjectKey`, not from a user filename, public ID, MIME type, or caller path.
+  The internal layout is `objects/v1/<hash-prefix>/<key-hash>/` with content,
+  metadata, and a final committed marker; clients never see this layout.
+- Each staging handle is a UUID-backed opaque name. Bytes stream into an
+  exclusive `.upload` file, are hashed and length-checked with bounded memory,
+  then freeze as `.verified` plus a bounded metadata record. Staging remains
+  invisible to final-object reads and stale staging is not automatically wiped.
+- Promotion verifies the staged bytes again, creates the final directory and
+  content through same-root create-only hard links, writes metadata, and writes
+  the committed marker last. Existing committed keys return a stable conflict;
+  no cross-device copy fallback silently weakens promotion safety. An
+  incomplete directory without a committed marker remains invisible and is
+  quarantined rather than overwritten or automatically removed.
+- Full reads stream through bounded buffers and validate the stored SHA-256;
+  range reads validate the logical range and the complete stored object before
+  streaming only that range. Metadata exposes only the contract fields. Delete
+  and conditional delete are limited to the exact committed opaque key.
+  Conditional comparison and deletion are serialized across clones of one
+  adapter instance; they are not claimed to be atomic across independent
+  processes, which must not concurrently mutate the same local root.
+- File `sync_all` is performed for staged content, bounded metadata, and commit
+  markers. When the open-time probe proves directory synchronization, the
+  adapter also synchronizes completed staging transitions, the promotion
+  directory chain, and deletion visibility before reporting success.
+  `DurableFsync` requires the file-sync probe, while `DurableFlush` additionally
+  requires directory-sync and same-root hard-link promotion probes. These
+  capabilities describe observed behavior rather than the operating-system
+  name. Compression, snapshots, reflink/block clone, and filesystem-health
+  acceleration are explicitly unsupported in this adapter. Unit/conformance
+  tests exercise these code paths but do not constitute power-loss crash proof.
+- Managed directories and files are checked with no-follow metadata checks,
+  including Windows reparse/symlink-sensitive paths where the standard API
+  exposes them. Standard portable APIs cannot eliminate every cross-process
+  TOCTOU race, so deployment ownership and permissions remain required.
 
-The adapter must also carry platform-specific implementations behind the same
-contract: Windows path/reparse-point and service lifecycle rules, macOS APFS
-and permission/sleep behavior, and Linux filesystem/mount behavior. No platform
-path may leak into domain invariants.
+The adapter and the transport-neutral upload service are
+contract/conformance validated. The authenticated exact-offset HTTP transport
+now streams bounded request frames through that service; it is not a download
+path or the future part-manifest protocol. Broader download, GC, sync, backup,
+or deployment-installer work remains planned. The service's PostgreSQL finalization transaction creates
+the first visible `FileVersion` only after durable object verification. NAS and
+other filesystems still require their own capability and crash evidence before
+production support is claimed.
 
 Startup does not recursively scan all content before serving. It validates
 identity/configuration and schedules bounded reconciliation. Missing referenced
@@ -460,6 +506,13 @@ references; object GC later determines whether bytes are physically deletable.
 
 Trash is a user-visible soft deletion in the live sync domain. It is not backup
 retention and it is not physical deletion.
+
+Implementation status for the current metadata API: single-node logical trash
+is implemented, root nodes are protected, and a non-empty directory is
+rejected with a stable conflict. Recursive subtree trash is intentionally not
+implemented until the subtree precondition and concurrent descendant-edit
+contract in `SYNC.md` OD-SYNC-004 is closed. The current operation does not
+delete `FileVersion` or `Object` rows.
 
 ### Trash transaction
 

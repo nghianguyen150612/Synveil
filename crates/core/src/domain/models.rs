@@ -692,6 +692,43 @@ impl Node {
         candidate_parent.validate_parent_chain(ancestors)
     }
 
+    /// Rename this logical node without touching any content object or file
+    /// version. The caller supplies a domain-valid logical name and a
+    /// server-observed timestamp.
+    pub fn rename(&mut self, name: LogicalName, observed_at: Timestamp) -> Result<(), DomainError> {
+        if self.name != name {
+            self.name = name;
+            self.bump_revision(observed_at)?;
+        }
+        Ok(())
+    }
+
+    /// Move this logical node under an already validated directory parent.
+    /// Physical object identity and immutable file history are deliberately
+    /// outside this operation.
+    pub fn move_to(&mut self, parent: &Node, observed_at: Timestamp) -> Result<(), DomainError> {
+        if self.is_root() {
+            return Err(DomainError::RootCannotHaveParent);
+        }
+        if self.library_id != parent.library_id() {
+            return Err(DomainError::ParentLibraryMismatch);
+        }
+        if parent.kind() != NodeKind::Directory {
+            return Err(DomainError::ParentMustBeDirectory);
+        }
+        if parent.state() != NodeState::Active {
+            return Err(DomainError::ParentMustBeActive);
+        }
+        if parent.id() == self.id {
+            return Err(DomainError::ParentCannotBeSelf);
+        }
+        if self.parent_node_id != Some(parent.id()) {
+            self.parent_node_id = Some(parent.id());
+            self.bump_revision(observed_at)?;
+        }
+        Ok(())
+    }
+
     pub fn with_current_version(
         &self,
         version: &FileVersion,
@@ -1172,6 +1209,59 @@ mod tests {
         );
         assert_eq!(
             first_root.validate_parent_relationship(&second_root),
+            Err(DomainError::RootCannotHaveParent)
+        );
+    }
+
+    #[test]
+    fn logical_rename_and_move_bump_revision_without_touching_content() {
+        let library_id = LibraryId::new();
+        let first_time = observed_at();
+        let second_time = Timestamp::parse("2026-08-22T00:00:01Z").expect("valid test time");
+        let mut root = Node::new_root(NodeId::new(), library_id, name("root"), first_time);
+        let first_parent = Node::new_child(
+            NodeId::new(),
+            library_id,
+            &root,
+            NodeKind::Directory,
+            name("first"),
+            first_time,
+        )
+        .expect("first parent is valid");
+        let second_parent = Node::new_child(
+            NodeId::new(),
+            library_id,
+            &root,
+            NodeKind::Directory,
+            name("second"),
+            first_time,
+        )
+        .expect("second parent is valid");
+        let mut file = Node::new_child(
+            NodeId::new(),
+            library_id,
+            &first_parent,
+            NodeKind::File,
+            name("before"),
+            first_time,
+        )
+        .expect("file is valid");
+
+        file.rename(name("after"), second_time)
+            .expect("rename is valid");
+        assert_eq!(file.name().as_str(), "after");
+        assert_eq!(file.revision(), Revision::new(1));
+        assert_eq!(file.current_version_id(), None);
+        assert_eq!(file.updated_at(), second_time);
+
+        file.move_to(&second_parent, second_time)
+            .expect("move is valid");
+        assert_eq!(file.parent_node_id(), Some(second_parent.id()));
+        assert_eq!(file.revision(), Revision::new(2));
+        assert_eq!(file.current_version_id(), None);
+
+        assert_eq!(
+            root.move_to(&second_parent, second_time),
             Err(DomainError::RootCannotHaveParent)
         );
     }

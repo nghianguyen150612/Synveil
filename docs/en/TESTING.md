@@ -12,9 +12,23 @@ This document defines test oracles, suites and phase evidence. The current
 foundation gate runs Rust format/check/test/clippy plus `cargo deny check`,
 strict web lint/typecheck/test/build, OpenAPI validation, and Python package
 syntax/import smoke checks. The PostgreSQL integration test requires an
-explicit disposable test database. Property/fuzz runners, Playwright,
-production adapter conformance, and isolated Docker Compose recovery/upgrade
-jobs remain future phase evidence.
+explicit disposable test database. The in-memory and production local
+filesystem adapters now share a backend-neutral conformance suite, with local
+managed-layout, corruption, incomplete-state, and practical symlink-containment
+fixtures. Property/fuzz runners, Playwright, deterministic crash/power-loss and
+disk-exhaustion evidence, Windows runner evidence, and isolated Docker Compose
+recovery/upgrade jobs remain future phase evidence.
+
+The current upload-session subset additionally has focused application tests for
+exact-offset append, multi-frame streaming and aggregate chunk limits, restart
+reconciliation, checksum failure, replacement revision conflict, and
+exactly-once completion replay, plus local adapter tests for durable
+append/finalize/promote across reopen. HTTP route tests cover authentication,
+CSRF, strict headers/media type, owner concealment, offset conflict/recovery,
+completion/abort retry, safe errors/request IDs, and the lost-response status/
+resume flow. Typed browser-helper tests prove raw `Blob`/`ArrayBuffer` transport
+and server-authoritative progress. These tests do not replace PostgreSQL
+locking/integration evidence when the disposable database is unavailable.
 
 ## Quality principles
 
@@ -226,6 +240,16 @@ than relying on timing luck.
 
 Every production adapter—local, NAS profile, S3/MinIO and future—passes one
 versioned suite:
+
+The checked-in v1 shared helper currently covers staged identity, streamed
+integrity checks, pre-promotion invisibility, create-only promotion/conflict,
+zero/large objects, full/edge/invalid ranges, metadata, exists, abort, ordinary
+and conditional delete, and repeat deletion for both the in-memory and local
+adapters. Local integration tests add managed-layout, incomplete-state,
+corruption, marker, and practical symlink/reparse containment fixtures. The
+broader matrix below remains the release contract; crash injection, resource
+exhaustion, concurrent-process races, cancellation/backpressure, and platform
+labs are not claimed by the current unit/integration pass.
 
 | Area | Cases and oracle |
 |---|---|

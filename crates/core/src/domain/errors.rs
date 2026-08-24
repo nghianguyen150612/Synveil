@@ -26,6 +26,8 @@ pub enum DomainError {
     ParentCannotBeSelf,
     ParentChainMismatch,
     ParentCycle,
+    DirectoryNotEmpty,
+    LibraryNotWritable,
     NodeLibraryMismatch,
     DirectoryCannotReferenceFileVersion,
     FileVersionRequiresFileNode,
@@ -67,6 +69,8 @@ impl fmt::Display for DomainError {
             Self::ParentCannotBeSelf => "node cannot be its own parent",
             Self::ParentChainMismatch => "node parent chain is inconsistent",
             Self::ParentCycle => "node parent chain contains a cycle",
+            Self::DirectoryNotEmpty => "directory is not empty",
+            Self::LibraryNotWritable => "library does not accept metadata writes",
             Self::NodeLibraryMismatch => "node belongs to a different library",
             Self::DirectoryCannotReferenceFileVersion => {
                 "directory cannot reference a file version"

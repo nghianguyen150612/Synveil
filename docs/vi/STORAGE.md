@@ -1,6 +1,9 @@
 # Lưu trữ, vòng đời object, phiên bản và Thùng rác
 
-Trạng thái: **Blueprint quy chuẩn PLANNED**
+Trạng thái: **Hợp đồng ObjectStore VALIDATED; adapter in-memory VALIDATED; adapter
+filesystem cục bộ IMPLEMENTED/VALIDATED; subset persisted upload-session và
+application-service IMPLEMENTED/VALIDATED; exact-offset HTTP upload transport
+IMPLEMENTED; lifecycle cấp cao PLANNED**
 
 Tài liệu này đặc tả hợp đồng lưu trữ byte chuẩn của Synveil và vòng đời logic
 nằm bên trên hợp đồng đó. Tài liệu tuân theo các ADR đã được chấp thuận và sử
@@ -9,7 +12,24 @@ upload nằm trong [UPLOADS.md](UPLOADS.md), đồng bộ client nằm trong
 [SYNC.md](SYNC.md), còn lịch sử backup được bảo vệ nằm trong
 [BACKUP.md](BACKUP.md).
 
-Không nội dung nào trong tài liệu này là tuyên bố về trạng thái implementation.
+Bảng trạng thái dưới đây là ranh giới implementation của repository hiện tại.
+Các phần lifecycle, upload, retention, reconciliation và backend còn lại vẫn là
+tài liệu quy chuẩn kế hoạch trừ khi được đánh dấu khác.
+
+| Capability | Trạng thái hiện tại của repository |
+|---|---|
+| Hợp đồng `ObjectStore` | `VALIDATED` |
+| adapter in-memory | `VALIDATED` |
+| adapter filesystem cục bộ | `IMPLEMENTED/VALIDATED` |
+| persisted upload-session state | `IMPLEMENTED/VALIDATED` |
+| resumable upload service trung lập transport | `IMPLEMENTED/VALIDATED` |
+| exact-offset HTTP byte upload transport | `IMPLEMENTED` |
+| production download path | `PLANNED` |
+| GC | `PLANNED` |
+| compression | `PLANNED` |
+| filesystem optimization | `PLANNED` |
+| sync | `PLANNED` |
+| backup | `PLANNED` |
 
 ## Phạm vi và quyền sở hữu
 
@@ -209,35 +229,60 @@ production.
 
 ## Adapter filesystem cục bộ
 
-Adapter cục bộ là implementation target ban đầu. Hợp đồng an toàn của nó là:
+Adapter production đầu tiên được implement trong
+`crates/storage/src/local.rs` và được export lại qua storage composition crate.
+Hợp đồng root tường minh của nó đã được validate trên host hiện tại bằng
+primitive filesystem Rust/Tokio portable:
 
-- Resolve và validate storage root được cấu hình khi khởi động. Root có marker
-  storage-identity của Synveil gắn với `StorageBackend`; marker không tồn tại
-  hoặc không như dự kiến làm readiness fail thay vì coi mọi object là đã mất.
-- Không bao giờ nối tên file, path, MIME type hay public ID của người dùng vào
-  filesystem path. Component relative key được sinh phải được validate lần nữa
-  tại ranh giới adapter.
-- Mở staging file và final file theo chế độ exclusive. Từ chối symlink,
-  redirect kiểu junction, target không phải regular file hoặc traversal ra
-  ngoài root sở hữu. Dùng operation tương đối theo descriptor/no-follow khi
-  platform cho phép thay vì kiểm tra canonicalize-after-open có race window.
-- Đặt dữ liệu tạm để promotion trên cùng filesystem với final key. Stream vào
-  temporary file, verify length/checksum, flush dữ liệu file và metadata bắt
-  buộc, promote không replacement, sau đó flush directory chứa file theo
-  durability profile đã chọn.
-- Không bao giờ để lộ file đang lớn dần tại final key. Crash trước promotion chỉ
-  để lại staging; crash sau promotion để lại file bất biến hoàn chỉnh hoặc một
-  receipt mà recovery có thể dựng lại bằng `HEAD` và hashing.
-- Coi short write, `ENOSPC`, lỗi quota, mount read-only, lỗi I/O và flush failure
-  là storage failure. Không ghi part/object bị ảnh hưởng là đã verify.
-- Không giả định mọi filesystem được mount qua NAS đều cung cấp ngữ nghĩa local
-  atomic-rename hoặc `fsync`. Chỉ chấp nhận NAS path sau cùng adapter conformance
-  và crash test, đồng thời công bố giới hạn trong health output.
+- `LocalFilesystemObjectStore::open` chỉ nhận root absolute được truyền tường
+  minh, giữ dạng canonical đã resolve, tạo marker layout Synveil cùng `objects/`
+  và `staging/`, từ chối root filesystem, home/profile người dùng,
+  current-directory và source-workspace tại thời điểm build, đồng thời không
+  recursive-clean content không rõ chủ sở hữu. Marker chứng minh đúng version
+  local adapter/layout; việc gắn nó với record `StorageBackend` bền vững vẫn
+  thuộc tầng cao hơn.
+- Physical path được sinh từ SHA-256 của `ObjectKey` opaque đã validate, không từ
+  filename, public ID, MIME type hay caller path. Layout nội bộ là
+  `objects/v1/<hash-prefix>/<key-hash>/` với content, metadata và committed
+  marker; client không thấy layout này.
+- Mỗi staging handle là tên opaque dựa trên UUID. Byte được stream vào file
+  `.upload` exclusive, hash và kiểm tra length bằng memory bounded, sau đó được
+  freeze thành `.verified` cùng metadata record bounded. Staging không xuất hiện
+  trong đọc final object và staging cũ không bị tự động xóa.
+- Promotion verify lại staged bytes, tạo final directory và content bằng
+  hard-link create-only trong cùng root, ghi metadata rồi ghi committed marker
+  sau cùng. Key committed đã tồn tại trả về conflict ổn định; không có fallback
+  copy cross-device âm thầm làm yếu an toàn promotion. Directory chưa hoàn tất
+  không có committed marker tiếp tục vô hình và được quarantine thay vì bị ghi
+  đè hay tự động xóa.
+- Full read stream qua buffer bounded và validate SHA-256 đã lưu; range read
+  validate logical range và toàn bộ object trước khi stream riêng range đó.
+  Metadata chỉ trả các field của contract. Delete và conditional delete chỉ
+  tác động đúng opaque key committed. So sánh và xóa có điều kiện được serialize
+  giữa các clone của một adapter instance; không tuyên bố atomic giữa các
+  process độc lập, và các process đó không được mutate đồng thời cùng local root.
+- Adapter gọi `sync_all` cho staged content, metadata có giới hạn và commit
+  marker. Khi probe lúc open chứng minh directory synchronization, adapter cũng
+  sync transition staging đã hoàn tất, chuỗi directory promotion và visibility
+  của delete trước khi báo success. `DurableFsync` đòi file-sync probe, còn
+  `DurableFlush` đòi thêm directory-sync và same-root hard-link promotion probe.
+  Các capability này mô tả hành vi quan sát được, không suy ra từ tên OS.
+  Compression, snapshot, reflink/block clone và filesystem-health acceleration
+  được đánh dấu unsupported rõ ràng. Unit/conformance test exercise các code
+  path này nhưng không phải bằng chứng crash khi mất điện.
+- Managed directory/file được kiểm tra bằng metadata no-follow, bao gồm path
+  nhạy cảm với Windows reparse/symlink khi standard API cung cấp bằng chứng.
+  Portable API không thể loại bỏ mọi TOCTOU race giữa process, nên ownership và
+  permission deployment vẫn bắt buộc.
 
-Adapter cũng phải chứa implementation riêng platform sau cùng contract: path/
-reparse-point và service lifecycle Windows, APFS cùng permission/sleep macOS,
-filesystem/mount Linux. Không path riêng platform nào được rò vào domain
-invariant.
+Adapter và upload service trung lập transport đã được contract/conformance
+validate. HTTP transport exact-offset đã authenticate hiện stream request frame
+có giới hạn qua service đó; đây không phải download path hay protocol
+part-manifest tương lai. Download cấp cao, GC, sync, backup và installer
+deployment vẫn là kế hoạch. Transaction
+finalization PostgreSQL của service chỉ tạo `FileVersion` nhìn thấy được đầu
+tiên sau khi object đã durable và được verify. NAS và filesystem khác vẫn cần
+capability/crash evidence riêng trước khi tuyên bố production support.
 
 Startup không scan đệ quy toàn bộ content trước khi phục vụ. Nó validate
 identity/configuration và lập lịch đối soát có giới hạn. Object được tham chiếu
@@ -459,6 +504,13 @@ reference hết hạn; object GC sau đó xác định byte có thể xóa vật
 
 Trash là soft deletion người dùng nhìn thấy trong live sync domain. Nó không
 phải backup retention và không phải physical deletion.
+
+Trạng thái implementation của metadata API hiện tại: logical trash một node
+đơn lẻ đã implement, root được bảo vệ và directory không rỗng bị reject bằng
+conflict ổn định. Recursive subtree trash cố ý chưa implement cho tới khi
+subtree precondition và contract edit descendant concurrent trong `SYNC.md`
+OD-SYNC-004 được đóng. Operation hiện tại không xóa row `FileVersion` hoặc
+`Object`.
 
 ### Transaction đưa vào Trash
 

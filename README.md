@@ -11,8 +11,14 @@ without a mandatory hosted Synveil service or AI.
 > [!IMPORTANT]
 > Synveil is currently in the **foundation stage**. This repository contains a
 > validated Rust/API foundation, React/Vite web skeleton, optional isolated AI
-> package boundary, and cross-platform CI. It does not yet contain product
-> authentication, file, sync, backup, or deployment capabilities. Every
+> package boundary, and cross-platform CI. Browser-session HTTP authentication,
+> the first-run bootstrap HTTP boundary, the minimal web setup/login/session
+> shell, and the authenticated logical file/folder metadata slice are
+> implemented and validated. Persisted resumable upload sessions and their
+> transport-neutral application service, authenticated exact-offset HTTP
+> upload transport, and typed browser upload helpers are implemented and
+> validated. Upload product UI, content download, sync, backup, sharing, and
+> deployment capabilities remain out of scope for this phase. Every other
 > product capability below remains a blueprint unless explicitly marked
 > otherwise.
 
@@ -28,16 +34,29 @@ without a mandatory hosted Synveil service or AI.
 | `EXPERIMENTAL` | A future exploration with an unstable contract. |
 | `NON-GOAL` | Deliberately outside the stated scope. |
 
-Current repository status: **foundation skeleton implemented and validated**.
-No product capability is marked `IMPLEMENTED`.
+Current repository status: **foundation skeleton, browser-auth transport,
+first-run bootstrap HTTP flow, minimal web auth UI, logical file/folder
+metadata API, and authenticated resumable upload HTTP transport implemented
+and validated**. The metadata slice covers
+owner-scoped library/root listing, directory creation, node reads, rename,
+move, logical delete, and restore. The upload slice streams bounded raw chunks,
+resumes at a server-authoritative exact offset, and commits one verified
+version through the upload service. It does not provide upload UI, download,
+purge, journals, sync, backup, or sharing.
 
 The initial PostgreSQL canonical schema and explicit SQLx persistence mappings
 for the validated domain subset are implemented. Disposable PostgreSQL
 integration evidence remains environment-dependent and is reported separately;
 Argon2id password hashing, persistent first-admin bootstrap, verifier-only
-browser-session persistence, and transport-neutral login/session semantics are
-implemented; HTTP login/logout transport, cookies/CSRF, device credentials,
-recovery, uploads, journals, sync, and backup remain planned.
+browser-session persistence, transport-neutral login/session semantics, HTTP
+login/logout/session/CSRF and first-run bootstrap routes, secure cookie policy,
+the minimal typed web API boundary, and the web setup/login/session shell are
+implemented; PostgreSQL end-to-end evidence remains environment-dependent and
+is reported separately. Device credentials, recovery, file-content download,
+journals, sync, backup, and sharing remain planned.
+Deployment-managed first-run secret delivery and
+installer lifecycle remain future work; the current bootstrap HTTP contract
+does not accept a setup-secret field.
 
 ## Product direction
 
@@ -61,8 +80,10 @@ implemented capabilities.
 
 Synveil combines several related, but explicitly separated, domains:
 
-- `PLANNED` — authenticated files and folders, streaming transfers, resumable
-  uploads, versions, trash, sharing, and integrity checks;
+- `IMPLEMENTED` (metadata and exact-offset upload subsets) / `PLANNED`
+  (download/UI/broader lifecycle) — authenticated files and folders, logical
+  metadata, bounded streaming resumable upload, versions, trash, sharing, and
+  integrity checks;
 - `PLANNED` — first-class devices and a cursor-based multi-device sync
   protocol that preserves conflicting user data;
 - `PLANNED` — backup sets, committed snapshots, retention, and verified
@@ -139,7 +160,7 @@ See [Architecture](docs/en/ARCHITECTURE.md),
 | Product and scope | [PRODUCT](docs/en/PRODUCT.md) | [PRODUCT](docs/vi/PRODUCT.md) |
 | Platform and accessibility | [PLATFORM](docs/en/PLATFORM.md) | [PLATFORM](docs/vi/PLATFORM.md) |
 | System architecture | [ARCHITECTURE](docs/en/ARCHITECTURE.md) | [ARCHITECTURE](docs/vi/ARCHITECTURE.md) |
-| Domain and API | [DOMAIN_MODEL](docs/en/DOMAIN_MODEL.md), [API_ARCHITECTURE](docs/en/API_ARCHITECTURE.md), [OpenAPI skeleton](api/openapi.yaml) | [DOMAIN_MODEL](docs/vi/DOMAIN_MODEL.md), [API_ARCHITECTURE](docs/vi/API_ARCHITECTURE.md), [OpenAPI skeleton](api/openapi.yaml) |
+| Domain and API | [DOMAIN_MODEL](docs/en/DOMAIN_MODEL.md), [API_ARCHITECTURE](docs/en/API_ARCHITECTURE.md), [OpenAPI contract](api/openapi.yaml) | [DOMAIN_MODEL](docs/vi/DOMAIN_MODEL.md), [API_ARCHITECTURE](docs/vi/API_ARCHITECTURE.md), [OpenAPI contract](api/openapi.yaml) |
 | Data safety | [STORAGE](docs/en/STORAGE.md), [UPLOADS](docs/en/UPLOADS.md), [SYNC](docs/en/SYNC.md), [BACKUP](docs/en/BACKUP.md) | [STORAGE](docs/vi/STORAGE.md), [UPLOADS](docs/vi/UPLOADS.md), [SYNC](docs/vi/SYNC.md), [BACKUP](docs/vi/BACKUP.md) |
 | Product extensions | [PHOTOS](docs/en/PHOTOS.md), [AI](docs/en/AI.md), [CODE_INTEGRATION](docs/en/CODE_INTEGRATION.md) | [PHOTOS](docs/vi/PHOTOS.md), [AI](docs/vi/AI.md), [CODE_INTEGRATION](docs/vi/CODE_INTEGRATION.md) |
 | Delivery | [ROADMAP](docs/en/ROADMAP.md), [TEAM_PLAN](docs/en/TEAM_PLAN.md), [TESTING](docs/en/TESTING.md) | [ROADMAP](docs/vi/ROADMAP.md), [TEAM_PLAN](docs/vi/TEAM_PLAN.md), [TESTING](docs/vi/TESTING.md) |

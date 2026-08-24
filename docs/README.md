@@ -3,18 +3,23 @@
 Synveil's product and architecture blueprint is maintained in parallel English
 and Vietnamese editions. Most documents specify planned behavior; the API
 contract and foundation status markers identify the limited transport evidence
-that exists. They are not claims that product capabilities exist.
+that exists. The current implemented slice includes authenticated logical
+file/folder metadata and the exact-offset resumable upload HTTP/API-helper
+boundary. It is not a claim that upload UI, download, sync, backup, or sharing
+exist.
 
 Blueprint sản phẩm và kiến trúc Synveil được duy trì song song bằng tiếng Anh
 và tiếng Việt. Phần lớn tài liệu mô tả hành vi dự kiến; API contract và status
-foundation xác định bằng chứng transport hữu hạn đang tồn tại. Chúng không
-khẳng định capability sản phẩm đã tồn tại.
+foundation xác định bằng chứng transport hữu hạn đang tồn tại. Slice hiện đã
+implement gồm logical file/folder metadata đã authenticate và boundary HTTP/API
+helper upload có thể tiếp tục theo exact offset. Điều này không khẳng định
+upload UI, download, sync, backup hay sharing đã tồn tại.
 
 - [English blueprint](en/PRODUCT.md)
 - [Bản thiết kế tiếng Việt](vi/PRODUCT.md)
 - [Cross-platform product and platform architecture](en/PLATFORM.md)
 - [Kiến trúc sản phẩm và nền tảng đa nền tảng](vi/PLATFORM.md)
-- [OpenAPI contract skeleton](../api/openapi.yaml)
+- [OpenAPI metadata and resumable-upload API contract](../api/openapi.yaml)
 - [Architecture Decision Records / Biên bản quyết định kiến trúc](adr/README.md)
 - [Repository audit / Kiểm kê repository](en/REPOSITORY_AUDIT.md)
 

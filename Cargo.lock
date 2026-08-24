@@ -1578,12 +1578,19 @@ dependencies = [
 name = "synveil-api"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
  "bytes",
+ "futures-util",
+ "hmac",
  "http-body-util",
  "serde",
  "serde_json",
+ "sha2",
+ "subtle",
+ "synveil-auth",
  "synveil-core",
+ "synveil-metadata",
  "synveil-platform",
  "synveil-storage",
  "tokio",
@@ -1621,6 +1628,7 @@ dependencies = [
 name = "synveil-metadata"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "sqlx",
  "synveil-core",
  "time",
@@ -1653,9 +1661,16 @@ dependencies = [
 name = "synveil-storage"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "bytes",
+ "futures-util",
+ "sha2",
  "synveil-core",
  "synveil-metadata",
  "synveil-object-store",
+ "time",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

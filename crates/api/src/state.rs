@@ -4,7 +4,20 @@ use std::sync::{
 };
 
 use axum::http::HeaderMap;
+use synveil_auth::{PasswordHasherConfig, SessionConfig};
+use synveil_metadata::{DatabasePool, FileMetadataBackend, FileMetadataService};
 use synveil_platform::{HealthInfo, PlatformRuntime};
+
+use crate::{
+    auth::{
+        AuthenticationBackend, PostgresAuthenticationBackend, UnavailableAuthenticationBackend,
+    },
+    cookies::CookieConfig,
+    csrf::CsrfKey,
+    etag::EtagKey,
+    files::UnavailableFileMetadataBackend,
+    uploads::{UnavailableUploadBackend, UploadBackend},
+};
 
 /// Bounded readiness evidence consumed by the transport layer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -88,8 +101,8 @@ impl ReadinessProbe for StaticReadiness {
 
 /// Authorization hook for the restricted detailed system-health view.
 ///
-/// Authentication itself is deliberately not implemented by this foundation;
-/// a composition root supplies an authorizer once the identity feature exists.
+/// Detailed system-health authorization remains a separate application hook;
+/// browser authentication is supplied through `AuthenticationBackend`.
 pub trait SystemHealthAuthorizer: Send + Sync {
     fn authorize(&self, headers: &HeaderMap) -> bool;
 }
@@ -110,6 +123,13 @@ pub struct ApiState {
     runtime: Arc<dyn PlatformRuntime>,
     readiness: Arc<dyn ReadinessProbe>,
     health_authorizer: Arc<dyn SystemHealthAuthorizer>,
+    auth_backend: Arc<dyn AuthenticationBackend>,
+    file_metadata_backend: Arc<dyn FileMetadataBackend>,
+    upload_backend: Arc<dyn UploadBackend>,
+    csrf_key: Arc<CsrfKey>,
+    etag_key: Arc<EtagKey>,
+    cookie_config: CookieConfig,
+    allowed_origin: Option<String>,
     body_limit_bytes: usize,
 }
 
@@ -122,6 +142,13 @@ impl ApiState {
             readiness,
             runtime,
             health_authorizer: Arc::new(DenySystemHealth),
+            auth_backend: Arc::new(UnavailableAuthenticationBackend),
+            file_metadata_backend: Arc::new(UnavailableFileMetadataBackend),
+            upload_backend: Arc::new(UnavailableUploadBackend),
+            csrf_key: Arc::new(CsrfKey::generate()),
+            etag_key: Arc::new(EtagKey::generate()),
+            cookie_config: CookieConfig::production(),
+            allowed_origin: None,
             body_limit_bytes: crate::DEFAULT_BODY_LIMIT_BYTES,
         }
     }
@@ -136,6 +163,13 @@ impl ApiState {
             runtime,
             readiness,
             health_authorizer: Arc::new(DenySystemHealth),
+            auth_backend: Arc::new(UnavailableAuthenticationBackend),
+            file_metadata_backend: Arc::new(UnavailableFileMetadataBackend),
+            upload_backend: Arc::new(UnavailableUploadBackend),
+            csrf_key: Arc::new(CsrfKey::generate()),
+            etag_key: Arc::new(EtagKey::generate()),
+            cookie_config: CookieConfig::production(),
+            allowed_origin: None,
             body_limit_bytes: crate::DEFAULT_BODY_LIMIT_BYTES,
         }
     }
@@ -162,8 +196,101 @@ impl ApiState {
     }
 
     #[must_use]
+    pub fn with_auth_backend(mut self, backend: Arc<dyn AuthenticationBackend>) -> Self {
+        self.auth_backend = backend;
+        self
+    }
+
+    #[must_use]
+    pub fn with_file_metadata_backend(mut self, backend: Arc<dyn FileMetadataBackend>) -> Self {
+        self.file_metadata_backend = backend;
+        self
+    }
+
+    #[must_use]
+    pub fn with_upload_backend(mut self, backend: Arc<dyn UploadBackend>) -> Self {
+        self.upload_backend = backend;
+        self
+    }
+
+    #[must_use]
+    pub fn with_postgres_auth(
+        self,
+        pool: Arc<DatabasePool>,
+        password_config: PasswordHasherConfig,
+        session_config: SessionConfig,
+    ) -> Self {
+        let state = self.with_auth_backend(Arc::new(PostgresAuthenticationBackend::new(
+            Arc::clone(&pool),
+            password_config,
+            session_config,
+        )));
+        state.with_file_metadata_backend(Arc::new(FileMetadataService::new(pool.as_ref().clone())))
+    }
+
+    #[must_use]
+    pub fn with_csrf_key(mut self, key: CsrfKey) -> Self {
+        self.csrf_key = Arc::new(key);
+        self
+    }
+
+    #[must_use]
+    pub fn with_etag_key(mut self, key: EtagKey) -> Self {
+        self.etag_key = Arc::new(key);
+        self
+    }
+
+    #[must_use]
+    pub fn with_cookie_config(mut self, config: CookieConfig) -> Self {
+        self.cookie_config = config;
+        self
+    }
+
+    #[must_use]
+    pub fn with_allowed_origin(mut self, origin: impl Into<String>) -> Self {
+        let origin = origin.into();
+        self.allowed_origin = (!origin.trim().is_empty()).then_some(origin);
+        self
+    }
+
+    #[must_use]
     pub(crate) fn body_limit_bytes(&self) -> usize {
         self.body_limit_bytes
+    }
+
+    #[must_use]
+    pub(crate) fn auth_backend(&self) -> &Arc<dyn AuthenticationBackend> {
+        &self.auth_backend
+    }
+
+    #[must_use]
+    pub(crate) fn file_metadata_backend(&self) -> &Arc<dyn FileMetadataBackend> {
+        &self.file_metadata_backend
+    }
+
+    #[must_use]
+    pub(crate) fn upload_backend(&self) -> &Arc<dyn UploadBackend> {
+        &self.upload_backend
+    }
+
+    #[must_use]
+    pub(crate) fn csrf_key(&self) -> &CsrfKey {
+        self.csrf_key.as_ref()
+    }
+
+    #[must_use]
+    pub(crate) fn etag_key(&self) -> &EtagKey {
+        self.etag_key.as_ref()
+    }
+
+    #[must_use]
+    pub(crate) const fn cookie_config(&self) -> CookieConfig {
+        self.cookie_config
+    }
+
+    #[must_use]
+    pub(crate) fn allowed_origin(&self) -> Option<&str> {
+        self.allowed_origin.as_deref()
     }
 
     #[must_use]

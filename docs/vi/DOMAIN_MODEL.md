@@ -1,6 +1,6 @@
 # Domain model chuẩn của Synveil
 
-Trạng thái: **SKELETON_IMPLEMENTED — entity và invariant chuẩn ban đầu đã được validate; canonical schema PostgreSQL cùng mapping SQLx tường minh cho phần đã implement là IMPLEMENTED; domain còn lại vẫn PLANNED**
+Trạng thái: **SKELETON_IMPLEMENTED — entity và invariant chuẩn ban đầu đã được validate; canonical schema PostgreSQL, mapping SQLx tường minh, logical node metadata workflow authenticated, subset persisted upload-session/verified-replica và exact-offset HTTP upload transport là IMPLEMENTED; download và content protocol rộng hơn vẫn PLANNED**
 
 Tài liệu này sở hữu ý nghĩa chuẩn, field, relationship, lifecycle state và
 transaction invariant của các domain entity trong Synveil. Tài liệu không áp

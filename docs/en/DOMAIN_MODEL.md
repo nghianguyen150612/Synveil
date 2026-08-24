@@ -1,6 +1,6 @@
 # Synveil canonical domain model
 
-Status: **SKELETON_IMPLEMENTED — initial canonical entities and invariants are validated; the PostgreSQL canonical schema and explicit SQLx mappings for this implemented subset are IMPLEMENTED; the remaining domain remains PLANNED**
+Status: **SKELETON_IMPLEMENTED — initial canonical entities and invariants are validated; the PostgreSQL canonical schema, explicit SQLx mappings, authenticated logical node metadata workflows, persisted upload-session/verified-replica subset, and exact-offset HTTP upload transport are IMPLEMENTED; download and broader content protocols remain PLANNED**
 
 This document owns the canonical meanings, fields, relationships, lifecycle
 states, and transaction invariants of Synveil domain entities. It does not

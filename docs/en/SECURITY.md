@@ -8,8 +8,13 @@ IMPLEMENTED**. Bootstrap concurrency is **VALIDATED only when the disposable
 PostgreSQL test runs**. Verifier-only browser-session persistence and
 transport-neutral login/session semantics are **IMPLEMENTED**; session
 PostgreSQL behavior is **VALIDATED only when the disposable PostgreSQL session
-test runs**. HTTP login/logout transport, cookies, CSRF, device credentials,
-and recovery remain **PLANNED**.
+test runs**. HTTP login/logout/session/CSRF transport, secure cookie policy, the
+typed web API boundary, the first-run bootstrap HTTP flow, and the minimal web
+setup/login/session UI are **IMPLEMENTED**. The authenticated exact-offset
+upload transport and raw-byte browser API helpers are also **IMPLEMENTED**;
+device credentials, recovery, upload UI, and download remain **PLANNED**.
+PostgreSQL end-to-end bootstrap/session/upload evidence remains
+environment-dependent when the disposable database is not configured.
 
 Synveil stores personal files, backups, photos, device state, repository data,
 credentials, and derived search information. Security is therefore a release
@@ -200,15 +205,41 @@ flowchart TB
   absolute expiry, active-user validation, and immediate persisted revocation.
   Its default eight-hour TTL is a configurable implementation baseline, not a
   public protocol guarantee.
-- Login and session-validation service semantics are transport-neutral. HTTP
-  login/logout routes, cookie attributes, and CSRF behavior are not implemented
-  by this foundation.
-- Cookies are `Secure`, `HttpOnly`, path/domain scoped, and use the strictest
-  compatible `SameSite` policy. Production rejects insecure transport except a
-  deliberately isolated local development mode.
-- Mutating cookie requests require a reviewed CSRF token pattern plus
-  same-origin `Origin`/`Sec-Fetch-Site` validation where available. `SameSite`
-  alone is not the complete defense.
+- Login and session-validation service semantics remain transport-neutral, and
+  the API boundary now implements `POST /api/v1/auth/login`,
+  `POST /api/v1/auth/logout`, `GET /api/v1/auth/session`, and
+  `GET /api/v1/auth/csrf`.
+- Session cookies are host-only (`Domain` is omitted), use `Path=/`,
+  `HttpOnly`, `SameSite=Lax`, and `Secure` under the production policy.
+  An explicit development-only insecure policy exists for isolated local HTTP;
+  it is not the default.
+- Authenticated state-changing cookie requests require a signed
+  session-bound double-submit proof in `X-CSRF-Token`, a matching non-
+  `HttpOnly` CSRF cookie, and same-origin `Origin`/`Sec-Fetch-Site` validation
+  where available. Login is exempt because it has no authenticated session;
+  `SameSite` alone is not the complete defense.
+- Authentication and CSRF responses use `Cache-Control: no-store`; raw session
+  credentials are only placed in the session cookie and are never serialized,
+  logged, traced, or persisted.
+- The first-run HTTP boundary implements `GET /api/v1/system/bootstrap-status`
+  and `POST /api/v1/bootstrap/admin` with a strict 16 KiB JSON body, unknown
+  field rejection, safe status-only responses, request correlation, and a
+  race-safe call into the existing bootstrap service. It never issues a
+  browser session; the web client performs explicit login after setup.
+- Every `/api/v1/upload-sessions` route requires the authenticated session;
+  create, PATCH append, complete, and abort additionally require the same
+  session-bound CSRF proof and same-origin provenance. Status is an
+  authenticated safe read and needs no CSRF header.
+- Upload creation accepts no `user_id`, object key, staging handle, path, or
+  backend field. PATCH requires one canonical `Upload-Offset` and exactly
+  `application/octet-stream`; the handler streams frames through the bounded
+  application service and never logs or aggregates file content. Safe error
+  bodies expose only allow-listed codes, request IDs, and an authoritative
+  offset where recovery requires it.
+- Ambiguous append outcomes are recovered only through authenticated GET
+  status. The browser helper never reads the HttpOnly session cookie, persists
+  bearer material, base64-encodes bytes, or assumes that a locally incremented
+  offset is authoritative.
 - Session refresh rotation atomically consumes and issues. It is not
   transparently retryable after an ambiguous response: reuse of the consumed
   credential atomically sets the family to `REVOKED`, invalidates all remaining
@@ -286,9 +317,21 @@ domain core:
 
 ### Bootstrap and recovery
 
-- When no administrator exists, bootstrap requires a high-entropy deployment-
-  local one-time secret, is serialized against concurrent claims, and closes
-  atomically after success. Do not put the secret in routine logs or images.
+- When no administrator exists, the current HTTP bootstrap contract exposes
+  only the minimum status and first-administrator command. It has no accepted
+  setup-secret field: browser requests are checked for same-origin provenance
+  when `Origin`/`Sec-Fetch-Site` are present, and operators must keep the
+  first-run endpoint on a trusted/private or correctly terminated TLS network
+  until a later installer or secret-gate contract is reviewed.
+- The first-administrator command is serialized by the existing PostgreSQL
+  bootstrap service and closes atomically after success. It never reopens from
+  a browser cookie, and this phase provides no distributed rate-limiter
+  subsystem; the body bound and deployment exposure controls are the explicit
+  current limits.
+- The successful bootstrap response contains no password, verifier, cookie,
+  session credential, or administrator record and does not create a session.
+  The minimal web UI shows a safe completion notice and sends the user to
+  explicit login.
 - Recovery codes are the frozen baseline. Each replacement set's raw codes are
   generated and displayed exactly once, then stored only as verifiers and
   consumed atomically; the authenticated pending-then-activate flow may safely
@@ -356,6 +399,10 @@ syntax. Randomness and opacity reduce guessing; they never replace policy.
   never combines wildcard origin with credentials.
 - Cookie-authenticated state changes require CSRF protection. Bearer-token API
   clients do not bypass authorization/rate/idempotency controls.
+- The current browser implementation uses a cryptographically random
+  256-bit nonce plus HMAC-SHA-256 over the nonce and raw session credential.
+  The proof is rotated by `GET /api/v1/auth/csrf` and cannot validate against a
+  different session.
 - Trust `X-Forwarded-*` only from configured Caddy addresses. Validate the
   canonical host and scheme used for absolute links and callback origins.
 
@@ -376,11 +423,16 @@ enumeration where policy requires it.
 - Physical keys are generated opaque components under a configured storage
   root/prefix. A client path is never passed to `open`, joined to that root, or
   used as an S3 key.
-- The local adapter uses descriptor-relative operations where supported,
-  exclusive temporary creation and no-follow semantics. It validates every
-  directory/object type and avoids canonicalize-then-open TOCTOU patterns.
-- The configured root cannot be `/`, a home/workspace root, or an unvalidated
-  symlink/junction. Synveil never traverses symlinks during recursive GC.
+- The implemented local adapter uses exclusive temporary creation and
+  `symlink_metadata`/reparse-point checks before managed path operations. It
+  derives every object path from a validated opaque-key hash. Portable standard
+  APIs do not eliminate every cross-process check/open TOCTOU window;
+  descriptor-relative hardening remains future platform-adapter work, and the
+  root therefore requires exclusive service ownership and permissions.
+- The configured root cannot be a filesystem root, user home/profile, current
+  directory, build-time source workspace, or redirected symlink/junction entry.
+  Recursive GC is not implemented in this phase and must retain the no-follow
+  rule when added.
 - Backup symlinks are manifest metadata under an explicit policy; restore does
   not follow a restored symlink to write outside the destination.
 
@@ -716,7 +768,7 @@ independent external sink is configured.
 | Raw token/database theft | High-entropy opaque tokens, verifier-only storage, pending activation, expiry/rotation/revoke, secret redaction | DB/log scan; lost-response, activation-race, rotation replay, and revoke tests |
 | Compromised device | Scoped credential, device status, revoke, base versions/conflicts, retained backup | Revoke during sync/upload; malicious stale mutation; clean-device recovery |
 | IDOR/cross-user access | Central resource relationship policy; object access only through authorized logical reference | Complete positive/negative authorization matrix and query review |
-| Path traversal/symlink/TOCTOU | Generated keys, descriptor-relative no-follow local adapter, portable names, root validation | Fuzz corpus and symlink-race adapter tests |
+| Path traversal/symlink/TOCTOU | Generated hashed keys, managed-entry no-follow/reparse checks, exclusive root ownership, portable names, root validation; descriptor-relative hardening remains planned | Key-validation and practical symlink containment tests now; race/fuzz corpus before broader deployment support |
 | Malicious filename/XSS/content sniffing | React escaping, CSP, safe disposition, `nosniff`, no inline active content | Browser E2E with hostile names/SVG/HTML and header assertions |
 | CSRF/CORS/proxy spoof | Secure cookie, CSRF token + origin checks, exact CORS, trusted proxy list | Cross-site mutation, preflight and spoofed-header tests |
 | Oversized upload/slow client | Edge/API size/time/concurrency/quota limits, bounded streaming | Boundary/overrun/slow stream/disk-full/load tests |

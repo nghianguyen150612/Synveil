@@ -76,7 +76,7 @@ impl FromStr for Sha256Digest {
         }
 
         let mut bytes = [0_u8; 32];
-        for (index, pair) in hex.as_bytes().chunks_exact(2).enumerate() {
+        for (index, pair) in hex.as_bytes().chunks(2).enumerate() {
             if !pair
                 .iter()
                 .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))

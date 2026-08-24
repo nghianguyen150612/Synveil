@@ -63,6 +63,7 @@ impl From<MetadataError> for AuthError {
         match error {
             MetadataError::Database(error) => Self::Persistence(error),
             MetadataError::Mapping(_) => Self::InvalidPersistedData,
+            MetadataError::CapacityUnavailable => Self::InvalidPersistedData,
         }
     }
 }

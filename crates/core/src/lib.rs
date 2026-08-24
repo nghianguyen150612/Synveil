@@ -17,8 +17,9 @@ mod tokens;
 pub use config::{CacheDir, ConfigDir, DataDir, RuntimeDir};
 pub use domain::{
     Device, DeviceStatus, DomainError, FileVersion, Library, LibraryStatus, LogicalName,
-    LoginIdentifier, MAX_LOGICAL_NAME_BYTES, Node, NodeKind, NodeState, ObjectReference, User,
-    UserStatus,
+    LoginIdentifier, MAX_LOGICAL_NAME_BYTES, Node, NodeKind, NodeState, ObjectReference,
+    UploadOperation, UploadOperationParseError, UploadSessionState, UploadSessionStateParseError,
+    UploadStateTransitionError, User, UserStatus,
 };
 pub use errors::{CoreError, ErrorCode, UnknownErrorCode};
 pub use hashes::{Hash, HashParseError, Sha256Digest};

@@ -1,11 +1,32 @@
 # Synveil API architecture
 
-Status: **PLANNED normative blueprint**
+Status: **Foundation transport, browser/bootstrap auth, logical metadata, and exact-offset resumable upload HTTP transport implemented; upload UI, download, sync, and backup remain PLANNED**
 
 This document defines the target HTTP contract and the blueprint for
-`api/openapi.yaml`. The foundation currently implements only bounded health
-transport: liveness/readiness probes and a fail-closed restricted system-health
-route. Product endpoints described below remain planned. The canonical entity meanings and states come from
+`api/openapi.yaml`. The foundation currently implements bounded health transport,
+the browser authentication subset (`POST /auth/login`, `POST /auth/logout`,
+`GET /auth/session`, and `GET /auth/csrf`), and the first-run bootstrap subset
+(`GET /system/bootstrap-status` and `POST /bootstrap/admin`). The React setup,
+login, session, route-guard, and logout shell is covered by frontend tests.
+The owner-scoped logical metadata subset is also implemented:
+
+- `GET /libraries` with bounded owner-library pagination;
+- `GET /libraries/{library_id}/nodes` with bounded active-child pagination;
+- `POST /libraries/{library_id}/nodes` for empty logical directories;
+- `GET/PATCH /nodes/{node_id}` for safe reads, rename, and move;
+- `POST /nodes/{node_id}/trash` and `POST /nodes/{node_id}/restore` for
+  conditional logical state changes.
+
+These metadata routes use slash-separated action paths because the current
+Axum path grammar does not support a parameter followed by a literal suffix in
+one segment. They remain metadata-only. The repository also exposes the
+transport-neutral persisted upload-session service through authenticated
+`/upload-sessions` create/status/exact-offset append/complete/abort routes.
+Mutations use the existing CSRF boundary, PATCH bodies stream raw bytes under
+the service-configured limit, and status is the authoritative recovery path
+after an ambiguous response. Upload UI, download, sync, backup, sharing,
+device, and other product endpoints described below remain planned.
+The canonical entity meanings and states come from
 [DOMAIN_MODEL.md](DOMAIN_MODEL.md); storage, upload, sync, backup, photo, AI,
 and integration specifications refine behavior without inventing alternate
 IDs, errors, or mutation semantics.
@@ -156,13 +177,15 @@ library/share relationship, device scope, and resource state. A `404` may be
 returned instead of `403` where distinguishing existence would leak another
 user's resource.
 
-Authentication endpoints are rate-limited by multiple safe signals and record
-redacted security audit outcomes. Logs, errors, list/read responses, and all
-responses except the explicitly named first one-time issuance response never
-include a password, refresh secret, API/device credential, share capability,
-recovery code, object-store credential, or Git integration token. A permitted
-issuance response uses `Cache-Control: no-store`, is redacted from tracing, and
-excludes raw material from persisted idempotency outcomes and replay.
+Authentication endpoints are intended to receive deployment and application
+abuse controls, but this phase does not include a distributed rate-limiter
+subsystem. Logs, errors, list/read responses, and all responses except the
+explicitly named first one-time issuance response never include a password,
+refresh secret, API/device credential, share capability, recovery code,
+object-store credential, or Git integration token. The bootstrap and browser
+authentication responses use `Cache-Control: no-store`, are redacted from
+tracing, and exclude raw material from persisted idempotency outcomes and
+replay.
 
 ## Conditional mutation
 
@@ -404,22 +427,26 @@ committed child mutations by pretending distributed work was atomic. A partial
 operation names every committed, skipped, conflicted, and failed item so retry
 can target the remainder.
 
-## Planned endpoint inventory
+## Endpoint inventory and implementation status
 
-All endpoint groups below are `PLANNED`. Except for the two explicitly named
-absolute `/health/*` probes, paths in the inventory are relative to `/api/v1`.
-Exact schemas become reviewable in `api/openapi.yaml` before implementation. A
+The four browser authentication routes, two bootstrap routes, logical metadata
+routes, and exact-offset upload-session routes named above are `IMPLEMENTED`
+and specified in `api/openapi.yaml`. Unmarked endpoint groups below are
+`PLANNED`. Except for the two explicitly named absolute
+`/health/*` probes, paths in the inventory are relative to `/api/v1`. A
 collection route never removes the need to authorize each returned resource.
 
 ### Bootstrap, authentication, and users
 
 | Method and path | Responsibility | Access and retry |
 |---|---|---|
-| `POST /system/bootstrap` | Create the first administrator and close the one-time bootstrap state. | Unauthenticated only while securely eligible; local/setup secret gate; idempotent terminal outcome. |
-| `GET /system/bootstrap-status` | Report only whether setup is required, without configuration secrets. | Rate-limited; minimal public response. |
-| `POST /auth/login` | Verify a user credential and create/rotate a session. | Public, CSRF/origin controls as applicable, strict rate limit; idempotency is not used to cache secrets. |
+| `GET /system/bootstrap-status` | **IMPLEMENTED** — Report only whether setup is required, without configuration secrets. | Public bounded status; `no-store`; deployment must keep first-run exposure trusted/private or correctly terminated by TLS. |
+| `POST /bootstrap/admin` | **IMPLEMENTED** — Create the first administrator through the existing race-safe bootstrap service and close setup. | Public only while setup is open; strict 16 KiB JSON; same-origin provenance when browser headers are present; no setup-secret field or automatic session; explicit login follows. |
+| `POST /auth/login` | **IMPLEMENTED** — Verify the canonical login identifier and password and issue a browser session cookie. | Public; bounded JSON input; raw session is Secure/HttpOnly cookie-only; no raw token JSON. |
 | `POST /auth/refresh` | Atomically consume a refresh credential and issue its successor; detect replay. | Existing refresh grant; an ambiguous lost response is fail-closed and requires login again, not transparent retry. |
-| `POST /auth/logout` | Revoke the current session/refresh family. | Authenticated; idempotent. |
+| `POST /auth/logout` | **IMPLEMENTED** — Revoke the current browser session and clear session/CSRF cookies. | Authenticated valid sessions require session-bound CSRF and same-origin provenance; absent/expired/revoked logout is safely repeatable. |
+| `GET /auth/session` | **IMPLEMENTED** — Return the safe current browser principal only. | Authenticated browser session; no token, verifier, password, or database row. |
+| `GET /auth/csrf` | **IMPLEMENTED** — Issue a fresh signed proof bound to the current browser session. | Authenticated browser session; response is `no-store`; proof is sent in `X-CSRF-Token`, never a query parameter. |
 | `GET /sessions` | List the caller's safe browser/API session metadata, current-session marker, expiry, last use, and revocation state; device grants link to Devices. | Authenticated owner; keyset pagination; no token/verifier. |
 | `POST /sessions/{session_id}:revoke` | Revoke one owned browser/API session family independently; this is the sole public revoke authority for an API grant. | Authenticated owner; `If-Match` and idempotency key; current session also clears its cookie; device revocation uses the Device endpoint. |
 | `GET /api-grants` | List the caller's named API grants, scopes, status, expiry, last use, and safe generation metadata. | Authenticated owner; keyset pagination; no credential/verifier. |
@@ -437,9 +464,20 @@ collection route never removes the need to authorize each returned resource.
 | `GET/POST /admin/users` | List/create accounts under instance policy. | Instance administrator; keyset pagination; create requires idempotency key. |
 | `GET/PATCH /admin/users/{user_id}` | Read/lock/disable/administer an account without silent data purge. | Instance administrator; `If-Match`; audited. |
 
-Bootstrap must fail closed if database state is ambiguous, an administrator
-already exists, or the setup secret is missing. It is never re-enabled by
-deleting a browser cookie.
+Bootstrap status fails closed when database state is unavailable or ambiguous,
+and the create operation uses the existing serialized PostgreSQL service
+boundary so only one administrator claim succeeds. A closed bootstrap state is
+never re-enabled by deleting a browser cookie. The current HTTP contract has no
+setup-secret field: until a later installer or secret-gate contract is reviewed,
+operators must expose first-run endpoints only on a trusted/private or correctly
+terminated TLS network and use the configured canonical origin. The endpoint
+has a strict body bound and provenance checks, but no distributed rate limiter
+is implemented in this phase.
+
+The successful create response contains only `setup_required=false` and
+request correlation metadata. It does not issue a browser session; the web
+client transitions to explicit login. Passwords, verifiers, cookies, and raw
+session/CSRF material are never returned in the bootstrap response or logged.
 
 Browser refresh prioritizes theft response over transparent availability. If
 the consume-and-issue transaction commits but its response is lost, reuse of
@@ -515,21 +553,34 @@ never resurrected by this flow.
 | Method and path | Responsibility | Access and retry |
 |---|---|---|
 | `POST /libraries` | Create an ownership/policy/sync namespace and root node. | Authenticated user; idempotency key. |
-| `GET /libraries` | List accessible owned/shared libraries. | Authenticated; keyset pagination and access-scoped counts. |
+| `GET /libraries` | **IMPLEMENTED** — List libraries owned by the authenticated user with bounded opaque cursor pagination. | Authenticated owner; inaccessible libraries are not returned. |
 | `GET/PATCH /libraries/{library_id}` | Read or update safe library metadata/policy. | Authorized owner/admin; `If-Match`. |
-| `GET /libraries/{library_id}/nodes` | List a parent or bounded query of active nodes. | Library read; parent/filter/sort-bound cursor. |
+| `GET /libraries/{library_id}/nodes` | **IMPLEMENTED** — List active direct children under the root or an active directory in stable node-ID order. | Authenticated owner; bounded opaque cursor scoped to library and parent. |
 | `GET /libraries/{library_id}/favorites` | List the caller's readable active favorite nodes without exposing inaccessible relations. | Current user and library read; keyset pagination; authorization rechecked per result. |
 | `GET /recent-nodes?library_id=...` | List caller-readable active nodes by recent committed server-side mutation, optionally within one library; this is not view tracking. | Authenticated; snapshot-watermarked keyset cursor bound to caller/filter; authorization rechecked per result. |
-| `POST /libraries/{library_id}/nodes` | Create an empty directory or upload target intent; canonical file content uses uploads. | Library write; idempotency key; parent precondition. |
-| `GET/PATCH /nodes/{node_id}` | Read metadata or rename/move/update allowed metadata. | Node read/write; `If-Match`; move validates destination and cycles. |
+| `POST /libraries/{library_id}/nodes` | **IMPLEMENTED** — Create an empty logical directory only; no upload intent or physical directory. | Authenticated owner; strict 16 KiB JSON; raw logical names; duplicate siblings remain permitted by the current schema. |
+| `GET/PATCH /nodes/{node_id}` | **IMPLEMENTED** — Read safe metadata or perform one conditional rename/move. | Node owner; signed `ETag`/`If-Match`; move validates destination and cycles transactionally. |
 | `PUT /nodes/{node_id}/favorite` | Ensure the caller's personal `NodeFavorite` exists and return its relation ETag. | Current user with node read; desired-state idempotency key; optional relation precondition; never changes `Node`. |
 | `DELETE /nodes/{node_id}/favorite` | Ensure the caller's personal favorite is absent. | Relation owner; idempotent and non-revealing when absent/inaccessible; optional relation `If-Match`. |
 | `POST /nodes/{node_id}:copy` | Copy a node or enqueue a bounded subtree copy. | Source read plus destination write; idempotency key and destination precondition. |
-| `POST /nodes/{node_id}:trash` | Soft-delete a node/subtree. | Write; `If-Match`, idempotency key, and an opaque subtree precondition for recursive directory Trash. |
+| `POST /nodes/{node_id}/trash` | **IMPLEMENTED** — Logically delete one non-root node; non-empty directories are rejected while recursive subtree preconditions remain open. | Node owner; CSRF and `If-Match`; file versions/objects are untouched. |
+| `POST /nodes/{node_id}/restore` | **IMPLEMENTED** — Restore one trashed node only when its existing parent remains valid and active. | Node owner; CSRF and `If-Match`; no guessed recovery destination. |
 | `DELETE /nodes/{node_id}` | Request purge only when retention/policy permits. | Owner/admin; `If-Match`, idempotency key, explicit irreversible intent. |
 | `GET /nodes/{node_id}/content` | Stream the authorized current version. | Node read; supports validators and ranges. |
 | `GET /versions/{version_id}/content` | Stream one authorized immutable historical version. | Node/version read; supports ranges. |
 | `POST /libraries/{library_id}/node-operations` | Execute a bounded multi-item move/copy/trash/metadata command. | Per-item authorization/precondition, including subtree preconditions where recursive; idempotency; synchronous only below reviewed bounds. |
+
+The implemented metadata slice intentionally leaves the following decisions
+explicit. The current PostgreSQL schema has no sibling `name_key` or unique
+constraint, so duplicate raw logical names under one parent remain valid. The
+service does not normalize Unicode, fold case, reject host-platform reserved
+names, or construct filesystem paths. `POST /nodes/{node_id}/trash` is a
+single-node logical transition: root nodes are protected and non-empty
+directories return `invalid_state` until the recursive subtree precondition
+decision in `SYNC.md` OD-SYNC-004 is closed. Restore uses the existing parent
+only; a missing, deleted, or invalid parent returns a stable conflict rather
+than guessing a recovery location. No `FileVersion`, `Object`, journal,
+outbox, or physical-content row is changed by these operations.
 
 Folder and file are `Node.kind` variants, not incompatible identity systems.
 Raw `Object` URLs are not a browsing API.
@@ -566,6 +617,26 @@ context; a refresh starts a new watermark and includes later mutations.
   with a success status.
 
 ### Resumable uploads
+
+The currently implemented exact-offset subset is:
+
+| Method and path | Responsibility | Access and retry |
+|---|---|---|
+| `POST /upload-sessions` | **IMPLEMENTED** — Create a strict tagged `CREATE_FILE` or `REPLACE_CONTENT` intent with expected bytes and optional canonical SHA-256. | Authenticated principal becomes owner; CSRF; strict 16 KiB JSON; no client `user_id`, object key, or staging handle. |
+| `GET /upload-sessions/{upload_session_id}` | **IMPLEMENTED** — Return safe state, target, expiry, completion, and authoritative offset. | Owner-scoped authentication; no CSRF; after any unknown PATCH outcome this is the only recovery oracle. |
+| `PATCH /upload-sessions/{upload_session_id}` | **IMPLEMENTED** — Stream a non-empty raw chunk at exactly `Upload-Offset`. | Owner + CSRF; exact `application/octet-stream`; canonical unsigned decimal offset; aggregate service limit, 8 MiB by default; success and `invalid_offset` return the authoritative offset. |
+| `POST /upload-sessions/{upload_session_id}/complete` | **IMPLEMENTED** — Delegate verification/promotion/logical commit and return canonical completion metadata. | Owner + CSRF; retry reuses the validated service's exactly-once outcome. |
+| `POST /upload-sessions/{upload_session_id}/abort` | **IMPLEMENTED** — Delegate abort without direct filesystem or metadata manipulation. | Owner + CSRF; safe repeat. |
+
+The handler does not aggregate a full PATCH body. Accepted transport frames are
+durably progressed through the application service, so a lost response or a
+stream failure can leave an accepted prefix. The client must GET status and
+resume from `Upload-Offset`/`received_bytes`; it must never blindly replay the
+old offset or locally increment progress. The typed browser helper sends
+`Blob`/`ArrayBuffer` directly and no upload product UI is implemented.
+
+The following richer part-manifest inventory remains `PLANNED`; its `/uploads`
+paths are not aliases for the implemented `/upload-sessions` subset:
 
 | Method and path | Responsibility | Access and retry |
 |---|---|---|
@@ -794,12 +865,13 @@ external provider failure affects only its operation and freshness.
 
 ## OpenAPI blueprint and review gate
 
-The checked-in [`api/openapi.yaml`](../../api/openapi.yaml) is a Phase 0
-transport-contract skeleton and the reviewed transport authority below
-domain/protocol specifications. It contains the validated foundation health
-routes, shared conventions, bootstrap-status shape, and reusable schemas;
-product operations remain `PLANNED` until the corresponding domain contracts
-are ready. It should grow to contain:
+The checked-in [`api/openapi.yaml`](../../api/openapi.yaml) is the reviewed
+transport authority below the domain/protocol specifications. It contains the
+validated foundation health, browser-authentication, bootstrap, and logical
+file/folder metadata routes, shared conventions, safe resource DTOs, bounded
+pagination, conditional mutation responses, and reusable schemas. Content,
+sync, backup, sharing, and device operations remain `PLANNED` until their
+corresponding contracts are ready. It should continue to contain:
 
 ```text
 info and server/profile metadata

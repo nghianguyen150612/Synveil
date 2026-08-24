@@ -12,9 +12,15 @@ microservices are not installation requirements.
 
 This document defines operational contracts. It does not claim that product
 deployment images, Compose files, commands, or production support already
-exist. The foundation runtime does implement the bounded health routes
-documented in the API contract; the deployment topologies and lifecycle below
-remain planned.
+exist. The foundation runtime implements the bounded health routes, browser
+authentication transport, first-run bootstrap HTTP boundary, minimal web
+setup/login/session shell documented in the API contract, and the explicit-root
+local `ObjectStore` adapter/conformance boundary. The exact-offset HTTP upload
+transport is wired for the current developer executable only when
+`DATABASE_URL` and an explicit absolute `SYNVEIL_OBJECT_ROOT` are both set.
+This is not a download path or evidence of a deployable production image.
+Deployment topologies, installer lifecycle, and production support remain
+planned.
 
 ## Supported deployment profiles
 
@@ -238,22 +244,39 @@ validated bind paths.
 | Parser/job temporary data | Bounded writable temp area; disposable after process crash and reconciled by job identity. |
 | System backups | Separate failure domain/off-host destination, not another directory on the same disk presented as protection. |
 
+Repository status: the explicit-root local filesystem adapter and its managed
+`objects/` plus `staging/` layout are `IMPLEMENTED/VALIDATED` at the storage
+crate boundary. The developer API composition root accepts
+`SYNVEIL_OBJECT_ROOT` only alongside `DATABASE_URL` and then installs the
+validated upload application service behind the authenticated HTTP routes; an
+unset root fails closed rather than selecting a default. Download paths,
+production configuration/preflight, broader logical object lifecycle, GC,
+sync, backup, and installer wiring remain `PLANNED`.
+
 ### Local object-root validation
 
-At startup and readiness, the local adapter verifies:
+The implemented `LocalFilesystemObjectStore::open` boundary verifies:
 
-- the configured path is non-empty, absolute, dedicated, expected type and not
-  `/`, a home/workspace root, the PostgreSQL directory or an unreviewed link/
-  junction;
-- ownership/mode permit only intended service users;
-- a persistent storage identity marker matches database configuration;
-- required staging/committed namespaces are inside the root and not symlinks;
-- the accepted durability/capability profile matches the observed filesystem;
-- free space and inode/file-count headroom exceed configured safety reserves.
+- the resolved path is non-empty and absolute, has directory type, is not a
+  filesystem root, user home/profile, current directory, build-time source
+  workspace, symlink, junction, or other reparse-point root;
+- the versioned local-layout marker has the expected bounded content;
+- required `staging/` and `objects/v1/` namespaces exist directly below the
+  root and are not redirected entries; and
+- file sync, directory sync, same-root hard-link promotion, and rename behavior
+  are probed to populate capabilities without inferring from an OS name.
 
-A missing or unexpected root fails readiness. It is never interpreted as “all
-objects were deleted,” and changing the path string is never an object-store
-migration.
+Runtime configuration/readiness has not yet been wired. Ownership/mode policy,
+PostgreSQL-directory exclusion, persisted `StorageBackend` identity binding,
+free-space/inode reserves, mount replacement detection, and an operator-facing
+health report remain `PLANNED`; deployment must not claim those checks are
+active merely because the adapter can be constructed.
+
+The explicit open routine may create a missing configured directory, but it
+rejects an unexpected marker or redirected managed entry. Higher-level runtime
+composition must decide when a missing previously bound root fails readiness;
+it must never interpret that condition as “all objects were deleted,” and a
+changed path string is never an object-store migration.
 
 ### Staging placement
 
@@ -287,7 +310,8 @@ Required production categories include:
 - journal/trash/version/staging/job/audit retention;
 - worker lease, retry, dead-letter and concurrency budgets;
 - log level/format/redaction, metrics and optional OTLP endpoint;
-- bootstrap state/secret reference;
+- bootstrap state and first-run exposure policy; the current HTTP contract has
+  no setup-secret field;
 - optional AI mode/provider/model/resource/privacy policy;
 - optional Forgejo origins/credential references/webhook policy.
 
@@ -299,7 +323,9 @@ inconsistent limits. A config validation command runs without mutating data.
 ## Secret management
 
 - Installation generates independent random database, session/token-verifier,
-  CSRF/bootstrap, application-master and webhook/provider secrets as needed.
+  CSRF, application-master and webhook/provider secrets as needed. A bootstrap
+  setup secret is not part of the current HTTP contract and must not be
+  invented in deployment configuration.
   Do not reuse one secret for multiple purposes.
 - Prefer mounted files with restrictive host ownership/mode. Environment
   variables may leak through process inspection, crash/debug output or support
@@ -373,9 +399,9 @@ generate protected secrets and non-secret configuration
     ↓
 start PostgreSQL, run one-shot migrations, start API/worker/Caddy
     ↓
-open canonical HTTPS URL with one-time bootstrap secret
+open canonical HTTPS URL and read the bounded bootstrap status
     ↓
-create first administrator, consume/close bootstrap
+create first administrator, consume/close bootstrap, then sign in explicitly
     ↓
 select/confirm an ObjectStore from the host-authorized candidates
     ↓
@@ -401,15 +427,24 @@ Backend credentials remain mounted secrets and never round-trip to browser
 JavaScript. A later backend migration uses the copy/verify/switch procedure,
 not a new path string.
 
-First-run bootstrap:
+First-run bootstrap in the current HTTP/web phase:
 
 1. is available only while no administrator exists;
-2. requires a high-entropy one-time secret delivered through a protected host
-   file or explicit installer output, not routine logs;
-3. serializes concurrent claims and commits administrator plus bootstrap-close
-   atomically;
-4. produces one-time recovery codes and prompts an external system backup;
-5. closes after success and requires an explicit audited host action to re-arm.
+2. accepts the canonical `login`, `login_key`, and `password` fields in a
+   strict bounded JSON body; no setup-secret field is accepted;
+3. checks browser provenance when `Origin` or `Sec-Fetch-Site` is present, so
+   the deployment must keep the route on a trusted/private or correctly
+   terminated TLS network until a later installer/secret-gate contract exists;
+4. serializes concurrent claims and commits administrator plus bootstrap-close
+   atomically through the existing service;
+5. returns safe status metadata, does not issue a session, and closes
+   permanently until a separately reviewed maintenance action exists. The web
+   client then performs explicit login.
+
+This phase has no distributed rate-limiter subsystem. The body bound, generic
+errors, no-store responses, provenance checks, and deployment network boundary
+are the current controls; operators must not expose an open setup endpoint to
+an untrusted public network.
 
 No first-run step requires manual SQL or editing object metadata.
 

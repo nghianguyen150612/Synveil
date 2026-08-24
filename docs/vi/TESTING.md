@@ -12,9 +12,23 @@ Tài liệu này định nghĩa test oracle, suite và bằng chứng phase. Fou
 hiện tại chạy Rust format/check/test/clippy cùng `cargo deny check`, web
 lint/typecheck/test/build nghiêm ngặt, OpenAPI validation và Python syntax/
 import smoke. Test integration PostgreSQL cần disposable test database được
-cấu hình tường minh. Property/fuzz runner, Playwright, production adapter
-conformance và job recovery/upgrade Docker Compose biệt lập vẫn là bằng chứng
-phase tương lai.
+cấu hình tường minh. Adapter in-memory và production filesystem cục bộ hiện dùng
+chung suite conformance độc lập backend, cùng fixture local cho managed layout,
+corruption, incomplete state và containment symlink thực tế. Property/fuzz
+runner, Playwright, bằng chứng crash/mất điện và cạn disk xác định, evidence trên
+Windows runner cùng job recovery/upgrade Docker Compose biệt lập vẫn là bằng
+chứng phase tương lai.
+
+Subset upload-session hiện có thêm application test tập trung cho append
+exact-offset, streaming nhiều frame và aggregate chunk limit, đối soát sau
+restart, checksum failure, conflict revision khi replace và replay completion
+exactly-once; cùng test local adapter cho append/finalize/promote bền vững qua
+reopen. Test HTTP route bao phủ authentication, CSRF, header/media type strict,
+che giấu cross-owner, offset conflict/recovery, retry completion/abort, safe
+error/request ID và flow response mất rồi status/resume. Test browser helper
+typed chứng minh transport `Blob`/`ArrayBuffer` raw và progress có thẩm quyền từ
+server. Các test này không thay thế evidence PostgreSQL locking/integration khi
+disposable database chưa có.
 
 ## Nguyên tắc chất lượng
 
@@ -225,6 +239,15 @@ may mắn timing.
 
 Mọi adapter production—local, profile NAS, S3/MinIO và tương lai—đạt một suite
 có version:
+
+Helper dùng chung v1 đã check-in hiện cover identity staging, integrity check
+streamed, trạng thái vô hình trước promotion, promotion/conflict create-only,
+object zero/large, range full/edge/invalid, metadata, exists, abort, delete
+thường/có điều kiện và delete lặp cho cả adapter in-memory lẫn local. Integration
+test local bổ sung fixture managed layout, incomplete state, corruption, marker
+và containment symlink/reparse thực tế. Ma trận rộng hơn bên dưới vẫn là release
+contract; pass unit/integration hiện tại không tuyên bố crash injection, cạn tài
+nguyên, race giữa process, cancellation/backpressure hay platform lab.
 
 | Area | Case và oracle |
 |---|---|

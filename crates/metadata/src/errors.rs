@@ -130,6 +130,7 @@ impl std::error::Error for DatabaseError {}
 pub enum MetadataError {
     Database(DatabaseError),
     Mapping(MappingError),
+    CapacityUnavailable,
 }
 
 impl MetadataError {
@@ -137,7 +138,7 @@ impl MetadataError {
     pub const fn database_kind(self) -> Option<DatabaseErrorKind> {
         match self {
             Self::Database(error) => error.kind(),
-            Self::Mapping(_) => None,
+            Self::Mapping(_) | Self::CapacityUnavailable => None,
         }
     }
 }
@@ -171,6 +172,7 @@ impl fmt::Display for MetadataError {
         match self {
             Self::Database(error) => error.fmt(formatter),
             Self::Mapping(error) => error.fmt(formatter),
+            Self::CapacityUnavailable => formatter.write_str("metadata capacity is unavailable"),
         }
     }
 }

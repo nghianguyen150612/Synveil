@@ -18,6 +18,12 @@ const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
 /// Attach safe request/trace correlation and normalize all public error bodies.
 pub(crate) async fn request_context(mut request: Request, next: Next) -> Response {
     let request_id = RequestId::from_headers(request.headers()).unwrap_or_default();
+    let path = request.uri().path();
+    let is_auth_route = path.starts_with("/api/v1/auth/");
+    let is_no_store_route = is_auth_route
+        || path == "/api/v1/system/bootstrap-status"
+        || path == "/api/v1/bootstrap/admin"
+        || path.starts_with("/api/v1/upload-sessions");
     let context = RequestContext::new(request_id.clone());
     request.extensions_mut().insert(context.clone());
 
@@ -43,6 +49,17 @@ pub(crate) async fn request_context(mut request: Request, next: Next) -> Respons
         REQUEST_ID_HEADER,
         HeaderValue::from_str(request_id.as_str()).expect("validated request id is a header value"),
     );
+    if is_no_store_route {
+        response.headers_mut().insert(
+            axum::http::header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        );
+    }
+    if is_auth_route {
+        response
+            .headers_mut()
+            .insert(axum::http::header::VARY, HeaderValue::from_static("Cookie"));
+    }
     response
 }
 
