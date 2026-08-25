@@ -15,11 +15,15 @@ product, Compose file, command hay production support được mô tả ở đâ
 tại. Runtime foundation đã implement health route có giới hạn, browser
 authentication transport, first-run bootstrap HTTP boundary, minimal web
 setup/login/session shell trong API contract và boundary adapter local
-`ObjectStore`/conformance nhận root tường minh. Exact-offset HTTP upload
-transport được wire cho executable developer hiện tại chỉ khi cả `DATABASE_URL`
-và `SYNVEIL_OBJECT_ROOT` tuyệt đối, tường minh được đặt. Đây không phải download
-path hay evidence của production image có thể deploy. Topology deployment,
-installer lifecycle và production support bên dưới vẫn là kế hoạch.
+`ObjectStore`/conformance nhận root tường minh. Storage crate cũng chứa
+content-read service trung lập transport đã authorize theo owner; developer API
+composition root wire route download full/single-range current/historical đã
+authenticate khi cả `DATABASE_URL` và `SYNVEIL_OBJECT_ROOT` tuyệt đối, tường
+minh được đặt. Metadata version-history listing và direct lookup chỉ cần
+metadata service PostgreSQL, không cần object root và không mở storage. Đây
+không phải evidence của production image có thể deploy:
+configuration/preflight download production, topology deployment, installer
+lifecycle và production support bên dưới vẫn là kế hoạch.
 
 ## Profile deployment được hỗ trợ
 
@@ -245,8 +249,13 @@ Trạng thái repository: adapter filesystem cục bộ nhận root tường min
 Composition root API developer nhận `SYNVEIL_OBJECT_ROOT` chỉ cùng
 `DATABASE_URL`, rồi install upload application service đã validate sau các HTTP
 route đã authenticate; root chưa đặt sẽ fail closed thay vì tự chọn default.
-Download path, configuration/preflight production, lifecycle object logic rộng
-hơn, GC, sync, backup và installer wiring vẫn `PLANNED`.
+Content-read application service và API download transport dùng chung port
+metadata/`ObjectStore`. Safe version restore đã implement ở boundary
+API/metadata authenticate nhưng vẫn cần metadata service PostgreSQL; gate
+end-to-end disposable của nó phụ thuộc môi trường. Configuration/preflight
+download production, lifecycle object logic rộng hơn, GC, sync, backup và
+installer wiring vẫn `PLANNED`; metadata version-history vẫn có thể dùng từ
+metadata service đã cấu hình mà không cần object-root setup.
 
 ### Validation object-root local
 
@@ -301,7 +310,12 @@ Category production bắt buộc gồm:
   capacity reserve và credential reference;
 - session/cookie/CSRF và reference application master-key;
 - limit request/upload/part/quota/concurrency/deadline;
-- retention journal/trash/version/staging/job/audit;
+- retention journal/trash/version/staging/job/audit và state hạch toán
+  reference của metadata purge nội bộ;
+- override retention logical của Trash là `SYNVEIL_TRASH_RETENTION_SECONDS`
+  tính bằng giây nguyên; khi unset dùng default 30 ngày có thể cấu hình, và
+  chỉ điều khiển logical retention eligibility và metadata purge; không bật
+  physical object purge hay GC object byte;
 - lease worker, retry, dead-letter và concurrency budget;
 - level/format/redaction log, metric và endpoint OTLP tùy chọn;
 - bootstrap state và first-run exposure policy; HTTP contract hiện tại không có

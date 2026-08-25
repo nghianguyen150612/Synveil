@@ -36,8 +36,11 @@ The current implementation provides:
 
 `UploadPart`, ordered manifests, richer idempotency fingerprints, quota
 reservation, worker scheduling, and GC execution remain future work and must
-not be inferred from this exact-offset HTTP subset. Upload product UI, download,
-sync, and backup also remain planned.
+not be inferred from this exact-offset HTTP subset. The separate
+transport-neutral content-read application service and authenticated HTTP
+download transport are documented in [STORAGE.md](STORAGE.md) and
+[API_ARCHITECTURE.md](API_ARCHITECTURE.md); upload product UI, download UI,
+sync, and backup remain planned.
 
 ## Implemented exact-offset HTTP subset
 

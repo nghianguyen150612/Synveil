@@ -1,6 +1,12 @@
 # Synveil API architecture
 
-Status: **Foundation transport, browser/bootstrap auth, logical metadata, and exact-offset resumable upload HTTP transport implemented; upload UI, download, sync, and backup remain PLANNED**
+Status: **Foundation transport, browser/bootstrap auth, logical metadata,
+exact-offset resumable upload HTTP transport, transport-neutral owner-authorized
+immutable content reads, authenticated HTTP full/single-range download
+transport, authenticated immutable version-history metadata, safe
+historical-version restore, additive Trash retention metadata, and internal
+metadata purge execution implemented; upload UI, physical object purge/GC,
+download UI, sync, and backup remain PLANNED**
 
 This document defines the target HTTP contract and the blueprint for
 `api/openapi.yaml`. The foundation currently implements bounded health transport,
@@ -16,6 +22,17 @@ The owner-scoped logical metadata subset is also implemented:
 - `GET/PATCH /nodes/{node_id}` for safe reads, rename, and move;
 - `POST /nodes/{node_id}/trash` and `POST /nodes/{node_id}/restore` for
   conditional logical state changes.
+- Node responses additionally expose safe `trashed_at`, derived
+  `restore_deadline`, and server-evaluated `purge_eligible` metadata; the
+  internal retention and metadata-purge worker boundaries are not normal user
+  APIs. Metadata purge preserves Object/ObjectReplica rows and bytes.
+- `GET /nodes/{node_id}/versions` for bounded newest-first immutable
+  version-history metadata;
+- `GET /versions/{version_id}` for direct safe metadata lookup using the same
+  immutable ID accepted by the historical content route.
+- `POST /nodes/{node_id}/versions/{version_id}/restore` for an authenticated
+  owner restore that appends one new immutable version from a verified
+  historical object.
 
 These metadata routes use slash-separated action paths because the current
 Axum path grammar does not support a parameter followed by a literal suffix in
@@ -24,8 +41,20 @@ transport-neutral persisted upload-session service through authenticated
 `/upload-sessions` create/status/exact-offset append/complete/abort routes.
 Mutations use the existing CSRF boundary, PATCH bodies stream raw bytes under
 the service-configured limit, and status is the authoritative recovery path
-after an ambiguous response. Upload UI, download, sync, backup, sharing,
-device, and other product endpoints described below remain planned.
+after an ambiguous response. The content-read service is wired to authenticated
+`GET /nodes/{node_id}/content` and `GET /versions/{version_id}/content` routes.
+Those routes perform owner-scoped current or immutable-version resolution,
+single-range parsing, strong SHA-256 validation, safe headers, and bounded
+streaming without exposing storage keys or physical paths. Download UI, sync,
+backup, sharing, device, and other product endpoints described below remain
+planned. Version-history reads and version restore are authenticated; reads are
+CSRF-free while restore requires CSRF, a signed current-node `If-Match`, and a
+bounded `Idempotency-Key`. Both are active-file-only and private/no-store, and
+neither opens an ObjectStore; unknown, cross-owner, trashed, and purging
+nodes/versions are concealed. The restore transaction locks and rechecks the
+owner/library/file/source relationship and one matching `VERIFIED` replica,
+inserts exactly one new `FileVersion` whose parent is the prior current
+version, advances the node revision, and never creates an `UploadSession`.
 The canonical entity meanings and states come from
 [DOMAIN_MODEL.md](DOMAIN_MODEL.md); storage, upload, sync, backup, photo, AI,
 and integration specifications refine behavior without inventing alternate
@@ -430,8 +459,9 @@ can target the remainder.
 ## Endpoint inventory and implementation status
 
 The four browser authentication routes, two bootstrap routes, logical metadata
-routes, and exact-offset upload-session routes named above are `IMPLEMENTED`
-and specified in `api/openapi.yaml`. Unmarked endpoint groups below are
+routes, exact-offset upload-session routes, and two authenticated content
+download routes named above are `IMPLEMENTED` and specified in
+`api/openapi.yaml`. Unmarked endpoint groups below are
 `PLANNED`. Except for the two explicitly named absolute
 `/health/*` probes, paths in the inventory are relative to `/api/v1`. A
 collection route never removes the need to authorize each returned resource.
@@ -563,12 +593,19 @@ never resurrected by this flow.
 | `PUT /nodes/{node_id}/favorite` | Ensure the caller's personal `NodeFavorite` exists and return its relation ETag. | Current user with node read; desired-state idempotency key; optional relation precondition; never changes `Node`. |
 | `DELETE /nodes/{node_id}/favorite` | Ensure the caller's personal favorite is absent. | Relation owner; idempotent and non-revealing when absent/inaccessible; optional relation `If-Match`. |
 | `POST /nodes/{node_id}:copy` | Copy a node or enqueue a bounded subtree copy. | Source read plus destination write; idempotency key and destination precondition. |
-| `POST /nodes/{node_id}/trash` | **IMPLEMENTED** — Logically delete one non-root node; non-empty directories are rejected while recursive subtree preconditions remain open. | Node owner; CSRF and `If-Match`; file versions/objects are untouched. |
+| `POST /nodes/{node_id}/trash` | **IMPLEMENTED** — Logically delete one non-root node; non-empty directories are rejected while recursive subtree preconditions remain open. The response includes the canonical Trash timestamp and derived retention status. | Node owner; CSRF and `If-Match`; file versions/objects are untouched. |
 | `POST /nodes/{node_id}/restore` | **IMPLEMENTED** — Restore one trashed node only when its existing parent remains valid and active. | Node owner; CSRF and `If-Match`; no guessed recovery destination. |
 | `DELETE /nodes/{node_id}` | Request purge only when retention/policy permits. | Owner/admin; `If-Match`, idempotency key, explicit irreversible intent. |
-| `GET /nodes/{node_id}/content` | Stream the authorized current version. | Node read; supports validators and ranges. |
-| `GET /versions/{version_id}/content` | Stream one authorized immutable historical version. | Node/version read; supports ranges. |
+| `GET /nodes/{node_id}/content` | **IMPLEMENTED** — Stream the authorized current version. | Authenticated node read; no CSRF; supports strong validators and one byte range. |
+| `GET /versions/{version_id}/content` | **IMPLEMENTED** — Stream one authorized immutable historical version. | Authenticated node/version read; no CSRF; supports strong validators and one byte range. |
 | `POST /libraries/{library_id}/node-operations` | Execute a bounded multi-item move/copy/trash/metadata command. | Per-item authorization/precondition, including subtree preconditions where recursive; idempotency; synchronous only below reviewed bounds. |
+
+The public node DTO's retention fields are informational: `purge_eligible=true`
+means the internal worker may attempt `begin_node_purge`; it is not a public
+delete-now capability. Restore remains allowed after the deadline until the
+transactional `PURGING` transition wins. Candidate enumeration and begin-purge
+are internal metadata application operations, not ordinary user routes, and no
+physical metadata or object-byte purge is exposed here.
 
 The implemented metadata slice intentionally leaves the following decisions
 explicit. The current PostgreSQL schema has no sibling `name_key` or unique
@@ -600,16 +637,29 @@ context; a refresh starts a new watermark and includes later mutations.
 
 ### Downloads, ranges, and object diagnostics
 
-- A content response supplies `Content-Length`, safe `Content-Type`,
-  `Content-Disposition` with correctly encoded untrusted filename, immutable
-  version ETag, and integrity metadata where exposing it is authorized.
-- Single byte ranges follow standard HTTP range semantics. Invalid or
-  unsatisfiable ranges fail without reading unbounded content. Multi-range
-  support may be omitted initially and must be declared in OpenAPI.
-- Conditional `If-None-Match` may return `304` for the exact immutable version.
-- The API authorizes every request/range; an internal or future signed backend
-  URL is short-lived, resource/version/range-scoped, non-loggable, and issued
-  only after the same authorization and audit decision.
+The authenticated HTTP content transport is implemented for
+`GET /nodes/{node_id}/content` (current content) and
+`GET /versions/{version_id}/content` (immutable historical content). Both
+routes delegate content resolution and verified reads to the transport-neutral
+application service; handlers never receive an object key, physical path, or
+direct storage URL.
+
+- Full responses return `200`; valid single ranges return `206` with exact
+  `Content-Length` and inclusive `Content-Range`.
+- `Range` accepts exactly one `bytes=start-end`, `bytes=start-`, or
+  `bytes=-suffix` form. Malformed, duplicate, multi-range, and unsatisfiable
+  values return `416` with `Content-Range: bytes */length` before opening the
+  object stream. `Accept-Ranges: bytes` is emitted only when the configured
+  backend proves range-read capability.
+- A strong ETag is derived from the immutable SHA-256 digest. Matching
+  `If-None-Match` returns `304` from metadata without opening the byte stream.
+- Successful responses use `application/octet-stream`, an attachment
+  disposition with RFC 5987 filename encoding, and `Cache-Control: private,
+  no-store`. No CSRF proof is required for these authenticated safe GETs.
+- The body is pull-driven through the content service and Axum stream; the
+  handler does not aggregate the complete file. Multi-range, `HEAD`,
+  `If-Range`, direct object URLs, download UI, and object-integrity diagnostic
+  endpoints remain out of scope.
 - `GET /objects/{object_id}/integrity` is an owner/operator diagnostic if
   retained in OpenAPI. It returns safe state/hash/verification evidence, never
   a storage key, backend credential, or authorization-bypassing content URL.
@@ -657,9 +707,9 @@ precedes the metadata transaction. The complete state machine belongs to
 
 | Method and path | Responsibility | Access and retry |
 |---|---|---|
-| `GET /nodes/{node_id}/versions` | List immutable history with retention/conflict metadata. | Node history read; keyset pagination. |
-| `GET /versions/{version_id}` | Read one authorized immutable version. | Node history read. |
-| `POST /versions/{version_id}:restore` | Create a new head version from historical bytes. | Node write; current node `If-Match` plus idempotency key. |
+| `GET /nodes/{node_id}/versions` | **IMPLEMENTED** — List safe immutable history metadata newest-first with bounded node-scoped keyset pagination. | Authenticated owner of an active file; no CSRF; private/no-store; trashed/purging and cross-owner resources are concealed. |
+| `GET /versions/{version_id}` | **IMPLEMENTED** — Read one authorized safe immutable version metadata record. | Authenticated owner of an active file; no CSRF; private/no-store; ID is compatible with the historical content route. |
+| `POST /nodes/{node_id}/versions/{version_id}/restore` | **IMPLEMENTED** — Append one new immutable current version referencing the selected historical version's verified object; historical rows and bytes remain unchanged. | Owner node write; CSRF, signed current-node `If-Match`, bounded idempotency key; stale state returns safe revision/ETag. |
 | `GET /libraries/{library_id}/trash` | List retained trash entries. | Library read; keyset pagination. |
 | `POST /trash/{trash_entry_id}:restore` | Restore with explicit destination/name collision policy. | Library write; idempotency and destination precondition. |
 | `DELETE /trash/{trash_entry_id}` | Request permanent logical purge. | Owner; `If-Match`/explicit confirmation, idempotency, audited. |

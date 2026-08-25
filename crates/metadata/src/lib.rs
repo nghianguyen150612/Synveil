@@ -9,18 +9,25 @@
 
 mod auth;
 mod config;
+mod content;
 mod errors;
 mod files;
 mod mapping;
 mod migrations;
 mod models;
 mod pool;
+mod purge;
 mod readiness;
 mod repository;
 mod uploads;
+mod versions;
 
 pub use auth::{AuthRepository, BootstrapAttempt, BootstrapState};
 pub use config::{DATABASE_URL_ENV, DatabaseConfig, PoolConfig};
+pub use content::{
+    AuthorizedContent, ContentReadMetadataBackend, ContentReadResolution,
+    PostgresContentReadRepository,
+};
 pub use errors::{DatabaseConfigError, DatabaseError, DatabaseErrorKind, MetadataError};
 pub use files::{
     DEFAULT_PAGE_LIMIT, FileMetadataBackend, FileMetadataError, FileMetadataService, LibraryPage,
@@ -36,12 +43,22 @@ pub use models::{
     UploadSessionRow, UserCredentialRow, UserLoginRow, UserRow,
 };
 pub use pool::DatabasePool;
+pub use purge::{
+    DEFAULT_PURGE_CANDIDATE_LIMIT, MAX_PURGE_CANDIDATE_LIMIT, PurgeCandidate, PurgeCandidatePage,
+    PurgeError, PurgeExecutionResult, TrashRetentionService,
+};
 pub use readiness::DatabaseReadiness;
 pub use repository::DomainRepository;
 pub use uploads::{
     NewUploadSession, PostgresUploadRepository, UploadClaim, UploadCleanupCandidate,
     UploadCompletion, UploadDurabilityReceipt, UploadFinalization, UploadMetadataBackend,
     UploadSessionRecord,
+};
+pub use versions::{
+    FileVersionMetadata, FileVersionPage, MAX_RESTORE_IDEMPOTENCY_KEY_BYTES,
+    MIN_RESTORE_IDEMPOTENCY_KEY_BYTES, RestoredFileVersion, VersionHistoryBackend,
+    VersionHistoryError, VersionHistoryService, VersionRestoreBackend, VersionRestoreError,
+    VersionRestoreService,
 };
 
 pub use synveil_core;

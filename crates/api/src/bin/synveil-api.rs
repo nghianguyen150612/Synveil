@@ -2,11 +2,14 @@ use std::{env, error::Error, net::SocketAddr, sync::Arc};
 
 use synveil_api::{ApiState, CookieConfig, init_tracing, router};
 use synveil_auth::{PasswordHasherConfig, SessionConfig};
+use synveil_core::TrashRetentionPolicy;
 use synveil_metadata::{
-    DatabaseConfig, DatabasePool, MigrationRunner, PostgresUploadRepository, UploadMetadataBackend,
+    ContentReadMetadataBackend, DatabaseConfig, DatabasePool, MigrationRunner,
+    PostgresContentReadRepository, PostgresUploadRepository, UploadMetadataBackend,
 };
 use synveil_storage::{
-    ObjectStore, UploadApplicationService, UploadLimits, open_local_object_store,
+    ContentReadApplicationService, ObjectStore, UploadApplicationService, UploadLimits,
+    open_local_object_store,
 };
 use tokio::net::TcpListener;
 
@@ -19,7 +22,9 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let bind_address: SocketAddr = bind_address.parse()?;
     let listener = TcpListener::bind(bind_address).await?;
 
-    let mut state = ApiState::from_current_platform();
+    let trash_retention_policy = TrashRetentionPolicy::from_env()?;
+    let mut state =
+        ApiState::from_current_platform().with_trash_retention_policy(trash_retention_policy);
     if let Ok(origin) = env::var("SYNVEIL_PUBLIC_ORIGIN") {
         state = state.with_allowed_origin(origin);
     }
@@ -52,10 +57,18 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 Arc::new(PostgresUploadRepository::new(pool.as_ref().clone()));
             let object_store: Arc<dyn ObjectStore> =
                 Arc::new(open_local_object_store(object_root)?);
-            let upload_service =
-                UploadApplicationService::new(metadata, object_store, UploadLimits::default())?;
+            let content_metadata: Arc<dyn ContentReadMetadataBackend> =
+                Arc::new(PostgresContentReadRepository::new(pool.as_ref().clone()));
+            let content_service =
+                ContentReadApplicationService::new(content_metadata, Arc::clone(&object_store));
+            let upload_service = UploadApplicationService::new(
+                metadata,
+                Arc::clone(&object_store),
+                UploadLimits::default(),
+            )?;
             state = state.with_upload_backend(Arc::new(upload_service));
-            tracing::info!("PostgreSQL/local-object-store upload backend configured");
+            state = state.with_download_backend(Arc::new(content_service));
+            tracing::info!("PostgreSQL/local-object-store upload/download backends configured");
         } else {
             tracing::warn!(
                 "SYNVEIL_OBJECT_ROOT is not configured; HTTP upload backend is unavailable"

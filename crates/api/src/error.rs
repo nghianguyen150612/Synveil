@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Map;
 use synveil_auth::AuthError;
 use synveil_core::ErrorCode;
-use synveil_storage::UploadError;
+use synveil_storage::{ContentReadError, UploadError};
 
 /// Stable public error envelope matching the reviewed API contract.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -34,6 +34,7 @@ pub enum ApiError {
         current_revision: Option<String>,
         current_etag: Option<String>,
     },
+    IdempotencyConflict,
     PreconditionRequired,
     InvalidRequest,
     InvalidUploadOffset,
@@ -44,6 +45,9 @@ pub enum ApiError {
     BootstrapClosed,
     ReadinessUnavailable,
     Internal,
+    RangeNotSatisfiable {
+        length: u64,
+    },
     Upload(UploadError),
 }
 
@@ -84,6 +88,7 @@ impl ApiError {
                 ErrorCode::InternalError => StatusCode::INTERNAL_SERVER_ERROR,
             },
             Self::VersionConflict { .. } => StatusCode::CONFLICT,
+            Self::IdempotencyConflict => StatusCode::CONFLICT,
             Self::PreconditionRequired => StatusCode::PRECONDITION_REQUIRED,
             Self::InvalidRequest => StatusCode::BAD_REQUEST,
             Self::InvalidUploadOffset => StatusCode::BAD_REQUEST,
@@ -94,6 +99,7 @@ impl ApiError {
             Self::BootstrapClosed => StatusCode::CONFLICT,
             Self::ReadinessUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::RangeNotSatisfiable { .. } => StatusCode::RANGE_NOT_SATISFIABLE,
             Self::Upload(error) => match error {
                 UploadError::NotFound => StatusCode::NOT_FOUND,
                 UploadError::InvalidRequest => StatusCode::BAD_REQUEST,
@@ -121,6 +127,7 @@ impl ApiError {
         match self {
             Self::Core(error) => error.as_str(),
             Self::VersionConflict { .. } => "version_conflict",
+            Self::IdempotencyConflict => "idempotency_conflict",
             Self::PreconditionRequired => "precondition_required",
             Self::InvalidRequest => "invalid_request",
             Self::InvalidUploadOffset => "invalid_offset",
@@ -131,6 +138,7 @@ impl ApiError {
             Self::BootstrapClosed => "bootstrap_closed",
             Self::ReadinessUnavailable => "internal_dependency_unavailable",
             Self::Internal => "internal_error",
+            Self::RangeNotSatisfiable { .. } => "invalid_range",
             Self::Upload(error) => match error {
                 UploadError::ChunkTooLarge => "payload_too_large",
                 UploadError::DatabaseUnavailable => "internal_dependency_unavailable",
@@ -145,6 +153,7 @@ impl ApiError {
         match self {
             Self::Core(error) => error.retryable(),
             Self::VersionConflict { .. }
+            | Self::IdempotencyConflict
             | Self::PreconditionRequired
             | Self::InvalidRequest
             | Self::InvalidUploadOffset
@@ -152,7 +161,8 @@ impl ApiError {
             | Self::UnsupportedMediaType
             | Self::Unauthorized
             | Self::Forbidden
-            | Self::BootstrapClosed => false,
+            | Self::BootstrapClosed
+            | Self::RangeNotSatisfiable { .. } => false,
             Self::ReadinessUnavailable | Self::Internal => true,
             Self::Upload(error) => error.retryable(),
         }
@@ -180,6 +190,9 @@ impl ApiError {
                 ErrorCode::InternalError => "Synveil could not complete the request.",
             },
             Self::VersionConflict { .. } => "The resource changed before this request was applied.",
+            Self::IdempotencyConflict => {
+                "The idempotency key was already used for a different restore request."
+            }
             Self::PreconditionRequired => "An If-Match precondition is required.",
             Self::InvalidRequest => "The request is invalid.",
             Self::InvalidUploadOffset => {
@@ -194,6 +207,7 @@ impl ApiError {
             Self::BootstrapClosed => "Initial setup is no longer available.",
             Self::ReadinessUnavailable => "Required service dependencies are not ready.",
             Self::Internal => "Synveil could not complete the request.",
+            Self::RangeNotSatisfiable { .. } => "The requested byte range cannot be satisfied.",
             Self::Upload(error) => match error {
                 UploadError::NotFound => "The upload session was not found.",
                 UploadError::InvalidRequest => "The upload request is invalid.",
@@ -254,6 +268,13 @@ impl ApiError {
                 crate::uploads::UPLOAD_OFFSET_HEADER_NAME,
                 HeaderValue::from_str(&current_offset.to_string())
                     .expect("a decimal upload offset is valid HTTP header data"),
+            );
+        }
+        if let Self::RangeNotSatisfiable { length } = self {
+            response.headers_mut().insert(
+                axum::http::header::CONTENT_RANGE,
+                HeaderValue::from_str(&format!("bytes */{length}"))
+                    .expect("content range is valid HTTP header data"),
             );
         }
         response
@@ -317,6 +338,30 @@ impl ApiError {
             }
             _ => None,
         }
+    }
+}
+
+/// Map transport-neutral immutable content-read failures to the stable HTTP
+/// error registry. A range failure carries the already-resolved length so the
+/// caller receives RFC-compatible `Content-Range: bytes */length` without
+/// exposing storage details.
+#[must_use]
+pub(crate) fn map_content_read_error(
+    error: ContentReadError,
+    resolved_length: Option<u64>,
+) -> ApiError {
+    match error {
+        ContentReadError::ContentNotFound | ContentReadError::VersionNotFound => {
+            ApiError::Core(ErrorCode::NotFound)
+        }
+        ContentReadError::NotAFile => ApiError::Core(ErrorCode::InvalidState),
+        ContentReadError::ContentUnavailable | ContentReadError::StorageUnavailable => {
+            ApiError::Core(ErrorCode::StorageUnavailable)
+        }
+        ContentReadError::IntegrityMismatch => ApiError::Internal,
+        ContentReadError::InvalidRange => resolved_length.map_or(ApiError::Internal, |length| {
+            ApiError::RangeNotSatisfiable { length }
+        }),
     }
 }
 

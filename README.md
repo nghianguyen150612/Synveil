@@ -16,9 +16,19 @@ without a mandatory hosted Synveil service or AI.
 > shell, and the authenticated logical file/folder metadata slice are
 > implemented and validated. Persisted resumable upload sessions and their
 > transport-neutral application service, authenticated exact-offset HTTP
-> upload transport, and typed browser upload helpers are implemented and
-> validated. Upload product UI, content download, sync, backup, sharing, and
-> deployment capabilities remain out of scope for this phase. Every other
+> upload transport, typed browser upload helpers, and a transport-neutral,
+> owner-authorized immutable content-read application service over verified
+> `ObjectStore` replicas are implemented and validated. The content service
+> supports full reads and application-level validated ranges. Authenticated
+> current-node and historical-version HTTP downloads now provide full and
+> single-range streaming, strong SHA-256 validators, safe attachment headers,
+> and private no-store caching. Authenticated immutable version-history listing
+> and direct metadata lookup are also implemented and validated. Safe
+> historical-version restore is implemented at the authenticated
+> API/metadata boundary as one new immutable FileVersion reusing the verified
+> historical Object; its disposable-PostgreSQL end-to-end gate remains
+> environment dependent. Download UI, sync, backup, sharing, and deployment
+> capabilities remain out of scope for this phase. Every other
 > product capability below remains a blueprint unless explicitly marked
 > otherwise.
 
@@ -36,13 +46,35 @@ without a mandatory hosted Synveil service or AI.
 
 Current repository status: **foundation skeleton, browser-auth transport,
 first-run bootstrap HTTP flow, minimal web auth UI, logical file/folder
-metadata API, and authenticated resumable upload HTTP transport implemented
-and validated**. The metadata slice covers
+metadata API, authenticated resumable upload HTTP transport, authenticated
+immutable version-history metadata, metadata-only Trash retention/purge
+execution and reference accounting, a transport-neutral owner-authorized
+immutable content-read service, and authenticated HTTP full/single-range
+download transport implemented and validated**. The metadata slice covers
 owner-scoped library/root listing, directory creation, node reads, rename,
 move, logical delete, and restore. The upload slice streams bounded raw chunks,
 resumes at a server-authoritative exact offset, and commits one verified
-version through the upload service. It does not provide upload UI, download,
-purge, journals, sync, backup, or sharing.
+version through the upload service. Version history lists immutable records
+newest-first with owner-scoped cursors and direct IDs compatible with
+historical downloads. Safe historical-version restore appends one new
+current FileVersion under CSRF, If-Match, owner/file, verified-replica, and
+persisted idempotency controls; it never mutates historical rows, copies
+bytes, moves the current pointer backward, or creates an UploadSession. The
+Trash contract stores one server-observed `trashed_at`, derives a configurable
+30-day-by-default restore deadline, exposes bounded internal eligibility, and
+only begins the metadata `PURGING` state after owner/revision/transaction
+checks. It does not delete physical bytes or implement physical purge/GC.
+Metadata purge execution is an internal trusted operation: after a node is
+`PURGING`, it removes that node and its `FileVersion` rows transactionally,
+records metadata-only unreferenced-object candidates, and preserves `Object`,
+`ObjectReplica`, and object bytes. Physical object GC remains planned. The
+content service resolves active
+owner-authorized current content or an allowed immutable historical version to
+a verified replica, streams full bytes or a validated application-level range,
+and cross-checks object metadata before yielding bytes. The HTTP download
+routes keep filename/content-type/ETag/cache policy at the API boundary and
+stream through the content service. They do not provide upload UI, download UI,
+object-byte GC, journals, sync, backup, or sharing.
 
 The initial PostgreSQL canonical schema and explicit SQLx persistence mappings
 for the validated domain subset are implemented. Disposable PostgreSQL
@@ -52,8 +84,8 @@ browser-session persistence, transport-neutral login/session semantics, HTTP
 login/logout/session/CSRF and first-run bootstrap routes, secure cookie policy,
 the minimal typed web API boundary, and the web setup/login/session shell are
 implemented; PostgreSQL end-to-end evidence remains environment-dependent and
-is reported separately. Device credentials, recovery, file-content download,
-journals, sync, backup, and sharing remain planned.
+is reported separately. Device credentials, recovery, download UI, journals,
+sync, backup, and sharing remain planned.
 Deployment-managed first-run secret delivery and
 installer lifecycle remain future work; the current bootstrap HTTP contract
 does not accept a setup-secret field.
@@ -80,10 +112,14 @@ implemented capabilities.
 
 Synveil combines several related, but explicitly separated, domains:
 
-- `IMPLEMENTED` (metadata and exact-offset upload subsets) / `PLANNED`
-  (download/UI/broader lifecycle) — authenticated files and folders, logical
-  metadata, bounded streaming resumable upload, versions, trash, sharing, and
-  integrity checks;
+- `IMPLEMENTED` (metadata, exact-offset upload, authenticated immutable
+  version-history metadata, safe historical-version restore, Trash retention
+  metadata/purge eligibility, and authenticated full/single-range
+  content-download transport) / `PLANNED` (download UI, physical purge/GC, and
+  broader lifecycle) —
+  authenticated files and folders, logical metadata, bounded streaming
+  resumable upload, immutable full/range content reads, versions, trash,
+  sharing, and integrity checks;
 - `PLANNED` — first-class devices and a cursor-based multi-device sync
   protocol that preserves conflicting user data;
 - `PLANNED` — backup sets, committed snapshots, retention, and verified

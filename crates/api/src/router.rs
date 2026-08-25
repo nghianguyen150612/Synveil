@@ -7,8 +7,8 @@ use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
 use tracing::{Span, info};
 
 use crate::{
-    ApiError, ApiState, FILE_METADATA_BODY_LIMIT_BYTES, UPLOAD_JSON_BODY_LIMIT_BYTES, auth, files,
-    health, middleware, uploads,
+    ApiError, ApiState, FILE_METADATA_BODY_LIMIT_BYTES, UPLOAD_JSON_BODY_LIMIT_BYTES, auth,
+    downloads, files, health, middleware, uploads, versions,
 };
 
 /// Stable product API prefix for versioned resources.
@@ -71,6 +71,43 @@ pub fn router(state: ApiState) -> Router {
             auth::require_authentication,
         ))
         .with_state(state.clone());
+    let protected_downloads = Router::new()
+        .route("/nodes/{node_id}/content", get(downloads::current_content))
+        .route(
+            "/versions/{version_id}/content",
+            get(downloads::historical_content),
+        )
+        // Downloads are authenticated reads. They deliberately do not pass
+        // through the mutation CSRF layer.
+        .layer(from_fn_with_state(
+            state.clone(),
+            auth::require_authentication,
+        ))
+        .with_state(state.clone());
+    let protected_versions = Router::new()
+        .route("/nodes/{node_id}/versions", get(versions::list_versions))
+        .route("/versions/{version_id}", get(versions::get_version))
+        // Version history is an authenticated read and deliberately does not
+        // pass through the mutation CSRF layer.
+        .layer(from_fn_with_state(
+            state.clone(),
+            auth::require_authentication,
+        ))
+        .with_state(state.clone());
+    let protected_version_restore = Router::new()
+        .route(
+            "/nodes/{node_id}/versions/{version_id}/restore",
+            post(versions::restore_version),
+        )
+        .layer(from_fn_with_state(
+            state.clone(),
+            auth::require_csrf_for_mutations,
+        ))
+        .layer(from_fn_with_state(
+            state.clone(),
+            auth::require_authentication,
+        ))
+        .with_state(state.clone());
     let create_upload = Router::new()
         .route("/upload-sessions", post(uploads::create_upload_session))
         .layer(RequestBodyLimitLayer::new(UPLOAD_JSON_BODY_LIMIT_BYTES));
@@ -118,6 +155,9 @@ pub fn router(state: ApiState) -> Router {
     let api = api
         .merge(protected_files)
         .layer(RequestBodyLimitLayer::new(state.body_limit_bytes()))
+        .merge(protected_downloads)
+        .merge(protected_versions)
+        .merge(protected_version_restore)
         .merge(protected_uploads);
 
     Router::new()

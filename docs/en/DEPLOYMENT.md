@@ -15,12 +15,15 @@ deployment images, Compose files, commands, or production support already
 exist. The foundation runtime implements the bounded health routes, browser
 authentication transport, first-run bootstrap HTTP boundary, minimal web
 setup/login/session shell documented in the API contract, and the explicit-root
-local `ObjectStore` adapter/conformance boundary. The exact-offset HTTP upload
-transport is wired for the current developer executable only when
-`DATABASE_URL` and an explicit absolute `SYNVEIL_OBJECT_ROOT` are both set.
-This is not a download path or evidence of a deployable production image.
-Deployment topologies, installer lifecycle, and production support remain
-planned.
+local `ObjectStore` adapter/conformance boundary. The storage crate also
+contains a transport-neutral owner-authorized content-read service, and the
+developer API composition root wires authenticated current/historical
+full/single-range download routes when `DATABASE_URL` and an explicit absolute
+`SYNVEIL_OBJECT_ROOT` are both set. Authenticated version-history metadata
+listing and direct lookup require the PostgreSQL metadata service but do not
+require an object root or open storage. This is not evidence of a deployable
+production image: production download configuration/preflight, deployment
+topologies, installer lifecycle, and production support remain planned.
 
 ## Supported deployment profiles
 
@@ -248,10 +251,16 @@ Repository status: the explicit-root local filesystem adapter and its managed
 `objects/` plus `staging/` layout are `IMPLEMENTED/VALIDATED` at the storage
 crate boundary. The developer API composition root accepts
 `SYNVEIL_OBJECT_ROOT` only alongside `DATABASE_URL` and then installs the
-validated upload application service behind the authenticated HTTP routes; an
-unset root fails closed rather than selecting a default. Download paths,
-production configuration/preflight, broader logical object lifecycle, GC,
-sync, backup, and installer wiring remain `PLANNED`.
+validated upload and download application services behind the authenticated HTTP
+routes; an unset root fails closed rather than selecting a default. The storage
+crate's content-read application service and API download transport use the same
+metadata/`ObjectStore` ports. Safe version restore is implemented at the
+authenticated API/metadata boundary but still requires the PostgreSQL metadata
+service; its disposable end-to-end gate is environment-dependent. HTTP
+download production configuration/preflight, broader logical object lifecycle,
+GC, sync, backup, and installer wiring remain `PLANNED`; version-history
+metadata itself remains available from the configured metadata service without
+object-root setup.
 
 ### Local object-root validation
 
@@ -307,7 +316,12 @@ Required production categories include:
   capacity reserve and credential reference;
 - session/cookie/CSRF and application master-key references;
 - request/upload/part/quota/concurrency/deadline limits;
-- journal/trash/version/staging/job/audit retention;
+- journal/trash/version/staging/job/audit retention and internal metadata-purge
+  reference-accounting state;
+- the logical Trash retention override `SYNVEIL_TRASH_RETENTION_SECONDS` in
+  whole seconds; when unset it uses the configurable 30-day default, and it
+  controls logical retention eligibility and metadata purge only; it does not
+  enable physical object purge or object-byte GC;
 - worker lease, retry, dead-letter and concurrency budgets;
 - log level/format/redaction, metrics and optional OTLP endpoint;
 - bootstrap state and first-run exposure policy; the current HTTP contract has

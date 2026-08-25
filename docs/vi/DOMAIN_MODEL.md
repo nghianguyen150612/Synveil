@@ -1,6 +1,6 @@
 # Domain model chuẩn của Synveil
 
-Trạng thái: **SKELETON_IMPLEMENTED — entity và invariant chuẩn ban đầu đã được validate; canonical schema PostgreSQL, mapping SQLx tường minh, logical node metadata workflow authenticated, subset persisted upload-session/verified-replica và exact-offset HTTP upload transport là IMPLEMENTED; download và content protocol rộng hơn vẫn PLANNED**
+Trạng thái: **SKELETON_IMPLEMENTED — entity và invariant chuẩn ban đầu đã được validate; canonical schema PostgreSQL, mapping SQLx tường minh, logical node metadata workflow authenticated, subset persisted upload-session/verified-replica, exact-offset HTTP upload transport, content-read bất biến đã authorize theo owner, HTTP download full/single-range đã authenticate, metadata version-history bất biến đã authenticate, safe historical-version restore, metadata Trash retention/purge execution và reference accounting theo FileVersion đã IMPLEMENTED; physical object GC, download UI và content protocol rộng hơn vẫn PLANNED**
 
 Tài liệu này sở hữu ý nghĩa chuẩn, field, relationship, lifecycle state và
 transaction invariant của các domain entity trong Synveil. Tài liệu không áp
@@ -263,6 +263,9 @@ Field chuẩn:
 - `name` gốc và `name_key` do server tạo;
 - đối với file, `current_version_id` nullable khi upload chưa commit;
 - `state`: `ACTIVE`, `TRASHED` hoặc `PURGING`;
+- `trashed_at` nullable là timestamp chuẩn, chỉ có ở `TRASHED`/`PURGING` và
+  được clear khi restore; retention policy derive `restore_deadline` mà không
+  lưu thêm cột deadline thứ hai;
 - metadata revision, instant created/updated và creator/last-actor ID.
 
 Directory còn expose opaque subtree precondition do server cấp cho destructive
@@ -280,6 +283,11 @@ Invariant:
   chuyển `Object`.
 - Content mutation đổi `current_version_id` và node revision trong cùng giao
   dịch tạo version và journal event.
+- Trash eligibility chỉ dùng `trashed_at` do server quan sát, một retention
+  policy chuẩn, server time hiện tại, ownership và state an toàn. Node `ACTIVE`,
+  đã restore, root và `PURGING` không bao giờ là fresh purge candidate. Contract
+  Trash một node hiện tại reject directory không rỗng nên candidate selection
+  không thể orphan child.
 - Trong correctness profile ban đầu, mọi giao dịch ngắn mutate `Node` đều lấy
   namespace guard theo library trước domain row và lock `sync_head` ở cuối.
   Cách này tạo thứ tự xác định giữa directory move hoặc recursive Trash với
@@ -343,6 +351,23 @@ Một restore tạo version mới có source trỏ đến historical version đ�
 không bao giờ khiến lịch sử cũ trở thành mutable. Object bằng nhau chỉ được tái
 sử dụng bên trong cùng dedup domain được phép.
 
+Metadata API đã implement list các record bất biến này theo newest-first với
+bounded node-scoped keyset cursor và chỉ báo currentness từ
+`Node.current_version_id`. DTO public cố ý loại object, replica, backend,
+staging và filesystem identity. Direct version ID cũng là ID mà historical
+content-read route chấp nhận. Restore route đã authenticate tạo một head bất
+biến mới từ historical version được chọn, dùng head trước restore làm parent,
+chỉ dùng lại canonical Object cùng replica đã verify matching và giữ nguyên mọi
+historical row. File node trashed hoặc purging vẫn bị che giấu theo active-file
+visibility contract. Bằng chứng restore end-to-end PostgreSQL bị gate bởi
+`SYNVEIL_TEST_DATABASE_URL`.
+
+Sau điểm không thể quay lại của Trash retention, metadata-purge contract hiện
+tại xóa vĩnh viễn row Node và mọi FileVersion của node đó trong một transaction.
+Schema hiện tại không có contract tombstone để giữ lịch sử FileVersion đã bị
+purge. Chỉ giữ một replay identity tối thiểu, không có tên file hay path. Bằng
+chứng PostgreSQL end-to-end purge bị gate bởi `SYNVEIL_TEST_DATABASE_URL`.
+
 ### `Object`
 
 Mục đích: identity nội dung plaintext chuẩn bất biến và metadata vòng đời logic
@@ -360,9 +385,12 @@ Field chuẩn:
 
 Một `Object` chỉ có thể được tham chiếu khi ở `VERIFIED`. Hash equality được xác
 nhận dựa trên length và byte đã verify; collision hoặc mismatch bị quarantine
-thay vì alias. Reference count được lưu có thể cache để tăng hiệu năng, nhưng
-deletion eligibility được suy ra từ authoritative live reference cộng lease và
-safety window.
+thay vì alias. Implementation hiện tại dùng relation `FileVersion -> Object`
+làm truy vấn logical reference có thẩm quyền, không dùng global counter
+mutable. Row metadata-only `object_gc_candidates` ghi `unreferenced_at` và
+source sau khi reference FileVersion cuối được release. Row này không phải
+deadline xóa byte; GC tương lai phải recheck mọi reference class, lease, hold và
+safety window trước khi đổi state Object hoặc replica.
 
 ### `StorageBackend`
 

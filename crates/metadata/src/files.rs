@@ -10,7 +10,8 @@ use std::{fmt, str::FromStr};
 
 use async_trait::async_trait;
 use synveil_core::{
-    DomainError, Library, LibraryId, LogicalName, Node, NodeId, Revision, Timestamp, UserId,
+    DomainError, Library, LibraryId, LogicalName, Node, NodeId, Revision, Timestamp,
+    TrashRetentionPolicy, UserId,
 };
 
 use crate::{DatabaseError, DatabasePool, DomainRepository, MappingError, MetadataError};
@@ -196,17 +197,34 @@ pub trait FileMetadataBackend: Send + Sync {
 #[derive(Clone)]
 pub struct FileMetadataService {
     pool: DatabasePool,
+    trash_retention_policy: TrashRetentionPolicy,
 }
 
 impl FileMetadataService {
     #[must_use]
     pub fn new(pool: DatabasePool) -> Self {
-        Self { pool }
+        Self::new_with_policy(pool, TrashRetentionPolicy::default())
+    }
+
+    #[must_use]
+    pub fn new_with_policy(
+        pool: DatabasePool,
+        trash_retention_policy: TrashRetentionPolicy,
+    ) -> Self {
+        Self {
+            pool,
+            trash_retention_policy,
+        }
     }
 
     #[must_use]
     pub fn pool(&self) -> &DatabasePool {
         &self.pool
+    }
+
+    #[must_use]
+    pub const fn trash_retention_policy(&self) -> TrashRetentionPolicy {
+        self.trash_retention_policy
     }
 
     pub async fn list_libraries(
@@ -491,6 +509,7 @@ fn map_domain_error(error: DomainError) -> FileMetadataError {
         DomainError::ParentLibraryMismatch | DomainError::NodeLibraryMismatch => {
             FileMetadataError::PermissionDenied
         }
+        DomainError::InvalidTrashTimestamp => FileMetadataError::InvalidPersistedData,
         DomainError::DirectoryNotEmpty
         | DomainError::LibraryNotWritable
         | DomainError::RootCannotBeDeleted

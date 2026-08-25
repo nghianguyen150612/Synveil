@@ -215,6 +215,7 @@ pub struct NodeRow {
     pub name: String,
     pub current_version_id: Option<Uuid>,
     pub state: String,
+    pub trashed_at: Option<OffsetDateTime>,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
     pub revision: String,

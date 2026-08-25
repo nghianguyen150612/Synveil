@@ -35,8 +35,10 @@ Implementation hiện cung cấp:
 
 `UploadPart`, ordered manifest, fingerprint idempotency phong phú hơn, quota
 reservation, worker scheduling và thực thi GC vẫn là công việc về sau và không
-được suy ra từ subset HTTP exact-offset này. Upload UI product, download, sync
-và backup cũng vẫn được hoạch định.
+được suy ra từ subset HTTP exact-offset này. Content-read application service
+trung lập transport và HTTP download transport authenticate được mô tả trong
+[STORAGE.md](STORAGE.md) và [API_ARCHITECTURE.md](API_ARCHITECTURE.md); upload UI
+product, download UI, sync và backup vẫn được hoạch định.
 
 ## Subset HTTP exact-offset đã implement
 

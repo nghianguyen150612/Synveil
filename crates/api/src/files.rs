@@ -15,7 +15,10 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
-use synveil_core::{Library, LibraryId, LogicalName, Node, NodeId, Revision, UserId};
+use synveil_core::{
+    Library, LibraryId, LogicalName, Node, NodeId, Revision, Timestamp, TrashRetentionPolicy,
+    UserId,
+};
 use synveil_metadata::{
     DEFAULT_PAGE_LIMIT, DatabaseError, DatabaseErrorKind, FileMetadataBackend, FileMetadataError,
     LibraryPage, NodePage,
@@ -200,6 +203,11 @@ pub(crate) struct NodeAttributes {
     state: &'static str,
     created_at: String,
     updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trashed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    restore_deadline: Option<String>,
+    purge_eligible: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -261,7 +269,11 @@ pub(crate) async fn list_children(
         )
         .await
         .map_err(|error| map_file_error(error, None, state.etag_key()))?;
-    Ok(Json(node_page_response(page, &context)))
+    Ok(Json(node_page_response(
+        page,
+        &context,
+        state.trash_retention_policy(),
+    )))
 }
 
 pub(crate) async fn create_directory(
@@ -288,6 +300,7 @@ pub(crate) async fn create_directory(
         node,
         &context,
         state.etag_key(),
+        state.trash_retention_policy(),
     ))
 }
 
@@ -308,6 +321,7 @@ pub(crate) async fn get_node(
         node,
         &context,
         state.etag_key(),
+        state.trash_retention_policy(),
     ))
 }
 
@@ -351,6 +365,7 @@ pub(crate) async fn update_node(
         node,
         &context,
         state.etag_key(),
+        state.trash_retention_policy(),
     ))
 }
 
@@ -373,6 +388,7 @@ pub(crate) async fn delete_node(
         node,
         &context,
         state.etag_key(),
+        state.trash_retention_policy(),
     ))
 }
 
@@ -395,6 +411,7 @@ pub(crate) async fn restore_node(
         node,
         &context,
         state.etag_key(),
+        state.trash_retention_policy(),
     ))
 }
 
@@ -459,9 +476,14 @@ fn library_page_response(
 fn node_page_response(
     page: NodePage,
     context: &RequestContext,
+    policy: TrashRetentionPolicy,
 ) -> CollectionResponse<NodeResource> {
     CollectionResponse {
-        data: page.nodes().iter().map(node_resource).collect(),
+        data: page
+            .nodes()
+            .iter()
+            .map(|node| node_resource(node, policy))
+            .collect(),
         page: PageResponse {
             next_cursor: page.next_cursor().map(str::to_owned),
             has_more: page.has_more(),
@@ -475,12 +497,13 @@ fn node_response(
     node: Node,
     context: &RequestContext,
     etag_key: &EtagKey,
+    policy: TrashRetentionPolicy,
 ) -> Response {
     let etag = etag_key.issue(node.id(), node.revision());
     let mut response = (
         status,
         Json(ResourceResponse {
-            data: node_resource(&node),
+            data: node_resource(&node, policy),
             meta: response_meta(context),
         }),
     )
@@ -496,7 +519,8 @@ fn node_response(
     response
 }
 
-fn node_resource(node: &Node) -> NodeResource {
+fn node_resource(node: &Node, policy: TrashRetentionPolicy) -> NodeResource {
+    let trashed_at = node.trashed_at();
     NodeResource {
         id: node.id().to_string(),
         resource_type: "node",
@@ -509,6 +533,16 @@ fn node_resource(node: &Node) -> NodeResource {
             state: node.state().as_str(),
             created_at: node.created_at().to_string(),
             updated_at: node.updated_at().to_string(),
+            trashed_at: trashed_at.map(|timestamp| timestamp.to_string()),
+            restore_deadline: trashed_at
+                .and_then(|timestamp| policy.restore_deadline(timestamp))
+                .map(|timestamp| timestamp.to_string()),
+            purge_eligible: policy.is_purge_eligible(
+                node.state(),
+                node.is_root(),
+                trashed_at,
+                Timestamp::now(),
+            ),
         },
     }
 }

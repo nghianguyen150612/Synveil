@@ -17,8 +17,8 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::{
-    DatabasePool, FileVersionRow, LibraryRow, MappingError, MetadataError, NodeRow,
-    ObjectReplicaRow, ObjectRow, UploadSessionRow,
+    DatabasePool, DomainRepository, FileVersionRow, LibraryRow, MappingError, MetadataError,
+    NodeRow, ObjectReplicaRow, ObjectRow, UploadSessionRow,
 };
 
 /// Verified storage evidence that is safe to persist and later reconcile.
@@ -617,7 +617,7 @@ async fn load_owned_library_for_update(
     };
     let root = sqlx::query_as::<_, NodeRow>(
         "SELECT id, library_id, parent_node_id, kind, name, current_version_id,
-                state, created_at, updated_at, revision::TEXT AS revision
+                state, trashed_at, created_at, updated_at, revision::TEXT AS revision
          FROM nodes WHERE id = $1 AND library_id = $2 FOR UPDATE",
     )
     .bind(row.root_node_id)
@@ -639,7 +639,7 @@ async fn load_node_for_update(
 ) -> Result<Option<Node>, MetadataError> {
     let row = sqlx::query_as::<_, NodeRow>(
         "SELECT id, library_id, parent_node_id, kind, name, current_version_id,
-                state, created_at, updated_at, revision::TEXT AS revision
+                state, trashed_at, created_at, updated_at, revision::TEXT AS revision
          FROM nodes WHERE id = $1 AND library_id = $2 FOR UPDATE",
     )
     .bind(node_id.into_uuid())
@@ -659,9 +659,9 @@ async fn insert_node(
     let row = NodeRow::from_domain(node)?;
     sqlx::query(
         "INSERT INTO nodes
-            (id, library_id, parent_node_id, kind, name, current_version_id,
-             state, created_at, updated_at, revision)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::NUMERIC)",
+                (id, library_id, parent_node_id, kind, name, current_version_id,
+             state, trashed_at, created_at, updated_at, revision)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::NUMERIC)",
     )
     .bind(row.id)
     .bind(row.library_id)
@@ -670,6 +670,7 @@ async fn insert_node(
     .bind(&row.name)
     .bind(row.current_version_id)
     .bind(&row.state)
+    .bind(row.trashed_at)
     .bind(row.created_at)
     .bind(row.updated_at)
     .bind(&row.revision)
@@ -767,7 +768,14 @@ async fn insert_file_version(
     transaction: &mut Transaction<'_, Postgres>,
     version: FileVersion,
 ) -> Result<(), MetadataError> {
+    let object = version.object_reference();
     let row = FileVersionRow::from_domain(version)?;
+    DomainRepository::clear_object_gc_candidate_in_transaction(
+        transaction,
+        object.object_id(),
+        object.dedup_domain_id(),
+    )
+    .await?;
     sqlx::query(
         "INSERT INTO file_versions
             (id, library_id, node_id, object_id, object_dedup_domain_id,

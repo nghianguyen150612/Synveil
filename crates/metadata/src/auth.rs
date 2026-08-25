@@ -398,8 +398,8 @@ async fn insert_initial_library(
     sqlx::query(
         "INSERT INTO nodes
             (id, library_id, parent_node_id, kind, name, current_version_id,
-             state, created_at, updated_at, revision)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::NUMERIC)",
+             state, trashed_at, created_at, updated_at, revision)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::NUMERIC)",
     )
     .bind(root.id)
     .bind(root.library_id)
@@ -408,6 +408,7 @@ async fn insert_initial_library(
     .bind(&root.name)
     .bind(root.current_version_id)
     .bind(&root.state)
+    .bind(root.trashed_at)
     .bind(root.created_at)
     .bind(root.updated_at)
     .bind(&root.revision)

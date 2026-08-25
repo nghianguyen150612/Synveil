@@ -2,29 +2,49 @@ openapi: 3.1.0
 info:
   title: Synveil API
   version: 0.1.0-blueprint
-  summary: Authenticated metadata and exact-offset resumable upload API contract
+  summary: Authenticated metadata, Trash retention status, safe version restore, content-download, and exact-offset resumable upload API contract
   description: |
     This is the checked-in OpenAPI contract for the authenticated logical
-    file/folder metadata and resumable-upload slice. It records transport-wide conventions,
-    foundation health routes, browser authentication transport, the first-run
-    bootstrap boundary, owner-scoped library/root/node operations, security
-    schemes, exact-offset raw-byte upload sessions, and shared response shapes.
+    file/folder metadata, immutable version-history metadata, immutable
+    content-download, resumable-upload, and metadata-only Trash retention slices.
+    It records transport-wide conventions, foundation health routes, browser
+    authentication transport, the first-run bootstrap boundary, owner-scoped
+    library/root/node operations, immutable file-version listing and direct
+    metadata lookup, security schemes, exact-offset raw-byte upload sessions,
+    authenticated current and historical full/single-range content reads, and
+    shared response shapes.
+
+    Version-history listing is bounded, newest-first, node-scoped keyset
+    pagination over immutable FileVersion rows. Direct version metadata uses
+    the same opaque version ID accepted by the historical content route. Both
+    reads expose only safe logical metadata and do not open an ObjectStore.
 
     Upload creation, owner-scoped status, bounded streaming append, retry-safe
     completion, and abort are implemented through the transport-neutral upload
-    application service. The API never exposes staging handles, object keys,
-    physical paths, or backend credentials. Download, upload product UI, sync,
-    backup, sharing, garbage collection, and device operations remain planned.
+    application service. Authenticated current-node and immutable-version
+    content downloads are implemented through the transport-neutral content-read
+    service with full responses, exactly one byte range, strong SHA-256 ETags,
+    safe attachment headers, and bounded streaming. The API never exposes
+    staging handles, object keys, physical paths, or backend credentials.
+    Safe historical-version restore is implemented as a conditional owner
+    mutation that appends one new immutable FileVersion reusing the selected
+    version's verified Object; it never mutates history, moves the current
+    pointer backward, copies bytes, or creates an UploadSession. Download UI,
+    multi-range responses, physical purge/GC, synchronization, backup, sharing,
+    and device operations remain planned. Trash eligibility and the internal
+    metadata-only `PURGING` begin transition do not expose a normal user-facing
+    purge route.
   contact:
     name: Synveil Architecture / Contracts
   license:
     name: MIT
     identifier: MIT
-  x-synveil-status: HTTP_UPLOAD_IMPLEMENTED
-  x-synveil-gate: SYNVEIL_HTTP_UPLOAD_READY
+  x-synveil-status: HTTP_VERSION_HISTORY_SAFE_RESTORE_AND_TRASH_RETENTION_IMPLEMENTED
+  x-synveil-gate: SYNVEIL_TRASH_RETENTION_IMPLEMENTED
   x-synveil-next-step: |
-    Review the completed Prompt 11-20 batch before beginning download,
-    synchronization, backup, sharing, garbage collection, or device work.
+    Validate the retention candidate and begin-purge transactions against
+    disposable PostgreSQL. Do not implement physical metadata purge, object-byte
+    GC, or synchronization yet.
 servers:
   - url: /
     description: Deployment-relative base URL; TLS is supplied by the supported proxy topology.
@@ -36,7 +56,11 @@ tags:
   - name: Bootstrap
     description: Implemented one-time setup status and first-administrator creation; no automatic session issuance.
   - name: Files
-    description: Implemented authenticated owner-scoped logical library, directory, and node metadata operations; no byte transfer.
+    description: Implemented authenticated owner-scoped logical library, directory, node metadata, and safe Trash retention status operations.
+  - name: Downloads
+    description: Implemented authenticated current and historical full or single-range immutable content reads; no multi-range or UI surface.
+  - name: Versions
+    description: Implemented authenticated immutable file-version history, safe owner restore, and direct safe metadata lookup; no physical purge or synchronization.
   - name: Uploads
     description: Implemented authenticated, CSRF-protected exact-offset upload sessions with bounded streaming byte append.
 paths:
@@ -558,7 +582,9 @@ paths:
         Transition one non-root node to TRASHED without deleting file versions
         or object references. A directory with any child is rejected with
         invalid_state because the recursive subtree-precondition contract is
-        still open. This route does not purge data.
+        still open. The response includes the server-observed `trashed_at`, a
+        derived `restore_deadline`, and `purge_eligible`; this route does not
+        purge data.
       security:
         - BrowserSession: []
       parameters:
@@ -630,6 +656,336 @@ paths:
           $ref: '#/components/responses/PreconditionRequired'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/nodes/{node_id}/versions:
+    get:
+      tags: [Versions]
+      operationId: listNodeVersions
+      summary: List immutable version-history metadata for an owned file
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Metadata / Rust Backend
+      description: |
+        Return a bounded newest-first page ordered by committed_at descending
+        and immutable version ID descending. The cursor is opaque, node-scoped,
+        and safe to resume only for this collection. Only active owned file
+        nodes are visible; unknown, cross-owner, trashed, and purging nodes are
+        concealed as not found. This read does not require a CSRF header and
+        does not open an ObjectStore.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/NodeId'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A bounded newest-first immutable version-history page.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionCollectionResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidState'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/nodes/{node_id}/versions/{version_id}/restore:
+    post:
+      tags: [Versions]
+      operationId: restoreFileVersion
+      summary: Restore an immutable file version as one new current version
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Metadata / Rust Backend
+      description: |
+        Restore one owner-authorized historical FileVersion by appending exactly
+        one new immutable FileVersion that references the same canonical Object.
+        The historical row is never mutated, the current pointer never moves
+        backward, bytes are never copied, and no UploadSession is created. The
+        active file, source version, owner/library relationship, and a matching
+        VERIFIED replica are rechecked inside one PostgreSQL transaction. The
+        current node revision is the parent of the restore and is protected by
+        If-Match. Idempotency-Key replay returns the committed safe outcome.
+        Object, replica, backend, staging, and filesystem identifiers are never
+        returned.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/NodeId'
+        - $ref: '#/components/parameters/VersionId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: The newly appended current version and updated node concurrency metadata.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionRestoreResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/VersionRestoreConflict'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/versions/{version_id}:
+    get:
+      tags: [Versions]
+      operationId: getVersionMetadata
+      summary: Read safe metadata for an owned immutable file version
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Metadata / Rust Backend
+      description: |
+        Return safe logical metadata for one immutable FileVersion. The
+        version ID is the same identifier accepted by the historical content
+        route `/api/v1/versions/{version_id}/content`, so callers can use the
+        response without an ID translation step. Unknown, cross-owner,
+        trashed, and purging versions are concealed as not found. This read
+        does not require a CSRF header and does not open an ObjectStore.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/VersionId'
+      responses:
+        '200':
+          description: Safe immutable file-version metadata.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidState'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/nodes/{node_id}/content:
+    get:
+      tags: [Downloads]
+      operationId: getCurrentNodeContent
+      summary: Download the current immutable content of an owned file node
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Storage / Downloads, Rust Backend
+      description: |
+        Resolve the current committed file version through the authenticated
+        content-read application service and stream its verified bytes. A
+        request may include exactly one `bytes` range in one of the forms
+        `bytes=start-end`, `bytes=start-`, or `bytes=-suffix`. Multi-range,
+        malformed, and unsatisfiable ranges return `416` with
+        `Content-Range: bytes */length`. `If-None-Match` is evaluated from
+        immutable SHA-256 metadata before opening the byte stream. This safe
+        read does not require a CSRF header.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/NodeId'
+        - $ref: '#/components/parameters/Range'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The complete verified content stream.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Accept-Ranges:
+              $ref: '#/components/headers/AcceptRanges'
+            Content-Length:
+              $ref: '#/components/headers/ContentLength'
+            Content-Type:
+              $ref: '#/components/headers/ContentType'
+            Content-Disposition:
+              $ref: '#/components/headers/ContentDisposition'
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '206':
+          description: The requested single verified byte range.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Accept-Ranges:
+              $ref: '#/components/headers/AcceptRanges'
+            Content-Range:
+              $ref: '#/components/headers/ContentRange'
+            Content-Length:
+              $ref: '#/components/headers/ContentLength'
+            Content-Type:
+              $ref: '#/components/headers/ContentType'
+            Content-Disposition:
+              $ref: '#/components/headers/ContentDisposition'
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '304':
+          description: The supplied `If-None-Match` validator matches the immutable content.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Accept-Ranges:
+              $ref: '#/components/headers/AcceptRanges'
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidState'
+        '416':
+          $ref: '#/components/responses/InvalidRange'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/versions/{version_id}/content:
+    get:
+      tags: [Downloads]
+      operationId: getHistoricalVersionContent
+      summary: Download the immutable content of an owned historical file version
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Storage / Downloads, Rust Backend
+      description: |
+        Resolve the requested immutable file version through the authenticated
+        content-read application service and stream its verified bytes. A
+        request may include exactly one `bytes` range in one of the forms
+        `bytes=start-end`, `bytes=start-`, or `bytes=-suffix`. Multi-range,
+        malformed, and unsatisfiable ranges return `416` with
+        `Content-Range: bytes */length`. `If-None-Match` is evaluated from
+        immutable SHA-256 metadata before opening the byte stream. This safe
+        read does not require a CSRF header.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/VersionId'
+        - $ref: '#/components/parameters/Range'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The complete verified content stream.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Accept-Ranges:
+              $ref: '#/components/headers/AcceptRanges'
+            Content-Length:
+              $ref: '#/components/headers/ContentLength'
+            Content-Type:
+              $ref: '#/components/headers/ContentType'
+            Content-Disposition:
+              $ref: '#/components/headers/ContentDisposition'
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '206':
+          description: The requested single verified byte range.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Accept-Ranges:
+              $ref: '#/components/headers/AcceptRanges'
+            Content-Range:
+              $ref: '#/components/headers/ContentRange'
+            Content-Length:
+              $ref: '#/components/headers/ContentLength'
+            Content-Type:
+              $ref: '#/components/headers/ContentType'
+            Content-Disposition:
+              $ref: '#/components/headers/ContentDisposition'
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '304':
+          description: The supplied `If-None-Match` validator matches the immutable content.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Accept-Ranges:
+              $ref: '#/components/headers/AcceptRanges'
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidState'
+        '416':
+          $ref: '#/components/responses/InvalidRange'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/v1/upload-sessions:
     post:
       tags: [Uploads]
@@ -897,6 +1253,13 @@ components:
       description: Opaque UUIDv7 node identifier owned by the current principal.
       schema:
         $ref: '#/components/schemas/OpaqueId'
+    VersionId:
+      name: version_id
+      in: path
+      required: true
+      description: Opaque UUIDv7 immutable file-version identifier owned by the current principal.
+      schema:
+        $ref: '#/components/schemas/OpaqueId'
     ParentId:
       name: parent_id
       in: query
@@ -933,6 +1296,34 @@ components:
         type: string
         minLength: 3
         maxLength: 256
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Bounded authenticated mutation identity; an identical retry replays the stored restore outcome.
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 256
+        pattern: '^[A-Za-z0-9._~-]+$'
+    Range:
+      name: Range
+      in: header
+      required: false
+      description: 'Exactly one byte range: `bytes=start-end`, `bytes=start-`, or `bytes=-suffix`; multi-range and unsatisfiable values return 416.'
+      schema:
+        type: string
+        minLength: 7
+        maxLength: 256
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      required: false
+      description: Optional quoted SHA-256 content validator; a matching value returns 304 before opening the stream.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 1024
     CsrfHeader:
       name: X-CSRF-Token
       in: header
@@ -983,6 +1374,34 @@ components:
       schema:
         type: string
         const: no-store
+    PrivateNoStore:
+      description: Authenticated content is private and must not be stored by an intermediary or browser cache.
+      schema:
+        type: string
+        const: private, no-store
+    AcceptRanges:
+      description: The configured content backend accepts single byte ranges.
+      schema:
+        type: string
+        const: bytes
+    ContentLength:
+      description: Exact decimal byte length of the response body; on 206 this is the selected range length.
+      schema:
+        $ref: '#/components/schemas/U64Decimal'
+    ContentRange:
+      description: Inclusive selected byte range and complete immutable content length.
+      schema:
+        type: string
+        pattern: '^bytes [0-9]+-[0-9]+/[0-9]+$'
+    ContentType:
+      description: Safe fallback media type for the downloaded attachment.
+      schema:
+        type: string
+        const: application/octet-stream
+    ContentDisposition:
+      description: Attachment disposition with a safe fallback and RFC 5987 encoded logical filename when available.
+      schema:
+        type: string
     UploadOffset:
       description: Authoritative durable byte offset for this upload session.
       schema:
@@ -1121,6 +1540,15 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    VersionRestoreConflict:
+      description: The restore conflicted with the current node revision, resource state, or an existing idempotency-key request.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     PreconditionRequired:
       description: A required If-Match node ETag was omitted.
       headers:
@@ -1135,6 +1563,31 @@ components:
       headers:
         X-Request-Id:
           $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: The server could not safely complete the content read.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InvalidRange:
+      description: The requested range is malformed, contains multiple ranges, or is not satisfiable for the immutable content length.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Content-Range:
+          description: Unsatisfiable content length in the required `bytes */length` form.
+          schema:
+            type: string
+            pattern: '^bytes \\*/[0-9]+$'
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
       content:
         application/json:
           schema:
@@ -1493,6 +1946,76 @@ components:
           $ref: '#/components/schemas/Page'
         meta:
           $ref: '#/components/schemas/ResponseMeta'
+    VersionCollectionResponse:
+      type: object
+      additionalProperties: false
+      required: [data, page, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/VersionResource'
+        page:
+          $ref: '#/components/schemas/Page'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    VersionResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/VersionResource'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    VersionRestoreResponse:
+      type: object
+      additionalProperties: false
+      required: [data, node, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/VersionResource'
+        node:
+          $ref: '#/components/schemas/RestoreNodeConcurrency'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    RestoreNodeConcurrency:
+      type: object
+      additionalProperties: false
+      required: [id, revision]
+      properties:
+        id:
+          $ref: '#/components/schemas/OpaqueId'
+        revision:
+          $ref: '#/components/schemas/U64Decimal'
+    VersionResource:
+      type: object
+      additionalProperties: false
+      required: [id, type, attributes]
+      properties:
+        id:
+          $ref: '#/components/schemas/OpaqueId'
+        type:
+          type: string
+          const: file_version
+        attributes:
+          $ref: '#/components/schemas/VersionAttributes'
+    VersionAttributes:
+      type: object
+      additionalProperties: false
+      required: [node_id, created_at, byte_length, sha256, is_current]
+      properties:
+        node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        created_at:
+          type: string
+          format: date-time
+        byte_length:
+          $ref: '#/components/schemas/U64Decimal'
+        sha256:
+          $ref: '#/components/schemas/Hash'
+        is_current:
+          type: boolean
     Page:
       type: object
       additionalProperties: false
@@ -1563,7 +2086,7 @@ components:
     NodeAttributes:
       type: object
       additionalProperties: false
-      required: [library_id, name, kind, state, created_at, updated_at]
+      required: [library_id, name, kind, state, created_at, updated_at, purge_eligible]
       properties:
         library_id:
           $ref: '#/components/schemas/OpaqueId'
@@ -1585,6 +2108,17 @@ components:
         updated_at:
           type: string
           format: date-time
+        trashed_at:
+          type: string
+          format: date-time
+          description: Server-observed timestamp when the node entered TRASHED; omitted for ACTIVE nodes.
+        restore_deadline:
+          type: string
+          format: date-time
+          description: Derived inclusive retention deadline; omitted for ACTIVE nodes and never accepted from clients.
+        purge_eligible:
+          type: boolean
+          description: Server-evaluated internal eligibility hint; true does not expose a public delete-now operation.
     LoginRequest:
       type: object
       additionalProperties: false

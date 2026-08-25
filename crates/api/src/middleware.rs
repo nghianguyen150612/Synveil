@@ -23,7 +23,9 @@ pub(crate) async fn request_context(mut request: Request, next: Next) -> Respons
     let is_no_store_route = is_auth_route
         || path == "/api/v1/system/bootstrap-status"
         || path == "/api/v1/bootstrap/admin"
-        || path.starts_with("/api/v1/upload-sessions");
+        || path.starts_with("/api/v1/upload-sessions")
+        || ((path.starts_with("/api/v1/nodes/") || path.starts_with("/api/v1/versions/"))
+            && path.ends_with("/content"));
     let context = RequestContext::new(request_id.clone());
     request.extensions_mut().insert(context.clone());
 
@@ -49,7 +51,11 @@ pub(crate) async fn request_context(mut request: Request, next: Next) -> Respons
         REQUEST_ID_HEADER,
         HeaderValue::from_str(request_id.as_str()).expect("validated request id is a header value"),
     );
-    if is_no_store_route {
+    if is_no_store_route
+        && !response
+            .headers()
+            .contains_key(axum::http::header::CACHE_CONTROL)
+    {
         response.headers_mut().insert(
             axum::http::header::CACHE_CONTROL,
             HeaderValue::from_static("no-store"),

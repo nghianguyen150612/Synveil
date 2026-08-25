@@ -14,7 +14,10 @@ mod numbers;
 mod time;
 mod tokens;
 
-pub use config::{CacheDir, ConfigDir, DataDir, RuntimeDir};
+pub use config::{
+    CacheDir, ConfigDir, DEFAULT_TRASH_RETENTION, DataDir, RuntimeDir, TRASH_RETENTION_SECONDS_ENV,
+    TrashRetentionPolicy, TrashRetentionPolicyError,
+};
 pub use domain::{
     Device, DeviceStatus, DomainError, FileVersion, Library, LibraryStatus, LogicalName,
     LoginIdentifier, MAX_LOGICAL_NAME_BYTES, Node, NodeKind, NodeState, ObjectReference,

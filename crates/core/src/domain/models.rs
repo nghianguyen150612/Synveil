@@ -487,6 +487,7 @@ pub struct Node {
     name: LogicalName,
     current_version_id: Option<FileVersionId>,
     state: NodeState,
+    trashed_at: Option<Timestamp>,
     created_at: Timestamp,
     updated_at: Timestamp,
     revision: Revision,
@@ -585,6 +586,36 @@ impl Node {
         updated_at: Timestamp,
         revision: Revision,
     ) -> Result<Self, DomainError> {
+        Self::rehydrate_with_trash(
+            id,
+            library_id,
+            parent_node_id,
+            kind,
+            name,
+            current_version_id,
+            state,
+            None,
+            created_at,
+            updated_at,
+            revision,
+        )
+    }
+
+    /// Reconstruct a node with its canonical logical-Trash timestamp.
+    #[allow(clippy::too_many_arguments)]
+    pub fn rehydrate_with_trash(
+        id: NodeId,
+        library_id: LibraryId,
+        parent_node_id: Option<NodeId>,
+        kind: NodeKind,
+        name: LogicalName,
+        current_version_id: Option<FileVersionId>,
+        state: NodeState,
+        trashed_at: Option<Timestamp>,
+        created_at: Timestamp,
+        updated_at: Timestamp,
+        revision: Revision,
+    ) -> Result<Self, DomainError> {
         if parent_node_id.is_none() {
             if kind != NodeKind::Directory {
                 return Err(DomainError::RootMustBeDirectory);
@@ -592,6 +623,9 @@ impl Node {
             if state != NodeState::Active {
                 return Err(DomainError::RootMustBeActive);
             }
+        }
+        if (state == NodeState::Active) != trashed_at.is_none() {
+            return Err(DomainError::InvalidTrashTimestamp);
         }
         if parent_node_id == Some(id) {
             return Err(DomainError::ParentCannotBeSelf);
@@ -608,6 +642,7 @@ impl Node {
             name,
             current_version_id,
             state,
+            trashed_at,
             created_at,
             updated_at,
             revision,
@@ -775,6 +810,11 @@ impl Node {
 
         if self.state != next {
             self.state = next;
+            self.trashed_at = match next {
+                NodeState::Active => None,
+                NodeState::Trashed => Some(observed_at),
+                NodeState::Purging => self.trashed_at,
+            };
             self.bump_revision(observed_at)?;
         }
         Ok(())
@@ -813,6 +853,11 @@ impl Node {
     #[must_use]
     pub const fn state(&self) -> NodeState {
         self.state
+    }
+
+    #[must_use]
+    pub const fn trashed_at(&self) -> Option<Timestamp> {
+        self.trashed_at
     }
 
     #[must_use]
@@ -1423,9 +1468,11 @@ mod tests {
         file.transition_state(NodeState::Trashed, observed_at())
             .expect("active node can be trashed");
         assert_eq!(file.state(), NodeState::Trashed);
+        assert_eq!(file.trashed_at(), Some(observed_at()));
         assert_eq!(file.revision(), Revision::new(1));
         file.transition_state(NodeState::Active, observed_at())
             .expect("trashed node can be restored");
+        assert_eq!(file.trashed_at(), None);
         file.transition_state(NodeState::Trashed, observed_at())
             .expect("active node can be trashed again");
         file.transition_state(NodeState::Purging, observed_at())

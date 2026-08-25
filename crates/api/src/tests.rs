@@ -1,5 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
+    fs,
+    path::PathBuf,
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -10,13 +12,17 @@ use std::{
 use async_trait::async_trait;
 use axum::{
     body::Body,
-    http::{HeaderMap, HeaderValue, Method, Request, StatusCode, header::CONTENT_LENGTH},
+    http::{
+        HeaderMap, HeaderValue, Method, Request, StatusCode,
+        header::{CONTENT_LENGTH, CONTENT_RANGE},
+    },
     response::Response,
 };
 use bytes::Bytes;
-use futures_util::StreamExt;
+use futures_util::{StreamExt, stream};
 use http_body_util::BodyExt;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use synveil_auth::{
     AuthError, PasswordHasherConfig, PasswordParameters, PasswordVerification, PlaintextPassword,
     SessionExpiry, SessionPrincipal, SessionToken, StoredPasswordHash,
@@ -27,18 +33,24 @@ use synveil_core::{
     UploadSessionState, UserId,
 };
 use synveil_metadata::{
-    FileMetadataBackend, FileMetadataError, LibraryPage, NodePage, UploadCompletion,
+    AuthorizedContent, ContentReadMetadataBackend, ContentReadResolution, FileMetadataBackend,
+    FileMetadataError, FileVersionMetadata, FileVersionPage, LibraryPage, MetadataError, NodePage,
+    RestoredFileVersion, UploadCompletion, VersionHistoryBackend, VersionHistoryError,
+    VersionRestoreBackend, VersionRestoreError,
 };
 use synveil_storage::{
-    CreateUploadSessionRequest, UploadByteStream, UploadError, UploadProgress, UploadSessionView,
-    UploadTargetRequest, UploadTargetView,
+    ByteRange, ContentReadApplicationService, ContentReadError, CreateUploadSessionRequest,
+    IntegrityExpectation, ObjectKey, ObjectStore, PutRequest, UploadByteStream, UploadError,
+    UploadProgress, UploadSessionView, UploadTargetRequest, UploadTargetView, boxed_content_stream,
+    boxed_stream, open_local_object_store,
 };
 use tower::ServiceExt;
 
 use super::{
     ApiError, ApiState, AuthenticationBackend, BOOTSTRAP_BODY_LIMIT_BYTES, BootstrapStatus,
-    CookieConfig, IssuedSession, RequestId, StaticReadiness, SystemHealthAuthorizer,
-    UPLOAD_JSON_BODY_LIMIT_BYTES, UploadBackend, map_core_error, router,
+    CookieConfig, DownloadBackend, DownloadMetadata, DownloadRead, EtagKey, IssuedSession,
+    RequestId, StaticReadiness, SystemHealthAuthorizer, UPLOAD_JSON_BODY_LIMIT_BYTES,
+    UploadBackend, map_core_error, router,
 };
 
 const TEST_LOGIN: &str = "alice";
@@ -279,6 +291,25 @@ impl TestFileMetadataBackend {
             .expect("file metadata state lock")
             .library
             .root_node_id()
+    }
+
+    fn add_file(&self, node_id: NodeId, name: &str) {
+        let mut state = self.state.lock().expect("file metadata state lock");
+        let root = state
+            .nodes
+            .get(&state.library.root_node_id())
+            .cloned()
+            .expect("test root node");
+        let file = Node::new_child(
+            node_id,
+            state.library.id(),
+            &root,
+            NodeKind::File,
+            LogicalName::new(name).expect("test filename must be valid"),
+            Timestamp::parse("2026-08-23T00:00:00Z").expect("valid test time"),
+        )
+        .expect("test file must be valid");
+        state.nodes.insert(node_id, file);
     }
 }
 
@@ -523,6 +554,589 @@ impl FileMetadataBackend for TestFileMetadataBackend {
         node.transition_state(NodeState::Active, Timestamp::now())
             .map_err(fake_file_error)?;
         Ok(node.clone())
+    }
+}
+
+struct TestVersionHistoryBackend {
+    owner_user_id: UserId,
+    file_node_id: NodeId,
+    directory_node_id: NodeId,
+    trashed_node_id: NodeId,
+    current_version_id: FileVersionId,
+    previous_version_id: FileVersionId,
+}
+
+impl TestVersionHistoryBackend {
+    fn new(owner_user_id: UserId) -> Self {
+        Self {
+            owner_user_id,
+            file_node_id: NodeId::new(),
+            directory_node_id: NodeId::new(),
+            trashed_node_id: NodeId::new(),
+            current_version_id: FileVersionId::new(),
+            previous_version_id: FileVersionId::new(),
+        }
+    }
+
+    fn file_node_id(&self) -> NodeId {
+        self.file_node_id
+    }
+
+    fn directory_node_id(&self) -> NodeId {
+        self.directory_node_id
+    }
+
+    fn trashed_node_id(&self) -> NodeId {
+        self.trashed_node_id
+    }
+
+    fn current_version_id(&self) -> FileVersionId {
+        self.current_version_id
+    }
+
+    fn previous_version_id(&self) -> FileVersionId {
+        self.previous_version_id
+    }
+
+    fn metadata(&self, version_id: FileVersionId) -> FileVersionMetadata {
+        let is_current = version_id == self.current_version_id;
+        FileVersionMetadata::new(
+            version_id,
+            self.file_node_id,
+            Timestamp::parse("2026-08-24T00:00:00Z").expect("valid version timestamp"),
+            if is_current { 42 } else { 24 },
+            if is_current {
+                Sha256Digest::from_bytes([0xab; 32])
+            } else {
+                Sha256Digest::from_bytes([0xcd; 32])
+            },
+            is_current,
+        )
+    }
+}
+
+#[async_trait]
+impl VersionHistoryBackend for TestVersionHistoryBackend {
+    async fn list_file_versions(
+        &self,
+        user_id: UserId,
+        node_id: NodeId,
+        cursor: Option<String>,
+        limit: u32,
+    ) -> Result<FileVersionPage, VersionHistoryError> {
+        if !(1..=100).contains(&limit) {
+            return Err(VersionHistoryError::InvalidRequest);
+        }
+        if user_id != self.owner_user_id {
+            return Err(VersionHistoryError::NotFound);
+        }
+        if cursor.as_deref() == Some("v1.version.opaque-page-cursor")
+            && node_id != self.file_node_id
+        {
+            return Err(VersionHistoryError::InvalidCursor);
+        }
+        if node_id == self.directory_node_id {
+            return Err(VersionHistoryError::InvalidState);
+        }
+        if node_id == self.trashed_node_id || node_id != self.file_node_id {
+            return Err(VersionHistoryError::NotFound);
+        }
+        match cursor.as_deref() {
+            None => Ok(FileVersionPage::new(
+                vec![self.metadata(self.current_version_id)],
+                Some("v1.version.opaque-page-cursor".to_owned()),
+                true,
+            )),
+            Some("v1.version.opaque-page-cursor") => Ok(FileVersionPage::new(
+                vec![self.metadata(self.previous_version_id)],
+                None,
+                false,
+            )),
+            Some("invalid" | "cross-node") => Err(VersionHistoryError::InvalidCursor),
+            Some(_) => Err(VersionHistoryError::InvalidCursor),
+        }
+    }
+
+    async fn get_file_version_metadata(
+        &self,
+        user_id: UserId,
+        version_id: FileVersionId,
+    ) -> Result<FileVersionMetadata, VersionHistoryError> {
+        if user_id != self.owner_user_id
+            || !matches!(version_id, id if id == self.current_version_id || id == self.previous_version_id)
+        {
+            return Err(VersionHistoryError::NotFound);
+        }
+        Ok(self.metadata(version_id))
+    }
+}
+
+#[derive(Clone)]
+struct StoredRestoreOutcome {
+    node_id: NodeId,
+    source_version_id: FileVersionId,
+    expected_revision: Revision,
+    result: RestoredFileVersion,
+}
+
+struct TestVersionRestoreBackend {
+    owner_user_id: UserId,
+    file_node_id: NodeId,
+    directory_node_id: NodeId,
+    trashed_node_id: NodeId,
+    source_version_id: FileVersionId,
+    source_byte_length: u64,
+    source_sha256: Sha256Digest,
+    current_version_id: Mutex<FileVersionId>,
+    current_revision: Mutex<Revision>,
+    outcomes: Mutex<HashMap<String, StoredRestoreOutcome>>,
+    applied_calls: AtomicUsize,
+}
+
+impl TestVersionRestoreBackend {
+    fn new(owner_user_id: UserId, file_node_id: NodeId, source_version_id: FileVersionId) -> Self {
+        Self {
+            owner_user_id,
+            file_node_id,
+            directory_node_id: NodeId::new(),
+            trashed_node_id: NodeId::new(),
+            source_version_id,
+            source_byte_length: 24,
+            source_sha256: Sha256Digest::from_bytes([0xcd; 32]),
+            current_version_id: Mutex::new(FileVersionId::new()),
+            current_revision: Mutex::new(Revision::new(0)),
+            outcomes: Mutex::new(HashMap::new()),
+            applied_calls: AtomicUsize::new(0),
+        }
+    }
+
+    fn directory_node_id(&self) -> NodeId {
+        self.directory_node_id
+    }
+
+    fn trashed_node_id(&self) -> NodeId {
+        self.trashed_node_id
+    }
+
+    fn current_version_id(&self) -> FileVersionId {
+        *self
+            .current_version_id
+            .lock()
+            .expect("restore current version lock")
+    }
+
+    fn current_revision(&self) -> Revision {
+        *self
+            .current_revision
+            .lock()
+            .expect("restore current revision lock")
+    }
+
+    fn set_current_version_id(&self, version_id: FileVersionId) {
+        *self
+            .current_version_id
+            .lock()
+            .expect("restore current version lock") = version_id;
+    }
+
+    fn with_source_metadata(mut self, byte_length: u64, sha256: Sha256Digest) -> Self {
+        self.source_byte_length = byte_length;
+        self.source_sha256 = sha256;
+        self
+    }
+
+    fn applied_calls(&self) -> usize {
+        self.applied_calls.load(Ordering::Relaxed)
+    }
+}
+
+#[async_trait]
+impl VersionRestoreBackend for TestVersionRestoreBackend {
+    async fn restore_file_version(
+        &self,
+        user_id: UserId,
+        node_id: NodeId,
+        source_version_id: FileVersionId,
+        expected_revision: Revision,
+        idempotency_key: String,
+    ) -> Result<RestoredFileVersion, VersionRestoreError> {
+        if user_id != self.owner_user_id {
+            return Err(VersionRestoreError::NotFound);
+        }
+        if node_id == self.trashed_node_id {
+            return Err(VersionRestoreError::NotFound);
+        }
+        if node_id == self.directory_node_id {
+            return Err(VersionRestoreError::InvalidState);
+        }
+        if node_id != self.file_node_id || source_version_id != self.source_version_id {
+            return Err(VersionRestoreError::NotFound);
+        }
+
+        if let Some(outcome) = self
+            .outcomes
+            .lock()
+            .expect("restore outcome lock")
+            .get(&idempotency_key)
+            .cloned()
+        {
+            if outcome.node_id != node_id
+                || outcome.source_version_id != source_version_id
+                || outcome.expected_revision != expected_revision
+            {
+                return Err(VersionRestoreError::IdempotencyConflict);
+            }
+            return Ok(outcome.result);
+        }
+
+        let current_revision = self.current_revision();
+        if current_revision != expected_revision {
+            return Err(VersionRestoreError::VersionConflict { current_revision });
+        }
+        if self.current_version_id() == source_version_id {
+            return Err(VersionRestoreError::InvalidRequest);
+        }
+
+        let next_revision = Revision::new(
+            current_revision
+                .get()
+                .checked_add(1)
+                .expect("test revision must not overflow"),
+        );
+        let new_version_id = FileVersionId::new();
+        let result = RestoredFileVersion::new(
+            FileVersionMetadata::new(
+                new_version_id,
+                node_id,
+                Timestamp::parse("2026-08-24T00:00:01Z").expect("valid restore timestamp"),
+                self.source_byte_length,
+                self.source_sha256,
+                true,
+            ),
+            next_revision,
+        );
+        self.applied_calls.fetch_add(1, Ordering::Relaxed);
+        *self
+            .current_revision
+            .lock()
+            .expect("restore current revision lock") = next_revision;
+        *self
+            .current_version_id
+            .lock()
+            .expect("restore current version lock") = new_version_id;
+        self.outcomes.lock().expect("restore outcome lock").insert(
+            idempotency_key,
+            StoredRestoreOutcome {
+                node_id,
+                source_version_id,
+                expected_revision,
+                result: result.clone(),
+            },
+        );
+        Ok(result)
+    }
+}
+
+struct TestDownloadBackend {
+    owner_user_id: UserId,
+    node_id: NodeId,
+    file_version_id: FileVersionId,
+    bytes: Vec<u8>,
+    sha256: Sha256Digest,
+    supports_range_reads: bool,
+    current_error: Mutex<Option<ContentReadError>>,
+    historical_error: Mutex<Option<ContentReadError>>,
+    open_calls: AtomicUsize,
+    range_calls: AtomicUsize,
+}
+
+impl TestDownloadBackend {
+    fn new(owner_user_id: UserId, bytes: &[u8]) -> Self {
+        Self::with_ids(owner_user_id, NodeId::new(), FileVersionId::new(), bytes)
+    }
+
+    fn with_ids(
+        owner_user_id: UserId,
+        node_id: NodeId,
+        file_version_id: FileVersionId,
+        bytes: &[u8],
+    ) -> Self {
+        let digest = Sha256::digest(bytes);
+        Self {
+            owner_user_id,
+            node_id,
+            file_version_id,
+            bytes: bytes.to_vec(),
+            sha256: Sha256Digest::try_from(digest.as_slice()).expect("SHA-256 is valid"),
+            supports_range_reads: true,
+            current_error: Mutex::new(None),
+            historical_error: Mutex::new(None),
+            open_calls: AtomicUsize::new(0),
+            range_calls: AtomicUsize::new(0),
+        }
+    }
+
+    fn node_id(&self) -> NodeId {
+        self.node_id
+    }
+
+    fn file_version_id(&self) -> FileVersionId {
+        self.file_version_id
+    }
+
+    fn set_current_error(&self, error: ContentReadError) {
+        *self.current_error.lock().expect("download error lock") = Some(error);
+    }
+
+    fn open_calls(&self) -> usize {
+        self.open_calls.load(Ordering::Relaxed)
+    }
+
+    fn range_calls(&self) -> usize {
+        self.range_calls.load(Ordering::Relaxed)
+    }
+
+    fn metadata(&self) -> DownloadMetadata {
+        DownloadMetadata::new(
+            self.node_id,
+            self.file_version_id,
+            self.bytes.len() as u64,
+            self.sha256,
+        )
+    }
+
+    fn check_current(
+        &self,
+        owner_user_id: UserId,
+        node_id: NodeId,
+    ) -> Result<DownloadMetadata, ContentReadError> {
+        if let Some(error) = *self.current_error.lock().expect("download error lock") {
+            return Err(error);
+        }
+        if owner_user_id != self.owner_user_id || node_id != self.node_id {
+            return Err(ContentReadError::ContentNotFound);
+        }
+        Ok(self.metadata())
+    }
+
+    fn check_historical(
+        &self,
+        owner_user_id: UserId,
+        file_version_id: FileVersionId,
+    ) -> Result<DownloadMetadata, ContentReadError> {
+        if let Some(error) = *self
+            .historical_error
+            .lock()
+            .expect("historical download error lock")
+        {
+            return Err(error);
+        }
+        if owner_user_id != self.owner_user_id || file_version_id != self.file_version_id {
+            return Err(ContentReadError::VersionNotFound);
+        }
+        Ok(self.metadata())
+    }
+
+    fn read(&self, range: Option<ByteRange>) -> Result<DownloadRead, ContentReadError> {
+        let bytes = match range {
+            Some(range) => {
+                if range.end_exclusive() > self.bytes.len() as u64 {
+                    return Err(ContentReadError::InvalidRange);
+                }
+                self.range_calls.fetch_add(1, Ordering::Relaxed);
+                self.bytes[range.start() as usize..range.end_exclusive() as usize].to_vec()
+            }
+            None => {
+                self.open_calls.fetch_add(1, Ordering::Relaxed);
+                self.bytes.clone()
+            }
+        };
+        let frames = bytes
+            .chunks(3)
+            .map(|chunk| Ok(Bytes::copy_from_slice(chunk)))
+            .collect::<Vec<_>>();
+        Ok(DownloadRead::new(
+            self.metadata(),
+            boxed_content_stream(stream::iter(frames)),
+        ))
+    }
+}
+
+#[async_trait]
+impl DownloadBackend for TestDownloadBackend {
+    fn supports_range_reads(&self) -> bool {
+        self.supports_range_reads
+    }
+
+    async fn current_content_metadata(
+        &self,
+        owner_user_id: UserId,
+        node_id: NodeId,
+    ) -> Result<DownloadMetadata, ContentReadError> {
+        self.check_current(owner_user_id, node_id)
+    }
+
+    async fn historical_content_metadata(
+        &self,
+        owner_user_id: UserId,
+        file_version_id: FileVersionId,
+    ) -> Result<DownloadMetadata, ContentReadError> {
+        self.check_historical(owner_user_id, file_version_id)
+    }
+
+    async fn open_current_content(
+        &self,
+        owner_user_id: UserId,
+        node_id: NodeId,
+    ) -> Result<DownloadRead, ContentReadError> {
+        self.check_current(owner_user_id, node_id)?;
+        self.read(None)
+    }
+
+    async fn open_current_content_range(
+        &self,
+        owner_user_id: UserId,
+        node_id: NodeId,
+        range: ByteRange,
+    ) -> Result<DownloadRead, ContentReadError> {
+        self.check_current(owner_user_id, node_id)?;
+        self.read(Some(range))
+    }
+
+    async fn open_historical_content(
+        &self,
+        owner_user_id: UserId,
+        file_version_id: FileVersionId,
+    ) -> Result<DownloadRead, ContentReadError> {
+        self.check_historical(owner_user_id, file_version_id)?;
+        self.read(None)
+    }
+
+    async fn open_historical_content_range(
+        &self,
+        owner_user_id: UserId,
+        file_version_id: FileVersionId,
+        range: ByteRange,
+    ) -> Result<DownloadRead, ContentReadError> {
+        self.check_historical(owner_user_id, file_version_id)?;
+        self.read(Some(range))
+    }
+}
+
+struct TestRestoreDownloadBackend {
+    current: Arc<TestDownloadBackend>,
+    historical: Arc<TestDownloadBackend>,
+}
+
+#[async_trait]
+impl DownloadBackend for TestRestoreDownloadBackend {
+    fn supports_range_reads(&self) -> bool {
+        self.current.supports_range_reads()
+    }
+
+    async fn current_content_metadata(
+        &self,
+        owner_user_id: UserId,
+        node_id: NodeId,
+    ) -> Result<DownloadMetadata, ContentReadError> {
+        self.current
+            .current_content_metadata(owner_user_id, node_id)
+            .await
+    }
+
+    async fn historical_content_metadata(
+        &self,
+        owner_user_id: UserId,
+        file_version_id: FileVersionId,
+    ) -> Result<DownloadMetadata, ContentReadError> {
+        self.historical
+            .historical_content_metadata(owner_user_id, file_version_id)
+            .await
+    }
+
+    async fn open_current_content(
+        &self,
+        owner_user_id: UserId,
+        node_id: NodeId,
+    ) -> Result<DownloadRead, ContentReadError> {
+        self.current
+            .open_current_content(owner_user_id, node_id)
+            .await
+    }
+
+    async fn open_current_content_range(
+        &self,
+        owner_user_id: UserId,
+        node_id: NodeId,
+        range: ByteRange,
+    ) -> Result<DownloadRead, ContentReadError> {
+        self.current
+            .open_current_content_range(owner_user_id, node_id, range)
+            .await
+    }
+
+    async fn open_historical_content(
+        &self,
+        owner_user_id: UserId,
+        file_version_id: FileVersionId,
+    ) -> Result<DownloadRead, ContentReadError> {
+        self.historical
+            .open_historical_content(owner_user_id, file_version_id)
+            .await
+    }
+
+    async fn open_historical_content_range(
+        &self,
+        owner_user_id: UserId,
+        file_version_id: FileVersionId,
+        range: ByteRange,
+    ) -> Result<DownloadRead, ContentReadError> {
+        self.historical
+            .open_historical_content_range(owner_user_id, file_version_id, range)
+            .await
+    }
+}
+
+#[derive(Clone)]
+struct TestContentReadMetadata {
+    owner_user_id: UserId,
+    node_id: NodeId,
+    file_version_id: FileVersionId,
+    content: AuthorizedContent,
+}
+
+#[async_trait]
+impl ContentReadMetadataBackend for TestContentReadMetadata {
+    async fn resolve_current_content(
+        &self,
+        owner_user_id: UserId,
+        node_id: NodeId,
+        _backend_kind: &str,
+    ) -> Result<ContentReadResolution, MetadataError> {
+        if owner_user_id != self.owner_user_id || node_id != self.node_id {
+            return Ok(ContentReadResolution::NotFound);
+        }
+        Ok(ContentReadResolution::Found(self.content.clone()))
+    }
+
+    async fn resolve_file_version_content(
+        &self,
+        owner_user_id: UserId,
+        file_version_id: FileVersionId,
+        _backend_kind: &str,
+    ) -> Result<ContentReadResolution, MetadataError> {
+        if owner_user_id != self.owner_user_id || file_version_id != self.file_version_id {
+            return Ok(ContentReadResolution::NotFound);
+        }
+        Ok(ContentReadResolution::Found(self.content.clone()))
+    }
+}
+
+struct TestDownloadRoot(PathBuf);
+
+impl Drop for TestDownloadRoot {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
     }
 }
 
@@ -847,6 +1461,85 @@ fn upload_test_state() -> (
     (state, auth_backend, upload_backend)
 }
 
+fn download_test_state() -> (
+    ApiState,
+    Arc<TestAuthenticationBackend>,
+    Arc<TestDownloadBackend>,
+) {
+    let auth_backend = Arc::new(TestAuthenticationBackend::new());
+    let download_backend = Arc::new(TestDownloadBackend::new(
+        auth_backend.user_id,
+        b"0123456789abcdef0123456789abcdef",
+    ));
+    let state = state(true)
+        .with_auth_backend(auth_backend.clone())
+        .with_download_backend(download_backend.clone())
+        .with_cookie_config(CookieConfig::production())
+        .with_allowed_origin("https://app.example");
+    (state, auth_backend, download_backend)
+}
+
+fn version_test_state() -> (
+    ApiState,
+    Arc<TestAuthenticationBackend>,
+    Arc<TestVersionHistoryBackend>,
+    Arc<TestDownloadBackend>,
+) {
+    let auth_backend = Arc::new(TestAuthenticationBackend::new());
+    let version_backend = Arc::new(TestVersionHistoryBackend::new(auth_backend.user_id));
+    let download_backend = Arc::new(TestDownloadBackend::with_ids(
+        auth_backend.user_id,
+        version_backend.file_node_id(),
+        version_backend.current_version_id(),
+        b"version-history-compatible-content",
+    ));
+    let state = state(true)
+        .with_auth_backend(auth_backend.clone())
+        .with_version_history_backend(version_backend.clone())
+        .with_download_backend(download_backend.clone())
+        .with_cookie_config(CookieConfig::production())
+        .with_allowed_origin("https://app.example");
+    (state, auth_backend, version_backend, download_backend)
+}
+
+fn restore_test_state() -> (
+    ApiState,
+    Arc<TestAuthenticationBackend>,
+    Arc<TestVersionHistoryBackend>,
+    Arc<TestVersionRestoreBackend>,
+) {
+    restore_test_state_with_source_metadata(24, Sha256Digest::from_bytes([0xcd; 32]))
+}
+
+fn restore_test_state_with_source_metadata(
+    source_byte_length: u64,
+    source_sha256: Sha256Digest,
+) -> (
+    ApiState,
+    Arc<TestAuthenticationBackend>,
+    Arc<TestVersionHistoryBackend>,
+    Arc<TestVersionRestoreBackend>,
+) {
+    let auth_backend = Arc::new(TestAuthenticationBackend::new());
+    let version_backend = Arc::new(TestVersionHistoryBackend::new(auth_backend.user_id));
+    let restore_backend = Arc::new(
+        TestVersionRestoreBackend::new(
+            auth_backend.user_id,
+            version_backend.file_node_id(),
+            version_backend.previous_version_id(),
+        )
+        .with_source_metadata(source_byte_length, source_sha256),
+    );
+    let state = state(true)
+        .with_auth_backend(auth_backend.clone())
+        .with_version_history_backend(version_backend.clone())
+        .with_version_restore_backend(restore_backend.clone())
+        .with_etag_key(EtagKey::from_bytes([0x42; 32]))
+        .with_cookie_config(CookieConfig::production())
+        .with_allowed_origin("https://app.example");
+    (state, auth_backend, version_backend, restore_backend)
+}
+
 fn authenticated_body_request(
     method: Method,
     uri: &str,
@@ -858,6 +1551,32 @@ fn authenticated_body_request(
     request
         .headers_mut()
         .insert("cookie", cookie_header(session, csrf));
+    request
+}
+
+fn authenticated_restore_request(
+    path: &str,
+    session: &str,
+    csrf: &str,
+    if_match: Option<&str>,
+    idempotency_key: Option<&str>,
+) -> Request<Body> {
+    let mut request = authenticated_request(Method::POST, path, session, csrf);
+    mark_same_origin(&mut request);
+    add_csrf_header(&mut request, csrf);
+    if let Some(if_match) = if_match {
+        request.headers_mut().insert(
+            "if-match",
+            HeaderValue::from_str(if_match).expect("test If-Match header must be valid"),
+        );
+    }
+    if let Some(idempotency_key) = idempotency_key {
+        request.headers_mut().insert(
+            "idempotency-key",
+            HeaderValue::from_str(idempotency_key)
+                .expect("test idempotency key header must be valid"),
+        );
+    }
     request
 }
 
@@ -905,6 +1624,999 @@ fn response_request_id(response: &Response) -> String {
         .to_str()
         .expect("request ID must be valid ASCII")
         .to_owned()
+}
+
+async fn response_bytes(response: Response) -> Vec<u8> {
+    response
+        .into_body()
+        .collect()
+        .await
+        .expect("response body must be readable")
+        .to_bytes()
+        .to_vec()
+}
+
+#[tokio::test]
+async fn version_history_requires_authentication_and_does_not_require_csrf() {
+    let (state, _auth_backend, version_backend, _download_backend) = version_test_state();
+    for path in [
+        format!("/api/v1/nodes/{}/versions", version_backend.file_node_id()),
+        format!("/api/v1/versions/{}", version_backend.current_version_id()),
+    ] {
+        let response = router(state.clone())
+            .oneshot(request(Method::GET, &path, Body::empty()))
+            .await
+            .expect("version metadata request must not fail");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            json_body(response).await["error"]["code"],
+            "authentication_failed"
+        );
+    }
+}
+
+#[tokio::test]
+async fn version_history_is_bounded_owner_scoped_and_download_compatible() {
+    let (state, _auth_backend, version_backend, _download_backend) = version_test_state();
+    let (session, csrf) = login_cookies(&state).await;
+    let list_path = format!(
+        "/api/v1/nodes/{}/versions?limit=1",
+        version_backend.file_node_id()
+    );
+    let response = router(state.clone())
+        .oneshot(authenticated_request(
+            Method::GET,
+            &list_path,
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("version list request must not fail");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "private, no-store");
+    let body = json_body(response).await;
+    assert_eq!(body["data"].as_array().expect("version page").len(), 1);
+    assert_eq!(
+        body["data"][0]["id"],
+        version_backend.current_version_id().to_string()
+    );
+    assert_eq!(body["data"][0]["type"], "file_version");
+    assert_eq!(
+        body["data"][0]["attributes"]["node_id"],
+        version_backend.file_node_id().to_string()
+    );
+    assert_eq!(body["data"][0]["attributes"]["byte_length"], "42");
+    assert_eq!(
+        body["data"][0]["attributes"]["sha256"],
+        format!("sha256:{}", "ab".repeat(32))
+    );
+    assert_eq!(body["data"][0]["attributes"]["is_current"], true);
+    let attributes = body["data"][0]["attributes"]
+        .as_object()
+        .expect("version attributes must be an object");
+    for forbidden in [
+        "object_id",
+        "object_key",
+        "storage_key",
+        "replica_id",
+        "backend_kind",
+        "staging_handle",
+        "physical_path",
+    ] {
+        assert!(
+            !attributes.contains_key(forbidden),
+            "field leaked: {forbidden}"
+        );
+    }
+    let cursor = body["page"]["next_cursor"]
+        .as_str()
+        .expect("first page must have a cursor")
+        .to_owned();
+    assert!(!cursor.contains(&version_backend.file_node_id().to_string()));
+
+    let continuation_path = format!(
+        "/api/v1/nodes/{}/versions?cursor={cursor}",
+        version_backend.file_node_id()
+    );
+    let response = router(state.clone())
+        .oneshot(authenticated_request(
+            Method::GET,
+            &continuation_path,
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("version continuation request must not fail");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["page"]["has_more"], false);
+    assert_eq!(
+        body["data"][0]["id"],
+        version_backend.previous_version_id().to_string()
+    );
+    assert_eq!(body["data"][0]["attributes"]["is_current"], false);
+
+    let direct_path = format!("/api/v1/versions/{}", version_backend.current_version_id());
+    let response = router(state.clone())
+        .oneshot(authenticated_request(
+            Method::GET,
+            &direct_path,
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("direct version metadata request must not fail");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "private, no-store");
+    assert_eq!(
+        json_body(response).await["data"]["id"],
+        version_backend.current_version_id().to_string()
+    );
+
+    let historical_download_path = format!(
+        "/api/v1/versions/{}/content",
+        version_backend.current_version_id()
+    );
+    let response = router(state)
+        .oneshot(authenticated_request(
+            Method::GET,
+            &historical_download_path,
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("historical content compatibility request must not fail");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response_bytes(response).await,
+        b"version-history-compatible-content"
+    );
+}
+
+#[tokio::test]
+async fn version_history_rejects_invalid_state_cursor_and_cross_owner_access() {
+    let (state, _auth_backend, version_backend, _download_backend) = version_test_state();
+    let (session, csrf) = login_cookies(&state).await;
+
+    let invalid_limit = format!(
+        "/api/v1/nodes/{}/versions?limit=101",
+        version_backend.file_node_id()
+    );
+    let mut invalid_limit_request =
+        authenticated_request(Method::GET, &invalid_limit, &session, &csrf);
+    invalid_limit_request.headers_mut().insert(
+        "x-request-id",
+        HeaderValue::from_static("version-error-1234"),
+    );
+    let response = router(state.clone())
+        .oneshot(invalid_limit_request)
+        .await
+        .expect("invalid version limit request must not fail");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response_request_id(&response), "version-error-1234");
+    assert_eq!(
+        json_body(response).await["error"]["code"],
+        "invalid_request"
+    );
+
+    for (path, status, code) in [
+        (
+            format!(
+                "/api/v1/nodes/{}/versions?cursor=invalid",
+                version_backend.file_node_id()
+            ),
+            StatusCode::BAD_REQUEST,
+            "invalid_cursor",
+        ),
+        (
+            format!(
+                "/api/v1/nodes/{}/versions",
+                version_backend.directory_node_id()
+            ),
+            StatusCode::CONFLICT,
+            "invalid_state",
+        ),
+        (
+            format!(
+                "/api/v1/nodes/{}/versions",
+                version_backend.trashed_node_id()
+            ),
+            StatusCode::NOT_FOUND,
+            "not_found",
+        ),
+    ] {
+        let response = router(state.clone())
+            .oneshot(authenticated_request(Method::GET, &path, &session, &csrf))
+            .await
+            .expect("version negative request must not fail");
+        assert_eq!(response.status(), status);
+        assert_eq!(json_body(response).await["error"]["code"], code);
+    }
+
+    let cross_node_cursor = format!(
+        "/api/v1/nodes/{}/versions?cursor=v1.version.opaque-page-cursor",
+        version_backend.directory_node_id()
+    );
+    let response = router(state.clone())
+        .oneshot(authenticated_request(
+            Method::GET,
+            &cross_node_cursor,
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("cross-node cursor request must not fail");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(json_body(response).await["error"]["code"], "invalid_cursor");
+
+    let other_auth = Arc::new(TestAuthenticationBackend::new());
+    let other_state = state.with_auth_backend(other_auth.clone());
+    let (other_session, other_csrf) = login_cookies(&other_state).await;
+    let response = router(other_state)
+        .oneshot(authenticated_request(
+            Method::GET,
+            &format!("/api/v1/versions/{}", version_backend.current_version_id()),
+            &other_session,
+            &other_csrf,
+        ))
+        .await
+        .expect("cross-owner version request must not fail");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(json_body(response).await["error"]["code"], "not_found");
+}
+
+#[tokio::test]
+async fn version_restore_requires_authentication_csrf_if_match_and_idempotency_key() {
+    let (state, _auth_backend, version_backend, _restore_backend) = restore_test_state();
+    let path = format!(
+        "/api/v1/nodes/{}/versions/{}/restore",
+        version_backend.file_node_id(),
+        version_backend.previous_version_id()
+    );
+
+    let response = router(state.clone())
+        .oneshot(request(Method::POST, &path, Body::empty()))
+        .await
+        .expect("unauthenticated restore request must not fail");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        json_body(response).await["error"]["code"],
+        "authentication_failed"
+    );
+
+    let (session, csrf) = login_cookies(&state).await;
+    let response = router(state.clone())
+        .oneshot(authenticated_request(Method::POST, &path, &session, &csrf))
+        .await
+        .expect("CSRF-protected restore request must not fail");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        json_body(response).await["error"]["code"],
+        "permission_denied"
+    );
+
+    let response = router(state.clone())
+        .oneshot(authenticated_restore_request(
+            &path,
+            &session,
+            &csrf,
+            None,
+            Some("restore-key-001"),
+        ))
+        .await
+        .expect("missing If-Match restore request must not fail");
+    assert_eq!(response.status(), StatusCode::PRECONDITION_REQUIRED);
+    assert_eq!(
+        json_body(response).await["error"]["code"],
+        "precondition_required"
+    );
+
+    let response = router(state.clone())
+        .oneshot(authenticated_restore_request(
+            &path,
+            &session,
+            &csrf,
+            Some("\"not-an-etag\""),
+            Some("restore-key-001"),
+        ))
+        .await
+        .expect("invalid If-Match restore request must not fail");
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        json_body(response).await["error"]["code"],
+        "version_conflict"
+    );
+
+    let etag = state
+        .etag_key()
+        .issue(version_backend.file_node_id(), Revision::new(0));
+    let response = router(state)
+        .oneshot(authenticated_restore_request(
+            &path,
+            &session,
+            &csrf,
+            Some(&etag),
+            None,
+        ))
+        .await
+        .expect("missing idempotency-key restore request must not fail");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        json_body(response).await["error"]["code"],
+        "invalid_request"
+    );
+}
+
+#[tokio::test]
+async fn version_restore_creates_one_new_version_and_replays_the_same_outcome() {
+    let (state, auth_backend, version_backend, restore_backend) = restore_test_state();
+    let (session, csrf) = login_cookies(&state).await;
+    let node_id = version_backend.file_node_id();
+    let source_version_id = version_backend.previous_version_id();
+    let path = format!("/api/v1/nodes/{node_id}/versions/{source_version_id}/restore");
+    let old_etag = state.etag_key().issue(node_id, Revision::new(0));
+    let mut first_request = authenticated_restore_request(
+        &path,
+        &session,
+        &csrf,
+        Some(&old_etag),
+        Some("restore-key-001"),
+    );
+    first_request.headers_mut().insert(
+        "x-request-id",
+        HeaderValue::from_static("restore-success-1"),
+    );
+    let response = router(state.clone())
+        .oneshot(first_request)
+        .await
+        .expect("restore request must not fail");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "private, no-store");
+    let expected_etag = state.etag_key().issue(node_id, Revision::new(1));
+    assert_eq!(response.headers()["etag"], expected_etag);
+    assert_eq!(response_request_id(&response), "restore-success-1");
+    let body = json_body(response).await;
+    let restored_version_id = body["data"]["id"]
+        .as_str()
+        .expect("restore response must contain a version ID");
+    assert_ne!(restored_version_id, source_version_id.to_string());
+    assert_eq!(body["data"]["type"], "file_version");
+    assert_eq!(body["data"]["attributes"]["node_id"], node_id.to_string());
+    assert_eq!(body["data"]["attributes"]["byte_length"], "24");
+    assert_eq!(
+        body["data"]["attributes"]["sha256"],
+        format!("sha256:{}", "cd".repeat(32))
+    );
+    assert_eq!(body["data"]["attributes"]["is_current"], true);
+    assert_eq!(body["node"]["id"], node_id.to_string());
+    assert_eq!(body["node"]["revision"], "1");
+    assert_eq!(body["meta"]["request_id"], "restore-success-1");
+    for forbidden in [
+        "object_id",
+        "object_key",
+        "storage_key",
+        "replica_id",
+        "backend_kind",
+        "staging_handle",
+        "physical_path",
+    ] {
+        assert!(
+            !body.to_string().contains(forbidden),
+            "field leaked: {forbidden}"
+        );
+    }
+    assert_eq!(restore_backend.applied_calls(), 1);
+    assert_ne!(restore_backend.current_version_id(), source_version_id);
+    assert_eq!(restore_backend.current_revision(), Revision::new(1));
+
+    let response = router(state.clone())
+        .oneshot(authenticated_restore_request(
+            &path,
+            &session,
+            &csrf,
+            Some(&old_etag),
+            Some("restore-key-001"),
+        ))
+        .await
+        .expect("replayed restore request must not fail");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["etag"], expected_etag);
+    let replay_body = json_body(response).await;
+    assert_eq!(replay_body["data"]["id"], restored_version_id);
+    assert_eq!(replay_body["node"]["revision"], "1");
+    assert_eq!(restore_backend.applied_calls(), 1);
+
+    let download_state =
+        state
+            .clone()
+            .with_download_backend(Arc::new(TestRestoreDownloadBackend {
+                current: Arc::new(TestDownloadBackend::with_ids(
+                    auth_backend.user_id,
+                    node_id,
+                    restore_backend.current_version_id(),
+                    b"restored-content",
+                )),
+                historical: Arc::new(TestDownloadBackend::with_ids(
+                    auth_backend.user_id,
+                    node_id,
+                    source_version_id,
+                    b"historical-content",
+                )),
+            }));
+    let response = router(download_state.clone())
+        .oneshot(authenticated_request(
+            Method::GET,
+            &format!("/api/v1/versions/{source_version_id}/content"),
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("historical restore source download must not fail");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response_bytes(response).await, b"historical-content");
+    let response = router(download_state)
+        .oneshot(authenticated_request(
+            Method::GET,
+            &format!("/api/v1/nodes/{node_id}/content"),
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("restored current download must not fail");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response_bytes(response).await, b"restored-content");
+
+    let mut stale_request = authenticated_restore_request(
+        &path,
+        &session,
+        &csrf,
+        Some(&old_etag),
+        Some("restore-key-002"),
+    );
+    stale_request
+        .headers_mut()
+        .insert("x-request-id", HeaderValue::from_static("restore-stale-1"));
+    let response = router(state.clone())
+        .oneshot(stale_request)
+        .await
+        .expect("stale restore request must not fail");
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(response_request_id(&response), "restore-stale-1");
+    let body = json_body(response).await;
+    assert_eq!(body["error"]["code"], "version_conflict");
+    assert_eq!(body["error"]["details"]["current_revision"], "1");
+    assert_eq!(body["error"]["details"]["etag"], expected_etag);
+    assert_eq!(restore_backend.applied_calls(), 1);
+
+    let response = router(state)
+        .oneshot(authenticated_restore_request(
+            &path,
+            &session,
+            &csrf,
+            Some(&expected_etag),
+            Some("restore-key-001"),
+        ))
+        .await
+        .expect("idempotency conflict request must not fail");
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        json_body(response).await["error"]["code"],
+        "idempotency_conflict"
+    );
+    assert_eq!(restore_backend.applied_calls(), 1);
+}
+
+#[tokio::test]
+async fn version_restore_supports_zero_byte_historical_versions() {
+    let zero_hash = Sha256Digest::from_bytes([0; 32]);
+    let (state, _auth_backend, version_backend, restore_backend) =
+        restore_test_state_with_source_metadata(0, zero_hash);
+    let (session, csrf) = login_cookies(&state).await;
+    let node_id = version_backend.file_node_id();
+    let source_version_id = version_backend.previous_version_id();
+    let path = format!("/api/v1/nodes/{node_id}/versions/{source_version_id}/restore");
+    let etag = state.etag_key().issue(node_id, Revision::new(0));
+
+    let response = router(state)
+        .oneshot(authenticated_restore_request(
+            &path,
+            &session,
+            &csrf,
+            Some(&etag),
+            Some("restore-zero-001"),
+        ))
+        .await
+        .expect("zero-byte restore request must not fail");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["data"]["attributes"]["byte_length"], "0");
+    assert_eq!(
+        body["data"]["attributes"]["sha256"],
+        format!("sha256:{}", "00".repeat(32))
+    );
+    assert_eq!(body["data"]["attributes"]["is_current"], true);
+    assert_eq!(restore_backend.applied_calls(), 1);
+}
+
+#[tokio::test]
+async fn version_restore_conceals_cross_owner_and_cross_node_access_and_rejects_invalid_states() {
+    let (state, _auth_backend, version_backend, restore_backend) = restore_test_state();
+    let (session, csrf) = login_cookies(&state).await;
+    let node_id = version_backend.file_node_id();
+    let source_version_id = version_backend.previous_version_id();
+
+    for (node_id, source_version_id, status, code) in [
+        (
+            NodeId::new(),
+            source_version_id,
+            StatusCode::NOT_FOUND,
+            "not_found",
+        ),
+        (
+            restore_backend.directory_node_id(),
+            source_version_id,
+            StatusCode::CONFLICT,
+            "invalid_state",
+        ),
+        (
+            restore_backend.trashed_node_id(),
+            source_version_id,
+            StatusCode::NOT_FOUND,
+            "not_found",
+        ),
+        (
+            node_id,
+            FileVersionId::new(),
+            StatusCode::NOT_FOUND,
+            "not_found",
+        ),
+    ] {
+        let path = format!("/api/v1/nodes/{node_id}/versions/{source_version_id}/restore");
+        let target_etag = state.etag_key().issue(node_id, Revision::new(0));
+        let response = router(state.clone())
+            .oneshot(authenticated_restore_request(
+                &path,
+                &session,
+                &csrf,
+                Some(&target_etag),
+                Some("restore-negative-1"),
+            ))
+            .await
+            .expect("restore negative request must not fail");
+        assert_eq!(response.status(), status);
+        assert_eq!(json_body(response).await["error"]["code"], code);
+    }
+
+    restore_backend.set_current_version_id(source_version_id);
+    let path = format!("/api/v1/nodes/{node_id}/versions/{source_version_id}/restore");
+    let etag = state.etag_key().issue(node_id, Revision::new(0));
+    let response = router(state.clone())
+        .oneshot(authenticated_restore_request(
+            &path,
+            &session,
+            &csrf,
+            Some(&etag),
+            Some("restore-current-1"),
+        ))
+        .await
+        .expect("current-version restore request must not fail");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        json_body(response).await["error"]["code"],
+        "invalid_request"
+    );
+
+    let other_auth = Arc::new(TestAuthenticationBackend::new());
+    let other_state = state.with_auth_backend(other_auth);
+    let (other_session, other_csrf) = login_cookies(&other_state).await;
+    let response = router(other_state)
+        .oneshot(authenticated_restore_request(
+            &path,
+            &other_session,
+            &other_csrf,
+            Some(&etag),
+            Some("restore-owner-1"),
+        ))
+        .await
+        .expect("cross-owner restore request must not fail");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(json_body(response).await["error"]["code"], "not_found");
+}
+
+#[tokio::test]
+async fn download_requires_authentication_and_does_not_require_csrf() {
+    let (state, _auth_backend, backend) = download_test_state();
+    let response = router(state)
+        .oneshot(request(
+            Method::GET,
+            &format!("/api/v1/nodes/{}/content", backend.node_id()),
+            Body::empty(),
+        ))
+        .await
+        .expect("download request must not fail");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        json_body(response).await["error"]["code"],
+        "authentication_failed"
+    );
+    assert_eq!(backend.open_calls(), 0);
+    assert_eq!(backend.range_calls(), 0);
+
+    let (state, _auth_backend, backend) = download_test_state();
+    let (session, csrf) = login_cookies(&state).await;
+    let response = router(state)
+        .oneshot(authenticated_request(
+            Method::GET,
+            &format!("/api/v1/nodes/{}/content", backend.node_id()),
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("authenticated download request must not fail");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response_bytes(response).await,
+        b"0123456789abcdef0123456789abcdef"
+    );
+}
+
+#[tokio::test]
+async fn full_download_returns_safe_headers_and_a_bounded_multi_frame_body() {
+    let (state, _auth_backend, backend) = download_test_state();
+    let (session, csrf) = login_cookies(&state).await;
+    let mut response = router(state)
+        .oneshot(authenticated_request(
+            Method::GET,
+            &format!("/api/v1/nodes/{}/content", backend.node_id()),
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("full download request must not fail");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[CONTENT_LENGTH], "32");
+    assert_eq!(
+        response.headers()["content-type"],
+        "application/octet-stream"
+    );
+    assert_eq!(response.headers()["accept-ranges"], "bytes");
+    assert_eq!(response.headers()["cache-control"], "private, no-store");
+    assert!(
+        response.headers()["etag"]
+            .to_str()
+            .unwrap()
+            .starts_with("\"sha256:")
+    );
+    assert!(
+        response.headers()["content-disposition"]
+            .to_str()
+            .unwrap()
+            .starts_with("attachment; filename=\"download\"")
+    );
+    assert!(response.headers().contains_key("x-request-id"));
+
+    let mut frames = 0;
+    let mut body_bytes = Vec::new();
+    while let Some(frame) = response.body_mut().frame().await {
+        let frame = frame.expect("download body frame must be readable");
+        if let Ok(data) = frame.into_data() {
+            frames += 1;
+            body_bytes.extend_from_slice(&data);
+        }
+    }
+    assert!(
+        frames > 1,
+        "the response must preserve multiple stream frames"
+    );
+    assert_eq!(body_bytes, b"0123456789abcdef0123456789abcdef");
+    assert_eq!(backend.open_calls(), 1);
+}
+
+#[tokio::test]
+async fn single_range_download_returns_exact_partial_semantics() {
+    let (state, _auth_backend, backend) = download_test_state();
+    let (session, csrf) = login_cookies(&state).await;
+    let mut request = authenticated_request(
+        Method::GET,
+        &format!("/api/v1/nodes/{}/content", backend.node_id()),
+        &session,
+        &csrf,
+    );
+    request
+        .headers_mut()
+        .insert("range", HeaderValue::from_static("bytes=5-10"));
+    let response = router(state)
+        .oneshot(request)
+        .await
+        .expect("range download request must not fail");
+
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(response.headers()[CONTENT_RANGE], "bytes 5-10/32");
+    assert_eq!(response.headers()[CONTENT_LENGTH], "6");
+    assert_eq!(response_bytes(response).await, b"56789a");
+    assert_eq!(backend.range_calls(), 1);
+    assert_eq!(backend.open_calls(), 0);
+}
+
+#[tokio::test]
+async fn open_ended_and_suffix_ranges_are_supported() {
+    for (range, expected, content_range) in [
+        ("bytes=27-", b"bcdef".as_slice(), "bytes 27-31/32"),
+        ("bytes=-4", b"cdef".as_slice(), "bytes 28-31/32"),
+    ] {
+        let (state, _auth_backend, backend) = download_test_state();
+        let (session, csrf) = login_cookies(&state).await;
+        let mut request = authenticated_request(
+            Method::GET,
+            &format!("/api/v1/nodes/{}/content", backend.node_id()),
+            &session,
+            &csrf,
+        );
+        request
+            .headers_mut()
+            .insert("range", HeaderValue::from_str(range).unwrap());
+        let response = router(state)
+            .oneshot(request)
+            .await
+            .expect("range download request must not fail");
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.headers()[CONTENT_RANGE], content_range);
+        assert_eq!(response_bytes(response).await, expected);
+    }
+}
+
+#[tokio::test]
+async fn invalid_and_multiple_ranges_return_416_without_opening_storage() {
+    for range in ["bytes=999-1000", "bytes=0-1,2-3", "items=0-1", "bytes=-0"] {
+        let (state, _auth_backend, backend) = download_test_state();
+        let (session, csrf) = login_cookies(&state).await;
+        let mut request = authenticated_request(
+            Method::GET,
+            &format!("/api/v1/nodes/{}/content", backend.node_id()),
+            &session,
+            &csrf,
+        );
+        request
+            .headers_mut()
+            .insert("range", HeaderValue::from_str(range).unwrap());
+        let response = router(state)
+            .oneshot(request)
+            .await
+            .expect("invalid range request must not fail");
+        assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(response.headers()[CONTENT_RANGE], "bytes */32");
+        let request_id = response_request_id(&response);
+        let body = json_body(response).await;
+        assert_eq!(body["error"]["code"], "invalid_range");
+        assert_eq!(body["error"]["request_id"], request_id);
+        assert_eq!(backend.open_calls(), 0);
+        assert_eq!(backend.range_calls(), 0);
+    }
+}
+
+#[tokio::test]
+async fn if_none_match_returns_304_without_streaming_bytes() {
+    let (state, _auth_backend, backend) = download_test_state();
+    let (session, csrf) = login_cookies(&state).await;
+    let path = format!("/api/v1/nodes/{}/content", backend.node_id());
+    let response = router(state.clone())
+        .oneshot(authenticated_request(Method::GET, &path, &session, &csrf))
+        .await
+        .expect("initial download request must not fail");
+    let etag = response.headers()["etag"].clone();
+    let _ = response_bytes(response).await;
+    assert_eq!(backend.open_calls(), 1);
+
+    let mut request = authenticated_request(Method::GET, &path, &session, &csrf);
+    request.headers_mut().insert("if-none-match", etag);
+    let response = router(state)
+        .oneshot(request)
+        .await
+        .expect("conditional download request must not fail");
+    assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(response_bytes(response).await, Vec::<u8>::new());
+    assert_eq!(backend.open_calls(), 1);
+}
+
+#[tokio::test]
+async fn historical_download_is_owner_scoped_and_supports_ranges() {
+    let (state, _auth_backend, backend) = download_test_state();
+    let (session, csrf) = login_cookies(&state).await;
+    let path = format!("/api/v1/versions/{}/content", backend.file_version_id());
+    let mut request = authenticated_request(Method::GET, &path, &session, &csrf);
+    request
+        .headers_mut()
+        .insert("range", HeaderValue::from_static("bytes=16-"));
+    let response = router(state)
+        .oneshot(request)
+        .await
+        .expect("historical range request must not fail");
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(response.headers()[CONTENT_RANGE], "bytes 16-31/32");
+    assert_eq!(response_bytes(response).await, b"0123456789abcdef");
+
+    let (state, _auth_backend, backend) = download_test_state();
+    let (session, csrf) = login_cookies(&state).await;
+    let missing_version = FileVersionId::new();
+    let response = router(state)
+        .oneshot(authenticated_request(
+            Method::GET,
+            &format!("/api/v1/versions/{missing_version}/content"),
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("missing historical request must not fail");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(json_body(response).await["error"]["code"], "not_found");
+    assert_eq!(backend.open_calls(), 0);
+}
+
+#[tokio::test]
+async fn api_downloads_use_the_content_service_and_local_object_store() {
+    let auth_backend = Arc::new(TestAuthenticationBackend::new());
+    let owner_user_id = auth_backend.user_id;
+    let node_id = NodeId::new();
+    let file_version_id = FileVersionId::new();
+    let object_id = ObjectId::new();
+    let bytes = b"local-object-store-content".to_vec();
+    let digest = Sha256::digest(&bytes);
+    let sha256 = Sha256Digest::try_from(digest.as_slice()).expect("SHA-256 is valid");
+    let key = ObjectKey::new(format!("objects/v1/{object_id}")).expect("object key is valid");
+    let root =
+        TestDownloadRoot(std::env::temp_dir().join(format!("synveil-api-download-{node_id}")));
+    let object_store: Arc<dyn ObjectStore> =
+        Arc::new(open_local_object_store(&root.0).expect("local object store must open"));
+    object_store
+        .put(
+            PutRequest::new(
+                key.clone(),
+                boxed_stream(stream::iter([Ok(Bytes::from(bytes.clone()))])),
+            )
+            .with_integrity(
+                IntegrityExpectation::none()
+                    .with_length(bytes.len() as u64)
+                    .with_sha256(sha256),
+            ),
+        )
+        .await
+        .expect("test object must be durable");
+    let metadata = TestContentReadMetadata {
+        owner_user_id,
+        node_id,
+        file_version_id,
+        content: AuthorizedContent::new(
+            node_id,
+            file_version_id,
+            object_id,
+            bytes.len() as u64,
+            sha256,
+            Revision::new(4),
+            Timestamp::parse("2026-08-24T00:00:00Z").expect("valid test time"),
+            key.as_str(),
+        ),
+    };
+    let content_service = ContentReadApplicationService::new(Arc::new(metadata), object_store);
+    let state = state(true)
+        .with_auth_backend(auth_backend)
+        .with_download_backend(Arc::new(content_service))
+        .with_cookie_config(CookieConfig::production())
+        .with_allowed_origin("https://app.example");
+    let (session, csrf) = login_cookies(&state).await;
+    let path = format!("/api/v1/nodes/{node_id}/content");
+    let response = router(state.clone())
+        .oneshot(authenticated_request(Method::GET, &path, &session, &csrf))
+        .await
+        .expect("service-backed full download must not fail");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response_bytes(response).await, bytes);
+
+    let mut request = authenticated_request(Method::GET, &path, &session, &csrf);
+    request
+        .headers_mut()
+        .insert("range", HeaderValue::from_static("bytes=6-11"));
+    let response = router(state)
+        .oneshot(request)
+        .await
+        .expect("service-backed range download must not fail");
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(response.headers()[CONTENT_RANGE], "bytes 6-11/26");
+    assert_eq!(response_bytes(response).await, b"object");
+}
+
+#[tokio::test]
+async fn content_errors_are_safe_and_cross_owner_nodes_are_concealed() {
+    let (state, _auth_backend, _backend) = download_test_state();
+    let (session, csrf) = login_cookies(&state).await;
+    let mut request = authenticated_request(
+        Method::GET,
+        &format!("/api/v1/nodes/{}/content", NodeId::new()),
+        &session,
+        &csrf,
+    );
+    request
+        .headers_mut()
+        .insert("range", HeaderValue::from_static("bytes=0-1"));
+    let response = router(state)
+        .oneshot(request)
+        .await
+        .expect("cross-owner request must not fail");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(json_body(response).await["error"]["code"], "not_found");
+
+    let (state, _auth_backend, backend) = download_test_state();
+    backend.set_current_error(ContentReadError::NotAFile);
+    let (session, csrf) = login_cookies(&state).await;
+    let response = router(state)
+        .oneshot(authenticated_request(
+            Method::GET,
+            &format!("/api/v1/nodes/{}/content", backend.node_id()),
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("directory request must not fail");
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(json_body(response).await["error"]["code"], "invalid_state");
+
+    let (state, _auth_backend, backend) = download_test_state();
+    backend.set_current_error(ContentReadError::ContentUnavailable);
+    let (session, csrf) = login_cookies(&state).await;
+    let response = router(state)
+        .oneshot(authenticated_request(
+            Method::GET,
+            &format!("/api/v1/nodes/{}/content", backend.node_id()),
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("unavailable content request must not fail");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        json_body(response).await["error"]["code"],
+        "storage_unavailable"
+    );
+
+    let (state, _auth_backend, backend) = download_test_state();
+    backend.set_current_error(ContentReadError::IntegrityMismatch);
+    let (session, csrf) = login_cookies(&state).await;
+    let response = router(state)
+        .oneshot(authenticated_request(
+            Method::GET,
+            &format!("/api/v1/nodes/{}/content", backend.node_id()),
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("integrity failure request must not fail");
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(json_body(response).await["error"]["code"], "internal_error");
+}
+
+#[tokio::test]
+async fn content_disposition_uses_encoded_logical_filename() {
+    let (state, auth_backend, backend) = download_test_state();
+    let file_metadata = Arc::new(TestFileMetadataBackend::new(auth_backend.user_id));
+    file_metadata.add_file(backend.node_id(), "ảnh\r\nname/report.txt");
+    let state = state.with_file_metadata_backend(file_metadata);
+    let (session, csrf) = login_cookies(&state).await;
+    let response = router(state)
+        .oneshot(authenticated_request(
+            Method::GET,
+            &format!("/api/v1/nodes/{}/content", backend.node_id()),
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("named download request must not fail");
+    let disposition = response.headers()["content-disposition"].to_str().unwrap();
+    assert_eq!(
+        disposition,
+        "attachment; filename=\"download\"; filename*=UTF-8''%E1%BA%A3nh%0D%0Aname%2Freport.txt"
+    );
+    assert!(!disposition.contains('\r'));
+    assert!(!disposition.contains('\n'));
 }
 
 #[tokio::test]
@@ -1655,6 +3367,9 @@ async fn logical_metadata_routes_are_authenticated_csrf_protected_and_conditiona
         .to_owned();
     assert_eq!(created_body["data"]["attributes"]["kind"], "DIRECTORY");
     assert_eq!(created_body["data"]["revision"], "0");
+    assert_eq!(created_body["data"]["attributes"]["purge_eligible"], false);
+    assert!(created_body["data"]["attributes"]["trashed_at"].is_null());
+    assert!(created_body["data"]["attributes"]["restore_deadline"].is_null());
 
     let node_path = format!("/api/v1/nodes/{node_id}");
     let mut rename = json_request(Method::PATCH, &node_path, r#"{"name":"Renamed"}"#);
@@ -1790,10 +3505,11 @@ async fn logical_metadata_routes_are_authenticated_csrf_protected_and_conditiona
         .to_str()
         .expect("ETag must be valid ASCII")
         .to_owned();
-    assert_eq!(
-        json_body(trash).await["data"]["attributes"]["state"],
-        "TRASHED"
-    );
+    let trashed_body = json_body(trash).await;
+    assert_eq!(trashed_body["data"]["attributes"]["state"], "TRASHED");
+    assert!(trashed_body["data"]["attributes"]["trashed_at"].is_string());
+    assert!(trashed_body["data"]["attributes"]["restore_deadline"].is_string());
+    assert_eq!(trashed_body["data"]["attributes"]["purge_eligible"], false);
 
     let mut restore = authenticated_request(
         Method::POST,
@@ -1811,10 +3527,11 @@ async fn logical_metadata_routes_are_authenticated_csrf_protected_and_conditiona
         .await
         .expect("restore request must not fail");
     assert_eq!(restore.status(), StatusCode::OK);
-    assert_eq!(
-        json_body(restore).await["data"]["attributes"]["state"],
-        "ACTIVE"
-    );
+    let restored_body = json_body(restore).await;
+    assert_eq!(restored_body["data"]["attributes"]["state"], "ACTIVE");
+    assert!(restored_body["data"]["attributes"]["trashed_at"].is_null());
+    assert!(restored_body["data"]["attributes"]["restore_deadline"].is_null());
+    assert_eq!(restored_body["data"]["attributes"]["purge_eligible"], false);
 }
 
 #[tokio::test]

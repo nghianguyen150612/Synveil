@@ -6,6 +6,7 @@
 //! object-store ports. Production filesystem behavior remains in an explicit
 //! local adapter; no API handler or domain type performs filesystem I/O.
 
+mod downloads;
 mod local;
 mod uploads;
 
@@ -21,6 +22,10 @@ pub use synveil_object_store::{
     boxed_stream,
 };
 
+pub use downloads::{
+    ContentByteStream, ContentDescriptor, ContentMetadata, ContentReadApplicationService,
+    ContentReadError, boxed_content_stream,
+};
 pub use local::LocalFilesystemObjectStore;
 pub use uploads::{
     CapacityAdmission, CreateUploadSessionRequest, NoCapacityAdmission, UploadApplicationService,

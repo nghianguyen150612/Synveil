@@ -9,6 +9,7 @@
 mod auth;
 mod cookies;
 mod csrf;
+mod downloads;
 mod error;
 mod etag;
 mod files;
@@ -19,12 +20,14 @@ mod router;
 mod state;
 mod telemetry;
 mod uploads;
+mod versions;
 
 pub use auth::{
     AuthenticationBackend, BootstrapStatus, IssuedSession, PostgresAuthenticationBackend,
 };
 pub use cookies::{CSRF_COOKIE_NAME, CookieConfig, CookieSameSite, SESSION_COOKIE_NAME};
 pub use csrf::CsrfKey;
+pub use downloads::{DownloadBackend, DownloadMetadata, DownloadRead};
 pub use error::{ApiError, ErrorBody, ErrorResponse, map_auth_error, map_core_error};
 pub use etag::EtagKey;
 pub use files::FILE_METADATA_BODY_LIMIT_BYTES;

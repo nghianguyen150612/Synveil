@@ -30,6 +30,71 @@ resume flow. Typed browser-helper tests prove raw `Blob`/`ArrayBuffer` transport
 and server-authoritative progress. These tests do not replace PostgreSQL
 locking/integration evidence when the disposable database is unavailable.
 
+The transport-neutral content-read service additionally has focused application
+tests for owner/missing/cross-owner concealment, directories, trashed nodes,
+immutable historical versions, full and zero-byte streams, interior/final/
+past-end ranges, empty/overflow range construction, missing/unverified
+replicas, metadata length/SHA-256 mismatch, and abandoned-stream non-mutation.
+One local `ObjectStore` integration test seeds a committed object and proves
+one full read plus one range read through the same service. These fakes and the
+local adapter validate the service boundary; they do not replace the
+environment-gated PostgreSQL content-resolution test.
+
+Focused HTTP download route tests additionally cover authentication without
+CSRF, current and historical owner scoping, full `200` and exact single-range
+`206` semantics, open-ended/suffix ranges, deterministic `416` handling before
+storage open, strong `If-None-Match` `304` responses without streaming, safe
+content headers/filename encoding, bounded multi-frame bodies, and the real
+content-read service over the local object store. These tests do not claim
+PostgreSQL end-to-end content resolution when the disposable database gate is
+not configured.
+
+The version-history metadata boundary additionally requires focused tests for
+newest-first `(committed_at DESC, id DESC)` ordering, same-timestamp tie
+breaking, bounded node-scoped cursor continuation and tamper rejection,
+currentness from `Node.current_version_id`, owner/cross-owner concealment,
+trashed/purging behavior, directory state handling, direct lookup compatibility
+with historical download IDs, safe DTO field allowlisting, private no-store
+responses, and the absence of ObjectStore reads. The PostgreSQL integration
+gate must exercise the real owner/library/node/version/object joins and report
+its status explicitly; an unset `SYNVEIL_TEST_DATABASE_URL` does not certify
+end-to-end PostgreSQL coverage.
+
+The safe version-restore boundary additionally has focused tests for
+authentication, CSRF, required `If-Match`, bounded idempotency keys, stale
+revision conflict details, owner/cross-node concealment, directory/trashed and
+current-version rejection, safe response allowlisting, one-new-version retry
+replay, and idempotency-key conflict. The ignored PostgreSQL restore test
+exercises the real transaction path: verified-replica selection, same-object
+reuse, pre-restore parent linkage, node-pointer advancement, historical-row
+immutability, no duplicate on replay, stale failure without mutation, current
+version rejection, and missing-verified-replica failure. It is not evidence
+until a fresh disposable PostgreSQL URL is supplied.
+
+The Trash-retention policy has focused unit coverage for the 30-day default,
+configuration validation, derived deadline, inclusive boundary, server-time
+eligibility, active/restored/PURGING/root exclusion, and timestamp clearing on
+restore. The API metadata test checks additive `trashed_at`,
+`restore_deadline`, and `purge_eligible` fields. The ignored PostgreSQL
+retention test exercises owner concealment, empty-directory behavior, stable
+bounded keyset continuation, restore-after-deadline, before-deadline rejection,
+metadata-only `PURGING` begin, repeated-begin revision semantics,
+restore-vs-purge locking, and preservation of version/object/replica rows. It
+is not PostgreSQL evidence until `SYNVEIL_TEST_DATABASE_URL` identifies a fresh
+disposable database.
+
+The metadata-purge PostgreSQL test is also ignored without that gate. It covers
+the internal-only boundary for active/trashed/PURGING, root, parent, and child
+preconditions; stale revision rejection; same-revision replay; concurrent
+duplicate workers; atomic removal of a node and all of its FileVersion rows;
+current-version-pointer and restore-operation cleanup; shared-object reference
+accounting, including a restore-created reference; preservation of
+Object/ObjectReplica rows; candidate clearing when a new FileVersion
+re-references an object; upload-parent FK deferral; rollback after a late
+completion-record failure; and staging/zero-byte cases. It is
+not PostgreSQL evidence until `SYNVEIL_TEST_DATABASE_URL` identifies a fresh
+disposable database.
+
 ## Quality principles
 
 1. **Invariants before examples.** Each example has a state/authorization/

@@ -11,9 +11,22 @@ PostgreSQL behavior is **VALIDATED only when the disposable PostgreSQL session
 test runs**. HTTP login/logout/session/CSRF transport, secure cookie policy, the
 typed web API boundary, the first-run bootstrap HTTP flow, and the minimal web
 setup/login/session UI are **IMPLEMENTED**. The authenticated exact-offset
-upload transport and raw-byte browser API helpers are also **IMPLEMENTED**;
-device credentials, recovery, upload UI, and download remain **PLANNED**.
-PostgreSQL end-to-end bootstrap/session/upload evidence remains
+upload transport and raw-byte browser API helpers are also **IMPLEMENTED**. The
+transport-neutral owner-authorized content-read service selects only a verified
+replica, cross-checks object metadata, and streams full/current-range bytes
+without exposing physical keys; it is **IMPLEMENTED**. The authenticated HTTP
+full/single-range download transport is also **IMPLEMENTED** with strong
+SHA-256 validators, safe attachment headers, private no-store caching, and no
+CSRF requirement for safe GETs. Device credentials, recovery, upload UI, and
+download UI remain **PLANNED**. Authenticated version-history listing and direct
+metadata lookup are **IMPLEMENTED** with owner/library scoping, active-file
+concealment, bounded node-scoped cursors, safe allowlisted DTOs, and no
+ObjectStore access; safe historical-version restore is **IMPLEMENTED** with
+CSRF, signed `If-Match`, owner/file/source rechecks, verified-replica
+selection, append-only FileVersion creation, and persisted idempotent replay.
+The restore response exposes only safe version and node concurrency metadata;
+it never exposes object or replica identity. PostgreSQL end-to-end
+bootstrap/session/upload/content-read/version-history/restore evidence remains
 environment-dependent when the disposable database is not configured.
 
 Synveil stores personal files, backups, photos, device state, repository data,
@@ -175,6 +188,31 @@ flowchart TB
    migration reference, lease, hold or safety window protects an object.
 10. Remote content egress occurs only under the effective current policy; no
     filename, OCR text, photo or repository content silently leaves the host.
+
+### Trash retention safety
+
+Trash eligibility is evaluated from the server-observed `nodes.trashed_at`, the
+single configured retention policy, current server time, owner-scoped library
+state, and the canonical node revision. Client, browser, and device clocks
+cannot shorten the retention window or supply a deletion timestamp. The
+internal candidate scan is bounded and opaque; it is not a global user-facing
+administrative API. `begin_node_purge` rechecks owner, library, state, empty
+directory shape, retention cutoff, and expected revision while holding the
+same transaction locks used by restore. Restore remains available after the
+deadline until `PURGING` wins, so the race has one committed state transition.
+The transition does not delete or detach `FileVersion`, `Object`,
+`ObjectReplica`, or object bytes, and it has no `ObjectStore` dependency.
+
+The internal `execute_metadata_purge` boundary is narrower and separately
+authorized: it accepts only an owner-scoped node already in `PURGING`, rechecks
+the expected revision and root/parent/child invariants, and runs as one
+PostgreSQL transaction. It deletes only the node's `Node`, `FileVersion`, and
+restore-operation metadata, then records canonical object identities in the
+metadata-only GC-candidate table. It has no public route, no object-store
+capability, and no operation that deletes `Object`, `ObjectReplica`, or bytes.
+The compact replay record contains only owner/node/revision identity; it does
+not retain filenames, paths, content, or credentials. Cross-library reference
+release and re-reference are serialized by database transaction locks.
 
 ## Authentication, bootstrap and recovery
 

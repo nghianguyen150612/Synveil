@@ -27,6 +27,7 @@ pub enum DomainError {
     ParentChainMismatch,
     ParentCycle,
     DirectoryNotEmpty,
+    InvalidTrashTimestamp,
     LibraryNotWritable,
     NodeLibraryMismatch,
     DirectoryCannotReferenceFileVersion,
@@ -70,6 +71,7 @@ impl fmt::Display for DomainError {
             Self::ParentChainMismatch => "node parent chain is inconsistent",
             Self::ParentCycle => "node parent chain contains a cycle",
             Self::DirectoryNotEmpty => "directory is not empty",
+            Self::InvalidTrashTimestamp => "node trash timestamp does not match its state",
             Self::LibraryNotWritable => "library does not accept metadata writes",
             Self::NodeLibraryMismatch => "node belongs to a different library",
             Self::DirectoryCannotReferenceFileVersion => {

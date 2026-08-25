@@ -1629,6 +1629,7 @@ name = "synveil-metadata"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "sha2",
  "sqlx",
  "synveil-core",
  "time",

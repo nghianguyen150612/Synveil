@@ -11,10 +11,22 @@ session trên PostgreSQL chỉ **VALIDATED khi test PostgreSQL session disposabl
 thực thi**. Transport HTTP login/logout/session/CSRF, policy cookie an toàn,
 typed web API boundary, first-run bootstrap HTTP flow và minimal web setup/
 login/session UI đã **IMPLEMENTED**. Exact-offset upload transport đã
-authenticate và browser API helper raw-byte cũng **IMPLEMENTED**; credential
-thiết bị, recovery, upload UI và download vẫn **PLANNED**. Bằng chứng bootstrap/
-session/upload end-to-end trên PostgreSQL vẫn phụ
-thuộc môi trường khi chưa cấu hình disposable database.
+authenticate và browser API helper raw-byte cũng **IMPLEMENTED**. Content-read
+service trung lập transport đã authorize theo owner chỉ chọn replica đã verify,
+cross-check metadata object và stream byte full/current-range mà không expose
+physical key; nó đã **IMPLEMENTED**. HTTP download full/single-range đã
+authenticate cũng **IMPLEMENTED**, với ETag SHA-256 strong, attachment header
+an toàn, private no-store và không cần CSRF cho safe GET. Credential thiết bị,
+recovery, upload UI và download UI vẫn **PLANNED**. Metadata version-history
+listing và direct lookup đã **IMPLEMENTED** với owner/library scoping,
+active-file concealment, cursor bounded theo node, DTO allowlist an toàn và
+không truy cập ObjectStore; safe historical-version restore đã **IMPLEMENTED**
+với CSRF, signed `If-Match`, recheck owner/file/source, chọn replica đã verify,
+append-only FileVersion mới và replay idempotent đã persist. Response restore
+chỉ expose version metadata an toàn cùng node concurrency metadata, không expose
+object hay replica identity. Bằng chứng bootstrap/session/upload/content-read/
+version-history/restore end-to-end trên PostgreSQL vẫn phụ thuộc môi trường khi
+chưa cấu hình disposable database.
 
 Synveil lưu file cá nhân, backup, ảnh, trạng thái thiết bị, dữ liệu repository,
 credential và thông tin search dẫn xuất. Vì vậy security là điều kiện phát hành,
@@ -173,6 +185,30 @@ flowchart TB
    staging/migration, lease, hold hoặc safety window nào bảo vệ object.
 10. Remote content egress chỉ xảy ra theo policy hiệu lực hiện tại; không
     filename, text OCR, ảnh hay content repository nào âm thầm rời host.
+
+### An toàn retention của Trash
+
+Trash eligibility được evaluate từ `nodes.trashed_at` do server quan sát, một
+retention policy chuẩn, server time hiện tại, state library theo owner và node
+revision chuẩn. Clock của client, browser hay device không thể rút ngắn grace
+window hoặc cung cấp deletion timestamp. Candidate scan nội bộ có bound và
+cursor opaque; nó không phải global administrative API cho user. Trong cùng
+transaction lock với restore, `begin_node_purge` kiểm tra lại owner, library,
+state, directory phải rỗng, retention cutoff và expected revision. Restore vẫn
+được phép sau deadline cho tới khi `PURGING` thắng, vì vậy race chỉ commit một
+state transition. Transition này không xóa hoặc detach `FileVersion`, `Object`,
+`ObjectReplica`, object byte và không có dependency vào `ObjectStore`.
+
+Boundary nội bộ `execute_metadata_purge` hẹp hơn và được authorize riêng: nó
+chỉ nhận node thuộc owner đã ở `PURGING`, recheck expected revision cùng invariant
+root/parent/child và chạy trong một PostgreSQL transaction. Operation chỉ xóa
+metadata `Node`, `FileVersion` và restore-operation của node, sau đó ghi
+canonical object identity vào bảng GC candidate metadata-only. Nó không có
+public route, không có capability ObjectStore và không có thao tác xóa
+`Object`, `ObjectReplica` hay byte. Replay record nhỏ gọn chỉ giữ identity
+owner/node/revision, không giữ filename, path, content hay credential. Release
+reference và re-reference cross-library được serialize bằng transaction lock
+của database.
 
 ## Authentication, bootstrap và recovery
 

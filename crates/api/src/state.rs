@@ -5,7 +5,11 @@ use std::sync::{
 
 use axum::http::HeaderMap;
 use synveil_auth::{PasswordHasherConfig, SessionConfig};
-use synveil_metadata::{DatabasePool, FileMetadataBackend, FileMetadataService};
+use synveil_core::TrashRetentionPolicy;
+use synveil_metadata::{
+    DatabasePool, FileMetadataBackend, FileMetadataService, VersionHistoryBackend,
+    VersionHistoryService, VersionRestoreBackend, VersionRestoreService,
+};
 use synveil_platform::{HealthInfo, PlatformRuntime};
 
 use crate::{
@@ -14,9 +18,11 @@ use crate::{
     },
     cookies::CookieConfig,
     csrf::CsrfKey,
+    downloads::{DownloadBackend, UnavailableDownloadBackend},
     etag::EtagKey,
     files::UnavailableFileMetadataBackend,
     uploads::{UnavailableUploadBackend, UploadBackend},
+    versions::{UnavailableVersionHistoryBackend, UnavailableVersionRestoreBackend},
 };
 
 /// Bounded readiness evidence consumed by the transport layer.
@@ -125,12 +131,16 @@ pub struct ApiState {
     health_authorizer: Arc<dyn SystemHealthAuthorizer>,
     auth_backend: Arc<dyn AuthenticationBackend>,
     file_metadata_backend: Arc<dyn FileMetadataBackend>,
+    version_history_backend: Arc<dyn VersionHistoryBackend>,
+    version_restore_backend: Arc<dyn VersionRestoreBackend>,
+    download_backend: Arc<dyn DownloadBackend>,
     upload_backend: Arc<dyn UploadBackend>,
     csrf_key: Arc<CsrfKey>,
     etag_key: Arc<EtagKey>,
     cookie_config: CookieConfig,
     allowed_origin: Option<String>,
     body_limit_bytes: usize,
+    trash_retention_policy: TrashRetentionPolicy,
 }
 
 impl ApiState {
@@ -144,12 +154,16 @@ impl ApiState {
             health_authorizer: Arc::new(DenySystemHealth),
             auth_backend: Arc::new(UnavailableAuthenticationBackend),
             file_metadata_backend: Arc::new(UnavailableFileMetadataBackend),
+            version_history_backend: Arc::new(UnavailableVersionHistoryBackend),
+            version_restore_backend: Arc::new(UnavailableVersionRestoreBackend),
+            download_backend: Arc::new(UnavailableDownloadBackend),
             upload_backend: Arc::new(UnavailableUploadBackend),
             csrf_key: Arc::new(CsrfKey::generate()),
             etag_key: Arc::new(EtagKey::generate()),
             cookie_config: CookieConfig::production(),
             allowed_origin: None,
             body_limit_bytes: crate::DEFAULT_BODY_LIMIT_BYTES,
+            trash_retention_policy: TrashRetentionPolicy::default(),
         }
     }
 
@@ -165,12 +179,16 @@ impl ApiState {
             health_authorizer: Arc::new(DenySystemHealth),
             auth_backend: Arc::new(UnavailableAuthenticationBackend),
             file_metadata_backend: Arc::new(UnavailableFileMetadataBackend),
+            version_history_backend: Arc::new(UnavailableVersionHistoryBackend),
+            version_restore_backend: Arc::new(UnavailableVersionRestoreBackend),
+            download_backend: Arc::new(UnavailableDownloadBackend),
             upload_backend: Arc::new(UnavailableUploadBackend),
             csrf_key: Arc::new(CsrfKey::generate()),
             etag_key: Arc::new(EtagKey::generate()),
             cookie_config: CookieConfig::production(),
             allowed_origin: None,
             body_limit_bytes: crate::DEFAULT_BODY_LIMIT_BYTES,
+            trash_retention_policy: TrashRetentionPolicy::default(),
         }
     }
 
@@ -196,6 +214,12 @@ impl ApiState {
     }
 
     #[must_use]
+    pub fn with_trash_retention_policy(mut self, policy: TrashRetentionPolicy) -> Self {
+        self.trash_retention_policy = policy;
+        self
+    }
+
+    #[must_use]
     pub fn with_auth_backend(mut self, backend: Arc<dyn AuthenticationBackend>) -> Self {
         self.auth_backend = backend;
         self
@@ -204,6 +228,24 @@ impl ApiState {
     #[must_use]
     pub fn with_file_metadata_backend(mut self, backend: Arc<dyn FileMetadataBackend>) -> Self {
         self.file_metadata_backend = backend;
+        self
+    }
+
+    #[must_use]
+    pub fn with_version_history_backend(mut self, backend: Arc<dyn VersionHistoryBackend>) -> Self {
+        self.version_history_backend = backend;
+        self
+    }
+
+    #[must_use]
+    pub fn with_version_restore_backend(mut self, backend: Arc<dyn VersionRestoreBackend>) -> Self {
+        self.version_restore_backend = backend;
+        self
+    }
+
+    #[must_use]
+    pub fn with_download_backend(mut self, backend: Arc<dyn DownloadBackend>) -> Self {
+        self.download_backend = backend;
         self
     }
 
@@ -225,7 +267,15 @@ impl ApiState {
             password_config,
             session_config,
         )));
-        state.with_file_metadata_backend(Arc::new(FileMetadataService::new(pool.as_ref().clone())))
+        let trash_retention_policy = state.trash_retention_policy;
+        let pool = pool.as_ref().clone();
+        state
+            .with_file_metadata_backend(Arc::new(FileMetadataService::new_with_policy(
+                pool.clone(),
+                trash_retention_policy,
+            )))
+            .with_version_history_backend(Arc::new(VersionHistoryService::new(pool.clone())))
+            .with_version_restore_backend(Arc::new(VersionRestoreService::new(pool)))
     }
 
     #[must_use]
@@ -259,6 +309,11 @@ impl ApiState {
     }
 
     #[must_use]
+    pub(crate) const fn trash_retention_policy(&self) -> TrashRetentionPolicy {
+        self.trash_retention_policy
+    }
+
+    #[must_use]
     pub(crate) fn auth_backend(&self) -> &Arc<dyn AuthenticationBackend> {
         &self.auth_backend
     }
@@ -266,6 +321,21 @@ impl ApiState {
     #[must_use]
     pub(crate) fn file_metadata_backend(&self) -> &Arc<dyn FileMetadataBackend> {
         &self.file_metadata_backend
+    }
+
+    #[must_use]
+    pub(crate) fn version_history_backend(&self) -> &Arc<dyn VersionHistoryBackend> {
+        &self.version_history_backend
+    }
+
+    #[must_use]
+    pub(crate) fn version_restore_backend(&self) -> &Arc<dyn VersionRestoreBackend> {
+        &self.version_restore_backend
+    }
+
+    #[must_use]
+    pub(crate) fn download_backend(&self) -> &Arc<dyn DownloadBackend> {
+        &self.download_backend
     }
 
     #[must_use]

@@ -30,6 +30,65 @@ typed chứng minh transport `Blob`/`ArrayBuffer` raw và progress có thẩm qu
 server. Các test này không thay thế evidence PostgreSQL locking/integration khi
 disposable database chưa có.
 
+Focused test của HTTP download route còn bao phủ authentication không cần
+CSRF, owner scoping của current và historical, semantic full `200` cùng
+single-range `206` chính xác, range open-ended/suffix, xử lý `416` deterministic
+trước khi mở storage, `If-None-Match` strong trả `304` mà không stream, header/
+filename encode an toàn, body nhiều frame có giới hạn và content-read service
+thực qua local object store. Các test này không tuyên bố content resolution
+end-to-end trên PostgreSQL khi disposable database gate chưa được cấu hình.
+
+Version-history metadata boundary cần thêm focused test cho ordering newest-first
+`(committed_at DESC, id DESC)`, tie-break cùng timestamp, cursor continuation
+bounded có scope theo node và reject tamper, currentness lấy từ
+`Node.current_version_id`, concealment owner/cross-owner, trạng thái
+trashed/purging, xử lý directory, direct lookup tương thích với historical
+download ID, allowlist field DTO an toàn, response private no-store và không có
+ObjectStore read. PostgreSQL integration gate phải exercise join thực giữa
+owner/library/node/version/object và báo status rõ ràng; `SYNVEIL_TEST_DATABASE_URL`
+không được set không thể coi là bằng chứng PostgreSQL end-to-end.
+
+Safe version-restore boundary còn có focused test cho authentication, CSRF,
+`If-Match` bắt buộc, idempotency key bounded, chi tiết stale revision conflict,
+concealment owner/cross-node, reject directory/trashed/current version,
+allowlist response an toàn, replay một outcome với đúng một version mới và
+idempotency-key conflict. PostgreSQL restore test bị ignore exercise transaction
+thực cho chọn replica verified, reuse cùng object, parent là head trước
+restore, advance node pointer, historical row bất biến, replay không duplicate,
+stale failure không mutation, reject current version và failure khi thiếu
+replica verified. Đây chưa phải bằng chứng cho tới khi cung cấp fresh
+PostgreSQL disposable URL.
+
+Policy Trash-retention có focused unit test cho default 30 ngày, validation
+configuration, deadline dẫn xuất, boundary inclusive, eligibility dùng server
+time, loại `ACTIVE`/restored/`PURGING`/root và clear timestamp khi restore. API
+metadata test kiểm tra field additive `trashed_at`, `restore_deadline` và
+`purge_eligible`. PostgreSQL retention test bị ignore nhưng exercise owner
+concealment, directory rỗng, keyset continuation bounded ổn định, restore sau
+deadline, reject trước deadline, begin `PURGING` chỉ metadata, repeated-begin
+theo revision, locking restore-vs-purge và bảo toàn row version/object/replica.
+Đây chưa là evidence PostgreSQL cho tới khi `SYNVEIL_TEST_DATABASE_URL` trỏ
+đến database disposable mới.
+
+Metadata-purge PostgreSQL test cũng bị ignore nếu thiếu gate này. Test bao phủ
+boundary nội bộ cho state active/trashed/PURGING, root, parent và child; reject
+revision cũ; replay cùng revision; duplicate worker concurrent; xóa nguyên tử
+Node cùng mọi row FileVersion; clear current-version pointer và
+restore-operation; hạch toán reference object dùng chung, gồm reference tạo bởi
+restore; bảo toàn row Object/ObjectReplica; clear candidate khi FileVersion mới
+reference lại object; defer FK upload-parent; rollback sau lỗi completion-record
+muộn; cùng staging và zero-byte. Đây chưa là evidence PostgreSQL cho tới khi
+`SYNVEIL_TEST_DATABASE_URL` trỏ đến database disposable mới.
+
+Content-read service trung lập transport còn có focused application test cho
+concealment owner/missing/cross-owner, directory, node trashed, historical
+version bất biến, stream full và zero-byte, range interior/final/past-end,
+tạo range rỗng/overflow, replica missing/chưa verify, metadata length/SHA-256
+mismatch và bỏ stream không mutation. Một local `ObjectStore` integration test
+seed object đã commit rồi chứng minh một full read và một range read qua cùng
+service. Fake và local adapter này validate service boundary; chúng không thay
+thế test content-resolution PostgreSQL bị gate theo môi trường.
+
 ## Nguyên tắc chất lượng
 
 1. **Bất biến trước ví dụ.** Mỗi ví dụ có oracle state/authorization/durability;
