@@ -2153,6 +2153,16 @@ async fn postgres_metadata_purge_releases_references_without_deleting_objects() 
         .delete_node(owner_id, file_a.id(), file_a_head.revision())
         .await
         .expect("shared file can enter Trash");
+    sqlx::query(
+        "UPDATE nodes SET trashed_at = $2
+         WHERE id = $1 AND library_id = $3",
+    )
+    .bind(file_a.id().into_uuid())
+    .bind(old_trash_at.as_offset_datetime())
+    .bind(library_id.into_uuid())
+    .execute(&inspection_pool)
+    .await
+    .expect("test must age the shared-file Trash timestamp");
     assert_eq!(
         retention
             .execute_metadata_purge(owner_id, file_a.id(), trashed_a.revision())
@@ -2324,6 +2334,16 @@ async fn postgres_metadata_purge_releases_references_without_deleting_objects() 
         .delete_node(owner_id, file_b.id(), restored_b.node_revision())
         .await
         .expect("restore-created shared file can enter Trash");
+    sqlx::query(
+        "UPDATE nodes SET trashed_at = $2
+         WHERE id = $1 AND library_id = $3",
+    )
+    .bind(file_b.id().into_uuid())
+    .bind(old_trash_at.as_offset_datetime())
+    .bind(library_id.into_uuid())
+    .execute(&inspection_pool)
+    .await
+    .expect("test must age the restore-created Trash timestamp");
     let purging_b = retention
         .begin_node_purge(owner_id, file_b.id(), trashed_b.revision())
         .await
@@ -2621,6 +2641,16 @@ async fn postgres_metadata_purge_releases_references_without_deleting_objects() 
         .delete_node(owner_id, zero_file.id(), zero_head.revision())
         .await
         .expect("zero-byte file can enter Trash");
+    sqlx::query(
+        "UPDATE nodes SET trashed_at = $2
+         WHERE id = $1 AND library_id = $3",
+    )
+    .bind(zero_file.id().into_uuid())
+    .bind(old_trash_at.as_offset_datetime())
+    .bind(library_id.into_uuid())
+    .execute(&inspection_pool)
+    .await
+    .expect("test must age the zero-byte Trash timestamp");
     let zero_purging = retention
         .begin_node_purge(owner_id, zero_file.id(), zero_trashed.revision())
         .await
@@ -2688,6 +2718,16 @@ async fn postgres_metadata_purge_releases_references_without_deleting_objects() 
         .delete_node(owner_id, reused_file.id(), reused_head.revision())
         .await
         .expect("reused zero-byte file can enter Trash");
+    sqlx::query(
+        "UPDATE nodes SET trashed_at = $2
+         WHERE id = $1 AND library_id = $3",
+    )
+    .bind(reused_file.id().into_uuid())
+    .bind(old_trash_at.as_offset_datetime())
+    .bind(library_id.into_uuid())
+    .execute(&inspection_pool)
+    .await
+    .expect("test must age the reused zero-byte Trash timestamp");
     let reused_purging = retention
         .begin_node_purge(owner_id, reused_file.id(), reused_trashed.revision())
         .await
