@@ -35,8 +35,10 @@ The current implementation provides:
   errors, authoritative offset recovery, and typed browser API helpers.
 
 `UploadPart`, ordered manifests, richer idempotency fingerprints, quota
-reservation, worker scheduling, and GC execution remain future work and must
-not be inferred from this exact-offset HTTP subset. The separate
+reservation, and upload-specific worker scheduling remain future work and must
+not be inferred from this exact-offset HTTP subset. The separately implemented
+internal GC execution/worker pipeline is documented in `STORAGE.md`; it is not
+an upload protocol capability. The separate
 transport-neutral content-read application service and authenticated HTTP
 download transport are documented in [STORAGE.md](STORAGE.md) and
 [API_ARCHITECTURE.md](API_ARCHITECTURE.md); upload product UI, download UI,

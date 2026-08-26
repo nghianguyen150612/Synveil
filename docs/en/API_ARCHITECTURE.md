@@ -4,9 +4,10 @@ Status: **Foundation transport, browser/bootstrap auth, logical metadata,
 exact-offset resumable upload HTTP transport, transport-neutral owner-authorized
 immutable content reads, authenticated HTTP full/single-range download
 transport, authenticated immutable version-history metadata, safe
-historical-version restore, additive Trash retention metadata, and internal
-metadata purge execution implemented; upload UI, physical object purge/GC,
-download UI, sync, and backup remain PLANNED**
+historical-version restore, additive Trash retention metadata, internal
+metadata purge execution, crash-safe internal physical object GC, and bounded
+internal GC-worker orchestration/reconciliation implemented; upload UI, sync,
+backup, and sharing remain PLANNED**
 
 This document defines the target HTTP contract and the blueprint for
 `api/openapi.yaml`. The foundation currently implements bounded health transport,
@@ -59,6 +60,18 @@ The canonical entity meanings and states come from
 [DOMAIN_MODEL.md](DOMAIN_MODEL.md); storage, upload, sync, backup, photo, AI,
 and integration specifications refine behavior without inventing alternate
 IDs, errors, or mutation semantics.
+
+Object-GC planning and execution are deliberately transport-neutral and
+internal: neither exposes an HTTP route or OpenAPI operation. Execution accepts
+only a `READY` candidate with a live matching lease/generation, repeats the
+reference/hold proof in a short PostgreSQL transaction before each action,
+persists an operation before ObjectStore I/O, and deletes/reconciles one
+verified replica at a time. `GC_DELETING` rejects new `FileVersion`, replica,
+and active-hold acquisition, while completion removes metadata only after every
+replica is confirmed absent. The opt-in `synveil-worker` invokes those accepted
+services through bounded internal `run_once()` cycles and has no HTTP route,
+OpenAPI operation, or normal-user control. Backup/share/sync hold producers
+remain planned and cannot be inferred from the internal API status.
 
 ## Contract boundary
 

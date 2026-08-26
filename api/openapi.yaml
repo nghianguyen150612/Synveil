@@ -29,22 +29,24 @@ info:
     Safe historical-version restore is implemented as a conditional owner
     mutation that appends one new immutable FileVersion reusing the selected
     version's verified Object; it never mutates history, moves the current
-    pointer backward, copies bytes, or creates an UploadSession. Download UI,
-    multi-range responses, physical purge/GC, synchronization, backup, sharing,
-    and device operations remain planned. Trash eligibility and the internal
-    metadata-only `PURGING` begin transition do not expose a normal user-facing
-    purge route.
+    pointer backward, copies bytes, or creates an UploadSession. The internal
+    physical-GC pipeline is implemented behind trusted PostgreSQL/ObjectStore
+    services and a private opt-in worker, but it has no public HTTP operation,
+    scheduling control, or user-facing purge route. Download UI, multi-range
+    responses, synchronization, backup, sharing, device operations, and all
+    public physical-GC controls remain planned. Trash eligibility and the
+    internal metadata-only `PURGING` begin transition do not expose a normal
+    user-facing purge route.
   contact:
     name: Synveil Architecture / Contracts
   license:
     name: MIT
     identifier: MIT
-  x-synveil-status: HTTP_VERSION_HISTORY_SAFE_RESTORE_AND_TRASH_RETENTION_IMPLEMENTED
-  x-synveil-gate: SYNVEIL_TRASH_RETENTION_IMPLEMENTED
+  x-synveil-status: HTTP_DOWNLOAD_VERSION_TRASH_AND_INTERNAL_GC_IMPLEMENTED
+  x-synveil-gate: SYNVEIL_GC_WORKER_READY
   x-synveil-next-step: |
-    Validate the retention candidate and begin-purge transactions against
-    disposable PostgreSQL. Do not implement physical metadata purge, object-byte
-    GC, or synchronization yet.
+    Keep physical GC internal and operator-configured. Do not add a public
+    physical-GC/purge control plane, synchronization, backup, or sharing here.
 servers:
   - url: /
     description: Deployment-relative base URL; TLS is supplied by the supported proxy topology.

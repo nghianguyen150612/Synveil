@@ -367,3 +367,18 @@ pub enum DeleteOutcome {
     Deleted,
     AlreadyAbsent,
 }
+
+/// Read-only reconciliation evidence for a previously attempted delete.
+///
+/// `InProgress` is distinct from `Absent`: an adapter has durable evidence of
+/// a backend-owned partial deletion/tombstone that still needs a fenced retry.
+/// When immutable metadata survives, it is returned so callers can re-check
+/// the exact key/hash/length/version before continuing. `None` is allowed only
+/// for a terminal tombstone whose content and visibility marker are already
+/// absent. Callers must not remove replica metadata for either form.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DeleteReconciliation {
+    Absent,
+    Present(ObjectMetadata),
+    InProgress(Option<ObjectMetadata>),
+}

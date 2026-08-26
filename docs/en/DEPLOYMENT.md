@@ -21,9 +21,11 @@ developer API composition root wires authenticated current/historical
 full/single-range download routes when `DATABASE_URL` and an explicit absolute
 `SYNVEIL_OBJECT_ROOT` are both set. Authenticated version-history metadata
 listing and direct lookup require the PostgreSQL metadata service but do not
-require an object root or open storage. This is not evidence of a deployable
-production image: production download configuration/preflight, deployment
-topologies, installer lifecycle, and production support remain planned.
+require an object root or open storage. The private `synveil-worker` binary is
+also implemented as an opt-in, bounded GC runtime with no listener; it is not
+evidence of a deployable production image. Production download
+configuration/preflight, deployment topologies, installer lifecycle, and
+production support remain planned.
 
 ## Supported deployment profiles
 
@@ -257,10 +259,12 @@ crate's content-read application service and API download transport use the same
 metadata/`ObjectStore` ports. Safe version restore is implemented at the
 authenticated API/metadata boundary but still requires the PostgreSQL metadata
 service; its disposable end-to-end gate is environment-dependent. HTTP
-download production configuration/preflight, broader logical object lifecycle,
-GC, sync, backup, and installer wiring remain `PLANNED`; version-history
-metadata itself remains available from the configured metadata service without
-object-root setup.
+download production configuration/preflight, sync, backup, and installer wiring
+remain `PLANNED`; metadata-only GC planning and the internal physical execution
+service are `IMPLEMENTED/VALIDATED`, while the private bounded GC worker is
+`IMPLEMENTED`.
+Version-history metadata itself remains available from the configured metadata
+service without object-root setup.
 
 ### Local object-root validation
 
@@ -322,7 +326,21 @@ Required production categories include:
   whole seconds; when unset it uses the configurable 30-day default, and it
   controls logical retention eligibility and metadata purge only; it does not
   enable physical object purge or object-byte GC;
-- worker lease, retry, dead-letter and concurrency budgets;
+- metadata-only GC planning policy: `SYNVEIL_OBJECT_GC_GRACE_SECONDS`,
+  `SYNVEIL_OBJECT_GC_LEASE_SECONDS`, and
+  `SYNVEIL_OBJECT_GC_MAX_BATCH_SIZE`; defaults are 24 hours, 15 minutes, and
+  100, with a hard batch maximum of 500; zero/invalid values fail startup
+  configuration validation and do not enable physical deletion;
+- internal GC-worker policy: `SYNVEIL_GC_WORKER_ENABLED` defaults to `false`;
+  its `60`-second cycle, new-claim (`8`), active-operation (`2`),
+  replica-action (`4`), execution (`2`), and replica-delete (`1`) caps are
+  independently validated. `SYNVEIL_GC_WORKER_RETRY_BASE_SECONDS` and
+  `SYNVEIL_GC_WORKER_RETRY_MAX_SECONDS` default to `30`/`900`,
+  `SYNVEIL_GC_WORKER_MAX_ATTEMPTS` to `12`, and
+  `SYNVEIL_GC_WORKER_SHUTDOWN_TIMEOUT_SECONDS` to `30`. The worker uses no
+  database URL, storage root, or credential from this policy object; runtime
+  composition owns those dependencies. See [STORAGE.md](STORAGE.md) for the
+  complete variable list and bound relationships;
 - log level/format/redaction, metrics and optional OTLP endpoint;
 - bootstrap state and first-run exposure policy; the current HTTP contract has
   no setup-secret field;
@@ -540,10 +558,49 @@ then conditionally complete. Operations expose:
 
 - queue depth and oldest eligible age by bounded job class;
 - attempts, lease expiry/steal, running duration, success/failure and dead
-  letters;
+letters;
 - last successful staging/orphan/integrity/retention/GC/storage-health job;
 - per-class concurrency, priority and backpressure;
 - safe administrative pause/resume/retry/dead-letter inspection with audit.
+
+The implemented object-GC execution boundary continues the planner after a
+`READY` lease. It creates durable operation/action rows before every external
+effect, moves the Object to `GC_DELETING`, and uses short transactions in this
+order: candidate -> canonical Object -> operation/action. It renews and
+revalidates the matching lease/generation plus zero FileVersion references and
+active holds before each replica action; ObjectStore I/O occurs outside those
+transactions. Exact replicas are ordered deterministically, deleted one at a
+time using conditional evidence where available, and reconciled after any
+ambiguous response. Candidate/ObjectReplica/Object removal occurs only after
+all replicas are proven absent.
+
+The implemented `synveil-worker` is an opt-in private runtime, not an API
+process extension or public control surface. Its runtime loop calls the
+transport-neutral `run_once()` coordinator, sleeps at the configured interval,
+and listens for shutdown. A cycle reports bounded metadata reconciliation,
+then reclaims due incomplete operations before considering new candidates; any
+recovery claim suppresses new destructive work for that cycle. It applies at
+most one replica action per selected operation, caps operation task and
+storage-delete concurrency independently, and releases a nonterminal planning
+lease after each slice so that the next due cycle has to reclaim current
+generation fencing.
+
+Replica retry attempt count and next due time are persisted in PostgreSQL. The
+server clock schedules a bounded exponential retry delay with at most 10%
+deterministic jitter. Transient database/storage, stale lease, and ambiguous
+outcomes do not report completion; persisted identity/evidence/configuration
+faults or an exhausted retry budget become `NEEDS_ATTENTION`. On Ctrl-C the
+binary stops claiming, drains only the configured bounded current cycle, and
+leaves a timed-out fenced action for normal Prompt 28 reconciliation after a
+restart. General API health/readiness remains independent of worker backlog or
+an individual GC failure. Safe per-cycle counts, status, duration, and redacted
+error classes are logged; an operator does not receive storage keys, paths,
+credentials, or a delete command.
+
+Reconciliation is bounded and metadata-only: it reports inconsistent
+candidate/operation/action/Object lifecycle states but does not recursively
+inventory a storage root. Unknown physical files are not auto-deleted in this
+phase. Backup/share/sync hold producers remain unimplemented.
 
 Worker termination expires a bounded lease and repeats idempotently. Poison
 jobs become terminal rather than hot-looping. Optional AI/photo/Git work uses

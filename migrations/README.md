@@ -29,5 +29,16 @@ The metadata-purge migration adds the minimal completed-purge replay identity,
 metadata-only object GC-candidate table, the deferrable self-parent constraint,
 the Object-reference index, and the upload-parent reference index needed to
 remove one node's immutable FileVersion history and evaluate survivors
-set-wise in one transaction. It does not delete Object rows, ObjectReplica
-rows, or object bytes, and it does not define a physical-GC grace deadline.
+set-wise in one transaction. The following GC-planning migration adds candidate
+state, opaque lease/generation timestamps, lifecycle constraints, and bounded
+claim indexes. The physical-GC execution migration then adds the minimal
+`objects.lifecycle_state` fence, active hold registry, durable operation/action
+records, and database triggers that reject new reference or hold acquisition
+once an Object is `GC_DELETING`. The worker-orchestration migration adds only
+bounded retry scheduling (`attempt_count`, `next_attempt_at`), recovery indexes,
+and an explicit `NEEDS_ATTENTION` operation state; it contains no path, storage
+credential, external queue, or deletion behavior. The runtime deletes bytes
+only after these forward-only schema records and a final PostgreSQL
+revalidation; it records each replica outcome before ObjectReplica/Object
+cleanup. These migrations add no public GC API, unknown-physical-orphan scan or
+auto-delete, sync, backup, or sharing subsystem.

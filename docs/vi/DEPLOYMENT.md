@@ -20,10 +20,13 @@ content-read service trung lập transport đã authorize theo owner; developer 
 composition root wire route download full/single-range current/historical đã
 authenticate khi cả `DATABASE_URL` và `SYNVEIL_OBJECT_ROOT` tuyệt đối, tường
 minh được đặt. Metadata version-history listing và direct lookup chỉ cần
-metadata service PostgreSQL, không cần object root và không mở storage. Đây
-không phải evidence của production image có thể deploy:
-configuration/preflight download production, topology deployment, installer
-lifecycle và production support bên dưới vẫn là kế hoạch.
+metadata service PostgreSQL, không cần object root và không mở storage. Binary
+private `synveil-worker` cũng đã implement như runtime GC opt-in có giới hạn,
+không listener; đây không phải evidence của production image có thể deploy.
+Configuration/preflight download production, topology deployment, installer
+lifecycle và production support bên dưới vẫn là kế hoạch; GC planning
+metadata-only, execution vật lý và worker orchestration nội bộ đã có boundary
+được mô tả.
 
 ## Profile deployment được hỗ trợ
 
@@ -253,9 +256,11 @@ Content-read application service và API download transport dùng chung port
 metadata/`ObjectStore`. Safe version restore đã implement ở boundary
 API/metadata authenticate nhưng vẫn cần metadata service PostgreSQL; gate
 end-to-end disposable của nó phụ thuộc môi trường. Configuration/preflight
-download production, lifecycle object logic rộng hơn, GC, sync, backup và
-installer wiring vẫn `PLANNED`; metadata version-history vẫn có thể dùng từ
-metadata service đã cấu hình mà không cần object-root setup.
+download production, lifecycle object logic rộng hơn, sync, backup và installer
+wiring vẫn `PLANNED`; metadata-only GC planning và internal physical execution
+service đã `IMPLEMENTED/VALIDATED`, còn GC worker private bounded đã
+`IMPLEMENTED`. Metadata version-history vẫn có thể dùng từ metadata service đã
+cấu hình mà không cần object-root setup.
 
 ### Validation object-root local
 
@@ -316,7 +321,21 @@ Category production bắt buộc gồm:
   tính bằng giây nguyên; khi unset dùng default 30 ngày có thể cấu hình, và
   chỉ điều khiển logical retention eligibility và metadata purge; không bật
   physical object purge hay GC object byte;
-- lease worker, retry, dead-letter và concurrency budget;
+- policy GC planning metadata-only dùng
+  `SYNVEIL_OBJECT_GC_GRACE_SECONDS`, `SYNVEIL_OBJECT_GC_LEASE_SECONDS` và
+  `SYNVEIL_OBJECT_GC_MAX_BATCH_SIZE`; default là 24 giờ, 15 phút và 100,
+  hard maximum 500; giá trị zero/không hợp lệ fail validation config và không
+  bật xóa vật lý;
+- policy GC-worker nội bộ: `SYNVEIL_GC_WORKER_ENABLED` mặc định `false`; cycle
+  `60` giây, cap new-claim (`8`), active-operation (`2`), replica-action (`4`),
+  execution (`2`) và replica-delete (`1`) được validate độc lập.
+  `SYNVEIL_GC_WORKER_RETRY_BASE_SECONDS` và
+  `SYNVEIL_GC_WORKER_RETRY_MAX_SECONDS` mặc định `30`/`900`,
+  `SYNVEIL_GC_WORKER_MAX_ATTEMPTS` mặc định `12`, còn
+  `SYNVEIL_GC_WORKER_SHUTDOWN_TIMEOUT_SECONDS` mặc định `30`. Policy object
+  không mang database URL, storage root hay credential; runtime composition
+  sở hữu dependency đó. Xem [STORAGE.md](STORAGE.md) cho danh sách variable đầy
+  đủ và quan hệ giữa các bound;
 - level/format/redaction log, metric và endpoint OTLP tùy chọn;
 - bootstrap state và first-run exposure policy; HTTP contract hiện tại không có
   setup-secret field;
@@ -545,6 +564,41 @@ Operations phơi:
 - job staging/orphan/integrity/retention/GC/storage-health thành công gần nhất;
 - concurrency, priority và backpressure theo class;
 - administrative pause/resume/retry/inspection dead-letter an toàn cùng audit.
+
+Boundary execution object-GC đã implement tiếp sau lease `READY`. Nó ghi
+operation/action bền trước external effect, đặt Object thành `GC_DELETING` và
+dùng transaction ngắn theo thứ tự candidate -> canonical Object ->
+operation/action. Nó renew/revalidate lease/generation matching, zero reference
+`FileVersion` và active hold trước mỗi replica action; ObjectStore I/O ở ngoài
+transaction. Replica exact được order xác định, xóa từng cái với conditional
+evidence khi có, rồi đối soát mọi response ambiguous. Candidate/ObjectReplica/
+Object chỉ bị dọn khi mọi replica được chứng minh absent.
+
+`synveil-worker` đã implement là runtime private opt-in, không phải extension
+của API process hay public control surface. Runtime loop gọi coordinator
+transport-neutral `run_once()`, sleep theo interval cấu hình và lắng nghe
+shutdown. Một cycle báo reconciliation metadata có giới hạn, sau đó reclaim
+operation incomplete đến hạn trước khi xét candidate mới; bất kỳ recovery claim
+nào cũng chặn destructive work mới trong cycle đó. Nó áp dụng tối đa một replica
+action trên mỗi operation được chọn, cap riêng concurrency task operation và
+storage-delete, rồi release planning lease của slice nonterminal để cycle đến
+hạn tiếp theo phải reclaim generation fence hiện tại.
+
+Attempt retry replica và thời gian đến hạn kế tiếp được persist trong
+PostgreSQL. Server clock schedule delay retry exponential bounded với jitter
+xác định tối đa 10%. Outcome database/storage transient, lease stale và
+ambiguous không báo completion; lỗi identity/evidence/configuration đã persist
+hoặc retry budget cạn chuyển thành `NEEDS_ATTENTION`. Khi Ctrl-C binary dừng
+claim, chỉ drain cycle hiện tại theo bound cấu hình và để action fenced bị timeout
+cho reconciliation Prompt 28 bình thường sau restart. API health/readiness chung
+vẫn độc lập với backlog worker hay failure của GC riêng lẻ. Counter/status/
+duration cycle an toàn và error class đã redact được log; operator không nhận
+storage key, path, credential hay delete command.
+
+Reconciliation có giới hạn và chỉ từ metadata: nó báo state candidate/
+operation/action/lifecycle Object mâu thuẫn nhưng không recursive-inventory
+storage root. File vật lý không rõ không bị auto-delete trong phase này.
+Producer hold backup/share/sync vẫn chưa implement.
 
 Worker termination làm expiry lease có giới hạn và lặp idempotent. Poison job
 thành terminal thay vì hot-loop. Công việc AI/photo/Git tùy chọn dùng concurrency

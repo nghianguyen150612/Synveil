@@ -5,12 +5,16 @@ use std::str::FromStr;
 use sqlx::FromRow;
 use synveil_core::{
     DedupDomainId, Device, DomainError, FileVersion, FileVersionId, Library, LibraryId,
-    LibraryStatus, LogicalName, Node, NodeId, NodeKind, NodeState, ObjectId, ObjectReference,
-    Revision, Sha256Digest, Timestamp, User, UserId,
+    LibraryStatus, LogicalName, Node, NodeId, NodeKind, NodeState, ObjectGcPolicy, ObjectId,
+    ObjectReference, Revision, Sha256Digest, Timestamp, User, UserId,
 };
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+use crate::gc::{
+    GcLeaseId, GcPlanMutation, GcReleaseMutation, GcRenewalMutation, ObjectGcCandidate,
+    ObjectGcCandidateRow, ObjectGcCandidateState, ObjectGcLease, map_object_gc_candidate_row,
+};
 use crate::purge::PurgeCursor;
 use crate::versions::{VersionCursor, VersionRecord, restore_request_fingerprint};
 use crate::{
@@ -771,6 +775,24 @@ impl<'pool> DomainRepository<'pool> {
         };
         let _source_record = map_version_row(source_row.clone(), &scope)?;
         let object = object_reference_from_version_row(&source_row)?;
+
+        // Restore reference creation participates in the same canonical
+        // order as GC and purge: target library/node -> candidate row (if
+        // present) -> Object advisory/Object row -> replica row. The source
+        // lookup deliberately locks only the immutable FileVersion; taking
+        // the Object lock there would invert this order.
+        Self::lock_gc_candidate_row_for_reference(
+            &mut transaction,
+            object.object_id(),
+            object.dedup_domain_id(),
+        )
+        .await?;
+        Self::lock_object_for_gc(
+            &mut transaction,
+            object.object_id(),
+            object.dedup_domain_id(),
+        )
+        .await?;
         if !has_usable_verified_replica(&mut transaction, object).await? {
             return Ok(VersionRestoreMutation::ContentUnavailable);
         }
@@ -1309,6 +1331,11 @@ impl<'pool> DomainRepository<'pool> {
             }
         }
 
+        // Candidate rows must precede canonical Object locks in the shared
+        // lock order. This is the Prompt 26 side of the GC worker/purge race:
+        // library/node -> candidate -> object advisory/Object row.
+        Self::lock_gc_candidate_rows_for_purge(&mut transaction, node.id(), library_id).await?;
+
         // Serialize reference creation against this release set, including
         // references from another library in the same deduplication domain.
         // The advisory key is derived only from canonical object identity; a
@@ -1392,6 +1419,445 @@ impl<'pool> DomainRepository<'pool> {
 
         transaction.commit().await.map_err(MetadataError::from)?;
         Ok(PurgeExecutionMutation::Completed)
+    }
+
+    /// Claim a bounded batch of metadata-only object-GC candidates. Candidate
+    /// rows are locked in stable order first; each canonical Object is then
+    /// locked and the committed FileVersion reference relation is rechecked
+    /// before the lease is written. This method never touches replicas or
+    /// object bytes.
+    pub(crate) async fn claim_object_gc_candidates(
+        &self,
+        policy: ObjectGcPolicy,
+        limit: u32,
+    ) -> Result<Vec<ObjectGcLease>, MetadataError> {
+        let mut transaction = self
+            .pool
+            .sqlx_pool()
+            .begin()
+            .await
+            .map_err(MetadataError::from)?;
+        let now = Self::database_now(&mut transaction).await?;
+        let (grace_cutoff, _) = gc_time_window(policy, now)?;
+
+        let rows = sqlx::query_as::<_, ObjectGcCandidateRow>(
+            "SELECT object_id, object_dedup_domain_id, unreferenced_at, source,
+                    state, lease_id, lease_generation::TEXT AS lease_generation,
+                    lease_acquired_at, lease_expires_at, validated_at
+             FROM object_gc_candidates
+             WHERE source = 'METADATA_PURGE'
+               AND unreferenced_at <= $1
+               -- A durable physical operation is its own recovery queue. Do
+               -- not let generic candidate planning reclaim it as new work;
+               -- the GC coordinator must rebind it through the explicit
+               -- resume-before-new-work boundary instead.
+               AND NOT EXISTS (
+                    SELECT 1
+                    FROM object_gc_operations AS operation
+                    WHERE operation.object_id = object_gc_candidates.object_id
+                      AND operation.object_dedup_domain_id =
+                          object_gc_candidates.object_dedup_domain_id
+                      AND operation.state <> 'COMPLETED'
+               )
+               AND (
+                    state = 'ELIGIBLE'
+                    OR (
+                        state IN ('LEASED', 'READY')
+                        AND lease_expires_at <= $2
+                    )
+               )
+             ORDER BY unreferenced_at ASC, object_id ASC,
+                      object_dedup_domain_id ASC
+             LIMIT $3
+             FOR UPDATE SKIP LOCKED",
+        )
+        .bind(grace_cutoff.as_offset_datetime())
+        .bind(now.as_offset_datetime())
+        .bind(i64::from(limit))
+        .fetch_all(&mut *transaction)
+        .await
+        .map_err(MetadataError::from)?;
+
+        let mut leases = Vec::with_capacity(rows.len());
+        for row in rows {
+            let candidate = map_object_gc_candidate_row(row)?;
+            Self::lock_object_for_gc(
+                &mut transaction,
+                candidate.object_id(),
+                candidate.dedup_domain_id(),
+            )
+            .await?;
+
+            // The Object lock can wait behind another metadata/storage
+            // transaction. Start the lease at a fresh server-observed instant
+            // after that wait, rather than shortening or misdating the lease
+            // from the initial candidate-query timestamp.
+            let claimed_at = Self::database_now(&mut transaction).await?;
+            let (_, lease_expires_at) = gc_time_window(policy, claimed_at)?;
+            if Self::has_object_file_version_reference(
+                &mut transaction,
+                candidate.object_id(),
+                candidate.dedup_domain_id(),
+            )
+            .await?
+            {
+                Self::delete_object_gc_candidate(
+                    &mut transaction,
+                    candidate.object_id(),
+                    candidate.dedup_domain_id(),
+                )
+                .await?;
+                continue;
+            }
+
+            let lease_generation =
+                candidate
+                    .lease_generation()
+                    .checked_add(1)
+                    .ok_or(MetadataError::Mapping(MappingError::InvalidDecimal {
+                        field: "object_gc_candidates.lease_generation",
+                    }))?;
+            let lease_id = GcLeaseId::new();
+            let updated = sqlx::query(
+                "UPDATE object_gc_candidates
+                 SET state = 'LEASED', lease_id = $4,
+                     lease_generation = $5::NUMERIC,
+                     lease_acquired_at = $6, lease_expires_at = $7,
+                     validated_at = $6
+                 WHERE object_id = $1
+                   AND object_dedup_domain_id = $2
+                   AND source = 'METADATA_PURGE'
+                   AND state = $3
+                   AND lease_generation = $8::NUMERIC",
+            )
+            .bind(candidate.object_id().into_uuid())
+            .bind(candidate.dedup_domain_id().into_uuid())
+            .bind(candidate.state().as_str())
+            .bind(lease_id.into_uuid())
+            .bind(lease_generation.to_string())
+            .bind(claimed_at.as_offset_datetime())
+            .bind(lease_expires_at.as_offset_datetime())
+            .bind(candidate.lease_generation().to_string())
+            .execute(&mut *transaction)
+            .await
+            .map_err(MetadataError::from)?;
+            if updated.rows_affected() != 1 {
+                return Err(MetadataError::Mapping(MappingError::RelationMismatch {
+                    relation: "object_gc_candidates.claim",
+                }));
+            }
+
+            leases.push(ObjectGcLease::from_parts(
+                candidate.object_id(),
+                candidate.dedup_domain_id(),
+                lease_id,
+                lease_generation,
+                claimed_at,
+                lease_expires_at,
+                ObjectGcCandidateState::Leased,
+            ));
+        }
+
+        transaction.commit().await.map_err(MetadataError::from)?;
+        Ok(leases)
+    }
+
+    /// Renew a matching lease after revalidating its committed reference
+    /// relation under the canonical Object lock.
+    pub(crate) async fn renew_object_gc_lease(
+        &self,
+        policy: ObjectGcPolicy,
+        lease: ObjectGcLease,
+    ) -> Result<GcRenewalMutation, MetadataError> {
+        let mut transaction = self
+            .pool
+            .sqlx_pool()
+            .begin()
+            .await
+            .map_err(MetadataError::from)?;
+        let Some(row) = Self::lock_object_gc_candidate(&mut transaction, lease).await? else {
+            transaction.commit().await.map_err(MetadataError::from)?;
+            return Ok(GcRenewalMutation::CandidateGone);
+        };
+        let now = Self::database_now(&mut transaction).await?;
+        let (grace_cutoff, _lease_expires_at) = gc_time_window(policy, now)?;
+        let candidate = map_object_gc_candidate_row(row)?;
+        let Some(stored_lease) = candidate.lease() else {
+            transaction.commit().await.map_err(MetadataError::from)?;
+            return Ok(GcRenewalMutation::StaleLease);
+        };
+        if !same_gc_lease(stored_lease, lease) {
+            transaction.commit().await.map_err(MetadataError::from)?;
+            return Ok(GcRenewalMutation::StaleLease);
+        }
+        if stored_lease.lease_expires_at() <= now {
+            transaction.commit().await.map_err(MetadataError::from)?;
+            return Ok(GcRenewalMutation::LeaseExpired);
+        }
+        if candidate.unreferenced_at() > grace_cutoff {
+            transaction.commit().await.map_err(MetadataError::from)?;
+            return Ok(GcRenewalMutation::GraceNotMature);
+        }
+
+        Self::lock_object_for_gc(
+            &mut transaction,
+            candidate.object_id(),
+            candidate.dedup_domain_id(),
+        )
+        .await?;
+        let validation_now = Self::database_now(&mut transaction).await?;
+        let (validation_grace_cutoff, lease_expires_at) = gc_time_window(policy, validation_now)?;
+        if stored_lease.lease_expires_at() <= validation_now {
+            transaction.commit().await.map_err(MetadataError::from)?;
+            return Ok(GcRenewalMutation::LeaseExpired);
+        }
+        if candidate.unreferenced_at() > validation_grace_cutoff {
+            transaction.commit().await.map_err(MetadataError::from)?;
+            return Ok(GcRenewalMutation::GraceNotMature);
+        }
+        if Self::has_object_file_version_reference(
+            &mut transaction,
+            candidate.object_id(),
+            candidate.dedup_domain_id(),
+        )
+        .await?
+        {
+            Self::delete_object_gc_candidate(
+                &mut transaction,
+                candidate.object_id(),
+                candidate.dedup_domain_id(),
+            )
+            .await?;
+            transaction.commit().await.map_err(MetadataError::from)?;
+            return Ok(GcRenewalMutation::Invalidated);
+        }
+
+        let updated = sqlx::query(
+            "UPDATE object_gc_candidates
+             SET lease_expires_at = $4, validated_at = $4
+             WHERE object_id = $1
+               AND object_dedup_domain_id = $2
+               AND source = 'METADATA_PURGE'
+               AND lease_id = $3
+               AND lease_generation = $5::NUMERIC
+               AND state IN ('LEASED', 'READY')",
+        )
+        .bind(candidate.object_id().into_uuid())
+        .bind(candidate.dedup_domain_id().into_uuid())
+        .bind(lease.lease_id().into_uuid())
+        .bind(lease_expires_at.as_offset_datetime())
+        .bind(lease.lease_generation().to_string())
+        .execute(&mut *transaction)
+        .await
+        .map_err(MetadataError::from)?;
+        if updated.rows_affected() != 1 {
+            return Err(MetadataError::Mapping(MappingError::RelationMismatch {
+                relation: "object_gc_candidates.renew",
+            }));
+        }
+
+        let renewed = ObjectGcLease::from_parts(
+            candidate.object_id(),
+            candidate.dedup_domain_id(),
+            stored_lease.lease_id(),
+            stored_lease.lease_generation(),
+            stored_lease.lease_acquired_at(),
+            lease_expires_at,
+            candidate.state(),
+        );
+        transaction.commit().await.map_err(MetadataError::from)?;
+        Ok(GcRenewalMutation::Renewed(renewed))
+    }
+
+    /// Safely release a matching lease back to `ELIGIBLE`. The transition is
+    /// metadata-only and remains fenced by the generation supplied by the
+    /// worker.
+    pub(crate) async fn release_object_gc_lease(
+        &self,
+        lease: ObjectGcLease,
+    ) -> Result<GcReleaseMutation, MetadataError> {
+        let mut transaction = self
+            .pool
+            .sqlx_pool()
+            .begin()
+            .await
+            .map_err(MetadataError::from)?;
+        let Some(row) = Self::lock_object_gc_candidate(&mut transaction, lease).await? else {
+            transaction.commit().await.map_err(MetadataError::from)?;
+            return Ok(GcReleaseMutation::CandidateGone);
+        };
+        let candidate = map_object_gc_candidate_row(row)?;
+        if candidate.lease_generation() != lease.lease_generation() {
+            transaction.commit().await.map_err(MetadataError::from)?;
+            return Ok(GcReleaseMutation::StaleLease);
+        }
+        if candidate.state() == ObjectGcCandidateState::Eligible {
+            transaction.commit().await.map_err(MetadataError::from)?;
+            return Ok(GcReleaseMutation::AlreadyReleased);
+        }
+        let Some(stored_lease) = candidate.lease() else {
+            transaction.commit().await.map_err(MetadataError::from)?;
+            return Ok(GcReleaseMutation::StaleLease);
+        };
+        if !same_gc_lease(stored_lease, lease) {
+            transaction.commit().await.map_err(MetadataError::from)?;
+            return Ok(GcReleaseMutation::StaleLease);
+        }
+
+        let updated = sqlx::query(
+            "UPDATE object_gc_candidates
+             SET state = 'ELIGIBLE', lease_id = NULL,
+                 lease_acquired_at = NULL, lease_expires_at = NULL,
+                 validated_at = NULL
+             WHERE object_id = $1
+               AND object_dedup_domain_id = $2
+               AND source = 'METADATA_PURGE'
+               AND lease_id = $3
+               AND lease_generation = $4::NUMERIC
+               AND state IN ('LEASED', 'READY')",
+        )
+        .bind(candidate.object_id().into_uuid())
+        .bind(candidate.dedup_domain_id().into_uuid())
+        .bind(lease.lease_id().into_uuid())
+        .bind(lease.lease_generation().to_string())
+        .execute(&mut *transaction)
+        .await
+        .map_err(MetadataError::from)?;
+        if updated.rows_affected() != 1 {
+            return Err(MetadataError::Mapping(MappingError::RelationMismatch {
+                relation: "object_gc_candidates.release",
+            }));
+        }
+        transaction.commit().await.map_err(MetadataError::from)?;
+        Ok(GcReleaseMutation::Released)
+    }
+
+    /// Revalidate a leased candidate, optionally moving it to the revocable
+    /// `READY` planning state. The Object row is only locked for reference
+    /// truth; no Object or replica row is deleted or updated.
+    pub(crate) async fn revalidate_object_gc_candidate(
+        &self,
+        policy: ObjectGcPolicy,
+        lease: ObjectGcLease,
+        mark_ready: bool,
+    ) -> Result<GcPlanMutation, MetadataError> {
+        let mut transaction = self
+            .pool
+            .sqlx_pool()
+            .begin()
+            .await
+            .map_err(MetadataError::from)?;
+        let Some(row) = Self::lock_object_gc_candidate(&mut transaction, lease).await? else {
+            transaction.commit().await.map_err(MetadataError::from)?;
+            return Ok(GcPlanMutation::CandidateGone);
+        };
+        let now = Self::database_now(&mut transaction).await?;
+        let (grace_cutoff, _lease_expires_at) = gc_time_window(policy, now)?;
+        let candidate = map_object_gc_candidate_row(row)?;
+        let Some(stored_lease) = candidate.lease() else {
+            transaction.commit().await.map_err(MetadataError::from)?;
+            return Ok(GcPlanMutation::StaleLease);
+        };
+        if !same_gc_lease(stored_lease, lease) {
+            transaction.commit().await.map_err(MetadataError::from)?;
+            return Ok(GcPlanMutation::StaleLease);
+        }
+        if stored_lease.lease_expires_at() <= now {
+            transaction.commit().await.map_err(MetadataError::from)?;
+            return Ok(GcPlanMutation::LeaseExpired);
+        }
+        if candidate.unreferenced_at() > grace_cutoff {
+            transaction.commit().await.map_err(MetadataError::from)?;
+            return Ok(GcPlanMutation::GraceNotMature);
+        }
+
+        Self::lock_object_for_gc(
+            &mut transaction,
+            candidate.object_id(),
+            candidate.dedup_domain_id(),
+        )
+        .await?;
+        let validation_now = Self::database_now(&mut transaction).await?;
+        let validation_grace_cutoff = validation_now
+            .checked_sub_std(policy.grace_period())
+            .ok_or(MetadataError::Mapping(MappingError::InvalidTimestamp {
+                field: "object_gc_policy.grace_cutoff",
+            }))?;
+        if stored_lease.lease_expires_at() <= validation_now {
+            transaction.commit().await.map_err(MetadataError::from)?;
+            return Ok(GcPlanMutation::LeaseExpired);
+        }
+        if candidate.unreferenced_at() > validation_grace_cutoff {
+            transaction.commit().await.map_err(MetadataError::from)?;
+            return Ok(GcPlanMutation::GraceNotMature);
+        }
+        if Self::has_object_file_version_reference(
+            &mut transaction,
+            candidate.object_id(),
+            candidate.dedup_domain_id(),
+        )
+        .await?
+        {
+            Self::delete_object_gc_candidate(
+                &mut transaction,
+                candidate.object_id(),
+                candidate.dedup_domain_id(),
+            )
+            .await?;
+            transaction.commit().await.map_err(MetadataError::from)?;
+            return Ok(GcPlanMutation::Invalidated);
+        }
+
+        let state = if mark_ready {
+            ObjectGcCandidateState::Ready
+        } else {
+            candidate.state()
+        };
+        let updated = sqlx::query(
+            "UPDATE object_gc_candidates
+             SET state = $4, validated_at = $5
+             WHERE object_id = $1
+               AND object_dedup_domain_id = $2
+               AND source = 'METADATA_PURGE'
+               AND lease_id = $3
+               AND lease_generation = $6::NUMERIC
+               AND state IN ('LEASED', 'READY')",
+        )
+        .bind(candidate.object_id().into_uuid())
+        .bind(candidate.dedup_domain_id().into_uuid())
+        .bind(lease.lease_id().into_uuid())
+        .bind(state.as_str())
+        .bind(validation_now.as_offset_datetime())
+        .bind(lease.lease_generation().to_string())
+        .execute(&mut *transaction)
+        .await
+        .map_err(MetadataError::from)?;
+        if updated.rows_affected() != 1 {
+            return Err(MetadataError::Mapping(MappingError::RelationMismatch {
+                relation: "object_gc_candidates.revalidate",
+            }));
+        }
+
+        let planned_lease = ObjectGcLease::from_parts(
+            candidate.object_id(),
+            candidate.dedup_domain_id(),
+            stored_lease.lease_id(),
+            stored_lease.lease_generation(),
+            stored_lease.lease_acquired_at(),
+            stored_lease.lease_expires_at(),
+            state,
+        );
+        let planned = ObjectGcCandidate::from_parts(
+            candidate.object_id(),
+            candidate.dedup_domain_id(),
+            candidate.unreferenced_at(),
+            state,
+            candidate.lease_generation(),
+            Some(validation_now),
+            Some(planned_lease),
+        );
+        transaction.commit().await.map_err(MetadataError::from)?;
+        Ok(GcPlanMutation::Valid(planned))
     }
 
     pub async fn insert_node(&self, value: &Node) -> Result<(), MetadataError> {
@@ -1716,11 +2182,183 @@ impl<'pool> DomainRepository<'pool> {
         .map(|_| ())
     }
 
+    async fn database_now(
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> Result<Timestamp, MetadataError> {
+        let now = sqlx::query_scalar::<_, OffsetDateTime>("SELECT clock_timestamp()")
+            .fetch_one(&mut **transaction)
+            .await
+            .map_err(MetadataError::from)?;
+        Ok(Timestamp::from_offset_datetime(now))
+    }
+
+    async fn lock_object_gc_candidate(
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        lease: ObjectGcLease,
+    ) -> Result<Option<ObjectGcCandidateRow>, MetadataError> {
+        sqlx::query_as::<_, ObjectGcCandidateRow>(
+            "SELECT object_id, object_dedup_domain_id, unreferenced_at, source,
+                    state, lease_id, lease_generation::TEXT AS lease_generation,
+                    lease_acquired_at, lease_expires_at, validated_at
+             FROM object_gc_candidates
+             WHERE object_id = $1 AND object_dedup_domain_id = $2
+             FOR UPDATE",
+        )
+        .bind(lease.object_id().into_uuid())
+        .bind(lease.dedup_domain_id().into_uuid())
+        .fetch_optional(&mut **transaction)
+        .await
+        .map_err(MetadataError::from)
+    }
+
+    async fn lock_gc_candidate_row_for_reference(
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        object_id: ObjectId,
+        object_dedup_domain_id: DedupDomainId,
+    ) -> Result<(), MetadataError> {
+        sqlx::query(
+            "SELECT 1
+             FROM object_gc_candidates
+             WHERE object_id = $1 AND object_dedup_domain_id = $2
+             FOR UPDATE",
+        )
+        .bind(object_id.into_uuid())
+        .bind(object_dedup_domain_id.into_uuid())
+        .fetch_optional(&mut **transaction)
+        .await
+        .map_err(MetadataError::from)
+        .map(|_| ())
+    }
+
+    async fn lock_object_for_gc(
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        object_id: ObjectId,
+        object_dedup_domain_id: DedupDomainId,
+    ) -> Result<(), MetadataError> {
+        // Canonical object lock order: candidate row first, then this
+        // advisory lock, then the Object row. The advisory key is derived
+        // only from typed canonical identity; collisions reduce concurrency
+        // but cannot authorize a different object.
+        sqlx::query(
+            "SELECT pg_advisory_xact_lock(
+                hashtextextended($1::TEXT || ':' || $2::TEXT, 0)
+             )",
+        )
+        .bind(object_id.into_uuid())
+        .bind(object_dedup_domain_id.into_uuid())
+        .execute(&mut **transaction)
+        .await
+        .map_err(MetadataError::from)?;
+
+        let object_exists = sqlx::query(
+            "SELECT 1
+             FROM objects
+             WHERE id = $1 AND dedup_domain_id = $2
+             FOR UPDATE",
+        )
+        .bind(object_id.into_uuid())
+        .bind(object_dedup_domain_id.into_uuid())
+        .fetch_optional(&mut **transaction)
+        .await
+        .map_err(MetadataError::from)?
+        .is_some();
+        if !object_exists {
+            return Err(MetadataError::Mapping(MappingError::RelationMismatch {
+                relation: "object_gc_candidates.object",
+            }));
+        }
+        Ok(())
+    }
+
+    async fn has_object_file_version_reference(
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        object_id: ObjectId,
+        object_dedup_domain_id: DedupDomainId,
+    ) -> Result<bool, MetadataError> {
+        sqlx::query_scalar(
+            "SELECT EXISTS(
+                SELECT 1
+                FROM file_versions
+                WHERE object_id = $1 AND object_dedup_domain_id = $2
+            )",
+        )
+        .bind(object_id.into_uuid())
+        .bind(object_dedup_domain_id.into_uuid())
+        .fetch_one(&mut **transaction)
+        .await
+        .map_err(MetadataError::from)
+    }
+
+    async fn delete_object_gc_candidate(
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        object_id: ObjectId,
+        object_dedup_domain_id: DedupDomainId,
+    ) -> Result<(), MetadataError> {
+        sqlx::query(
+            "DELETE FROM object_gc_candidates
+             WHERE object_id = $1
+               AND object_dedup_domain_id = $2
+               AND source = 'METADATA_PURGE'",
+        )
+        .bind(object_id.into_uuid())
+        .bind(object_dedup_domain_id.into_uuid())
+        .execute(&mut **transaction)
+        .await
+        .map_err(MetadataError::from)
+        .map(|_| ())
+    }
+
+    /// Prompt 26 purge execution participates in the same candidate-first,
+    /// canonical-object-second order as GC workers and committed reference
+    /// creation. This closes the candidate/object deadlock cycle without
+    /// weakening the survivor `NOT EXISTS` authority.
+    async fn lock_gc_candidate_rows_for_purge(
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        node_id: NodeId,
+        library_id: LibraryId,
+    ) -> Result<(), MetadataError> {
+        sqlx::query(
+            "SELECT candidate.object_id, candidate.object_dedup_domain_id
+             FROM object_gc_candidates AS candidate
+             WHERE EXISTS (
+                 SELECT 1
+                 FROM file_versions AS version
+                 WHERE version.node_id = $1
+                   AND version.library_id = $2
+                   AND version.object_id = candidate.object_id
+                   AND version.object_dedup_domain_id = candidate.object_dedup_domain_id
+             )
+             ORDER BY candidate.object_id ASC, candidate.object_dedup_domain_id ASC
+             FOR UPDATE OF candidate",
+        )
+        .bind(node_id.into_uuid())
+        .bind(library_id.into_uuid())
+        .execute(&mut **transaction)
+        .await
+        .map_err(MetadataError::from)
+        .map(|_| ())
+    }
+
     pub(crate) async fn clear_object_gc_candidate_in_transaction(
         transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         object_id: ObjectId,
         object_dedup_domain_id: DedupDomainId,
     ) -> Result<(), MetadataError> {
+        // Reference creation and GC/purge all acquire the candidate row before
+        // the canonical object lock. The row may be absent, so the delete after
+        // the advisory lock also closes the absent-at-first-read window for a
+        // candidate committed by another metadata transaction.
+        sqlx::query(
+            "SELECT 1
+             FROM object_gc_candidates
+             WHERE object_id = $1 AND object_dedup_domain_id = $2
+             FOR UPDATE",
+        )
+        .bind(object_id.into_uuid())
+        .bind(object_dedup_domain_id.into_uuid())
+        .fetch_optional(&mut **transaction)
+        .await
+        .map_err(MetadataError::from)?;
         sqlx::query(
             "SELECT pg_advisory_xact_lock(
                 hashtextextended($1::TEXT || ':' || $2::TEXT, 0)
@@ -2110,6 +2748,30 @@ impl<'pool> DomainRepository<'pool> {
     }
 }
 
+fn gc_time_window(
+    policy: ObjectGcPolicy,
+    now: Timestamp,
+) -> Result<(Timestamp, Timestamp), MetadataError> {
+    let grace_cutoff = now
+        .checked_sub_std(policy.grace_period())
+        .ok_or(MetadataError::Mapping(MappingError::InvalidTimestamp {
+            field: "object_gc_policy.grace_cutoff",
+        }))?;
+    let lease_expires_at =
+        now.checked_add_std(policy.lease_duration())
+            .ok_or(MetadataError::Mapping(MappingError::InvalidTimestamp {
+                field: "object_gc_policy.lease_expiry",
+            }))?;
+    Ok((grace_cutoff, lease_expires_at))
+}
+
+fn same_gc_lease(left: ObjectGcLease, right: ObjectGcLease) -> bool {
+    left.object_id() == right.object_id()
+        && left.dedup_domain_id() == right.dedup_domain_id()
+        && left.lease_id() == right.lease_id()
+        && left.lease_generation() == right.lease_generation()
+}
+
 async fn load_ancestors(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     destination: &Node,
@@ -2210,7 +2872,7 @@ async fn load_restore_source_for_update(
             ON o.id = fv.object_id
            AND o.dedup_domain_id = fv.object_dedup_domain_id
          WHERE fv.id = $1 AND fv.node_id = $2 AND fv.library_id = $3
-         FOR UPDATE OF fv, o",
+         FOR UPDATE OF fv",
     )
     .bind(source_version_id.into_uuid())
     .bind(node_id.into_uuid())

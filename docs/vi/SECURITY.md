@@ -27,6 +27,12 @@ chỉ expose version metadata an toàn cùng node concurrency metadata, không e
 object hay replica identity. Bằng chứng bootstrap/session/upload/content-read/
 version-history/restore end-to-end trên PostgreSQL vẫn phụ thuộc môi trường khi
 chưa cấu hình disposable database.
+Physical object GC nội bộ đã **IMPLEMENTED/VALIDATED** với final revalidation
+reference/hold/lease, action replica bền, lifecycle fence và xóa chỉ qua
+ObjectStore. Worker orchestration opt-in nội bộ và đối soát operation bị kẹt đã
+**IMPLEMENTED**; nó không có public route, control xóa dành cho người dùng thông
+thường hay auto-delete orphan vật lý không rõ. Sync, backup và sharing chưa có
+hold producer, vẫn **PLANNED**.
 
 Synveil lưu file cá nhân, backup, ảnh, trạng thái thiết bị, dữ liệu repository,
 credential và thông tin search dẫn xuất. Vì vậy security là điều kiện phát hành,
@@ -209,6 +215,48 @@ public route, không có capability ObjectStore và không có thao tác xóa
 owner/node/revision, không giữ filename, path, content hay credential. Release
 reference và re-reference cross-library được serialize bằng transaction lock
 của database.
+
+### Control physical GC
+
+`ObjectGcPolicy` reject grace/lease zero hoặc không hợp lệ và batch không
+bounded, evaluate grace inclusive theo
+`clock_timestamp()` của PostgreSQL, với default claim 100 và hard maximum 500.
+Transaction claim dùng thứ tự ổn định cùng `FOR UPDATE SKIP LOCKED`, sau đó lock
+candidate row và Object canonical trước khi kiểm tra `NOT EXISTS` với
+`FileVersion` committed đúng identity `(object_id, object_dedup_domain_id)`.
+
+Lease ID là UUIDv7 mờ đục và generation được tăng dưới candidate-row lock.
+Lease chưa hết hạn chặn claim cạnh tranh; lease hết hạn có thể reclaim, còn
+ID/generation cũ không thể renew, release hay revalidate successor. `READY` chỉ
+là metadata planning có thể revoke. FileVersion mới commit sẽ clear candidate
+kể cả row leased/ready theo cùng lock order candidate -> Object. Worker phải
+coi row mất, lease stale hoặc final revalidation fail là cancellation, không
+bao giờ coi đó là quyền xóa byte. Executor ghi operation/action bền trước
+ObjectStore I/O, đặt lifecycle Object là `GC_DELETING`, rồi lặp lại proof
+reference/active-hold/lease/generation ngay trước conditional delete. Outcome
+unknown được đối soát bằng exact-key metadata, không đọc/buffer byte và không
+tin lost response. Metadata ObjectReplica/Object chỉ bị dọn sau confirmed
+absence. Bảng `object_gc_holds` là boundary bắt buộc cho reference class tương
+lai: backup/share/sync phải đăng ký active hold trước khi coexist với physical
+GC.
+
+`GcWorker` opt-in cố ý có quyền ít hơn executor vật lý: nó chỉ sở hữu thứ tự
+cycle và claim có giới hạn, và chỉ có thể tới storage qua service Prompt 28 đã
+được chấp thuận. Nó không nhận path/key tùy ý và không gọi trực tiếp `ObjectStore`
+hay xóa filesystem. Worker identity opaque không phải input correctness;
+PostgreSQL lease/generation fencing vẫn authoritative giữa nhiều process. Config
+reject giá trị cycle/concurrency/retry zero, mâu thuẫn hoặc quá mức; default là
+disabled, cycle 60 giây, hai execution concurrent và một replica delete
+concurrent.
+
+Worker persist attempt count cùng retry deadline theo clock PostgreSQL trên
+replica action. Outage retryable, lease stale và outcome reconciliation-required
+không bao giờ thành success. Evidence mismatch, persisted state không an toàn,
+backend routing không được hỗ trợ và retry cạn chuyển vào `NEEDS_ATTENTION` để
+operator review. Reconciliation chỉ metadata có thể báo durable state mâu thuẫn
+nhưng không recursive-scan storage root hay auto-delete byte vật lý không rõ.
+Khi shutdown nó dừng claim, chỉ có drain window bounded và để fence unfinished
+được revalidate sau restart.
 
 ## Authentication, bootstrap và recovery
 
@@ -577,6 +625,11 @@ Giao job/outbox PostgreSQL là at-least-once, không phải exactly-once. Mỗi 
 Payload job chứa ID mờ đục cùng snapshot policy/version cần thiết, không chứa raw
 password/token hay content lớn. Poison job vẫn nhìn thấy và không spin. Tuổi
 queue, attempt count, dead letter và lease expiry được monitor.
+
+Với GC worker đã implement, logging chỉ gồm error class đã redact và counter/
+status/duration cycle an toàn. Failure của worker hay finding `NEEDS_ATTENTION`
+không làm API public unhealthy, và không có diagnostics endpoint nào được thêm
+như destructive control plane.
 
 ## Mô hình privacy và security của AI
 

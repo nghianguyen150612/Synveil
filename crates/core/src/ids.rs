@@ -146,6 +146,7 @@ domain_id!(NodeId);
 domain_id!(FileVersionId);
 domain_id!(ObjectId);
 domain_id!(ObjectReplicaId);
+domain_id!(ObjectGcOperationId);
 domain_id!(UploadSessionId);
 domain_id!(BackupSetId);
 domain_id!(SnapshotId);

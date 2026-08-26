@@ -2,9 +2,9 @@ use async_trait::async_trait;
 use bytes::Bytes;
 
 use crate::{
-    ByteRange, ByteStream, DeleteOutcome, IntegrityExpectation, ObjectKey, ObjectMetadata,
-    ObjectRead, ObjectStoreError, ObjectVersion, PromotionReceipt, PutRequest, StagedMetadata,
-    StagingHandle, StagingProgress, StorageCapabilities,
+    ByteRange, ByteStream, DeleteOutcome, DeleteReconciliation, IntegrityExpectation, ObjectKey,
+    ObjectMetadata, ObjectRead, ObjectStoreError, ObjectVersion, PromotionReceipt, PutRequest,
+    StagedMetadata, StagingHandle, StagingProgress, StorageCapabilities,
 };
 
 /// Replaceable, backend-neutral binary object store port.
@@ -95,4 +95,19 @@ pub trait ObjectStore: Send + Sync {
         key: &ObjectKey,
         expected_version: &ObjectVersion,
     ) -> Result<DeleteOutcome, ObjectStoreError>;
+
+    /// Inspect the exact key after a delete attempt without guessing from a
+    /// write response. Adapters with a durable partial-delete/tombstone state
+    /// override this method and return `InProgress` until all physical bytes
+    /// are gone. The portable default uses immutable head evidence.
+    async fn reconcile_delete(
+        &self,
+        key: &ObjectKey,
+    ) -> Result<DeleteReconciliation, ObjectStoreError> {
+        match self.metadata(key).await {
+            Ok(metadata) => Ok(DeleteReconciliation::Present(metadata)),
+            Err(ObjectStoreError::NotFound) => Ok(DeleteReconciliation::Absent),
+            Err(error) => Err(error),
+        }
+    }
 }
