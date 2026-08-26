@@ -32,6 +32,15 @@ typed chứng minh transport `Blob`/`ArrayBuffer` raw và progress có thẩm qu
 server. Các test này không thay thế evidence PostgreSQL locking/integration khi
 disposable database chưa có.
 
+Regression capability của upload local mở production filesystem adapter, assert
+profile bắt buộc gồm availability, promotion, checksum, read-after-write, file
+flush, directory flush, atomic-rename và conditional-delete, sau đó tạo upload
+session qua `UploadApplicationService`. Trên Windows, adapter test còn exercise
+directory handle writable và flush được dùng trong capability probe cùng đường
+promotion. Test vẫn bật trên mọi native CI runner; nếu durability probe fail,
+upload phải giữ trạng thái unavailable thay vì đổi thành skip hoặc nới lỏng
+contract.
+
 Focused test của HTTP download route còn bao phủ authentication không cần
 CSRF, owner scoping của current và historical, semantic full `200` cùng
 single-range `206` chính xác, range open-ended/suffix, xử lý `416` deterministic

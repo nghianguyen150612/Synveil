@@ -387,6 +387,9 @@ fn capabilities_report_the_portable_profile_and_known_limits() {
     assert!(capabilities.supports(StorageCapability::RangeReads));
     assert!(capabilities.supports(StorageCapability::ExclusiveCreate));
     assert!(capabilities.supports(StorageCapability::AtomicPromotion));
+    assert!(capabilities.supports(StorageCapability::AtomicRename));
+    assert!(capabilities.supports(StorageCapability::DurableFsync));
+    assert!(capabilities.supports(StorageCapability::DurableFlush));
     assert!(capabilities.supports(StorageCapability::ReadAfterWrite));
     assert!(capabilities.supports(StorageCapability::Checksumming));
     assert!(capabilities.supports(StorageCapability::ConditionalDelete));
