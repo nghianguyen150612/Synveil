@@ -1350,6 +1350,10 @@ async fn collision_missing_source_and_stale_quarantine_fail_closed() {
         LocalIssueKind::LocalNameCollision
     );
     assert!(harness.root.join("File").is_dir());
+    // Case-sensitivity check: on case-insensitive filesystems (macOS APFS default),
+    // "File" and "file" resolve to the same path, so this assertion only applies
+    // on case-sensitive filesystems.
+    #[cfg(target_os = "linux")]
     assert!(!harness.root.join("file").exists());
     drop(engine);
     drop(state);

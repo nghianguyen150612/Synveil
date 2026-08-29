@@ -4610,6 +4610,7 @@ mod tests {
             reopened.schema_version().await.unwrap(),
             LOCAL_SCHEMA_VERSION
         );
+        reopened.close_pool().await;
         drop(reopened);
         remove_dir_all_bounded(&directory).unwrap();
     }
@@ -4641,6 +4642,7 @@ mod tests {
                 .is_ok()
         );
         assert_ne!(other.library_id(), replica_scope.library_id());
+        reopened.close_pool().await;
         drop(reopened);
         remove_dir_all_bounded(&directory).unwrap();
     }
