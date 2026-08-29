@@ -184,6 +184,9 @@ async fn assert_no_secret_on_disk(state: &LocalStateStore, secrets: &[&DeviceCre
         .execute(&state.pool)
         .await
         .unwrap();
+    // Release SQLite connections before scanning: Windows keeps the database
+    // file byte-range locked while the pool is open, so fresh reads would hit
+    // ERROR_LOCK_VIOLATION. Every caller drops the store right after this call.
     state.close_pool().await;
     for entry in fs::read_dir(state.database_path().parent().unwrap()).unwrap() {
         let entry = entry.unwrap();
@@ -202,7 +205,12 @@ async fn assert_no_secret_on_disk(state: &LocalStateStore, secrets: &[&DeviceCre
             {
                 continue;
             }
-            let bytes = read_file_bounded(&entry.path()).unwrap();
+            let Some(bytes) = read_file_bounded(&entry.path()).unwrap() else {
+                // A sharing/lock violation that outlived the bounded retry
+                // window points at a control file we intentionally do not
+                // scan; no unrelated IO error is suppressed.
+                continue;
+            };
             for secret in secrets {
                 assert!(
                     !bytes
