@@ -1025,7 +1025,7 @@ mod tests {
 
     impl Drop for TempDir {
         fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
+            let _ = crate::test_support::remove_dir_all_bounded(&self.0);
         }
     }
 

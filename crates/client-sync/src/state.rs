@@ -932,6 +932,16 @@ impl LocalStateStore {
         &self.database_path
     }
 
+    /// Explicitly close all pooled SQLite connections and flush WAL state.
+    ///
+    /// Call this in tests before removing the database directory to avoid
+    /// Windows sharing/lock violations on WAL/SHM files that SQLite holds
+    /// open asynchronously.
+    #[cfg(test)]
+    pub(crate) async fn close_pool(&self) {
+        self.pool.close().await;
+    }
+
     /// Coordinates inbound filesystem application and outbound reinspection
     /// inside this process. The adjacent `fs2` lock still prevents a second
     /// process from opening the same local state database.
@@ -4563,7 +4573,8 @@ mod tests {
 
     use super::{LocalNode, LocalOperation, LocalOperationKind, LocalStateConfig, LocalStateStore};
     use crate::{
-        LOCAL_SCHEMA_VERSION, ManagedRelativePath, OutboundIntentState, ReplicaScope, RootBindingId,
+        LOCAL_SCHEMA_VERSION, ManagedRelativePath, OutboundIntentState, ReplicaScope,
+        RootBindingId, test_support::remove_dir_all_bounded,
     };
 
     fn temporary_database(label: &str) -> (PathBuf, PathBuf) {
@@ -4600,7 +4611,7 @@ mod tests {
             LOCAL_SCHEMA_VERSION
         );
         drop(reopened);
-        fs::remove_dir_all(directory).unwrap();
+        remove_dir_all_bounded(&directory).unwrap();
     }
 
     #[tokio::test]
@@ -4631,7 +4642,7 @@ mod tests {
         );
         assert_ne!(other.library_id(), replica_scope.library_id());
         drop(reopened);
-        fs::remove_dir_all(directory).unwrap();
+        remove_dir_all_bounded(&directory).unwrap();
     }
 
     #[tokio::test]
@@ -4700,8 +4711,9 @@ mod tests {
             .await
             .is_err()
         );
+        store.close_pool().await;
         drop(store);
-        fs::remove_dir_all(directory).unwrap();
+        remove_dir_all_bounded(&directory).unwrap();
     }
 
     #[tokio::test]
@@ -4806,8 +4818,9 @@ mod tests {
                 .state(),
             OutboundIntentState::ServerApplied
         );
+        store.close_pool().await;
         drop(store);
-        fs::remove_dir_all(directory).unwrap();
+        remove_dir_all_bounded(&directory).unwrap();
     }
 
     #[tokio::test]
@@ -4881,8 +4894,9 @@ mod tests {
                 .as_str(),
             "mới/child"
         );
+        store.close_pool().await;
         drop(store);
-        fs::remove_dir_all(directory).unwrap();
+        remove_dir_all_bounded(&directory).unwrap();
     }
 
     #[tokio::test]
@@ -4977,7 +4991,8 @@ mod tests {
                 .generation(),
             Sequence::new(9)
         );
+        reopened.close_pool().await;
         drop(reopened);
-        fs::remove_dir_all(directory).unwrap();
+        remove_dir_all_bounded(&directory).unwrap();
     }
 }
