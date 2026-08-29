@@ -934,11 +934,13 @@ impl LocalStateStore {
 
     /// Explicitly close all pooled SQLite connections and flush WAL state.
     ///
-    /// Call this in tests before removing the database directory to avoid
-    /// Windows sharing/lock violations on WAL/SHM files that SQLite holds
-    /// open asynchronously.
-    #[cfg(test)]
-    pub(crate) async fn close_pool(&self) {
+    /// This is a deterministic release operation: the pool stops accepting
+    /// work, outstanding connections are returned and closed, and WAL/SHM
+    /// file handles are released so the backing directory can be removed. It
+    /// is primarily used by tests and embedder supervision to avoid Windows
+    /// sharing/lock violations that the asynchronous pool drop does not
+    /// guarantee to clear in time.
+    pub async fn close_pool(&self) {
         self.pool.close().await;
     }
 
