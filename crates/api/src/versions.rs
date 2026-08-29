@@ -23,7 +23,7 @@ use synveil_metadata::{
 
 use crate::{
     ApiError, ApiState, RequestContext,
-    auth::{AuthContext, ResponseMeta},
+    auth::{AuthContext, AuthenticatedPrincipal, ResponseMeta},
 };
 
 /// Fail-closed backend used until a PostgreSQL-backed version-history service
@@ -175,14 +175,14 @@ pub(crate) async fn list_versions(
 
 pub(crate) async fn get_version(
     State(state): State<ApiState>,
-    Extension(auth): Extension<AuthContext>,
+    Extension(auth): Extension<AuthenticatedPrincipal>,
     Extension(context): Extension<RequestContext>,
     Path(version_id): Path<String>,
 ) -> Result<Response, ApiError> {
     let version_id = parse_id::<FileVersionId>(&version_id)?;
     let version = state
         .version_history_backend()
-        .get_file_version_metadata(auth.principal().user_id(), version_id)
+        .get_file_version_metadata(auth.owner_user_id(), version_id)
         .await
         .map_err(map_version_error)?;
     Ok(private_no_store(

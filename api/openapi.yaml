@@ -2,11 +2,12 @@ openapi: 3.1.0
 info:
   title: Synveil API
   version: 0.1.0-blueprint
-  summary: Authenticated metadata, Trash retention status, safe version restore, content-download, and exact-offset resumable upload API contract
+  summary: Device enrollment, scoped bearer authentication, desktop inbound synchronization, browser metadata mutations, and bounded content transport
   description: |
     This is the checked-in OpenAPI contract for the authenticated logical
-    file/folder metadata, immutable version-history metadata, immutable
-    content-download, resumable-upload, and metadata-only Trash retention slices.
+    file/folder metadata, one-way device synchronization, immutable
+    version-history metadata, immutable content-download, resumable-upload,
+    and metadata-only Trash retention slices.
     It records transport-wide conventions, foundation health routes, browser
     authentication transport, the first-run bootstrap boundary, owner-scoped
     library/root/node operations, immutable file-version listing and direct
@@ -33,8 +34,23 @@ info:
     physical-GC pipeline is implemented behind trusted PostgreSQL/ObjectStore
     services and a private opt-in worker, but it has no public HTTP operation,
     scheduling control, or user-facing purge route. Download UI, multi-range
-    responses, synchronization, backup, sharing, device operations, and all
-    public physical-GC controls remain planned. Trash eligibility and the
+    responses, backup, sharing, pairing GUI, and all public physical-GC
+    controls remain planned. One-time enrollment groundwork, scoped revocable
+    device bearer authentication, durable desktop profiles, secure credential
+    persistence and the production HTTP inbound adapter are implemented.
+    One-way server change-feed polling, durable
+    per-device/per-library checkpoints, signed acknowledgment evidence, and a
+    materialized logical snapshot/rebaseline bootstrap are implemented and
+    validated. The snapshot protocol pages an immutable logical manifest and
+    atomically hands off at a journal epoch/sequence cut; it does not transfer
+    file bytes or expose physical storage metadata. The authenticated logical
+    client-mutation route is implemented with durable mutation IDs, canonical
+    fingerprints, explicit base/revision preconditions, deterministic persisted
+    conflicts, and exactly one journal event for each applied mutation. It does
+    not accept file bytes. Automatic conflict resolution: NOT IMPLEMENTED.
+    Last-write-wins, conflict-copy renaming, merge engines, local filesystem
+    watching, outbound mutation generation and client GUI remain deferred.
+    Trash eligibility and the
     internal metadata-only `PURGING` begin transition do not expose a normal
     user-facing purge route.
   contact:
@@ -42,11 +58,14 @@ info:
   license:
     name: MIT
     identifier: MIT
-  x-synveil-status: HTTP_DOWNLOAD_VERSION_TRASH_AND_INTERNAL_GC_IMPLEMENTED
-  x-synveil-gate: SYNVEIL_GC_WORKER_READY
+  x-synveil-status: DESKTOP_PROFILES_ENROLLMENT_DEVICE_AUTH_AND_HTTP_INBOUND_IMPLEMENTED
+  x-synveil-gate: SYNVEIL_DESKTOP_REMOTE_READY
   x-synveil-next-step: |
-    Keep physical GC internal and operator-configured. Do not add a public
-    physical-GC/purge control plane, synchronization, backup, or sharing here.
+    Keep physical GC internal and operator-configured. Client logical mutation
+    submission and optimistic-concurrency conflict detection are implemented;
+    automatic conflict resolution, backup, sharing, watcher/outbound generation
+    and desktop GUI remain out of scope. Prompt 38 captures local observations
+    and durable outbound intent only; it must not automatically submit mutations.
 servers:
   - url: /
     description: Deployment-relative base URL; TLS is supplied by the supported proxy topology.
@@ -55,6 +74,8 @@ tags:
     description: Foundation liveness/readiness probes and restricted health.
   - name: Authentication
     description: Implemented browser-session login, session inspection, CSRF issuance, and logout transport.
+  - name: Device enrollment
+    description: Browser-owner grants and revocation; once-only high-entropy enrollment exchange. No GUI, cookies on desktop, or automatic rotation.
   - name: Bootstrap
     description: Implemented one-time setup status and first-administrator creation; no automatic session issuance.
   - name: Files
@@ -62,10 +83,195 @@ tags:
   - name: Downloads
     description: Implemented authenticated current and historical full or single-range immutable content reads; no multi-range or UI surface.
   - name: Versions
-    description: Implemented authenticated immutable file-version history, safe owner restore, and direct safe metadata lookup; no physical purge or synchronization.
+    description: Implemented authenticated immutable file-version history, safe owner restore, and direct safe metadata lookup; no physical purge operation.
   - name: Uploads
     description: Implemented authenticated, CSRF-protected exact-offset upload sessions with bounded streaming byte append.
+  - name: Synchronization
+    description: Implemented logical snapshot/rebaseline, one-way feed/checkpoints and desktop HTTP inbound sync. Browser-only logical mutations/manual conflicts remain separate; no filesystem watcher, outbound generator or automatic resolution.
 paths:
+  /api/v1/devices/enrollment-grants:
+    post:
+      tags: [Device enrollment]
+      operationId: createDeviceEnrollmentGrant
+      summary: Create one owner-scoped one-time enrollment grant
+      x-synveil-status: IMPLEMENTED
+      x-synveil-max-body-bytes: 2048
+      description: |
+        Browser owner plus CSRF creates a grant for an owned PENDING/ACTIVE
+        Device or a new canonical PENDING Device. Other owners' Devices and
+        PAUSED/REVOKED Devices are rejected. A 256-bit random enrollment token
+        is returned once; PostgreSQL stores its domain-separated digest only.
+        TTL is 600 seconds (schema upper bound 900 seconds), server controlled.
+        No token, cookie, CSRF proof, or bearer may be logged or put in a URL.
+        All responses and errors are private/no-store. Production ingress is HTTPS.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDeviceEnrollmentGrantRequest'
+      responses:
+        '201':
+          description: One-time grant secret; retain only until desktop exchange.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceEnrollmentGrantResponse'
+        '400':
+          $ref: '#/components/responses/DevicePrivateError'
+        '401':
+          $ref: '#/components/responses/DevicePrivateError'
+        '403':
+          $ref: '#/components/responses/DevicePrivateError'
+        '404':
+          $ref: '#/components/responses/DevicePrivateError'
+        '413':
+          $ref: '#/components/responses/DevicePrivateError'
+        '503':
+          $ref: '#/components/responses/DevicePrivateError'
+  /api/v1/device-enrollment/exchange:
+    post:
+      tags: [Device enrollment]
+      operationId: exchangeDeviceEnrollmentGrant
+      summary: Consume a grant and hand off one device bearer exactly once
+      x-synveil-status: IMPLEMENTED
+      x-synveil-max-body-bytes: 2048
+      description: |
+        The high-entropy enrollment token is the sole authority; neither a
+        browser session nor CSRF nor a pre-existing device bearer is required.
+        Over verified HTTPS, one transaction checks scope, TTL, consumption and
+        revocation, activates the canonical PENDING Device if needed, consumes
+        the grant, and stores only a new credential digest. Concurrent/replayed,
+        expired and tampered exchanges cannot issue another credential and use
+        one generic invalid_enrollment error. No automatic retry is permitted.
+        If the response is lost after commit, the owner explicitly calls the
+        Device revoke-all route (also revoking outstanding grants), creates a
+        new grant and re-enrolls the same Device. The old secret is unrecoverable.
+        Desktop persists the credential only in SecretStore, never SQLite.
+        Every response and error is private/no-store. No token examples are supplied.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExchangeDeviceEnrollmentRequest'
+      responses:
+        '201':
+          description: Exactly-once device bearer handoff bound to owner and Device.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceCredentialResponse'
+        '400':
+          $ref: '#/components/responses/DevicePrivateError'
+        '401':
+          $ref: '#/components/responses/DevicePrivateError'
+        '413':
+          $ref: '#/components/responses/DevicePrivateError'
+        '500':
+          $ref: '#/components/responses/DevicePrivateError'
+        '503':
+          $ref: '#/components/responses/DevicePrivateError'
+  /api/v1/devices/{device_id}/credentials/{credential_id}/revoke:
+    post:
+      tags: [Device enrollment]
+      operationId: revokeDeviceCredential
+      summary: Explicitly revoke one owned device credential
+      x-synveil-status: IMPLEMENTED
+      x-synveil-max-body-bytes: 2048
+      description: |
+        Browser owner plus CSRF; exact empty JSON object. Revocation is durable
+        and idempotent for the same owned credential. Every subsequent bearer
+        request checks current DB state. A valid secret proving a revoked
+        credential/Device receives device_revoked; unknown or incorrect bearers
+        receive authentication_failed. No device bearer may invoke this route.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+        - $ref: '#/components/parameters/DeviceCredentialId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceRevokeRequest'
+      responses:
+        '204':
+          description: Credential revoked; existing local replica data is unchanged.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+        '400':
+          $ref: '#/components/responses/DevicePrivateError'
+        '401':
+          $ref: '#/components/responses/DevicePrivateError'
+        '403':
+          $ref: '#/components/responses/DevicePrivateError'
+        '404':
+          $ref: '#/components/responses/DevicePrivateError'
+        '413':
+          $ref: '#/components/responses/DevicePrivateError'
+        '503':
+          $ref: '#/components/responses/DevicePrivateError'
+  /api/v1/devices/{device_id}/credentials/revoke-all:
+    post:
+      tags: [Device enrollment]
+      operationId: revokeAllDeviceCredentials
+      summary: Revoke all credentials and outstanding grants for one owned Device
+      x-synveil-status: IMPLEMENTED
+      x-synveil-max-body-bytes: 2048
+      description: |
+        Browser owner plus CSRF; exact empty JSON object. This is the explicit
+        recovery path after a lost once-only exchange response. It revokes every
+        credential and outstanding grant under the Device lock without revoking
+        the Device itself, allowing a fresh owner-created grant for the same
+        Device. Local forget is separate and never implies offline server revoke.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceRevokeRequest'
+      responses:
+        '204':
+          description: All owned Device credentials and outstanding grants revoked.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+        '400':
+          $ref: '#/components/responses/DevicePrivateError'
+        '401':
+          $ref: '#/components/responses/DevicePrivateError'
+        '403':
+          $ref: '#/components/responses/DevicePrivateError'
+        '404':
+          $ref: '#/components/responses/DevicePrivateError'
+        '413':
+          $ref: '#/components/responses/DevicePrivateError'
+        '503':
+          $ref: '#/components/responses/DevicePrivateError'
   /health/live:
     get:
       tags: [Operations]
@@ -296,9 +502,10 @@ paths:
         route is fail-closed until an authenticated system-health authorizer is
         supplied. It exposes bounded component states only; paths, provider
         URLs, credentials, stack traces, and topology details are excluded.
+        Inbound desktop DeviceBearer credentials do not authorize this route;
+        desktop connection probing uses anonymous readiness plus its checkpoint.
       security:
         - BrowserSession: []
-        - DeviceBearer: []
       responses:
         '200':
           description: Authorized bounded system health.
@@ -392,6 +599,583 @@ paths:
           $ref: '#/components/responses/BootstrapClosed'
         '503':
           $ref: '#/components/responses/BootstrapServiceUnavailable'
+  /api/v1/devices/{device_id}/libraries/{library_id}/checkpoint:
+    get:
+      tags: [Synchronization]
+      operationId: getDeviceLibraryCheckpoint
+      summary: Read or initialize an authenticated device/library checkpoint
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Sync / Metadata / Security
+      description: |
+        Return the durable consumer checkpoint for one existing registered
+        device and one library owned by the authenticated user. The minimal
+        sync-eligible device state is ACTIVE. First use creates a checkpoint
+        at the current journal epoch with acknowledged_sequence=0; it never
+        silently skips to the current journal head. Device IDs and library
+        IDs are not authorization credentials, and inaccessible scopes are
+        concealed as not found.
+      x-synveil-auth-classes: [BROWSER_SESSION, DEVICE_CREDENTIAL]
+      x-synveil-device-auth: Same authenticated Device on scoped routes; active owner, Device and credential checked on every request. Mixed Cookie and Authorization are rejected. Private/no-store for device responses and errors.
+      security:
+        - BrowserSession: []
+        - DeviceBearer: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+        - $ref: '#/components/parameters/LibraryId'
+      responses:
+        '200':
+          description: The durable owner-scoped checkpoint.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncCheckpointResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/devices/{device_id}/libraries/{library_id}/changes:
+    get:
+      tags: [Synchronization]
+      operationId: listDeviceLibraryChanges
+      summary: Read a bounded one-way incremental change-feed page
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Sync / Metadata / Security
+      description: |
+        Read committed logical journal facts after the durable checkpoint in
+        ascending journal sequence order. The page is bounded to a default of
+        100 and a maximum of 500 events, uses keyset semantics through the
+        checkpoint, and returns the repeatable-read high watermark captured
+        with the page. Fetching never advances the checkpoint. A non-empty
+        page includes signed acknowledgment evidence that binds the owner,
+        device, library, epoch, page start, delivered-through sequence, high
+        watermark, and token format version. This is server-to-device polling
+        only; it is not a client mutation or conflict-resolution endpoint.
+      x-synveil-auth-classes: [BROWSER_SESSION, DEVICE_CREDENTIAL]
+      x-synveil-device-auth: Same authenticated Device on scoped routes; active owner, Device and credential checked on every request. Mixed Cookie and Authorization are rejected. Private/no-store for device responses and errors.
+      security:
+        - BrowserSession: []
+        - DeviceBearer: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+        - $ref: '#/components/parameters/LibraryId'
+        - $ref: '#/components/parameters/SyncLimit'
+      responses:
+        '200':
+          description: A bounded ascending logical change page.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncFeedResponse'
+        '400':
+          $ref: '#/components/responses/InvalidSyncRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/SyncRebaselineRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/devices/{device_id}/libraries/{library_id}/changes/ack:
+    post:
+      tags: [Synchronization]
+      operationId: acknowledgeDeviceLibraryChanges
+      summary: Acknowledge one server-delivered change-feed page
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Sync / Metadata / Security
+      x-synveil-max-body-bytes: 2048
+      description: |
+        Verify the bounded signed acknowledgment evidence and advance the
+        durable checkpoint only when the token starts at the current
+        acknowledged sequence and its complete claimed range exists in the
+        current journal epoch. Browser sessions require the existing
+        same-origin CSRF contract; authenticated device bearers do not. Replaying an already-applied
+        valid token returns the current checkpoint without rewinding it;
+        out-of-order or gap-skipping acknowledgments return
+        checkpoint_conflict. Epoch mismatch or history no longer available
+        returns sync_rebaseline_required with safe bootstrap metadata.
+      x-synveil-csrf: Browser cookies require session-bound CSRF and same-origin provenance; a successfully authenticated device bearer does not use CSRF.
+      x-synveil-auth-classes: [BROWSER_SESSION, DEVICE_CREDENTIAL]
+      x-synveil-device-auth: Same authenticated Device on scoped routes; active owner, Device and credential checked on every request. Mixed Cookie and Authorization are rejected. Private/no-store for device responses and errors.
+      security:
+        - BrowserSession: []
+        - DeviceBearer: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+        - $ref: '#/components/parameters/LibraryId'
+        - $ref: '#/components/parameters/BrowserCsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SyncAckRequest'
+      responses:
+        '200':
+          description: The current durable checkpoint after idempotent acknowledgment.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncCheckpointResponse'
+        '400':
+          $ref: '#/components/responses/InvalidSyncRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/SyncConflict'
+        '413':
+          $ref: '#/components/responses/SyncPayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/devices/{device_id}/libraries/{library_id}/rebaseline:
+    post:
+      tags: [Synchronization]
+      operationId: startDeviceLibraryRebaseline
+      summary: Start or retry one logical snapshot bootstrap
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Sync / Metadata / Security
+      x-synveil-max-body-bytes: 2048
+      description: |
+        For an authenticated owner, an ACTIVE registered device, and an owned
+        library, create or safely return the one OPEN bootstrap for this scope.
+        In one PostgreSQL transaction the server captures journal_epoch and
+        snapshot_resume_sequence and materializes the current logical Node
+        projection into an immutable manifest. The canonical root and TRASHED
+        Nodes are included; internal PURGING rows, historical versions, file
+        bytes, object IDs, replicas, storage keys, staging handles, paths,
+        locators, GC state, and credentials are excluded. Start never resets or
+        advances the durable checkpoint. An exact empty JSON object is required;
+        browser sessions also require same-origin CSRF proof.
+      x-synveil-csrf: Browser cookies require session-bound CSRF and same-origin provenance; a successfully authenticated device bearer does not use CSRF.
+      x-synveil-auth-classes: [BROWSER_SESSION, DEVICE_CREDENTIAL]
+      x-synveil-device-auth: Same authenticated Device on scoped routes; active owner, Device and credential checked on every request. Mixed Cookie and Authorization are rejected. Private/no-store for device responses and errors.
+      security:
+        - BrowserSession: []
+        - DeviceBearer: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+        - $ref: '#/components/parameters/LibraryId'
+        - $ref: '#/components/parameters/BrowserCsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RebaselineStartRequest'
+      responses:
+        '200':
+          description: The newly created or safely replayed OPEN bootstrap and its coherent cut.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RebaselineBootstrapResponse'
+        '400':
+          $ref: '#/components/responses/RebaselineInvalidRequest'
+        '401':
+          $ref: '#/components/responses/RebaselineUnauthorized'
+        '403':
+          $ref: '#/components/responses/RebaselineForbidden'
+        '404':
+          $ref: '#/components/responses/RebaselineNotFound'
+        '409':
+          $ref: '#/components/responses/RebaselineConflict'
+        '413':
+          $ref: '#/components/responses/RebaselinePayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/RebaselineInternalError'
+        '503':
+          $ref: '#/components/responses/RebaselineServiceUnavailable'
+  /api/v1/devices/{device_id}/libraries/{library_id}/rebaseline/{bootstrap_id}/nodes:
+    get:
+      tags: [Synchronization]
+      operationId: listDeviceLibraryRebaselineNodes
+      summary: Read one immutable logical snapshot-manifest page
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Sync / Metadata / Security
+      description: |
+        Read up to 200 logical Nodes by default and at most 1000, ordered by
+        immutable node_id keyset. The opaque HMAC cursor is bounded to 320
+        bytes and binds owner, device, library, bootstrap, generation, cut, and
+        last Node ID; possession is never authorization. Repeating the same
+        session/cursor returns the same captured rows, including after a server
+        restart or concurrent live mutations. Page reads never mutate the
+        device checkpoint. Only the actual terminal page returns a completion
+        token, bounded to 336 bytes, proving the immutable manifest terminal.
+        No CSRF proof is required for this authenticated GET.
+      x-synveil-auth-classes: [BROWSER_SESSION, DEVICE_CREDENTIAL]
+      x-synveil-device-auth: Same authenticated Device on scoped routes; active owner, Device and credential checked on every request. Mixed Cookie and Authorization are rejected. Private/no-store for device responses and errors.
+      security:
+        - BrowserSession: []
+        - DeviceBearer: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+        - $ref: '#/components/parameters/LibraryId'
+        - $ref: '#/components/parameters/RebaselineBootstrapId'
+        - $ref: '#/components/parameters/RebaselineCursor'
+        - $ref: '#/components/parameters/RebaselineLimit'
+      responses:
+        '200':
+          description: A bounded deterministic page from the immutable logical manifest.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RebaselineSnapshotPageResponse'
+        '400':
+          $ref: '#/components/responses/RebaselineInvalidRequest'
+        '401':
+          $ref: '#/components/responses/RebaselineUnauthorized'
+        '404':
+          $ref: '#/components/responses/RebaselineNotFound'
+        '409':
+          $ref: '#/components/responses/RebaselineConflict'
+        '410':
+          $ref: '#/components/responses/RebaselineExpired'
+        '500':
+          $ref: '#/components/responses/RebaselineInternalError'
+        '503':
+          $ref: '#/components/responses/RebaselineServiceUnavailable'
+  /api/v1/devices/{device_id}/libraries/{library_id}/rebaseline/{bootstrap_id}/complete:
+    post:
+      tags: [Synchronization]
+      operationId: completeDeviceLibraryRebaseline
+      summary: Atomically replace a checkpoint from terminal snapshot proof
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Sync / Metadata / Security
+      x-synveil-max-body-bytes: 2048
+      description: |
+        Verify the HMAC terminal-page token and current authenticated scope,
+        session state, server-time expiry, generation fence, journal epoch, and
+        retained-history boundary. On success, one transaction sets the
+        device/library checkpoint exactly to snapshot_epoch and
+        snapshot_resume_sequence and marks the bootstrap COMPLETED. It never
+        jumps beyond the cut or rewinds newer progress. A retry after committed
+        response loss returns the completed/current result without a second
+        reset. Subsequent incremental feed events are strictly after the cut.
+        Browser sessions require same-origin CSRF; authenticated device bearers
+        do not. This is not a client mutation or conflict-resolution route.
+      x-synveil-csrf: Browser cookies require session-bound CSRF and same-origin provenance; a successfully authenticated device bearer does not use CSRF.
+      x-synveil-auth-classes: [BROWSER_SESSION, DEVICE_CREDENTIAL]
+      x-synveil-device-auth: Same authenticated Device on scoped routes; active owner, Device and credential checked on every request. Mixed Cookie and Authorization are rejected. Private/no-store for device responses and errors.
+      security:
+        - BrowserSession: []
+        - DeviceBearer: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+        - $ref: '#/components/parameters/LibraryId'
+        - $ref: '#/components/parameters/RebaselineBootstrapId'
+        - $ref: '#/components/parameters/BrowserCsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RebaselineCompleteRequest'
+      responses:
+        '200':
+          description: The exact checkpoint replacement, or its idempotent replay.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RebaselineCompletionResponse'
+        '400':
+          $ref: '#/components/responses/RebaselineInvalidRequest'
+        '401':
+          $ref: '#/components/responses/RebaselineUnauthorized'
+        '403':
+          $ref: '#/components/responses/RebaselineForbidden'
+        '404':
+          $ref: '#/components/responses/RebaselineNotFound'
+        '409':
+          $ref: '#/components/responses/RebaselineConflict'
+        '410':
+          $ref: '#/components/responses/RebaselineExpired'
+        '413':
+          $ref: '#/components/responses/RebaselinePayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/RebaselineInternalError'
+        '503':
+          $ref: '#/components/responses/RebaselineServiceUnavailable'
+  /api/v1/devices/{device_id}/libraries/{library_id}/mutations:
+    post:
+      tags: [Synchronization]
+      operationId: submitDeviceLibraryMutation
+      summary: Submit one durable logical client mutation
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Sync / Metadata / Security
+      x-synveil-max-body-bytes: 16384
+      x-synveil-automatic-conflict-resolution: NOT_IMPLEMENTED
+      description: |
+        Submit exactly one closed-vocabulary logical mutation for an
+        authenticated owner session or scoped desktop DeviceBearer acting on
+        an ACTIVE registered Device and an owned ACTIVE Library. Browser cookie
+        authority requires CSRF; authenticated device bearer authority does not
+        use CSRF and never falls back to cookies. The strict JSON envelope carries a durable
+        client mutation ID, canonical semantic SHA-256 idempotency identity,
+        base journal epoch/sequence, and explicit typed Node revision/parent
+        preconditions. The server is canonical: a stale precondition produces
+        a deterministic persisted `mutation_conflict` and never overwrites a
+        newer Node. A same-ID/same-fingerprint retry returns the exact durable
+        APPLIED or CONFLICT outcome with `replayed=true`; a different
+        fingerprint returns `mutation_id_conflict`. An APPLIED outcome commits
+        the Node mutation, one journal event, and operation result atomically;
+        it never advances the originating Device checkpoint. The endpoint is
+        metadata-only and does not accept file bytes, ObjectStore identities,
+        replica locators, paths, staging handles, credentials, or arbitrary
+        JSON Patch. `automatic conflict resolution: NOT IMPLEMENTED`.
+        Rebaseline-required errors are returned when the epoch or retained
+        history cannot satisfy the submitted base context. Authentication,
+        bounded body parsing, and private/no-store caching are required.
+      security:
+        - BrowserSession: []
+        - DeviceBearer: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+        - $ref: '#/components/parameters/LibraryId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientMutationRequest'
+      responses:
+        '200':
+          description: The applied logical Node and exactly one canonical journal event, or its same-ID durable replay.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientMutationResponse'
+        '400':
+          $ref: '#/components/responses/ClientMutationInvalidRequest'
+        '401':
+          $ref: '#/components/responses/ClientMutationUnauthorized'
+        '403':
+          $ref: '#/components/responses/ClientMutationForbidden'
+        '404':
+          $ref: '#/components/responses/ClientMutationNotFound'
+        '409':
+          $ref: '#/components/responses/ClientMutationConflict'
+        '413':
+          $ref: '#/components/responses/ClientMutationPayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/ClientMutationInternalError'
+        '503':
+          $ref: '#/components/responses/ClientMutationServiceUnavailable'
+  /api/v1/devices/{device_id}/libraries/{library_id}/conflicts:
+    get:
+      tags: [Synchronization]
+      operationId: listOpenDeviceLibraryConflicts
+      summary: List durable OPEN conflicts for one device and library
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Sync / Metadata / Security
+      x-synveil-automatic-conflict-resolution: NOT_IMPLEMENTED
+      description: |
+        Return one bounded, stable page of durable OPEN conflict summaries for
+        the authenticated owner, ACTIVE registered Device, and owned Library.
+        Results use immutable `(created_at DESC, conflict_id DESC)` ordering and
+        an opaque HMAC-authenticated keyset cursor bound to the owner, Device,
+        Library, filter, and ordering key; OFFSET pagination is not used.
+        Conflict identity is never authorization. Cross-owner, wrong-scope, and
+        revoked-Device access is concealed. This read does not mutate canonical
+        state, resolve conflicts, advance a Device checkpoint, or require CSRF.
+        `automatic conflict resolution: NOT IMPLEMENTED`.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+        - $ref: '#/components/parameters/LibraryId'
+        - $ref: '#/components/parameters/ConflictLimit'
+        - $ref: '#/components/parameters/ConflictCursor'
+      responses:
+        '200':
+          description: A bounded device-scoped page containing OPEN conflict evidence summaries only.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConflictListResponse'
+        '400':
+          $ref: '#/components/responses/ConflictInvalidRequest'
+        '401':
+          $ref: '#/components/responses/ConflictUnauthorized'
+        '404':
+          $ref: '#/components/responses/ConflictNotFound'
+        '500':
+          $ref: '#/components/responses/ConflictInternalError'
+        '503':
+          $ref: '#/components/responses/ConflictServiceUnavailable'
+  /api/v1/devices/{device_id}/libraries/{library_id}/conflicts/{conflict_id}:
+    get:
+      tags: [Synchronization]
+      operationId: getDeviceLibraryConflict
+      summary: Inspect immutable durable conflict evidence
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Sync / Metadata / Security
+      x-synveil-automatic-conflict-resolution: NOT_IMPLEMENTED
+      description: |
+        Return the typed original client intent, immutable historical server
+        observation captured at conflict time, current conflict lifecycle, and
+        terminal resolution metadata when present. Historical fields are
+        evidence and are never represented as current canonical Node state;
+        clients must read the canonical Node API before choosing fresh manual
+        preconditions. The authenticated owner must control the ACTIVE Device,
+        Library, and exact conflict scope. CSRF is not required and the response
+        is private/no-store. `automatic conflict resolution: NOT IMPLEMENTED`.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+        - $ref: '#/components/parameters/LibraryId'
+        - $ref: '#/components/parameters/ConflictId'
+      responses:
+        '200':
+          description: Durable conflict evidence with a clearly historical server projection.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConflictDetailResponse'
+        '401':
+          $ref: '#/components/responses/ConflictUnauthorized'
+        '404':
+          $ref: '#/components/responses/ConflictNotFound'
+        '500':
+          $ref: '#/components/responses/ConflictInternalError'
+        '503':
+          $ref: '#/components/responses/ConflictServiceUnavailable'
+  /api/v1/devices/{device_id}/libraries/{library_id}/conflicts/{conflict_id}/resolve:
+    post:
+      tags: [Synchronization]
+      operationId: resolveDeviceLibraryConflict
+      summary: Make one explicit idempotent manual conflict decision
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Sync / Metadata / Security
+      x-synveil-max-body-bytes: 16384
+      x-synveil-automatic-conflict-resolution: NOT_IMPLEMENTED
+      description: |
+        Resolve one OPEN conflict with the explicit `ACCEPT_SERVER` or
+        `APPLY_CLIENT_INTENT` action. `ACCEPT_SERVER` changes only conflict
+        control-plane state to DISMISSED and emits no canonical resource journal
+        event. `APPLY_CLIENT_INTENT` reconstructs the preserved typed intent and
+        requires fresh explicit current revision preconditions, including the
+        current parent/destination revision for MOVE_NODE and RESTORE_NODE. It
+        re-reads current canonical state under the shared Prompt 34 mutation
+        locks and executor. A stale resolution returns `resolution_conflict`,
+        leaves the conflict OPEN, and creates neither a Node change nor a journal
+        event; unsafe epoch/history may return `sync_rebaseline_required`. A
+        purged resource cannot be resurrected. A successful apply atomically
+        commits one canonical Node mutation, exactly one normal resource journal
+        event, the durable resolution result, and conflict RESOLVED state without
+        advancing any Device checkpoint.
+
+        `resolution_id` is a durable UUIDv7 idempotency identity. The canonical
+        SHA-256 fingerprint covers conflict ID, action, and presence/value of
+        every fresh precondition, never raw JSON. Same ID and fingerprint returns
+        the exact original result with `replayed=true`, including timestamp and
+        journal linkage; same ID with different semantics returns
+        `resolution_id_conflict`. A different resolution against terminal state
+        returns `conflict_not_open`. The strict body rejects unknown fields and
+        is limited to 16 KiB. Browser-session authentication, same-origin CSRF,
+        and private/no-store caching are required. No policy chooses an action:
+        `automatic conflict resolution: NOT IMPLEMENTED`.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+        - $ref: '#/components/parameters/LibraryId'
+        - $ref: '#/components/parameters/ConflictId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConflictResolutionRequest'
+      responses:
+        '200':
+          description: The exact committed ACCEPT_SERVER or APPLY_CLIENT_INTENT result, including an idempotent lost-response replay.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConflictResolutionResponse'
+        '400':
+          $ref: '#/components/responses/ConflictInvalidRequest'
+        '401':
+          $ref: '#/components/responses/ConflictUnauthorized'
+        '403':
+          $ref: '#/components/responses/ConflictForbidden'
+        '404':
+          $ref: '#/components/responses/ConflictNotFound'
+        '409':
+          $ref: '#/components/responses/ConflictResolutionConflict'
+        '413':
+          $ref: '#/components/responses/ConflictPayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/ConflictInternalError'
+        '503':
+          $ref: '#/components/responses/ConflictServiceUnavailable'
   /api/v1/libraries:
     get:
       tags: [Files]
@@ -507,8 +1291,11 @@ paths:
       summary: Read safe logical metadata for an owned node
       x-synveil-status: IMPLEMENTED
       x-synveil-owner: Metadata / Rust Backend
+      x-synveil-auth-classes: [BROWSER_SESSION, DEVICE_CREDENTIAL]
+      x-synveil-device-auth: Same authenticated Device on scoped routes; active owner, Device and credential checked on every request. Mixed Cookie and Authorization are rejected. Private/no-store for device responses and errors.
       security:
         - BrowserSession: []
+        - DeviceBearer: []
       parameters:
         - $ref: '#/components/parameters/NodeId'
       responses:
@@ -772,8 +1559,11 @@ paths:
         response without an ID translation step. Unknown, cross-owner,
         trashed, and purging versions are concealed as not found. This read
         does not require a CSRF header and does not open an ObjectStore.
+      x-synveil-auth-classes: [BROWSER_SESSION, DEVICE_CREDENTIAL]
+      x-synveil-device-auth: Same authenticated Device on scoped routes; active owner, Device and credential checked on every request. Mixed Cookie and Authorization are rejected. Private/no-store for device responses and errors.
       security:
         - BrowserSession: []
+        - DeviceBearer: []
       parameters:
         - $ref: '#/components/parameters/VersionId'
       responses:
@@ -816,8 +1606,11 @@ paths:
         `Content-Range: bytes */length`. `If-None-Match` is evaluated from
         immutable SHA-256 metadata before opening the byte stream. This safe
         read does not require a CSRF header.
+      x-synveil-auth-classes: [BROWSER_SESSION, DEVICE_CREDENTIAL]
+      x-synveil-device-auth: Same authenticated Device on scoped routes; active owner, Device and credential checked on every request. Mixed Cookie and Authorization are rejected. Private/no-store for device responses and errors.
       security:
         - BrowserSession: []
+        - DeviceBearer: []
       parameters:
         - $ref: '#/components/parameters/NodeId'
         - $ref: '#/components/parameters/Range'
@@ -910,8 +1703,11 @@ paths:
         `Content-Range: bytes */length`. `If-None-Match` is evaluated from
         immutable SHA-256 metadata before opening the byte stream. This safe
         read does not require a CSRF header.
+      x-synveil-auth-classes: [BROWSER_SESSION, DEVICE_CREDENTIAL]
+      x-synveil-device-auth: Same authenticated Device on scoped routes; active owner, Device and credential checked on every request. Mixed Cookie and Authorization are rejected. Private/no-store for device responses and errors.
       security:
         - BrowserSession: []
+        - DeviceBearer: []
       parameters:
         - $ref: '#/components/parameters/VersionId'
         - $ref: '#/components/parameters/Range'
@@ -998,11 +1794,17 @@ paths:
       x-synveil-max-json-body-bytes: 16384
       description: |
         Freeze either a CREATE_FILE destination or a REPLACE_CONTENT target and
-        its canonical expected revision. The authenticated principal is the
-        owner; no user_id is accepted from the client. Object keys, replica
-        identifiers, staging handles, and physical paths are never returned.
+        its canonical expected revision under a required UUIDv7
+        idempotency_key. A lost create response is recovered by replaying the
+        same key and canonical payload; key reuse with different semantics is a
+        conflict. The authenticated principal is the owner; no user_id is
+        accepted from the client. Browser cookie authority requires CSRF on
+        this state-changing route; authenticated device bearer authority does
+        not. Object keys, replica identifiers, staging handles, and physical
+        paths are never returned.
       security:
         - BrowserSession: []
+        - DeviceBearer: []
       parameters:
         - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
@@ -1051,9 +1853,11 @@ paths:
       description: |
         Return the owner-scoped upload projection and Upload-Offset header.
         Clients use this operation after any ambiguous PATCH outcome and resume
-        from received_bytes. This safe read does not require a CSRF header.
+        from received_bytes. Browser sessions and device bearers are both
+        accepted; this safe read does not require a CSRF header.
       security:
         - BrowserSession: []
+        - DeviceBearer: []
       parameters:
         - $ref: '#/components/parameters/UploadSessionId'
       responses:
@@ -1096,8 +1900,11 @@ paths:
         the client receives the response. The recovery contract is always GET
         status, accept its Upload-Offset/received_bytes value as canonical, and
         resume from there. Never replay blindly or increment progress locally.
+        Browser cookie authority requires CSRF; authenticated device bearer
+        authority does not use CSRF.
       security:
         - BrowserSession: []
+        - DeviceBearer: []
       parameters:
         - $ref: '#/components/parameters/UploadSessionId'
         - $ref: '#/components/parameters/UploadOffset'
@@ -1151,10 +1958,12 @@ paths:
         Delegate completion to the validated upload application service. It
         verifies expected length and optional SHA-256, reconciles ambiguous
         promotion, rechecks REPLACE_CONTENT revision, and returns the same
-        canonical completion on a successful retry. HTTP code does not write
+        canonical completion on a successful retry. Browser cookie authority
+        requires CSRF; authenticated device bearer authority does not. HTTP code does not write
         object, FileVersion, or replica rows directly.
       security:
         - BrowserSession: []
+        - DeviceBearer: []
       parameters:
         - $ref: '#/components/parameters/UploadSessionId'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -1195,9 +2004,12 @@ paths:
       x-synveil-owner: Storage / Uploads, Rust Backend
       description: |
         Request abort through the owner-scoped upload service. A repeat is safe.
-        API code never removes staging files or committed recoverable content.
+        Browser cookie authority requires CSRF; authenticated device bearer
+        authority does not. API code never removes staging files or committed
+        recoverable content.
       security:
         - BrowserSession: []
+        - DeviceBearer: []
       parameters:
         - $ref: '#/components/parameters/UploadSessionId'
         - $ref: '#/components/parameters/CsrfHeader'
@@ -1227,6 +2039,37 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
 components:
   parameters:
+    DeviceCredentialId:
+      name: credential_id
+      in: path
+      required: true
+      description: Non-secret UUIDv7 device credential identity; not bearer authority.
+      schema:
+        $ref: '#/components/schemas/OpaqueId'
+    BrowserCsrfHeader:
+      name: X-CSRF-Token
+      in: header
+      required: false
+      description: Required with browser-session cookie authority on this POST; not required for an actually authenticated device bearer. Invalid or mixed bearer requests never fall back to cookie/CSRF authority.
+      schema:
+        type: string
+        minLength: 128
+        maxLength: 128
+        pattern: '^[A-Fa-f0-9]{128}$'
+    DeviceId:
+      name: device_id
+      in: path
+      required: true
+      description: Opaque UUIDv7 registered device identifier; possession is not authorization and the device must belong to the current principal.
+      schema:
+        $ref: '#/components/schemas/OpaqueId'
+    ConflictId:
+      name: conflict_id
+      in: path
+      required: true
+      description: Opaque UUIDv7 durable conflict identifier; possession is never authorization and exact owner, ACTIVE Device, and Library scope is rechecked.
+      schema:
+        $ref: '#/components/schemas/OpaqueId'
     UploadSessionId:
       name: upload_session_id
       in: path
@@ -1289,6 +2132,64 @@ components:
         minimum: 1
         maximum: 100
         default: 50
+    ConflictLimit:
+      name: limit
+      in: query
+      required: false
+      description: Bounded OPEN-conflict page size; canonical unsigned decimal text only.
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 100
+        default: 50
+    ConflictCursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque bounded HMAC-authenticated keyset cursor bound to owner, Device, Library, OPEN filter, and immutable descending order key; never authorization.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 384
+    SyncLimit:
+      name: limit
+      in: query
+      required: false
+      description: Bounded incremental-feed page size; the server default is 100 and the maximum is 500.
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 500
+        default: 100
+    RebaselineBootstrapId:
+      name: bootstrap_id
+      in: path
+      required: true
+      description: Opaque UUIDv7 identity for one owner/device/library logical bootstrap session; it is never an authorization credential.
+      schema:
+        $ref: '#/components/schemas/OpaqueId'
+    RebaselineCursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque HMAC-protected keyset cursor for this exact bootstrap scope, generation, cut, and last immutable Node ID.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 320
+    RebaselineLimit:
+      name: limit
+      in: query
+      required: false
+      description: Bounded logical-manifest page size; the server default is 200 and the maximum is 1000.
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 1000
+        default: 200
     IfMatch:
       name: If-Match
       in: header
@@ -1345,8 +2246,16 @@ components:
     DeviceBearer:
       type: http
       scheme: bearer
-      bearerFormat: opaque
-      description: Scoped, rotatable, revocable device credential; never a password or URL parameter.
+      bearerFormat: svd1_ followed by 64 lowercase hexadecimal characters
+      description: |
+        Implemented 256-bit random opaque credential scoped to exactly one
+        owner and Device. Only domain-separated SHA-256 verifiers are durable
+        server-side; desktop uses OS SecretStore. Revoked/non-ACTIVE Devices,
+        inactive owners, and revoked credentials fail on the next request.
+        No positive auth cache, cookie jar, automatic rotation or URL tokens.
+        Only explicitly marked inbound routes permit this class; mutation,
+        conflict inspection/resolution, upload and browser/admin routes do not.
+        Verified HTTPS is mandatory; desktop redirects and proxies are disabled.
     PublicShareContext:
       type: apiKey
       in: cookie
@@ -1414,6 +2323,350 @@ components:
         type: string
         pattern: '^/api/v1/upload-sessions/[0-9a-f-]{36}$'
   responses:
+    DevicePrivateError:
+      description: |
+        Stable safe error envelope; private/no-store. invalid_enrollment is
+        generic for malformed, expired, consumed or revoked grants (401).
+        authentication_failed is an unknown/incorrect bearer (401);
+        device_revoked is disclosed only after valid bearer proof (401).
+        Browser CSRF failures use permission_denied (403); inaccessible
+        owner/Device/credential scopes use not_found (404). Invalid JSON uses
+        invalid_request (400), over 2048 bytes uses payload_too_large (413),
+        and unavailable dependencies use internal_dependency_unavailable (503).
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RebaselineInvalidRequest:
+      description: The scope/body is invalid, limit is outside 1..1000, cursor is malformed/oversized/tampered, or completion token is malformed/oversized/tampered. Stable codes include invalid_request, invalid_limit, invalid_cursor, and invalid_bootstrap_token.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RebaselineUnauthorized:
+      description: Authentication is absent or invalid; the stable code is authentication_failed.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RebaselineForbidden:
+      description: The state-changing request lacks valid same-origin CSRF evidence; the stable code is permission_denied.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RebaselineNotFound:
+      description: The currently authenticated owner cannot access an ACTIVE device, library, or bootstrap in this exact scope; cross-owner and revoked-device cases are concealed with not_found.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RebaselineConflict:
+      description: Newer checkpoint/generation progress fenced this bootstrap, or the captured epoch/retention boundary is no longer usable. Stable codes are bootstrap_conflict and sync_rebaseline_required.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RebaselineExpired:
+      description: PostgreSQL/server time has expired the OPEN bootstrap; the stable code is bootstrap_expired and its proof cannot replace a checkpoint.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RebaselinePayloadTooLarge:
+      description: The start or complete JSON body exceeds the 2048-byte transport limit; the stable code is payload_too_large.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RebaselineInternalError:
+      description: Persisted bootstrap data is invalid or an internal invariant failed; stable codes are invalid_persisted_data and internal_error, and no physical detail is exposed.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RebaselineServiceUnavailable:
+      description: PostgreSQL or another required dependency is unavailable; the stable code is dependency_unavailable without topology or credentials.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InvalidSyncRequest:
+      description: The synchronization scope, bounded feed limit, or signed acknowledgment token is invalid.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    SyncConflict:
+      description: The checkpoint cannot accept this acknowledgment because it is out of order or the journal requires rebaseline.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    SyncRebaselineRequired:
+      description: The current journal epoch or retained history cannot satisfy incremental synchronization; start the implemented logical rebaseline bootstrap to establish a new baseline.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    SyncPayloadTooLarge:
+      description: The signed acknowledgment JSON body exceeds the 2048-byte transport limit.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ClientMutationInvalidRequest:
+      description: The strict typed mutation envelope, canonical UUID/decimal/name field, or closed mutation kind is invalid; the stable code is invalid_mutation.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ClientMutationUnauthorized:
+      description: Authentication is absent or invalid; the stable code is authentication_failed.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ClientMutationForbidden:
+      description: The state-changing request lacks valid same-origin CSRF evidence; the stable code is permission_denied.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ClientMutationNotFound:
+      description: The authenticated owner cannot access the exact ACTIVE device/library scope; cross-owner, unknown, and revoked-device cases are concealed with not_found.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ClientMutationConflict:
+      description: The typed mutation has a durable optimistic-concurrency conflict, the mutation ID was reused with a different fingerprint, or the base epoch/retention context requires rebaseline. Stable codes are mutation_conflict, mutation_id_conflict, and sync_rebaseline_required; no canonical mutation or journal event is created for a resource conflict.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ClientMutationPayloadTooLarge:
+      description: The strict JSON client-mutation envelope exceeds the 16 KiB body limit; the stable code is payload_too_large.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ClientMutationInternalError:
+      description: Persisted mutation-operation data or an internal invariant is invalid; stable codes are invalid_persisted_data and internal_error, and no SQL/physical detail is exposed.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ClientMutationServiceUnavailable:
+      description: PostgreSQL or another required mutation dependency is unavailable; the stable code is dependency_unavailable without topology, SQL, or credentials.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ConflictInvalidRequest:
+      description: The list limit/cursor, strict resolution body, UUID, action, or action-specific fresh precondition shape is invalid. Stable codes are invalid_limit, invalid_cursor, invalid_request, and invalid_conflict_resolution.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ConflictUnauthorized:
+      description: Authentication is absent or invalid; the stable code is authentication_failed.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ConflictForbidden:
+      description: The state-changing resolution request lacks valid same-origin CSRF evidence; the stable code is permission_denied. GET inspection routes do not require CSRF.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ConflictNotFound:
+      description: The authenticated owner cannot access the exact ACTIVE Device, Library, and conflict scope; cross-owner, wrong-scope, unknown, and revoked-Device cases are concealed with not_found.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ConflictResolutionConflict:
+      description: The durable resolution ID has different semantics, the conflict is already terminal, fresh preconditions became stale, or current epoch/history requires rebaseline. Stable codes are resolution_id_conflict, conflict_not_open, resolution_conflict, and sync_rebaseline_required. A stale resolution leaves the conflict OPEN with zero canonical mutation and zero journal event.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ConflictPayloadTooLarge:
+      description: The strict JSON resolution envelope exceeds the 16 KiB body limit; the stable code is payload_too_large.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ConflictInternalError:
+      description: Persisted conflict/resolution data is invalid or an internal invariant failed; stable codes are invalid_persisted_data and internal_error, and no SQL, lock, name, path, or physical-storage detail is exposed.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ConflictServiceUnavailable:
+      description: PostgreSQL or another required conflict-management dependency is unavailable; the stable code is dependency_unavailable without topology, SQL, credentials, or internal lock detail.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     InvalidRequest:
       description: The request body or bounded input is invalid.
       headers:
@@ -1683,6 +2936,899 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
   schemas:
+    CreateDeviceEnrollmentGrantRequest:
+      type: object
+      additionalProperties: false
+      required: [target]
+      properties:
+        target:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [kind, device_id]
+              properties:
+                kind:
+                  type: string
+                  const: existing
+                device_id:
+                  $ref: '#/components/schemas/OpaqueId'
+            - type: object
+              additionalProperties: false
+              required: [kind, display_name]
+              properties:
+                kind:
+                  type: string
+                  const: new
+                display_name:
+                  type: string
+                  minLength: 1
+                  maxLength: 1024
+                  description: Canonical Device logical display name, within the aggregate 2048-byte JSON limit.
+    ExchangeDeviceEnrollmentRequest:
+      type: object
+      additionalProperties: false
+      required: [enrollment_token]
+      properties:
+        enrollment_token:
+          type: string
+          minLength: 69
+          maxLength: 69
+          pattern: '^sve1_[0-9a-f]{64}$'
+          writeOnly: true
+          description: High-entropy once-only grant secret; never a short numeric pairing code or URL parameter.
+    DeviceEnrollmentGrantResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        data:
+          type: object
+          additionalProperties: false
+          required: [grant_id, owner_user_id, device_id, enrollment_token, created_at, expires_at]
+          properties:
+            grant_id:
+              $ref: '#/components/schemas/OpaqueId'
+            owner_user_id:
+              $ref: '#/components/schemas/OpaqueId'
+            device_id:
+              $ref: '#/components/schemas/OpaqueId'
+            enrollment_token:
+              type: string
+              minLength: 69
+              maxLength: 69
+              pattern: '^sve1_[0-9a-f]{64}$'
+              readOnly: true
+              description: Returned once. Secret storage/export, logs and URLs are forbidden.
+            created_at:
+              type: string
+              format: date-time
+            expires_at:
+              type: string
+              format: date-time
+              description: Server-created timestamp plus 600 seconds; inclusive expiry rejects exchange.
+    DeviceCredentialResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        data:
+          type: object
+          additionalProperties: false
+          required: [owner_user_id, device_id, credential_id, device_credential, created_at]
+          properties:
+            owner_user_id:
+              $ref: '#/components/schemas/OpaqueId'
+            device_id:
+              $ref: '#/components/schemas/OpaqueId'
+            credential_id:
+              $ref: '#/components/schemas/OpaqueId'
+            device_credential:
+              type: string
+              minLength: 69
+              maxLength: 69
+              pattern: '^svd1_[0-9a-f]{64}$'
+              readOnly: true
+              description: Returned exactly once; desktop must store only in secure SecretStore.
+            created_at:
+              type: string
+              format: date-time
+    DeviceRevokeRequest:
+      type: object
+      additionalProperties: false
+      maxProperties: 0
+    ClientMutationRequest:
+      oneOf:
+        - $ref: '#/components/schemas/ClientMutationCreateDirectoryRequest'
+        - $ref: '#/components/schemas/ClientMutationRenameRequest'
+        - $ref: '#/components/schemas/ClientMutationMoveRequest'
+        - $ref: '#/components/schemas/ClientMutationTrashRequest'
+        - $ref: '#/components/schemas/ClientMutationRestoreRequest'
+      discriminator:
+        propertyName: kind
+        mapping:
+          CREATE_DIRECTORY: '#/components/schemas/ClientMutationCreateDirectoryRequest'
+          RENAME_NODE: '#/components/schemas/ClientMutationRenameRequest'
+          MOVE_NODE: '#/components/schemas/ClientMutationMoveRequest'
+          TRASH_NODE: '#/components/schemas/ClientMutationTrashRequest'
+          RESTORE_NODE: '#/components/schemas/ClientMutationRestoreRequest'
+      description: One strict envelope for exactly one typed logical mutation; arbitrary JSON Patch and file bytes are not accepted.
+    ClientMutationCreateDirectoryRequest:
+      type: object
+      additionalProperties: false
+      required: [mutation_id, base_epoch, base_sequence, kind, payload]
+      properties:
+        mutation_id:
+          $ref: '#/components/schemas/ClientMutationId'
+        base_epoch:
+          $ref: '#/components/schemas/U64Decimal'
+        base_sequence:
+          $ref: '#/components/schemas/U64Decimal'
+        kind:
+          type: string
+          const: CREATE_DIRECTORY
+        payload:
+          $ref: '#/components/schemas/ClientMutationCreateDirectoryPayload'
+    ClientMutationRenameRequest:
+      type: object
+      additionalProperties: false
+      required: [mutation_id, base_epoch, base_sequence, kind, payload]
+      properties:
+        mutation_id:
+          $ref: '#/components/schemas/ClientMutationId'
+        base_epoch:
+          $ref: '#/components/schemas/U64Decimal'
+        base_sequence:
+          $ref: '#/components/schemas/U64Decimal'
+        kind:
+          type: string
+          const: RENAME_NODE
+        payload:
+          $ref: '#/components/schemas/ClientMutationRenamePayload'
+    ClientMutationMoveRequest:
+      type: object
+      additionalProperties: false
+      required: [mutation_id, base_epoch, base_sequence, kind, payload]
+      properties:
+        mutation_id:
+          $ref: '#/components/schemas/ClientMutationId'
+        base_epoch:
+          $ref: '#/components/schemas/U64Decimal'
+        base_sequence:
+          $ref: '#/components/schemas/U64Decimal'
+        kind:
+          type: string
+          const: MOVE_NODE
+        payload:
+          $ref: '#/components/schemas/ClientMutationMovePayload'
+    ClientMutationTrashRequest:
+      type: object
+      additionalProperties: false
+      required: [mutation_id, base_epoch, base_sequence, kind, payload]
+      properties:
+        mutation_id:
+          $ref: '#/components/schemas/ClientMutationId'
+        base_epoch:
+          $ref: '#/components/schemas/U64Decimal'
+        base_sequence:
+          $ref: '#/components/schemas/U64Decimal'
+        kind:
+          type: string
+          const: TRASH_NODE
+        payload:
+          $ref: '#/components/schemas/ClientMutationTrashPayload'
+    ClientMutationRestoreRequest:
+      type: object
+      additionalProperties: false
+      required: [mutation_id, base_epoch, base_sequence, kind, payload]
+      properties:
+        mutation_id:
+          $ref: '#/components/schemas/ClientMutationId'
+        base_epoch:
+          $ref: '#/components/schemas/U64Decimal'
+        base_sequence:
+          $ref: '#/components/schemas/U64Decimal'
+        kind:
+          type: string
+          const: RESTORE_NODE
+        payload:
+          $ref: '#/components/schemas/ClientMutationRestorePayload'
+    ClientMutationCreateDirectoryPayload:
+      type: object
+      additionalProperties: false
+      required: [parent_node_id, expected_parent_revision, name]
+      properties:
+        parent_node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        expected_parent_revision:
+          $ref: '#/components/schemas/U64Decimal'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: Logical name only; it is not a filesystem path.
+    ClientMutationRenamePayload:
+      type: object
+      additionalProperties: false
+      required: [node_id, expected_revision, new_name]
+      properties:
+        node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        expected_revision:
+          $ref: '#/components/schemas/U64Decimal'
+        new_name:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: Logical name only; it is not a filesystem path.
+    ClientMutationMovePayload:
+      type: object
+      additionalProperties: false
+      required: [node_id, expected_revision, new_parent_node_id, expected_new_parent_revision]
+      properties:
+        node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        expected_revision:
+          $ref: '#/components/schemas/U64Decimal'
+        new_parent_node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        expected_new_parent_revision:
+          $ref: '#/components/schemas/U64Decimal'
+    ClientMutationTrashPayload:
+      type: object
+      additionalProperties: false
+      required: [node_id, expected_revision]
+      properties:
+        node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        expected_revision:
+          $ref: '#/components/schemas/U64Decimal'
+    ClientMutationRestorePayload:
+      type: object
+      additionalProperties: false
+      required: [node_id, expected_revision, expected_parent_node_id, expected_parent_revision]
+      properties:
+        node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        expected_revision:
+          $ref: '#/components/schemas/U64Decimal'
+        expected_parent_node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        expected_parent_revision:
+          $ref: '#/components/schemas/U64Decimal'
+    ClientMutationKind:
+      type: string
+      enum: [CREATE_DIRECTORY, RENAME_NODE, MOVE_NODE, TRASH_NODE, RESTORE_NODE]
+    ClientMutationResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/ClientMutationAppliedData'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    ClientMutationAppliedData:
+      type: object
+      additionalProperties: false
+      required: [outcome, mutation_id, kind, replayed, node, journal_event_id, journal_sequence]
+      properties:
+        outcome:
+          type: string
+          const: APPLIED
+        mutation_id:
+          $ref: '#/components/schemas/ClientMutationId'
+        kind:
+          $ref: '#/components/schemas/ClientMutationKind'
+        replayed:
+          type: boolean
+          description: True when the committed operation result is returned after a retry or lost response.
+        node:
+          $ref: '#/components/schemas/ClientMutationNode'
+        journal_event_id:
+          $ref: '#/components/schemas/OpaqueId'
+        journal_sequence:
+          $ref: '#/components/schemas/U64Decimal'
+    ClientMutationNode:
+      type: object
+      additionalProperties: false
+      required: [id, library_id, kind, state, name, revision, created_at, updated_at]
+      properties:
+        id:
+          $ref: '#/components/schemas/OpaqueId'
+        library_id:
+          $ref: '#/components/schemas/OpaqueId'
+        parent_node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        kind:
+          type: string
+          enum: [FILE, DIRECTORY]
+        state:
+          type: string
+          enum: [ACTIVE, TRASHED]
+        name:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        revision:
+          $ref: '#/components/schemas/U64Decimal'
+        current_version_id:
+          $ref: '#/components/schemas/OpaqueId'
+        trashed_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ClientMutationConflictDetails:
+      type: object
+      additionalProperties: false
+      required: [outcome, replayed, conflict_id, reason, resource_id, server_epoch, server_sequence]
+      properties:
+        outcome:
+          type: string
+          const: CONFLICT
+        replayed:
+          type: boolean
+        conflict_id:
+          $ref: '#/components/schemas/SyncConflictId'
+        reason:
+          type: string
+          enum: [REVISION_MISMATCH, NODE_STATE_CHANGED, PARENT_CHANGED, NAME_OCCUPIED, DESTINATION_CHANGED, RESOURCE_PURGED]
+        resource_id:
+          $ref: '#/components/schemas/OpaqueId'
+        expected_revision:
+          $ref: '#/components/schemas/U64Decimal'
+        current_revision:
+          $ref: '#/components/schemas/U64Decimal'
+        current_state:
+          type: string
+          enum: [ACTIVE, TRASHED, PURGING]
+        current_parent_id:
+          $ref: '#/components/schemas/OpaqueId'
+        current_name:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        server_epoch:
+          $ref: '#/components/schemas/U64Decimal'
+        server_sequence:
+          $ref: '#/components/schemas/U64Decimal'
+    ClientMutationId:
+      allOf:
+        - $ref: '#/components/schemas/OpaqueId'
+      description: Durable UUIDv7 identity scoped to owner, registered device, and library; reuse with a different canonical fingerprint is rejected.
+    SyncConflictId:
+      allOf:
+        - $ref: '#/components/schemas/OpaqueId'
+      description: Durable UUIDv7 conflict identity scoped to one owner, originating Device, and Library; possession is never authorization.
+    ConflictResolutionId:
+      allOf:
+        - $ref: '#/components/schemas/OpaqueId'
+      description: Durable UUIDv7 manual-decision idempotency identity; reuse with a different canonical typed fingerprint is rejected.
+    ConflictLifecycle:
+      type: string
+      enum: [OPEN, RESOLVED, DISMISSED]
+      description: Closed durable lifecycle; OPEN never transitions automatically.
+    ConflictReason:
+      type: string
+      enum: [REVISION_MISMATCH, NODE_STATE_CHANGED, PARENT_CHANGED, NAME_OCCUPIED, DESTINATION_CHANGED, RESOURCE_PURGED]
+    ConflictResolutionAction:
+      type: string
+      enum: [ACCEPT_SERVER, APPLY_CLIENT_INTENT]
+      description: Explicit manual action only; no automatic selection policy exists.
+    ConflictListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/ConflictListData'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    ConflictListData:
+      type: object
+      additionalProperties: false
+      required: [conflicts, page]
+      properties:
+        conflicts:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ConflictSummary'
+        page:
+          $ref: '#/components/schemas/ConflictPage'
+    ConflictPage:
+      type: object
+      additionalProperties: false
+      required: [has_more]
+      properties:
+        has_more:
+          type: boolean
+        next_cursor:
+          type: string
+          minLength: 1
+          maxLength: 384
+          description: Opaque HMAC-authenticated cursor for the next immutable keyset page; omitted on the terminal page.
+    ConflictSummary:
+      type: object
+      additionalProperties: false
+      required: [conflict_id, original_client_mutation_id, mutation_kind, resource_id, reason, lifecycle, created_at]
+      properties:
+        conflict_id:
+          $ref: '#/components/schemas/SyncConflictId'
+        original_client_mutation_id:
+          $ref: '#/components/schemas/ClientMutationId'
+        mutation_kind:
+          $ref: '#/components/schemas/ClientMutationKind'
+        resource_id:
+          $ref: '#/components/schemas/OpaqueId'
+        reason:
+          $ref: '#/components/schemas/ConflictReason'
+        lifecycle:
+          type: string
+          const: OPEN
+        created_at:
+          type: string
+          format: date-time
+    ConflictDetailResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/ConflictDetailData'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    ConflictDetailData:
+      type: object
+      additionalProperties: false
+      required: [conflict_id, original_client_mutation_id, mutation_kind, resource_id, reason, lifecycle, created_at, original_intent, historical_server_observation]
+      properties:
+        conflict_id:
+          $ref: '#/components/schemas/SyncConflictId'
+        original_client_mutation_id:
+          $ref: '#/components/schemas/ClientMutationId'
+        mutation_kind:
+          $ref: '#/components/schemas/ClientMutationKind'
+        resource_id:
+          $ref: '#/components/schemas/OpaqueId'
+        reason:
+          $ref: '#/components/schemas/ConflictReason'
+        lifecycle:
+          $ref: '#/components/schemas/ConflictLifecycle'
+        created_at:
+          type: string
+          format: date-time
+        original_intent:
+          $ref: '#/components/schemas/ConflictOriginalIntent'
+        historical_server_observation:
+          $ref: '#/components/schemas/ConflictHistoricalObservation'
+        terminal_resolution:
+          $ref: '#/components/schemas/ConflictTerminalResolution'
+    ConflictOriginalIntent:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      description: Closed safe projection of the original Prompt 34 semantic intent; no raw request JSON or physical storage metadata.
+      properties:
+        kind:
+          $ref: '#/components/schemas/ClientMutationKind'
+        node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        parent_node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        requested_parent_id:
+          $ref: '#/components/schemas/OpaqueId'
+        expected_revision:
+          $ref: '#/components/schemas/U64Decimal'
+        expected_parent_revision:
+          $ref: '#/components/schemas/U64Decimal'
+        requested_name:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: Logical name only; never a filesystem path.
+    ConflictHistoricalObservation:
+      type: object
+      additionalProperties: false
+      required: [resource_id, reason, server_epoch_at_conflict, server_sequence_at_conflict]
+      description: Immutable evidence captured when the original mutation conflicted; these fields are explicitly not current canonical truth.
+      properties:
+        resource_id:
+          $ref: '#/components/schemas/OpaqueId'
+        reason:
+          $ref: '#/components/schemas/ConflictReason'
+        original_expected_revision:
+          $ref: '#/components/schemas/U64Decimal'
+        server_revision_at_conflict:
+          $ref: '#/components/schemas/U64Decimal'
+        server_state_at_conflict:
+          type: string
+          enum: [ACTIVE, TRASHED, PURGING]
+        server_parent_id_at_conflict:
+          $ref: '#/components/schemas/OpaqueId'
+        server_name_at_conflict:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        server_epoch_at_conflict:
+          $ref: '#/components/schemas/U64Decimal'
+        server_sequence_at_conflict:
+          $ref: '#/components/schemas/U64Decimal'
+    ConflictTerminalResolution:
+      type: object
+      additionalProperties: false
+      required: [resolution_id, action, completed_at]
+      description: Present only for a terminal conflict; journal fields exist only for a successful APPLY_CLIENT_INTENT.
+      properties:
+        resolution_id:
+          $ref: '#/components/schemas/ConflictResolutionId'
+        action:
+          $ref: '#/components/schemas/ConflictResolutionAction'
+        completed_at:
+          type: string
+          format: date-time
+        journal_event_id:
+          $ref: '#/components/schemas/OpaqueId'
+        journal_sequence:
+          $ref: '#/components/schemas/U64Decimal'
+    ConflictResolutionRequest:
+      oneOf:
+        - $ref: '#/components/schemas/AcceptServerResolutionRequest'
+        - $ref: '#/components/schemas/ApplyClientIntentResolutionRequest'
+      discriminator:
+        propertyName: action
+        mapping:
+          ACCEPT_SERVER: '#/components/schemas/AcceptServerResolutionRequest'
+          APPLY_CLIENT_INTENT: '#/components/schemas/ApplyClientIntentResolutionRequest'
+      description: Strict manual-decision body. The 16 KiB body bound applies before deserialization, and unknown fields are rejected.
+    AcceptServerResolutionRequest:
+      type: object
+      additionalProperties: false
+      required: [resolution_id, action]
+      properties:
+        resolution_id:
+          $ref: '#/components/schemas/ConflictResolutionId'
+        action:
+          type: string
+          const: ACCEPT_SERVER
+    ApplyClientIntentResolutionRequest:
+      type: object
+      additionalProperties: false
+      required: [resolution_id, action, expected_current_revision]
+      properties:
+        resolution_id:
+          $ref: '#/components/schemas/ConflictResolutionId'
+        action:
+          type: string
+          const: APPLY_CLIENT_INTENT
+        expected_current_revision:
+          $ref: '#/components/schemas/U64Decimal'
+        expected_current_parent_revision:
+          allOf:
+            - $ref: '#/components/schemas/U64Decimal'
+          description: Required for MOVE_NODE and RESTORE_NODE; forbidden for CREATE_DIRECTORY, RENAME_NODE, and TRASH_NODE.
+    ConflictResolutionResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/ConflictResolutionData'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    ConflictResolutionData:
+      type: object
+      additionalProperties: false
+      required: [outcome, conflict_id, resolution_id, action, lifecycle, replayed, completed_at]
+      description: Durable terminal result. Same resolution ID and canonical fingerprint replays every value exactly except replayed becomes true.
+      properties:
+        outcome:
+          type: string
+          enum: [ACCEPTED_SERVER, APPLIED_CLIENT_INTENT]
+        conflict_id:
+          $ref: '#/components/schemas/SyncConflictId'
+        resolution_id:
+          $ref: '#/components/schemas/ConflictResolutionId'
+        action:
+          $ref: '#/components/schemas/ConflictResolutionAction'
+        lifecycle:
+          type: string
+          enum: [RESOLVED, DISMISSED]
+        replayed:
+          type: boolean
+        completed_at:
+          type: string
+          format: date-time
+        journal_event_id:
+          allOf:
+            - $ref: '#/components/schemas/OpaqueId'
+          description: Present only for APPLIED_CLIENT_INTENT and identical on replay.
+        journal_sequence:
+          allOf:
+            - $ref: '#/components/schemas/U64Decimal'
+          description: Present only for APPLIED_CLIENT_INTENT and identical on replay.
+    RebaselineStartRequest:
+      type: object
+      additionalProperties: false
+      maxProperties: 0
+      description: Exact empty JSON object; bootstrap behavior is fully determined by the authenticated path scope.
+    RebaselineCompleteRequest:
+      type: object
+      additionalProperties: false
+      required: [completion_token]
+      properties:
+        completion_token:
+          type: string
+          minLength: 1
+          maxLength: 336
+          description: Opaque terminal-page HMAC evidence; it is integrity proof, never authorization, and must not be logged.
+    RebaselineBootstrapResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/RebaselineBootstrapData'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    RebaselineBootstrapData:
+      type: object
+      additionalProperties: false
+      required: [bootstrap_id, device_id, library_id, state, generation, snapshot_epoch, snapshot_resume_sequence, manifest_item_count, created_at, expires_at]
+      properties:
+        bootstrap_id:
+          $ref: '#/components/schemas/OpaqueId'
+        device_id:
+          $ref: '#/components/schemas/OpaqueId'
+        library_id:
+          $ref: '#/components/schemas/OpaqueId'
+        state:
+          type: string
+          enum: [OPEN, COMPLETED, ABORTED, EXPIRED]
+        generation:
+          $ref: '#/components/schemas/U64Decimal'
+        snapshot_epoch:
+          $ref: '#/components/schemas/U64Decimal'
+        snapshot_resume_sequence:
+          $ref: '#/components/schemas/U64Decimal'
+        manifest_item_count:
+          $ref: '#/components/schemas/U64Decimal'
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          description: PostgreSQL/server-time expiry for an OPEN session.
+        completed_at:
+          type: string
+          format: date-time
+    RebaselineSnapshotPageResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/RebaselineSnapshotPageData'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    RebaselineSnapshotPageData:
+      type: object
+      additionalProperties: false
+      required: [bootstrap, nodes, has_more]
+      properties:
+        bootstrap:
+          $ref: '#/components/schemas/RebaselineBootstrapData'
+        nodes:
+          type: array
+          maxItems: 1000
+          description: Immutable manifest rows ordered by ascending opaque Node ID; never a physical filesystem or ObjectStore listing.
+          items:
+            $ref: '#/components/schemas/RebaselineSnapshotNode'
+        has_more:
+          type: boolean
+        next_cursor:
+          type: string
+          minLength: 1
+          maxLength: 320
+          description: Present only when another keyset page exists.
+        completion_token:
+          type: string
+          minLength: 1
+          maxLength: 336
+          description: Present only on the actual terminal page and bound to the complete manifest count/terminal marker and coherent cut.
+    RebaselineSnapshotNode:
+      type: object
+      additionalProperties: false
+      required: [node_id, name, kind, state, revision]
+      properties:
+        node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        parent_node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: Logical component name; never an operating-system path.
+        kind:
+          type: string
+          enum: [FILE, DIRECTORY]
+        state:
+          type: string
+          enum: [ACTIVE, TRASHED]
+          description: PURGING is an internal maintenance state and is never materialized in this public logical snapshot.
+        revision:
+          $ref: '#/components/schemas/U64Decimal'
+        current_version_id:
+          $ref: '#/components/schemas/OpaqueId'
+        current_content:
+          $ref: '#/components/schemas/RebaselineSnapshotContent'
+    RebaselineSnapshotContent:
+      type: object
+      additionalProperties: false
+      required: [byte_length, sha256]
+      properties:
+        byte_length:
+          $ref: '#/components/schemas/U64Decimal'
+        sha256:
+          $ref: '#/components/schemas/Hash'
+      description: Safe logical identity metadata for the current file bytes; clients use existing content-download routes to obtain bytes.
+    RebaselineCompletionResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/RebaselineCompletionData'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    RebaselineCompletionData:
+      type: object
+      additionalProperties: false
+      required: [bootstrap, checkpoint, replayed]
+      properties:
+        bootstrap:
+          $ref: '#/components/schemas/RebaselineBootstrapData'
+        checkpoint:
+          $ref: '#/components/schemas/RebaselineCompletionCheckpoint'
+        replayed:
+          type: boolean
+          description: True when a committed completion is returned safely after response loss/retry.
+    RebaselineCompletionCheckpoint:
+      type: object
+      additionalProperties: false
+      required: [journal_epoch, acknowledged_sequence, updated_at]
+      properties:
+        journal_epoch:
+          $ref: '#/components/schemas/U64Decimal'
+        acknowledged_sequence:
+          $ref: '#/components/schemas/U64Decimal'
+        updated_at:
+          type: string
+          format: date-time
+    SyncAckRequest:
+      type: object
+      additionalProperties: false
+      required: [ack_token]
+      properties:
+        ack_token:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Opaque server-issued HMAC evidence for one delivered page; integrity evidence only and never an authorization credential.
+    SyncCheckpointResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/SyncCheckpointData'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    SyncCheckpointData:
+      type: object
+      additionalProperties: false
+      required: [device_id, library_id, epoch, acknowledged_sequence, created_at, updated_at]
+      properties:
+        device_id:
+          $ref: '#/components/schemas/OpaqueId'
+        library_id:
+          $ref: '#/components/schemas/OpaqueId'
+        epoch:
+          $ref: '#/components/schemas/U64Decimal'
+        acknowledged_sequence:
+          $ref: '#/components/schemas/U64Decimal'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        last_seen_high_watermark:
+          $ref: '#/components/schemas/U64Decimal'
+    SyncFeedResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/SyncFeedData'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    SyncFeedData:
+      type: object
+      additionalProperties: false
+      required: [device_id, library_id, epoch, from_sequence, through_sequence, high_watermark, has_more, changes]
+      properties:
+        device_id:
+          $ref: '#/components/schemas/OpaqueId'
+        library_id:
+          $ref: '#/components/schemas/OpaqueId'
+        epoch:
+          $ref: '#/components/schemas/U64Decimal'
+        from_sequence:
+          $ref: '#/components/schemas/U64Decimal'
+        through_sequence:
+          $ref: '#/components/schemas/U64Decimal'
+        high_watermark:
+          $ref: '#/components/schemas/U64Decimal'
+        has_more:
+          type: boolean
+        changes:
+          type: array
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/SyncChange'
+        ack_token:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Present only for a non-empty page; signed evidence binds the page start, delivered-through sequence, and high watermark.
+    SyncChange:
+      type: object
+      additionalProperties: false
+      required: [event_id, schema_version, sequence, resource_kind, resource_id, change_kind, resource_revision, occurred_at]
+      properties:
+        event_id:
+          $ref: '#/components/schemas/OpaqueId'
+        schema_version:
+          type: integer
+          const: 1
+          description: Closed journal projection schema; incompatible versions fail closed in desktop transport.
+        sequence:
+          $ref: '#/components/schemas/U64Decimal'
+        resource_kind:
+          type: string
+          const: NODE
+        resource_id:
+          $ref: '#/components/schemas/OpaqueId'
+        change_kind:
+          type: string
+          enum: [NODE_CREATED, NODE_RENAMED, NODE_MOVED, NODE_TRASHED, NODE_RESTORED, FILE_CONTENT_COMMITTED, FILE_VERSION_RESTORED, NODE_PURGED]
+        resource_revision:
+          $ref: '#/components/schemas/U64Decimal'
+        occurred_at:
+          type: string
+          format: date-time
+        parent_node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        node_kind:
+          type: string
+          enum: [FILE, DIRECTORY]
+        node_state:
+          type: string
+          enum: [ACTIVE, TRASHED, PURGING]
+        current_version_id:
+          $ref: '#/components/schemas/OpaqueId'
     CreateUploadSessionRequest:
       oneOf:
         - $ref: '#/components/schemas/CreateFileUploadRequest'
@@ -1695,11 +3841,13 @@ components:
     CreateFileUploadRequest:
       type: object
       additionalProperties: false
-      required: [operation, library_id, parent_id, name, expected_bytes]
+      required: [operation, idempotency_key, library_id, parent_id, name, expected_bytes]
       properties:
         operation:
           type: string
           const: CREATE_FILE
+        idempotency_key:
+          $ref: '#/components/schemas/OpaqueId'
         library_id:
           $ref: '#/components/schemas/OpaqueId'
         parent_id:
@@ -1716,11 +3864,13 @@ components:
     ReplaceContentUploadRequest:
       type: object
       additionalProperties: false
-      required: [operation, library_id, node_id, expected_revision, expected_bytes]
+      required: [operation, idempotency_key, library_id, node_id, expected_revision, expected_bytes]
       properties:
         operation:
           type: string
           const: REPLACE_CONTENT
+        idempotency_key:
+          $ref: '#/components/schemas/OpaqueId'
         library_id:
           $ref: '#/components/schemas/OpaqueId'
         node_id:
@@ -1868,7 +4018,6 @@ components:
       required:
         - node_id
         - file_version_id
-        - object_id
         - node_revision
         - bytes
         - sha256
@@ -1877,8 +4026,6 @@ components:
         node_id:
           $ref: '#/components/schemas/OpaqueId'
         file_version_id:
-          $ref: '#/components/schemas/OpaqueId'
-        object_id:
           $ref: '#/components/schemas/OpaqueId'
         node_revision:
           $ref: '#/components/schemas/U64Decimal'
@@ -2094,6 +4241,9 @@ components:
           $ref: '#/components/schemas/OpaqueId'
         parent_id:
           $ref: '#/components/schemas/OpaqueId'
+        current_version_id:
+          $ref: '#/components/schemas/OpaqueId'
+          description: Current immutable file version, omitted when absent. Desktop requires exact agreement with the event at the same revision.
         name:
           type: string
           minLength: 1
@@ -2213,7 +4363,7 @@ components:
       minLength: 8
       maxLength: 128
       pattern: '^[A-Za-z0-9._~-]+$'
-      description: Diagnostic identifier; not an idempotency key or credential.
+      description: Diagnostic identifier; not an idempotency key or credential. Client hints containing reserved svd1_ or sve1_ machine-secret prefixes are replaced by a fresh server identifier before echoing or logging.
     OpaqueId:
       type: string
       format: uuid
@@ -2300,6 +4450,50 @@ components:
       properties:
         request_id:
           $ref: '#/components/schemas/OpaqueRequestId'
+    ConflictNotOpenDetails:
+      type: object
+      additionalProperties: false
+      required: [lifecycle]
+      properties:
+        lifecycle:
+          type: string
+          enum: [RESOLVED, DISMISSED]
+      description: Stable conflict_not_open detail for a different decision submitted after terminal state.
+    ResolutionConflictDetails:
+      type: object
+      additionalProperties: false
+      required: [resolution_id, replayed, completed_at, reason, resource_id, server_epoch, server_sequence]
+      properties:
+        resolution_id:
+          $ref: '#/components/schemas/ConflictResolutionId'
+        replayed:
+          type: boolean
+          description: True when returning the exact persisted stale result after response loss.
+        completed_at:
+          type: string
+          format: date-time
+        reason:
+          $ref: '#/components/schemas/ConflictReason'
+        resource_id:
+          $ref: '#/components/schemas/OpaqueId'
+        expected_revision:
+          $ref: '#/components/schemas/U64Decimal'
+        current_revision:
+          $ref: '#/components/schemas/U64Decimal'
+        current_state:
+          type: string
+          enum: [ACTIVE, TRASHED, PURGING]
+        current_parent_id:
+          $ref: '#/components/schemas/OpaqueId'
+        current_name:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        server_epoch:
+          $ref: '#/components/schemas/U64Decimal'
+        server_sequence:
+          $ref: '#/components/schemas/U64Decimal'
+      description: Durable stale manual-apply evidence. The conflict remains OPEN and no canonical event is emitted.
     ErrorResponse:
       type: object
       additionalProperties: false
@@ -2326,6 +4520,10 @@ components:
         retryable:
           type: boolean
         details:
-          type: object
-          description: Operation-specific allow-listed details; never stack traces, paths, secrets, or content.
-          additionalProperties: true
+          anyOf:
+            - $ref: '#/components/schemas/ClientMutationConflictDetails'
+            - $ref: '#/components/schemas/ConflictNotOpenDetails'
+            - $ref: '#/components/schemas/ResolutionConflictDetails'
+            - type: object
+              description: Operation-specific allow-listed details; never stack traces, paths, secrets, or content.
+              additionalProperties: true

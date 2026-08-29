@@ -6,6 +6,7 @@
 //! HTTP, database, operating-system, and storage-backend dependencies.
 
 mod config;
+mod device_secrets;
 mod domain;
 mod errors;
 mod hashes;
@@ -36,19 +37,38 @@ pub use config::{
     OBJECT_GC_MAX_BATCH_SIZE_ENV, ObjectGcPolicy, ObjectGcPolicyError, RuntimeDir,
     TRASH_RETENTION_SECONDS_ENV, TrashRetentionPolicy, TrashRetentionPolicyError,
 };
+pub use device_secrets::{
+    DEVICE_SECRET_ENCODED_BYTES, DEVICE_SECRET_ENTROPY_BYTES, DeviceCredentialSecret,
+    DeviceSecretError, EnrollmentSecret,
+};
 pub use domain::{
-    Device, DeviceStatus, DomainError, FileVersion, Library, LibraryStatus, LogicalName,
-    LoginIdentifier, MAX_LOGICAL_NAME_BYTES, Node, NodeKind, NodeState, ObjectReference,
+    CLIENT_MUTATION_FINGERPRINT_VERSION, CONFLICT_RESOLUTION_FINGERPRINT_VERSION, ChangeEvent,
+    ChangeKind, ChangeKindParseError, ChangeResourceKind, ChangeResourceKindParseError,
+    ClientMutation, ClientMutationFingerprint, ClientMutationKind, ClientMutationKindParseError,
+    ClientMutationRequest, ConflictLifecycle, ConflictLifecycleParseError,
+    ConflictResolutionAction, ConflictResolutionActionParseError, ConflictResolutionFingerprint,
+    ConflictResolutionRequest, Device, DeviceStatus, DeviceSyncCheckpoint, DomainError,
+    FileVersion, Library, LibraryStatus, LogicalName, LogicalSnapshotNode,
+    LogicalSnapshotNodeError, LoginIdentifier, MAX_LOGICAL_NAME_BYTES, Node, NodeKind, NodeState,
+    ObjectReference, SyncBootstrap, SyncBootstrapState, SyncBootstrapStateParseError,
     UploadOperation, UploadOperationParseError, UploadSessionState, UploadSessionStateParseError,
     UploadStateTransitionError, User, UserStatus,
 };
 pub use errors::{CoreError, ErrorCode, UnknownErrorCode};
 pub use hashes::{Hash, HashParseError, Sha256Digest};
 pub use ids::{
-    BackupSetId, ChangeEventId, DedupDomainId, DeviceId, FileVersionId, IdParseError, LibraryId,
-    NodeId, ObjectGcOperationId, ObjectId, ObjectReplicaId, ShareId, SnapshotId, UploadSessionId,
-    UserId,
+    BackupSetId, ChangeEventId, ClientMutationId, ConflictResolutionId, DedupDomainId,
+    DeviceCredentialId, DeviceEnrollmentGrantId, DeviceId, FileVersionId, IdParseError, LibraryId,
+    NodeId, ObjectGcOperationId, ObjectId, ObjectReplicaId, OutboundIntentId, ShareId, SnapshotId,
+    SyncBootstrapId, SyncConflictId, UploadSessionId, UserId,
 };
+
+/// Compatibility spelling for the immutable identity of one journal entry.
+/// The accepted domain vocabulary calls the entry a `ChangeEvent`.
+pub type ChangeJournalEntryId = ChangeEventId;
+
+/// Compatibility spelling for the immutable journal fact contract.
+pub type ChangeJournalEntry = ChangeEvent;
 pub use numbers::{DecimalValueError, Revision, Sequence};
 pub use time::{Timestamp, TimestampParseError};
 pub use tokens::{ETag, Etag, OpaqueCursor, TokenError, VersionToken};

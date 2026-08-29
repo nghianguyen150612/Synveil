@@ -16,8 +16,10 @@ service trung lập transport đã authorize theo owner chỉ chọn replica đ�
 cross-check metadata object và stream byte full/current-range mà không expose
 physical key; nó đã **IMPLEMENTED**. HTTP download full/single-range đã
 authenticate cũng **IMPLEMENTED**, với ETag SHA-256 strong, attachment header
-an toàn, private no-store và không cần CSRF cho safe GET. Credential thiết bị,
-recovery, upload UI và download UI vẫn **PLANNED**. Metadata version-history
+an toàn, private no-store và không cần CSRF cho safe GET. One-time device
+enrollment, device bearer authentication, server profile, native secure
+credential persistence và production HTTP `SyncRemote` đã **IMPLEMENTED**.
+Browser recovery, upload UI và download UI vẫn **PLANNED**. Metadata version-history
 listing và direct lookup đã **IMPLEMENTED** với owner/library scoping,
 active-file concealment, cursor bounded theo node, DTO allowlist an toàn và
 không truy cập ObjectStore; safe historical-version restore đã **IMPLEMENTED**
@@ -31,8 +33,16 @@ Physical object GC nội bộ đã **IMPLEMENTED/VALIDATED** với final revalid
 reference/hold/lease, action replica bền, lifecycle fence và xóa chỉ qua
 ObjectStore. Worker orchestration opt-in nội bộ và đối soát operation bị kẹt đã
 **IMPLEMENTED**; nó không có public route, control xóa dành cho người dùng thông
-thường hay auto-delete orphan vật lý không rõ. Sync, backup và sharing chưa có
-hold producer, vẫn **PLANNED**.
+thường hay auto-delete orphan vật lý không rõ. Durable change journal,
+checkpoint theo device, incremental change feed, acknowledgment và bootstrap
+snapshot/rebaseline logical materialized đã **VALIDATED**. Typed client mutation
+submission, durable UUID idempotency, canonical SHA-256 fingerprint,
+optimistic precondition, deterministic conflict persistence và exact journal
+integration đã **IMPLEMENTED**. Durable conflict record, manual inspection và
+explicit manual resolution idempotent đã **IMPLEMENTED**. Automatic conflict
+resolution, backup, sharing, filesystem watcher, outbound mutation generation
+và desktop GUI/pairing UX vẫn **NOT IMPLEMENTED/PLANNED**. Desktop inbound sync
+core đã **VALIDATED**.
 
 Synveil lưu file cá nhân, backup, ảnh, trạng thái thiết bị, dữ liệu repository,
 credential và thông tin search dẫn xuất. Vì vậy security là điều kiện phát hành,
@@ -329,21 +339,64 @@ Khi shutdown nó dừng claim, chỉ có drain window bounded và để fence un
 
 ### Credential thiết bị/API
 
-- Grant API và device nhận credential mờ đục có scope riêng, expiry, có thể
-  rotate qua TLS sau đăng ký đã xác thực. Initial issuance chỉ lưu verifier
-  `PENDING` và display raw secret một lần; không pending generation nào
-  authenticate trước activation tường minh.
-- Device token dùng header Authorization, không bao giờ dùng URL, query parameter
-  hay browser local storage. Native client dùng facility credential Keychain/OS.
-- Scope tách action sync, backup, photo import và administrative. Khai báo
-  capability không phải security claim.
-- Rotation tạo một pending candidate trong khi generation active cũ còn hợp lệ.
-  Activation retire nguyên tử generation cũ. Response bị mất chỉ để lại
-  candidate inert có thể replace tường minh; revocation invalidate family, mọi
-  generation, lần dùng API tương lai và truy cập journal.
-- Activation device credential chỉ dành cho owner với recent step-up,
-  generation precondition, idempotency, rate limit và audit. Pending bearer
-  secret không thể authenticate hoặc tự activate.
+Prompt 37 implement contract enrollment tối thiểu bên dưới. Automatic rotation,
+credential generation có expiry, step-up UI, credential API cho backup/photo/
+admin và pairing GUI vẫn bị hoãn.
+
+- `DeviceCredentialId` và `DeviceEnrollmentGrantId` là identity UUIDv7 không bí
+  mật. Bảng `devices` chuẩn và `Device::transition_status` vẫn là authority;
+  không tạo device registry thứ hai.
+- Browser owner dùng session và CSRF proof hiện có để tạo grant cho Device
+  PENDING/ACTIVE thuộc mình hoặc Device PENDING mới. PAUSED/REVOKED và Device
+  thuộc owner khác bị từ chối. Tạo Device mới và persist grant cùng transaction.
+- Mỗi grant/bearer có 32 byte random độc lập từ OS, encode thành `sve1_` hoặc
+  `svd1_` cộng 64 ký tự hexadecimal chữ thường. Presentation đúng 69 byte ASCII,
+  header-safe, parse có giới hạn, zeroize khi drop, redact `Debug`, không có
+  `Display`.
+- Grant hết hạn sau 10 phút; database độc lập giới hạn TTL tối đa 15 phút.
+  Server chỉ lưu digest. SHA-256 dùng domain riêng
+  `synveil.device-enrollment-grant.v1\0` và `synveil.device-credential.v1\0`
+  trước toàn bộ token có version. Secret random đều 256 bit không cần password
+  KDF; verifier bị lấy không trở thành bearer. Dùng primitive constant-time
+  đã review để so digest khi khả thi; lookup bằng digest.
+- Token enrollment là authority cho exchange HTTPS không cần browser session.
+  Ai có token đều có thể claim một lần: phải truyền riêng tư, không trong URL,
+  log, browser storage hay QR công khai. Lock owner, Device rồi grant serialize
+  exchange với revoke. Transaction recheck expiry, chưa dùng/chưa revoke và
+  owner/Device scope, rồi chuyển PENDING → ACTIVE, insert bearer digest và ghi
+  consumption. Production lấy timestamp server mới sau khi đã giữ toàn bộ
+  authorization/grant lock; thời gian chờ lock không kéo dài TTL grant. Lỗi
+  rollback cả ba effect.
+- Bearer chỉ được trả đúng một lần. Grant đã consume không phát credential thứ
+  hai dù response bị mất. Recovery tường minh: browser owner revoke-all cùng
+  Device, tạo grant mới rồi exchange. Revoke-all cũng vô hiệu grant chưa consume
+  nhưng giữ Device ACTIVE có thể enroll. Owner có thể revoke một credential khi
+  còn biết ID. Giữ credential row để audit, không xóa mạnh tay.
+- Phase này không automatic expiry/rotation cho bearer; lifecycle là revoke rồi
+  enroll mới tường minh. Mỗi request đọc lại trạng thái credential, owner và
+  Device từ PostgreSQL. Credential revoked, Device không ACTIVE hoặc owner
+  inactive làm lần auth kế tiếp thất bại; không positive-auth cache hay write
+  last-used best-effort làm yếu boundary. Chỉ trả `device_revoked` sau khi đã
+  chứng minh biết credential thật. Lỗi enrollment/credential unknown hoặc
+  tampered không lộ arbitrary grant/credential có tồn tại hay không.
+
+`AuthenticatedPrincipal` tách `BROWSER_SESSION` khỏi
+`DEVICE_CREDENTIAL { owner_user_id, device_id, credential_id }`. Device ID
+không phải authentication; bearer không được cấp Session ID giả. Device auth
+chỉ được vào checkpoint/feed/ack, rebaseline start/page/complete và logical
+Node/version metadata cùng current/version download cần cho inbound engine.
+Route có Device phải khớp Device của credential; owner/library authorization
+và logical download service hiện có vẫn được áp dụng. Prompt 34 mutation,
+Prompt 35 manual conflict resolution, upload, version restore, enrollment/
+revoke administration và route browser-only khác đều reject device bearer.
+Chỉ mutation đã authenticate là Device mới được miễn CSRF; browser cookie vẫn
+phải có CSRF. Bearer invalid không fallback sang cookie; request có cả Cookie
+và Authorization bị reject.
+
+Body grant/exchange/revoke là JSON strict tối đa 2 KiB. Secret response và mọi
+success/error response của các route này dùng `private, no-store`. Không được
+automatic retry one-time exchange. Revocation được check khi authorize request/
+stream mới; không thể thu hồi byte đã nhận hay hứa dừng stream đang chạy.
 
 ## Security của native installation, pairing, service và lifecycle
 
@@ -360,9 +413,11 @@ và phải được threat-review riêng với Rust domain core:
   authorization; chúng chỉ start/stop/restart process có giới hạn và báo state.
   Elevation, crossing user/session, crash recovery, reboot, sleep/wake,
   uninstall và update transition phải audit và test.
-- Secret material dùng OS facility đã khai báo khi có—Windows Credential
-  Manager/DPAPI, macOS Keychain, Linux Secret Service hoặc fallback protected
-  file—với permission và semantics backup/recovery rõ. Raw pairing code,
+- Secret material dùng OS facility đã khai báo khi có. Prompt 37 implement
+  Windows Credential Manager và Linux Secret Service qua
+  `PlatformRuntime::SecretStore`; native backend khác chưa được hỗ trợ.
+  Persistence production fail closed khi backend locked, thiếu hoặc unavailable:
+  không fallback plaintext file/SQLite hay volatile store. Raw pairing code,
   database credential, recovery material và master key không xuất hiện trong
   log, command line, browser storage hay installer bundle.
 - Storage picker chỉ expose candidate host đã authorize. Nó reject `/`,
@@ -374,11 +429,12 @@ và phải được threat-review riêng với Rust domain core:
   migration role, được bảo vệ khỏi uninstall thông thường và recovery qua cùng
   backup/key/upgrade policy. Personal / Home không âm thầm đổi sang SQLite khi
   managed service unavailable.
-- Pairing dùng authenticated exchange high-entropy, sống ngắn, single-use, bind
+- Native pairing UX tương lai dùng authenticated exchange high-entropy, sống ngắn, single-use, bind
   vào instance/user/device đích. Có expiry, replay, concurrent claim,
   wrong-target, revoke và failure/remediation hiển thị rõ. Human confirmation
-  hoặc authenticated bootstrap ngăn code bị thấy trên LAN tự bind attacker
-  device.
+  hoặc authenticated bootstrap phải ngăn silent attacker enrollment. Prompt 37
+  chỉ cung cấp owner-created grant groundwork, chưa có confirmation UI này;
+  người giữ grant bị lộ vẫn có thể claim.
 - Remote access theo lớp: local/LAN trước, direct/proxy do operator cấu hình
   tiếp theo và relay tùy chọn chỉ sau contract đã chấp thuận. Không relay nào là
   bắt buộc cho correctness core. Relay metadata được giảm thiểu, content được
@@ -448,6 +504,143 @@ truy cập dữ liệu user phải tường minh, được audit và mô tả tr
 
 Query database được scope theo owner/library/grant ngoài việc kiểm tra cú pháp
 UUID. Randomness và opacity giảm guessing; không bao giờ thay thế policy.
+
+### Trạng thái đồng bộ, remote connection và observation Prompt 38
+
+| Capability | Status |
+|---|---|
+| durable change journal | `VALIDATED` |
+| device checkpoints/feed | `VALIDATED` |
+| snapshot/rebaseline | `VALIDATED` |
+| client mutation submission | `VALIDATED` |
+| optimistic conflict detection | `VALIDATED` |
+| durable conflict records | `IMPLEMENTED` |
+| manual conflict inspection | `IMPLEMENTED` |
+| explicit manual resolution | `IMPLEMENTED` |
+| automatic conflict resolution | `NOT IMPLEMENTED` |
+| desktop inbound sync core | `VALIDATED` |
+| desktop server profiles | `IMPLEMENTED` |
+| device enrollment groundwork | `IMPLEMENTED` |
+| device bearer authentication | `IMPLEMENTED` |
+| secure desktop credential persistence | `IMPLEMENTED` |
+| production HTTP SyncRemote | `IMPLEMENTED` |
+| filesystem observation | `IMPLEMENTED` |
+| self-generated change suppression | `IMPLEMENTED` |
+| durable outbound intent capture | `IMPLEMENTED` |
+| rename/move attribution | `IMPLEMENTED with conservative fallback` |
+| watcher overflow/reconciliation | `IMPLEMENTED` |
+| automatic outbound mutation submission | `NOT IMPLEMENTED` |
+| desktop GUI/pairing UX | `NOT IMPLEMENTED` |
+
+Observer Prompt 38 không nhận credential hoặc `SyncRemote`. Nó chỉ ghi row
+control-plane local SQLite và không gọi endpoint mutation, upload hay manual
+conflict-resolution. Watcher hint không được tin cậy; root marker, profile
+binding, kiểm tra symlink/reparse, loại control-directory, streaming hash
+verification và suppression evidence bền vững Prompt 36 đều được check trước khi
+persist outbound intent. Fact local ambiguous/unsupported bị block local thay vì
+sanitize hoặc submit.
+
+### Boundary change journal bền vững
+
+Journal đã implement chỉ chứa metadata và vẫn nằm sau application boundary đã
+authenticate. Reader nhận owner đã authenticate riêng, yêu cầu library thuộc
+owner đó và áp dụng limit keyset bounded trước khi trả event. Cursor có version,
+giới hạn độ dài, integrity-check và scope theo library/epoch, nhưng không phải
+credential authorization và không thể dùng để suy ra library của owner khác.
+
+Projection journal chỉ chứa logical ID có type, revision, metadata state/kind và
+identity tombstone tối thiểu cho purge. Nó loại ObjectStore key, staging handle,
+filesystem path, backend credential, session/CSRF token, content và raw SQL
+error. Trigger append-only ở database reject UPDATE/DELETE lịch sử. Mọi Node
+mutation được hỗ trợ lấy namespace guard theo library trong transaction trước
+Node lock và append fact cùng domain change cùng idempotent outcome trong một
+PostgreSQL transaction. Public sync feed chỉ expose logical projection bounded
+qua owner browser session hoặc device bearer có inbound scope đã authenticate
+và device register đang active. Token
+acknowledgment HMAC bind owner, device, library, epoch, page range và high
+watermark; nó không phải bearer credential. Ack bằng browser cookie có CSRF;
+chỉ request đã verify device bearer được miễn. Mọi
+sync response là private/no-store, còn raw token, storage internals, path,
+credential và journal payload không được log hoặc trả về. Mutation route
+authenticated nhận đúng một logical operation typed, bắt buộc session-bound
+CSRF proof, giới hạn body 16 KiB và chỉ trả field logical Node/result hoặc
+conflict đã allowlist. Server scope theo owner hiện tại, device đã register và
+đang active, cùng library thuộc owner; không nhận object/replica identity vật
+lý, path, storage locator, credential, arbitrary JSON patch hay file byte.
+Mutation identity và fingerprint chỉ được log như giá trị opaque bounded; raw
+body và conflict payload không được log. Response success, conflict và error
+đều private/no-store.
+
+### Boundary bootstrap rebaseline logical
+
+Bootstrap dùng cùng honest trust model như incremental feed: browser session
+của owner hoặc device bearer có inbound scope đã authenticate hành động cho một Device đã register ở `ACTIVE` và
+Library thuộc owner. Device/library/bootstrap/cursor/token ngẫu nhiên không cấp
+quyền. Mọi request đều recheck owner hiện tại, lifecycle device, ownership
+library và scope session bền. Cross-owner/application scope inaccessible và
+browser request cho Device revoked bị conceal thành `not_found`; device bearer
+đã chứng minh thật nhưng revoked bị authentication reject trước với `device_revoked`.
+
+Start và complete dùng cookie bắt buộc CSRF proof bind session hiện có; chỉ
+verified device principal được miễn. Page GET là safe read theo policy hiện tại và không cần
+CSRF. Mọi response thành công/lỗi là `Cache-Control: private, no-store`; body
+start/complete tối đa 2 KiB, limit page tối đa 1000, cursor tối đa 320 byte và
+completion token tối đa 336 byte.
+
+Cursor và terminal token dùng HMAC-SHA-256 với label format/domain riêng. Cursor
+bind owner, device, library, bootstrap, generation, epoch, resume sequence và
+Node ID cuối. Terminal proof còn bind manifest count bất biến cùng terminal
+marker. Chúng chỉ là integrity evidence: scope và authorization vẫn được
+revalidate độc lập. Application secret có `Debug` đã redact. Log được ghi opaque
+bootstrap/device/library ID, item count, cut sequence, terminal/replay flag và
+outcome class; không ghi raw cursor/token, physical path/key/locator, credential
+hay byte.
+
+Expiry dùng PostgreSQL/server time. Generation compare-and-set của checkpoint,
+validation epoch/retention hiện tại, terminal proof chính xác và check
+checkpoint đã đi trước fence session stale. Completion hoặc commit nguyên tử
+exact cut cùng state `COMPLETED`, hoặc không đổi gì. Protocol này không phải
+device attestation, pairing hay bidirectional sync. Client mutation submission
+là logical write boundary riêng có CSRF: resource stale hoặc name/destination
+đã chiếm tạo durable typed conflict, không đổi canonical metadata và không
+append journal event. Không bật automatic conflict-copy, merge hay
+last-writer-wins.
+
+### Boundary quản lý durable conflict
+
+Conflict identity, mutation identity và resolution identity là correlation
+value opaque, không phải capability. List, detail và resolve đều tự kiểm tra
+owner đã authenticate, Device thuộc owner ở `ACTIVE`, Library thuộc owner và
+scope conflict persisted chính xác. Cross-owner, sai Device, sai Library,
+unknown và Device revoked đều bị conceal thành `not_found`. Inspection GET
+không cần CSRF theo read policy hiện tại; resolution bắt buộc session-bound CSRF
+proof hiện có. Mọi success/error là private/no-store. Body resolution strict
+tối đa 16 KiB và reject field lạ.
+
+List OPEN tối đa 100 và không có path OFFSET. Cursor HMAC-SHA-256 tối đa 384
+byte dùng rebaseline secret ổn định theo deployment dưới HMAC domain label riêng
+cho conflict, bind owner, Device, Library, order OPEN,
+timestamp và conflict ID. Cursor chỉ là integrity evidence; database scope luôn
+được authorize lại. Debug/log bỏ hoặc redact cursor và HMAC key.
+
+Database lưu projection intent/evidence typed đóng, không bao giờ lưu raw JSON,
+ObjectStore key, ObjectReplica locator, filesystem path, staging handle,
+backend credential, session/CSRF secret, HMAC key hay byte. Detail gọi dữ liệu
+lịch sử là `historical_server_observation` và cố ý không trả current canonical
+state để evidence stale không bị hiểu nhầm thành authority. Trigger hẹp làm
+evidence gốc và terminal decision bất biến. Conflict row không có Node foreign
+key nên audit history sống qua purge.
+
+Fingerprint resolution SHA-256 là encoding typed canonical của conflict ID,
+action và fresh precondition explicit, phân biệt presence với absence; không
+hash hay giữ raw serialization request. Resolution lấy namespace guard hiện có
+và scoped row lock trước, rồi đọc lại current canonical row và dùng chung
+executor Prompt 34. State stale/purged fail closed mà không đổi Node, event,
+lifecycle hay checkpoint. Safe log có thể chứa
+request/conflict/mutation/resolution/device/library/resource ID, action/outcome,
+replay state và journal sequence khi success. Name, body, token, secret,
+storage path/key, backend identifier, SQL/lock text và raw error bị loại. Không
+có policy automatic conflict resolution.
 
 ## Bảo vệ web và API
 
@@ -1003,3 +1196,100 @@ yêu cầu reporter gửi file user nhạy cảm hay production secret.
 - Deletion, revoke, retention, backup, restore và upgrade bị ảnh hưởng thế nào?
 - Thay đổi có làm claim privacy/encryption/E2EE rộng hơn trust model thực không?
 - Công bố user và operator tiếng Anh/tiếng Việt có nhất quán không?
+
+## Boundary security inbound desktop Prompt 36
+
+Client core Prompt 36 vẫn trung lập transport, nhận logical state từ server;
+Prompt 37 cung cấp boundary credential/HTTP production riêng.
+`OpaqueEvidence` có giới hạn length,
+được che khỏi `Debug`, không implement `Display` và chỉ được persist khi restart-
+safe acknowledgement hoặc bootstrap completion cần. Local database không chứa
+session secret, CSRF secret, password, signing key, object backend credential,
+storage key, server filesystem path hay file content.
+
+Filesystem mutation chỉ chạy khi đủ mọi điều kiện:
+
+- managed root absolute do user chọn rõ, rỗng lúc initialize hoặc đã mang đúng
+  marker Synveil;
+- owner, device, library và binding UUIDv7 ngẫu nhiên trong marker khớp SQLite;
+- chặn filesystem root, HOME/USERPROFILE, process root hiện tại, adopt folder
+  populated tùy ý và binding root/database khác nhau;
+- relative path chỉ gồm logical segment portable nguyên vẹn hoặc control path
+  Synveil đóng;
+- root, marker và mọi target component đang tồn tại vượt kiểm tra symlink/
+  reparse ngay trước khi dùng;
+- không có exact unknown occupancy hay collision case/normalization portable;
+- object có thể quy thuộc hiện tại khớp kind, length và SHA-256 bền gần nhất
+  trước destructive operation.
+
+Symlink Linux và attribute symlink/reparse Windows bị chặn. Implementation path
+dùng standard library lặp lại component check nhưng không được công bố như một
+directory-handle sandbox chống race tuyệt đối với user hostile cùng account;
+vẫn cần Windows runtime native và platform race lab đối kháng trước claim OS
+hardening mạnh hơn. Attribution sau crash bị mơ hồ sẽ block thay vì đoán.
+Operation receipt chỉ nằm dưới control tree `.synveil` đã bind và chứa operation
+ID, không phải authority hay secret.
+
+Trên Windows, mọi managed path đã resolve còn bị giới hạn bảo thủ ở
+32.000 UTF-16 code unit (ngoài giới hạn riêng của từng segment) trước
+filesystem operation. Mức này nằm dưới extended-length ceiling và chừa
+chỗ cho terminator/prefix; path vượt giới hạn fail closed thay vì phụ thuộc
+vào lỗi Win32 không đồng nhất giữa operation.
+
+Local issue là vocabulary đóng, tách khỏi server conflict Prompt 35: divergence,
+path occupied, name không represent được/collision, parent missing, type
+mismatch, local I/O unavailable, content integrity mismatch và recovery mơ hồ.
+Resolution là explicit; engine không auto-dismiss issue, upload hay tạo conflict
+copy. Error chứa stable code thay vì absolute path, raw name, file content hay
+opaque token.
+
+Không thêm watcher, shell, subprocess, outbound mutation producer, automatic
+conflict resolver, last-write-wins, merge engine, external broker, GUI framework
+hay installer privilege boundary. Propagation ACL/xattr/permission và ép local
+mtime được hoãn thay vì mô phỏng không an toàn.
+
+## Boundary security remote desktop Prompt 37
+
+Profile chỉ chứa profile ID UUIDv7, canonical base URL ở origin root, display
+label và timestamp kết nối. Enrollment metadata chỉ có owner, Device,
+credential ID cùng timestamp. Forward-only SQLite migration không lưu bearer
+hay enrollment secret. Replica bind một profile tường minh ngoài owner/Device/
+Library; không thể mở replica đó bằng profile khác. Replica legacy chưa bind
+không được suy ra profile từ Library ID. Verified origin/TLS là server binding
+hiện tại: server chưa expose stable installation ID, không tạo pseudo-identity
+từ hostname.
+
+`DeviceCredentialSecret` chỉ được lưu qua `PlatformRuntime::SecretStore`, key
+bằng opaque profile cộng credential identity. Load, replacement tường minh và
+local forget giữ binding profile/owner/Device. Forget xóa local secret và ghi
+non-secret cleanup intent có thể retry khi cần; không tuyên bố server đã revoke
+khi offline, không xóa content/progress của replica. In-memory store test tường
+minh không phải fallback production. Claim native OS keyring persistence cần
+runtime test với backend đã unlock; compile hoặc mock test không phải bằng
+chứng native persistence.
+
+Base URL production chỉ nhận HTTPS origin root: không userinfo, query,
+fragment, reverse-proxy subpath, port sai hay scheme khác. Test mode tường minh
+chỉ cho HTTP với literal loopback IP. HTTP client mature giữ certificate/
+hostname verification bình thường, tắt hoàn toàn redirect, không browser
+cookie jar và không expose certificate-bypass switch. Profile/credential của
+Server A không được rebind hay forward sang Server B. TLS terminate tại trusted
+deployment edge; listener HTTP plaintext của server binary hiện tại phải giữ
+loopback/private phía sau edge đó.
+
+Body metadata/error, connect/header/request duration, stream idle và download
+duration đều hữu hạn. Content streaming có giới hạn theo logical length và
+SHA-256 dự kiến, không buffer cả file. Transparent HTTP compression bị tắt.
+Không bật automatic request retry; typed retryable outcome trả cho runtime sau.
+Response protocol phải khớp content type, schema, scope, epoch và sequence.
+HTML proxy page và response incompatible fail closed bằng protocol error.
+
+Log chỉ giữ route class an toàn, opaque ID, status, request ID, timing và count.
+Loại Authorization, enrollment/bearer secret, CSRF, ack/completion proof và full
+body. Hint request ID từ client chứa prefix dành riêng `svd1_` hoặc `sve1_` bị
+loại và thay bằng ID server mới, kể cả khi secret nằm trong hint dài hơn. Nhờ
+vậy machine secret bị copy vào ID đúng cú pháp không đi vào log.
+`AUTH_REQUIRED`/`DEVICE_REVOKED` cùng transport failure bảo toàn local
+file, applied/acknowledged progress, pending evidence và local issue. Phase này
+không thêm watcher, outbound mutation generator, automatic conflict resolver,
+GUI/QR UX, installer, certificate pinning/TOFU, relay hay custom TLS stack.

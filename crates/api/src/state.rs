@@ -7,8 +7,9 @@ use axum::http::HeaderMap;
 use synveil_auth::{PasswordHasherConfig, SessionConfig};
 use synveil_core::TrashRetentionPolicy;
 use synveil_metadata::{
-    DatabasePool, FileMetadataBackend, FileMetadataService, VersionHistoryBackend,
-    VersionHistoryService, VersionRestoreBackend, VersionRestoreService,
+    ClientMutationBackend, ConflictManagementBackend, DatabasePool, FileMetadataBackend,
+    FileMetadataService, VersionHistoryBackend, VersionHistoryService, VersionRestoreBackend,
+    VersionRestoreService,
 };
 use synveil_platform::{HealthInfo, PlatformRuntime};
 
@@ -16,11 +17,24 @@ use crate::{
     auth::{
         AuthenticationBackend, PostgresAuthenticationBackend, UnavailableAuthenticationBackend,
     },
+    conflicts::{
+        ConflictCursorKey, PostgresConflictManagementBackend, UnavailableConflictManagementBackend,
+    },
     cookies::CookieConfig,
     csrf::CsrfKey,
+    device_auth::{
+        DeviceAuthenticationBackend, PostgresDeviceAuthenticationBackend,
+        UnavailableDeviceAuthenticationBackend,
+    },
     downloads::{DownloadBackend, UnavailableDownloadBackend},
     etag::EtagKey,
     files::UnavailableFileMetadataBackend,
+    mutations::{PostgresClientMutationBackend, UnavailableClientMutationBackend},
+    rebaseline::{
+        PostgresRebaselineBackend, RebaselineBackend, RebaselineTokenKey,
+        UnavailableRebaselineBackend,
+    },
+    sync::{PostgresSyncFeedBackend, SyncAckKey, SyncFeedBackend, UnavailableSyncFeedBackend},
     uploads::{UnavailableUploadBackend, UploadBackend},
     versions::{UnavailableVersionHistoryBackend, UnavailableVersionRestoreBackend},
 };
@@ -130,13 +144,21 @@ pub struct ApiState {
     readiness: Arc<dyn ReadinessProbe>,
     health_authorizer: Arc<dyn SystemHealthAuthorizer>,
     auth_backend: Arc<dyn AuthenticationBackend>,
+    device_auth_backend: Arc<dyn DeviceAuthenticationBackend>,
     file_metadata_backend: Arc<dyn FileMetadataBackend>,
+    client_mutation_backend: Arc<dyn ClientMutationBackend>,
+    conflict_management_backend: Arc<dyn ConflictManagementBackend>,
     version_history_backend: Arc<dyn VersionHistoryBackend>,
     version_restore_backend: Arc<dyn VersionRestoreBackend>,
     download_backend: Arc<dyn DownloadBackend>,
     upload_backend: Arc<dyn UploadBackend>,
+    sync_backend: Arc<dyn SyncFeedBackend>,
+    rebaseline_backend: Arc<dyn RebaselineBackend>,
     csrf_key: Arc<CsrfKey>,
     etag_key: Arc<EtagKey>,
+    sync_ack_key: Arc<SyncAckKey>,
+    rebaseline_token_key: Arc<RebaselineTokenKey>,
+    conflict_cursor_key: Arc<ConflictCursorKey>,
     cookie_config: CookieConfig,
     allowed_origin: Option<String>,
     body_limit_bytes: usize,
@@ -153,13 +175,21 @@ impl ApiState {
             runtime,
             health_authorizer: Arc::new(DenySystemHealth),
             auth_backend: Arc::new(UnavailableAuthenticationBackend),
+            device_auth_backend: Arc::new(UnavailableDeviceAuthenticationBackend),
             file_metadata_backend: Arc::new(UnavailableFileMetadataBackend),
+            client_mutation_backend: Arc::new(UnavailableClientMutationBackend),
+            conflict_management_backend: Arc::new(UnavailableConflictManagementBackend),
             version_history_backend: Arc::new(UnavailableVersionHistoryBackend),
             version_restore_backend: Arc::new(UnavailableVersionRestoreBackend),
             download_backend: Arc::new(UnavailableDownloadBackend),
             upload_backend: Arc::new(UnavailableUploadBackend),
+            sync_backend: Arc::new(UnavailableSyncFeedBackend),
+            rebaseline_backend: Arc::new(UnavailableRebaselineBackend),
             csrf_key: Arc::new(CsrfKey::generate()),
             etag_key: Arc::new(EtagKey::generate()),
+            sync_ack_key: Arc::new(SyncAckKey::generate()),
+            rebaseline_token_key: Arc::new(RebaselineTokenKey::generate()),
+            conflict_cursor_key: Arc::new(ConflictCursorKey::generate()),
             cookie_config: CookieConfig::production(),
             allowed_origin: None,
             body_limit_bytes: crate::DEFAULT_BODY_LIMIT_BYTES,
@@ -178,13 +208,21 @@ impl ApiState {
             readiness,
             health_authorizer: Arc::new(DenySystemHealth),
             auth_backend: Arc::new(UnavailableAuthenticationBackend),
+            device_auth_backend: Arc::new(UnavailableDeviceAuthenticationBackend),
             file_metadata_backend: Arc::new(UnavailableFileMetadataBackend),
+            client_mutation_backend: Arc::new(UnavailableClientMutationBackend),
+            conflict_management_backend: Arc::new(UnavailableConflictManagementBackend),
             version_history_backend: Arc::new(UnavailableVersionHistoryBackend),
             version_restore_backend: Arc::new(UnavailableVersionRestoreBackend),
             download_backend: Arc::new(UnavailableDownloadBackend),
             upload_backend: Arc::new(UnavailableUploadBackend),
+            sync_backend: Arc::new(UnavailableSyncFeedBackend),
+            rebaseline_backend: Arc::new(UnavailableRebaselineBackend),
             csrf_key: Arc::new(CsrfKey::generate()),
             etag_key: Arc::new(EtagKey::generate()),
+            sync_ack_key: Arc::new(SyncAckKey::generate()),
+            rebaseline_token_key: Arc::new(RebaselineTokenKey::generate()),
+            conflict_cursor_key: Arc::new(ConflictCursorKey::generate()),
             cookie_config: CookieConfig::production(),
             allowed_origin: None,
             body_limit_bytes: crate::DEFAULT_BODY_LIMIT_BYTES,
@@ -226,8 +264,32 @@ impl ApiState {
     }
 
     #[must_use]
+    pub fn with_device_auth_backend(
+        mut self,
+        backend: Arc<dyn DeviceAuthenticationBackend>,
+    ) -> Self {
+        self.device_auth_backend = backend;
+        self
+    }
+
+    #[must_use]
     pub fn with_file_metadata_backend(mut self, backend: Arc<dyn FileMetadataBackend>) -> Self {
         self.file_metadata_backend = backend;
+        self
+    }
+
+    #[must_use]
+    pub fn with_client_mutation_backend(mut self, backend: Arc<dyn ClientMutationBackend>) -> Self {
+        self.client_mutation_backend = backend;
+        self
+    }
+
+    #[must_use]
+    pub fn with_conflict_management_backend(
+        mut self,
+        backend: Arc<dyn ConflictManagementBackend>,
+    ) -> Self {
+        self.conflict_management_backend = backend;
         self
     }
 
@@ -256,17 +318,49 @@ impl ApiState {
     }
 
     #[must_use]
+    pub fn with_sync_backend(mut self, backend: Arc<dyn SyncFeedBackend>) -> Self {
+        self.sync_backend = backend;
+        self
+    }
+
+    #[must_use]
+    pub fn with_rebaseline_backend(mut self, backend: Arc<dyn RebaselineBackend>) -> Self {
+        self.rebaseline_backend = backend;
+        self
+    }
+
+    #[must_use]
     pub fn with_postgres_auth(
         self,
         pool: Arc<DatabasePool>,
         password_config: PasswordHasherConfig,
         session_config: SessionConfig,
+        rebaseline_token_key: RebaselineTokenKey,
     ) -> Self {
-        let state = self.with_auth_backend(Arc::new(PostgresAuthenticationBackend::new(
-            Arc::clone(&pool),
-            password_config,
-            session_config,
-        )));
+        let conflict_cursor_key = ConflictCursorKey::from_bytes(*rebaseline_token_key.key_bytes());
+        let state = self
+            .with_device_auth_backend(Arc::new(PostgresDeviceAuthenticationBackend::new(
+                Arc::clone(&pool),
+            )))
+            .with_auth_backend(Arc::new(PostgresAuthenticationBackend::new(
+                Arc::clone(&pool),
+                password_config,
+                session_config,
+            )))
+            .with_sync_backend(Arc::new(PostgresSyncFeedBackend::new(
+                pool.as_ref().clone(),
+            )))
+            .with_rebaseline_backend(Arc::new(PostgresRebaselineBackend::new(
+                pool.as_ref().clone(),
+            )))
+            .with_client_mutation_backend(Arc::new(PostgresClientMutationBackend::new(
+                pool.as_ref().clone(),
+            )))
+            .with_conflict_management_backend(Arc::new(PostgresConflictManagementBackend::new(
+                pool.as_ref().clone(),
+            )))
+            .with_conflict_cursor_key(conflict_cursor_key)
+            .with_rebaseline_token_key(rebaseline_token_key);
         let trash_retention_policy = state.trash_retention_policy;
         let pool = pool.as_ref().clone();
         state
@@ -287,6 +381,24 @@ impl ApiState {
     #[must_use]
     pub fn with_etag_key(mut self, key: EtagKey) -> Self {
         self.etag_key = Arc::new(key);
+        self
+    }
+
+    #[must_use]
+    pub fn with_sync_ack_key(mut self, key: SyncAckKey) -> Self {
+        self.sync_ack_key = Arc::new(key);
+        self
+    }
+
+    #[must_use]
+    pub fn with_rebaseline_token_key(mut self, key: RebaselineTokenKey) -> Self {
+        self.rebaseline_token_key = Arc::new(key);
+        self
+    }
+
+    #[must_use]
+    pub fn with_conflict_cursor_key(mut self, key: ConflictCursorKey) -> Self {
+        self.conflict_cursor_key = Arc::new(key);
         self
     }
 
@@ -319,8 +431,23 @@ impl ApiState {
     }
 
     #[must_use]
+    pub(crate) fn device_auth_backend(&self) -> &Arc<dyn DeviceAuthenticationBackend> {
+        &self.device_auth_backend
+    }
+
+    #[must_use]
     pub(crate) fn file_metadata_backend(&self) -> &Arc<dyn FileMetadataBackend> {
         &self.file_metadata_backend
+    }
+
+    #[must_use]
+    pub(crate) fn client_mutation_backend(&self) -> &Arc<dyn ClientMutationBackend> {
+        &self.client_mutation_backend
+    }
+
+    #[must_use]
+    pub(crate) fn conflict_management_backend(&self) -> &Arc<dyn ConflictManagementBackend> {
+        &self.conflict_management_backend
     }
 
     #[must_use]
@@ -344,6 +471,16 @@ impl ApiState {
     }
 
     #[must_use]
+    pub(crate) fn sync_backend(&self) -> &Arc<dyn SyncFeedBackend> {
+        &self.sync_backend
+    }
+
+    #[must_use]
+    pub(crate) fn rebaseline_backend(&self) -> &Arc<dyn RebaselineBackend> {
+        &self.rebaseline_backend
+    }
+
+    #[must_use]
     pub(crate) fn csrf_key(&self) -> &CsrfKey {
         self.csrf_key.as_ref()
     }
@@ -351,6 +488,21 @@ impl ApiState {
     #[must_use]
     pub(crate) fn etag_key(&self) -> &EtagKey {
         self.etag_key.as_ref()
+    }
+
+    #[must_use]
+    pub(crate) fn sync_ack_key(&self) -> &SyncAckKey {
+        self.sync_ack_key.as_ref()
+    }
+
+    #[must_use]
+    pub(crate) fn rebaseline_token_key(&self) -> &RebaselineTokenKey {
+        self.rebaseline_token_key.as_ref()
+    }
+
+    #[must_use]
+    pub(crate) fn conflict_cursor_key(&self) -> &ConflictCursorKey {
+        self.conflict_cursor_key.as_ref()
     }
 
     #[must_use]

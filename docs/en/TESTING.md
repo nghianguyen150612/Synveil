@@ -289,6 +289,250 @@ Minimum pure/unit coverage includes:
 State-transition tests enumerate every state and ensure undefined transitions
 fail without mutation.
 
+## Prompt 31 durable change-journal validation
+
+The durable journal foundation has an explicit live-PostgreSQL gate in
+`crates/metadata/tests/postgres.rs`. On a fresh disposable database, the
+enabled ignored suite proves migration application, typed schema round-trip,
+one event for each supported logical mutation, upload and version-restore
+idempotent replay, purge tombstone survival after Node deletion, owner/library
+scope, bounded ordered paging, cursor resume, reader/write interleaving,
+concurrent writers, a late journal failure rollback, and database-enforced
+append-only history. The upload finalization test also runs two concurrent
+completion calls and asserts one stored completion and one journal fact.
+
+The foundation-specific unit tests cover canonical change vocabulary, cursor
+version/length/integrity/overflow handling, PostgreSQL `BIGINT` boundaries, and
+separation from the file-history and purge cursor namespaces. The live suite is
+not run against a persistent development database. A representative explicit
+run is:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://<disposable-loopback-db> \
+  cargo test -p synveil-metadata --test postgres --locked -- \
+  --ignored --test-threads=1
+```
+
+This validates the journal foundation only. The Prompt 32 checkpoint/feed,
+Prompt 33 server-side rebaseline, and Prompt 34 client-mutation tests are
+documented below. Client-side staged installation and automatic conflict
+resolution remain future sync-phase tests.
+
+## Prompt 35 synchronization status and validation
+
+| Capability | Status |
+|---|---|
+| durable change journal | `VALIDATED` |
+| device checkpoints/feed | `VALIDATED` |
+| snapshot/rebaseline | `VALIDATED` |
+| client mutation submission | `VALIDATED` |
+| optimistic conflict detection | `VALIDATED` |
+| durable conflict records | `IMPLEMENTED` |
+| manual conflict inspection | `IMPLEMENTED` |
+| explicit manual resolution | `IMPLEMENTED` |
+| automatic conflict resolution | `NOT IMPLEMENTED` |
+| desktop sync agent | `NOT IMPLEMENTED` |
+
+The Prompt 32 live PostgreSQL test uses a fresh disposable database and covers
+checkpoint creation/uniqueness, concurrent creation, owner and library
+concealment, deterministic epoch/zero initialization, bounded ascending feed
+pages, stable repeat reads before acknowledgment, signed delivery evidence,
+monotonic compare-and-set acknowledgment, same-page and older-token replay,
+gap/out-of-order and future-progress rejection, independent devices and
+libraries, concurrent readers, concurrent acknowledgments, a journal writer
+overlapping a feed read, retained-history expiry, epoch rollover, and revoked
+device denial. API tests cover session auth, CSRF asymmetry, private/no-store
+headers, body/limit bounds, safe errors, scope concealment, logical-only DTOs,
+and token non-disclosure. The required live command is:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-metadata --test postgres --locked -- \
+  --ignored --test-threads=1
+```
+
+The Prompt 34 API and metadata suites implement and test the authenticated
+logical mutation boundary. A local watcher, staged desktop agent, conflict
+auto-resolver, WebSocket/SSE, and broker remain outside this phase.
+
+## Prompt 33 logical snapshot/rebaseline validation
+
+Unit coverage proves the closed bootstrap state vocabulary; typed logical
+projection invariants; canonical root/directory/file shapes; cursor round trip,
+scope binding, tamper and oversize rejection; completion-token round trip and
+owner/device/library/session/generation claim binding; distinct cursor/token
+HMAC domains; empty-manifest terminal encoding; and redacted secret `Debug`.
+API coverage exercises start and complete authentication plus CSRF, GET auth
+without CSRF, 2 KiB body bounds, strict JSON fields, page-limit bounds,
+malformed/tampered/oversized cursor and completion token, cross-owner
+concealment, revoked/unknown device denial, private/no-store success and error
+responses, deterministic page/retry mapping, terminal proof, exact checkpoint
+result, response-loss replay, and a DTO allowlist that contains no physical
+storage field.
+
+The ignored live PostgreSQL test
+`postgres_sync_rebaseline_bootstrap_is_coherent_bounded_and_fenced` is required
+on a fresh disposable database. It applies the Prompt 33 migration, verifies
+the scoped state/manifest schema and absence of physical columns, and then
+proves:
+
+- root-only/empty-user-content completion at sequence zero; inclusion of
+  current `ACTIVE` and `TRASHED` Nodes; exclusion of `PURGING`/purged Nodes; and
+  safe current version/length/hash projection;
+- one coherent epoch/resume cut captured with an immutable manifest and stable
+  Node-ID keyset ordering, bounded `limit + 1` page reads, deterministic first
+  and terminal retries, service restart continuation, and byte-for-byte
+  unchanged checkpoints throughout page reads;
+- real concurrent directory create, rename, move, Trash, metadata purge,
+  verified upload finalization/content replacement, and version restore. Each
+  assertion requires the committed outcome in the captured projection exactly
+  when its journal event is at/before the cut; otherwise the event must be
+  strictly post-cut;
+- a multi-page snapshot followed after page one by concurrent rename, move,
+  Trash, create, and content finalization still returns only the captured old
+  projection. Post-cut feed events reconcile those changes and every returned
+  sequence is strictly greater than the snapshot resume sequence;
+- completion rejects non-terminal evidence without changing the checkpoint,
+  then atomically replaces epoch/acknowledged sequence exactly at the cut;
+  committed response-loss replay is idempotent;
+- an already-ahead checkpoint, expired/replaced generation, epoch rotation, or
+  minimum-retained-sequence invalidation fails closed without rewind; and
+  concurrent starts return the same one OPEN bootstrap;
+- bounded retired-session cleanup removes only bootstrap/manifest state and
+  preserves the canonical root and journal facts.
+
+The exact focused live invocations are:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-metadata --test postgres --locked -- \
+  postgres_change_journal_is_ordered_scoped_resumable_and_atomic \
+  --ignored --exact --test-threads=1
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-metadata --test postgres --locked -- \
+  postgres_device_sync_checkpoints_and_feed_are_bounded_monotonic_and_scoped \
+  --ignored --exact --test-threads=1
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-metadata --test postgres --locked -- \
+  postgres_sync_rebaseline_bootstrap_is_coherent_bounded_and_fenced \
+  --ignored --exact --test-threads=1
+```
+
+Passing a fake backend or leaving the ignored test unexecuted is not Prompt 33
+PostgreSQL/no-gap evidence. The final gate also reruns upload finalization,
+version restore, Trash/restore, metadata purge, journal atomicity, sync
+feed/ack, GC planning/execution/worker, local ObjectStore conformance, and
+available Windows upload-durability regression coverage.
+
+## Prompt 34 client mutation submission validation
+
+Unit coverage in `synveil-core` and `synveil-metadata` proves the closed
+mutation vocabulary, canonical UUIDv7 mutation identity, typed payload
+construction, decimal epoch/sequence boundaries, deterministic versioned
+SHA-256 fingerprinting, conflict-reason parsing, exact logical result replay,
+and the explicit replay marker. No arbitrary JSON patch, byte payload, object
+identity, or physical storage field is part of the contract.
+
+API coverage proves strict JSON field allowlists for the envelope and every
+typed payload, exact kind parsing, authentication and session-bound CSRF,
+16 KiB request-body rejection, private/no-store success and error responses,
+owner/device/library concealment, safe logical applied results, safe conflict
+details, mutation-ID conflict mapping, and rebaseline-required mapping.
+
+The live PostgreSQL tests
+`postgres_client_mutations_are_atomic_idempotent_scoped_and_bootstrap_safe`
+and `postgres_client_mutations_are_race_safe_for_duplicate_and_stale_pairs`
+run on a fresh disposable database and prove:
+
+- all five supported namespace/state mutations commit one canonical Node
+  change, one journal event, and one terminal operation row atomically;
+- retry after a lost response returns the exact persisted Node/event or
+  conflict with `replayed: true`, while the originating device checkpoint is
+  unchanged and other devices can read the event from the feed;
+- stale revision, changed parent/name, future base sequence, wrong epoch,
+  retained-history expiry, and purged-resource cases fail deterministically;
+- same-ID/different-payload reuse is rejected, cross-owner/library/device
+  access is concealed, and transient rollback leaves no operation or journal
+  fact;
+- concurrent duplicate submissions, rename-vs-rename, move-vs-move,
+  Trash-vs-rename, same-name directory creation, and two-device stale writes
+  are serialized by the library namespace guard without deadlock or duplicate
+  canonical facts; and
+- a bootstrap cut followed by a client mutation hands the post-cut event to
+  the feed while the immutable bootstrap manifest remains unchanged.
+
+The exact live command is:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-metadata --test postgres --locked -- \
+  --ignored --test-threads=1
+```
+
+The focused tests use PostgreSQL row locks, foreign-key scope, the
+transaction-scoped per-library advisory guard, and the real journal/feed,
+rather than a fake backend. Automatic conflict resolution, local staged
+application, content-byte mutations, and desktop sync remain unimplemented.
+
+## Prompt 35 durable conflict and manual-resolution validation
+
+Unit coverage proves typed UUIDv7 conflict/resolution parsing, closed lifecycle
+and action vocabularies, canonical typed SHA-256 fingerprint stability and
+semantic-change detection, bounded page limits, strict deny-unknown-fields
+resolution DTOs, and owner/device/library-bound cursor round trip, oversize,
+scope, and tamper rejection. API coverage proves list/detail authentication,
+GET without CSRF, POST with session-bound CSRF, 16 KiB body rejection,
+private/no-store successes and errors, cross-scope/revoked-Device concealment,
+stable stale and terminal error envelopes, exact replay projection, and DTO
+allowlists with no physical-storage field.
+
+The fresh disposable PostgreSQL tests
+`postgres_sync_conflicts_are_durable_inspectable_and_manually_resolvable` and
+`postgres_sync_conflict_resolution_is_fenced_race_safe_and_replayable` prove:
+
+- a managed terminal Prompt 34 conflict and its operation row are linked
+  one-to-one in the same transaction, original replay returns the same conflict
+  ID, managed reasons persist, and non-managed failures create no conflict;
+- immutable historical evidence, bounded OPEN keyset pages, stable descending
+  order, detail lookup, owner/Device/Library concealment, revoked-Device denial,
+  and survival through rebaseline plus Node purge;
+- `ACCEPT_SERVER` moves OPEN to DISMISSED with no Node or journal change, is
+  exactly replayable by ID/fingerprint, and fences a different second decision;
+- `APPLY_CLIENT_INTENT` requires mutation-appropriate fresh current revisions,
+  reuses the real Prompt 34 executor, commits exactly one Node change/event and
+  RESOLVED linkage, leaves the original operation CONFLICT, and replays the
+  original timestamp/event after response loss;
+- stale revision, rename, move, and purge winners persist an explicit stale
+  result, leave the conflict OPEN, and produce zero resolution mutation/event;
+- APPLY/APPLY and ACCEPT/APPLY races permit at most one terminal decision and
+  at most one resource event, while original mutation replay during resolution
+  cannot duplicate the conflict or mutate canonical state; and
+- successful apply is visible to another Device through the Prompt 32 feed,
+  the originating checkpoint is byte-for-byte unchanged, accept-server emits
+  no feed event, and a post-rebaseline fresh apply succeeds or safely conflicts.
+
+The Prompt 35 tests use real PostgreSQL advisory/row locks with per-race
+10-second timeouts and assert no deadlock. They also inspect the migration
+schema for forbidden physical columns and attempt a direct evidence rewrite to
+prove the database trigger rejects it. The focused commands are:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-metadata --test postgres --locked -- \
+  postgres_sync_conflicts_are_durable_inspectable_and_manually_resolvable \
+  --ignored --exact --test-threads=1
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-metadata --test postgres --locked -- \
+  postgres_sync_conflict_resolution_is_fenced_race_safe_and_replayable \
+  --ignored --exact --test-threads=1
+```
+
+The final gate also runs every ignored metadata PostgreSQL test sequentially on
+one fresh database, authentication and storage-GC ignored suites, the complete
+non-live workspace, strict Clippy, cargo-deny, OpenAPI lint, diff checks, and a
+forbidden-scope/security-field scan. Automatic conflict resolution and the
+desktop sync agent remain unimplemented.
+
 ## PostgreSQL integration tests
 
 Use the supported PostgreSQL version, not SQLite or a simplistic repository
@@ -456,6 +700,18 @@ path is valid test input.
 Synchronization receives unusually deep testing because an apparently small
 ordering/retry defect can silently lose changes across every device.
 
+The implemented Prompt 31 scope is the server-side durable journal foundation:
+transaction-local publication, typed projections, per-library ordering,
+bounded cursor reads, and rollback/idempotency/concurrency evidence. Prompt 32
+adds the authenticated one-way server feed, durable per-device/per-library
+checkpoints, signed acknowledgment evidence, and explicit rebaseline-required
+outcomes. Prompt 33 adds the server-side immutable logical manifest, coherent
+cut, bounded retryable pages, terminal proof, and exact checkpoint handoff.
+Prompt 34 adds authenticated typed logical mutation submission, durable
+mutation identity/fingerprint persistence, optimistic preconditions, and
+deterministic conflict outcomes. Client-side staged installation, arbitrary
+content-byte mutation, and automatic conflict resolution remain planned.
+
 ### Sync invariants
 
 For one `Library` and journal epoch:
@@ -477,11 +733,14 @@ For one `Library` and journal epoch:
    later event, never omitted between them.
 7. The same `client_mutation_id`/fingerprint produces one mutation/event.
    Different payload reuse is rejected.
-8. Content based on a stale version preserves incoming and current bytes in the
-   defined conflict representation. No last-writer-wins byte loss.
-9. Metadata conflicts return current state/rebase instructions; directory
-   ancestry remains acyclic and sibling names remain unique under the portable
-   profile.
+8. The Prompt 34 mutation boundary accepts only typed logical namespace/state
+   operations; it never accepts file bytes, object/replica identities, or
+   storage locators. A future content protocol must preserve incoming and
+   current bytes without last-writer-wins loss.
+9. Failed mutation preconditions return the persisted expected/current logical
+   conflict projection and do not silently overwrite, merge, or create a
+   conflict copy. Directory ancestry remains acyclic and sibling names remain
+   unique under the portable profile.
 10. Tombstones/history outlive the documented active cursor window. Below-
     retention or wrong-epoch clients receive explicit rebaseline, never an
     empty page that implies deletion convergence.
@@ -511,7 +770,7 @@ independent durable local states and credentials.
 | `SYNC-011` Restore on A → B | Restore trashed node, original parent free | B sees restored identity/revision and content; new event, no re-upload/rewrite of old object. |
 | `SYNC-012` Restore name collision | Original parent now contains colliding name | Defined server conflict/name/destination behavior; both resources preserved/addressable. |
 | `SYNC-013` Purge versus stale client | Retention purges tombstone/history while B is below retained cursor | B receives cursor-expired/rebaseline; never resurrects or silently retains wrong live state. |
-| `SYNC-014` Offline content/content conflict | Server v4; A offline produces v5A, B v5B; reconnect A then B, then reverse order in another run | First valid head and incoming stale bytes both persist under deterministic conflict grouping/copy; no byte loss; all devices converge. |
+| `SYNC-014` Offline content/content conflict | Reserved for the future content mutation protocol; Prompt 34 accepts no file bytes | No content-conflict claim is made by Prompt 34; a later protocol must preserve both byte streams without last-writer-wins loss. |
 | `SYNC-015` Content versus rename | A edits from base while B renames same node | Compatible operations rebase/merge per spec or return explicit conflict; content and intended current name remain explainable and journaled. |
 | `SYNC-016` Content versus delete | A edits offline while B trashes node | Defined edit/delete conflict preserves incoming bytes and deletion history; no silent resurrection/overwrite. |
 | `SYNC-017` Restore versus new edit | A restores old version while B advances head | Base precondition chooses one head; stale outcome is explicit/conflict-preserved; old history immutable. |
@@ -587,6 +846,14 @@ claimed Windows, macOS, Linux Desktop, and Linux Server profile tests:
 - symlink/reparse/junction policy, hard links, sparse files, permission/xattr
   support and file identities;
 - watcher overflow/lost notification/coalescing plus authoritative rescan;
+- Prompt 38 deterministic watcher tests for create/modify/delete, paired
+  rename/move, ambiguous unpaired remove+create fallback, inbound suppression,
+  user-edit-after-inbound races, bounded queue overflow, restart scan recovery,
+  and control-path exclusion;
+- native Linux `notify` tests for live create plus disposable-root rename/move,
+  editor-style temp replace, delete, and symlink/special-entry safety where the
+  host exposes those semantics; Windows evidence is cross-target compile unless
+  a native Windows host actually runs the watcher suite;
 - atomic local temp-write/hash/replace, locked/open file, process kill and low
   disk/inodes;
 - local state database transaction, corruption, backup/rebuild and cursor apply;
@@ -1224,3 +1491,215 @@ Before the gate owner records any roadmap token:
   release-blocking invariant;
 - status and English/Vietnamese docs accurately describe support, degradation,
   residual risk and non-goals.
+
+## Prompt 36 desktop inbound evidence
+
+The client-sync suite uses disposable SQLite files and managed roots under the
+OS temporary directory. It does not touch a user-selected real root. A
+deterministic in-process `SyncRemote` enforces rebaseline completion,
+per-device checkpoints, bounded feed/ack behavior, and chunked logical content
+download without external internet.
+
+Current direct coverage includes:
+
+- migration from zero, schema version, reopen, WAL/FULL/foreign-key/busy-timeout
+  pragmas, foreign-key/check rejection, pending ack/operation/bootstrap restart,
+  per-library scope, and exclusive second-writer rejection;
+- strict relative paths, Windows-reserved/control/trailing/separator names,
+  Unicode/case collision keys, Unicode descendant path updates, root marker and
+  wrong scope/root binding, and Linux symlink redirect rejection;
+- root-only and multi-page bootstrap, durable manifest pages, terminal topology
+  proof, parent-first materialization, response-loss retry, local-complete
+  recovery, tracked generation sweep, and preservation of unknown files;
+- empty, single-event, and multi-event feed pages, all eight current journal
+  kinds, exact applied/acknowledged transitions, cross-device independence,
+  wrong epoch, sequence gap, unknown kind, page/event replay, and offline state;
+- directory create/rename/move/Trash/restore/purge replay, managed and unknown
+  case collision, occupied destination, missing source, stale quarantine,
+  divergent file replacement/purge, and racing unknown-directory attribution;
+- sequential multi-chunk download, length and SHA-256 mismatch, old-visible-file
+  retention, staged restart, replace-before-database recovery, and final
+  receipt cleanup; and
+- deterministic failures after page intent, before filesystem action, after
+  staged content, after filesystem receipt but before SQLite state, after local
+  event commit, after server ack, after bootstrap page, during bootstrap apply,
+  after local bootstrap completion, and after server completion before local
+  handoff.
+
+The authoritative local commands are:
+
+```text
+cargo test -p synveil-client-sync --all-targets --locked
+cargo clippy -p synveil-client-sync --all-targets --all-features --locked -- -D warnings
+```
+
+The release handoff also reruns the full locked workspace gates and the existing
+Prompt 31-35 ignored PostgreSQL integration cases against a fresh disposable
+database. Linux provides the filesystem runtime evidence for Prompt 36. Native
+Windows execution, power-loss testing, and hostile same-user path-race testing
+remain later platform/release-lab gates and must not be inferred from Linux. A
+locked `cargo check -p synveil-client-sync --target
+x86_64-pc-windows-gnu` with the matching official Rust 1.98 toolchain passes,
+so the Windows conditional Rust path is compile-audited; that check does not
+claim a native Windows link or runtime result.
+
+## Prompt 37 desktop remote evidence
+
+The continuation audit is in
+[`PROMPT37_CONTINUATION_AUDIT.md`](../PROMPT37_CONTINUATION_AUDIT.md). It records
+the inherited dirty worktree, requirement classification, demonstrated defects,
+and final evidence separately. Earlier test output is not a substitute for
+rerunning the final source tree.
+
+### Client, protocol, and credential coverage
+
+The Linux client-sync suite contains 55 unit tests (23 HTTP adapter tests,
+21 profile/SecretStore tests, and 11 existing local-state/path tests), plus
+12 inbound integration tests. HTTP tests use real local Axum/TCP/TLS fixtures
+and the production reqwest adapter; the explicit numeric-loopback HTTP policy
+does not relax the production HTTPS constructor. Coverage includes:
+
+- exact method, route, query, DTO, bearer header, scope and evidence for all
+  seven `SyncRemote` methods; canonical IDs/decimals, unknown fields/kinds,
+  epoch/sequence/generation, revision-zero Nodes, revision drift, tombstones,
+  and terminal rebaseline proof;
+- JSON/error limits with and without `Content-Length`, malformed/HTML bodies,
+  compressed or duplicate content encodings, typed HTTP errors, connect/
+  header/metadata/idle/total deadlines, no automatic retry, and a maximum of
+  500 feed events or 1,000 manifest Nodes per request;
+- bounded streaming chunks, exact immutable version and validator, length/
+  SHA-256 mismatch, early EOF, extra bytes, and a deadline independent of idle
+  progress; no whole-file response buffering;
+- a two-server redirect fixture whose destination receives zero requests and
+  no bearer/cookie; wrong profile/owner/Device rejection before network access;
+  and an ephemeral self-signed TLS fixture rejected before HTTP authentication;
+- strict URL normalization/rejection, durable profile and replica/root binding,
+  migration from the original SQLite schema, versioned secure-store envelopes,
+  copied/reconstructed SQLite isolation, and scans of database/WAL/SHM files
+  for synthetic plaintext secrets;
+- failed store/read-back/delete, restart after cleanup intent, explicit
+  replacement and forget, unavailable secure storage with no plaintext
+  fallback, concurrent store attempts, and stale live-engine rejection after
+  forget or re-enrollment; and
+- preserving managed bytes, bootstrap state, applied/acknowledged sequences,
+  pending ACK evidence and local issues through offline/auth/revocation failure.
+
+Core tests cover 256-bit versioned secret syntax, purpose-separated digest
+vectors, canonical IDs, redacted Debug and bounded parsing. API tests cover
+browser/device principal separation, CSRF, duplicate or mixed authentication,
+restricted routes, strict enrollment JSON, and secret-safe errors/tracing.
+The trace regression runs in a fresh test process so another parallel test's
+tracing callsite cache cannot suppress the capture. It must observe real trace
+events and reject secret leakage, including a bearer/grant copied into
+`X-Request-Id` or an unmatched URI.
+
+### Fresh PostgreSQL and real HTTP acceptance
+
+There are 27 ignored PostgreSQL cases. Run each case against its own newly
+created disposable database with all forward migrations applied by the test.
+Use `SYNVEIL_TEST_DATABASE_URL`, not `DATABASE_URL`; reused databases invalidate
+the single-owner/count assumptions in these fixtures. The continuation uses a
+new loopback-only PostgreSQL 17 container and leaves the interrupted session's
+container untouched.
+
+| Package / integration target | Cases |
+|---|---:|
+| `synveil-metadata` / `postgres` | 14 |
+| `synveil-auth` / `postgres` | 2 |
+| `synveil-storage` / `gc` | 5 |
+| `synveil-metadata` / `device_credentials_postgres` | 1 |
+| `synveil-auth` / `device_credentials_postgres` | 3 |
+| `synveil-auth` / `bootstrap_precision_postgres` | 1 |
+| `synveil-api` / `desktop_remote` | 1 |
+
+Discover exact cases with `cargo test -p <package> --test <target> --locked --
+--list --ignored`, then use a fresh database for each invocation:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5432/fresh_test_database \
+  cargo test -p <package> --test <target> --locked -- <exact_test_name> \
+  --ignored --exact --test-threads=1
+```
+
+Credential cases verify schema constraints, digest-only storage, wrong owner/
+Device, inactive owner/Device, single/all-credential revoke, concurrent exchange
+with one winner, lost-response replay rejection and fresh-grant recovery. The
+lock-expiry regression holds the Device row lock until the grant has expired;
+the queued production exchange must leave the Device PENDING and create neither
+a credential nor a consumption record. A timestamp captured before waiting
+does not satisfy the expiry check.
+
+The acceptance case uses a real router, fresh PostgreSQL, actual logical
+storage/upload services, the production `HttpSyncRemote`, fresh SQLite and a
+temporary managed root. Only its platform SecretStore is an explicit test
+implementation. It bootstraps a browser owner/session, creates and exchanges a
+grant, downloads a 192-KiB file, bootstraps the replica, consumes/ACKs a browser
+mutation, replaces content with 128 KiB, and injects failure after local apply
+before ACK. It revokes the credential, verifies all sync/rebaseline/content
+routes reject it, preserves bytes and pending progress, then explicitly
+re-enrolls the same Device and recovers ACK. Wrong-owner/library/Device/content
+requests, browser CSRF, mixed auth, and device attempts to use upload/mutation/
+conflict/admin routes are rejected by that same real router.
+
+### Native secure storage and Windows evidence
+
+Native Linux persistence is a separate ignored test, not an inference from the
+test store. Run it in a private `dbus-run-session` with fresh temporary
+`XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `XDG_RUNTIME_DIR`, and an unlocked synthetic
+GNOME Secret Service vault. Never point the fixture at a personal keyring. Wait
+for `org.freedesktop.DBus.NameHasOwner` on `org.freedesktop.secrets`; introspection
+can accidentally auto-activate a second daemon before the owned daemon is ready.
+The unlock password is synthetic and supplied through stdin, not argv or a file.
+
+```text
+cargo test -p synveil-platform --lib --locked -- \
+  native_secrets::tests::native_secret_survives_backend_recreation_and_is_deleted \
+  --ignored --exact
+```
+
+The test writes a fresh opaque key, starts a new process to read the entry
+through the native adapter, then deletes it and verifies absence. The child
+receives only the non-secret key name; the secret is not passed in its arguments
+or environment. Stop only the fixture's own daemon/session afterward.
+
+With matching official Rust 1.98 host/Windows standard libraries, MinGW GCC,
+headers, libraries and binutils, set `RUSTC`, `CARGO_TARGET_DIR`,
+`CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER`, `CC_x86_64_pc_windows_gnu`, and
+`AR_x86_64_pc_windows_gnu` to that isolated toolchain, then run:
+
+```text
+cargo check --workspace --all-targets --locked --target x86_64-pc-windows-gnu
+cargo test -p synveil-client-sync -p synveil-platform --all-targets --locked \
+  --target x86_64-pc-windows-gnu --no-run
+```
+
+This checks the workspace and links actual Windows test executables, including
+bundled SQLite and the Windows Credential Manager adapter. It does not use host
+SQLite through a pkg-config cross-check workaround. No native Windows runtime,
+Credential Manager persistence, TLS, NTFS, reboot or power-loss evidence is
+claimed; those remain platform/release-lab gates.
+
+### Final validation and dependency policy
+
+After the final code changes, rerun all fresh database/native cases above and:
+
+```text
+cargo fmt --all -- --check
+cargo check --workspace --all-targets --locked
+cargo test --workspace --all-targets --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test -p synveil-client-sync --all-targets --locked
+cargo clippy -p synveil-client-sync --all-targets --all-features --locked -- -D warnings
+cargo deny check
+npx --yes @redocly/cli lint api/openapi.yaml
+git diff --check
+```
+
+The reviewed TLS license additions are exact-version exceptions in `deny.toml`:
+ISC for `ring@0.17.14`, `rustls-webpki@0.103.15`, and `untrusted@0.9.0`, and
+CDLA-Permissive-2.0 for `webpki-roots@1.0.9`. The global allowlist is unchanged;
+upgrades require renewed review. Distributions must preserve the applicable
+upstream license notices and root-data agreement. No advisory was suppressed.
+OpenAPI lint warnings for public probe/status 4xx responses and unused shared
+components are reported separately; they are not resolved by inventing API
+behavior. DeviceBearer is not advertised for privileged system health.

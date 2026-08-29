@@ -12,8 +12,15 @@ execution plus FileVersion reference accounting VALIDATED; GC grace-period,
 lease planning, and crash-safe internal physical Object/ObjectReplica deletion
 IMPLEMENTED/VALIDATED; bounded internal GC-worker orchestration and
 stuck-operation reconciliation IMPLEMENTED; unknown physical-orphan auto-delete
-NOT IMPLEMENTED; download UI, sync, backup, sharing, and higher-level lifecycle
-PLANNED**
+NOT IMPLEMENTED; the durable owner/library-scoped change-journal foundation is
+IMPLEMENTED/VALIDATED; per-device checkpoints and the incremental change feed
+are VALIDATED; the materialized logical snapshot/rebaseline bootstrap is also
+VALIDATED; typed client mutation submission, optimistic concurrency conflict
+detection, durable idempotency, and exact journal integration are IMPLEMENTED;
+filesystem observation and durable outbound intent capture are IMPLEMENTED;
+automatic outbound mutation submission, automatic conflict resolution, desktop
+GUI, download UI, backup, sharing, and higher-level lifecycle remain NOT
+IMPLEMENTED/PLANNED**
 
 This document specifies Synveil's canonical byte-storage contract and the
 logical lifecycle that sits above it. It is subordinate to accepted ADRs and
@@ -37,6 +44,17 @@ are still normative planning material unless explicitly marked otherwise.
 | authenticated HTTP full/single-range download transport | `IMPLEMENTED/VALIDATED` |
 | authenticated immutable version-history metadata listing and lookup | `IMPLEMENTED/VALIDATED` |
 | authenticated safe historical-version restore as a new immutable `FileVersion` | `IMPLEMENTED` |
+| owner/library-scoped durable change-journal writer and bounded read service | `IMPLEMENTED/VALIDATED` |
+| per-device checkpoints | `VALIDATED` |
+| incremental change feed and acknowledgment | `VALIDATED` |
+| logical snapshot/rebaseline bootstrap | `VALIDATED` |
+| client mutation submission | `IMPLEMENTED` |
+| optimistic concurrency conflict detection | `IMPLEMENTED` |
+| filesystem observation | `IMPLEMENTED` |
+| durable outbound intent capture | `IMPLEMENTED` |
+| automatic outbound mutation submission | `NOT IMPLEMENTED` |
+| automatic conflict resolution | `NOT IMPLEMENTED` |
+| desktop GUI | `NOT IMPLEMENTED` |
 | canonical Trash timestamp, derived retention status, and metadata-only `PURGING` begin | `IMPLEMENTED` |
 | trusted metadata purge execution, FileVersion reference release, and GC-candidate metadata | `IMPLEMENTED/VALIDATED` |
 | GC grace-period, bounded claims, leases, revalidation, and ready planning | `IMPLEMENTED/VALIDATED` |
@@ -46,9 +64,66 @@ are still normative planning material unless explicitly marked otherwise.
 | download UI | `PLANNED` |
 | compression | `PLANNED` |
 | filesystem optimizations | `PLANNED` |
-| sync | `PLANNED` |
+| broader client synchronization | `PLANNED` |
 | backup | `PLANNED` |
 | sharing | `PLANNED` |
+
+## Implemented durable change-journal foundation
+
+The metadata boundary now owns one canonical `change_journal` table. A logical
+namespace mutation first takes a short transaction-scoped per-library guard
+before locking any `Node`; after the domain work is ready, the transaction-local
+writer takes the library row lock, advances `journal_epoch`/`sync_head`, and
+inserts the typed event projection in that same PostgreSQL transaction. This
+boundary is used for directory creation, rename, move, Trash, restore, upload
+finalization, version restore, and metadata purge. A failed transaction
+therefore publishes neither its domain change nor its journal fact. PostgreSQL
+also rejects UPDATE and DELETE on `change_journal`; retention and compaction are
+deliberately absent.
+
+The journal stores logical IDs, result revisions, parent/kind/state projection,
+and current version ID where useful. It does not store object/replica keys,
+filesystem paths, staging handles, credentials, or file contents. Purge uses a
+minimal node tombstone that remains after the Node and its FileVersions are
+removed. Internal GC leases, retries, replica deletion, and physical cleanup
+are not journal events.
+
+`ChangeJournalService` provides an owner-authenticated, transport-neutral
+bounded reader using `sequence > cursor` keyset paging and a repeatable-read
+high-watermark snapshot. The cursor is integrity-checked but is not an
+authorization credential: the service must receive and verify the authenticated
+owner separately. The public feed and device checkpoints build on this
+validated boundary. The authenticated client mutation route now adds one
+strict logical mutation per request with durable identity/fingerprint, typed
+preconditions, and exact journal integration; it does not carry bytes or
+physical storage identity. Automatic conflict policy and a client apply engine
+remain future work; the journal service itself remains transport-neutral.
+
+## Implemented logical bootstrap is not physical storage
+
+The Prompt 33 rebaseline path materializes a logical namespace projection in
+PostgreSQL. It does not read or list an `ObjectStore`, open a local filesystem,
+copy an object, create an archive, or retain file bytes. In the same transaction
+that captures the journal epoch/resume sequence, it copies each current public
+Node projection into an immutable manifest: Node/parent IDs, logical name,
+kind, `ACTIVE`/`TRASHED` state, revision, optional current version ID, and the
+current file's already-public byte length/SHA-256 identity. The canonical root
+is included. `PURGING` and purged rows are excluded.
+
+Manifest storage intentionally has no Object/ObjectReplica ID, object key,
+staging handle, filesystem path, backend version/locator, replica or GC state,
+credential, or byte column. It does not preserve full historical FileVersion
+history. Existing owner-authorized content endpoints hydrate a current version
+after a client processes the logical manifest. Later Node/FileVersion/Object
+mutation or collection cannot change a captured manifest because its rows are
+copied values without foreign keys back to those mutable records.
+
+Paging reads at most the requested limit plus one row in immutable Node-ID
+order and never loads the library into one Rust collection. Cleanup deletes
+only bounded retired bootstrap sessions and their cascading manifest rows; it
+never deletes journal, Library, Node, FileVersion, Object, ObjectReplica, or
+ObjectStore data. Consequently bootstrap TTL is synchronization staging
+retention, not user-data or backup retention.
 
 ## Scope and ownership
 
@@ -1214,3 +1289,57 @@ filesystem accelerators only after capability probes, crash evidence, and
 disable/fallback behavior are versioned
 Decision evidence: NTFS/ReFS/APFS/Btrfs/ext4/XFS/NAS fixtures, power-loss and
 disconnect tests, capability false-positive tests, and performance evidence
+
+## Prompt 36 local replica and SQLite storage
+
+Desktop inbound state is a separate local authority for apply progress, not a
+replacement for server PostgreSQL. `LocalStateConfig::from_platform` resolves
+`client-sync/state.sqlite3` below the platform application data directory; an
+explicit absolute database path is also available for composition and tests.
+The database stores no authentication or object-backend secrets.
+
+The independent migration set in `crates/client-sync/migrations` currently
+creates strict SQLite tables for:
+
+- replica/root binding and distinct applied/acknowledged sequence state;
+- `NodeId`-keyed local Node projections and portable collision keys;
+- bootstrap sessions plus durable desired manifest rows;
+- pending feed pages and their typed events;
+- pending opaque acknowledgement evidence;
+- prepared/filesystem-applied/database-committed local operations;
+- bounded applied-event replay evidence; and
+- durable unresolved/resolved local apply issues.
+
+Foreign keys, closed-value checks, content tuple checks, operation fact checks,
+and `acknowledged_sequence <= applied_sequence` are schema-enforced. A trigger
+prevents pending acknowledgement evidence from exceeding durable local apply.
+SQLx tracks migration version/checksum and applies from an empty database; the
+same database reopens without rebuilding pending page, acknowledgement,
+operation, issue, or bootstrap state.
+
+The correctness profile is `journal_mode=WAL`, `synchronous=FULL`,
+`foreign_keys=ON`, `busy_timeout=5000`, and one SQLite pool connection. An
+exclusive OS file lock adjacent to the database prevents a second writer in
+the same application-state store. A single process may bind independent
+libraries, each with separate root identity, Node mapping, sequences,
+bootstrap, operations, and issues.
+
+Visible file bytes are never a download target. Each current version is
+streamed into `.synveil/staging/<operation>.part` with a 1 MiB maximum yielded
+chunk and the server's 1 TiB initial object bound. Length and SHA-256 are
+checked before file and staging-directory synchronization. The verified file
+is then exposed by same-filesystem rename on Unix. A new directory is likewise
+created in controlled staging and renamed into place, avoiding adoption of an
+unknown directory that races a prepared operation.
+
+Trash, purge, and bootstrap sweep move attributed clean bytes to
+`.synveil/quarantine`; this phase deliberately has no age-based or aggressive
+quarantine deletion. Operation receipts are exact files in controlled staging,
+are validated by operation ID, and are removed only after the corresponding
+SQLite operation reaches `DATABASE_COMMITTED`. Startup never glob-deletes
+unknown temporary files.
+
+Cross-platform ACLs, xattrs, ownership/mode replication, sparse-file behavior,
+and server timestamp to local mtime mapping are not stored or applied in this
+phase. Windows directory-metadata flush has no standard Rust equivalent here;
+native platform durability evidence remains a declared later gate.

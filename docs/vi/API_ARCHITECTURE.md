@@ -6,8 +6,33 @@ transport đã authorize theo owner và HTTP download full/single-range đã
 implement, cùng metadata version-history bất biến, safe historical-version
 restore và retention metadata của Trash đã authenticate; metadata purge
 execution nội bộ, physical object GC nội bộ crash-safe và GC-worker
-orchestration/reconciliation nội bộ bounded đã implement; upload UI, download
-UI, sync, backup và sharing còn PLANNED**
+orchestration/reconciliation nội bộ bounded đã implement; nền tảng change
+journal bền vững theo owner/library, checkpoint theo device, server change feed
+một chiều bounded đã authenticate, checkpoint acknowledgment và bootstrap
+snapshot/rebaseline logical materialized đã VALIDATED; client mutation
+submission logical typed với UUID idempotency, fingerprint SHA-256 canonical,
+optimistic precondition, conflict deterministic và journal integration chính
+xác đã IMPLEMENTED; durable conflict record, manual conflict inspection và
+explicit manual resolution cũng đã IMPLEMENTED; Prompt 37 implement enrollment
+Device một lần, bearer scoped thu hồi được, desktop profile bền vững, native
+SecretStore adapter và HTTP inbound production. Upload UI, automatic conflict
+resolution, backup, sharing, desktop GUI, watcher và outbound generation còn
+NOT IMPLEMENTED/PLANNED**
+
+## Trạng thái đồng bộ tại gate Prompt 35 (lịch sử)
+
+| Capability | Status |
+|---|---|
+| durable change journal | `VALIDATED` |
+| device checkpoints/feed | `VALIDATED` |
+| snapshot/rebaseline | `VALIDATED` |
+| client mutation submission | `VALIDATED` |
+| optimistic conflict detection | `VALIDATED` |
+| durable conflict records | `IMPLEMENTED` |
+| manual conflict inspection | `IMPLEMENTED` |
+| explicit manual resolution | `IMPLEMENTED` |
+| automatic conflict resolution | `NOT IMPLEMENTED` |
+| desktop sync agent | `NOT IMPLEMENTED` |
 
 Tài liệu này xác định HTTP contract mục tiêu và blueprint cho
 `api/openapi.yaml`. Foundation hiện triển khai transport health hữu hạn, subset
@@ -35,19 +60,90 @@ Subset metadata logical theo ownership cũng đã implement:
   authenticate restore bằng cách append một immutable version mới từ object
   historical đã verify.
 
+Crate metadata expose các boundary `ChangeJournalService`, `DeviceSyncService`
+và `SyncBootstrapService` trung lập transport. DeviceSyncService tạo một
+checkpoint bền vững cho mỗi device đã
+register và đang `ACTIVE` cùng library thuộc owner, đọc journal theo keyset tăng
+dần sau checkpoint, trả stable high watermark và chỉ advance sau khi evidence
+delivery có chữ ký được verify. Checkpoint không phải mutation authority. Sai
+journal epoch hiện tại hoặc checkpoint thấp hơn minimum retained sequence trả
+metadata rebaseline-required ổn định. Bootstrap service thiết lập baseline thay
+thế nhất quán mà không xóa hay reset checkpoint khi start.
+
+HTTP transport một chiều đã implement gồm:
+
+- `GET /devices/{device_id}/libraries/{library_id}/checkpoint` — authenticated,
+  đọc/tạo checkpoint ở lần dùng đầu;
+- `GET /devices/{device_id}/libraries/{library_id}/changes?limit=100` — page
+  logical tăng dần, private/no-store, bounded 1..500; và
+- `POST /devices/{device_id}/libraries/{library_id}/changes/ack` — bounded,
+  yêu cầu CSRF với browser, chỉ nhận token evidence page đã ký từ server;
+- `POST /devices/{device_id}/libraries/{library_id}/rebaseline` — start/retry
+  yêu cầu CSRF với browser, body bounded 2 KiB;
+- `GET /devices/{device_id}/libraries/{library_id}/rebaseline/{bootstrap_id}/nodes`
+  — page manifest logical bất biến private/no-store, mặc định 200 và tối đa
+  1000 Node, dùng signed keyset cursor bounded; và
+- `POST /devices/{device_id}/libraries/{library_id}/rebaseline/{bootstrap_id}/complete`
+  — completion terminal-proof yêu cầu CSRF với browser, body bounded 2 KiB.
+- `POST /devices/{device_id}/libraries/{library_id}/mutations` — submission
+  một logical mutation typed, body bounded 16 KiB và yêu cầu CSRF; request có
+  UUID mutation ID bền vững, fingerprint semantic canonical, base
+  epoch/sequence và precondition revision/parent explicit. Success append đúng
+  một journal event; stale state trả conflict an toàn đã persist; route không
+  nhận file byte;
+- `GET /devices/{device_id}/libraries/{library_id}/conflicts` — list conflict
+  OPEN đã authenticate, không cần CSRF, private/no-store, limit 1..100 và cursor
+  keyset `(created_at, conflict_id)` opaque có HMAC, bounded 384 byte;
+- `GET /devices/{device_id}/libraries/{library_id}/conflicts/{conflict_id}` —
+  inspection đã authenticate, không cần CSRF, private/no-store cho typed intent
+  bất biến, server observation được ghi nhãn lịch sử, lifecycle và terminal
+  resolution metadata; và
+- `POST /devices/{device_id}/libraries/{library_id}/conflicts/{conflict_id}/resolve`
+  — quyết định manual strict đã authenticate, yêu cầu CSRF, private/no-store,
+  body bounded 16 KiB cùng resolution ID UUIDv7 bền vững.
+
+Body resolution chỉ cho `ACCEPT_SERVER` hoặc `APPLY_CLIENT_INTENT`.
+Accept-server chuyển OPEN thành DISMISSED mà không đổi Node, không publish
+journal event và không advance checkpoint. Apply-client-intent bắt buộc current
+revision mới, kể cả parent/destination revision cho move và restore, rồi dùng
+chung executor canonical Prompt 34 trong transaction. Success commit đúng một
+resource journal event thông thường cùng RESOLVED và linkage resolution. State
+hiện tại stale persist `resolution_conflict` replay được, giữ conflict OPEN và
+commit zero canonical mutation/event. Fingerprint SHA-256 canonical có type bind
+conflict ID, action và presence/value của mọi fresh precondition; không hash raw
+JSON. Cùng resolution ID/fingerprint trả chính xác kết quả đã commit sau mất
+response; semantic khác trả `resolution_id_conflict`. Quyết định mới sau state
+terminal trả `conflict_not_open`. Resource đã purge không thể resurrect nhưng
+evidence conflict vẫn inspect được. Không policy tự động chọn action.
+
+Mọi operation đều scope theo owner đã authenticate và library thuộc owner.
+Sáu operation checkpoint/feed/rebaseline còn nhận Device bearer đã verify và
+bind đúng Device trong route; chỉ principal đó được miễn browser CSRF.
+Mutation và conflict route vẫn chỉ nhận browser session. Prompt 37 implement
+enrollment một lần và Device credential thu hồi được như mô tả bên dưới.
+Mutation route chỉ nhận năm kind đóng `CREATE_DIRECTORY`, `RENAME_NODE`,
+`MOVE_NODE`, `TRASH_NODE`, `RESTORE_NODE`; không có arbitrary JSON patch,
+object/replica identity, path, storage locator hay byte. Không có automatic
+conflict engine, watcher, broker, WebSocket hay SSE trong slice này.
+
 Route metadata dùng action path phân cách bằng slash vì path grammar hiện tại
 của Axum không hỗ trợ parameter nối với literal suffix trong cùng segment.
 Chúng vẫn chỉ là metadata. Repository cũng expose persisted upload-session
 service trung lập transport qua route `/upload-sessions` đã authenticate cho
-create/status/exact-offset append/complete/abort. Mutation dùng CSRF boundary
-hiện có, body PATCH stream raw byte dưới limit do service cấu hình và status là
-recovery path có thẩm quyền sau response mơ hồ. Content-read service đã được
+create/status/exact-offset append/complete/abort. Mutation node PATCH/upload
+dùng CSRF boundary hiện có, stream raw byte chỉ qua upload path bounded riêng
+và status là recovery path có thẩm quyền sau response mơ hồ. Client mutation
+route ở trên là logical JSON strict và không mang byte. Content-read service đã
+được
 wire vào các route authenticate `GET /nodes/{node_id}/content` và
 `GET /versions/{version_id}/content`. Các route này resolve current hoặc
 immutable version theo owner, parse single range, verify SHA-256, đặt safe
 header và stream có giới hạn mà không expose storage key hay physical path.
-Download UI, sync, backup, sharing, device và product endpoint khác bên dưới
-vẫn là kế hoạch. Version-history read và version restore được authenticate;
+Download UI, automatic conflict resolution, backup, sharing, guided pairing UI và
+product endpoint khác bên dưới vẫn là kế hoạch. Các endpoint one-way sync,
+rebaseline và logical client mutation phía trên đã IMPLEMENTED/VALIDATED theo
+status tương ứng.
+Version-history read và version restore được authenticate;
 read không cần CSRF nhưng restore cần CSRF, signed current-node `If-Match` và
 `Idempotency-Key` bounded. Cả hai chỉ cho active file, private/no-store và
 không mở ObjectStore; node/version unknown, cross-owner, trashed và purging
@@ -319,23 +415,40 @@ hết hạn thay vì âm thầm trộn ranking không tương thích.
 
 ### Sync rebaseline
 
-Client mới hoặc stale dùng sync bootstrap do server chỉ định:
+Bootstrap server-side đã implement dùng manifest logical materialized, không
+dùng high watermark rồi đọc row `nodes` mutable ở các request sau:
 
-1. `POST /libraries/{library_id}/sync-bootstrap` tạo bounded bootstrap lease,
-   capture current epoch/head `H` trên primary và pin journal retention cần
-   thiết. Nó không expose usable resume cursor quá sớm.
-2. Client phân trang current node projection theo immutable ID order bằng
-   bootstrap token. Mutation có thể tiếp tục; repeat không gây hại.
-3. Sau khi listing hoàn tất, completion trả server cursor đặt chính xác tại `H`.
-4. Client cài staged listing theo cách nguyên tử, consume `changes` sau cursor
-   đó và áp dụng event idempotent theo node revision/version.
-5. Nếu bootstrap lease hoặc journal retention hết hạn, client discard staged
-   view chưa hoàn tất và khởi động lại.
+1. Start lấy namespace guard theo library trong transaction hiện có, lock
+   library/head và checkpoint đúng scope, verify owner đã authenticate, device
+   `ACTIVE` và library thuộc owner, rồi tăng generation rebaseline của
+   checkpoint.
+2. Trong chính PostgreSQL transaction đó, service capture `snapshot_epoch` và
+   `snapshot_resume_sequence`, copy canonical root cùng projection Node
+   `ACTIVE`/`TRASHED` hiện tại vào `sync_bootstrap_nodes`, rồi seal item count và
+   terminal Node ID bất biến. Row `PURGING`/đã purge, historical version, byte
+   và toàn bộ field storage vật lý đều bị loại.
+3. GET sau đó chỉ page manifest bền theo `node_id > after_node_id`, không dùng
+   `OFFSET` hay thứ tự name/path mutable. Mặc định là 200, tối đa 1000 và SQL chỉ
+   đọc `limit + 1`; không buffer toàn library trong Rust.
+4. Cursor tối đa 320 byte bind version, owner, device, library, session,
+   generation, epoch, resume sequence và Node ID cuối bằng HMAC domain riêng.
+   Chỉ terminal page thật trả token tối đa 336 byte còn bind manifest count và
+   terminal marker bằng HMAC domain khác. Token chứng minh integrity, không cấp
+   authorization.
+5. Completion recheck scope, expiry theo PostgreSQL/server time, state session,
+   generation, journal epoch hiện tại, retained-history boundary, terminal
+   proof và vị trí checkpoint trong khi giữ row lock. Cùng transaction đánh dấu
+   `COMPLETED` và đặt checkpoint chính xác bằng epoch/resume sequence đã capture;
+   progress mới hơn không bao giờ bị rewind.
+6. Replay completion đã commit trả kết quả completed hiện tại. Change feed
+   thường sau đó bắt đầu nghiêm ngặt sau resume sequence đã capture.
 
-Cách này tránh database transaction kéo dài qua HTTP request. Node được tạo sau
-`H` có thể xuất hiện trong cả listing và journal; node bị xóa sau `H` có thể
-không có trong listing nhưng vẫn có deletion event. Application nhận biết
-revision sẽ hội tụ cả hai trường hợp.
+Thiết kế này không giữ database transaction qua nhiều HTTP request nhưng mọi
+page vẫn thuộc một cut có thể restart. Mutation serialize trước capture nằm
+trong manifest; mutation serialize sau capture có journal sequence lớn hơn cut.
+Vì vậy không logical mutation đã commit nào vắng ở cả snapshot lẫn feed tiếp
+theo. Expiry, replacement generation, epoch rotation hay retention invalidation
+đều fail closed và buộc bootstrap mới.
 
 ## Error contract
 
@@ -1029,3 +1142,101 @@ Needed by: Gate bulk và recursive operation Phase 2
 Options: luôn asynchronous; synchronous dưới fixed item/work estimate; client-selected preference bị server giới hạn
 Recommendation: dùng work bound operation-specific cố định trên server và trả `202` phía trên bound; không bao giờ quyết định chỉ từ item count khi subtree expansion hoặc byte work chưa biết
 Decision evidence: transaction-lock duration benchmark, worker recovery test, API timeout limit và partial-result UX review
+
+## Boundary client/HTTP Prompt 36
+
+Prompt 36 không thêm hay thay đổi public HTTP route hoặc OpenAPI schema. Core
+inbound desktop nhận contract bootstrap, feed, acknowledgement, completion và
+logical content có kiểu qua trait `SyncRemote`. Nhờ vậy server transport,
+authentication, redaction token, ánh xạ HTTP error, backoff và connection
+lifecycle không nằm trong code recovery filesystem/SQLite.
+
+Prompt 37 implement adapter đó mà không đổi apply-before-acknowledge, durable
+evidence hay filesystem recovery của engine. Adapter giữ nguyên byte evidence
+server, bound JSON trong lúc nhận, stream content theo length/hash budget strict
+và trả typed error đã sanitize.
+
+## Boundary Device enrollment và HTTP inbound đã implement ở Prompt 37
+
+Đây là contract đã implement. Các family challenge, discovery, refresh-token,
+guided pairing và remote relay rộng hơn ở phần blueprint khác chưa được phase
+này implement.
+
+Mọi path dưới đây có prefix `/api/v1`. Body là JSON strict tối đa 2 KiB, không
+nhận field lạ. Enrollment thành công và mọi auth error đều `private, no-store`.
+
+| Method và path | Principal và request | Kết quả |
+|---|---|---|
+| `POST /devices/enrollment-grants` | Browser + CSRF; `target` là `{"kind":"new","display_name":"Desktop"}` hoặc `{"kind":"existing","device_id":"<canonical UUIDv7>"}` | `201`: owner/Device/grant ID, token một lần, thời điểm tạo và hết hạn |
+| `POST /device-enrollment/exchange` | Không browser session; một `enrollment_token` | `201`: owner/Device/credential ID, một bearer secret, thời điểm tạo |
+| `POST /devices/{device_id}/credentials/{credential_id}/revoke` | Browser + CSRF; `{}` | `204`: revoke credential đúng owner |
+| `POST /devices/{device_id}/credentials/revoke-all` | Browser + CSRF; `{}` | `204`: revoke mọi credential và grant còn mở của Device |
+
+Credential thuộc `Device` canonical hiện có, không có device identity song
+song. Enrollment mới tạo Device `PENDING`, rồi activate trong cùng transaction
+consume grant và insert credential. Grant sống mặc định mười phút, entropy
+cao, chỉ lưu digest, single-use bằng row lock PostgreSQL và không thể mint hai
+credential khi exchange đồng thời. Response exchange thành công bị mất không
+được retry/replay: browser revoke credential của Device, tạo grant mới rồi
+re-enroll explicit. Grant hết hạn/đã dùng/không tồn tại cùng trả
+`invalid_enrollment` an toàn. API không phục hồi secret từ digest. Mọi request,
+kể cả metadata/download, đều kiểm tra revocation.
+
+`BrowserSession { owner_user_id, session_id }` và
+`DeviceCredential { owner_user_id, device_id, credential_id }` là hai principal
+khác nhau; bearer không tạo SessionId giả. Có Authorization header thì bắt buộc
+parse bearer; malformed, duplicate, invalid hoặc Cookie/Authorization trộn lẫn
+không fallback sang cookie. Chỉ Device principal đã verify thành công được
+miễn CSRF ở ba POST inbound.
+
+Device bearer chỉ được vào sáu operation checkpoint/feed/rebaseline cộng
+`GET /nodes/{node_id}`, `GET /versions/{version_id}` và hai route `/content`.
+Bearer bị từ chối ở session administration, tạo/revoke enrollment grant,
+library browsing, upload, mutation submission, conflict management, version
+restore và route tương lai chưa review. Content vẫn đi qua owner/file/version
+service hiện có: che giấu sai owner, unknown, trashed hoặc purging; ObjectStore
+key và physical path không vào URL desktop.
+
+`HttpSyncRemote` implement đủ bảy method `SyncRemote`. Event incremental có
+`schema_version: 1`; Node response thêm `current_version_id`. Current Node và
+immutable version metadata resolve projection feed. Revision đã đổi sẽ yêu
+cầu rebaseline, không bịa tên lịch sử. Revision zero hợp lệ cho Node mới;
+epoch/generation vẫn dương và mọi decimal/UUID vẫn phải canonical.
+
+Profile chỉ nhận HTTPS origin đã verify, normalize host/default port bằng
+parser `url`, reject userinfo, query/fragment, non-root/dot-segment path, port
+lỗi, control, whitespace và URL repair. Constructor test numeric-loopback
+explicit là ngoại lệ HTTP duy nhất. Chưa có stable server-installation ID:
+binding dựa trên canonical origin đã verify, không suy ID từ hostname.
+Envelope trong secure store còn bind origin cùng profile/owner/Device/
+credential ID; copy SQLite metadata không thể gán secret cũ sang origin khác.
+Public enrollment persistence chỉ nhận receipt bind với HTTP exchange profile.
+
+Client reqwest/rustls verify certificate bình thường, minimum TLS 1.2, không
+follow redirect, không proxy/cookie jar/referer/transparent compression và
+không auto-retry. Sensitive Authorization header gắn riêng từng request cùng
+origin. Mặc định: connect 10 giây, headers 20 giây, metadata 30 giây, stream idle
+30 giây, tổng download một giờ. Duration cấu hình phải dương và không quá 24
+giờ. JSON tối đa 8 MiB, error 64 KiB, manifest page 1.000 Node, feed page 500
+event, chunk content phát ra 1 MiB. Download dùng immutable version ID chính
+xác, bound expected length tối đa 1 TiB và verify SHA-256 incremental. Sai
+redirect, encoding, scope, schema, ID, sequence, bootstrap generation,
+content-type hoặc evidence đều fail closed.
+
+401 phân biệt `AuthRequired` với `DeviceRevoked` chỉ khi đã chứng minh secret;
+403/404 giữ forbidden/not-found, 409/410 giữ outcome checkpoint/rebaseline/
+evidence, 429 là rate-limited, 5xx thành dependency/internal error an toàn.
+TLS, timeout, body-limit, redirect, JSON lỗi và response bất thường có category
+transport đã sanitize riêng. Health trả `ONLINE`, `AUTH_REQUIRED`,
+`DEVICE_REVOKED`, `SERVER_UNAVAILABLE`, `TLS_ERROR` hoặc `PROTOCOL_ERROR`,
+không lộ response message server, URL, credential hay TLS implementation text.
+
+Trace ghi route template và request ID, không ghi URI/query thô, body,
+Authorization, cookie hay enrollment/ack/completion token. Hint request ID từ
+client chứa prefix machine-secret dành riêng (`svd1_` hoặc `sve1_`) được thay
+bằng ID server mới trước khi trace hoặc ghi response header. Proxy deployment
+cũng phải tắt sensitive header/body/query logging. Auth/offline failure giữ
+nguyên managed file, bootstrap state, applied/acknowledged sequence và pending
+evidence. Local forget không phải revoke server; caller phải drop direct
+transport còn giữ, engine kiểm tra credential identity đã persist trước mỗi
+lần sync.

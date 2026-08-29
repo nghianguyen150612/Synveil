@@ -7,6 +7,7 @@ members = [
     "crates/object-store",
     "crates/storage",
     "crates/api",
+    "crates/client-sync",
 ]
 resolver = "3"
 
@@ -30,17 +31,19 @@ synveil-platform = { path = "crates/platform" }
 synveil-metadata = { path = "crates/metadata" }
 synveil-object-store = { path = "crates/object-store" }
 synveil-storage = { path = "crates/storage" }
+synveil-client-sync = { path = "crates/client-sync" }
 time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing"] }
 uuid = { version = "1", default-features = false, features = ["std", "rng", "v7"] }
 async-trait = "0.1"
 hmac = "0.12"
 futures-core = "0.3"
 futures-util = "0.3"
+fs2 = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 subtle = "2"
-sqlx = { version = "0.8", default-features = false, features = ["macros", "postgres", "runtime-tokio", "migrate", "time", "uuid"] }
+sqlx = { version = "0.8", default-features = false, features = ["macros", "postgres", "sqlite", "runtime-tokio", "migrate", "time", "uuid"] }
 argon2 = "0.5"
 tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tower = "0.5"
@@ -48,3 +51,18 @@ tower-http = { version = "0.6", features = ["limit", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 zeroize = "1"
+unicode-normalization = "0.1"
+url = "2"
+# Verified HTTPS, bounded streaming, no cookie/compression/default TLS features.
+reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls", "json", "stream"] }
+# Used only to classify the HTTP client's typed TLS errors, not to build a TLS stack.
+rustls = { version = "0.23", default-features = false, features = ["std"] }
+# Persistent native stores: Secret Service on Linux, Credential Manager on Windows.
+keyring = { version = "3.6.3", default-features = false, features = ["windows-native", "sync-secret-service", "crypto-rust"] }
+# Test-only HTTPS peer with ephemeral self-signed certificates; no client bypass.
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rcgen = { version = "0.13", default-features = false, features = ["crypto", "ring"] }
+# Mature cross-platform filesystem event adapter.  The client-sync observer
+# deliberately consumes its events only as bounded hints and reconciles local
+# state before creating any durable outbound intent.
+notify = { version = "8.2.0", default-features = false }

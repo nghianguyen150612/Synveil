@@ -3,14 +3,15 @@
 //! Portable platform/runtime contracts for Synveil.
 //!
 //! The contracts in this crate are the boundary between the domain/application
-//! core and host behavior. The default adapters are deliberately read-only:
-//! they can describe the current host, resolve conventional paths, and report
-//! capability evidence, but they do not install services, mutate service
-//! managers, or persist secrets.
+//! core and host behavior. Adapters describe the current host, resolve paths,
+//! and expose capability evidence. Linux/Windows also expose native persistent
+//! secure-secret storage with no plaintext fallback. No adapter installs or
+//! mutates service managers.
 
 mod health;
 mod host;
 mod lifecycle;
+mod native_secrets;
 mod paths;
 mod runtime;
 mod secrets;
@@ -27,6 +28,7 @@ pub use lifecycle::{
     LifecycleAction, LifecycleError, LifecycleReceipt, RestartRequest, ServiceLifecycle,
     ServiceLifecycleStatus, ServiceState, ShutdownRequest, UnsupportedServiceLifecycle,
 };
+pub use native_secrets::NativeSecureSecretStore;
 pub use paths::{
     FixedPathResolver, PathKind, PathResolutionError, PathResolutionViolation, PathResolver,
     PlatformPathResolver, PlatformPaths,
@@ -50,8 +52,9 @@ pub fn detect_platform() -> Platform {
 
 /// Construct the adapter selected for the current compilation target.
 ///
-/// This factory only selects a read-only adapter. It does not install or start
-/// any service and it never creates a directory or writes a secret.
+/// This factory only composes an adapter. It does not install or start any
+/// service and it never creates a directory or writes a secret. Linux/Windows
+/// expose native secure persistence only through subsequent explicit calls.
 #[must_use]
 pub fn current() -> Box<dyn PlatformRuntime> {
     #[cfg(target_os = "linux")]

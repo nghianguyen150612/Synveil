@@ -20,10 +20,17 @@ pub(crate) async fn request_context(mut request: Request, next: Next) -> Respons
     let request_id = RequestId::from_headers(request.headers()).unwrap_or_default();
     let path = request.uri().path();
     let is_auth_route = path.starts_with("/api/v1/auth/");
+    let is_private_no_store_route = path.starts_with("/api/v1/devices/")
+        || path == "/api/v1/device-enrollment/exchange"
+        || (request
+            .headers()
+            .contains_key(axum::http::header::AUTHORIZATION)
+            && (path.starts_with("/api/v1/nodes/") || path.starts_with("/api/v1/versions/")));
     let is_no_store_route = is_auth_route
         || path == "/api/v1/system/bootstrap-status"
         || path == "/api/v1/bootstrap/admin"
         || path.starts_with("/api/v1/upload-sessions")
+        || is_private_no_store_route
         || ((path.starts_with("/api/v1/nodes/") || path.starts_with("/api/v1/versions/"))
             && path.ends_with("/content"));
     let context = RequestContext::new(request_id.clone());
@@ -34,7 +41,7 @@ pub(crate) async fn request_context(mut request: Request, next: Next) -> Respons
         request_id = %context.request_id(),
         trace_id = %context.trace_id(),
         method = %request.method(),
-        path = %request.uri().path(),
+        route = request.extensions().get::<axum::extract::MatchedPath>().map_or("unmatched", axum::extract::MatchedPath::as_str),
         status_code = tracing::field::Empty,
         latency_ms = tracing::field::Empty,
     );
@@ -51,14 +58,19 @@ pub(crate) async fn request_context(mut request: Request, next: Next) -> Respons
         REQUEST_ID_HEADER,
         HeaderValue::from_str(request_id.as_str()).expect("validated request id is a header value"),
     );
-    if is_no_store_route
-        && !response
-            .headers()
-            .contains_key(axum::http::header::CACHE_CONTROL)
+    if is_private_no_store_route
+        || (is_no_store_route
+            && !response
+                .headers()
+                .contains_key(axum::http::header::CACHE_CONTROL))
     {
         response.headers_mut().insert(
             axum::http::header::CACHE_CONTROL,
-            HeaderValue::from_static("no-store"),
+            if is_private_no_store_route {
+                HeaderValue::from_static("private, no-store")
+            } else {
+                HeaderValue::from_static("no-store")
+            },
         );
     }
     if is_auth_route {

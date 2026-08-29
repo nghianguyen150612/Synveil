@@ -1,6 +1,10 @@
 # Change-journal synchronization protocol
 
-Status: **PLANNED normative blueprint**
+Status: **Prompt 31–36 foundations and desktop inbound core are VALIDATED.
+Prompt 37 server profiles, enrollment groundwork, device authentication,
+secure credential persistence, and production HTTP SyncRemote are IMPLEMENTED.
+Automatic resolution and broader bidirectional client synchronization remain
+a PLANNED normative blueprint.**
 
 This document specifies Synveil's multi-device synchronization model. It
 follows ADR-006 and the domain vocabulary in
@@ -14,6 +18,142 @@ clients, with Android, iPhone, and iPad as future mobile profiles. It does not
 claim those clients are implemented. Windows, macOS, Linux Desktop, and Linux
 Server are first-class host targets only when their client/service evidence gate
 passes.
+
+Prompt 34 implements the authenticated server boundary
+`POST /api/v1/devices/{device_id}/libraries/{library_id}/mutations`: one strict
+logical `CREATE_DIRECTORY`, `RENAME_NODE`, `MOVE_NODE`, `TRASH_NODE`, or
+`RESTORE_NODE` per request, durable UUID idempotency, canonical fingerprinting,
+explicit optimistic preconditions, deterministic persisted conflicts, and one
+exact journal event on success. It accepts no file bytes or physical storage
+identity and performs no automatic conflict copy, merge, or last-write-wins
+resolution. Prompt 35 adds durable conflict evidence, bounded authenticated
+inspection, and explicit idempotent manual decisions. The content mutation and
+outbound client application sections below remain future protocol design and
+must not be read as implemented product behavior. Prompt 36 implements inbound
+apply, and Prompt 37 connects it to the real server with device credentials.
+
+## Prompt 37 synchronization status
+
+| Capability | Status |
+|---|---|
+| durable change journal | `VALIDATED` |
+| device checkpoints/feed | `VALIDATED` |
+| snapshot/rebaseline | `VALIDATED` |
+| client mutation submission | `VALIDATED` |
+| optimistic conflict detection | `VALIDATED` |
+| durable conflict records | `IMPLEMENTED` |
+| manual conflict inspection | `IMPLEMENTED` |
+| explicit manual resolution | `IMPLEMENTED` |
+| desktop inbound sync core | `VALIDATED` |
+| desktop server profiles | `IMPLEMENTED` |
+| device enrollment groundwork | `IMPLEMENTED` |
+| device bearer authentication | `IMPLEMENTED` |
+| secure desktop credential persistence | `IMPLEMENTED` |
+| production HTTP SyncRemote | `IMPLEMENTED` |
+| filesystem observation | `IMPLEMENTED` |
+| self-generated change suppression | `IMPLEMENTED` |
+| durable outbound intent capture | `IMPLEMENTED` |
+| rename/move attribution | `IMPLEMENTED with conservative fallback` |
+| watcher overflow/reconciliation | `IMPLEMENTED` |
+| automatic outbound mutation submission | `NOT IMPLEMENTED` |
+| automatic conflict resolution | `NOT IMPLEMENTED` |
+| desktop GUI/pairing UX | `NOT IMPLEMENTED` |
+
+## Implemented local filesystem observation and outbound intent capture
+
+Prompt 38 adds a desktop-local observation layer in `crates/client-sync`. It is a
+control-plane boundary only: native `notify` watcher events and deterministic
+test-watchers emit bounded hints, but every logical decision comes from durable
+SQLite state, managed-root validation, Prompt 36 operation evidence, and
+filesystem reinspection through `LocalReplica`. The observer stores typed
+`outbound_intents` (`CREATE_DIRECTORY`, `CREATE_FILE`, `RENAME_NODE`,
+`MOVE_NODE`, `DELETE_OR_TRASH_NODE`, `MODIFY_FILE_CONTENT`) with UUIDv7 local
+intent IDs, base epoch/applied sequence, Node revision/version context, observed
+path and fingerprint, and a semantic dedupe hash. It never stores file bytes.
+
+`.synveil/`, staging, quarantine, operation receipts, and local SQLite/control
+files are excluded from user namespace classification. Prompt 36 inbound applies
+write durable `observation_suppressions` tied to operation ID, NodeId, expected
+path/presence/type, and content fingerprint where relevant; suppression is not a
+timer. Once the expected Synveil-generated filesystem result is proven, an
+immediate user edit with a different fingerprint is observed as a real outbound
+intent. Observation never advances `applied_sequence` or `acknowledged_sequence`.
+
+Watcher overflow, dropped events, backend errors, ambiguous unpaired rename
+patterns, unstable hashes, locked/unreadable files, unrepresentable names,
+portable-name collisions, symlinks/reparse points, and Linux special files become
+durable observation issues or `RESCAN_REQUIRED`; the engine does not guess.
+Startup always marks reconciliation required and performs a bounded scan to close
+downtime gaps. Rename/move intents require paired native/evidence-based
+attribution; remove+create timing alone falls back to `AMBIGUOUS_RENAME`/rescan.
+The observer has no `SyncRemote` or HTTP transport and does not call
+`POST /api/v1/devices/{device_id}/libraries/{library_id}/mutations`, create
+upload sessions, complete uploads, or resolve conflicts.
+
+## Implemented durable conflict and manual-resolution protocol
+
+A managed Prompt 34 resource conflict is durable evidence of rejected client
+intent. In the same PostgreSQL transaction that terminalizes the original
+mutation as CONFLICT, the server creates exactly one UUIDv7 `SyncConflictId`
+and one owner/originating-Device/Library-scoped record. The original operation
+remains terminal forever. Its same-ID/same-fingerprint replay returns the same
+conflict ID and never creates a second record. Authentication, CSRF, malformed
+input, mutation-ID reuse, infrastructure failures, and rebaseline requirements
+are not resource conflicts and create no record.
+
+The record contains only the closed Prompt 34 intent fields and immutable
+historical logical observation. It has no raw JSON, content bytes, physical
+storage identity, or Node foreign key. Its lifecycle is exactly OPEN, RESOLVED,
+or DISMISSED. A purged-resource conflict therefore remains inspectable and can
+be dismissed, but apply can never recreate the Node.
+
+The implemented routes are:
+
+- `GET /api/v1/devices/{device_id}/libraries/{library_id}/conflicts` for an
+  OPEN-only page, default 50 and maximum 100, ordered by immutable
+  `(created_at DESC, conflict_id DESC)` with no OFFSET and an opaque
+  HMAC-authenticated, scope-bound keyset cursor;
+- `GET /api/v1/devices/{device_id}/libraries/{library_id}/conflicts/{conflict_id}`
+  for typed original intent, explicitly named historical server observation,
+  lifecycle, and terminal-resolution linkage; and
+- `POST /api/v1/devices/{device_id}/libraries/{library_id}/conflicts/{conflict_id}/resolve`
+  for one strict `ACCEPT_SERVER` or `APPLY_CLIENT_INTENT` decision.
+
+Every route reauthorizes the authenticated owner, ACTIVE Device, owned Library,
+and exact conflict scope. Conflict-ID possession grants nothing. GET routes are
+CSRF-free reads; POST requires the session-bound CSRF proof. All results and
+errors are private/no-store, and the resolution body is limited to 16 KiB.
+
+Every decision has a UUIDv7 `resolution_id` and a canonical typed SHA-256
+fingerprint over the conflict ID, action, and presence/value of explicit fresh
+preconditions. The raw JSON serialization is irrelevant. Same ID/fingerprint
+replays the exact terminal outcome, completion time, and journal linkage after
+a lost response; different semantics return `resolution_id_conflict`.
+
+`ACCEPT_SERVER` explicitly chooses the current canonical server state. It
+atomically records the decision and moves OPEN to DISMISSED, but changes no
+Node, emits no resource journal event, and advances no checkpoint.
+
+`APPLY_CLIENT_INTENT` never reuses stale original revisions. The resolver must
+supply the current resource revision for every supported kind, plus the current
+parent/destination revision for move and restore. The service acquires the
+existing library namespace guard and scoped row locks, re-reads current state,
+reconstructs the preserved semantic intent with those fresh preconditions, and
+invokes the shared Prompt 34 transaction-local canonical executor. Success
+atomically commits exactly one Node mutation, one ordinary resource event, the
+resolution result/linkage, and conflict RESOLVED. It does not reopen the
+original mutation or advance any checkpoint. Another Device observes the event
+through the ordinary feed.
+
+If a server rename, move, purge, or other canonical mutation wins first, apply
+records a durable replayable stale resolution result, returns
+`resolution_conflict`, leaves the conflict OPEN, and commits zero Node change
+and zero journal event. It does not refresh, retry, merge, rename, copy, or
+select a different action. OPEN evidence survives rebaseline; after the Device
+completes rebaseline, a human may inspect current state and submit new fresh
+preconditions. Concurrent APPLY/APPLY or ACCEPT/APPLY attempts can produce at
+most one terminal conflict decision and at most one resource event. There is no
+automatic conflict-resolution policy.
 
 ## Sync versus backup
 
@@ -41,12 +181,14 @@ these domains distinct.
    it.
 5. Change pages may be redelivered. A client applies a complete page and saves
    its returned cursor in one local transaction.
-6. Every logical mutation carries a stable `client_mutation_id` and an
-   operation-appropriate base version/revision. A repeated mutation returns the
-   persisted outcome and does not append another event.
-7. Content conflicts preserve both verified byte streams. Metadata conflicts
-   return current authoritative state for explicit rebase; there is no silent
-   last-writer-wins.
+6. Every supported logical mutation carries a stable `client_mutation_id`, a
+   canonical fingerprint, a base epoch/sequence, and operation-appropriate
+   typed preconditions. A repeated mutation returns the persisted outcome and
+   does not append another event.
+7. Prompt 34 accepts no content bytes. Its metadata conflicts return current
+   authoritative logical state for explicit rebase; there is no silent
+   last-writer-wins or automatic conflict copy. A future content protocol must
+   preserve both verified byte streams.
 8. A `ChangeEvent` is a durable resulting fact/invalidation, not an object-store
    command, authorization grant, arbitrary plugin event, or complete audit log.
 9. Trash emits a recursive tombstone for the affected subtree. Physical purge
@@ -313,6 +455,12 @@ unsent local mutations in their durable outbound queue; after rebaseline they
 rebase/submit them using original base facts and conflict rules.
 
 ## Push mutations
+
+The implemented Prompt 34 push subset is the strict logical route described
+above. The richer content/namespace profile specified in the remainder of this
+section is a future extension; it is not a license to add arbitrary JSON
+patches, file bytes, object identities, or automatic conflict resolution to
+the current route.
 
 Normal file/folder APIs and/or a reviewed sync mutation endpoint accept:
 
@@ -713,3 +861,172 @@ Needed by: Phase 1 schema/API freeze, before Phase 2 recursive Trash
 Options: per-directory subtree revision updated along ancestors; opaque snapshot token plus journal descendant-conflict query; library-head precondition as a conservative coarse guard
 Recommendation: expose an opaque subtree ETag backed initially by a per-directory subtree revision updated under the namespace guard; keep it separate from display-metadata revision so clients know which precondition they are presenting
 Decision evidence: delete-versus-descendant-edit model tests, deep-tree write benchmark, move/Trash races, and offline client fixtures
+
+## Implemented desktop inbound apply boundary (Prompt 36)
+
+`synveil-client-sync` is the first reusable desktop-side synchronization core.
+It is inbound-only and has no dependency on Axum handlers. A transport adapter
+implements `SyncRemote` for checkpoint reads, bounded feed pages, signed
+acknowledgements, rebaseline start/page/completion, and logical current-content
+downloads. Deterministic tests retain the same checkpoint/completion semantics;
+Prompt 37 adds the production device-authenticated HTTP adapter described below.
+
+The engine advances one bounded page or local bootstrap batch per call. Feed
+ordering is durable:
+
+1. validate and persist the page plus its events;
+2. prepare a typed local operation before a filesystem action;
+3. stage/perform and durably receipt the filesystem result;
+4. atomically persist the Node mapping, event evidence, and
+   `applied_sequence`;
+5. persist opaque `ACK_PENDING` evidence;
+6. acknowledge the server;
+7. persist the confirmed `acknowledged_sequence` and clear the page.
+
+SQLite enforces `acknowledged_sequence <= applied_sequence`. A process crash
+after local commit retries the exact redacted acknowledgement evidence rather
+than refetching or blindly applying the page. A response lost after the server
+acknowledges is safe because acknowledgement is idempotent. Unknown epoch,
+scope, schema, event kind, backwards sequence, or sequence gap fails closed.
+
+Bootstrap pages are persisted as a desired manifest, not held only in memory.
+The terminal manifest is accepted only when its exact declared count, single
+root, parent-directory closure, and reachability are proven. Nodes are applied
+parent-first. Only previously tracked clean Nodes absent from that completed
+generation are quarantined during sweep; unknown local objects are never
+swept. Server completion is retried from durable completion evidence and the
+local handoff sets both sequence values exactly to the returned snapshot cut.
+
+`NodeId` is local identity. Relative paths, parent identity, revision, current
+version, expected content length/hash, bootstrap generation, presence, and
+quarantine location are durable projections. Directory rename/move updates
+denormalized descendant paths with one set-based SQLite statement; Unicode
+offsets are computed by SQLite character length, not Rust byte length.
+
+Portable logical segments are materialized exactly. The conservative common
+Windows/Linux policy rejects separators, controls, Windows-illegal characters,
+trailing space/dot, reserved devices, overlong segments, and the `.synveil`
+control name. NFKC plus lowercase is used only as a collision key. It never
+rewrites a visible name. Managed and unknown case/normalization collisions
+become `LOCAL_NAME_COLLISION`.
+
+Before replace, rename, move, Trash, restore, purge, or bootstrap sweep, the
+engine verifies the last durable local fingerprint. Unknown destination
+occupancy and modified, missing, type-changed, or tree-diverged objects are
+durable local blockers. No conflict copy, upload, merge, or last-write-wins
+policy runs. Server Trash moves a clean attributed object to controlled
+quarantine; current server metadata permits Trash of an empty directory only.
+Restore trusts quarantine only after verification and otherwise reconstructs
+the canonical file/directory state. Purge removes only safely attributed clean
+local state and retains bytes in controlled quarantine in this phase; no
+aggressive quarantine cleanup exists.
+
+Current file content is streamed sequentially through a bounded adapter chunk,
+written to an operation-specific controlled staging file, hashed while
+streaming, checked for declared length and SHA-256, flushed and synchronized,
+then exposed. The previous visible file remains until verified bytes are ready.
+Unix uses same-filesystem atomic rename plus parent-directory synchronization.
+The Windows path closes the staged handle and uses a conservative
+operation-specific backup/rename sequence because standard Windows replacement
+semantics differ; it is compile-audited here but native Windows runtime evidence
+is deferred to the Prompt 40 platform checkpoint.
+
+Deterministic failure points cover page persistence, pre-filesystem action,
+post-stage/pre-expose, post-filesystem durable receipt, post-local commit,
+post-server acknowledgement, bootstrap page persistence, local bootstrap
+completion, and server bootstrap completion response loss. A durable receipt
+under `.synveil/staging` distinguishes a Synveil filesystem result from a
+racing unknown object. Missing or inconsistent attribution becomes
+`LOCAL_RECOVERY_AMBIGUOUS`; exact receipts are removed only after the matching
+database operation is committed.
+
+Filesystem watchers, outbound mutation generation, automatic conflict
+resolution, desktop UI/pairing UX, service installation, WebSocket/SSE, backup,
+and sharing are not part of this boundary. ACL, xattr,
+permission, and server-timestamp-to-local-mtime synchronization are explicitly
+deferred.
+
+## Implemented remote connection and credential lifecycle (Prompt 37)
+
+Profiles are immutable HTTPS origin-root configurations, identified by local
+UUIDv7 `ServerProfileId`. The adapter appends closed `/api/v1/...` route segments
+using URL operations, not caller-provided paths. Userinfo, query, fragment,
+subpath, malformed port, and parser repairs fail closed. Numeric loopback HTTP
+is an explicit test-only construction policy. TLS certificate validation is
+mandatory, every redirect is rejected, no cookie jar or ambient proxy is used,
+and transparent decompression cannot change logical file length/hash semantics.
+No stable server installation identity is currently exposed; verified
+origin/TLS is the binding, not an inferred hostname or LibraryId.
+
+An authenticated browser owner creates a bounded, short-lived one-time grant
+with existing CSRF protection. Desktop exchanges that grant exactly once and
+receives an owner/Device/credential identity plus a redacted bearer secret. The
+server persists only domain-separated digests. Exchange is deliberately not
+automatically retried: a committed exchange with a lost response requires the
+owner to revoke the unknown/issued credential and create a fresh grant. A
+lost desktop process before secure storage completes likewise needs explicit
+recovery; no enrollment token or bearer is saved in SQLite.
+
+The desktop lifecycle is:
+
+1. persist non-secret `ServerProfile` configuration;
+2. exchange a one-time grant over verified HTTPS;
+3. pass the opaque profile/origin-bound exchange receipt to `store_enrollment`
+   (or explicit `replace_enrollment`), record a non-secret cleanup intent, store
+   and read back the bearer through
+   `PlatformRuntime::SecretStore`, then commit enrollment identity metadata;
+4. load a profile-bound `LoadedDeviceCredential` after restart and construct
+   `HttpSyncRemote` from that profile, Device, credential and bounded config;
+5. initialize/open a V2 managed root with the same profile and run the existing
+   inbound bootstrap/feed/apply/ack/download engine.
+
+No public raw bearer-import API can relabel Server A's exchange as Server B's
+enrollment. The SecretStore key uses profile ID plus credential ID rather than
+URL aliases. Its bounded versioned envelope additionally binds canonical origin,
+transport policy, profile, owner, Device, and credential ID inside secure
+storage. A copied/reconstructed SQLite database with identical IDs but another
+origin cannot load, overwrite, or delete that secure entry. The HTTP constructor
+also compares the loaded secure origin against the requested profile before
+creating any bearer header. Malformed, unknown-version, oversized, or old raw
+secret entries are rejected without fallback.
+Linux uses persistent native Secret Service and Windows uses Credential
+Manager; the selected native builder never falls back to the crate's mock
+backend. Missing/locked/unavailable secure storage fails closed. Synthetic
+in-memory storage exists only in tests. Native Linux persistence was exercised
+with an isolated test vault; no native Windows credential-store/TLS execution
+is claimed by cross-target compilation. macOS persistence remains unsupported.
+
+SQLite migration V2 leaves V1 schema/checksums untouched. It persists only
+profiles, owner/Device/credential IDs, enrollment/forget timestamps and secure
+entry cleanup intents. Both the replica row and physical V2 root marker bind
+one explicit profile. A different profile, even with the same LibraryId,
+cannot open that replica. Legacy unbound replicas cannot silently become
+production replicas; automatic rebind is not implemented.
+
+Local forget first writes a durable disconnected marker, then deletes the
+secure entry, retaining the owner/Device binding for later explicit
+re-enrollment. Failure leaves retryable cleanup metadata and does not reload
+the old secret after restart. Replacement accepts only the same owner/Device,
+stages/read-verifies the new secret, commits its new credential ID, and retires
+the old key through durable cleanup. The engine checks the active credential
+generation before each call, so an existing engine stops after local forget or
+replacement. Callers must discard direct HTTP objects already holding the old
+secret. Forget does not imply an offline server revoke.
+
+Device bearer authority is limited to checkpoint/feed/ack, rebaseline
+start/page/complete and logical read/download operations required by inbound
+apply. Each route enforces the authenticated Device ID and owned Library.
+Browser-cookie writes still require CSRF; only an authenticated device bearer
+receives the inbound-route exemption. Device bearer cannot submit Prompt 34
+mutations, inspect/resolve Prompt 35 conflicts, or use browser administration.
+Server Device/credential revocation is checked again on the next request.
+
+HTTP errors retain authentication, revocation, checkpoint/rebaseline/evidence,
+rate-limit, dependency/internal, protocol, offline, timeout, TLS, body-limit,
+and redirect distinctions. Health uses the existing readiness endpoint and
+authenticated checkpoint validation, rejecting HTML or incompatible payloads.
+Metadata bodies, download bytes and stream chunks are bounded; timeouts are
+finite. The adapter performs no automatic retry. The engine may retry the same
+durable acknowledgement/completion proof after interruption. An authentication,
+revocation or offline error preserves local files, applied/acknowledged
+sequences, and pending evidence; it never wipes or rebinds the replica.

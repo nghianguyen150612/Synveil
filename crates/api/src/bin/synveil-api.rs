@@ -1,6 +1,6 @@
-use std::{env, error::Error, net::SocketAddr, sync::Arc};
+use std::{env, error::Error, io, net::SocketAddr, sync::Arc};
 
-use synveil_api::{ApiState, CookieConfig, init_tracing, router};
+use synveil_api::{ApiState, CookieConfig, RebaselineTokenKey, init_tracing, router};
 use synveil_auth::{PasswordHasherConfig, SessionConfig};
 use synveil_core::TrashRetentionPolicy;
 use synveil_metadata::{
@@ -41,6 +41,13 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
 
     if env::var_os("DATABASE_URL").is_some() {
+        let rebaseline_token_key = env::var("SYNVEIL_REBASELINE_TOKEN_KEY").map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "SYNVEIL_REBASELINE_TOKEN_KEY is required with DATABASE_URL",
+            )
+        })?;
+        let rebaseline_token_key = RebaselineTokenKey::from_hex(&rebaseline_token_key)?;
         let database_config = DatabaseConfig::from_env()?;
         let pool = DatabasePool::connect(&database_config).await?;
         MigrationRunner::new().run(&pool).await?;
@@ -49,6 +56,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             Arc::clone(&pool),
             PasswordHasherConfig::default(),
             SessionConfig::default(),
+            rebaseline_token_key,
         );
         tracing::info!("PostgreSQL authentication backend configured");
 

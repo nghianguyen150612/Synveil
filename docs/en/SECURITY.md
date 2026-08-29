@@ -17,8 +17,10 @@ replica, cross-checks object metadata, and streams full/current-range bytes
 without exposing physical keys; it is **IMPLEMENTED**. The authenticated HTTP
 full/single-range download transport is also **IMPLEMENTED** with strong
 SHA-256 validators, safe attachment headers, private no-store caching, and no
-CSRF requirement for safe GETs. Device credentials, recovery, upload UI, and
-download UI remain **PLANNED**. Authenticated version-history listing and direct
+CSRF requirement for safe GETs. One-time device enrollment, device bearer
+authentication, server profiles, native secure credential persistence, and the
+production HTTP `SyncRemote` are **IMPLEMENTED**. Browser recovery, upload UI,
+and download UI remain **PLANNED**. Authenticated version-history listing and direct
 metadata lookup are **IMPLEMENTED** with owner/library scoping, active-file
 concealment, bounded node-scoped cursors, safe allowlisted DTOs, and no
 ObjectStore access; safe historical-version restore is **IMPLEMENTED** with
@@ -32,8 +34,16 @@ Internal physical object GC is **IMPLEMENTED/VALIDATED** with final
 reference/hold/lease revalidation, durable replica actions, lifecycle fencing,
 and ObjectStore-only deletion. Its opt-in internal worker orchestration and
 stuck-operation reconciliation are **IMPLEMENTED**; it has no public route,
-normal-user deletion control, or unknown-physical-orphan auto-delete. Sync,
-backup, and sharing have no hold producers yet and remain **PLANNED**.
+normal-user deletion control, or unknown-physical-orphan auto-delete. The
+durable change journal, per-device checkpoints, incremental change feed,
+acknowledgment, and materialized logical snapshot/rebaseline bootstrap are
+**VALIDATED**. Typed client mutation submission, durable UUID idempotency,
+canonical SHA-256 fingerprinting, optimistic preconditions, deterministic
+conflict persistence, and exact journal integration are **IMPLEMENTED**.
+Durable conflict records, manual inspection, and explicit idempotent manual
+resolution are **IMPLEMENTED**. The desktop inbound sync core is **VALIDATED**.
+Automatic conflict resolution, backup, sharing, filesystem watching, outbound
+mutation generation, and desktop GUI/pairing UX remain **NOT IMPLEMENTED/PLANNED**.
 
 Synveil stores personal files, backups, photos, device state, repository data,
 credentials, and derived search information. Security is therefore a release
@@ -343,21 +353,70 @@ and leaves an unfinished fence to be revalidated after restart.
 
 ### Device/API credentials
 
-- API and device grants receive individually scoped, expiring, rotatable opaque
-  credentials over TLS after authenticated registration. Initial issuance
-  stores only a `PENDING` verifier and displays the raw secret once; no pending
-  generation authenticates before explicit activation.
-- A device token uses the Authorization header, never a URL, query parameter or
-  browser local storage. Native clients use Keychain/OS credential facilities.
-- Scope separates sync, backup, photo import and administrative actions.
-  Capability declarations are not security claims.
-- Rotation creates one pending candidate while the old active generation stays
-  valid. Activation atomically retires the old generation. A lost response
-  leaves only an inert candidate that can be explicitly replaced; revocation
-  invalidates the family, every generation, future API use, and journal access.
-- Device credential activation is owner-only with recent step-up, a generation
-  precondition, idempotency, rate limits, and audit. The pending bearer secret
-  cannot authenticate or activate itself.
+Prompt 37 implements the following deliberately small device enrollment
+contract; automatic rotation, expiring credential generations, step-up UI,
+backup/photo/admin API credentials, and pairing GUI remain deferred.
+
+- `DeviceCredentialId` and `DeviceEnrollmentGrantId` are non-secret UUIDv7
+  identities. The canonical `devices` table and `Device::transition_status`
+  remain authoritative; no duplicate device registry is introduced.
+- The browser owner, with the existing session and CSRF proof, creates a grant
+  for an owned PENDING/ACTIVE Device or a new PENDING Device. PAUSED/REVOKED
+  Devices and another owner's Device are rejected. New Device creation and
+  grant persistence share one transaction.
+- Grant and bearer secrets each contain 32 independently OS-random bytes,
+  encoded as `sve1_` or `svd1_` plus 64 lowercase hexadecimal characters.
+  Each presentation is exactly 69 ASCII bytes, header-safe, bounded on parse,
+  zeroized on drop, redacted in `Debug`, and has no `Display` implementation.
+- The grant expires after 10 minutes; the database independently caps any grant
+  lifetime at 15 minutes. Only digests are stored. SHA-256 uses distinct
+  `synveil.device-enrollment-grant.v1\0` and
+  `synveil.device-credential.v1\0` domains before the complete versioned token.
+  A password KDF is unnecessary for uniformly random 256-bit secrets; a stolen
+  verifier does not become a bearer credential. Digest comparison uses the
+  reviewed constant-time primitive where practical; lookup is by digest.
+- The enrollment token itself is authority for an unauthenticated HTTPS
+  exchange. Anyone possessing it can attempt the single claim: it must be
+  transferred privately, never in a URL, log, browser storage, or public QR.
+  Owner, Device, and grant locks serialize exchange with revocation. Expiry,
+  unused/unrevoked state, and owner/Device scope are checked inside the
+  transaction that activates PENDING → ACTIVE, inserts the bearer digest, and
+  records consumption. Production expiry uses a fresh server timestamp after
+  all authorization/grant locks are acquired, so waiting for a lock cannot
+  extend the grant lifetime. Failure rolls all three effects back.
+- The bearer is returned exactly once. A consumed grant never issues another
+  credential, including after response loss. Recovery is explicit browser
+  revoke-all for the same Device, then a new owner-created grant and exchange.
+  Revoke-all also invalidates outstanding grants but leaves an ACTIVE Device
+  enrollable. The owner can revoke one known credential instead when its ID is
+  available. Credential rows are retained for audit, not aggressively deleted.
+- Device credentials have no automatic expiry/rotation in this phase; explicit
+  revocation/new enrollment is the supported lifecycle. Every request reads
+  current PostgreSQL credential, owner, and Device status. A revoked credential,
+  non-ACTIVE Device, or inactive owner fails the next authentication request;
+  no positive-auth cache or best-effort last-used write weakens that boundary.
+  The distinct `device_revoked` result is returned only after knowledge of the
+  actual credential has been proved. Unknown/tampered enrollment and credential
+  errors do not disclose whether arbitrary grants or credentials exist.
+
+`AuthenticatedPrincipal` distinguishes `BROWSER_SESSION` from
+`DEVICE_CREDENTIAL { owner_user_id, device_id, credential_id }`. A Device ID is
+not authentication, and a bearer never receives a fabricated Session ID.
+Device auth is allowed only for checkpoint/feed/ack, rebaseline start/page/
+complete, and required logical Node/version metadata and current/version
+download reads. Every device-scoped route must match the credential's Device;
+owner/library authorization and the existing logical download service remain
+in force. Prompt 34 mutation submission, Prompt 35 manual conflict resolution,
+uploads, version restore, enrollment/revocation administration, and other
+browser-only routes reject device bearers. Verified device-bearer mutations do
+not require CSRF; browser-cookie requests still do. Invalid bearers cannot fall
+back to cookies, and mixed Cookie/Authorization requests are rejected.
+
+Grant/exchange/revoke bodies are strict JSON capped at 2 KiB. Secret responses
+and all success/error responses on these routes are `private, no-store`.
+Automatic retries of one-time exchange are forbidden. Revocation is checked
+when a new stream/request is authorized; it does not recall delivered bytes
+or promise to terminate a download already in progress.
 
 ## Native installation, pairing, service, and lifecycle security
 
@@ -375,9 +434,11 @@ domain core:
   define authorization; they can start/stop/restart a bounded process and report
   state. Elevation, user/session crossing, crash recovery, reboot, sleep/wake,
   uninstall, and update transitions are audited and tested.
-- Secret material uses the declared OS facility where available—Windows
-  Credential Manager/DPAPI, macOS Keychain, Linux Secret Service or a protected
-  file fallback—with explicit permissions and backup/recovery semantics. Raw
+- Secret material uses the declared OS facility where available. Prompt 37
+  implements Windows Credential Manager and Linux Secret Service through the
+  existing `PlatformRuntime::SecretStore`; other native backends remain
+  unsupported. Production persistence fails closed when the backend is locked,
+  missing, or unavailable: no plaintext file/SQLite or volatile fallback. Raw
   pairing codes, database credentials, recovery material, and master keys do
   not appear in logs, command lines, browser storage, or installer bundles.
 - The storage picker exposes only host-authorized candidates. It rejects `/`,
@@ -389,11 +450,12 @@ domain core:
   migration roles, protected from ordinary uninstall, and recovered through the
   same backup/key/upgrade policy. Personal / Home does not silently switch to
   SQLite when the managed service is unavailable.
-- Pairing uses a short-lived, high-entropy, single-use authenticated exchange
+- Future native pairing UX uses a short-lived, high-entropy, single-use authenticated exchange
   bound to the intended instance/user/device. It has expiry, replay, concurrent
   claim, wrong-target, revoke, and visible failure/remediation behavior. A
-  human confirmation or authenticated bootstrap step prevents a code observed on
-  the local network from silently binding an attacker device.
+  human confirmation or authenticated bootstrap step must prevent silent
+  attacker enrollment. Prompt 37 supplies the owner-created grant groundwork
+  only, not this confirmation UI; a leaked grant remains claimable by its holder.
 - Remote access is layered: local/LAN first, operator-configured direct/proxy
   access next, and an optional relay only under an explicit accepted contract.
   No relay is mandatory for core correctness. Relay metadata is minimized,
@@ -465,6 +527,149 @@ that accesses user data is explicit, audited and described in operator policy;
 
 Database queries scope by owner/library/grant in addition to checking UUID
 syntax. Randomness and opacity reduce guessing; they never replace policy.
+
+### Prompt 38 synchronization, remote-connection, and observation status
+
+| Capability | Status |
+|---|---|
+| durable change journal | `VALIDATED` |
+| device checkpoints/feed | `VALIDATED` |
+| snapshot/rebaseline | `VALIDATED` |
+| client mutation submission | `VALIDATED` |
+| optimistic conflict detection | `VALIDATED` |
+| durable conflict records | `IMPLEMENTED` |
+| manual conflict inspection | `IMPLEMENTED` |
+| explicit manual resolution | `IMPLEMENTED` |
+| automatic conflict resolution | `NOT IMPLEMENTED` |
+| desktop inbound sync core | `VALIDATED` |
+| desktop server profiles | `IMPLEMENTED` |
+| device enrollment groundwork | `IMPLEMENTED` |
+| device bearer authentication | `IMPLEMENTED` |
+| secure desktop credential persistence | `IMPLEMENTED` |
+| production HTTP SyncRemote | `IMPLEMENTED` |
+| filesystem observation | `IMPLEMENTED` |
+| self-generated change suppression | `IMPLEMENTED` |
+| durable outbound intent capture | `IMPLEMENTED` |
+| rename/move attribution | `IMPLEMENTED with conservative fallback` |
+| watcher overflow/reconciliation | `IMPLEMENTED` |
+| automatic outbound mutation submission | `NOT IMPLEMENTED` |
+| desktop GUI/pairing UX | `NOT IMPLEMENTED` |
+
+Prompt 38's observer does not receive credentials or a `SyncRemote`. It writes
+only local SQLite control-plane rows and never calls mutation, upload, or manual
+conflict-resolution endpoints. Watcher hints are untrusted; root markers,
+profile binding, symlink/reparse checks, control-directory exclusion, streaming
+hash verification, and durable Prompt 36 suppression evidence are rechecked
+before an outbound intent is persisted. Ambiguous or unsupported local facts are
+blocked locally instead of being sanitized or submitted.
+
+### Durable change-journal boundary
+
+The implemented journal is metadata-only and remains behind the authenticated
+application boundary. The reader receives the authenticated owner separately,
+requires the requested library to belong to that owner, and applies a bounded
+keyset limit before returning events. A cursor is versioned, length-bounded,
+integrity-checked, and library/epoch scoped, but it is not an authorization
+credential and cannot be used to infer another owner's library.
+
+Journal projections contain only typed logical IDs, revisions, state/kind
+metadata, and the minimum purge tombstone identity. They exclude ObjectStore
+keys, staging handles, filesystem paths, backend credentials, session/CSRF
+tokens, content, and raw SQL errors. The database append-only trigger rejects
+history UPDATE/DELETE attempts. Every supported Node mutation acquires the
+transaction-scoped library namespace guard before Node locks and appends its
+fact with the domain change and idempotent outcome in one PostgreSQL
+transaction. The public sync feed exposes only the bounded logical projection
+over an authenticated owner browser session or an inbound-scoped device bearer
+and an existing active registered device.
+Its acknowledgment token is HMAC-signed evidence bound to owner, device,
+library, epoch, page range, and high watermark; it is not a bearer credential.
+CSRF protects browser-cookie acknowledgment; verified device-bearer requests
+are exempt. All sync responses are private/no-store, and raw
+tokens, storage internals, paths, credentials, and journal payloads are not
+logged or returned. The authenticated mutation route accepts one strict typed
+logical operation, requires the session-bound CSRF proof, applies a 16 KiB
+body limit, and returns only allowlisted logical Node/result or conflict
+fields. The server scopes the operation by the active owner, registered active
+device, and owner-owned library; it never accepts physical object/replica
+identities, paths, storage locators, credentials, arbitrary JSON patches, or
+file bytes. The mutation identity and fingerprint are logged only as opaque
+bounded values; raw request bodies and conflict payloads are not logged.
+Mutation success, conflict, and error responses are private/no-store.
+
+### Logical rebaseline bootstrap boundary
+
+Bootstrap uses the same honest trust model as the incremental feed: an
+authenticated owner browser session or inbound-scoped device bearer acts for an
+existing registered `ACTIVE` Device and an owned Library. Random device, library, bootstrap, cursor, or
+token values do not grant access. Every request rechecks the current owner,
+device lifecycle, library ownership, and durable session scope. Inaccessible or
+cross-owner application scopes are concealed as `not_found`; a browser request
+for a revoked Device is likewise concealed. A proven revoked device bearer is
+rejected earlier by authentication with `device_revoked`.
+
+Start and complete require the existing session-bound CSRF proof when
+cookie-authenticated; only a verified device principal is exempt. Page GETs are safe reads under current
+policy and do not require CSRF. Their successful and error responses are
+`Cache-Control: private, no-store`; start/complete bodies are capped at 2 KiB,
+page limits at 1000, cursors at 320 bytes, and completion tokens at 336 bytes.
+
+Cursor and terminal tokens use HMAC-SHA-256 with separate format/domain labels.
+Cursor claims bind owner, device, library, bootstrap, generation, epoch,
+resume sequence, and last Node ID. Terminal proof additionally binds immutable
+manifest count and terminal marker. They are integrity evidence only: scope and
+authorization are independently revalidated. The application secret has a
+redacted `Debug` implementation. Logs may record opaque bootstrap/device/
+library IDs, item count, cut sequence, terminal flag, replay flag, and outcome
+class; they never record a raw cursor/token, physical path/key/locator,
+credential, or bytes.
+
+PostgreSQL/server time governs expiry. A checkpoint generation compare-and-set,
+current epoch/retention validation, exact terminal proof, and an already-ahead
+checkpoint check fence stale sessions. Completion either commits the exact cut
+and `COMPLETED` state atomically or changes neither. This protocol is not
+device attestation, pairing, or bidirectional sync. Client mutation submission
+is a separate CSRF-protected logical write boundary: stale or occupied
+resources produce a durable typed conflict and do not mutate canonical metadata
+or append a journal event. No automatic conflict-copy, merge, or last-writer-
+wins policy is enabled.
+
+### Durable conflict-management boundary
+
+Conflict identity, mutation identity, and resolution identity are opaque
+correlation values, never capabilities. List, detail, and resolve independently
+require the authenticated owner, an owned `ACTIVE` Device, an owned Library,
+and exact persisted conflict scope. Cross-owner, wrong-Device, wrong-Library,
+unknown, and revoked-Device access is concealed as `not_found`. GET inspection
+is CSRF-free under the current read policy; resolution requires the existing
+session-bound CSRF proof. Every success and error is private/no-store. The
+strict resolution body is capped at 16 KiB and rejects unknown fields.
+
+OPEN listing is capped at 100 and has no OFFSET path. Its HMAC-SHA-256 cursor
+is at most 384 bytes, uses the deployment-stable rebaseline key under a
+distinct conflict-specific HMAC domain label, and binds owner, Device, Library,
+OPEN ordering, timestamp, and conflict ID. It remains integrity evidence only;
+the database scope is always reauthorized. Cursor and HMAC key debug/log output
+is redacted or omitted.
+
+The database stores a closed typed intent/evidence projection, never raw JSON,
+ObjectStore keys, ObjectReplica locators, filesystem paths, staging handles,
+backend credentials, session/CSRF secrets, HMAC keys, or bytes. Detail calls
+historical data `historical_server_observation` and intentionally omits current
+canonical state so stale evidence cannot be mistaken for authority. Narrow
+triggers make original evidence and terminal decisions immutable. Conflict
+rows have no Node foreign key, preserving audit history through purge.
+
+Resolution SHA-256 fingerprints are canonical typed encodings of conflict ID,
+action, and explicit fresh preconditions, including absence versus presence;
+raw request serialization is not hashed or retained. Resolution first takes
+the existing library namespace guard and scoped row locks, then re-reads current
+canonical rows and uses the shared Prompt 34 executor. Stale/purged state fails
+closed without changing a Node, event, lifecycle, or checkpoint. Safe logs may
+include request/conflict/mutation/resolution/device/library/resource IDs,
+action/outcome, replay state, and successful journal sequence. Names, bodies,
+tokens, secrets, storage paths/keys, backend identifiers, SQL/lock text, and raw
+errors are excluded. No automatic conflict resolution policy exists.
 
 ## Web and API protections
 
@@ -1032,3 +1237,105 @@ not ask reporters to send sensitive user files or production secrets.
 - Does the change make a privacy/encryption/E2EE claim broader than the actual
   trust model?
 - Is the English/Vietnamese user and operator disclosure consistent?
+
+## Prompt 36 desktop inbound security boundary
+
+The Prompt 36 client core remains transport-neutral and receives logical server
+state; Prompt 37 supplies the separate production credential/HTTP boundary.
+`OpaqueEvidence` is length-bounded,
+redacted from `Debug`, never implements `Display`, and is persisted only where
+restart-safe acknowledgement or bootstrap completion requires it. The local
+database contains no session secret, CSRF secret, password, signing key, object
+backend credential, storage key, server filesystem path, or file contents.
+
+A filesystem mutation requires all of the following:
+
+- an explicitly selected absolute managed root that was empty at initialization
+  or already carried the exact Synveil marker;
+- marker owner, device, library, and random UUIDv7 binding matching SQLite;
+- rejection of filesystem roots, HOME/USERPROFILE, the current process root,
+  arbitrary populated-folder adoption, and different-root/database bindings;
+- a relative path composed only of exact portable logical segments or a closed
+  Synveil control path;
+- root, marker, and every existing target component passing symlink/reparse
+  inspection immediately before use;
+- no exact unknown occupancy and no portable case/normalization collision;
+- the current attributed object matching its last durable kind, length, and
+  SHA-256 evidence before a destructive operation.
+
+Linux symlinks and Windows symlink/reparse attributes are rejected. The
+standard-library path implementation performs repeated component checks but is
+not presented as a hostile same-user, race-free directory-handle sandbox; a
+native Windows runtime and adversarial platform race lab remain required before
+a stronger OS-hardening claim. Ambiguous post-crash attribution blocks rather
+than guessing. Operation receipts live only under the bound `.synveil` control
+tree and contain an operation ID, not authority or a secret.
+
+On Windows, every resolved managed path is also capped conservatively at
+32,000 UTF-16 code units (with each segment capped separately) before a
+filesystem operation. This stays below the extended-length ceiling with room
+for termination/prefix handling; an over-limit path fails closed rather than
+depending on inconsistent per-operation Win32 errors.
+
+Local issues are a closed vocabulary separate from server Prompt 35 conflicts:
+divergence, occupied path, unrepresentable/colliding name, missing parent, type
+mismatch, local I/O unavailability, content integrity mismatch, and ambiguous
+recovery. Resolution is explicit; the engine does not auto-dismiss an issue or
+generate an upload/conflict copy. Error values contain stable codes rather than
+absolute paths, raw names, file contents, or opaque tokens.
+
+No shell, subprocess, automatic outbound mutation producer, automatic conflict
+resolver, last-write-wins policy, merge engine, external broker, GUI framework,
+or installer privilege boundary was added. The Prompt 38 watcher is local-only
+and stops at durable SQLite intents. ACL/xattr/permission propagation and forced
+local mtime are deferred instead of being approximated insecurely.
+
+## Prompt 37 desktop remote security boundary
+
+Profiles contain only a UUIDv7 profile ID, canonical origin-root base URL,
+display label, and connection timestamps. Enrollment metadata contains owner,
+Device, and credential IDs plus timestamps. The forward-only SQLite migration
+stores neither bearer nor enrollment secrets. A replica binds one explicit
+profile in addition to its owner/Device/Library; a different profile cannot be
+opened as that replica. Legacy unbound replicas are not automatically inferred
+from a Library ID. A profile's verified origin/TLS is the current server binding:
+the server exposes no stable installation ID, and no hostname-derived identity
+is invented.
+
+`DeviceCredentialSecret` is stored only through `PlatformRuntime::SecretStore`,
+keyed by opaque profile plus credential identity. Loading, explicit replacement,
+and local forget preserve profile/owner/Device binding. Forget deletes local
+secret material and records retryable non-secret cleanup intent where required;
+it does not claim an offline server revoke or delete replica content/progress.
+The explicit in-memory test store is not a production fallback. Native OS
+keyring persistence requires an unlocked-backend runtime test; compilation or a
+mock test alone is not native persistence evidence.
+
+Production base URLs accept HTTPS origin roots only: no userinfo, query,
+fragment, reverse-proxy subpath, malformed port, or unsupported scheme. Explicit
+test mode permits HTTP only for literal loopback IPs. The mature HTTP client
+keeps normal certificate/hostname verification, disables redirects completely,
+has no browser cookie jar, and cannot expose a certificate-bypass switch. A
+profile/credential for Server A cannot be rebound or forwarded to Server B.
+TLS terminates at the trusted deployment edge; the current server binary's
+plain HTTP listener must remain loopback/private behind that edge.
+
+Metadata/error bodies, connect/header/request duration, stream idle time, and
+download duration have finite limits. Streaming content is bounded by the
+expected logical length and SHA-256, without whole-file buffering. Transparent
+HTTP compression is disabled. No automatic request retries are enabled;
+typed retryable outcomes are returned to a later runtime. Protocol responses
+must have the expected content type, schema, scope, epoch, and sequence. HTML
+proxy pages and incompatible responses fail closed as protocol errors.
+
+Logs retain only safe route classes, opaque IDs, status, request ID, timing,
+and counts. Authorization, enrollment/bearer secrets, CSRF, ack/completion
+proofs, and full bodies are excluded. Client request-ID hints containing the
+reserved `svd1_` or `sve1_` prefixes are discarded and replaced with a fresh
+server ID, including when a secret is embedded in a longer hint. This prevents
+copying a machine secret into an otherwise syntactically valid logged ID.
+`AUTH_REQUIRED`/`DEVICE_REVOKED` and
+transport failures preserve local files, applied/acknowledged progress,
+pending evidence, and local issues. This phase adds no watcher, outbound
+mutation generator, automatic conflict resolver, GUI/QR UX, installer,
+certificate pinning/TOFU, relay, or custom TLS stack.

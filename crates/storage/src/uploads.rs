@@ -11,8 +11,8 @@ use bytes::Bytes;
 use futures_util::{Stream, StreamExt};
 use sha2::{Digest, Sha256};
 use synveil_core::{
-    LibraryId, LogicalName, NodeId, ObjectId, ObjectReplicaId, Revision, Sha256Digest, Timestamp,
-    UploadOperation, UploadSessionId, UploadSessionState, UserId,
+    LibraryId, LogicalName, NodeId, ObjectId, ObjectReplicaId, OutboundIntentId, Revision,
+    Sha256Digest, Timestamp, UploadOperation, UploadSessionId, UploadSessionState, UserId,
 };
 use synveil_metadata::{
     MetadataError, NewUploadSession, UploadClaim, UploadCleanupCandidate, UploadCompletion,
@@ -96,6 +96,7 @@ pub enum UploadTargetRequest {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CreateUploadSessionRequest {
+    pub idempotency_key: OutboundIntentId,
     pub owner_user_id: UserId,
     pub target: UploadTargetRequest,
     pub expected_length: u64,
@@ -298,6 +299,19 @@ impl UploadApplicationService {
         &self,
         request: CreateUploadSessionRequest,
     ) -> Result<UploadSessionView, UploadError> {
+        let session_id = UploadSessionId::try_from_uuid(*request.idempotency_key.as_uuid())
+            .map_err(|_| UploadError::InvalidRequest)?;
+        if let Some(existing) = self
+            .metadata
+            .find_upload_session(request.owner_user_id, session_id)
+            .await
+            .map_err(map_metadata_error)?
+        {
+            if !upload_request_matches_record(&request, &existing) {
+                return Err(UploadError::CompletionConflict);
+            }
+            return view_from_record(&existing);
+        }
         self.validate_capabilities(self.object_store.capabilities())?;
         if request.expected_length > self.limits.max_object_size {
             return Err(UploadError::SizeMismatch);
@@ -309,8 +323,6 @@ impl UploadApplicationService {
                 request.expected_length,
             )
             .await?;
-
-        let session_id = UploadSessionId::new();
         let object_id = ObjectId::new();
         let object_replica_id = ObjectReplicaId::new();
         let object_key = ObjectKey::new(format!("objects/v1/{object_id}"))
@@ -375,7 +387,12 @@ impl UploadApplicationService {
             expires_at,
         };
         let record = match self.metadata.create_upload_session(input).await {
-            Ok(record) => record,
+            Ok(record) => {
+                if record.staging_handle != staging_handle.as_str() {
+                    let _ = self.object_store.abort_staged(&staging_handle).await;
+                }
+                record
+            }
             Err(error) => {
                 let _ = self.object_store.abort_staged(&staging_handle).await;
                 return Err(map_metadata_error(error));
@@ -1178,6 +1195,46 @@ fn map_storage_error(error: ObjectStoreError) -> UploadError {
         }
         ObjectStoreError::InvalidRange => UploadError::InvalidRequest,
     }
+}
+
+fn upload_request_matches_record(
+    request: &CreateUploadSessionRequest,
+    record: &UploadSessionRecord,
+) -> bool {
+    let expected_operation = match &request.target {
+        UploadTargetRequest::CreateFile { .. } => UploadOperation::CreateFile,
+        UploadTargetRequest::ReplaceContent { .. } => UploadOperation::ReplaceContent,
+    };
+    record.operation == expected_operation
+        && record.expected_length == request.expected_length
+        && record.expected_sha256 == request.expected_sha256
+        && match (&request.target, record.operation) {
+            (
+                UploadTargetRequest::CreateFile {
+                    library_id,
+                    parent_node_id,
+                    name,
+                },
+                UploadOperation::CreateFile,
+            ) => {
+                record.library_id == *library_id
+                    && record.target_parent_node_id == Some(*parent_node_id)
+                    && record.target_name.as_ref() == Some(name)
+            }
+            (
+                UploadTargetRequest::ReplaceContent {
+                    library_id,
+                    node_id,
+                    expected_revision,
+                },
+                UploadOperation::ReplaceContent,
+            ) => {
+                record.library_id == *library_id
+                    && record.target_node_id == *node_id
+                    && record.expected_node_revision == Some(*expected_revision)
+            }
+            _ => false,
+        }
 }
 
 fn parse_staging_handle(value: &str) -> Result<StagingHandle, UploadError> {

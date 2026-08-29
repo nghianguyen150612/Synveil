@@ -1,6 +1,6 @@
 # Synveil canonical domain model
 
-Status: **SKELETON_IMPLEMENTED — initial canonical entities and invariants are validated; the PostgreSQL canonical schema, explicit SQLx mappings, authenticated logical node metadata workflows, persisted upload-session/verified-replica subset, exact-offset HTTP upload transport, owner-authorized immutable content reads, authenticated HTTP full/single-range download transport, authenticated immutable version-history metadata, safe historical-version restore, metadata-only Trash retention/purge execution, FileVersion-based object reference accounting, metadata-only GC grace/lease planning, and crash-safe internal physical Object/ObjectReplica deletion are IMPLEMENTED/VALIDATED; bounded internal GC-worker orchestration and stuck-operation reconciliation are IMPLEMENTED; download UI and broader content protocols remain PLANNED**
+Status: **SKELETON_IMPLEMENTED — initial canonical entities and invariants are validated; the PostgreSQL canonical schema, explicit SQLx mappings, authenticated logical node metadata workflows, persisted upload-session/verified-replica subset, exact-offset HTTP upload transport, owner-authorized immutable content reads, authenticated HTTP full/single-range download transport, authenticated immutable version-history metadata, safe historical-version restore, metadata-only Trash retention/purge execution, FileVersion-based object reference accounting, metadata-only GC grace/lease planning, and crash-safe internal physical Object/ObjectReplica deletion are IMPLEMENTED/VALIDATED; bounded internal GC-worker orchestration and stuck-operation reconciliation are IMPLEMENTED; the durable owner/library-scoped change journal, per-device checkpoints, incremental change feed, acknowledgment, and materialized logical snapshot/rebaseline bootstrap are VALIDATED; typed client mutation submission with durable idempotency, canonical fingerprinting, optimistic concurrency, deterministic conflict persistence, and exact journal integration is IMPLEMENTED/VALIDATED; durable conflict records, manual inspection, and explicit manual resolution are IMPLEMENTED; automatic conflict resolution, the desktop sync agent, download UI, and broader content protocols remain NOT IMPLEMENTED/PLANNED**
 
 This document owns the canonical meanings, fields, relationships, lifecycle
 states, and transaction invariants of Synveil domain entities. It does not
@@ -244,9 +244,10 @@ Canonical fields:
 - `id`, `owner_user_id`, name;
 - root `Node` ID;
 - `dedup_domain_id`;
-- transactionally incremented `sync_head`;
+- transactionally incremented `sync_head` (the library-row lock is acquired at
+  the journal append boundary, after the namespace mutation has been checked);
 - `journal_epoch` and minimum retained sequence;
-- an internal namespace-mutation guard/structural revision used to order short
+- an internal transaction-scoped namespace-mutation guard used to order short
   `Node` commits in the initial correctness profile;
 - quota/policy references;
 - `status`: `ACTIVE`, `READ_ONLY`, `QUARANTINED`, or `DELETING`;
@@ -508,56 +509,180 @@ a request that reuses a part identity with different bytes is a conflict.
 Overlaps, gaps, total overflow, excessive part count, and expired sessions are
 rejected before assembly.
 
-## Synchronization domain
+## Synchronization domain — Prompt 35 status
+
+| Capability | Status |
+|---|---|
+| durable change journal | `VALIDATED` |
+| device checkpoints/feed | `VALIDATED` |
+| snapshot/rebaseline | `VALIDATED` |
+| client mutation submission | `VALIDATED` |
+| optimistic conflict detection | `VALIDATED` |
+| durable conflict records | `IMPLEMENTED` |
+| manual conflict inspection | `IMPLEMENTED` |
+| explicit manual resolution | `IMPLEMENTED` |
+| automatic conflict resolution | `NOT IMPLEMENTED` |
+| desktop sync agent | `NOT IMPLEMENTED` |
 
 ### `ChangeEvent`
 
 Purpose: durable committed fact required for clients to advance state.
 
-Canonical fields:
+The implemented foundation fields are:
 
-- `library_id`, transactionally allocated `sequence`, `journal_epoch`;
-- event ID, event kind, subject node ID;
-- resulting node revision and version ID where applicable;
-- minimal parent/name/state projection needed to apply or invalidate a cache;
-- actor user/device, server commit time;
-- causal/idempotency correlation and schema version.
+- `entry_id`, `owner_user_id`, `library_id`, transactionally allocated
+  `sequence`, and `journal_epoch`;
+- schema-versioned typed resource and change kind, plus subject node ID;
+- resulting node revision, parent ID, node kind/state, and current version ID
+  when applicable;
+- PostgreSQL transaction timestamp as descriptive `occurred_at`.
 
 The unique key is (`library_id`, `journal_epoch`, `sequence`). Sequence order is
-commit order for one library, not wall-clock or cross-library order. An event
-is appended in the same PostgreSQL transaction as its domain mutation.
+commit order for one library, not wall-clock or cross-library order. An event is
+appended in the same PostgreSQL transaction as its domain mutation. The
+foundation deliberately does not copy names, paths, object/replica identities,
+actor-device metadata, or arbitrary JSON; future schema versions may add a
+reviewed bounded projection without changing the ordering contract.
 
 ### `SyncCursor`
 
 Purpose: opaque server token representing a journal position and epoch for a
 client/library.
 
-The decoded server-side claims include token version, library ID, epoch,
-last-delivered sequence, and integrity protection. A persisted device
-checkpoint may additionally record device ID, acknowledgement sequence, and
-last contact.
+The metadata foundation exposes a distinct `JournalCursor` containing a version,
+library ID, journal epoch, and last-delivered sequence. It is bounded, opaque to
+callers, integrity-checked, and revalidated against the owner/library/head in
+PostgreSQL. The public feed uses a separate bounded HMAC-signed acknowledgment
+evidence token; it is integrity evidence only and is never authorization.
 
-Clients treat a cursor as opaque, cannot increment or manufacture it, and must
-not use it as authorization. Cursors for the wrong user/library/epoch or below
-retention are rejected with a directed rescan response.
+### `DeviceSyncCheckpoint`
+
+Purpose: durable consumer progress for one authenticated owner's registered
+device and one library.
+
+Canonical fields:
+
+- `owner_user_id`, `device_id`, and `library_id`, with composite ownership
+  foreign keys and one unique checkpoint per device/library pair;
+- `journal_epoch` and `acknowledged_sequence`, initialized to the current epoch
+  and sequence zero on first use;
+- monotonic `rebaseline_generation`, used only as a compare-and-set fence so an
+  older bootstrap cannot replace newer synchronization progress;
+- server-managed `created_at`, `updated_at`, and optional
+  `last_seen_high_watermark`.
+
+The checkpoint stores no journal payload, object/replica identity, storage key,
+path, or device credential. Only an existing `ACTIVE` device and an owned
+library can create, read, fetch, or acknowledge it. Fetch never advances it.
+Acknowledgment is a row-locked compare-and-set: the signed page start must
+equal the current sequence, the delivered interval must exist contiguously in
+the journal, and progress can only advance within the current epoch. Older
+valid acknowledgment replays return the current row without rewinding; gaps,
+future progress, an epoch mismatch, and unavailable retained history fail
+explicitly.
+
+The current HTTP trust model is an authenticated owner session acting on behalf
+of the registered device. Pairing, strong device credentials, and attestation
+are not part of this phase.
+
+Clients treat a cursor and acknowledgment token as opaque, cannot increment or
+manufacture them, and must not use either as authorization. Cursors or
+checkpoints for the wrong user/library/epoch, or below retained history, are
+rejected with stable `not_found` or `sync_rebaseline_required` outcomes.
+
+### `SyncBootstrap`
+
+Purpose: a restart-safe server-side session binding one immutable logical
+manifest to one exact journal handoff cut for one device/library.
+
+Canonical fields are typed `SyncBootstrapId`, `owner_user_id`, `device_id`,
+`library_id`, monotonic generation, `snapshot_epoch`,
+`snapshot_resume_sequence`, immutable manifest item count and optional terminal
+Node ID, state, and PostgreSQL/server-managed creation, expiry, and completion
+timestamps. States are closed to `OPEN`, `COMPLETED`, `ABORTED`, and `EXPIRED`.
+At most one `OPEN` row exists for a device/library scope. A safe repeated start
+returns that row; replacing an expired row increments the checkpoint generation
+before creating a new one.
+
+Starting never resets the checkpoint. Completing requires exact terminal-page
+evidence plus matching owner/device/library/session/generation/cut claims. In
+one row-locked transaction it rechecks the current journal epoch and retained
+history, refuses an already-ahead checkpoint, sets the checkpoint exactly to
+the captured epoch/resume sequence, and marks the bootstrap `COMPLETED`.
+Completed replay returns the committed checkpoint without another reset.
+
+### `LogicalSnapshotNode`
+
+Purpose: one immutable logical projection captured inside a `SyncBootstrap`;
+it is neither a live `Node` row nor a backup/archive entry.
+
+Fields are `node_id`, optional `parent_node_id`, logical name, `FILE` or
+`DIRECTORY` kind, public `ACTIVE` or `TRASHED` state, revision, optional current
+version ID, and—for a current file only—paired content length and SHA-256.
+The canonical root is included. Internal `PURGING` rows and permanently purged
+Nodes are absent, and complete historical FileVersion history is not copied.
+Directory rows cannot carry content metadata; file content length/hash are
+both present or both absent according to the current-version projection.
+
+Manifest membership and values are copied in the same transaction that reads
+the journal cut, then paged in ascending immutable Node ID order. Manifest rows
+deliberately do not foreign-key back to mutable Node/FileVersion/Object rows, so
+later rename, move, Trash, purge, content replacement, or version restore cannot
+change an existing bootstrap page. They contain no Object/ObjectReplica ID,
+storage key, staging handle, filesystem path, backend locator/version,
+credential, GC state, or byte content. Retired-session cleanup cascades only to
+these copied rows and never to canonical library, Node, FileVersion, Object, or
+journal data.
 
 ### Conflict representation
 
-For concurrent edits based on version `v4`:
+Every client mutation carries a durable `client_mutation_id`, a canonical
+fingerprint, a base journal epoch/sequence, and typed resource preconditions.
+When a precondition fails, the server preserves the canonical Node and returns
+a typed `MutationConflict` with the supported reason, expected value, safe
+current logical state when available, and the server epoch/sequence. A
+purged resource is reported from its retained `NODE_PURGED` tombstone rather
+than resurrected or treated as an empty result.
 
-```text
-server head v4
-├── Device A commits v5A from v4 -> original Node head
-└── Device B submits v5B from v4 -> deterministic sibling conflict-copy Node
-```
+Prompt 35 gives every managed terminal mutation conflict one typed UUIDv7
+`SyncConflictId` and one `sync_conflicts` row in the same transaction that
+terminalizes the original `device_mutation_operations` row. The relationship
+is one-to-one in both directions. Replaying the original mutation ID and
+fingerprint returns the same conflict ID; reusing it with different semantics
+is still a mutation-identity conflict. Authentication, CSRF, malformed input,
+dependency/internal failures, identity reuse, and `sync_rebaseline_required`
+never create managed conflict rows.
 
-The server never overwrites `v5A` with `v5B`. It creates a sibling conflict
-`Node` with a deterministic non-clobbering name, binds `v5B` to it, retains the
-common base/correlation, and appends the required journal facts. Replaying the
-same client mutation returns that conflict copy rather than creating another.
-Metadata-only conflicts return current state for client rebase. Exact naming
-and event fixtures are owned by [SYNC.md](SYNC.md), but may not replace this
-accepted conflict-copy behavior with last-writer-wins or an unexposed version.
+The conflict is scoped by owner, originating Device, Library, original client
+mutation, and primary logical resource. Its closed lifecycle is `OPEN`,
+`RESOLVED`, or `DISMISSED`. Evidence is immutable: conflict/original-mutation
+identity, typed kind, reason, resource, original expected context, closed typed
+intent fields, historical server revision/state/parent/name, captured
+epoch/sequence, and creation timestamp. It stores no raw request JSON, path,
+Object/ObjectReplica identity, locator, staging handle, credential, or bytes.
+The historical projection is evidence, never current canonical truth. There is
+no Node foreign key, so purge and rebaseline do not remove it. Only lifecycle
+and terminal resolution linkage can transition once.
+
+`sync_conflict_resolutions` is the smallest durable decision record needed for
+UUIDv7 resolution identity, versioned typed SHA-256 fingerprinting, response-
+loss replay, concurrency fencing, stale-result audit, and optional normal
+journal-event linkage. Its action vocabulary is exactly `ACCEPT_SERVER` and
+`APPLY_CLIENT_INTENT`. Same ID and fingerprint returns the original outcome,
+timestamp, and event linkage with a replay marker; a semantic mismatch returns
+`resolution_id_conflict`.
+
+`ACCEPT_SERVER` moves OPEN to DISMISSED and changes no canonical resource or
+journal. `APPLY_CLIENT_INTENT` requires caller-supplied fresh current revisions,
+reconstructs the preserved semantic intent, and uses the shared Prompt 34
+transaction-local mutation executor and lock order. Success atomically changes
+the Node, appends exactly one ordinary `ChangeEvent`, terminalizes the decision,
+and moves the conflict to RESOLVED. A stale/purged result terminalizes only that
+resolution attempt as stale, keeps the conflict OPEN, and changes no Node,
+journal, or checkpoint. Concurrent decisions can produce at most one terminal
+conflict transition. The original Prompt 34 operation remains CONFLICT forever.
+No automatic conflict-copy, merge, last-writer-wins, silent overwrite, or
+automatic action-selection policy exists.
 
 ## Backup domain
 

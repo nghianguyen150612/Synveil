@@ -27,6 +27,9 @@ tracing-subscriber.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+synveil-client-sync.workspace = true
+reqwest.workspace = true
+sqlx.workspace = true
 bytes.workspace = true
 http-body-util.workspace = true
 tower.workspace = true

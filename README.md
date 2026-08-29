@@ -27,8 +27,35 @@ without a mandatory hosted Synveil service or AI.
 > historical-version restore is implemented at the authenticated
 > API/metadata boundary as one new immutable FileVersion reusing the verified
 > historical Object; its disposable-PostgreSQL end-to-end gate remains
-> environment dependent. Download UI, sync, backup, sharing, and deployment
-> capabilities remain out of scope for this phase. Every other
+> environment dependent. The durable owner/library-scoped PostgreSQL change
+> journal foundation is now implemented and live-tested: supported metadata
+> mutations append ordered facts atomically, and a bounded transport-neutral
+> reader resumes with an opaque cursor. Per-device/per-library checkpoints,
+> the bounded authenticated server change feed, and signed checkpoint
+> acknowledgment are implemented and validated. A server-side logical
+> snapshot/rebaseline bootstrap is implemented and validated: PostgreSQL
+> materializes one immutable, bounded manifest at the same coherent journal
+> epoch/sequence cut used for the later feed handoff. The first authenticated
+> client mutation submission protocol is implemented and live-validated for
+> one typed logical mutation per request, durable UUID/idempotency results,
+> canonical fingerprints, explicit optimistic preconditions, deterministic
+> conflicts, and exact journal integration. Every managed conflict now has one
+> durable immutable record and authenticated device-scoped list/detail APIs.
+> An owner can explicitly `ACCEPT_SERVER` or retry the preserved semantic
+> intent with fresh preconditions through an idempotent, fenced manual
+> resolution operation. It does not carry file bytes or resolve conflicts
+> automatically. A reusable desktop inbound-sync core and its crash-safe local
+> SQLite state are now implemented. Prompt 37 adds durable server profiles,
+> verified-HTTPS inbound HTTP transport, one-time Device enrollment, revocable
+> owner/Device-scoped bearer credentials, and OS-backed secure credential
+> storage. Prompt 38 implements the local filesystem observation boundary:
+> watcher events are hints only, reconciliation is authoritative, Synveil-
+> generated inbound changes are suppressed through durable operation evidence,
+> and local changes become durable typed outbound intents without any automatic
+> server mutation submission or upload initiation. Installation/service
+> lifecycle and desktop GUI are not implemented.
+> Download UI, backup, sharing, and deployment capabilities remain out of scope
+> for this phase. Every other
 > product capability below remains a blueprint unless explicitly marked
 > otherwise.
 
@@ -44,13 +71,87 @@ without a mandatory hosted Synveil service or AI.
 | `EXPERIMENTAL` | A future exploration with an unstable contract. |
 | `NON-GOAL` | Deliberately outside the stated scope. |
 
+### Prompt 35 synchronization status (historical phase boundary)
+
+| Capability | Status |
+|---|---|
+| durable change journal | `VALIDATED` |
+| device checkpoints/feed | `VALIDATED` |
+| snapshot/rebaseline | `VALIDATED` |
+| client mutation submission | `VALIDATED` |
+| optimistic conflict detection | `VALIDATED` |
+| durable conflict records | `IMPLEMENTED` |
+| manual conflict inspection | `IMPLEMENTED` |
+| explicit manual resolution | `IMPLEMENTED` |
+| automatic conflict resolution | `NOT IMPLEMENTED` |
+| desktop sync agent | `NOT IMPLEMENTED` |
+
+### Prompt 36–37 desktop inbound synchronization status
+
+| Capability | Status |
+|---|---|
+| server journal/checkpoint/feed/rebaseline/mutations/conflicts | `VALIDATED` |
+| desktop inbound sync core | `IMPLEMENTED` |
+| desktop local crash-safe state | `IMPLEMENTED` |
+| snapshot/feed local apply | `IMPLEMENTED` |
+| file download/apply | `IMPLEMENTED` |
+| local divergence detection | `IMPLEMENTED` |
+| durable server profiles and verified-HTTPS HTTP remote | `IMPLEMENTED` |
+| one-time Device enrollment and revocable bearer authentication | `IMPLEMENTED` |
+| Linux Secret Service / Windows Credential Manager integration | `IMPLEMENTED` |
+| filesystem observation | `IMPLEMENTED` |
+| self-generated change suppression | `IMPLEMENTED` |
+| durable outbound intent capture | `IMPLEMENTED` |
+| rename/move attribution | `IMPLEMENTED with conservative fallback` |
+| watcher overflow/reconciliation | `IMPLEMENTED` |
+| automatic outbound mutation submission | `NOT IMPLEMENTED` |
+| automatic conflict resolution | `NOT IMPLEMENTED` |
+| desktop GUI | `NOT IMPLEMENTED` |
+
+The new `synveil-client-sync` crate is a UI-free, transport-neutral inbound
+engine. It binds an explicitly initialized managed root to one owner/device/
+library replica, persists bootstrap, feed, operation, issue, and acknowledgement
+state in a separately migrated SQLite database, stages and verifies content
+before exposure, and never turns local filesystem changes into server
+mutations. Prompt 37 supplies the production `HttpSyncRemote` and a distinct
+Device bearer principal. Browser-cookie state changes still require CSRF;
+Device bearer access is limited to inbound sync and owner-authorized logical
+content/metadata reads. Production profiles require an HTTPS origin and normal
+certificate verification; redirects are rejected. SQLite contains no bearer
+secret. Credentials persist only through Linux Secret Service or Windows
+Credential Manager, without a plaintext fallback. Native Linux secure-storage
+and HTTP/SQLite integration are tested; Windows workspace cross-compilation and
+MinGW linking of client-sync/platform test executables do not claim native
+Windows secure-store, TLS, NTFS, or power-loss evidence.
+
+Trạng thái Prompt 38: profile server bền vững, HTTP inbound xác minh HTTPS,
+enrollment Device một lần và credential bearer thu hồi được đã implement.
+Observer filesystem local đã capture thay đổi thành durable outbound intent trong
+SQLite; watcher chỉ là hint, reconciliation mới là truth, change do Synveil tạo
+được suppress bằng evidence operation bền vững. Chưa có desktop GUI, automatic
+outbound mutation submission, upload tự động hay automatic conflict resolution.
+Bằng chứng Windows hiện là cross-target compilation toàn workspace và link test
+executable client-sync/platform bằng MinGW, không phải runtime Windows native.
+
+The bootstrap includes the canonical library root and current `ACTIVE` and
+`TRASHED` logical Nodes, ordered by immutable Node ID. Current files carry only
+their public version ID, byte length, and SHA-256 identity. `PURGING` rows,
+historical version lists, Object/ObjectReplica identities, storage keys,
+staging handles, filesystem paths, backend locators, credentials, and file
+bytes are excluded. Existing authenticated content-download routes remain the
+only byte-transfer path.
+
 Current repository status: **foundation skeleton, browser-auth transport,
 first-run bootstrap HTTP flow, minimal web auth UI, logical file/folder
 metadata API, authenticated resumable upload HTTP transport, authenticated
 immutable version-history metadata, metadata-only Trash retention/purge
 execution and reference accounting, a transport-neutral owner-authorized
-immutable content-read service, and authenticated HTTP full/single-range
-download transport implemented and validated**. The metadata slice covers
+immutable content-read service, authenticated HTTP full/single-range download
+transport, per-device/per-library sync checkpoints, the authenticated bounded
+server change feed, signed checkpoint acknowledgment, and materialized logical
+snapshot/rebaseline bootstrap, durable desktop profiles, one-time Device
+enrollment, revocable bearer authentication, and the production inbound HTTP
+remote implemented**. The metadata slice covers
 owner-scoped library/root listing, directory creation, node reads, rename,
 move, logical delete, and restore. The upload slice streams bounded raw chunks,
 resumes at a server-authoritative exact offset, and commits one verified
@@ -84,7 +185,44 @@ a verified replica, streams full bytes or a validated application-level range,
 and cross-checks object metadata before yielding bytes. The HTTP download
 routes keep filename/content-type/ETag/cache policy at the API boundary and
 stream through the content service. They do not provide upload UI, download UI,
-physical-GC controls, journals, sync, backup, or sharing.
+physical-GC controls, automatic conflict resolution, backup, or sharing. The
+public sync feed accepts authenticated owner browser sessions acting on behalf
+of existing active registered Devices or a verified Device bearer bound to
+that exact owner/Device. The same trust model applies to bootstrap. Browser
+start, ack, and complete require CSRF; verified bearer requests do not. Pages
+are reads, and all bootstrap responses are private/no-store.
+Terminal-page HMAC proof and a generation fence are required before the
+checkpoint is atomically replaced at exactly the captured cut. One-time
+enrollment and revocable Device credentials are implemented; the desktop
+GUI/background lifecycle remains planned. PostgreSQL-backed API
+startup requires a deployment-stable 32-byte
+`SYNVEIL_REBASELINE_TOKEN_KEY` (64 lowercase hexadecimal characters), so
+cursor and completion proof remain verifiable across process restart; missing
+or malformed configuration fails closed and the secret is never logged.
+
+The logical client-mutation route is `POST
+/api/v1/devices/{device_id}/libraries/{library_id}/mutations`. It accepts one
+strict typed `CREATE_DIRECTORY`, `RENAME_NODE`, `MOVE_NODE`, `TRASH_NODE`, or
+`RESTORE_NODE` envelope with canonical UUID/decimal fields and explicit
+revision/parent preconditions. The server persists the mutation fingerprint
+and terminal `APPLIED`/`CONFLICT` result, appends exactly one journal event on
+success, and returns the same result with `replayed=true` after a lost response.
+Conflicts are returned with safe logical state only; automatic conflict
+resolution, last-write-wins, conflict-copy renaming, and merge engines are not
+implemented.
+
+Durable conflict management is available at the device/library-scoped
+`GET .../conflicts`, `GET .../conflicts/{conflict_id}`, and CSRF-protected
+`POST .../conflicts/{conflict_id}/resolve` routes. Listing is OPEN-only,
+bounded, and uses an opaque HMAC-authenticated keyset cursor. Detail separates
+the immutable historical server observation from current truth; resolvers read
+the canonical Node separately. `ACCEPT_SERVER` dismisses without a Node change
+or resource journal event. `APPLY_CLIENT_INTENT` requires explicit fresh
+revision preconditions and reuses the canonical mutation executor; success
+emits exactly one normal resource event, while stale state leaves the conflict
+OPEN and changes nothing. Resolution IDs use canonical typed SHA-256
+fingerprints for exact lost-response replay. No action is selected
+automatically.
 
 The initial PostgreSQL canonical schema and explicit SQLx persistence mappings
 for the validated domain subset are implemented. Disposable PostgreSQL
@@ -94,8 +232,12 @@ browser-session persistence, transport-neutral login/session semantics, HTTP
 login/logout/session/CSRF and first-run bootstrap routes, secure cookie policy,
 the minimal typed web API boundary, and the web setup/login/session shell are
 implemented; PostgreSQL end-to-end evidence remains environment-dependent and
-is reported separately. Device credentials, recovery, download UI, journals,
-sync, backup, and sharing remain planned.
+is reported separately. Device credentials and one-time enrollment are now
+implemented. Guided pairing UI, account recovery, automatic conflict
+resolution, download UI,
+backup, and sharing remain planned; the server-side one-way sync feed and
+durable device checkpoints plus logical rebaseline bootstrap are implemented
+below the future client sync product.
 Deployment-managed first-run secret delivery and
 installer lifecycle remain future work; the current bootstrap HTTP contract
 does not accept a setup-secret field.
@@ -122,7 +264,8 @@ implemented capabilities.
 
 Synveil combines several related, but explicitly separated, domains:
 
-- `IMPLEMENTED/VALIDATED` (metadata, exact-offset upload, authenticated
+- `IMPLEMENTED/VALIDATED` (metadata, durable change-journal foundation,
+  exact-offset upload, authenticated
   immutable version-history metadata, safe historical-version restore, Trash
   retention metadata/purge eligibility, authenticated full/single-range
   content-download transport, metadata-only GC planning, and physical
@@ -132,8 +275,11 @@ Synveil combines several related, but explicitly separated, domains:
   authenticated files and folders, logical metadata, bounded streaming
   resumable upload, immutable full/range content reads, versions, trash,
   sharing, and integrity checks;
-- `PLANNED` — first-class devices and a cursor-based multi-device sync
-  protocol that preserves conflicting user data;
+- `IMPLEMENTED` foundation / `PLANNED` product — server device cursors and the
+  reusable desktop inbound apply core preserve unknown or diverged local data;
+  verified-HTTPS transport and scoped Device identity are implemented;
+  installation, background lifecycle, watching, and outbound synchronization
+  remain planned;
 - `PLANNED` — backup sets, committed snapshots, retention, and verified
   restore, with deletion behavior distinct from sync;
 - `PLANNED` — photo originals, renditions, timeline, albums, and mobile upload;
@@ -147,7 +293,8 @@ Synveil combines several related, but explicitly separated, domains:
   Desktop, and Linux Server, with storage selection, service lifecycle,
   human-readable health, safe updates, migration, and data-preserving
   uninstall;
-- `PLANNED` — simple device pairing and understandable remote-access paths,
+- `IMPLEMENTED` one-time enrollment protocol / `PLANNED` guided pairing UI and
+  understandable remote-access paths,
   with no mandatory proprietary Synveil relay;
 - `PLANNED` (advanced) — files on demand, content-defined chunking, and
   deterministic smart tiering behind later phase gates;
