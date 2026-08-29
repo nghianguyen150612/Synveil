@@ -184,6 +184,7 @@ async fn assert_no_secret_on_disk(state: &LocalStateStore, secrets: &[&DeviceCre
         .execute(&state.pool)
         .await
         .unwrap();
+    state.close_pool().await;
     for entry in fs::read_dir(state.database_path().parent().unwrap()).unwrap() {
         let entry = entry.unwrap();
         if entry.file_type().unwrap().is_file() {
@@ -191,10 +192,14 @@ async fn assert_no_secret_on_disk(state: &LocalStateStore, secrets: &[&DeviceCre
             // Transient SQLite control files. After wal_checkpoint(TRUNCATE) the
             // WAL is zero bytes and SHM stores only lock metadata, never page
             // data, so plaintext secrets can never be durably hidden there. On
-            // Windows these descriptors are kept byte-range locked for the
-            // process lifetime (ERROR_LOCK_VIOLATION), so they are skipped here;
-            // the durable main database and every other file are still scanned.
-            if name.ends_with("-wal") || name.ends_with("-shm") {
+            // Windows these descriptors (and the fs2 writer-lock target) are
+            // byte-range locked for the process lifetime (ERROR_LOCK_VIOLATION),
+            // so they are skipped here; the durable main database and every
+            // other file are still scanned.
+            if name.ends_with("-wal")
+                || name.ends_with("-shm")
+                || name.ends_with("sqlite3.writer.lock")
+            {
                 continue;
             }
             let bytes = read_file_bounded(&entry.path()).unwrap();
