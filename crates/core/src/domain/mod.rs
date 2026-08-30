@@ -1,3 +1,4 @@
+mod backup;
 mod conflicts;
 mod errors;
 mod journal;
@@ -8,6 +9,35 @@ mod rebaseline;
 mod sync;
 mod uploads;
 
+pub use backup::{
+    BACKUP_MAINTENANCE_RUN_FINGERPRINT_VERSION, BACKUP_PRUNE_PLAN_FINGERPRINT_VERSION,
+    BACKUP_RESTORE_PLAN_FINGERPRINT_VERSION, BACKUP_SNAPSHOT_EXPIRY_BASIS_FINGERPRINT_VERSION,
+    BACKUP_SNAPSHOT_EXPIRY_EXECUTION_FINGERPRINT_VERSION,
+    BACKUP_SNAPSHOT_EXPIRY_PLAN_FINGERPRINT_VERSION,
+    BACKUP_SNAPSHOT_RETENTION_POLICY_FINGERPRINT_VERSION, BackupMaintenanceRun,
+    BackupMaintenanceRunIdempotencyFingerprint, BackupMaintenanceRunPreflightIssue,
+    BackupMaintenanceRunRequest, BackupMaintenanceRunState, BackupMaintenanceRunStateParseError,
+    BackupManifestContent, BackupPruneExecution, BackupPruneExecutionPreflightIssue,
+    BackupPruneImpact, BackupPruneImpactParseError, BackupPrunePlan, BackupPrunePlanEntry,
+    BackupPrunePlanIdempotencyFingerprint, BackupPrunePlanRequest, BackupPrunePlanState,
+    BackupPrunePlanStateParseError, BackupPrunePreflightIssue, BackupRestoreAction,
+    BackupRestoreActionParseError, BackupRestoreExecution, BackupRestoreExecutionEntry,
+    BackupRestorePlan, BackupRestorePlanEntry, BackupRestorePlanIdempotencyFingerprint,
+    BackupRestorePlanRequest, BackupRestorePlanState, BackupRestorePlanStateParseError,
+    BackupRestorePreflightIssue, BackupSet, BackupSetState, BackupSetStateParseError,
+    BackupSnapshot, BackupSnapshotExpiryBasisEntry, BackupSnapshotExpiryBasisFingerprint,
+    BackupSnapshotExpiryDecision, BackupSnapshotExpiryDecisionParseError,
+    BackupSnapshotExpiryExecution, BackupSnapshotExpiryExecutionEntry,
+    BackupSnapshotExpiryExecutionPreflightIssue, BackupSnapshotExpiryPlan,
+    BackupSnapshotExpiryPlanEntry, BackupSnapshotExpiryPlanIdempotencyFingerprint,
+    BackupSnapshotExpiryPlanRequest, BackupSnapshotExpiryPlanState,
+    BackupSnapshotExpiryPlanStateParseError, BackupSnapshotExpiryPreflightIssue,
+    BackupSnapshotNode, BackupSnapshotRetentionPolicyConfig,
+    BackupSnapshotRetentionPolicyIdempotencyFingerprint, BackupSnapshotRetentionPolicyRequest,
+    BackupSnapshotRetentionPolicyRevision, BackupSnapshotRetentionPolicyRevisionNumber,
+    BackupSource, BackupSourceParseError, MAX_BACKUP_SNAPSHOT_RETENTION_SECONDS, SnapshotState,
+    SnapshotStateParseError,
+};
 pub use conflicts::{
     CONFLICT_RESOLUTION_FINGERPRINT_VERSION, ConflictLifecycle, ConflictLifecycleParseError,
     ConflictResolutionAction, ConflictResolutionActionParseError, ConflictResolutionFingerprint,

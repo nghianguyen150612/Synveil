@@ -1425,6 +1425,9 @@ async fn ensure_no_references_or_holds(
         "SELECT EXISTS(
             SELECT 1 FROM file_versions
             WHERE object_id = $1 AND object_dedup_domain_id = $2
+            UNION ALL
+            SELECT 1 FROM backup_snapshot_content_pins
+            WHERE object_id = $1 AND object_dedup_domain_id = $2
          )",
     )
     .bind(object_id.into_uuid())
