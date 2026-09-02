@@ -1,6 +1,6 @@
 # Synveil canonical domain model
 
-Status: **SKELETON_IMPLEMENTED — initial canonical entities and invariants are validated; the PostgreSQL canonical schema and explicit SQLx mappings for this implemented subset are IMPLEMENTED; the remaining domain remains PLANNED**
+Status: **SKELETON_IMPLEMENTED — initial canonical entities and invariants are validated; the PostgreSQL canonical schema, explicit SQLx mappings, authenticated logical node metadata workflows, persisted upload-session/verified-replica subset, exact-offset HTTP upload transport, owner-authorized immutable content reads, authenticated HTTP full/single-range download transport, authenticated immutable version-history metadata, safe historical-version restore, metadata-only Trash retention/purge execution, and FileVersion-based object reference accounting are IMPLEMENTED; physical object GC, download UI, and broader content protocols remain PLANNED**
 
 This document owns the canonical meanings, fields, relationships, lifecycle
 states, and transaction invariants of Synveil domain entities. It does not
@@ -267,6 +267,9 @@ Canonical fields:
 - original `name` and server-derived `name_key`;
 - for a file, nullable `current_version_id` while an upload has not committed;
 - `state`: `ACTIVE`, `TRASHED`, or `PURGING`;
+- canonical nullable `trashed_at`, set only for `TRASHED`/`PURGING` and cleared
+  on restore; the retention policy derives `restore_deadline` without storing a
+  second deadline column;
 - metadata revision, created/updated instants, and creator/last-actor IDs.
 
 A directory also exposes a server-issued opaque subtree precondition for
@@ -286,6 +289,11 @@ Invariants:
   relocate an `Object`.
 - A content mutation changes `current_version_id` and node revision in the same
   transaction that creates the version and journal event.
+- Trash eligibility uses only the server-observed `trashed_at`, the one
+  authoritative retention policy, current server time, ownership, and safe
+  state. `ACTIVE`, restored, root, and `PURGING` nodes are never fresh purge
+  candidates. The current single-node Trash contract rejects non-empty
+  directories, so candidate selection cannot orphan children.
 - In the initial correctness profile, every short transaction that mutates a
   `Node` takes the per-library namespace guard before domain rows and the late
   `sync_head` lock. This gives directory move and recursive Trash a definite
@@ -350,6 +358,26 @@ A restore creates a new version whose source points to the selected historical
 version; it never makes old history mutable. Equal objects may be reused only
 inside the same allowed dedup domain.
 
+The implemented metadata API lists these immutable records newest-first with a
+bounded node-scoped keyset cursor and reports currentness only from
+`Node.current_version_id`. Its public DTO intentionally excludes object,
+replica, backend, staging, and filesystem identity. The direct version ID is
+also the identifier accepted by the historical content-read route. The
+authenticated restore route creates one new immutable head from a selected
+historical version, uses the pre-restore head as its parent, reuses only the
+same canonical Object with a matching verified replica, and leaves every
+historical row unchanged. Trashed or purging file nodes remain concealed by
+the active-file visibility contract. PostgreSQL end-to-end restore evidence is
+environment-gated by `SYNVEIL_TEST_DATABASE_URL`.
+
+After the Trash retention point of no return, the current metadata-purge
+contract permanently removes the purged Node row and all of that node's
+FileVersion rows in one transaction. It does not retain tombstoned
+FileVersion history because the accepted current schema has no retained-history
+tombstone contract. A minimal completed-purge replay identity remains without
+filenames or paths. PostgreSQL end-to-end purge evidence is environment-gated
+by `SYNVEIL_TEST_DATABASE_URL`.
+
 ### `Object`
 
 Purpose: immutable canonical plaintext content identity and logical lifecycle
@@ -366,9 +394,13 @@ Canonical fields:
 
 An `Object` becomes referenceable only in `VERIFIED`. Hash equality is
 confirmed against length and verified bytes; a collision or mismatch is
-quarantined rather than aliased. Stored reference counts may be cached for
-performance but deletion eligibility is derived from authoritative live
-references plus leases and a safety window.
+quarantined rather than aliased. The current implementation uses the
+`FileVersion -> Object` relation as the authoritative logical reference query;
+it does not maintain a mutable global counter. A metadata-only
+`object_gc_candidates` row records `unreferenced_at` and source after the last
+FileVersion reference is released. That row is not a physical deletion
+deadline: future GC must recheck all reference classes, leases, holds, and its
+safety window before changing Object or replica state.
 
 ### `StorageBackend`
 

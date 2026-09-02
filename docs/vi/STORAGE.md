@@ -1,6 +1,15 @@
 # Lưu trữ, vòng đời object, phiên bản và Thùng rác
 
-Trạng thái: **Blueprint quy chuẩn PLANNED**
+Trạng thái: **Hợp đồng ObjectStore VALIDATED; adapter in-memory VALIDATED; adapter
+filesystem cục bộ IMPLEMENTED/VALIDATED; subset persisted upload-session và
+application-service IMPLEMENTED/VALIDATED; exact-offset HTTP upload transport
+IMPLEMENTED/VALIDATED; content-read application service full/range trung lập
+transport đã authorize theo owner IMPLEMENTED/VALIDATED; HTTP download
+full/single-range đã authenticate IMPLEMENTED/VALIDATED; metadata
+version-history bất biến listing/lookup IMPLEMENTED/VALIDATED; safe
+historical-version restore IMPLEMENTED; metadata retention và purge execution
+metadata-only cùng reference accounting theo FileVersion IMPLEMENTED; physical
+object GC, download UI và lifecycle cấp cao PLANNED**
 
 Tài liệu này đặc tả hợp đồng lưu trữ byte chuẩn của Synveil và vòng đời logic
 nằm bên trên hợp đồng đó. Tài liệu tuân theo các ADR đã được chấp thuận và sử
@@ -9,7 +18,30 @@ upload nằm trong [UPLOADS.md](UPLOADS.md), đồng bộ client nằm trong
 [SYNC.md](SYNC.md), còn lịch sử backup được bảo vệ nằm trong
 [BACKUP.md](BACKUP.md).
 
-Không nội dung nào trong tài liệu này là tuyên bố về trạng thái implementation.
+Bảng trạng thái dưới đây là ranh giới implementation của repository hiện tại.
+Các phần lifecycle, upload, retention, reconciliation và backend còn lại vẫn là
+tài liệu quy chuẩn kế hoạch trừ khi được đánh dấu khác.
+
+| Capability | Trạng thái hiện tại của repository |
+|---|---|
+| Hợp đồng `ObjectStore` | `VALIDATED` |
+| adapter in-memory | `VALIDATED` |
+| adapter filesystem cục bộ | `IMPLEMENTED/VALIDATED` |
+| persisted upload-session state | `IMPLEMENTED/VALIDATED` |
+| resumable upload service trung lập transport | `IMPLEMENTED/VALIDATED` |
+| exact-offset HTTP byte upload transport | `IMPLEMENTED/VALIDATED` |
+| content-read service đã authorize trung lập transport (current và historical full/range) | `IMPLEMENTED/VALIDATED` |
+| HTTP download full/single-range đã authenticate | `IMPLEMENTED/VALIDATED` |
+| metadata version-history bất biến listing và lookup đã authenticate | `IMPLEMENTED/VALIDATED` |
+| safe historical-version restore thành `FileVersion` bất biến mới đã authenticate | `IMPLEMENTED` |
+| timestamp Trash chuẩn, retention status dẫn xuất và begin `PURGING` metadata-only | `IMPLEMENTED` |
+| trusted metadata purge execution, release reference FileVersion và GC-candidate metadata | `IMPLEMENTED` |
+| download UI | `PLANNED` |
+| GC | `PLANNED` |
+| compression | `PLANNED` |
+| filesystem optimization | `PLANNED` |
+| sync | `PLANNED` |
+| backup | `PLANNED` |
 
 ## Phạm vi và quyền sở hữu
 
@@ -30,6 +62,84 @@ Module upload sở hữu transport có thể tiếp tục và gọi port storage
 sở hữu các fact trong journal và conflict policy. Module backup sở hữu manifest
 snapshot và retention. Không module nào được gọi trực tiếp filesystem cục bộ
 hoặc S3 SDK; chúng dùng application service của storage và port `ObjectStore`.
+
+## Content read đã authorize theo owner được implement
+
+`ContentReadApplicationService` là ranh giới application trung lập transport,
+không phải HTTP endpoint. Nó resolve `Node` logic của owner active trước khi
+mở một `ObjectStore` key opaque:
+
+- current read chỉ theo `Node.current_version_id` của `FILE` active; node vắng
+  mặt, cross-owner, trashed và purging dùng cùng outcome not-found được che
+  giấu bình thường, còn directory mà owner nhìn thấy được báo rõ không phải
+  file;
+- historical full read chỉ được phép qua `FileVersion` bất biến đã authorize
+  theo owner và gắn với file node active. Service không suy version từ path và
+  không nhận object ID/key từ caller;
+- PostgreSQL chỉ chọn một row `object_replicas` khớp backend khi state là
+  `VERIFIED`, rồi đòi stored length và SHA-256 của replica bằng metadata
+  `Object` chuẩn;
+- service verify `ObjectStore` read trả đúng opaque key, full canonical length,
+  SHA-256 và range được yêu cầu trước khi yield descriptor. Descriptor chỉ có
+  logical ID an toàn, metadata bất biến, `ByteRange` tùy chọn và byte stream
+  pull-driven; nó không có physical key, path, backend version hay staging
+  handle; và
+- full read dùng `ObjectStore::get`; range của current file dùng `ByteRange`
+  đã parse và `ObjectStore::range_read` chỉ sau capability check cùng canonical
+  bound check. Shared range type từ chối range rỗng/overflow, và range vượt
+  canonical length bị từ chối trước khi mở storage. Không read method nào ghi
+  metadata hoặc state storage.
+
+Boundary HTTP download parse một byte range an toàn, tạo ETag immutable, đặt
+content header an toàn cùng private no-store và stream body đã verify qua
+service này. Boundary không expose direct object URL hay cung cấp browser UI.
+Multi-range, `HEAD`, `If-Range` và download UI vẫn ngoài scope.
+
+## Metadata version-history đã authorize theo owner được implement
+
+Application boundary metadata expose lịch sử bất biến của một file active thuộc
+owner qua `GET /api/v1/nodes/{node_id}/versions` và direct lookup qua
+`GET /api/v1/versions/{version_id}`. Đây là authenticated read, không cần CSRF
+và đặt `Cache-Control: private, no-store`.
+
+Version resource public chỉ có immutable version ID, node ID, server commit
+instant dưới tên `created_at`, `byte_length` dạng decimal unsigned chuẩn,
+`sha256` chuẩn và cờ `is_current`. Nó không expose `Object` ID, object key,
+replica ID, backend kind/version, staging handle, filesystem path hay physical
+storage identity nào khác. Application service chỉ đọc metadata từ PostgreSQL
+và không bao giờ mở `ObjectStore`.
+
+History listing bị bounded và sắp newest-first theo
+`(committed_at DESC, id DESC)`. Cursor là opaque, có scope theo node và mang cả
+hai ordering key bất biến nên version có cùng timestamp không bị bỏ sót hoặc
+lặp. `is_current` lấy từ pointer có thẩm quyền `Node.current_version_id`,
+không suy ra từ timestamp hay ID lớn nhất. Direct lookup dùng chính ID mà
+`/api/v1/versions/{version_id}/content` chấp nhận.
+
+Contract visibility active-file hiện có được áp dụng: node/version unknown,
+cross-owner, trashed và purging bị che giấu thành not found; directory mà owner
+nhìn thấy là invalid state. History trong slice này là append-only. Bằng chứng
+history và restore end-to-end PostgreSQL vẫn bị gate bởi
+`SYNVEIL_TEST_DATABASE_URL`.
+
+## Safe historical-version restore đã implement
+
+`POST /api/v1/nodes/{node_id}/versions/{version_id}/restore` là mutation của
+owner đã authenticate để restore một file version lịch sử. Request cần CSRF
+proof của session, signed current-node `If-Match` và `Idempotency-Key` bounded.
+Metadata application service thực hiện một PostgreSQL transaction lock và
+recheck owner/library, file node active, source version được chọn, quan hệ
+canonical object và một replica `VERIFIED` matching.
+
+Khi thành công, service tạo đúng một `FileVersion` bất biến mới tham chiếu cùng
+canonical `Object`, đặt parent là current version trước restore, advance
+`Node.current_version_id` và revision node, rồi trả version metadata an toàn
+cùng node concurrency metadata và ETag. Service không mutate historical row,
+không đưa pointer lùi, không copy byte, không mở `ObjectStore` và không tạo
+`UploadSession`. Check fail không để lại restore operation đã commit; retry của
+commit sẽ replay outcome đã persist, còn dùng lại key cho request material khác
+trả conflict. Purge, retention, synchronization, backup, sharing và UI vẫn
+ngoài boundary này.
 
 ## Độc lập filesystem và tăng tốc theo capability
 
@@ -209,35 +319,62 @@ production.
 
 ## Adapter filesystem cục bộ
 
-Adapter cục bộ là implementation target ban đầu. Hợp đồng an toàn của nó là:
+Adapter production đầu tiên được implement trong
+`crates/storage/src/local.rs` và được export lại qua storage composition crate.
+Hợp đồng root tường minh của nó đã được validate trên host hiện tại bằng
+primitive filesystem Rust/Tokio portable:
 
-- Resolve và validate storage root được cấu hình khi khởi động. Root có marker
-  storage-identity của Synveil gắn với `StorageBackend`; marker không tồn tại
-  hoặc không như dự kiến làm readiness fail thay vì coi mọi object là đã mất.
-- Không bao giờ nối tên file, path, MIME type hay public ID của người dùng vào
-  filesystem path. Component relative key được sinh phải được validate lần nữa
-  tại ranh giới adapter.
-- Mở staging file và final file theo chế độ exclusive. Từ chối symlink,
-  redirect kiểu junction, target không phải regular file hoặc traversal ra
-  ngoài root sở hữu. Dùng operation tương đối theo descriptor/no-follow khi
-  platform cho phép thay vì kiểm tra canonicalize-after-open có race window.
-- Đặt dữ liệu tạm để promotion trên cùng filesystem với final key. Stream vào
-  temporary file, verify length/checksum, flush dữ liệu file và metadata bắt
-  buộc, promote không replacement, sau đó flush directory chứa file theo
-  durability profile đã chọn.
-- Không bao giờ để lộ file đang lớn dần tại final key. Crash trước promotion chỉ
-  để lại staging; crash sau promotion để lại file bất biến hoàn chỉnh hoặc một
-  receipt mà recovery có thể dựng lại bằng `HEAD` và hashing.
-- Coi short write, `ENOSPC`, lỗi quota, mount read-only, lỗi I/O và flush failure
-  là storage failure. Không ghi part/object bị ảnh hưởng là đã verify.
-- Không giả định mọi filesystem được mount qua NAS đều cung cấp ngữ nghĩa local
-  atomic-rename hoặc `fsync`. Chỉ chấp nhận NAS path sau cùng adapter conformance
-  và crash test, đồng thời công bố giới hạn trong health output.
+- `LocalFilesystemObjectStore::open` chỉ nhận root absolute được truyền tường
+  minh, giữ dạng canonical đã resolve, tạo marker layout Synveil cùng `objects/`
+  và `staging/`, từ chối root filesystem, home/profile người dùng,
+  current-directory và source-workspace tại thời điểm build, đồng thời không
+  recursive-clean content không rõ chủ sở hữu. Marker chứng minh đúng version
+  local adapter/layout; việc gắn nó với record `StorageBackend` bền vững vẫn
+  thuộc tầng cao hơn.
+- Physical path được sinh từ SHA-256 của `ObjectKey` opaque đã validate, không từ
+  filename, public ID, MIME type hay caller path. Layout nội bộ là
+  `objects/v1/<hash-prefix>/<key-hash>/` với content, metadata và committed
+  marker; client không thấy layout này.
+- Mỗi staging handle là tên opaque dựa trên UUID. Byte được stream vào file
+  `.upload` exclusive, hash và kiểm tra length bằng memory bounded, sau đó được
+  freeze thành `.verified` cùng metadata record bounded. Staging không xuất hiện
+  trong đọc final object và staging cũ không bị tự động xóa.
+- Promotion verify lại staged bytes, tạo final directory và content bằng
+  hard-link create-only trong cùng root, ghi metadata rồi ghi committed marker
+  sau cùng. Key committed đã tồn tại trả về conflict ổn định; không có fallback
+  copy cross-device âm thầm làm yếu an toàn promotion. Directory chưa hoàn tất
+  không có committed marker tiếp tục vô hình và được quarantine thay vì bị ghi
+  đè hay tự động xóa.
+- Full read stream qua buffer bounded và validate SHA-256 đã lưu; range read
+  validate logical range và toàn bộ object trước khi stream riêng range đó.
+  Metadata chỉ trả các field của contract. Delete và conditional delete chỉ
+  tác động đúng opaque key committed. So sánh và xóa có điều kiện được serialize
+  giữa các clone của một adapter instance; không tuyên bố atomic giữa các
+  process độc lập, và các process đó không được mutate đồng thời cùng local root.
+- Adapter gọi `sync_all` cho staged content, metadata có giới hạn và commit
+  marker. Khi probe lúc open chứng minh directory synchronization, adapter cũng
+  sync transition staging đã hoàn tất, chuỗi directory promotion và visibility
+  của delete trước khi báo success. `DurableFsync` đòi file-sync probe, còn
+  `DurableFlush` đòi thêm directory-sync và same-root hard-link promotion probe.
+  Các capability này mô tả hành vi quan sát được, không suy ra từ tên OS.
+  Compression, snapshot, reflink/block clone và filesystem-health acceleration
+  được đánh dấu unsupported rõ ràng. Unit/conformance test exercise các code
+  path này nhưng không phải bằng chứng crash khi mất điện.
+- Managed directory/file được kiểm tra bằng metadata no-follow, bao gồm path
+  nhạy cảm với Windows reparse/symlink khi standard API cung cấp bằng chứng.
+  Portable API không thể loại bỏ mọi TOCTOU race giữa process, nên ownership và
+  permission deployment vẫn bắt buộc.
 
-Adapter cũng phải chứa implementation riêng platform sau cùng contract: path/
-reparse-point và service lifecycle Windows, APFS cùng permission/sleep macOS,
-filesystem/mount Linux. Không path riêng platform nào được rò vào domain
-invariant.
+Adapter, upload service trung lập transport và content-read service đã
+authorize theo owner đã được validate bằng contract/conformance hoặc focused
+application test. HTTP transport exact-offset đã authenticate stream request
+frame có giới hạn qua upload service; route download full/single-range cũng
+stream content đã verify qua content-read service. API không expose storage key
+hay physical path. Download UI, lifecycle object rộng hơn, GC, sync, backup và
+installer deployment vẫn là kế hoạch. Transaction finalization
+PostgreSQL của upload service chỉ tạo `FileVersion` nhìn thấy được đầu
+tiên sau khi object đã durable và được verify. NAS và filesystem khác vẫn cần
+capability/crash evidence riêng trước khi tuyên bố production support.
 
 Startup không scan đệ quy toàn bộ content trước khi phục vụ. Nó validate
 identity/configuration và lập lịch đối soát có giới hạn. Object được tham chiếu
@@ -443,7 +580,8 @@ bao giờ bị viết lại.
 | Restore old version | Tạo head version mới tham chiếu byte object lịch sử và ghi source `RESTORE`; không bao giờ lùi head pointer để viết lại lịch sử. |
 | Conflict | Bảo toàn byte incoming trong conflict version/node theo [SYNC.md](SYNC.md); không bao giờ âm thầm thay winning head. |
 | Trash | Giữ version và object reference trong suốt retention của Trash. |
-| Purge/retention expiry | Xóa logical version reference bằng purge work bền vững; GC object vật lý vẫn tách riêng. |
+| Purge eligibility / begin | Chọn metadata đủ điều kiện theo batch bounded và chuyển một node sang `PURGING`; `FileVersion`, `Object`, `ObjectReplica` và byte vẫn nguyên vẹn. Physical purge/GC vẫn tách riêng và PLANNED. |
+| Metadata purge execution | Yêu cầu `PURGING`, recheck invariant owner/library/root/parent/child/revision, xóa nguyên tử Node cùng mọi FileVersion của nó và ghi candidate metadata-only cho Object mất reference FileVersion cuối; row object, replica và byte vẫn giữ nguyên. |
 
 Mỗi content mutation cung cấp base version phù hợp với operation. Node revision
 bảo vệ metadata mutation. Cả `Object` ID lẫn physical key của `ObjectReplica`
@@ -459,6 +597,64 @@ reference hết hạn; object GC sau đó xác định byte có thể xóa vật
 
 Trash là soft deletion người dùng nhìn thấy trong live sync domain. Nó không
 phải backup retention và không phải physical deletion.
+
+Trạng thái implementation của metadata API hiện tại: logical trash một node
+đơn lẻ đã implement, root được bảo vệ và directory không rỗng bị reject bằng
+conflict ổn định. Recursive subtree trash cố ý chưa implement cho tới khi
+subtree precondition và contract edit descendant concurrent trong `SYNC.md`
+OD-SYNC-004 được đóng. Việc bắt đầu purge không xóa row `FileVersion` hoặc
+`Object`; execution sau `PURGING` là một metadata operation trusted riêng.
+
+### Contract retention metadata đã implement
+
+Timestamp Trash chuẩn được persist tại `nodes.trashed_at`. Server ghi timestamp
+quan sát được khi node `ACTIVE` chuyển sang `TRASHED`, giữ nguyên khi node ở
+`PURGING`, và clear khi restore về `ACTIVE`. Một `TrashRetentionPolicy` duy nhất
+có default 30 ngày; deployment có thể override bằng số giây qua
+`SYNVEIL_TRASH_RETENTION_SECONDS`. Default là policy có thể cấu hình, không phải
+protocol promise bất biến. `restore_deadline` được derive từ
+`trashed_at + retention_duration` và không persist trùng lặp.
+
+Eligibility chỉ dùng server time với boundary inclusive
+`now >= restore_deadline`. Chỉ node non-root `TRASHED` có timestamp chuẩn, thuộc
+library active cùng parent active đã authorize và không có child row mới được chọn. Node `ACTIVE`,
+đã restore, root, thiếu timestamp và node đã `PURGING` đều bị loại. Vì logical
+Trash hiện tại reject directory không rỗng, candidate query cũng loại directory
+còn child và không bao giờ orphan descendant.
+
+`TrashRetentionService` nội bộ cung cấp candidate scan bounded, dùng opaque v1
+keyset cursor riêng, thứ tự ổn định `(trashed_at ASC, node_id ASC)` và page tối
+đa 500. `begin_node_purge` lock owner, library và node trong cùng transaction,
+kiểm tra revision kỳ vọng cùng retention cutoff rồi chỉ chuyển metadata sang
+`PURGING`. Retry với revision hiện tại là idempotent; revision cũ trả conflict
+xác định. Begin contract này không xóa, detach hay gửi tới `ObjectStore` bất kỳ
+`Node`, `FileVersion`, `Object`, `ObjectReplica`, object reference hay object
+byte nào.
+
+### Metadata purge execution đã implement
+
+`execute_metadata_purge` là trusted service operation nội bộ; không phải public
+HTTP route và không có capability `ObjectStore`. Operation chỉ nhận node thuộc
+owner, revision kỳ vọng và node đã ở `PURGING`. Trong một PostgreSQL transaction,
+service kiểm tra lại owner/library/root/parent/child, upload-parent reference
+đã persist và revision, clear current-version pointer của node, xóa
+restore-operation row của node, chỉ xóa metadata `Node` và `FileVersion` của
+node đó, rồi ghi canonical Object identity có reference `FileVersion` vừa bị
+release vào `object_gc_candidates`. Operation không bao giờ xóa row object,
+row replica hay object byte. Candidate chỉ ghi canonical Object identity; sự
+tồn tại của replica không phải logical reference và không ngăn candidate
+zero-reference. Upload session đã persist mà target node là create parent sẽ
+block purge cho tới khi lifecycle staging/session độc lập release FK; nó không
+được tính là committed `FileVersion` reference.
+
+Bảng candidate chỉ là metadata handoff: physical object GC vẫn là workflow riêng
+và phải tự kiểm tra retention, lease, hold, backup và reconciliation. Purge
+thành công chỉ giữ replay identity nhỏ gọn gồm owner/node/revision. Retry cùng
+revision trả successful replay result; revision khác trả conflict. Replay record
+không chứa filename, path, content hay credential. Khi một `FileVersion` mới
+reference lại object đang là candidate, candidate được clear trong cùng
+transaction. PostgreSQL advisory và row lock serialize quyết định release và
+re-reference cho canonical object dùng chung giữa các library.
 
 ### Transaction đưa vào Trash
 
@@ -516,19 +712,25 @@ TRASHED --retention/manual confirmation--> PURGING --batched durable job--> logi
    +--------------- restore -----------------+  (only before PURGING begins)
 ```
 
-Đi vào `PURGING` là điểm không thể quay lại ở lớp logic và được audit trong
-transaction. Một job duyệt subtree theo các batch xác định, có giới hạn, xóa
-authoritative version/reference row, ghi progress và có thể tiếp tục sau crash.
-Root vẫn ẩn và immutable trong khi còn công việc một phần. Completion giữ lại
-tombstone nhỏ gọn cho journal/replay policy và chỉ release object sang workflow
-GC eligibility riêng. Purge fail không làm dữ liệu đã purge một phần xuất hiện
-live.
+Đi vào `PURGING` là điểm không thể quay lại ở lớp logic và được transaction
+guard. Repository hiện tại thực thi một leaf đã ở `PURGING` trong một
+transaction duy nhất, với semantics replay khi retry hoặc có worker concurrent.
+Service xóa authoritative `FileVersion` reference trước khi xóa row node và
+commit toàn bộ metadata purge hoặc không commit gì. Completion chỉ giữ replay
+identity nhỏ gọn và release object identity sang workflow GC-candidate riêng;
+không xóa physical byte. Purge fail không làm dữ liệu đã purge một phần xuất
+hiện live.
 
 Mặc định Trash tiếp tục tiêu thụ retained logical quota. UI báo riêng live byte,
 historical-version byte, Trash byte, backup byte, staging-reserved byte và
 physical byte để người dùng hiểu vì sao xóa chưa giải phóng capacity.
 
 ## Garbage collection và đối soát orphan
+
+Metadata purge chỉ tạo handoff `object_gc_candidates` theo canonical object
+identity. Nó không implement physical object GC, xóa replica, cleanup backend,
+sync, backup hay sharing. Các phần dưới đây vẫn là contract GC/delete-job rộng
+hơn và không được suy ra chỉ từ việc metadata purge đã hoàn tất.
 
 ### Bằng chứng đủ điều kiện
 

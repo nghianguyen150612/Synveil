@@ -1,10 +1,14 @@
 import { NavLink, Outlet } from 'react-router-dom'
 
+import { useAuth } from '../../auth/useAuth'
+
 function navigationClassName({ isActive }: { isActive: boolean }): string {
   return isActive ? 'navigation-link navigation-link--active' : 'navigation-link'
 }
 
 export function AppShell() {
+  const { logout, session, status } = useAuth()
+
   return (
     <div className="app-frame">
       <a className="skip-link" href="#main-content">
@@ -35,6 +39,20 @@ export function AppShell() {
               </li>
             </ul>
           </nav>
+          <div className="shell-actions">
+            <span className="signed-in-label">
+              Signed in
+              {session?.is_instance_admin ? ' · Administrator' : ''}
+            </span>
+            <button
+              type="button"
+              className="button--secondary"
+              onClick={() => void logout()}
+              disabled={status === 'loading'}
+            >
+              {status === 'loading' ? 'Signing out…' : 'Logout'}
+            </button>
+          </div>
         </div>
       </header>
       <main id="main-content" className="main-content">

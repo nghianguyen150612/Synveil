@@ -205,6 +205,71 @@ pub struct StagedMetadata {
     sha256: Option<Sha256Digest>,
 }
 
+/// Restart-safe progress for a staging handle. A partial append has a
+/// durable length but no canonical checksum until the staging object is
+/// finalized; a verified handle carries both.
+#[derive(Clone, Eq, PartialEq)]
+pub struct StagingProgress {
+    handle: StagingHandle,
+    length: u64,
+    sha256: Option<Sha256Digest>,
+    verified: bool,
+}
+
+impl fmt::Debug for StagingProgress {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StagingProgress")
+            .field("handle", &self.handle)
+            .field("length", &self.length)
+            .field("sha256", &self.sha256.as_ref().map(|_| "<redacted>"))
+            .field("verified", &self.verified)
+            .finish()
+    }
+}
+
+impl StagingProgress {
+    #[must_use]
+    pub const fn partial(handle: StagingHandle, length: u64) -> Self {
+        Self {
+            handle,
+            length,
+            sha256: None,
+            verified: false,
+        }
+    }
+
+    #[must_use]
+    pub const fn verified(handle: StagingHandle, length: u64, sha256: Sha256Digest) -> Self {
+        Self {
+            handle,
+            length,
+            sha256: Some(sha256),
+            verified: true,
+        }
+    }
+
+    #[must_use]
+    pub const fn handle(&self) -> &StagingHandle {
+        &self.handle
+    }
+
+    #[must_use]
+    pub const fn length(&self) -> u64 {
+        self.length
+    }
+
+    #[must_use]
+    pub const fn sha256(&self) -> Option<&Sha256Digest> {
+        self.sha256.as_ref()
+    }
+
+    #[must_use]
+    pub const fn is_verified(&self) -> bool {
+        self.verified
+    }
+}
+
 impl fmt::Debug for StagedMetadata {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter

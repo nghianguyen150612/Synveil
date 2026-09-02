@@ -7,6 +7,16 @@ publish.workspace = true
 description = "Storage composition boundary for Synveil application adapters"
 
 [dependencies]
+async-trait.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+sha2.workspace = true
 synveil-core.workspace = true
 synveil-metadata.workspace = true
 synveil-object-store.workspace = true
+tokio.workspace = true
+time.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+synveil-object-store = { workspace = true, features = ["test-util"] }

@@ -1,12 +1,84 @@
 # Resumable upload protocol
 
-Status: **PLANNED normative blueprint**
+Status: **Normative blueprint; persisted upload-session/application-service subset IMPLEMENTED/VALIDATED; exact-offset HTTP byte transport IMPLEMENTED**
 
 This document specifies the server-coordinated resumable upload state machine.
 It follows ADR-005, the canonical entities in
 [DOMAIN_MODEL.md](DOMAIN_MODEL.md), and the durable object contract in
-[STORAGE.md](STORAGE.md). It is a protocol blueprint, not an implementation
-claim or complete OpenAPI schema.
+[STORAGE.md](STORAGE.md). The repository now implements the bounded persisted-
+session and transport-neutral application-service subset described below. The
+authenticated exact-offset HTTP subset is now implemented and specified in
+[`api/openapi.yaml`](../../api/openapi.yaml). The larger part-manifest protocol
+remains blueprint material; this document does not claim it is implemented.
+
+## Current repository implementation boundary
+
+The current implementation provides:
+
+- PostgreSQL `upload_sessions` persistence plus the first verified
+  `object_replicas` record, with owner/library/target intent, opaque staging and
+  object identities, progress, leases, expiry, terminal errors, durability
+  evidence, and completion outcome;
+- `CREATE_FILE` and `REPLACE_CONTENT` target semantics with an expected node
+  revision recheck at finalization;
+- exact-offset append, bounded object/chunk/session limits, staging progress
+  reconciliation, safe status projections, and the public state sequence
+  `OPEN -> VERIFYING -> COMMITTING -> COMMITTED` with terminal failure,
+  expiry, and abort states;
+- durable local staging, checksum verification, create-only promotion, and
+  post-promotion read/integrity confirmation through the backend-neutral
+  `ObjectStore` port; and
+- the storage application service and focused restart/idempotency/integrity/
+  version-conflict tests; and
+- authenticated upload-session create/status/append/complete/abort routes,
+  CSRF on every mutation, bounded streaming raw-byte append, stable safe
+  errors, authoritative offset recovery, and typed browser API helpers.
+
+`UploadPart`, ordered manifests, richer idempotency fingerprints, quota
+reservation, worker scheduling, and GC execution remain future work and must
+not be inferred from this exact-offset HTTP subset. The separate
+transport-neutral content-read application service and authenticated HTTP
+download transport are documented in [STORAGE.md](STORAGE.md) and
+[API_ARCHITECTURE.md](API_ARCHITECTURE.md); upload product UI, download UI,
+sync, and backup remain planned.
+
+## Implemented exact-offset HTTP subset
+
+The current canonical transport is deliberately smaller than the future
+part-manifest blueprint:
+
+| Method and path | Implemented contract |
+|---|---|
+| `POST /api/v1/upload-sessions` | Strict 16 KiB tagged JSON for `CREATE_FILE` or `REPLACE_CONTENT`; authenticated identity is the owner and mutations require the existing CSRF proof. |
+| `GET /api/v1/upload-sessions/{upload_session_id}` | Owner-scoped safe state plus authoritative `Upload-Offset`; authentication is required but CSRF is not. |
+| `PATCH /api/v1/upload-sessions/{upload_session_id}` | Non-empty `application/octet-stream`, one canonical unsigned-decimal `Upload-Offset`, and an aggregate service-configured chunk limit (8 MiB by default). |
+| `POST /api/v1/upload-sessions/{upload_session_id}/complete` | Calls only the validated completion service and returns canonical, retry-stable completion metadata. |
+| `POST /api/v1/upload-sessions/{upload_session_id}/abort` | Calls only the validated abort service; a repeat is safe and API code never deletes storage directly. |
+
+The PATCH body is forwarded frame by frame into the upload application service;
+the HTTP handler never aggregates the complete chunk. Every accepted frame goes
+through durable exact-offset append and progress persistence. Consequently a
+disconnect, timeout, or chunked request that crosses the aggregate limit may
+leave a prefix durably accepted even when the caller receives no success. This
+is intentional recoverable ambiguity, not permission to guess progress:
+
+```text
+ambiguous PATCH outcome
+    -> GET the same upload session
+    -> read Upload-Offset / received_bytes
+    -> resume exactly at that offset
+```
+
+A stale or gap offset returns `409 invalid_offset`, includes the authoritative
+`Upload-Offset` header and `current_offset` safe detail, and appends no bytes.
+The browser helper sends `Blob`/`ArrayBuffer` directly and follows the returned
+offset; it does not base64-encode content or implement upload UI.
+
+The current executable wires this service only when both `DATABASE_URL` and an
+explicit absolute `SYNVEIL_OBJECT_ROOT` are configured. Without either
+dependency the authenticated routes fail closed with a safe dependency error.
+This wiring is a developer/runtime composition boundary, not production
+deployment support.
 
 ## Goals and non-goals
 

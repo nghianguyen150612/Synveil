@@ -12,8 +12,18 @@ cầu cài đặt.
 
 Tài liệu này định nghĩa contract vận hành. Nó không tuyên bố image triển khai
 product, Compose file, command hay production support được mô tả ở đây đã tồn
-tại. Runtime foundation đã implement các health route có giới hạn trong API
-contract; topology deployment và lifecycle bên dưới vẫn là kế hoạch.
+tại. Runtime foundation đã implement health route có giới hạn, browser
+authentication transport, first-run bootstrap HTTP boundary, minimal web
+setup/login/session shell trong API contract và boundary adapter local
+`ObjectStore`/conformance nhận root tường minh. Storage crate cũng chứa
+content-read service trung lập transport đã authorize theo owner; developer API
+composition root wire route download full/single-range current/historical đã
+authenticate khi cả `DATABASE_URL` và `SYNVEIL_OBJECT_ROOT` tuyệt đối, tường
+minh được đặt. Metadata version-history listing và direct lookup chỉ cần
+metadata service PostgreSQL, không cần object root và không mở storage. Đây
+không phải evidence của production image có thể deploy:
+configuration/preflight download production, topology deployment, installer
+lifecycle và production support bên dưới vẫn là kế hoạch.
 
 ## Profile deployment được hỗ trợ
 
@@ -234,20 +244,43 @@ tới bind path đã validate.
 | Dữ liệu temporary parser/job | Vùng temp writable có giới hạn; có thể bỏ sau process crash và đối soát theo job identity. |
 | System backup | Failure domain/off-host destination riêng, không phải directory khác trên cùng disk nhưng được trình bày như bảo vệ. |
 
+Trạng thái repository: adapter filesystem cục bộ nhận root tường minh cùng layout
+`objects/` và `staging/` đã `IMPLEMENTED/VALIDATED` tại ranh giới storage crate.
+Composition root API developer nhận `SYNVEIL_OBJECT_ROOT` chỉ cùng
+`DATABASE_URL`, rồi install upload application service đã validate sau các HTTP
+route đã authenticate; root chưa đặt sẽ fail closed thay vì tự chọn default.
+Content-read application service và API download transport dùng chung port
+metadata/`ObjectStore`. Safe version restore đã implement ở boundary
+API/metadata authenticate nhưng vẫn cần metadata service PostgreSQL; gate
+end-to-end disposable của nó phụ thuộc môi trường. Configuration/preflight
+download production, lifecycle object logic rộng hơn, GC, sync, backup và
+installer wiring vẫn `PLANNED`; metadata version-history vẫn có thể dùng từ
+metadata service đã cấu hình mà không cần object-root setup.
+
 ### Validation object-root local
 
-Khi startup và readiness, adapter local verify:
+Boundary `LocalFilesystemObjectStore::open` đã implement verify:
 
-- path cấu hình không rỗng, absolute, dedicated, đúng type và không phải `/`,
-  home/workspace root, directory PostgreSQL hay link/junction chưa review;
-- ownership/mode chỉ cho intended service user;
-- marker storage identity bền vững khớp configuration database;
-- namespace staging/committed bắt buộc nằm trong root và không phải symlink;
-- profile durability/capability đã chấp thuận khớp filesystem quan sát;
-- headroom free space và inode/file-count vượt safety reserve cấu hình.
+- path đã resolve không rỗng, là absolute directory, không phải filesystem root,
+  home/profile người dùng, current directory, source workspace tại thời điểm
+  build, symlink, junction hay reparse-point root khác;
+- marker local-layout có version chứa bounded content đúng dự kiến;
+- namespace `staging/` và `objects/v1/` bắt buộc tồn tại trực tiếp dưới root và
+  không phải redirected entry; và
+- hành vi file sync, directory sync, same-root hard-link promotion và rename
+  được probe để populate capability mà không suy ra từ tên OS.
 
-Root thiếu hoặc ngoài dự kiến làm readiness fail. Không bao giờ diễn giải thành
-“mọi object đã bị xóa”, và đổi chuỗi path không bao giờ là object-store migration.
+Runtime configuration/readiness chưa được nối. Policy ownership/mode, loại trừ
+directory PostgreSQL, gắn identity `StorageBackend` bền vững, reserve free-space/
+inode, phát hiện mount bị thay và health report cho operator vẫn `PLANNED`;
+deployment không được tuyên bố các check này active chỉ vì có thể construct
+adapter.
+
+Routine open tường minh có thể tạo directory cấu hình đang thiếu, nhưng từ chối
+marker ngoài dự kiến hay managed entry bị redirect. Runtime composition tầng
+cao hơn phải quyết định khi nào root đã bind trước đó bị thiếu làm readiness
+fail; không bao giờ diễn giải điều kiện đó thành “mọi object đã bị xóa”, và đổi
+chuỗi path không bao giờ là object-store migration.
 
 ### Placement staging
 
@@ -277,10 +310,16 @@ Category production bắt buộc gồm:
   capacity reserve và credential reference;
 - session/cookie/CSRF và reference application master-key;
 - limit request/upload/part/quota/concurrency/deadline;
-- retention journal/trash/version/staging/job/audit;
+- retention journal/trash/version/staging/job/audit và state hạch toán
+  reference của metadata purge nội bộ;
+- override retention logical của Trash là `SYNVEIL_TRASH_RETENTION_SECONDS`
+  tính bằng giây nguyên; khi unset dùng default 30 ngày có thể cấu hình, và
+  chỉ điều khiển logical retention eligibility và metadata purge; không bật
+  physical object purge hay GC object byte;
 - lease worker, retry, dead-letter và concurrency budget;
 - level/format/redaction log, metric và endpoint OTLP tùy chọn;
-- bootstrap state/secret reference;
+- bootstrap state và first-run exposure policy; HTTP contract hiện tại không có
+  setup-secret field;
 - mode/provider/model/resource/privacy policy AI tùy chọn;
 - origin/credential reference/policy webhook Forgejo tùy chọn.
 
@@ -292,8 +331,9 @@ validation config chạy mà không mutate dữ liệu.
 ## Quản lý secret
 
 - Installation sinh secret random độc lập cho database, session/token-verifier,
-  CSRF/bootstrap, application-master và webhook/provider khi cần. Không tái dùng
-  một secret cho nhiều mục đích.
+  CSRF, application-master và webhook/provider khi cần. Bootstrap setup secret
+  không thuộc HTTP contract hiện tại và không được tự phát minh trong config
+  deployment. Không tái dùng một secret cho nhiều mục đích.
 - Ưu tiên file mounted có ownership/mode host hạn chế. Environment variable có
   thể rò qua process inspection, crash/debug output hoặc support tooling và
   không phải nguồn production dài hạn được ưu tiên.
@@ -405,15 +445,23 @@ backend reference. Credential backend vẫn là secret được bảo vệ và k
 round-trip tới JavaScript trong browser. Migration backend về sau dùng quy trình
 copy/verify/switch, không dùng chuỗi path mới.
 
-Bootstrap lần đầu:
+Bootstrap lần đầu trong HTTP/web phase hiện tại:
 
 1. chỉ available khi chưa có administrator;
-2. đòi secret một lần entropy cao được chuyển qua protected host file hoặc
-   output installer tường minh, không qua log thường lệ;
-3. serialize claim đồng thời và commit administrator cùng bootstrap-close
-   nguyên tử;
-4. tạo recovery code một lần và prompt system backup bên ngoài;
-5. đóng sau success và đòi action host có audit tường minh để re-arm.
+2. nhận field canonical `login`, `login_key` và `password` trong JSON strict có
+   giới hạn; không nhận setup-secret field;
+3. check browser provenance khi có `Origin` hoặc `Sec-Fetch-Site`, nên
+   deployment phải giữ route trên mạng trusted/private hoặc TLS terminate đúng
+   cách cho tới khi có installer/secret-gate contract tương lai;
+4. serialize claim đồng thời và commit administrator cùng bootstrap-close
+   nguyên tử qua service hiện có;
+5. trả safe status metadata, không issue session và đóng cho tới khi có
+   maintenance action được review riêng. Web client sau đó login tường minh.
+
+Phase này không có distributed rate-limiter subsystem. Body bound, generic
+error, response no-store, provenance check và boundary network deployment là
+control hiện tại; operator không được expose setup endpoint đang open ra mạng
+public không tin cậy.
 
 Không bước first-run nào đòi manual SQL hay sửa object metadata.
 

@@ -487,6 +487,7 @@ pub struct Node {
     name: LogicalName,
     current_version_id: Option<FileVersionId>,
     state: NodeState,
+    trashed_at: Option<Timestamp>,
     created_at: Timestamp,
     updated_at: Timestamp,
     revision: Revision,
@@ -585,6 +586,36 @@ impl Node {
         updated_at: Timestamp,
         revision: Revision,
     ) -> Result<Self, DomainError> {
+        Self::rehydrate_with_trash(
+            id,
+            library_id,
+            parent_node_id,
+            kind,
+            name,
+            current_version_id,
+            state,
+            None,
+            created_at,
+            updated_at,
+            revision,
+        )
+    }
+
+    /// Reconstruct a node with its canonical logical-Trash timestamp.
+    #[allow(clippy::too_many_arguments)]
+    pub fn rehydrate_with_trash(
+        id: NodeId,
+        library_id: LibraryId,
+        parent_node_id: Option<NodeId>,
+        kind: NodeKind,
+        name: LogicalName,
+        current_version_id: Option<FileVersionId>,
+        state: NodeState,
+        trashed_at: Option<Timestamp>,
+        created_at: Timestamp,
+        updated_at: Timestamp,
+        revision: Revision,
+    ) -> Result<Self, DomainError> {
         if parent_node_id.is_none() {
             if kind != NodeKind::Directory {
                 return Err(DomainError::RootMustBeDirectory);
@@ -592,6 +623,9 @@ impl Node {
             if state != NodeState::Active {
                 return Err(DomainError::RootMustBeActive);
             }
+        }
+        if (state == NodeState::Active) != trashed_at.is_none() {
+            return Err(DomainError::InvalidTrashTimestamp);
         }
         if parent_node_id == Some(id) {
             return Err(DomainError::ParentCannotBeSelf);
@@ -608,6 +642,7 @@ impl Node {
             name,
             current_version_id,
             state,
+            trashed_at,
             created_at,
             updated_at,
             revision,
@@ -692,6 +727,43 @@ impl Node {
         candidate_parent.validate_parent_chain(ancestors)
     }
 
+    /// Rename this logical node without touching any content object or file
+    /// version. The caller supplies a domain-valid logical name and a
+    /// server-observed timestamp.
+    pub fn rename(&mut self, name: LogicalName, observed_at: Timestamp) -> Result<(), DomainError> {
+        if self.name != name {
+            self.name = name;
+            self.bump_revision(observed_at)?;
+        }
+        Ok(())
+    }
+
+    /// Move this logical node under an already validated directory parent.
+    /// Physical object identity and immutable file history are deliberately
+    /// outside this operation.
+    pub fn move_to(&mut self, parent: &Node, observed_at: Timestamp) -> Result<(), DomainError> {
+        if self.is_root() {
+            return Err(DomainError::RootCannotHaveParent);
+        }
+        if self.library_id != parent.library_id() {
+            return Err(DomainError::ParentLibraryMismatch);
+        }
+        if parent.kind() != NodeKind::Directory {
+            return Err(DomainError::ParentMustBeDirectory);
+        }
+        if parent.state() != NodeState::Active {
+            return Err(DomainError::ParentMustBeActive);
+        }
+        if parent.id() == self.id {
+            return Err(DomainError::ParentCannotBeSelf);
+        }
+        if self.parent_node_id != Some(parent.id()) {
+            self.parent_node_id = Some(parent.id());
+            self.bump_revision(observed_at)?;
+        }
+        Ok(())
+    }
+
     pub fn with_current_version(
         &self,
         version: &FileVersion,
@@ -738,6 +810,11 @@ impl Node {
 
         if self.state != next {
             self.state = next;
+            self.trashed_at = match next {
+                NodeState::Active => None,
+                NodeState::Trashed => Some(observed_at),
+                NodeState::Purging => self.trashed_at,
+            };
             self.bump_revision(observed_at)?;
         }
         Ok(())
@@ -776,6 +853,11 @@ impl Node {
     #[must_use]
     pub const fn state(&self) -> NodeState {
         self.state
+    }
+
+    #[must_use]
+    pub const fn trashed_at(&self) -> Option<Timestamp> {
+        self.trashed_at
     }
 
     #[must_use]
@@ -1177,6 +1259,59 @@ mod tests {
     }
 
     #[test]
+    fn logical_rename_and_move_bump_revision_without_touching_content() {
+        let library_id = LibraryId::new();
+        let first_time = observed_at();
+        let second_time = Timestamp::parse("2026-08-22T00:00:01Z").expect("valid test time");
+        let mut root = Node::new_root(NodeId::new(), library_id, name("root"), first_time);
+        let first_parent = Node::new_child(
+            NodeId::new(),
+            library_id,
+            &root,
+            NodeKind::Directory,
+            name("first"),
+            first_time,
+        )
+        .expect("first parent is valid");
+        let second_parent = Node::new_child(
+            NodeId::new(),
+            library_id,
+            &root,
+            NodeKind::Directory,
+            name("second"),
+            first_time,
+        )
+        .expect("second parent is valid");
+        let mut file = Node::new_child(
+            NodeId::new(),
+            library_id,
+            &first_parent,
+            NodeKind::File,
+            name("before"),
+            first_time,
+        )
+        .expect("file is valid");
+
+        file.rename(name("after"), second_time)
+            .expect("rename is valid");
+        assert_eq!(file.name().as_str(), "after");
+        assert_eq!(file.revision(), Revision::new(1));
+        assert_eq!(file.current_version_id(), None);
+        assert_eq!(file.updated_at(), second_time);
+
+        file.move_to(&second_parent, second_time)
+            .expect("move is valid");
+        assert_eq!(file.parent_node_id(), Some(second_parent.id()));
+        assert_eq!(file.revision(), Revision::new(2));
+        assert_eq!(file.current_version_id(), None);
+
+        assert_eq!(
+            root.move_to(&second_parent, second_time),
+            Err(DomainError::RootCannotHaveParent)
+        );
+    }
+
+    #[test]
     fn file_versions_are_the_only_node_content_binding() {
         let user_id = UserId::new();
         let library_id = LibraryId::new();
@@ -1333,9 +1468,11 @@ mod tests {
         file.transition_state(NodeState::Trashed, observed_at())
             .expect("active node can be trashed");
         assert_eq!(file.state(), NodeState::Trashed);
+        assert_eq!(file.trashed_at(), Some(observed_at()));
         assert_eq!(file.revision(), Revision::new(1));
         file.transition_state(NodeState::Active, observed_at())
             .expect("trashed node can be restored");
+        assert_eq!(file.trashed_at(), None);
         file.transition_state(NodeState::Trashed, observed_at())
             .expect("active node can be trashed again");
         file.transition_state(NodeState::Purging, observed_at())
