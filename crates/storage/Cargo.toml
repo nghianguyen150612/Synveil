@@ -19,4 +19,5 @@ time.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+sqlx.workspace = true
 synveil-object-store = { workspace = true, features = ["test-util"] }

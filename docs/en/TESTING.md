@@ -1,6 +1,8 @@
 # Synveil testing, verification and benchmark strategy
 
-Status: **Normative quality blueprint**
+Status: **Normative quality blueprint; Prompt 27 planning and Prompt 28 physical
+GC validation are established, and the bounded Prompt 29 internal-worker gate
+is implemented with focused live PostgreSQL/local-ObjectStore evidence**
 
 Synveil tests for preservation of user data and authorization under failure,
 not merely endpoint success. The storage, upload, version, synchronization,
@@ -378,6 +380,67 @@ local suite performs symlink/junction/TOCTOU/root-identity tests.
 - A dry-run reports candidates/reasons without mutation. An invariant audit
   compares database references, replicas and storage inventory while treating
   eventual listing conservatively.
+
+### Prompt 27 metadata-only GC planning matrix
+
+The PostgreSQL GC-planning integration gate covers the implemented boundary:
+
+| Scenario | Required evidence |
+|---|---|
+| Policy/defaults | 24-hour default grace, 15-minute default lease, default batch 100, hard batch maximum 500, and rejection of zero/invalid durations or batch sizes. |
+| Grace boundary | A candidate before grace is not claimable; the exact `now >= unreferenced_at + grace` boundary and an older candidate are claimable using PostgreSQL time. |
+| Bounded stable claim | `FOR UPDATE SKIP LOCKED` claims no more than the configured batch in `(unreferenced_at, object_id, dedup_domain_id)` order. |
+| Reference truth | A candidate with a committed `FileVersion` is cancelled by the exact `(object_id, object_dedup_domain_id)` `NOT EXISTS` recheck and cannot become leased/ready. |
+| Lease fencing | Non-expired claims block; expiry permits reclaim; generation increments; the prior opaque ID/generation cannot renew, release, or revalidate the successor. |
+| Renewal/release | A matching live lease renews; release is safe and idempotent; stale, expired, and already-cancelled outcomes are explicit. |
+| Re-reference cancellation | A new reference clears `ELIGIBLE`, `LEASED`, and `READY` candidates, and a re-reference followed by purge creates a fresh lifecycle. |
+| Ready planning | `READY` is metadata-only, revalidation is repeatable, and a reference after ready removes the row before any physical action. |
+| Crash/reconnect | A committed claim survives connection loss, blocks another worker until expiry, and can be reclaimed by a newly connected worker; ready state remains revocable. |
+| Real races | Concurrent claim/claim, claim/reference, and ready/reference operations leave disjoint leases and no candidate with a committed reference. |
+| Preservation | Object and ObjectReplica row counts and representative rows remain unchanged; no ObjectStore delete or byte deletion is invoked. |
+
+### Prompt 28 physical-GC execution matrix
+
+The disposable-PostgreSQL plus production-local-ObjectStore gate runs only
+against a caller-declared fresh database and a unique temporary managed object
+root. It proves the following implemented behavior without a public API:
+
+| Scenario | Required evidence |
+|---|---|
+| Entry and durable plan | `READY` plus a live matching lease is required; operation and deterministic action rows exist before storage effects. |
+| Final fence | Candidate, Object lifecycle, lease/generation, zero FileVersion references, and zero active holds are checked in short transactions before each delete and completion. |
+| Replica handling | Exactly one verified replica is deleted per call with key/hash/length/version evidence; metadata survives until absence is confirmed. |
+| Local deletion | The production local adapter conditionally deletes by opaque version through a managed rename-to-tombstone workflow; interrupted tombstones reconcile as `InProgress`, not absent. |
+| Ambiguity and absence | Lost responses reconcile to exact-key absence or retryable presence; already-absent replicas converge safely; evidence mismatch fails closed. |
+| Recovery | Crash before persistence, after one of many replicas, after lease expiry/reclaim, reconnect, and after final physical absence all resume deterministically. |
+| Concurrency | GC worker races converge on one operation; lifecycle triggers prevent a new FileVersion, restore-equivalent reference, active hold, or replica writer from making deleted content usable. |
+| Completion | All actions and ObjectReplica rows must be absent before candidate/Object removal; completed operation replay is deterministic. |
+
+The physical service never reads full object bytes to decide deletion, and the
+test verifies that its reconciliation path makes zero `get` calls. Scheduling,
+rate controls, and bounded durable-operation reconciliation are covered by the
+Prompt 29 gate below; storage inventory reconciliation, backup/share/sync hold
+producers, and public GC APIs are not part of either implemented gate.
+
+### Prompt 29 internal GC-worker orchestration matrix
+
+The worker gate uses `run_once()` directly for deterministic cycle tests. Live
+tests require a caller-declared fresh disposable PostgreSQL database and a
+unique temporary managed local ObjectStore root; no user database or storage
+path is valid test input.
+
+| Scenario | Required evidence |
+|---|---|
+| Configuration/disabled mode | The worker defaults disabled; zero/invalid durations, contradictory concurrency, invalid bounds, and invalid retry policy are rejected before work. A disabled `run_once()` is cheap and has no metadata effects. |
+| Bounded cycle | Candidate claims, active operation slices, replica actions, task concurrency, and storage-delete concurrency respect configured caps. No library loop sleeps or repeats unboundedly. |
+| Recovery priority | Due incomplete operations, including expired/released leases and incomplete terminal cleanup, are claimed oldest-first before new work. A recovery claim defers new destructive claims to the following cycle. |
+| Durable retry | A transient/ambiguous local-store outcome increments `attempt_count`, persists a PostgreSQL-clock `next_attempt_at`, releases the slice safely, and is not retried before due time. Delay is capped exponential with deterministic bounded jitter. |
+| Intervention | Evidence mismatch, unsafe durable state, unsupported routing, and an exhausted retry budget become fenced `NEEDS_ATTENTION`; they do not hot-loop or report completion. |
+| Reconciliation | Bounded set-based discovery reports `GC_DELETING` without an operation, operation without candidate, expired `READY` without incomplete work, terminal action cleanup pending, and intervention state. A re-reference cancels unsafe progress through the existing fences. |
+| Unknown physical files | The worker does not recursively list a storage root and does not delete unknown physical files. Missing bytes outside an active action remain integrity/reconciliation findings, not Object metadata deletion. |
+| Outage and shutdown | Database failure advances no new destructive work; ObjectStore failure persists recovery rather than false cleanup. Shutdown stops new claims, drains only the configured bounded cycle, and leaves timed-out fenced work for restart reconciliation. |
+| Multi-worker race | Concurrent process-equivalent workers use PostgreSQL `SKIP LOCKED`, candidate lease generations, and Prompt 28 fences to converge on one durable physical operation without leader election. |
+| Real integration | A worker-driven `READY` candidate passes through Prompt 28 and the production local adapter to exact physical absence and final metadata completion. |
 
 ## Synchronization test contract
 

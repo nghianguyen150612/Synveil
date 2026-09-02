@@ -1,6 +1,8 @@
 # Chiến lược testing, verification và benchmark của Synveil
 
-Trạng thái: **Blueprint chất lượng quy chuẩn**
+Trạng thái: **Blueprint chất lượng quy chuẩn; validation Prompt 27 planning và
+Prompt 28 physical GC đã được thiết lập, còn gate worker nội bộ bounded Prompt
+29 đã implement với evidence focused PostgreSQL/local-ObjectStore live**
 
 Synveil test khả năng bảo toàn dữ liệu user và authorization khi failure, không
 chỉ endpoint success. Suite storage, upload, version, synchronization, backup
@@ -368,6 +370,67 @@ test symlink/junction/TOCTOU/root-identity.
   key.
 - Dry-run báo candidate/reason mà không mutation. Invariant audit so database
   reference, replica và storage inventory trong khi bảo thủ với eventual listing.
+
+### Ma trận planning GC metadata-only của Prompt 27
+
+Integration gate PostgreSQL cho GC planning phải bao phủ boundary đã implement:
+
+| Scenario | Bằng chứng bắt buộc |
+|---|---|
+| Policy/default | Grace mặc định 24 giờ, lease 15 phút, batch mặc định 100, hard maximum 500, và reject duration hoặc batch zero/không hợp lệ. |
+| Grace boundary | Candidate trước grace không claim được; boundary exact `now >= unreferenced_at + grace` và candidate cũ hơn claim được theo giờ PostgreSQL. |
+| Claim bounded ổn định | `FOR UPDATE SKIP LOCKED` không claim quá batch cấu hình và theo thứ tự `(unreferenced_at, object_id, dedup_domain_id)`. |
+| Reference truth | Candidate có `FileVersion` committed bị cancel bởi recheck `NOT EXISTS` đúng identity `(object_id, object_dedup_domain_id)` và không thành leased/ready. |
+| Lease fence | Claim còn hạn bị block; lease hết hạn reclaim được; generation tăng; opaque ID/generation cũ không renew, release hay revalidate successor. |
+| Renew/release | Lease live matching renew được; release an toàn/idempotent; stale, expired và cancelled được trả outcome rõ. |
+| Re-reference cancellation | Reference mới clear candidate `ELIGIBLE`, `LEASED`, `READY`; re-reference rồi purge tạo lifecycle mới. |
+| Ready planning | `READY` chỉ metadata, revalidation lặp được, và reference sau ready xóa row trước mọi physical action. |
+| Crash/reconnect | Claim đã commit còn sau mất kết nối, worker khác bị block tới khi hết hạn, worker reconnect reclaim được; ready vẫn có thể revoke. |
+| Race thực | Claim/claim, claim/reference và ready/reference đồng thời để lại lease disjoint và không candidate nào có committed reference. |
+| Preservation | Count và row đại diện của Object/ObjectReplica không đổi; không gọi ObjectStore delete hay xóa byte. |
+
+### Ma trận physical-GC execution Prompt 28
+
+Gate disposable PostgreSQL cùng production local ObjectStore chỉ chạy với
+database fresh do caller khai báo và managed object root tạm riêng. Nó chứng
+minh behavior đã implement mà không cần public API:
+
+| Scenario | Bằng chứng bắt buộc |
+|---|---|
+| Entry và durable plan | Cần `READY` và lease matching còn hạn; operation/action deterministic tồn tại trước storage effect. |
+| Final fence | Candidate, lifecycle Object, lease/generation, zero FileVersion và zero active hold được check trong transaction ngắn trước mỗi delete/completion. |
+| Replica | Mỗi call xóa đúng một replica verified với evidence key/hash/length/version; metadata còn tới confirmed absence. |
+| Local deletion | Adapter local production conditional delete theo version opaque bằng rename-to-tombstone managed; tombstone ngắt là `InProgress`, không phải absent. |
+| Ambiguity/absence | Lost response đối soát thành exact-key absence hoặc presence retryable; replica absent sẵn hội tụ an toàn; mismatch fail closed. |
+| Recovery | Crash trước persistence, sau một trong nhiều replica, sau lease expiry/reclaim, reconnect và sau physical absence cuối đều resume xác định. |
+| Concurrency | GC worker race hội tụ một operation; lifecycle trigger ngăn FileVersion, restore-equivalent reference, active hold hay replica writer mới làm content đã xóa usable. |
+| Completion | Mọi action và ObjectReplica phải absent trước candidate/Object removal; replay completed xác định. |
+
+Service không bao giờ đọc full object byte để quyết định delete; test chứng minh
+reconciliation path có zero `get` call. Scheduling, rate control và
+reconciliation operation bền có giới hạn được bao phủ bởi gate Prompt 29 bên
+dưới; inventory reconciliation storage, producer hold backup/share/sync và
+public GC API không thuộc gate đã implement nào.
+
+### Ma trận orchestration GC worker nội bộ Prompt 29
+
+Gate worker gọi trực tiếp `run_once()` cho test cycle xác định. Test live yêu
+cầu database PostgreSQL disposable fresh do caller khai báo và local ObjectStore
+root managed tạm unique; database/path storage người dùng không bao giờ là input
+test hợp lệ.
+
+| Scenario | Bằng chứng bắt buộc |
+|---|---|
+| Configuration/disabled mode | Worker mặc định disabled; duration zero/invalid, concurrency mâu thuẫn, bound invalid và retry policy invalid bị reject trước work. `run_once()` disabled rẻ và không có metadata effect. |
+| Cycle bounded | Claim candidate, active operation slice, replica action, task concurrency và storage-delete concurrency tuân thủ cap cấu hình. Library không có loop sleep hay lặp unbounded. |
+| Ưu tiên recovery | Operation incomplete đến hạn, gồm lease expired/released và terminal cleanup incomplete, được claim oldest-first trước work mới. Recovery claim làm deferred destructive claim mới sang cycle kế tiếp. |
+| Retry bền | Outcome local-store transient/ambiguous tăng `attempt_count`, persist `next_attempt_at` theo clock PostgreSQL, release slice an toàn và không retry trước due time. Delay exponential cap và jitter xác định có giới hạn. |
+| Intervention | Evidence mismatch, durable state không an toàn, routing không hỗ trợ và retry budget cạn thành `NEEDS_ATTENTION` đã fenced; chúng không hot-loop hay báo complete. |
+| Reconciliation | Discovery set-based bounded báo `GC_DELETING` không operation, operation không candidate, `READY` expired không incomplete work, terminal action cleanup pending và intervention state. Re-reference cancel progress không an toàn qua fence có sẵn. |
+| File vật lý không rõ | Worker không recursive-list storage root và không delete file vật lý không rõ. Byte missing ngoài active action vẫn là finding integrity/reconciliation, không phải xóa Object metadata. |
+| Outage và shutdown | Database failure không advance destructive work mới; ObjectStore failure persist recovery thay vì cleanup sai. Shutdown dừng claim mới, chỉ drain cycle bounded theo config và để fenced work timeout cho reconciliation sau restart. |
+| Race multi-worker | Worker process-equivalent concurrent dùng PostgreSQL `SKIP LOCKED`, candidate lease generation và fence Prompt 28 để hội tụ một physical operation bền, không cần leader election. |
+| Integration thực | Candidate `READY` do worker dẫn qua Prompt 28 và local adapter production tới exact physical absence và metadata completion cuối. |
 
 ## Contract test synchronization
 

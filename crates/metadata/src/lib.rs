@@ -12,9 +12,12 @@ mod config;
 mod content;
 mod errors;
 mod files;
+mod gc;
+mod gc_worker;
 mod mapping;
 mod migrations;
 mod models;
+mod physical_gc;
 mod pool;
 mod purge;
 mod readiness;
@@ -33,6 +36,14 @@ pub use files::{
     DEFAULT_PAGE_LIMIT, FileMetadataBackend, FileMetadataError, FileMetadataService, LibraryPage,
     MAX_PAGE_LIMIT, NodePage,
 };
+pub use gc::{
+    GcLeaseId, ObjectGcCandidate, ObjectGcCandidateState, ObjectGcError, ObjectGcLease,
+    ObjectGcLeaseReleaseResult, ObjectGcPlanResult, ObjectGcPlanningService,
+};
+pub use gc_worker::{
+    MAX_GC_WORKER_RECONCILIATION_LIMIT, ObjectGcReconciliationReport, ObjectGcRecoveryClaim,
+    ObjectGcWorkerMetadataError, PostgresObjectGcWorkerRepository,
+};
 pub use mapping::{
     MappingError, revision_from_decimal, revision_to_decimal, sequence_from_decimal,
     sequence_to_decimal,
@@ -41,6 +52,11 @@ pub use migrations::{MigrationRunner, MigrationStatus};
 pub use models::{
     DeviceRow, FileVersionRow, LibraryRow, NodeRow, ObjectReplicaRow, ObjectRow, SessionRow,
     UploadSessionRow, UserCredentialRow, UserLoginRow, UserRow,
+};
+pub use physical_gc::{
+    ObjectGcExecutionMetadataBackend, ObjectGcExecutionMetadataError, ObjectGcExecutionState,
+    ObjectGcOperation, ObjectGcReplicaAction, ObjectGcReplicaActionState, ObjectGcReplicaDirective,
+    ObjectGcReplicaObservation, PostgresObjectGcExecutionRepository,
 };
 pub use pool::DatabasePool;
 pub use purge::{

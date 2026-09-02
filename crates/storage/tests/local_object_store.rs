@@ -7,8 +7,9 @@ use bytes::Bytes;
 use futures_util::{StreamExt, stream};
 use sha2::{Digest, Sha256};
 use synveil_object_store::{
-    ByteRange, ByteStream, CapabilityEvidence, CapabilitySupport, IntegrityExpectation, ObjectKey,
-    ObjectStore, ObjectStoreError, StorageAvailability, StorageBackendKind, StorageCapability,
+    ByteRange, ByteStream, CapabilityEvidence, CapabilitySupport, DeleteOutcome,
+    DeleteReconciliation, IntegrityExpectation, ObjectKey, ObjectStore, ObjectStoreError,
+    StorageAvailability, StorageBackendKind, StorageCapability,
 };
 use synveil_storage::{LocalFilesystemObjectStore, boxed_stream};
 use uuid::Uuid;
@@ -538,11 +539,10 @@ async fn reads_detect_same_length_content_corruption() {
     let object_directory = object_locator_for_test(root.path(), &key);
     fs::write(object_directory.join("content"), b"tampered").expect("corrupt object content");
 
-    let read = store.get(&key).await.expect("open corrupt object stream");
-    assert_eq!(
-        collect_body(read.into_stream()).await,
+    assert!(matches!(
+        store.get(&key).await,
         Err(ObjectStoreError::IntegrityMismatch)
-    );
+    ));
     assert!(matches!(
         store
             .range_read(&key, ByteRange::new(0, 4).expect("valid range"))
@@ -584,6 +584,61 @@ async fn delete_refuses_unknown_entries_and_preserves_the_committed_object() {
         .expect("collect preserved object"),
         b"preserve me"
     );
+}
+
+#[tokio::test]
+async fn interrupted_physical_delete_tombstone_is_reconciled_before_absence() {
+    let root = TempRoot::new();
+    let store = LocalFilesystemObjectStore::open(root.path()).expect("open local store");
+    let key = ObjectKey::new("objects/v1/interrupted-delete").expect("valid object key");
+    let metadata = store
+        .put(synveil_object_store::PutRequest::new(
+            key.clone(),
+            body(b"physical bytes must be removed"),
+        ))
+        .await
+        .expect("put deletion fixture");
+    let version = metadata
+        .version()
+        .expect("local committed object has a version")
+        .clone();
+    let object_directory = object_locator_for_test(root.path(), &key);
+    let deleting_directory = object_directory.with_file_name(format!(
+        "{}.deleting",
+        object_directory
+            .file_name()
+            .expect("hashed object directory has a name")
+            .to_string_lossy()
+    ));
+
+    // Simulate a process stopping after the atomic live->deleting rename and
+    // after content removal, but before marker/metadata/tombstone cleanup.
+    fs::rename(&object_directory, &deleting_directory).expect("create deletion tombstone");
+    fs::remove_file(deleting_directory.join("content"))
+        .expect("simulate already removed physical content");
+
+    match store
+        .reconcile_delete(&key)
+        .await
+        .expect("deletion tombstone must be inspectable")
+    {
+        DeleteReconciliation::InProgress(Some(evidence)) => assert_eq!(evidence, metadata),
+        outcome => panic!("unexpected deletion reconciliation outcome: {outcome:?}"),
+    }
+    assert_eq!(
+        store.exists(&key).await,
+        Err(ObjectStoreError::StorageUnavailable)
+    );
+    assert_eq!(
+        store.conditional_delete(&key, &version).await,
+        Ok(DeleteOutcome::Deleted)
+    );
+    assert_eq!(
+        store.reconcile_delete(&key).await,
+        Ok(DeleteReconciliation::Absent)
+    );
+    assert!(!object_directory.exists());
+    assert!(!deleting_directory.exists());
 }
 
 #[tokio::test]

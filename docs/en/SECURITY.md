@@ -28,6 +28,12 @@ The restore response exposes only safe version and node concurrency metadata;
 it never exposes object or replica identity. PostgreSQL end-to-end
 bootstrap/session/upload/content-read/version-history/restore evidence remains
 environment-dependent when the disposable database is not configured.
+Internal physical object GC is **IMPLEMENTED/VALIDATED** with final
+reference/hold/lease revalidation, durable replica actions, lifecycle fencing,
+and ObjectStore-only deletion. Its opt-in internal worker orchestration and
+stuck-operation reconciliation are **IMPLEMENTED**; it has no public route,
+normal-user deletion control, or unknown-physical-orphan auto-delete. Sync,
+backup, and sharing have no hold producers yet and remain **PLANNED**.
 
 Synveil stores personal files, backups, photos, device state, repository data,
 credentials, and derived search information. Security is therefore a release
@@ -213,6 +219,53 @@ capability, and no operation that deletes `Object`, `ObjectReplica`, or bytes.
 The compact replay record contains only owner/node/revision identity; it does
 not retain filenames, paths, content, or credentials. Cross-library reference
 release and re-reference are serialized by database transaction locks.
+
+### Physical GC controls
+
+`ObjectGcPolicy` rejects zero or invalid grace/lease durations and unbounded
+batches, evaluates the inclusive grace boundary against PostgreSQL
+`clock_timestamp()`, and limits claims to a configured maximum (default 100,
+hard maximum 500). A claim transaction uses stable ordering and `FOR UPDATE
+SKIP LOCKED`, then locks the candidate row and canonical Object before checking
+`NOT EXISTS` committed `FileVersion` rows for the exact
+`(object_id, object_dedup_domain_id)` identity.
+
+Lease IDs are opaque UUIDv7 values and the database generation is incremented
+under the candidate row lock. Non-expired leases block competing claims;
+expired leases can be reclaimed, and stale ID/generation pairs cannot renew,
+release, or revalidate a successor. `READY` is only revocable planning
+metadata. A new committed FileVersion clears any candidate, including a
+leased/ready row, under the same candidate -> Object lock order. The worker
+must therefore treat a missing row, stale lease, or failed final revalidation
+as cancellation, never as permission to delete bytes. The executor creates its
+durable operation and per-replica action rows before ObjectStore I/O, sets the
+Object lifecycle to `GC_DELETING`, and repeats the same reference/active-hold/
+lease/generation proof immediately before a conditional delete. It reconciles
+unknown outcomes using exact-key metadata; it never calls `get` to buffer bytes
+for reconciliation, never trusts a lost delete response, and removes
+ObjectReplica/Object metadata only after confirmed absence. The generic
+`object_gc_holds` table is the mandatory boundary for future backup/share/sync
+reference classes: each must register an active hold before it can coexist with
+physical GC.
+
+The opt-in `GcWorker` is deliberately less privileged than the physical
+executor: it owns cycle ordering and bounded claims only, and can reach storage
+solely through the accepted Prompt 28 service. It neither accepts arbitrary
+paths/keys nor calls `ObjectStore` or filesystem deletion directly. Its opaque
+worker identity is not a correctness input; PostgreSQL lease/generation fencing
+remains authoritative across multiple processes. Configuration rejects zero,
+contradictory, or excessive cycle/concurrency/retry values; defaults are
+disabled, 60-second cycles, two concurrent executions, and one concurrent
+replica delete.
+
+The worker persists attempt count and PostgreSQL-clock retry deadlines on the
+replica action. Retryable outages, stale leases, and reconciliation-required
+outcomes never become success. Evidence mismatch, unsafe persisted state,
+unsupported backend routing, and retry exhaustion enter `NEEDS_ATTENTION` for
+operator review. Metadata-only reconciliation can report inconsistent durable
+states but never recursively scans a storage root or auto-deletes unknown
+physical bytes. On shutdown it stops claiming, has only a bounded drain window,
+and leaves an unfinished fence to be revalidated after restart.
 
 ## Authentication, bootstrap and recovery
 
@@ -598,6 +651,11 @@ PostgreSQL job/outbox delivery is at-least-once, not exactly-once. Each handler:
 Job payloads contain opaque IDs and necessary policy/version snapshots, not raw
 passwords/tokens or large content. Poison jobs remain visible and do not spin.
 Queue age, attempt count, dead letters and lease expiry are monitored.
+
+For the implemented GC worker, logging is limited to redacted error classes and
+safe cycle counters/status/duration. A worker failure or `NEEDS_ATTENTION`
+finding does not make the public API unhealthy, and no diagnostics endpoint is
+introduced as a destructive control plane.
 
 ## AI privacy and security model
 

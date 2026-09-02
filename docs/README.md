@@ -11,8 +11,15 @@ downloads, plus authenticated immutable version-history metadata listing and
 lookup. Safe historical-version restore is implemented at the authenticated
 API/metadata boundary as one new immutable FileVersion reusing the verified
 historical Object. Internal metadata-purge execution and FileVersion-to-Object
-reference accounting are implemented without object-byte deletion; physical
-object GC, download UI, sync, backup, and sharing remain out of scope;
+reference accounting, metadata-only GC grace/lease planning, internal physical
+replica execution, and opt-in internal GC-worker orchestration are implemented.
+Physical GC has no HTTP route: it uses final PostgreSQL reference/hold/lease
+revalidation, durable per-replica reconciliation, and ObjectStore-only deletion
+before Object metadata removal. The worker performs bounded `run_once()`
+cycles, resumes durable operations before new planning, persists retry
+scheduling, and reports metadata-only inconsistencies; it does not scan or
+auto-delete unknown physical files. Download UI, sync, backup, and sharing
+remain out of scope;
 disposable-PostgreSQL end-to-end evidence remains environment-gated; the
 implemented transport does not expose storage keys or physical paths.
 
@@ -26,8 +33,14 @@ current cùng historical version, cùng metadata version-history bất biến li
 và lookup. Safe historical-version restore đã implement ở boundary API/metadata
 đã authenticate như một FileVersion bất biến mới dùng lại Object historical đã
 verify. Metadata-purge execution nội bộ và reference accounting từ
-FileVersion tới Object đã implement mà không xóa object byte; physical object
-GC, Download UI, sync, backup hay sharing vẫn nằm ngoài scope; bằng chứng
+FileVersion tới Object cùng GC planning grace/lease metadata-only, physical
+replica execution nội bộ và GC-worker orchestration nội bộ opt-in đã implement.
+Physical GC không có HTTP route; nó dùng final revalidation reference/hold/
+lease trong PostgreSQL, reconciliation bền theo từng replica và chỉ xóa qua
+ObjectStore trước khi dọn metadata Object. Worker chạy chu kỳ `run_once()` có
+giới hạn, resume operation bền trước planning mới, persist retry scheduling và
+báo inconsistency chỉ từ metadata; nó không scan hay auto-delete file vật lý
+không rõ. Download UI, sync, backup hay sharing vẫn nằm ngoài scope; bằng chứng
 end-to-end PostgreSQL disposable vẫn bị gate theo môi trường; transport đã
 implement không expose storage key hay physical path.
 
