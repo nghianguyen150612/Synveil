@@ -1048,7 +1048,13 @@ mod tests {
     use synveil_core::{DeviceId, LibraryId, UserId};
 
     use super::{FilesystemLocalReplica, LocalFingerprint, LocalReplica};
-    use crate::{ClientSyncError, ManagedRelativePath, ReplicaScope, boxed_content_stream};
+    use crate::{
+        ManagedRelativePath, ReplicaScope, boxed_content_stream,
+        test_support::remove_dir_all_bounded,
+    };
+
+    #[cfg(unix)]
+    use crate::ClientSyncError;
 
     fn temporary_directory(label: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
@@ -1092,7 +1098,7 @@ mod tests {
             replica.inspect(&destination).unwrap(),
             Some(LocalFingerprint::file(bytes.len() as u64, digest))
         );
-        fs::remove_dir_all(root).unwrap();
+        remove_dir_all_bounded(&root).unwrap();
     }
 
     #[cfg(unix)]
@@ -1110,8 +1116,8 @@ mod tests {
                 .is_err()
         );
         fs::remove_file(root.join("redirect")).unwrap();
-        fs::remove_dir_all(root).unwrap();
-        fs::remove_dir_all(outside).unwrap();
+        remove_dir_all_bounded(&root).unwrap();
+        remove_dir_all_bounded(&outside).unwrap();
     }
 
     #[cfg(unix)]
@@ -1134,8 +1140,8 @@ mod tests {
         ));
 
         fs::remove_file(root.join(staging.as_path())).unwrap();
-        fs::remove_dir_all(root).unwrap();
-        fs::remove_dir_all(outside).unwrap();
+        remove_dir_all_bounded(&root).unwrap();
+        remove_dir_all_bounded(&outside).unwrap();
     }
 
     #[tokio::test]
@@ -1166,6 +1172,6 @@ mod tests {
             .await;
         assert!(same_length_wrong_hash.is_err());
         assert_eq!(fs::read(root.join(destination.as_path())).unwrap(), b"old");
-        fs::remove_dir_all(root).unwrap();
+        remove_dir_all_bounded(&root).unwrap();
     }
 }

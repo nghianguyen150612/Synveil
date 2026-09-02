@@ -22,6 +22,9 @@ mod profiles;
 mod replica;
 mod state;
 
+#[cfg(test)]
+mod test_support;
+
 pub use contracts::{
     BootstrapCompletion, BootstrapPage, ContentByteStream, EngineStatus, InboundChange,
     OpaqueEvidence, RemoteCheckpoint, RemoteContent, RemoteError, RemoteErrorKind, RemoteFeedPage,

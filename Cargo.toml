@@ -65,4 +65,5 @@ rcgen = { version = "0.13", default-features = false, features = ["crypto", "rin
 # Mature cross-platform filesystem event adapter.  The client-sync observer
 # deliberately consumes its events only as bounded hints and reconciles local
 # state before creating any durable outbound intent.
-notify = { version = "8.2.0", default-features = false }
+# macos_kqueue selected for macOS to avoid fsevent_sys dependency in CI.
+notify = { version = "8.2.0", default-features = false, features = ["macos_kqueue"] }
