@@ -367,6 +367,13 @@ primitive filesystem Rust/Tokio portable:
   Compression, snapshot, reflink/block clone và filesystem-health acceleration
   được đánh dấu unsupported rõ ràng. Unit/conformance test exercise các code
   path này nhưng không phải bằng chứng crash khi mất điện.
+- Trên Windows, directory barrier mở directory managed bằng flag native cho
+  directory handle là `FILE_FLAG_BACKUP_SEMANTICS` và
+  `FILE_FLAG_OPEN_REPARSE_POINT`, yêu cầu write access mà `FlushFileBuffers`
+  cần, rồi dùng cùng barrier `sync_all` như phần còn lại của adapter. Đây là
+  probe và runtime path thật, không phải override capability riêng cho Windows:
+  nếu mở hoặc flush directory thất bại, `DurableFlush` vẫn unsupported và
+  upload service từ chối store.
 - Managed directory/file được kiểm tra bằng metadata no-follow, bao gồm path
   nhạy cảm với Windows reparse/symlink khi standard API cung cấp bằng chứng.
   Portable API không thể loại bỏ mọi TOCTOU race giữa process, nên ownership và
