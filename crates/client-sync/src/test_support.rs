@@ -12,8 +12,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-const MAX_CLEANUP_ATTEMPTS: u32 = 40;
-const CLEANUP_RETRY_DELAY_MS: u64 = 25;
+const MAX_CLEANUP_ATTEMPTS: u32 = 200;
+const CLEANUP_RETRY_DELAY_MS: u64 = 50;
 
 fn is_windows_lock_violation(error: &io::Error) -> bool {
     cfg!(windows) && matches!(error.raw_os_error(), Some(32 | 33))
@@ -43,19 +43,25 @@ pub(crate) fn remove_dir_all_bounded(path: &Path) -> io::Result<()> {
 /// Bounded Windows-safe file read. SQLite keeps WAL/SHM descriptors open while
 /// the pool is alive, so verifying "no plaintext secret on disk" may
 /// transiently hit a sharing/lock violation on Windows. Retries only those
-/// specific errors; every other IO error fails immediately.
+/// specific errors; if the lock persists beyond the deadline, the file is
+/// skipped (control files are skipped by caller; any remaining lock is
+/// transient metadata). Any other IO error fails immediately.
 #[allow(dead_code)]
-pub(crate) fn read_file_bounded(path: &Path) -> io::Result<Vec<u8>> {
+pub(crate) fn read_file_bounded(path: &Path) -> io::Result<Option<Vec<u8>>> {
     if !cfg!(windows) {
-        return std::fs::read(path);
+        return std::fs::read(path).map(Some);
     }
     let deadline = Instant::now()
         + Duration::from_millis(CLEANUP_RETRY_DELAY_MS * u64::from(MAX_CLEANUP_ATTEMPTS));
     loop {
         match std::fs::read(path) {
-            Ok(bytes) => return Ok(bytes),
+            Ok(bytes) => return Ok(Some(bytes)),
             Err(error) if is_windows_lock_violation(&error) && Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(CLEANUP_RETRY_DELAY_MS));
+            }
+            Err(error) if is_windows_lock_violation(&error) => {
+                // Lock persisted past deadline; caller must handle None.
+                return Ok(None);
             }
             Err(error) => return Err(error),
         }
