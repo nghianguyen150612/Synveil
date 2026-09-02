@@ -113,14 +113,18 @@ export function createUploadSession(
   request: CreateUploadSessionRequest,
   client: ApiClient = apiClient,
 ): Promise<UploadSessionResponse> {
-  return client.post<UploadSessionResponse>('/api/v1/upload-sessions', request)
+  return client.post<UploadSessionResponse>('/api/v1/upload-sessions', request, {
+    diagnosticOperation: 'UPLOAD_SESSION_CREATE',
+  })
 }
 
 export function getUploadSession(
   uploadSessionId: string,
   client: ApiClient = apiClient,
 ): Promise<UploadSessionResponse> {
-  return client.get<UploadSessionResponse>(uploadPath(uploadSessionId))
+  return client.get<UploadSessionResponse>(uploadPath(uploadSessionId), {
+    diagnosticOperation: 'UPLOAD_SESSION_GET',
+  })
 }
 
 /**
@@ -141,6 +145,7 @@ export async function appendUploadChunk(
       'Upload-Offset': uploadOffset,
     },
     body: bytes,
+    diagnosticOperation: 'UPLOAD_CHUNK_APPEND',
   })
   return {
     upload_offset: requireCanonicalOffset(response.headers.get('Upload-Offset')),
@@ -151,12 +156,16 @@ export function completeUpload(
   uploadSessionId: string,
   client: ApiClient = apiClient,
 ): Promise<UploadCompletionResponse> {
-  return client.post<UploadCompletionResponse>(`${uploadPath(uploadSessionId)}/complete`)
+  return client.post<UploadCompletionResponse>(`${uploadPath(uploadSessionId)}/complete`, undefined, {
+    diagnosticOperation: 'UPLOAD_COMPLETE',
+  })
 }
 
 export function abortUpload(
   uploadSessionId: string,
   client: ApiClient = apiClient,
 ): Promise<UploadSessionResponse> {
-  return client.post<UploadSessionResponse>(`${uploadPath(uploadSessionId)}/abort`)
+  return client.post<UploadSessionResponse>(`${uploadPath(uploadSessionId)}/abort`, undefined, {
+    diagnosticOperation: 'UPLOAD_ABORT',
+  })
 }

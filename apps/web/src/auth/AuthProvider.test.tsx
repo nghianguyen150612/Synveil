@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { StrictMode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { AuthApi, AuthSessionResponse } from '../api/auth'
@@ -75,8 +76,12 @@ function Probe() {
     <div>
       <output aria-label="auth status">{auth.status}</output>
       <output aria-label="auth error">{auth.errorMessage ?? ''}</output>
+      <output aria-label="auth generation">{auth.generation}</output>
       <button type="button" onClick={() => void auth.refresh()}>
         refresh
+      </button>
+      <button type="button" onClick={() => void auth.recoverSession()}>
+        recover
       </button>
       <button
         type="button"
@@ -119,7 +124,7 @@ describe('AuthProvider', () => {
     const apis = makeApis({}, { getStatus: vi.fn(() => status.promise) })
     renderProvider(apis)
 
-    expect(screen.getByLabelText('auth status')).toHaveTextContent('loading')
+    expect(screen.getByLabelText('auth status')).toHaveTextContent('bootstrapping')
     status.resolve(openStatus)
 
     await waitFor(() => {
@@ -226,5 +231,135 @@ describe('AuthProvider', () => {
     })
     expect(apis.authApi.getCsrfToken).toHaveBeenCalledOnce()
     expect(apis.authApi.logout).toHaveBeenCalledOnce()
+  })
+
+  it('deduplicates concurrent recovery and advances the protected response generation once', async () => {
+    const recovery = deferred<AuthSessionResponse>()
+    const getCurrentSession = vi
+      .fn<AuthApi['getCurrentSession']>()
+      .mockResolvedValueOnce(session)
+      .mockReturnValueOnce(recovery.promise)
+    const apis = makeApis({ getCurrentSession })
+    renderProvider(apis)
+    await waitFor(() => {
+      expect(screen.getByLabelText('auth status')).toHaveTextContent('authenticated')
+      expect(screen.getByLabelText('auth generation')).toHaveTextContent('1')
+    })
+
+    const recover = screen.getByRole('button', { name: 'recover' })
+    for (let index = 0; index < 5; index += 1) {
+      fireEvent.click(recover)
+    }
+    expect(screen.getByLabelText('auth status')).toHaveTextContent('recovering')
+    expect(getCurrentSession).toHaveBeenCalledTimes(2)
+
+    recovery.resolve(session)
+    await waitFor(() => {
+      expect(screen.getByLabelText('auth status')).toHaveTextContent('authenticated')
+      expect(screen.getByLabelText('auth generation')).toHaveTextContent('2')
+    })
+    expect(apis.authApi.getCsrfToken).toHaveBeenCalledOnce()
+  })
+
+  it('keeps protected state suspended and retryable when recovery cannot reach the server', async () => {
+    const getCurrentSession = vi
+      .fn<AuthApi['getCurrentSession']>()
+      .mockResolvedValueOnce(session)
+      .mockRejectedValueOnce(new TypeError('network unavailable'))
+      .mockResolvedValueOnce(session)
+    const apis = makeApis({ getCurrentSession })
+    renderProvider(apis)
+    await waitFor(() => {
+      expect(screen.getByLabelText('auth status')).toHaveTextContent('authenticated')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'recover' }))
+    await waitFor(() => {
+      expect(screen.getByLabelText('auth status')).toHaveTextContent('recovery_error')
+      expect(screen.getByLabelText('auth error')).toHaveTextContent(/unable to verify/i)
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'recover' }))
+    await waitFor(() => {
+      expect(screen.getByLabelText('auth status')).toHaveTextContent('authenticated')
+      expect(screen.getByLabelText('auth generation')).toHaveTextContent('2')
+    })
+  })
+
+  it('does not reuse a settled recovery flight after logout and a new login', async () => {
+    const supersededRecovery = deferred<AuthSessionResponse>()
+    const getCurrentSession = vi
+      .fn<AuthApi['getCurrentSession']>()
+      .mockResolvedValueOnce(session)
+      .mockReturnValueOnce(supersededRecovery.promise)
+      .mockResolvedValueOnce(session)
+    const apis = makeApis({ getCurrentSession })
+    renderProvider(apis)
+    await waitFor(() => {
+      expect(screen.getByLabelText('auth status')).toHaveTextContent('authenticated')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'recover' }))
+    expect(screen.getByLabelText('auth status')).toHaveTextContent('recovering')
+
+    fireEvent.click(screen.getByRole('button', { name: 'logout' }))
+    await waitFor(() => {
+      expect(screen.getByLabelText('auth status')).toHaveTextContent('unauthenticated')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'login' }))
+    await waitFor(() => {
+      expect(screen.getByLabelText('auth status')).toHaveTextContent('authenticated')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'recover' }))
+    await waitFor(() => {
+      expect(getCurrentSession).toHaveBeenCalledTimes(3)
+      expect(screen.getByLabelText('auth generation')).toHaveTextContent('4')
+    })
+
+    supersededRecovery.resolve(session)
+    await waitFor(() => {
+      expect(screen.getByLabelText('auth status')).toHaveTextContent('authenticated')
+      expect(screen.getByLabelText('auth generation')).toHaveTextContent('4')
+    })
+  })
+
+  it('uses a definitive recovery 401 to transition to unauthenticated once', async () => {
+    const getCurrentSession = vi
+      .fn<AuthApi['getCurrentSession']>()
+      .mockResolvedValueOnce(session)
+      .mockRejectedValueOnce(apiError(401, 'authentication_failed'))
+    const apis = makeApis({ getCurrentSession })
+    renderProvider(apis)
+    await waitFor(() => {
+      expect(screen.getByLabelText('auth status')).toHaveTextContent('authenticated')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'recover' }))
+    await waitFor(() => {
+      expect(screen.getByLabelText('auth status')).toHaveTextContent('unauthenticated')
+    })
+    expect(getCurrentSession).toHaveBeenCalledTimes(2)
+    expect(apis.authApi.getCsrfToken).not.toHaveBeenCalled()
+  })
+
+  it('starts bootstrap only once under StrictMode effect replay', async () => {
+    const status = deferred<BootstrapStatusResponse>()
+    const getStatus = vi.fn(() => status.promise)
+    const apis = makeApis({}, { getStatus })
+    render(
+      <StrictMode>
+        <AuthProvider authApi={apis.authApi} bootstrapApi={apis.bootstrapApi}>
+          <Probe />
+        </AuthProvider>
+      </StrictMode>,
+    )
+
+    expect(getStatus).toHaveBeenCalledOnce()
+    status.resolve(closedStatus)
+    await waitFor(() => {
+      expect(screen.getByLabelText('auth status')).toHaveTextContent('unauthenticated')
+    })
   })
 })

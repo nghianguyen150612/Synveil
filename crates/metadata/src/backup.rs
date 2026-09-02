@@ -16,6 +16,7 @@ use std::{
     fmt,
 };
 
+use async_trait::async_trait;
 use sqlx::{FromRow, Postgres, Transaction};
 use synveil_core::{
     BACKUP_MAINTENANCE_RUN_FINGERPRINT_VERSION, BACKUP_PRUNE_PLAN_FINGERPRINT_VERSION,
@@ -24,7 +25,7 @@ use synveil_core::{
     BACKUP_SNAPSHOT_RETENTION_POLICY_FINGERPRINT_VERSION, BackupMaintenanceRun,
     BackupMaintenanceRunId, BackupMaintenanceRunIdempotencyFingerprint,
     BackupMaintenanceRunPreflightIssue, BackupMaintenanceRunRequest, BackupMaintenanceRunState,
-    BackupManifestContent, BackupPruneExecution, BackupPruneExecutionId,
+    BackupManifestContent, BackupOperationKind, BackupPruneExecution, BackupPruneExecutionId,
     BackupPruneExecutionPreflightIssue, BackupPruneImpact, BackupPrunePlan, BackupPrunePlanEntry,
     BackupPrunePlanId, BackupPrunePlanIdempotencyFingerprint, BackupPrunePlanRequest,
     BackupPrunePlanState, BackupPrunePreflightIssue, BackupRestoreAction, BackupRestoreExecution,
@@ -65,9 +66,561 @@ pub const DEFAULT_BACKUP_PRUNE_PLAN_ENTRY_PAGE_LIMIT: u32 = 200;
 pub const MAX_BACKUP_PRUNE_PLAN_ENTRY_PAGE_LIMIT: u32 = 1_000;
 pub const DEFAULT_BACKUP_SNAPSHOT_EXPIRY_PLAN_ENTRY_PAGE_LIMIT: u32 = 200;
 pub const MAX_BACKUP_SNAPSHOT_EXPIRY_PLAN_ENTRY_PAGE_LIMIT: u32 = 1_000;
+pub const DEFAULT_BACKUP_MAINTENANCE_RUN_PAGE_LIMIT: u32 = 200;
+pub const MAX_BACKUP_MAINTENANCE_RUN_PAGE_LIMIT: u32 = 1_000;
+pub const DEFAULT_BACKUP_OPERATION_PAGE_LIMIT: u32 = 100;
+pub const MAX_BACKUP_OPERATION_PAGE_LIMIT: u32 = 500;
 
 const MIN_OPERATION_KEY_BYTES: usize = 8;
 const MAX_OPERATION_KEY_BYTES: usize = 256;
+
+/// Immutable keyset boundary for the owner/set snapshot listing. The
+/// timestamp is the canonical chronological sort key: committed snapshots use
+/// `committed_at`, while unfinished/failed observations use `created_at`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BackupSnapshotPagePosition {
+    sort_at: Timestamp,
+    snapshot_id: SnapshotId,
+}
+
+impl BackupSnapshotPagePosition {
+    #[must_use]
+    pub const fn new(sort_at: Timestamp, snapshot_id: SnapshotId) -> Self {
+        Self {
+            sort_at,
+            snapshot_id,
+        }
+    }
+
+    #[must_use]
+    pub const fn sort_at(self) -> Timestamp {
+        self.sort_at
+    }
+
+    #[must_use]
+    pub const fn snapshot_id(self) -> SnapshotId {
+        self.snapshot_id
+    }
+}
+
+/// Immutable keyset boundary for the owner/set maintenance-run listing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BackupMaintenanceRunPagePosition {
+    created_at: Timestamp,
+    run_id: BackupMaintenanceRunId,
+}
+
+/// Typed identity for one semantic item in the unified backup activity feed.
+/// Restore/prune execution receipts intentionally cannot be represented here:
+/// they are child evidence for their parent plan.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum BackupOperationId {
+    Maintenance(BackupMaintenanceRunId),
+    Restore(BackupRestorePlanId),
+    Prune(BackupPrunePlanId),
+}
+
+impl BackupOperationId {
+    #[must_use]
+    pub const fn kind(self) -> BackupOperationKind {
+        match self {
+            Self::Maintenance(_) => BackupOperationKind::Maintenance,
+            Self::Restore(_) => BackupOperationKind::Restore,
+            Self::Prune(_) => BackupOperationKind::Prune,
+        }
+    }
+
+    #[must_use]
+    pub const fn into_uuid(self) -> Uuid {
+        match self {
+            Self::Maintenance(value) => value.into_uuid(),
+            Self::Restore(value) => value.into_uuid(),
+            Self::Prune(value) => value.into_uuid(),
+        }
+    }
+}
+
+/// Opaque keyset boundary for the heterogeneous backup activity feed. The
+/// transport includes the backup-set scope in its encoded cursor; this value
+/// contains only the ordering tuple consumed by the metadata query.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BackupOperationPagePosition {
+    created_at: Timestamp,
+    operation_id: BackupOperationId,
+}
+
+impl BackupOperationPagePosition {
+    #[must_use]
+    pub const fn new(created_at: Timestamp, operation_id: BackupOperationId) -> Self {
+        Self {
+            created_at,
+            operation_id,
+        }
+    }
+
+    #[must_use]
+    pub const fn created_at(self) -> Timestamp {
+        self.created_at
+    }
+
+    #[must_use]
+    pub const fn operation_id(self) -> BackupOperationId {
+        self.operation_id
+    }
+}
+
+/// Canonical operation-specific state carried by the read projection. It is
+/// intentionally not flattened to a generic RUNNING/DONE vocabulary.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum BackupOperationState {
+    Maintenance(BackupMaintenanceRunState),
+    Restore(BackupRestorePlanState),
+    Prune(BackupPrunePlanState),
+}
+
+impl BackupOperationState {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Maintenance(state) => state.as_str(),
+            Self::Restore(state) => state.as_str(),
+            Self::Prune(state) => state.as_str(),
+        }
+    }
+}
+
+/// Compact, safe activity-feed projection. The step count is derived from
+/// durable child references and receipt state; it is not a live percentage or
+/// process-progress estimate.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BackupOperationSummary {
+    operation_kind: BackupOperationKind,
+    operation_id: BackupOperationId,
+    backup_set_id: BackupSetId,
+    snapshot_id: Option<SnapshotId>,
+    state: BackupOperationState,
+    completed_steps: u32,
+    total_steps: u32,
+    created_at: Timestamp,
+    last_transition_at: Timestamp,
+    completed_at: Option<Timestamp>,
+}
+
+impl BackupOperationSummary {
+    #[must_use]
+    pub const fn operation_kind(&self) -> BackupOperationKind {
+        self.operation_kind
+    }
+
+    #[must_use]
+    pub const fn operation_id(&self) -> BackupOperationId {
+        self.operation_id
+    }
+
+    #[must_use]
+    pub const fn backup_set_id(&self) -> BackupSetId {
+        self.backup_set_id
+    }
+
+    #[must_use]
+    pub const fn snapshot_id(&self) -> Option<SnapshotId> {
+        self.snapshot_id
+    }
+
+    #[must_use]
+    pub const fn state(&self) -> BackupOperationState {
+        self.state
+    }
+
+    #[must_use]
+    pub const fn completed_steps(&self) -> u32 {
+        self.completed_steps
+    }
+
+    #[must_use]
+    pub const fn total_steps(&self) -> u32 {
+        self.total_steps
+    }
+
+    #[must_use]
+    pub const fn created_at(&self) -> Timestamp {
+        self.created_at
+    }
+
+    #[must_use]
+    pub const fn last_transition_at(&self) -> Timestamp {
+        self.last_transition_at
+    }
+
+    #[must_use]
+    pub const fn completed_at(&self) -> Option<Timestamp> {
+        self.completed_at
+    }
+}
+
+/// Rich, kind-specific durable operation projection used by the detail
+/// endpoint. All fields are logical metadata; no Object/replica identity is
+/// reachable from this boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BackupOperationDetail {
+    Maintenance(BackupMaintenanceRun),
+    Restore {
+        plan: BackupRestorePlan,
+        execution: Option<BackupRestoreExecution>,
+    },
+    Prune {
+        plan: BackupPrunePlan,
+        execution: Option<BackupPruneExecution>,
+    },
+}
+
+impl BackupOperationDetail {
+    pub fn summary(&self) -> Result<BackupOperationSummary, BackupError> {
+        match self {
+            Self::Maintenance(run) => maintenance_operation_summary(run),
+            Self::Restore { plan, execution } => {
+                restore_operation_summary(plan, execution.as_ref())
+            }
+            Self::Prune { plan, execution } => prune_operation_summary(plan, execution.as_ref()),
+        }
+    }
+}
+
+fn maintenance_operation_summary(
+    run: &BackupMaintenanceRun,
+) -> Result<BackupOperationSummary, BackupError> {
+    let (completed_steps, last_transition_at) = match run.state() {
+        BackupMaintenanceRunState::Created => (0, run.created_at()),
+        BackupMaintenanceRunState::SnapshotCaptured => (
+            1,
+            run.snapshot_captured_at()
+                .ok_or(BackupError::InvalidPersistedData)?,
+        ),
+        BackupMaintenanceRunState::ExpiryPlanned => (
+            2,
+            run.expiry_planned_at()
+                .ok_or(BackupError::InvalidPersistedData)?,
+        ),
+        BackupMaintenanceRunState::Completed => (
+            3,
+            run.maintenance_completed_at()
+                .ok_or(BackupError::InvalidPersistedData)?,
+        ),
+        BackupMaintenanceRunState::Stale => {
+            // The durable stale shape deliberately preserves references to
+            // work already committed before the run became unusable. Reject
+            // partial references rather than resetting visible progress.
+            let captured = match (run.captured_snapshot_id(), run.snapshot_captured_at()) {
+                (None, None) => false,
+                (Some(_), Some(_)) => true,
+                _ => return Err(BackupError::InvalidPersistedData),
+            };
+            let planned = match (run.expiry_plan_id(), run.expiry_planned_at()) {
+                (None, None) => false,
+                (Some(_), Some(_)) if captured => true,
+                _ => return Err(BackupError::InvalidPersistedData),
+            };
+            if run.expiry_execution_id().is_some() || run.maintenance_completed_at().is_some() {
+                return Err(BackupError::InvalidPersistedData);
+            }
+            (
+                if planned {
+                    2
+                } else if captured {
+                    1
+                } else {
+                    0
+                },
+                run.stale_at().ok_or(BackupError::InvalidPersistedData)?,
+            )
+        }
+    };
+
+    Ok(BackupOperationSummary {
+        operation_kind: BackupOperationKind::Maintenance,
+        operation_id: BackupOperationId::Maintenance(run.id()),
+        backup_set_id: run.backup_set_id(),
+        snapshot_id: run.captured_snapshot_id(),
+        state: BackupOperationState::Maintenance(run.state()),
+        completed_steps,
+        total_steps: 3,
+        created_at: run.created_at(),
+        last_transition_at,
+        completed_at: run.maintenance_completed_at(),
+    })
+}
+
+fn restore_operation_summary(
+    plan: &BackupRestorePlan,
+    execution: Option<&BackupRestoreExecution>,
+) -> Result<BackupOperationSummary, BackupError> {
+    validate_restore_operation_shape(plan, execution)?;
+
+    let (completed_steps, last_transition_at, completed_at) = match plan.state() {
+        BackupRestorePlanState::Planned => (1, plan.created_at(), None),
+        BackupRestorePlanState::Stale => (
+            1,
+            plan.stale_at().ok_or(BackupError::InvalidPersistedData)?,
+            None,
+        ),
+        BackupRestorePlanState::Executed => {
+            let executed_at = execution
+                .map(BackupRestoreExecution::executed_at)
+                .ok_or(BackupError::InvalidPersistedData)?;
+            (2, executed_at, Some(executed_at))
+        }
+    };
+
+    Ok(BackupOperationSummary {
+        operation_kind: BackupOperationKind::Restore,
+        operation_id: BackupOperationId::Restore(plan.id()),
+        backup_set_id: plan.backup_set_id(),
+        snapshot_id: Some(plan.snapshot_id()),
+        state: BackupOperationState::Restore(plan.state()),
+        completed_steps,
+        total_steps: 2,
+        created_at: plan.created_at(),
+        last_transition_at,
+        completed_at,
+    })
+}
+
+fn prune_operation_summary(
+    plan: &BackupPrunePlan,
+    execution: Option<&BackupPruneExecution>,
+) -> Result<BackupOperationSummary, BackupError> {
+    validate_prune_operation_shape(plan, execution)?;
+
+    let (completed_steps, last_transition_at, completed_at) = match plan.state() {
+        BackupPrunePlanState::Planned => (1, plan.created_at(), None),
+        BackupPrunePlanState::Stale => (
+            1,
+            plan.stale_at().ok_or(BackupError::InvalidPersistedData)?,
+            None,
+        ),
+        BackupPrunePlanState::Executed => {
+            let executed_at = execution
+                .map(BackupPruneExecution::executed_at)
+                .ok_or(BackupError::InvalidPersistedData)?;
+            (2, executed_at, Some(executed_at))
+        }
+    };
+
+    Ok(BackupOperationSummary {
+        operation_kind: BackupOperationKind::Prune,
+        operation_id: BackupOperationId::Prune(plan.id()),
+        backup_set_id: plan.backup_set_id(),
+        snapshot_id: Some(plan.snapshot_id()),
+        state: BackupOperationState::Prune(plan.state()),
+        completed_steps,
+        total_steps: 2,
+        created_at: plan.created_at(),
+        last_transition_at,
+        completed_at,
+    })
+}
+
+impl BackupMaintenanceRunPagePosition {
+    #[must_use]
+    pub const fn new(created_at: Timestamp, run_id: BackupMaintenanceRunId) -> Self {
+        Self { created_at, run_id }
+    }
+
+    #[must_use]
+    pub const fn created_at(self) -> Timestamp {
+        self.created_at
+    }
+
+    #[must_use]
+    pub const fn run_id(self) -> BackupMaintenanceRunId {
+        self.run_id
+    }
+}
+
+/// Read-only metadata port used by the HTTP backup inspection surface. The
+/// trait intentionally contains no capture, retention mutation, restore/prune
+/// execution, expiry, maintenance-advance, pin, or object-store operation.
+#[async_trait]
+pub trait BackupReadBackend: Send + Sync {
+    async fn list_backup_sets(
+        &self,
+        owner_user_id: UserId,
+        after: Option<BackupSetId>,
+        limit: u32,
+    ) -> Result<(Vec<BackupSet>, bool), BackupError>;
+
+    async fn get_backup_set(
+        &self,
+        owner_user_id: UserId,
+        backup_set_id: BackupSetId,
+    ) -> Result<BackupSet, BackupError>;
+
+    async fn list_backup_snapshots(
+        &self,
+        owner_user_id: UserId,
+        backup_set_id: BackupSetId,
+        state: Option<SnapshotState>,
+        after: Option<BackupSnapshotPagePosition>,
+        limit: u32,
+    ) -> Result<(Vec<BackupSnapshot>, bool), BackupError>;
+
+    async fn get_backup_snapshot(
+        &self,
+        owner_user_id: UserId,
+        snapshot_id: SnapshotId,
+    ) -> Result<BackupSnapshot, BackupError>;
+
+    async fn list_backup_snapshot_nodes(
+        &self,
+        owner_user_id: UserId,
+        backup_set_id: BackupSetId,
+        snapshot_id: SnapshotId,
+        parent_node_id: Option<NodeId>,
+        after: Option<NodeId>,
+        limit: u32,
+    ) -> Result<(Vec<BackupSnapshotNode>, bool), BackupError>;
+
+    async fn get_current_snapshot_retention_policy(
+        &self,
+        owner_user_id: UserId,
+        backup_set_id: BackupSetId,
+    ) -> Result<BackupSnapshotRetentionPolicyRevision, BackupError>;
+
+    async fn list_backup_maintenance_runs(
+        &self,
+        owner_user_id: UserId,
+        backup_set_id: BackupSetId,
+        after: Option<BackupMaintenanceRunPagePosition>,
+        limit: u32,
+    ) -> Result<(Vec<BackupMaintenanceRun>, bool), BackupError>;
+
+    async fn get_backup_maintenance_run(
+        &self,
+        owner_user_id: UserId,
+        run_id: BackupMaintenanceRunId,
+    ) -> Result<BackupMaintenanceRun, BackupError>;
+
+    /// Read one owner-scoped restore plan without revalidating or mutating its state.
+    async fn get_restore_plan(
+        &self,
+        owner_user_id: UserId,
+        plan_id: BackupRestorePlanId,
+    ) -> Result<BackupRestorePlan, BackupError>;
+
+    /// Read one owner-scoped committed restore-execution receipt.
+    async fn get_restore_execution(
+        &self,
+        owner_user_id: UserId,
+        execution_id: BackupRestoreExecutionId,
+    ) -> Result<BackupRestoreExecution, BackupError>;
+
+    /// Read one owner-scoped prune plan without revalidating or mutating it.
+    async fn get_prune_plan(
+        &self,
+        owner_user_id: UserId,
+        plan_id: BackupPrunePlanId,
+    ) -> Result<BackupPrunePlan, BackupError>;
+
+    /// Read one owner-scoped committed prune-execution receipt.
+    async fn get_prune_execution(
+        &self,
+        owner_user_id: UserId,
+        execution_id: BackupPruneExecutionId,
+    ) -> Result<BackupPruneExecution, BackupError>;
+
+    /// List one owner- and backup-set-scoped heterogeneous activity page.
+    async fn list_backup_operations(
+        &self,
+        owner_user_id: UserId,
+        backup_set_id: BackupSetId,
+        kind: Option<BackupOperationKind>,
+        after: Option<BackupOperationPagePosition>,
+        limit: u32,
+    ) -> Result<(Vec<BackupOperationSummary>, bool), BackupError>;
+
+    /// Read one semantic operation by its kind-qualified identity. A UUID
+    /// present in another operation table is intentionally not a match.
+    async fn get_backup_operation(
+        &self,
+        owner_user_id: UserId,
+        kind: BackupOperationKind,
+        operation_id: BackupOperationId,
+    ) -> Result<BackupOperationDetail, BackupError>;
+}
+
+/// Narrow application port for the public manual backup mutation workflow.
+/// Implementations must preserve the canonical service's ownership,
+/// idempotency, retention, and maintenance-orchestration invariants.
+#[async_trait]
+pub trait BackupMutationBackend: Send + Sync {
+    async fn create_backup_set(
+        &self,
+        owner_user_id: UserId,
+        backup_set_id: BackupSetId,
+        name: LogicalName,
+        source_library_id: LibraryId,
+        observed_at: Timestamp,
+    ) -> Result<BackupSet, BackupError>;
+
+    async fn configure_snapshot_retention_policy(
+        &self,
+        owner_user_id: UserId,
+        operation_id: String,
+        backup_set_id: BackupSetId,
+        keep_latest_completed: u64,
+        expire_after_seconds: u64,
+    ) -> Result<BackupSnapshotRetentionPolicyRevision, BackupError>;
+
+    async fn create_backup_maintenance_run(
+        &self,
+        owner_user_id: UserId,
+        operation_id: String,
+        backup_set_id: BackupSetId,
+    ) -> Result<BackupMaintenanceRun, BackupError>;
+
+    async fn advance_backup_maintenance_run(
+        &self,
+        owner_user_id: UserId,
+        run_id: BackupMaintenanceRunId,
+    ) -> Result<BackupMaintenanceRun, BackupError>;
+
+    /// Create a durable, non-destructive restore plan.
+    #[allow(clippy::too_many_arguments)]
+    async fn create_restore_plan(
+        &self,
+        owner_user_id: UserId,
+        operation_id: String,
+        backup_set_id: BackupSetId,
+        snapshot_id: SnapshotId,
+        target_library_id: LibraryId,
+        target_parent_node_id: NodeId,
+        destination_name: LogicalName,
+    ) -> Result<BackupRestorePlan, BackupError>;
+
+    /// Execute one persisted PLANNED restore plan as one authoritative metadata transaction.
+    async fn execute_restore_plan(
+        &self,
+        owner_user_id: UserId,
+        plan_id: BackupRestorePlanId,
+    ) -> Result<BackupRestoreExecution, BackupError>;
+
+    /// Create a durable, non-destructive prune plan for one EXPIRED snapshot.
+    async fn create_prune_plan(
+        &self,
+        owner_user_id: UserId,
+        operation_id: String,
+        backup_set_id: BackupSetId,
+        snapshot_id: SnapshotId,
+    ) -> Result<BackupPrunePlan, BackupError>;
+
+    /// Execute exactly one persisted prune plan through the canonical atomic
+    /// retention-release service. This never performs physical ObjectStore I/O.
+    async fn execute_prune_plan(
+        &self,
+        owner_user_id: UserId,
+        plan_id: BackupPrunePlanId,
+    ) -> Result<BackupPruneExecution, BackupError>;
+}
 
 /// Stable failures for the backup domain application service. Inaccessible
 /// owner/set/library scopes intentionally collapse to `NotFound` so IDs cannot
@@ -78,6 +631,7 @@ pub enum BackupError {
     InvalidRequest,
     InvalidLimit,
     BackupSetConflict,
+    BackupSetOperationConflict,
     BackupSetDisabled,
     SnapshotConflict,
     SnapshotAlreadyBuilding,
@@ -109,6 +663,9 @@ impl fmt::Display for BackupError {
             Self::InvalidRequest => "backup request is invalid",
             Self::InvalidLimit => "backup page limit is invalid",
             Self::BackupSetConflict => "backup set already exists",
+            Self::BackupSetOperationConflict => {
+                "backup set operation identity conflicts with the request"
+            }
             Self::BackupSetDisabled => "backup set is disabled",
             Self::SnapshotConflict => "backup snapshot conflicts with newer progress",
             Self::SnapshotAlreadyBuilding => "a backup snapshot is already in progress",
@@ -1254,6 +1811,334 @@ pub struct BackupMaintenanceRunRow {
     pub created_at: OffsetDateTime,
 }
 
+/// Joined read row for a restore plan and its optional committed execution
+/// receipt. The joined shape is used only by the heterogeneous activity list;
+/// all nullable receipt columns must be present together or the mapping fails
+/// closed.
+#[derive(Clone, Debug, FromRow)]
+struct BackupRestoreOperationRow {
+    id: Uuid,
+    owner_user_id: Uuid,
+    backup_set_id: Uuid,
+    snapshot_id: Uuid,
+    target_library_id: Uuid,
+    target_parent_node_id: Uuid,
+    operation_id: String,
+    fingerprint_version: i16,
+    request_fingerprint: Vec<u8>,
+    destination_name: String,
+    base_journal_epoch: i64,
+    base_journal_head: i64,
+    item_count: i64,
+    content_item_count: i64,
+    state: String,
+    created_at: OffsetDateTime,
+    stale_at: Option<OffsetDateTime>,
+    execution_id: Option<Uuid>,
+    execution_owner_user_id: Option<Uuid>,
+    execution_restore_plan_id: Option<Uuid>,
+    execution_target_library_id: Option<Uuid>,
+    execution_journal_first_sequence: Option<i64>,
+    execution_journal_last_sequence: Option<i64>,
+    execution_created_node_count: Option<i64>,
+    execution_created_file_version_count: Option<i64>,
+    execution_state: Option<String>,
+    execution_executed_at: Option<OffsetDateTime>,
+}
+
+impl BackupRestoreOperationRow {
+    fn try_into_detail(self) -> Result<BackupOperationDetail, BackupError> {
+        let plan = BackupRestorePlanRow {
+            id: self.id,
+            owner_user_id: self.owner_user_id,
+            backup_set_id: self.backup_set_id,
+            snapshot_id: self.snapshot_id,
+            target_library_id: self.target_library_id,
+            target_parent_node_id: self.target_parent_node_id,
+            operation_id: self.operation_id,
+            fingerprint_version: self.fingerprint_version,
+            request_fingerprint: self.request_fingerprint,
+            destination_name: self.destination_name,
+            base_journal_epoch: self.base_journal_epoch,
+            base_journal_head: self.base_journal_head,
+            item_count: self.item_count,
+            content_item_count: self.content_item_count,
+            state: self.state,
+            created_at: self.created_at,
+            stale_at: self.stale_at,
+        }
+        .try_into_domain()?;
+        let execution = optional_restore_execution(
+            self.execution_id,
+            self.execution_owner_user_id,
+            self.execution_restore_plan_id,
+            self.execution_target_library_id,
+            self.execution_journal_first_sequence,
+            self.execution_journal_last_sequence,
+            self.execution_created_node_count,
+            self.execution_created_file_version_count,
+            self.execution_state,
+            self.execution_executed_at,
+        )?;
+        validate_restore_operation_shape(&plan, execution.as_ref())?;
+        Ok(BackupOperationDetail::Restore { plan, execution })
+    }
+}
+
+/// Joined read row for a prune plan and its optional committed execution
+/// receipt. No physical columns are selected into this projection.
+#[derive(Clone, Debug, FromRow)]
+struct BackupPruneOperationRow {
+    id: Uuid,
+    owner_user_id: Uuid,
+    backup_set_id: Uuid,
+    snapshot_id: Uuid,
+    operation_id: String,
+    fingerprint_version: i16,
+    request_fingerprint: Vec<u8>,
+    snapshot_manifest_item_count: i64,
+    snapshot_content_reference_count: i64,
+    planned_pin_release_count: i64,
+    distinct_retained_content_count: i64,
+    retained_after_release_count: i64,
+    would_become_unreferenced_count: i64,
+    state: String,
+    created_at: OffsetDateTime,
+    stale_at: Option<OffsetDateTime>,
+    execution_id: Option<Uuid>,
+    execution_owner_user_id: Option<Uuid>,
+    execution_prune_plan_id: Option<Uuid>,
+    execution_backup_set_id: Option<Uuid>,
+    execution_snapshot_id: Option<Uuid>,
+    execution_released_pin_count: Option<i64>,
+    execution_distinct_object_count: Option<i64>,
+    execution_retained_by_other_reference_count: Option<i64>,
+    execution_gc_handoff_object_count: Option<i64>,
+    execution_state: Option<String>,
+    execution_executed_at: Option<OffsetDateTime>,
+}
+
+impl BackupPruneOperationRow {
+    fn try_into_detail(self) -> Result<BackupOperationDetail, BackupError> {
+        let plan = BackupPrunePlanRow {
+            id: self.id,
+            owner_user_id: self.owner_user_id,
+            backup_set_id: self.backup_set_id,
+            snapshot_id: self.snapshot_id,
+            operation_id: self.operation_id,
+            fingerprint_version: self.fingerprint_version,
+            request_fingerprint: self.request_fingerprint,
+            snapshot_manifest_item_count: self.snapshot_manifest_item_count,
+            snapshot_content_reference_count: self.snapshot_content_reference_count,
+            planned_pin_release_count: self.planned_pin_release_count,
+            distinct_retained_content_count: self.distinct_retained_content_count,
+            retained_after_release_count: self.retained_after_release_count,
+            would_become_unreferenced_count: self.would_become_unreferenced_count,
+            state: self.state,
+            created_at: self.created_at,
+            stale_at: self.stale_at,
+        }
+        .try_into_domain()?;
+        let execution = optional_prune_execution(
+            self.execution_id,
+            self.execution_owner_user_id,
+            self.execution_prune_plan_id,
+            self.execution_backup_set_id,
+            self.execution_snapshot_id,
+            self.execution_released_pin_count,
+            self.execution_distinct_object_count,
+            self.execution_retained_by_other_reference_count,
+            self.execution_gc_handoff_object_count,
+            self.execution_state,
+            self.execution_executed_at,
+        )?;
+        validate_prune_operation_shape(&plan, execution.as_ref())?;
+        Ok(BackupOperationDetail::Prune { plan, execution })
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn optional_restore_execution(
+    id: Option<Uuid>,
+    owner_user_id: Option<Uuid>,
+    restore_plan_id: Option<Uuid>,
+    target_library_id: Option<Uuid>,
+    journal_first_sequence: Option<i64>,
+    journal_last_sequence: Option<i64>,
+    created_node_count: Option<i64>,
+    created_file_version_count: Option<i64>,
+    state: Option<String>,
+    executed_at: Option<OffsetDateTime>,
+) -> Result<Option<BackupRestoreExecution>, BackupError> {
+    let values = (
+        id,
+        owner_user_id,
+        restore_plan_id,
+        target_library_id,
+        journal_first_sequence,
+        journal_last_sequence,
+        created_node_count,
+        created_file_version_count,
+        state,
+        executed_at,
+    );
+    if values.0.is_none()
+        && values.1.is_none()
+        && values.2.is_none()
+        && values.3.is_none()
+        && values.4.is_none()
+        && values.5.is_none()
+        && values.6.is_none()
+        && values.7.is_none()
+        && values.8.is_none()
+        && values.9.is_none()
+    {
+        return Ok(None);
+    }
+    let (
+        Some(id),
+        Some(owner_user_id),
+        Some(restore_plan_id),
+        Some(target_library_id),
+        Some(journal_first_sequence),
+        Some(journal_last_sequence),
+        Some(created_node_count),
+        Some(created_file_version_count),
+        Some(state),
+        Some(executed_at),
+    ) = values
+    else {
+        return Err(BackupError::InvalidPersistedData);
+    };
+    Ok(Some(
+        BackupRestoreExecutionRow {
+            id,
+            owner_user_id,
+            restore_plan_id,
+            target_library_id,
+            journal_first_sequence,
+            journal_last_sequence,
+            created_node_count,
+            created_file_version_count,
+            state,
+            executed_at,
+        }
+        .try_into_domain()?,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn optional_prune_execution(
+    id: Option<Uuid>,
+    owner_user_id: Option<Uuid>,
+    prune_plan_id: Option<Uuid>,
+    backup_set_id: Option<Uuid>,
+    snapshot_id: Option<Uuid>,
+    released_pin_count: Option<i64>,
+    distinct_object_count: Option<i64>,
+    retained_by_other_reference_count: Option<i64>,
+    gc_handoff_object_count: Option<i64>,
+    state: Option<String>,
+    executed_at: Option<OffsetDateTime>,
+) -> Result<Option<BackupPruneExecution>, BackupError> {
+    let values = (
+        id,
+        owner_user_id,
+        prune_plan_id,
+        backup_set_id,
+        snapshot_id,
+        released_pin_count,
+        distinct_object_count,
+        retained_by_other_reference_count,
+        gc_handoff_object_count,
+        state,
+        executed_at,
+    );
+    if values.0.is_none()
+        && values.1.is_none()
+        && values.2.is_none()
+        && values.3.is_none()
+        && values.4.is_none()
+        && values.5.is_none()
+        && values.6.is_none()
+        && values.7.is_none()
+        && values.8.is_none()
+        && values.9.is_none()
+        && values.10.is_none()
+    {
+        return Ok(None);
+    }
+    let (
+        Some(id),
+        Some(owner_user_id),
+        Some(prune_plan_id),
+        Some(backup_set_id),
+        Some(snapshot_id),
+        Some(released_pin_count),
+        Some(distinct_object_count),
+        Some(retained_by_other_reference_count),
+        Some(gc_handoff_object_count),
+        Some(state),
+        Some(executed_at),
+    ) = values
+    else {
+        return Err(BackupError::InvalidPersistedData);
+    };
+    Ok(Some(
+        BackupPruneExecutionRow {
+            id,
+            owner_user_id,
+            prune_plan_id,
+            backup_set_id,
+            snapshot_id,
+            released_pin_count,
+            distinct_object_count,
+            retained_by_other_reference_count,
+            gc_handoff_object_count,
+            state,
+            executed_at,
+        }
+        .try_into_domain()?,
+    ))
+}
+
+fn validate_restore_operation_shape(
+    plan: &BackupRestorePlan,
+    execution: Option<&BackupRestoreExecution>,
+) -> Result<(), BackupError> {
+    if let Some(execution) = execution {
+        if plan.state() != BackupRestorePlanState::Executed
+            || execution.owner_user_id() != plan.owner_user_id()
+            || execution.plan_id() != plan.id()
+            || execution.target_library_id() != plan.target_library_id()
+        {
+            return Err(BackupError::InvalidPersistedData);
+        }
+    } else if plan.state() == BackupRestorePlanState::Executed {
+        return Err(BackupError::InvalidPersistedData);
+    }
+    Ok(())
+}
+
+fn validate_prune_operation_shape(
+    plan: &BackupPrunePlan,
+    execution: Option<&BackupPruneExecution>,
+) -> Result<(), BackupError> {
+    if let Some(execution) = execution {
+        if plan.state() != BackupPrunePlanState::Executed
+            || execution.owner_user_id() != plan.owner_user_id()
+            || execution.prune_plan_id() != plan.id()
+            || execution.backup_set_id() != plan.backup_set_id()
+            || execution.snapshot_id() != plan.snapshot_id()
+        {
+            return Err(BackupError::InvalidPersistedData);
+        }
+    } else if plan.state() == BackupPrunePlanState::Executed {
+        return Err(BackupError::InvalidPersistedData);
+    }
+    Ok(())
+}
+
 impl BackupMaintenanceRunRow {
     pub fn try_into_domain(self) -> Result<BackupMaintenanceRun, MappingError> {
         let id = decode_id(self.id, "backup_maintenance_runs.id")?;
@@ -1654,8 +2539,10 @@ impl BackupService {
         }
     }
 
-    /// Create a new owner-scoped backup set. The source library must be owned by
-    /// the authenticated user; name uniqueness is enforced per owner.
+    /// Create or replay one owner-scoped backup set. The source library must be
+    /// owned by the authenticated user; name uniqueness is enforced per owner.
+    /// The caller-supplied set ID is the durable creation operation identity:
+    /// identical semantics replay the row and changed semantics conflict.
     pub async fn create_backup_set(
         &self,
         owner_user_id: UserId,
@@ -1700,7 +2587,7 @@ impl BackupService {
                 (id, owner_user_id, name, source_library_id, source,
                  retention_days, state, created_at, updated_at, revision)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::NUMERIC)
-             ON CONFLICT (owner_user_id, name) DO NOTHING",
+             ON CONFLICT DO NOTHING",
         )
         .bind(row.id)
         .bind(row.owner_user_id)
@@ -1718,7 +2605,31 @@ impl BackupService {
             == 1;
 
         if !inserted {
-            return Err(BackupError::BackupSetConflict);
+            let existing = sqlx::query_as::<_, BackupSetRow>(
+                "SELECT id, owner_user_id, name, source_library_id, source,
+                        retention_days, state, created_at, updated_at,
+                        revision::TEXT AS revision
+                 FROM backup_sets
+                 WHERE id = $1 AND owner_user_id = $2
+                 FOR UPDATE",
+            )
+            .bind(backup_set_id.into_uuid())
+            .bind(owner_user_id.into_uuid())
+            .fetch_optional(&mut *transaction)
+            .await?;
+            let Some(existing) = existing else {
+                transaction.commit().await?;
+                return Err(BackupError::BackupSetConflict);
+            };
+            let existing = existing.try_into_domain()?;
+            let request_matches = existing.name() == set.name()
+                && existing.source_library_id() == set.source_library_id()
+                && existing.retention_days() == set.retention_days();
+            transaction.commit().await?;
+            if !request_matches {
+                return Err(BackupError::BackupSetOperationConflict);
+            }
+            return Ok(existing);
         }
 
         transaction.commit().await?;
@@ -1979,7 +2890,114 @@ impl BackupService {
         Ok((sets, has_more))
     }
 
-    /// List immutable manifest nodes for one completed snapshot.
+    /// Read one owner-scoped backup set. Missing and foreign sets are both
+    /// concealed as `NotFound`.
+    pub async fn get_backup_set(
+        &self,
+        owner_user_id: UserId,
+        backup_set_id: BackupSetId,
+    ) -> Result<BackupSet, BackupError> {
+        sqlx::query_as::<_, BackupSetRow>(
+            "SELECT id, owner_user_id, name, source_library_id, source,
+                    retention_days, state, created_at, updated_at,
+                    revision::TEXT AS revision
+             FROM backup_sets
+             WHERE id = $1 AND owner_user_id = $2",
+        )
+        .bind(backup_set_id.into_uuid())
+        .bind(owner_user_id.into_uuid())
+        .fetch_optional(self.pool.sqlx_pool())
+        .await?
+        .ok_or(BackupError::NotFound)
+        .and_then(|row| row.try_into_domain().map_err(Into::into))
+    }
+
+    /// List owner-scoped snapshots in deterministic newest-first chronological
+    /// order. Committed/expired snapshots use `committed_at`; snapshots that
+    /// have not committed yet use `created_at` as the stable fallback key.
+    pub async fn list_backup_snapshots(
+        &self,
+        owner_user_id: UserId,
+        backup_set_id: BackupSetId,
+        state: Option<SnapshotState>,
+        after: Option<BackupSnapshotPagePosition>,
+        limit: u32,
+    ) -> Result<(Vec<BackupSnapshot>, bool), BackupError> {
+        validate_page_limit_node(limit)?;
+        self.get_backup_set(owner_user_id, backup_set_id).await?;
+
+        let rows = sqlx::query_as::<_, BackupSnapshotRow>(
+            "SELECT snapshot.id, snapshot.backup_set_id, snapshot.owner_user_id,
+                    snapshot.source_library_id, snapshot.operation_id,
+                    snapshot.snapshot_epoch, snapshot.snapshot_resume_sequence,
+                    snapshot.manifest_item_count, snapshot.terminal_node_id,
+                    snapshot.content_reference_count, snapshot.state,
+                    snapshot.created_at, snapshot.committed_at, snapshot.expired_at
+             FROM backup_snapshots AS snapshot
+             WHERE snapshot.owner_user_id = $1
+               AND snapshot.backup_set_id = $2
+               AND (
+                    $3::TIMESTAMPTZ IS NULL
+                    OR COALESCE(snapshot.committed_at, snapshot.created_at) < $3
+                    OR (
+                        COALESCE(snapshot.committed_at, snapshot.created_at) = $3
+                        AND snapshot.id < $4
+                    )
+               )
+               AND ($5::TEXT IS NULL OR snapshot.state = $5)
+             ORDER BY COALESCE(snapshot.committed_at, snapshot.created_at) DESC,
+                      snapshot.id DESC
+             LIMIT $6",
+        )
+        .bind(owner_user_id.into_uuid())
+        .bind(backup_set_id.into_uuid())
+        .bind(after.map(|position| position.sort_at().as_offset_datetime()))
+        .bind(after.map(|position| position.snapshot_id().into_uuid()))
+        .bind(state.map(SnapshotState::as_str))
+        .bind(i64::from(limit) + 1)
+        .fetch_all(self.pool.sqlx_pool())
+        .await?;
+
+        let has_more = rows.len() > limit as usize;
+        let snapshots = rows
+            .into_iter()
+            .take(limit as usize)
+            .map(BackupSnapshotRow::try_into_domain)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((snapshots, has_more))
+    }
+
+    /// Read one owner-scoped snapshot summary. The immutable manifest remains
+    /// readable for the full logical snapshot history, including `EXPIRED`
+    /// snapshots whose retention pins have already been released by pruning.
+    pub async fn get_backup_snapshot(
+        &self,
+        owner_user_id: UserId,
+        snapshot_id: SnapshotId,
+    ) -> Result<BackupSnapshot, BackupError> {
+        sqlx::query_as::<_, BackupSnapshotRow>(
+            "SELECT snapshot.id, snapshot.backup_set_id, snapshot.owner_user_id,
+                    snapshot.source_library_id, snapshot.operation_id,
+                    snapshot.snapshot_epoch, snapshot.snapshot_resume_sequence,
+                    snapshot.manifest_item_count, snapshot.terminal_node_id,
+                    snapshot.content_reference_count, snapshot.state,
+                    snapshot.created_at, snapshot.committed_at, snapshot.expired_at
+             FROM backup_snapshots AS snapshot
+             INNER JOIN backup_sets AS backup_set
+                ON backup_set.id = snapshot.backup_set_id
+               AND backup_set.owner_user_id = snapshot.owner_user_id
+             WHERE snapshot.id = $1
+               AND snapshot.owner_user_id = $2",
+        )
+        .bind(snapshot_id.into_uuid())
+        .bind(owner_user_id.into_uuid())
+        .fetch_optional(self.pool.sqlx_pool())
+        .await?
+        .ok_or(BackupError::NotFound)
+        .and_then(|row| row.try_into_domain().map_err(Into::into))
+    }
+
+    /// List immutable manifest nodes for one completed or expired snapshot.
     pub async fn list_snapshot_nodes(
         &self,
         owner_user_id: UserId,
@@ -2004,7 +3022,10 @@ impl BackupService {
         .await?
         .ok_or(BackupError::NotFound)?;
         let snapshot = row.try_into_domain()?;
-        if !snapshot.is_restorable() {
+        if !matches!(
+            snapshot.state(),
+            SnapshotState::Completed | SnapshotState::Expired
+        ) {
             return Err(BackupError::InvalidState);
         }
 
@@ -2032,6 +3053,145 @@ impl BackupService {
             .map(BackupSnapshotNodeRow::try_into_domain)
             .collect::<Result<Vec<_>, _>>()?;
         Ok((nodes, has_more))
+    }
+
+    /// List direct children of one immutable snapshot manifest parent. When
+    /// `parent_node_id` is omitted, the single manifest root is returned. The
+    /// service validates the parent belongs to this owner-scoped snapshot and
+    /// is a directory before listing its children.
+    pub async fn list_backup_snapshot_nodes(
+        &self,
+        owner_user_id: UserId,
+        backup_set_id: BackupSetId,
+        snapshot_id: SnapshotId,
+        parent_node_id: Option<NodeId>,
+        after: Option<NodeId>,
+        limit: u32,
+    ) -> Result<(Vec<BackupSnapshotNode>, bool), BackupError> {
+        validate_page_limit_node(limit)?;
+        let snapshot = sqlx::query_as::<_, BackupSnapshotRow>(
+            "SELECT snapshot.id, snapshot.backup_set_id, snapshot.owner_user_id,
+                    snapshot.source_library_id, snapshot.operation_id,
+                    snapshot.snapshot_epoch, snapshot.snapshot_resume_sequence,
+                    snapshot.manifest_item_count, snapshot.terminal_node_id,
+                    snapshot.content_reference_count, snapshot.state,
+                    snapshot.created_at, snapshot.committed_at, snapshot.expired_at
+             FROM backup_snapshots AS snapshot
+             INNER JOIN backup_sets AS backup_set
+                ON backup_set.id = snapshot.backup_set_id
+               AND backup_set.owner_user_id = snapshot.owner_user_id
+             WHERE snapshot.id = $1
+               AND snapshot.owner_user_id = $2
+               AND snapshot.backup_set_id = $3",
+        )
+        .bind(snapshot_id.into_uuid())
+        .bind(owner_user_id.into_uuid())
+        .bind(backup_set_id.into_uuid())
+        .fetch_optional(self.pool.sqlx_pool())
+        .await?
+        .ok_or(BackupError::NotFound)?
+        .try_into_domain()?;
+        if !matches!(
+            snapshot.state(),
+            SnapshotState::Completed | SnapshotState::Expired
+        ) {
+            return Err(BackupError::InvalidState);
+        }
+
+        if let Some(parent_node_id) = parent_node_id {
+            let parent_kind = sqlx::query_scalar::<_, String>(
+                "SELECT kind
+                 FROM backup_snapshot_nodes
+                 WHERE snapshot_id = $1 AND node_id = $2",
+            )
+            .bind(snapshot_id.into_uuid())
+            .bind(parent_node_id.into_uuid())
+            .fetch_optional(self.pool.sqlx_pool())
+            .await?
+            .ok_or(BackupError::NotFound)?;
+            if parent_kind != "DIRECTORY" {
+                return Err(BackupError::InvalidState);
+            }
+        }
+
+        let rows = sqlx::query_as::<_, BackupSnapshotNodeRow>(
+            "SELECT snapshot_id, node_id, parent_node_id, name, kind, state,
+                    revision::TEXT AS revision, current_version_id,
+                    content_length::TEXT AS content_length, content_sha256,
+                    node_created_at, node_updated_at
+             FROM backup_snapshot_nodes
+             WHERE snapshot_id = $1
+               AND (
+                    ($2::UUID IS NULL AND parent_node_id IS NULL)
+                    OR parent_node_id = $2
+               )
+               AND ($3::UUID IS NULL OR node_id > $3)
+             ORDER BY node_id ASC
+             LIMIT $4",
+        )
+        .bind(snapshot_id.into_uuid())
+        .bind(parent_node_id.map(NodeId::into_uuid))
+        .bind(after.map(NodeId::into_uuid))
+        .bind(i64::from(limit) + 1)
+        .fetch_all(self.pool.sqlx_pool())
+        .await?;
+
+        let has_more = rows.len() > limit as usize;
+        let nodes = rows
+            .into_iter()
+            .take(limit as usize)
+            .map(BackupSnapshotNodeRow::try_into_domain)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((nodes, has_more))
+    }
+
+    /// List historical maintenance-run evidence for one owned backup set in
+    /// deterministic newest-first creation order. This is observational only;
+    /// it never recovers or advances a run.
+    pub async fn list_backup_maintenance_runs(
+        &self,
+        owner_user_id: UserId,
+        backup_set_id: BackupSetId,
+        after: Option<BackupMaintenanceRunPagePosition>,
+        limit: u32,
+    ) -> Result<(Vec<BackupMaintenanceRun>, bool), BackupError> {
+        validate_page_limit_maintenance(limit)?;
+        self.get_backup_set(owner_user_id, backup_set_id).await?;
+
+        let rows = sqlx::query_as::<_, BackupMaintenanceRunRow>(
+            "SELECT id, owner_user_id, backup_set_id, policy_revision_id,
+                    policy_revision_number, operation_id, fingerprint_version,
+                    request_fingerprint, capture_operation_id,
+                    expiry_plan_operation_id, state, captured_snapshot_id,
+                    expiry_plan_id, expiry_execution_id, snapshot_captured_at,
+                    expiry_planned_at, maintenance_completed_at, stale_at,
+                    created_at
+             FROM backup_maintenance_runs
+             WHERE owner_user_id = $1
+               AND backup_set_id = $2
+               AND (
+                    $3::TIMESTAMPTZ IS NULL
+                    OR created_at < $3
+                    OR (created_at = $3 AND id < $4)
+               )
+             ORDER BY created_at DESC, id DESC
+             LIMIT $5",
+        )
+        .bind(owner_user_id.into_uuid())
+        .bind(backup_set_id.into_uuid())
+        .bind(after.map(|position| position.created_at().as_offset_datetime()))
+        .bind(after.map(|position| position.run_id().into_uuid()))
+        .bind(i64::from(limit) + 1)
+        .fetch_all(self.pool.sqlx_pool())
+        .await?;
+
+        let has_more = rows.len() > limit as usize;
+        let runs = rows
+            .into_iter()
+            .take(limit as usize)
+            .map(BackupMaintenanceRunRow::try_into_domain)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((runs, has_more))
     }
 
     /// Append one immutable, owner-scoped retention-policy revision. The
@@ -4725,6 +5885,632 @@ impl BackupService {
         .ok_or(BackupError::NotFound)
         .and_then(|row| row.try_into_domain().map_err(Into::into))
     }
+
+    /// List the owner- and backup-set-scoped semantic backup operations in a
+    /// deterministic heterogeneous keyset order. This is a pure metadata
+    /// projection: every returned state comes from the canonical lifecycle
+    /// rows and committed child receipts.
+    pub async fn list_backup_operations(
+        &self,
+        owner_user_id: UserId,
+        backup_set_id: BackupSetId,
+        kind: Option<BackupOperationKind>,
+        after: Option<BackupOperationPagePosition>,
+        limit: u32,
+    ) -> Result<(Vec<BackupOperationSummary>, bool), BackupError> {
+        validate_page_limit_operation(limit)?;
+        if kind.is_some_and(|kind| after.is_some_and(|after| after.operation_id().kind() != kind)) {
+            return Err(BackupError::InvalidRequest);
+        }
+        // Preserve the existing concealment convention: an unknown/foreign
+        // set is not an empty activity feed.
+        self.get_backup_set(owner_user_id, backup_set_id).await?;
+
+        let mut details = Vec::new();
+        if kind.is_none_or(|kind| kind == BackupOperationKind::Maintenance) {
+            details.extend(
+                list_maintenance_operation_details(
+                    self.pool.sqlx_pool(),
+                    owner_user_id,
+                    backup_set_id,
+                    after,
+                    limit,
+                )
+                .await?,
+            );
+        }
+        if kind.is_none_or(|kind| kind == BackupOperationKind::Restore) {
+            details.extend(
+                list_restore_operation_details(
+                    self.pool.sqlx_pool(),
+                    owner_user_id,
+                    backup_set_id,
+                    after,
+                    limit,
+                )
+                .await?,
+            );
+        }
+        if kind.is_none_or(|kind| kind == BackupOperationKind::Prune) {
+            details.extend(
+                list_prune_operation_details(
+                    self.pool.sqlx_pool(),
+                    owner_user_id,
+                    backup_set_id,
+                    after,
+                    limit,
+                )
+                .await?,
+            );
+        }
+
+        let mut summaries = details
+            .iter()
+            .map(BackupOperationDetail::summary)
+            .collect::<Result<Vec<_>, _>>()?;
+        summaries.sort_by(compare_backup_operation_summaries);
+        let has_more = summaries.len() > limit as usize;
+        summaries.truncate(limit as usize);
+        Ok((summaries, has_more))
+    }
+
+    /// Read one kind-qualified semantic operation. The operation kind selects
+    /// the canonical table, so a UUID from another kind is concealed as
+    /// `NotFound` rather than being probed across tables.
+    pub async fn get_backup_operation(
+        &self,
+        owner_user_id: UserId,
+        kind: BackupOperationKind,
+        operation_id: BackupOperationId,
+    ) -> Result<BackupOperationDetail, BackupError> {
+        if operation_id.kind() != kind {
+            return Err(BackupError::NotFound);
+        }
+        match operation_id {
+            BackupOperationId::Maintenance(run_id) => Ok(BackupOperationDetail::Maintenance(
+                self.get_backup_maintenance_run(owner_user_id, run_id)
+                    .await?,
+            )),
+            BackupOperationId::Restore(plan_id) => {
+                let plan = self.get_restore_plan(owner_user_id, plan_id).await?;
+                let execution = load_restore_execution_for_operation(
+                    self.pool.sqlx_pool(),
+                    owner_user_id,
+                    plan.id(),
+                )
+                .await?
+                .map(BackupRestoreExecutionRow::try_into_domain)
+                .transpose()?;
+                validate_restore_operation_shape(&plan, execution.as_ref())?;
+                Ok(BackupOperationDetail::Restore { plan, execution })
+            }
+            BackupOperationId::Prune(plan_id) => {
+                let plan = self.get_prune_plan(owner_user_id, plan_id).await?;
+                let execution = load_prune_execution_for_operation(
+                    self.pool.sqlx_pool(),
+                    owner_user_id,
+                    plan.id(),
+                )
+                .await?
+                .map(BackupPruneExecutionRow::try_into_domain)
+                .transpose()?;
+                validate_prune_operation_shape(&plan, execution.as_ref())?;
+                Ok(BackupOperationDetail::Prune { plan, execution })
+            }
+        }
+    }
+}
+
+fn compare_backup_operation_summaries(
+    left: &BackupOperationSummary,
+    right: &BackupOperationSummary,
+) -> std::cmp::Ordering {
+    right
+        .created_at()
+        .cmp(&left.created_at())
+        .then_with(|| {
+            left.operation_kind()
+                .rank()
+                .cmp(&right.operation_kind().rank())
+        })
+        .then_with(|| {
+            right
+                .operation_id()
+                .into_uuid()
+                .cmp(&left.operation_id().into_uuid())
+        })
+}
+
+#[async_trait]
+impl BackupReadBackend for BackupService {
+    async fn list_backup_sets(
+        &self,
+        owner_user_id: UserId,
+        after: Option<BackupSetId>,
+        limit: u32,
+    ) -> Result<(Vec<BackupSet>, bool), BackupError> {
+        BackupService::list_backup_sets(self, owner_user_id, after, limit).await
+    }
+
+    async fn get_backup_set(
+        &self,
+        owner_user_id: UserId,
+        backup_set_id: BackupSetId,
+    ) -> Result<BackupSet, BackupError> {
+        BackupService::get_backup_set(self, owner_user_id, backup_set_id).await
+    }
+
+    async fn list_backup_snapshots(
+        &self,
+        owner_user_id: UserId,
+        backup_set_id: BackupSetId,
+        state: Option<SnapshotState>,
+        after: Option<BackupSnapshotPagePosition>,
+        limit: u32,
+    ) -> Result<(Vec<BackupSnapshot>, bool), BackupError> {
+        BackupService::list_backup_snapshots(
+            self,
+            owner_user_id,
+            backup_set_id,
+            state,
+            after,
+            limit,
+        )
+        .await
+    }
+
+    async fn get_backup_snapshot(
+        &self,
+        owner_user_id: UserId,
+        snapshot_id: SnapshotId,
+    ) -> Result<BackupSnapshot, BackupError> {
+        BackupService::get_backup_snapshot(self, owner_user_id, snapshot_id).await
+    }
+
+    async fn list_backup_snapshot_nodes(
+        &self,
+        owner_user_id: UserId,
+        backup_set_id: BackupSetId,
+        snapshot_id: SnapshotId,
+        parent_node_id: Option<NodeId>,
+        after: Option<NodeId>,
+        limit: u32,
+    ) -> Result<(Vec<BackupSnapshotNode>, bool), BackupError> {
+        BackupService::list_backup_snapshot_nodes(
+            self,
+            owner_user_id,
+            backup_set_id,
+            snapshot_id,
+            parent_node_id,
+            after,
+            limit,
+        )
+        .await
+    }
+
+    async fn get_current_snapshot_retention_policy(
+        &self,
+        owner_user_id: UserId,
+        backup_set_id: BackupSetId,
+    ) -> Result<BackupSnapshotRetentionPolicyRevision, BackupError> {
+        BackupService::get_current_snapshot_retention_policy(self, owner_user_id, backup_set_id)
+            .await
+    }
+
+    async fn list_backup_maintenance_runs(
+        &self,
+        owner_user_id: UserId,
+        backup_set_id: BackupSetId,
+        after: Option<BackupMaintenanceRunPagePosition>,
+        limit: u32,
+    ) -> Result<(Vec<BackupMaintenanceRun>, bool), BackupError> {
+        BackupService::list_backup_maintenance_runs(
+            self,
+            owner_user_id,
+            backup_set_id,
+            after,
+            limit,
+        )
+        .await
+    }
+
+    async fn get_backup_maintenance_run(
+        &self,
+        owner_user_id: UserId,
+        run_id: BackupMaintenanceRunId,
+    ) -> Result<BackupMaintenanceRun, BackupError> {
+        BackupService::get_backup_maintenance_run(self, owner_user_id, run_id).await
+    }
+
+    async fn get_restore_plan(
+        &self,
+        owner_user_id: UserId,
+        plan_id: BackupRestorePlanId,
+    ) -> Result<BackupRestorePlan, BackupError> {
+        BackupService::get_restore_plan(self, owner_user_id, plan_id).await
+    }
+
+    async fn get_restore_execution(
+        &self,
+        owner_user_id: UserId,
+        execution_id: BackupRestoreExecutionId,
+    ) -> Result<BackupRestoreExecution, BackupError> {
+        BackupService::get_restore_execution(self, owner_user_id, execution_id).await
+    }
+
+    async fn get_prune_plan(
+        &self,
+        owner_user_id: UserId,
+        plan_id: BackupPrunePlanId,
+    ) -> Result<BackupPrunePlan, BackupError> {
+        BackupService::get_prune_plan(self, owner_user_id, plan_id).await
+    }
+
+    async fn get_prune_execution(
+        &self,
+        owner_user_id: UserId,
+        execution_id: BackupPruneExecutionId,
+    ) -> Result<BackupPruneExecution, BackupError> {
+        BackupService::get_prune_execution(self, owner_user_id, execution_id).await
+    }
+
+    async fn list_backup_operations(
+        &self,
+        owner_user_id: UserId,
+        backup_set_id: BackupSetId,
+        kind: Option<BackupOperationKind>,
+        after: Option<BackupOperationPagePosition>,
+        limit: u32,
+    ) -> Result<(Vec<BackupOperationSummary>, bool), BackupError> {
+        BackupService::list_backup_operations(
+            self,
+            owner_user_id,
+            backup_set_id,
+            kind,
+            after,
+            limit,
+        )
+        .await
+    }
+
+    async fn get_backup_operation(
+        &self,
+        owner_user_id: UserId,
+        kind: BackupOperationKind,
+        operation_id: BackupOperationId,
+    ) -> Result<BackupOperationDetail, BackupError> {
+        BackupService::get_backup_operation(self, owner_user_id, kind, operation_id).await
+    }
+}
+
+#[async_trait]
+impl BackupMutationBackend for BackupService {
+    async fn create_backup_set(
+        &self,
+        owner_user_id: UserId,
+        backup_set_id: BackupSetId,
+        name: LogicalName,
+        source_library_id: LibraryId,
+        observed_at: Timestamp,
+    ) -> Result<BackupSet, BackupError> {
+        BackupService::create_backup_set(
+            self,
+            owner_user_id,
+            backup_set_id,
+            name,
+            source_library_id,
+            None,
+            observed_at,
+        )
+        .await
+    }
+
+    async fn configure_snapshot_retention_policy(
+        &self,
+        owner_user_id: UserId,
+        operation_id: String,
+        backup_set_id: BackupSetId,
+        keep_latest_completed: u64,
+        expire_after_seconds: u64,
+    ) -> Result<BackupSnapshotRetentionPolicyRevision, BackupError> {
+        BackupService::configure_snapshot_retention_policy(
+            self,
+            owner_user_id,
+            operation_id,
+            backup_set_id,
+            keep_latest_completed,
+            expire_after_seconds,
+        )
+        .await
+    }
+
+    async fn create_backup_maintenance_run(
+        &self,
+        owner_user_id: UserId,
+        operation_id: String,
+        backup_set_id: BackupSetId,
+    ) -> Result<BackupMaintenanceRun, BackupError> {
+        BackupService::create_backup_maintenance_run(
+            self,
+            owner_user_id,
+            operation_id,
+            backup_set_id,
+        )
+        .await
+    }
+
+    async fn advance_backup_maintenance_run(
+        &self,
+        owner_user_id: UserId,
+        run_id: BackupMaintenanceRunId,
+    ) -> Result<BackupMaintenanceRun, BackupError> {
+        BackupService::advance_backup_maintenance_run(self, owner_user_id, run_id).await
+    }
+
+    async fn create_restore_plan(
+        &self,
+        owner_user_id: UserId,
+        operation_id: String,
+        backup_set_id: BackupSetId,
+        snapshot_id: SnapshotId,
+        target_library_id: LibraryId,
+        target_parent_node_id: NodeId,
+        destination_name: LogicalName,
+    ) -> Result<BackupRestorePlan, BackupError> {
+        BackupService::create_restore_plan(
+            self,
+            owner_user_id,
+            operation_id,
+            backup_set_id,
+            snapshot_id,
+            target_library_id,
+            target_parent_node_id,
+            destination_name,
+        )
+        .await
+    }
+
+    async fn execute_restore_plan(
+        &self,
+        owner_user_id: UserId,
+        plan_id: BackupRestorePlanId,
+    ) -> Result<BackupRestoreExecution, BackupError> {
+        BackupService::execute_restore_plan(self, owner_user_id, plan_id).await
+    }
+
+    async fn create_prune_plan(
+        &self,
+        owner_user_id: UserId,
+        operation_id: String,
+        backup_set_id: BackupSetId,
+        snapshot_id: SnapshotId,
+    ) -> Result<BackupPrunePlan, BackupError> {
+        BackupService::create_prune_plan(
+            self,
+            owner_user_id,
+            operation_id,
+            backup_set_id,
+            snapshot_id,
+        )
+        .await
+    }
+
+    async fn execute_prune_plan(
+        &self,
+        owner_user_id: UserId,
+        plan_id: BackupPrunePlanId,
+    ) -> Result<BackupPruneExecution, BackupError> {
+        BackupService::execute_prune_plan(self, owner_user_id, plan_id).await
+    }
+}
+
+async fn list_maintenance_operation_details(
+    pool: &sqlx::PgPool,
+    owner_user_id: UserId,
+    backup_set_id: BackupSetId,
+    after: Option<BackupOperationPagePosition>,
+    limit: u32,
+) -> Result<Vec<BackupOperationDetail>, BackupError> {
+    let rows = sqlx::query_as::<_, BackupMaintenanceRunRow>(
+        "SELECT run.id, run.owner_user_id, run.backup_set_id, run.policy_revision_id,
+                run.policy_revision_number, run.operation_id, run.fingerprint_version,
+                run.request_fingerprint, run.capture_operation_id,
+                run.expiry_plan_operation_id, run.state, run.captured_snapshot_id,
+                run.expiry_plan_id, run.expiry_execution_id, run.snapshot_captured_at,
+                run.expiry_planned_at, run.maintenance_completed_at, run.stale_at,
+                run.created_at
+         FROM backup_maintenance_runs AS run
+         WHERE run.owner_user_id = $1
+           AND run.backup_set_id = $2
+           AND (
+                $3::TIMESTAMPTZ IS NULL
+                OR run.created_at < $3
+                OR (run.created_at = $3 AND (
+                    1 > $4::SMALLINT
+                    OR (1 = $4::SMALLINT AND run.id < $5)
+                ))
+           )
+         ORDER BY run.created_at DESC, run.id DESC
+         LIMIT $6",
+    )
+    .bind(owner_user_id.into_uuid())
+    .bind(backup_set_id.into_uuid())
+    .bind(after.map(|position| position.created_at().as_offset_datetime()))
+    .bind(after.map(|position| i16::from(position.operation_id().kind().rank())))
+    .bind(after.map(|position| position.operation_id().into_uuid()))
+    .bind(i64::from(limit) + 1)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter()
+        .map(|row| {
+            row.try_into_domain()
+                .map(BackupOperationDetail::Maintenance)
+                .map_err(Into::into)
+        })
+        .collect()
+}
+
+async fn list_restore_operation_details(
+    pool: &sqlx::PgPool,
+    owner_user_id: UserId,
+    backup_set_id: BackupSetId,
+    after: Option<BackupOperationPagePosition>,
+    limit: u32,
+) -> Result<Vec<BackupOperationDetail>, BackupError> {
+    let rows = sqlx::query_as::<_, BackupRestoreOperationRow>(
+        "SELECT plan.id, plan.owner_user_id, plan.backup_set_id, plan.snapshot_id,
+                plan.target_library_id, plan.target_parent_node_id,
+                plan.operation_id, plan.fingerprint_version, plan.request_fingerprint,
+                plan.destination_name, plan.base_journal_epoch, plan.base_journal_head,
+                plan.item_count, plan.content_item_count, plan.state, plan.created_at,
+                plan.stale_at,
+                execution.id AS execution_id,
+                execution.owner_user_id AS execution_owner_user_id,
+                execution.restore_plan_id AS execution_restore_plan_id,
+                execution.target_library_id AS execution_target_library_id,
+                execution.journal_first_sequence AS execution_journal_first_sequence,
+                execution.journal_last_sequence AS execution_journal_last_sequence,
+                execution.created_node_count AS execution_created_node_count,
+                execution.created_file_version_count AS execution_created_file_version_count,
+                execution.state AS execution_state,
+                execution.executed_at AS execution_executed_at
+         FROM backup_restore_plans AS plan
+         INNER JOIN backup_snapshots AS source_snapshot
+            ON source_snapshot.id = plan.snapshot_id
+           AND source_snapshot.owner_user_id = plan.owner_user_id
+           AND source_snapshot.backup_set_id = plan.backup_set_id
+         LEFT JOIN backup_restore_executions AS execution
+            ON execution.restore_plan_id = plan.id
+           AND execution.owner_user_id = plan.owner_user_id
+           AND execution.state = 'COMMITTED'
+         WHERE plan.owner_user_id = $1
+           AND plan.backup_set_id = $2
+           AND (
+                $3::TIMESTAMPTZ IS NULL
+                OR plan.created_at < $3
+                OR (plan.created_at = $3 AND (
+                    2 > $4::SMALLINT
+                    OR (2 = $4::SMALLINT AND plan.id < $5)
+                ))
+           )
+         ORDER BY plan.created_at DESC, plan.id DESC
+         LIMIT $6",
+    )
+    .bind(owner_user_id.into_uuid())
+    .bind(backup_set_id.into_uuid())
+    .bind(after.map(|position| position.created_at().as_offset_datetime()))
+    .bind(after.map(|position| i16::from(position.operation_id().kind().rank())))
+    .bind(after.map(|position| position.operation_id().into_uuid()))
+    .bind(i64::from(limit) + 1)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter()
+        .map(BackupRestoreOperationRow::try_into_detail)
+        .collect()
+}
+
+async fn list_prune_operation_details(
+    pool: &sqlx::PgPool,
+    owner_user_id: UserId,
+    backup_set_id: BackupSetId,
+    after: Option<BackupOperationPagePosition>,
+    limit: u32,
+) -> Result<Vec<BackupOperationDetail>, BackupError> {
+    let rows = sqlx::query_as::<_, BackupPruneOperationRow>(
+        "SELECT plan.id, plan.owner_user_id, plan.backup_set_id, plan.snapshot_id,
+                plan.operation_id, plan.fingerprint_version, plan.request_fingerprint,
+                plan.snapshot_manifest_item_count, plan.snapshot_content_reference_count,
+                plan.planned_pin_release_count, plan.distinct_retained_content_count,
+                plan.retained_after_release_count, plan.would_become_unreferenced_count,
+                plan.state, plan.created_at, plan.stale_at,
+                execution.id AS execution_id,
+                execution.owner_user_id AS execution_owner_user_id,
+                execution.prune_plan_id AS execution_prune_plan_id,
+                execution.backup_set_id AS execution_backup_set_id,
+                execution.snapshot_id AS execution_snapshot_id,
+                execution.released_pin_count AS execution_released_pin_count,
+                execution.distinct_object_count AS execution_distinct_object_count,
+                execution.retained_by_other_reference_count
+                    AS execution_retained_by_other_reference_count,
+                execution.gc_handoff_object_count AS execution_gc_handoff_object_count,
+                execution.state AS execution_state,
+                execution.executed_at AS execution_executed_at
+         FROM backup_prune_plans AS plan
+         INNER JOIN backup_snapshots AS target_snapshot
+            ON target_snapshot.id = plan.snapshot_id
+           AND target_snapshot.owner_user_id = plan.owner_user_id
+           AND target_snapshot.backup_set_id = plan.backup_set_id
+         LEFT JOIN backup_prune_executions AS execution
+            ON execution.prune_plan_id = plan.id
+           AND execution.owner_user_id = plan.owner_user_id
+           AND execution.state = 'COMMITTED'
+         WHERE plan.owner_user_id = $1
+           AND plan.backup_set_id = $2
+           AND (
+                $3::TIMESTAMPTZ IS NULL
+                OR plan.created_at < $3
+                OR (plan.created_at = $3 AND (
+                    3 > $4::SMALLINT
+                    OR (3 = $4::SMALLINT AND plan.id < $5)
+                ))
+           )
+         ORDER BY plan.created_at DESC, plan.id DESC
+         LIMIT $6",
+    )
+    .bind(owner_user_id.into_uuid())
+    .bind(backup_set_id.into_uuid())
+    .bind(after.map(|position| position.created_at().as_offset_datetime()))
+    .bind(after.map(|position| i16::from(position.operation_id().kind().rank())))
+    .bind(after.map(|position| position.operation_id().into_uuid()))
+    .bind(i64::from(limit) + 1)
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter()
+        .map(BackupPruneOperationRow::try_into_detail)
+        .collect()
+}
+
+async fn load_restore_execution_for_operation(
+    pool: &sqlx::PgPool,
+    owner_user_id: UserId,
+    plan_id: BackupRestorePlanId,
+) -> Result<Option<BackupRestoreExecutionRow>, BackupError> {
+    sqlx::query_as::<_, BackupRestoreExecutionRow>(
+        "SELECT id, owner_user_id, restore_plan_id, target_library_id,
+                journal_first_sequence, journal_last_sequence,
+                created_node_count, created_file_version_count, state, executed_at
+         FROM backup_restore_executions
+         WHERE restore_plan_id = $1
+           AND owner_user_id = $2
+           AND state = 'COMMITTED'",
+    )
+    .bind(plan_id.into_uuid())
+    .bind(owner_user_id.into_uuid())
+    .fetch_optional(pool)
+    .await
+    .map_err(Into::into)
+}
+
+async fn load_prune_execution_for_operation(
+    pool: &sqlx::PgPool,
+    owner_user_id: UserId,
+    plan_id: BackupPrunePlanId,
+) -> Result<Option<BackupPruneExecutionRow>, BackupError> {
+    sqlx::query_as::<_, BackupPruneExecutionRow>(
+        "SELECT id, owner_user_id, prune_plan_id, backup_set_id, snapshot_id,
+                released_pin_count, distinct_object_count,
+                retained_by_other_reference_count, gc_handoff_object_count,
+                state, executed_at
+         FROM backup_prune_executions
+         WHERE prune_plan_id = $1
+           AND owner_user_id = $2
+           AND state = 'COMMITTED'",
+    )
+    .bind(plan_id.into_uuid())
+    .bind(owner_user_id.into_uuid())
+    .fetch_optional(pool)
+    .await
+    .map_err(Into::into)
 }
 
 #[derive(Clone, Copy, Debug, FromRow)]
@@ -7587,6 +9373,22 @@ fn validate_page_limit_node(limit: u32) -> Result<u32, BackupError> {
     }
 }
 
+fn validate_page_limit_maintenance(limit: u32) -> Result<u32, BackupError> {
+    if (1..=MAX_BACKUP_MAINTENANCE_RUN_PAGE_LIMIT).contains(&limit) {
+        Ok(limit)
+    } else {
+        Err(BackupError::InvalidLimit)
+    }
+}
+
+fn validate_page_limit_operation(limit: u32) -> Result<u32, BackupError> {
+    if (1..=MAX_BACKUP_OPERATION_PAGE_LIMIT).contains(&limit) {
+        Ok(limit)
+    } else {
+        Err(BackupError::InvalidLimit)
+    }
+}
+
 fn validate_restore_plan_entry_limit(limit: u32) -> Result<u32, BackupError> {
     if (1..=MAX_BACKUP_RESTORE_PLAN_ENTRY_PAGE_LIMIT).contains(&limit) {
         Ok(limit)
@@ -7952,5 +9754,376 @@ mod tests {
         let plan = plan_row.try_into_domain().expect("expiry plan row decodes");
         assert_eq!(plan.evaluated_completed_snapshot_count(), 0);
         assert_eq!(plan.policy_revision_id(), policy.id());
+    }
+
+    #[test]
+    fn backup_operation_summary_is_durable_kind_specific_and_step_based() {
+        let owner_user_id = UserId::new();
+        let backup_set_id = BackupSetId::new();
+        let policy_id = BackupSnapshotRetentionPolicyRevisionId::new();
+        let policy_number = BackupSnapshotRetentionPolicyRevisionNumber::new(1).unwrap();
+        let created_at = Timestamp::parse("2026-08-30T00:00:00Z").unwrap();
+        let captured_at = Timestamp::parse("2026-08-30T01:00:00Z").unwrap();
+        let stale_at = Timestamp::parse("2026-08-30T02:00:00Z").unwrap();
+        let maintenance_request = BackupMaintenanceRunRequest::new(backup_set_id);
+        let stale_run = BackupMaintenanceRun::new(
+            BackupMaintenanceRunId::new(),
+            owner_user_id,
+            "maintenance-summary-stale".to_owned(),
+            maintenance_request.fingerprint(),
+            backup_set_id,
+            policy_id,
+            policy_number,
+            "maintenance-capture-summary".to_owned(),
+            "maintenance-expiry-summary".to_owned(),
+            BackupMaintenanceRunState::Stale,
+            Some(SnapshotId::new()),
+            None,
+            None,
+            Some(captured_at),
+            None,
+            None,
+            Some(stale_at),
+            created_at,
+        )
+        .unwrap();
+        let summary = BackupOperationDetail::Maintenance(stale_run)
+            .summary()
+            .unwrap();
+        assert_eq!(summary.operation_kind(), BackupOperationKind::Maintenance);
+        assert_eq!(summary.completed_steps(), 1);
+        assert_eq!(summary.total_steps(), 3);
+        assert_eq!(summary.last_transition_at(), stale_at);
+        assert_eq!(summary.completed_at(), None);
+
+        let snapshot_id = SnapshotId::new();
+        let target_library_id = LibraryId::new();
+        let target_parent_node_id = NodeId::new();
+        let restore_request = BackupRestorePlanRequest::new(
+            backup_set_id,
+            snapshot_id,
+            target_library_id,
+            target_parent_node_id,
+            name("Recovered"),
+        );
+        let restore_plan_id = BackupRestorePlanId::new();
+        let restore_plan = BackupRestorePlan::new(
+            restore_plan_id,
+            owner_user_id,
+            "restore-summary-planned".to_owned(),
+            restore_request.fingerprint(),
+            restore_request.clone(),
+            Sequence::new(1),
+            Sequence::new(1),
+            2,
+            1,
+            BackupRestorePlanState::Planned,
+            created_at,
+            None,
+        )
+        .unwrap();
+        let summary = BackupOperationDetail::Restore {
+            plan: restore_plan,
+            execution: None,
+        }
+        .summary()
+        .unwrap();
+        assert_eq!(summary.operation_kind(), BackupOperationKind::Restore);
+        assert_eq!(summary.completed_steps(), 1);
+        assert_eq!(summary.total_steps(), 2);
+        assert_eq!(summary.completed_at(), None);
+
+        let stale_restore_plan = BackupRestorePlan::new(
+            BackupRestorePlanId::new(),
+            owner_user_id,
+            "restore-summary-stale".to_owned(),
+            restore_request.fingerprint(),
+            restore_request.clone(),
+            Sequence::new(1),
+            Sequence::new(1),
+            2,
+            1,
+            BackupRestorePlanState::Stale,
+            created_at,
+            Some(stale_at),
+        )
+        .unwrap();
+        let summary = BackupOperationDetail::Restore {
+            plan: stale_restore_plan,
+            execution: None,
+        }
+        .summary()
+        .unwrap();
+        assert_eq!(summary.completed_steps(), 1);
+        assert_eq!(summary.total_steps(), 2);
+        assert_eq!(summary.last_transition_at(), stale_at);
+        assert_eq!(summary.completed_at(), None);
+
+        let corrupt_restore_plan = BackupRestorePlan::new(
+            BackupRestorePlanId::new(),
+            owner_user_id,
+            "restore-summary-corrupt".to_owned(),
+            restore_request.fingerprint(),
+            restore_request.clone(),
+            Sequence::new(1),
+            Sequence::new(1),
+            2,
+            1,
+            BackupRestorePlanState::Executed,
+            created_at,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            BackupOperationDetail::Restore {
+                plan: corrupt_restore_plan,
+                execution: None,
+            }
+            .summary(),
+            Err(BackupError::InvalidPersistedData)
+        );
+
+        let executed_at = Timestamp::parse("2026-08-30T03:00:00Z").unwrap();
+        let executed_restore_plan = BackupRestorePlan::new(
+            BackupRestorePlanId::new(),
+            owner_user_id,
+            "restore-summary-executed".to_owned(),
+            restore_request.fingerprint(),
+            restore_request,
+            Sequence::new(1),
+            Sequence::new(1),
+            2,
+            1,
+            BackupRestorePlanState::Executed,
+            created_at,
+            None,
+        )
+        .unwrap();
+        let execution = BackupRestoreExecution::new(
+            BackupRestoreExecutionId::new(),
+            owner_user_id,
+            executed_restore_plan.id(),
+            target_library_id,
+            Sequence::new(2),
+            Sequence::new(3),
+            2,
+            1,
+            executed_at,
+        )
+        .unwrap();
+        let summary = BackupOperationDetail::Restore {
+            plan: executed_restore_plan,
+            execution: Some(execution),
+        }
+        .summary()
+        .unwrap();
+        assert_eq!(summary.completed_steps(), 2);
+        assert_eq!(summary.last_transition_at(), executed_at);
+        assert_eq!(summary.completed_at(), Some(executed_at));
+
+        let prune_request = BackupPrunePlanRequest::new(backup_set_id, snapshot_id);
+        let prune_plan = BackupPrunePlan::new(
+            BackupPrunePlanId::new(),
+            owner_user_id,
+            "prune-summary-planned".to_owned(),
+            prune_request.fingerprint(),
+            prune_request,
+            2,
+            1,
+            1,
+            1,
+            1,
+            0,
+            BackupPrunePlanState::Planned,
+            created_at,
+            None,
+        )
+        .unwrap();
+        let summary = BackupOperationDetail::Prune {
+            plan: prune_plan,
+            execution: None,
+        }
+        .summary()
+        .unwrap();
+        assert_eq!(summary.operation_kind(), BackupOperationKind::Prune);
+        assert_eq!(summary.completed_steps(), 1);
+        assert_eq!(summary.total_steps(), 2);
+        assert_eq!(summary.completed_at(), None);
+
+        let stale_prune_request = BackupPrunePlanRequest::new(backup_set_id, snapshot_id);
+        let stale_prune_plan = BackupPrunePlan::new(
+            BackupPrunePlanId::new(),
+            owner_user_id,
+            "prune-summary-stale".to_owned(),
+            stale_prune_request.fingerprint(),
+            stale_prune_request,
+            2,
+            1,
+            1,
+            1,
+            1,
+            0,
+            BackupPrunePlanState::Stale,
+            created_at,
+            Some(stale_at),
+        )
+        .unwrap();
+        let summary = BackupOperationDetail::Prune {
+            plan: stale_prune_plan,
+            execution: None,
+        }
+        .summary()
+        .unwrap();
+        assert_eq!(summary.completed_steps(), 1);
+        assert_eq!(summary.total_steps(), 2);
+        assert_eq!(summary.last_transition_at(), stale_at);
+        assert_eq!(summary.completed_at(), None);
+
+        let corrupt_prune_request = BackupPrunePlanRequest::new(backup_set_id, snapshot_id);
+        let corrupt_prune_plan = BackupPrunePlan::new(
+            BackupPrunePlanId::new(),
+            owner_user_id,
+            "prune-summary-corrupt".to_owned(),
+            corrupt_prune_request.fingerprint(),
+            corrupt_prune_request,
+            2,
+            1,
+            1,
+            1,
+            1,
+            0,
+            BackupPrunePlanState::Executed,
+            created_at,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            BackupOperationDetail::Prune {
+                plan: corrupt_prune_plan,
+                execution: None,
+            }
+            .summary(),
+            Err(BackupError::InvalidPersistedData)
+        );
+
+        let executed_prune_plan = BackupPrunePlan::new(
+            BackupPrunePlanId::new(),
+            owner_user_id,
+            "prune-summary-executed".to_owned(),
+            BackupPrunePlanRequest::new(backup_set_id, snapshot_id).fingerprint(),
+            BackupPrunePlanRequest::new(backup_set_id, snapshot_id),
+            2,
+            1,
+            1,
+            1,
+            1,
+            0,
+            BackupPrunePlanState::Executed,
+            created_at,
+            None,
+        )
+        .unwrap();
+        let execution = BackupPruneExecution::new(
+            BackupPruneExecutionId::new(),
+            owner_user_id,
+            executed_prune_plan.id(),
+            backup_set_id,
+            snapshot_id,
+            1,
+            1,
+            1,
+            0,
+            executed_at,
+        )
+        .unwrap();
+        let summary = BackupOperationDetail::Prune {
+            plan: executed_prune_plan,
+            execution: Some(execution),
+        }
+        .summary()
+        .unwrap();
+        assert_eq!(summary.completed_steps(), 2);
+        assert_eq!(summary.last_transition_at(), executed_at);
+        assert_eq!(summary.completed_at(), Some(executed_at));
+    }
+
+    #[test]
+    fn backup_operation_order_is_deterministic_for_equal_timestamps() {
+        let backup_set_id = BackupSetId::new();
+        let created_at = Timestamp::parse("2026-08-30T00:00:00Z").unwrap();
+        let summary = |operation_kind, operation_id| {
+            let (state, completed_steps, total_steps) = match operation_kind {
+                BackupOperationKind::Maintenance => (
+                    BackupOperationState::Maintenance(BackupMaintenanceRunState::Created),
+                    0,
+                    3,
+                ),
+                BackupOperationKind::Restore => (
+                    BackupOperationState::Restore(BackupRestorePlanState::Planned),
+                    1,
+                    2,
+                ),
+                BackupOperationKind::Prune => (
+                    BackupOperationState::Prune(BackupPrunePlanState::Planned),
+                    1,
+                    2,
+                ),
+            };
+            BackupOperationSummary {
+                operation_kind,
+                operation_id,
+                backup_set_id,
+                snapshot_id: None,
+                state,
+                completed_steps,
+                total_steps,
+                created_at,
+                last_transition_at: created_at,
+                completed_at: None,
+            }
+        };
+
+        let mut summaries = [
+            summary(
+                BackupOperationKind::Prune,
+                BackupOperationId::Prune(BackupPrunePlanId::new()),
+            ),
+            summary(
+                BackupOperationKind::Restore,
+                BackupOperationId::Restore(BackupRestorePlanId::new()),
+            ),
+            summary(
+                BackupOperationKind::Maintenance,
+                BackupOperationId::Maintenance(BackupMaintenanceRunId::new()),
+            ),
+        ];
+        summaries.sort_by(compare_backup_operation_summaries);
+        assert_eq!(
+            summaries
+                .iter()
+                .map(BackupOperationSummary::operation_kind)
+                .collect::<Vec<_>>(),
+            vec![
+                BackupOperationKind::Maintenance,
+                BackupOperationKind::Restore,
+                BackupOperationKind::Prune,
+            ]
+        );
+
+        let first = BackupMaintenanceRunId::new();
+        let second = BackupMaintenanceRunId::new();
+        let expected_first = std::cmp::max(first.into_uuid(), second.into_uuid());
+        let mut tied = [
+            summary(
+                BackupOperationKind::Maintenance,
+                BackupOperationId::Maintenance(first),
+            ),
+            summary(
+                BackupOperationKind::Maintenance,
+                BackupOperationId::Maintenance(second),
+            ),
+        ];
+        tied.sort_by(compare_backup_operation_summaries);
+        assert_eq!(tied[0].operation_id().into_uuid(), expected_first);
     }
 }

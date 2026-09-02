@@ -1,3 +1,5 @@
+import { Link } from 'react-router-dom'
+
 import { useAuth } from '../../auth/useAuth'
 
 export function HomePage() {
@@ -9,12 +11,13 @@ export function HomePage() {
         <p className="eyebrow">Authenticated shell</p>
         <h1 id="home-title">Welcome to Synveil</h1>
         <p className="hero-copy">
-          You are signed in. This small shell confirms the browser session and
-          leaves product areas behind their own contracts.
+          You are signed in. Review protected file history and choose explicit
+          backup actions in the Backup Control Center.
         </p>
+        <Link className="button-link" to="/backups">Open Backup Control Center</Link>
         <p className="notice" role="status">
-          Files, synchronization, backups, sharing, and device management are
-          not available in this authentication phase.
+          General file browsing, synchronization controls, sharing, and device
+          management are not available in this application phase.
         </p>
       </section>
 

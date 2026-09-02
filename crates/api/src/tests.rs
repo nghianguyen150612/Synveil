@@ -68,6 +68,7 @@ const TEST_LOGIN: &str = "alice";
 const TEST_LOGIN_KEY: &str = "alice-key";
 const TEST_PASSWORD: &str = "correct horse battery staple";
 
+mod backups;
 mod device_auth;
 
 struct TestHealthAuthorizer;

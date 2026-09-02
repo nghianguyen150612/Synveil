@@ -1,7 +1,11 @@
 import { Component, type ReactNode } from 'react'
 
+import { recordClientRenderFailure } from '../diagnostics/record'
+import type { DiagnosticRouteCategory } from '../diagnostics/types'
+
 interface AppErrorBoundaryProps {
   readonly children: ReactNode
+  readonly routeCategory?: DiagnosticRouteCategory
 }
 
 interface AppErrorBoundaryState {
@@ -20,22 +24,31 @@ export class AppErrorBoundary extends Component<
   }
 
   componentDidCatch(): void {
-    // Diagnostics stay out of the public UI until the telemetry policy exists.
+    recordClientRenderFailure(this.props.routeCategory)
   }
 
   render() {
     if (this.state.hasError) {
       return (
-        <main className="error-screen" aria-labelledby="application-error-title">
+        <main
+          className="error-screen"
+          role="alert"
+          aria-labelledby="application-error-title"
+        >
           <div className="content-column">
             <p className="eyebrow">Synveil</p>
-            <h1 id="application-error-title">Something went wrong</h1>
+            <h1 id="application-error-title">Something went wrong in this page.</h1>
             <p>
-              The page could not be displayed safely. Reload to try again.
+              The page could not be displayed safely. Reload to try again or open diagnostics for troubleshooting.
             </p>
-            <button type="button" onClick={() => window.location.reload()}>
-              Reload page
-            </button>
+            <div className="error-screen-actions">
+              <button type="button" onClick={() => window.location.reload()}>
+                Reload page
+              </button>
+              <a className="button-link button-link--secondary" href="/health/dev">
+                Open diagnostics
+              </a>
+            </div>
           </div>
         </main>
       )
