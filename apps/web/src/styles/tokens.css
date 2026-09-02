@@ -10,6 +10,9 @@
   --color-info-soft: #e1eff6;
   --color-warning-soft: #fff2d7;
   --color-warning-ink: #704f08;
+  --color-danger: #9b2c2c;
+  --color-danger-strong: #782020;
+  --color-danger-soft: #fce8e6;
   --color-focus: #b44d00;
   --shadow-panel: 0 1rem 2.5rem rgb(20 55 50 / 8%);
   --radius-small: 0.5rem;

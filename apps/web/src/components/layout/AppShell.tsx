@@ -1,13 +1,41 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 
 import { useAuth } from '../../auth/useAuth'
+import { PendingMutationAccountWarning } from '../../features/backups/PendingMutationAccountWarning'
 
 function navigationClassName({ isActive }: { isActive: boolean }): string {
   return isActive ? 'navigation-link navigation-link--active' : 'navigation-link'
 }
 
 export function AppShell() {
-  const { logout, session, status } = useAuth()
+  const { generation, logout, session, status } = useAuth()
+  const location = useLocation()
+  const [loggingOut, setLoggingOut] = useState(false)
+
+  useEffect(() => {
+    if (status === 'recovering' || status === 'recovery_error') {
+      return
+    }
+    const heading = document.querySelector<HTMLElement>('#cross-account-retry-title')
+      ?? document.querySelector<HTMLElement>('#main-content h1')
+    if (heading) {
+      heading.setAttribute('tabindex', '-1')
+      heading.focus()
+    }
+  }, [generation, location.hash, location.pathname, location.search, status])
+
+  async function performLogout() {
+    if (loggingOut) {
+      return
+    }
+    setLoggingOut(true)
+    try {
+      await logout()
+    } finally {
+      setLoggingOut(false)
+    }
+  }
 
   return (
     <div className="app-frame">
@@ -33,6 +61,11 @@ export function AppShell() {
                 </NavLink>
               </li>
               <li>
+                <NavLink className={navigationClassName} to="/backups">
+                  Backups
+                </NavLink>
+              </li>
+              <li>
                 <NavLink className={navigationClassName} to="/health/dev">
                   Development health
                 </NavLink>
@@ -47,16 +80,17 @@ export function AppShell() {
             <button
               type="button"
               className="button--secondary"
-              onClick={() => void logout()}
-              disabled={status === 'loading'}
+              onClick={() => void performLogout()}
+              disabled={loggingOut}
             >
-              {status === 'loading' ? 'Signing out…' : 'Logout'}
+              {loggingOut ? 'Signing out…' : 'Logout'}
             </button>
           </div>
         </div>
       </header>
       <main id="main-content" className="main-content">
         <div className="content-column">
+          <PendingMutationAccountWarning />
           <Outlet />
         </div>
       </main>

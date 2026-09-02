@@ -22,7 +22,9 @@ export interface BootstrapApi {
 export function getBootstrapStatus(
   client: ApiClient = apiClient,
 ): Promise<BootstrapStatusResponse> {
-  return client.get<BootstrapStatusResponse>('/api/v1/system/bootstrap-status')
+  return client.get<BootstrapStatusResponse>('/api/v1/system/bootstrap-status', {
+    diagnosticOperation: 'AUTH_BOOTSTRAP',
+  })
 }
 
 /** Create the first administrator through the server-side race-safe boundary. */
@@ -30,7 +32,9 @@ export function createFirstAdmin(
   request: BootstrapAdminRequest,
   client: ApiClient = apiClient,
 ): Promise<BootstrapStatusResponse> {
-  return client.post<BootstrapStatusResponse>('/api/v1/bootstrap/admin', request)
+  return client.post<BootstrapStatusResponse>('/api/v1/bootstrap/admin', request, {
+    diagnosticOperation: 'AUTH_BOOTSTRAP_CREATE',
+  })
 }
 
 /** Default dependency-injection boundary used by AuthProvider and its tests. */

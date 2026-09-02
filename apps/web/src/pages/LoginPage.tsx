@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useLocation } from 'react-router-dom'
 
 import { isApiRequestError } from '../api/errors'
@@ -30,15 +30,18 @@ function routeNotice(state: unknown): string | undefined {
 
 export function LoginPage() {
   const location = useLocation()
-  const { login, status, errorMessage, notice: authNotice } = useAuth()
+  const { login, errorMessage, notice: authNotice } = useAuth()
   const [form, setForm] = useState<LoginForm>({
     login: '',
     login_key: '',
     password: '',
   })
   const [formError, setFormError] = useState<string>()
-  const submitting = status === 'loading'
+  const [submitting, setSubmitting] = useState(false)
+  const headingRef = useRef<HTMLHeadingElement>(null)
   const notice = routeNotice(location.state) ?? authNotice
+
+  useEffect(() => headingRef.current?.focus(), [])
 
   function update(field: keyof LoginForm, value: string) {
     setForm((current) => ({ ...current, [field]: value }))
@@ -53,9 +56,12 @@ export function LoginPage() {
     }
 
     try {
+      setSubmitting(true)
       await login(form)
     } catch (error) {
       setFormError(loginErrorMessage(error))
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -63,8 +69,8 @@ export function LoginPage() {
     <main className="auth-layout">
       <section className="auth-card panel" aria-labelledby="login-title">
         <p className="eyebrow">Synveil</p>
-        <h1 id="login-title">Sign in</h1>
-        <p>Sign in to continue to your Synveil server.</p>
+        <h1 id="login-title" ref={headingRef} tabIndex={-1}>Sign in</h1>
+        <p>{notice?.includes('session has ended') ? 'Sign in again to continue.' : 'Sign in to continue to your Synveil server.'}</p>
         {notice && (
           <p className="form-note" role="status">
             {notice}

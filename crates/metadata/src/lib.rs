@@ -34,18 +34,21 @@ mod versions;
 
 pub use auth::{AuthRepository, BootstrapAttempt, BootstrapState};
 pub use backup::{
-    BackupError, BackupMaintenanceRunRow, BackupPruneExecutionObjectResultRow,
-    BackupPruneExecutionRow, BackupPrunePlanEntryRow, BackupPrunePlanRow,
-    BackupRestoreExecutionEntryRow, BackupRestoreExecutionRow, BackupRestorePlanEntryRow,
-    BackupRestorePlanRow, BackupService, BackupSetRow, BackupSnapshotExpiryExecutionEntryRow,
-    BackupSnapshotExpiryExecutionRow, BackupSnapshotExpiryPlanEntryRow,
-    BackupSnapshotExpiryPlanRow, BackupSnapshotNodeRow, BackupSnapshotRetentionPolicyRevisionRow,
-    BackupSnapshotRow, DEFAULT_BACKUP_PRUNE_PLAN_ENTRY_PAGE_LIMIT,
-    DEFAULT_BACKUP_RESTORE_PLAN_ENTRY_PAGE_LIMIT, DEFAULT_BACKUP_SET_PAGE_LIMIT,
-    DEFAULT_BACKUP_SNAPSHOT_EXPIRY_PLAN_ENTRY_PAGE_LIMIT, DEFAULT_BACKUP_SNAPSHOT_PAGE_LIMIT,
-    MAX_BACKUP_PRUNE_PLAN_ENTRY_PAGE_LIMIT, MAX_BACKUP_RESTORE_PLAN_ENTRY_PAGE_LIMIT,
-    MAX_BACKUP_SET_PAGE_LIMIT, MAX_BACKUP_SNAPSHOT_EXPIRY_PLAN_ENTRY_PAGE_LIMIT,
-    MAX_BACKUP_SNAPSHOT_PAGE_LIMIT,
+    BackupError, BackupMaintenanceRunPagePosition, BackupMaintenanceRunRow, BackupMutationBackend,
+    BackupOperationDetail, BackupOperationId, BackupOperationPagePosition, BackupOperationState,
+    BackupOperationSummary, BackupPruneExecutionObjectResultRow, BackupPruneExecutionRow,
+    BackupPrunePlanEntryRow, BackupPrunePlanRow, BackupReadBackend, BackupRestoreExecutionEntryRow,
+    BackupRestoreExecutionRow, BackupRestorePlanEntryRow, BackupRestorePlanRow, BackupService,
+    BackupSetRow, BackupSnapshotExpiryExecutionEntryRow, BackupSnapshotExpiryExecutionRow,
+    BackupSnapshotExpiryPlanEntryRow, BackupSnapshotExpiryPlanRow, BackupSnapshotNodeRow,
+    BackupSnapshotPagePosition, BackupSnapshotRetentionPolicyRevisionRow, BackupSnapshotRow,
+    DEFAULT_BACKUP_MAINTENANCE_RUN_PAGE_LIMIT, DEFAULT_BACKUP_OPERATION_PAGE_LIMIT,
+    DEFAULT_BACKUP_PRUNE_PLAN_ENTRY_PAGE_LIMIT, DEFAULT_BACKUP_RESTORE_PLAN_ENTRY_PAGE_LIMIT,
+    DEFAULT_BACKUP_SET_PAGE_LIMIT, DEFAULT_BACKUP_SNAPSHOT_EXPIRY_PLAN_ENTRY_PAGE_LIMIT,
+    DEFAULT_BACKUP_SNAPSHOT_PAGE_LIMIT, MAX_BACKUP_MAINTENANCE_RUN_PAGE_LIMIT,
+    MAX_BACKUP_OPERATION_PAGE_LIMIT, MAX_BACKUP_PRUNE_PLAN_ENTRY_PAGE_LIMIT,
+    MAX_BACKUP_RESTORE_PLAN_ENTRY_PAGE_LIMIT, MAX_BACKUP_SET_PAGE_LIMIT,
+    MAX_BACKUP_SNAPSHOT_EXPIRY_PLAN_ENTRY_PAGE_LIMIT, MAX_BACKUP_SNAPSHOT_PAGE_LIMIT,
 };
 pub use config::{DATABASE_URL_ENV, DatabaseConfig, PoolConfig};
 pub use conflicts::{

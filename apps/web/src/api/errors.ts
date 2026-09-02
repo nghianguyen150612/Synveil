@@ -11,6 +11,8 @@ export interface ApiErrorEnvelope {
 }
 
 const MAX_ERROR_TEXT_LENGTH = 64 * 1024
+const MAX_SAFE_CORRELATION_ID_LENGTH = 128
+const SAFE_CORRELATION_ID_PATTERN = /^[A-Za-z0-9._~-]+$/
 
 const FALLBACK_ERROR: ApiErrorPayload = {
   code: 'http_error',
@@ -21,6 +23,28 @@ const FALLBACK_ERROR: ApiErrorPayload = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+/**
+ * The backend validates request IDs before returning them. Repeat the small
+ * boundary check in the browser before a value reaches user-facing diagnostics.
+ * Short IDs are accepted here so test and development servers can still be
+ * correlated; production IDs remain bounded by the server contract.
+ */
+export function safeServerRequestId(value: unknown): string | undefined {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > MAX_SAFE_CORRELATION_ID_LENGTH ||
+    value === 'unknown' ||
+    value === 'pending' ||
+    value.includes('svd1_') ||
+    value.includes('sve1_') ||
+    !SAFE_CORRELATION_ID_PATTERN.test(value)
+  ) {
+    return undefined
+  }
+  return value
 }
 
 function parseErrorPayload(value: unknown): ApiErrorPayload | undefined {
@@ -76,10 +100,19 @@ export class ApiRequestError extends Error {
       parsed = undefined
     }
 
-    const payload = parseErrorPayload(parsed) ?? {
-      ...FALLBACK_ERROR,
-      retryable: response.status >= 500,
-    }
+    const parsedPayload = parseErrorPayload(parsed)
+    const responseRequestId = safeServerRequestId(response.headers.get('X-Request-ID'))
+    const payload = parsedPayload
+      ? {
+          ...parsedPayload,
+          request_id:
+            safeServerRequestId(parsedPayload.request_id) ?? responseRequestId ?? 'unknown',
+        }
+      : {
+          ...FALLBACK_ERROR,
+          request_id: responseRequestId ?? 'unknown',
+          retryable: response.status >= 500,
+        }
     return new ApiRequestError(response.status, payload)
   }
 }
@@ -88,10 +121,75 @@ export function isApiRequestError(error: unknown): error is ApiRequestError {
   return error instanceof ApiRequestError
 }
 
+export type NormalizedApiErrorKind =
+  | 'AuthenticationRequired'
+  | 'ForbiddenError'
+  | 'ValidationError'
+  | 'ConflictError'
+  | 'NotFoundError'
+  | 'DependencyUnavailable'
+  | 'UnexpectedServerError'
+
+export interface NormalizedApiError {
+  readonly kind: NormalizedApiErrorKind
+  readonly status?: number
+  readonly code?: string
+  readonly requestId?: string
+  readonly retryable: boolean
+  readonly details?: Record<string, unknown>
+}
+
+/** Keep transport diagnostics typed at the API boundary; views choose their own safe copy. */
+export function normalizeApiError(error: unknown): NormalizedApiError {
+  if (!isApiRequestError(error)) {
+    return { kind: 'DependencyUnavailable', retryable: true }
+  }
+
+  const shared = {
+    status: error.status,
+    code: error.code,
+    requestId: error.requestId,
+    retryable: error.retryable,
+    ...(error.details ? { details: error.details } : {}),
+  }
+
+  if (error.status === 401) {
+    return { kind: 'AuthenticationRequired', ...shared }
+  }
+  if (error.status === 404) {
+    return { kind: 'NotFoundError', ...shared }
+  }
+  if (error.status === 403) {
+    return { kind: 'ForbiddenError', ...shared }
+  }
+  if (error.status === 409) {
+    return { kind: 'ConflictError', ...shared }
+  }
+  if (error.status === 503) {
+    return { kind: 'DependencyUnavailable', ...shared }
+  }
+  if (error.status === 400 || error.status === 413 || error.status === 422) {
+    return { kind: 'ValidationError', ...shared }
+  }
+  return { kind: 'UnexpectedServerError', ...shared }
+}
+
 /** Convert unknown failures to safe UI copy without exposing diagnostics. */
 export function toUserFacingMessage(error: unknown): string {
-  if (isApiRequestError(error)) {
-    return error.message
+  switch (normalizeApiError(error).kind) {
+    case 'AuthenticationRequired':
+      return 'Your session has expired. Sign in again.'
+    case 'ForbiddenError':
+      return 'This request could not be verified. Refresh and try again.'
+    case 'ValidationError':
+      return 'Check the information you entered and try again.'
+    case 'ConflictError':
+      return 'The item changed before this request completed. Refresh and try again.'
+    case 'NotFoundError':
+      return 'The requested item is not available.'
+    case 'DependencyUnavailable':
+      return 'The service is temporarily unavailable. Please try again.'
+    case 'UnexpectedServerError':
+      return 'Something went wrong. Please try again.'
   }
-  return 'Something went wrong. Please try again.'
 }

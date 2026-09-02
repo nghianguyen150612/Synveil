@@ -21,7 +21,7 @@ function setupErrorMessage(error: unknown): string {
 }
 
 export function SetupPage() {
-  const { bootstrap, status, errorMessage } = useAuth()
+  const { bootstrap, errorMessage } = useAuth()
   const [form, setForm] = useState<SetupForm>({
     login: '',
     login_key: '',
@@ -29,7 +29,7 @@ export function SetupPage() {
     confirmPassword: '',
   })
   const [formError, setFormError] = useState<string>()
-  const submitting = status === 'loading'
+  const [submitting, setSubmitting] = useState(false)
 
   function update(field: keyof SetupForm, value: string) {
     setForm((current) => ({ ...current, [field]: value }))
@@ -49,6 +49,7 @@ export function SetupPage() {
     }
 
     try {
+      setSubmitting(true)
       await bootstrap({
         login: form.login,
         login_key: form.login_key,
@@ -59,6 +60,8 @@ export function SetupPage() {
         return
       }
       setFormError(setupErrorMessage(error))
+    } finally {
+      setSubmitting(false)
     }
   }
 

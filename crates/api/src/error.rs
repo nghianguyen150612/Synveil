@@ -68,6 +68,17 @@ pub enum ApiError {
     BootstrapClosed,
     SyncInvalidLimit,
     SyncInvalidAckToken,
+    BackupInvalidLimit,
+    BackupInvalidCursor,
+    BackupSetConflict,
+    BackupRetentionPolicyNotConfigured,
+    BackupMaintenanceAlreadyRunning,
+    BackupMaintenanceRunStale,
+    BackupSnapshotNotPrunable,
+    BackupSnapshotAlreadyPruned,
+    BackupPrunePlanAlreadyExists,
+    BackupPrunePlanStale,
+    BackupRetentionCorruption,
     SyncCheckpointConflict,
     RebaselineInvalidLimit,
     RebaselineInvalidCursor,
@@ -144,8 +155,18 @@ impl ApiError {
             Self::InvalidEnrollment | Self::DeviceRevoked => StatusCode::UNAUTHORIZED,
             Self::Forbidden => StatusCode::FORBIDDEN,
             Self::BootstrapClosed => StatusCode::CONFLICT,
+            Self::BackupSetConflict
+            | Self::BackupRetentionPolicyNotConfigured
+            | Self::BackupMaintenanceAlreadyRunning
+            | Self::BackupMaintenanceRunStale
+            | Self::BackupSnapshotNotPrunable
+            | Self::BackupSnapshotAlreadyPruned
+            | Self::BackupPrunePlanAlreadyExists
+            | Self::BackupPrunePlanStale => StatusCode::CONFLICT,
             Self::SyncInvalidLimit
             | Self::SyncInvalidAckToken
+            | Self::BackupInvalidLimit
+            | Self::BackupInvalidCursor
             | Self::RebaselineInvalidLimit
             | Self::RebaselineInvalidCursor
             | Self::RebaselineInvalidBootstrapToken => StatusCode::BAD_REQUEST,
@@ -158,6 +179,7 @@ impl ApiError {
             | Self::MutationDependencyUnavailable
             | Self::ConflictDependencyUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal
+            | Self::BackupRetentionCorruption
             | Self::RebaselineInvalidPersistedData
             | Self::MutationInvalidPersistedData
             | Self::ConflictInvalidPersistedData => StatusCode::INTERNAL_SERVER_ERROR,
@@ -211,6 +233,17 @@ impl ApiError {
             Self::BootstrapClosed => "bootstrap_closed",
             Self::SyncInvalidLimit => "invalid_limit",
             Self::SyncInvalidAckToken => "invalid_ack_token",
+            Self::BackupInvalidLimit => "invalid_limit",
+            Self::BackupInvalidCursor => "invalid_cursor",
+            Self::BackupSetConflict => "backup_set_conflict",
+            Self::BackupRetentionPolicyNotConfigured => "retention_policy_not_configured",
+            Self::BackupMaintenanceAlreadyRunning => "maintenance_already_running",
+            Self::BackupMaintenanceRunStale => "maintenance_run_stale",
+            Self::BackupSnapshotNotPrunable => "snapshot_not_prunable",
+            Self::BackupSnapshotAlreadyPruned => "snapshot_already_pruned",
+            Self::BackupPrunePlanAlreadyExists => "prune_plan_already_exists",
+            Self::BackupPrunePlanStale => "prune_plan_stale",
+            Self::BackupRetentionCorruption => "retention_corruption",
             Self::SyncCheckpointConflict => "checkpoint_conflict",
             Self::RebaselineInvalidLimit => "invalid_limit",
             Self::RebaselineInvalidCursor => "invalid_cursor",
@@ -259,6 +292,17 @@ impl ApiError {
             | Self::BootstrapClosed
             | Self::SyncInvalidLimit
             | Self::SyncInvalidAckToken
+            | Self::BackupInvalidLimit
+            | Self::BackupInvalidCursor
+            | Self::BackupSetConflict
+            | Self::BackupRetentionPolicyNotConfigured
+            | Self::BackupMaintenanceAlreadyRunning
+            | Self::BackupMaintenanceRunStale
+            | Self::BackupSnapshotNotPrunable
+            | Self::BackupSnapshotAlreadyPruned
+            | Self::BackupPrunePlanAlreadyExists
+            | Self::BackupPrunePlanStale
+            | Self::BackupRetentionCorruption
             | Self::SyncCheckpointConflict
             | Self::RebaselineInvalidLimit
             | Self::RebaselineInvalidCursor
@@ -302,7 +346,7 @@ impl ApiError {
             },
             Self::VersionConflict { .. } => "The resource changed before this request was applied.",
             Self::IdempotencyConflict => {
-                "The idempotency key was already used for a different restore request."
+                "The idempotency key was already used for a different request."
             }
             Self::MutationIdConflict => {
                 "The mutation ID was already used for a different mutation."
@@ -339,6 +383,33 @@ impl ApiError {
             Self::BootstrapClosed => "Initial setup is no longer available.",
             Self::SyncInvalidLimit => "The synchronization feed limit is invalid.",
             Self::SyncInvalidAckToken => "The synchronization acknowledgment token is invalid.",
+            Self::BackupInvalidLimit => "The backup page limit is invalid.",
+            Self::BackupInvalidCursor => "The backup page cursor is invalid.",
+            Self::BackupSetConflict => "A backup set already uses this logical configuration.",
+            Self::BackupRetentionPolicyNotConfigured => {
+                "Configure a retention policy before creating a maintenance run."
+            }
+            Self::BackupMaintenanceAlreadyRunning => {
+                "The backup set already has an active maintenance run."
+            }
+            Self::BackupMaintenanceRunStale => {
+                "The maintenance run is stale and cannot be advanced."
+            }
+            Self::BackupSnapshotNotPrunable => {
+                "The backup snapshot is not eligible for retention pruning."
+            }
+            Self::BackupSnapshotAlreadyPruned => {
+                "The backup snapshot retention has already been pruned."
+            }
+            Self::BackupPrunePlanAlreadyExists => {
+                "The backup snapshot already has an active prune plan."
+            }
+            Self::BackupPrunePlanStale => {
+                "The prune plan reference basis changed; create a new plan explicitly."
+            }
+            Self::BackupRetentionCorruption => {
+                "Synveil could not validate the persisted backup retention evidence."
+            }
             Self::SyncCheckpointConflict => {
                 "The synchronization checkpoint changed; fetch the feed again."
             }
