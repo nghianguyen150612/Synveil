@@ -255,10 +255,11 @@ impl PostgresObjectGcWorkerRepository {
                 continue;
             }
 
-            // A new reference is impossible through the normal lifecycle
-            // trigger after `GC_DELETING`, but persisted drift must stop rather
-            // than be reclaimed and retried forever.
-            if has_file_version_reference(
+            // A new reference is impossible through normal FileVersion/pin
+            // lifecycle triggers after `GC_DELETING`, but persisted drift (or
+            // a fault-injected backup pin) must stop rather than be reclaimed
+            // and retried forever.
+            if has_content_retention_reference(
                 &mut transaction,
                 candidate.object_id(),
                 candidate.dedup_domain_id(),
@@ -530,7 +531,7 @@ async fn lock_object_identity(
     .map_err(db_error)
 }
 
-async fn has_file_version_reference(
+async fn has_content_retention_reference(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     object_id: ObjectId,
     dedup_domain_id: DedupDomainId,
@@ -538,6 +539,9 @@ async fn has_file_version_reference(
     sqlx::query_scalar(
         "SELECT EXISTS(
             SELECT 1 FROM file_versions
+            WHERE object_id = $1 AND object_dedup_domain_id = $2
+            UNION ALL
+            SELECT 1 FROM backup_snapshot_content_pins
             WHERE object_id = $1 AND object_dedup_domain_id = $2
          )",
     )

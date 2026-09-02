@@ -186,3 +186,115 @@ Prompt 37 status:
 | durable outbound intent capture | `IMPLEMENTED` |
 | automatic outbound mutation submission | `NOT IMPLEMENTED` |
 | desktop GUI/pairing UX | `NOT IMPLEMENTED` |
+
+Prompt 41 should add the next bounded backup capability only after this gate passes.
+
+`20260829000000_backup_domain_snapshot_manifest.sql` adds only the durable
+backup domain: owner/name-scoped `backup_sets` carrying retention metadata, the
+immutable `backup_snapshots` capture lifecycle, and immutable
+`backup_snapshot_nodes` manifest rows. The snapshot captures the current
+logical namespace cut (journal epoch and head sequence) at commit time; the
+manifest is written and completed in the same transaction as the capture, so a
+partial snapshot can never become restorable. Snapshot captures are
+retry-idempotent through `(owner_user_id, backup_set_id, operation_id)`.
+
+The manifest stores logical Node/FileVersion references and safe content
+metadata (byte length, SHA-256) only. No Object ID, ObjectReplica ID, storage
+key, backend locator, staging handle, filesystem path, credential, or byte is
+persisted here. Manifest rows have no foreign key back to mutable
+Node/FileVersion/Object rows, so later renames, moves, Trash/purge, or content
+replacement cannot alter or block a captured backup. An
+append-only trigger blocks in-place UPDATE on manifest rows; only the capture
+transaction inserts them. Expiration is a lifecycle state transition, not a
+hidden DELETE. The later explicit prune execution releases only its authorized
+retention pins while preserving the expired snapshot and manifest as audit
+history. The migration adds no crawler, scheduled execution, incremental
+planner, upload/restore execution, retention worker, pruning, or remote target.
+
+`20260829000001_backup_content_retention.sql` adds only server-internal
+`backup_snapshot_content_pins`: one durable canonical-Object retention
+reference for each captured manifest content row. Pins are snapshot-owned and
+may be released only through the later exact-plan authorized prune execution;
+the snapshot and manifest remain preserved. Pins have no FK to mutable
+Node/FileVersion rows and therefore survive metadata purge. A pin INSERT is
+accepted only for a BUILDING snapshot
+and immediately validates the exact manifest/FileVersion/Object mapping; pin
+rows are append-only and direct release is rejected while the owning snapshot
+exists. Snapshot lifecycle transitions are one-way, so a committed owner cannot
+be reopened. Ordinary deletion of a COMPLETED or EXPIRED snapshot is also
+rejected, while the existing cascade remains available for a later explicit
+pruning protocol. The migration also makes snapshot completion reject a
+manifest/pin count or mapping mismatch, requires a pinned Object to remain
+referenceable during capture, and provides the Object-keyed index used by the
+existing purge and GC rechecks. Snapshot expiry remains lifecycle metadata and
+does not remove a pin, manifest row, Object, replica, or byte.
+`20260829000002_backup_restore_plans.sql` adds the durable, owner-scoped
+non-destructive restore-plan foundation. A plan captures one completed
+snapshot's logical tree beneath a newly named destination directory, the
+target library journal epoch/head used for staleness validation, a semantic
+retry fingerprint, and immutable logical plan entries with durable planned
+Node IDs. Creation performs a metadata-only recoverability preflight through
+the retained pin, canonical Object, and verified-replica relations; it does
+not require the historical live FileVersion row and does not read or write an
+ObjectStore. The only plan lifecycle transition is `PLANNED` to `STALE` when
+target evidence changes. The migration adds no restore execution, live
+namespace mutation, overwrite/merge behavior, pin release, pruning, HTTP/UI,
+or client protocol.
+`20260829000003_backup_restore_execution.sql` adds the atomic restore execution
+receipt and immutable per-entry execution evidence. It extends the plan
+lifecycle with terminal `EXECUTED` and keeps `ASSEMBLING` transaction-local
+through deferred sealing checks. One committed execution is uniquely bound to
+one owner-scoped plan and cannot be deleted or rewritten.
+
+`20260829000004_backup_prune_plans.sql` adds only durable, owner-scoped
+retention-release preflight evidence for one `EXPIRED` snapshot. A sealed plan
+contains logical manifest release entries plus private per-distinct-Object
+reference-accounting evidence: all source-snapshot pins are prospective
+releases, while live `file_versions` and pins owned by other snapshots remain
+authoritative survivors. `ASSEMBLING` is transaction-local and deferred
+sealing proves that every source pin and distinct retained Object is
+represented before `PLANNED` can commit. Plans, entries, and impacts are
+immutable except `PLANNED -> STALE` when validation detects source or reference
+drift. The migration adds no pin release, snapshot/manifest deletion, GC
+candidate/lease mutation, physical GC, ObjectStore operation, policy worker,
+HTTP route, or client surface.
+
+`20260829000005_backup_prune_execution.sql` adds an explicit, atomic execution
+receipt for an accepted prune plan, authorizes only the plan-bound retention
+pin release, and hands newly unreferenced canonical Objects to the existing GC
+candidate pipeline. It does not delete ObjectStore bytes or expose physical
+identity through the public backup domain.
+
+`20260829000006_backup_retention_expiry_planning.sql` adds immutable,
+owner-scoped snapshot-retention policy revisions and sealed, deterministic
+snapshot-expiry plans. Policy values are limited to a positive newest-completed
+floor and a positive minimum age. Planning ranks only COMPLETED snapshots by
+duration is technically bounded to 10,000 Julian years so portable checked
+timestamp subtraction cannot accept an unrepresentable duration. Planning
+ranks by `committed_at DESC, id DESC`, records one of `KEEP_LATEST`, `KEEP_RECENT`,
+`BLOCKED_ACTIVE_RESTORE_PLAN`, or `EXPIRE` for every cohort member, and binds
+the decisions to the current immutable policy revision, a server-authoritative
+evaluation time, and a versioned cohort/blocker fingerprint. A backup-set row
+fence serializes policy revision allocation and coherent planning with snapshot
+completion; active restore-plan rows are share-locked while observed. Plans and
+entries are immutable after sealing except for `PLANNED -> STALE` validation.
+This migration performs no snapshot expiry transition, retention-pin release,
+prune operation, GC mutation, ObjectStore I/O, scheduler work, HTTP/client
+surface, or manual-hold behavior.
+
+`20260829000007_backup_expiry_execution.sql` adds explicit execution for a
+sealed snapshot-expiry plan. Execution revalidates the original policy/cohort
+basis, marks stale plans without replanning, persists one committed receipt and
+per-entry evidence, and transitions only plan-approved snapshots from
+`COMPLETED` to `EXPIRED`. It releases no retention pins, creates no prune plan,
+performs no GC handoff, and performs no ObjectStore operation.
+
+`20260829000008_backup_maintenance_runs.sql` adds the durable explicit manual
+backup maintenance-run coordinator. A run binds the current retention-policy
+revision at creation, stores owner-scoped idempotency evidence plus immutable
+child operation identities, and records monotonic progress through snapshot
+capture, expiry planning, expiry execution, and terminal completion or
+staleness. The coordinator stores only logical child references; child tables
+remain authoritative for snapshot, expiry-plan, and expiry-execution details.
+It adds no scheduler/background worker, HTTP/client surface, automatic prune,
+retention-pin release, GC handoff, physical GC, or ObjectStore I/O.

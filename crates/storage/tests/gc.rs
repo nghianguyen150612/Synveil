@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -14,15 +14,16 @@ use futures_util::stream;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use synveil_core::{
-    DedupDomainId, FileVersion, FileVersionId, GcWorkerConfig, GcWorkerRetryPolicy, Library,
-    LibraryId, LogicalName, Node, NodeId, NodeKind, ObjectGcOperationId, ObjectGcPolicy, ObjectId,
-    ObjectReference, ObjectReplicaId, Sha256Digest, Timestamp, UploadOperation, UploadSessionId,
-    User, UserId, UserStatus,
+    BackupSetId, DedupDomainId, FileVersion, FileVersionId, GcWorkerConfig, GcWorkerRetryPolicy,
+    Library, LibraryId, LogicalName, Node, NodeId, NodeKind, ObjectGcOperationId, ObjectGcPolicy,
+    ObjectId, ObjectReference, ObjectReplicaId, Sha256Digest, SnapshotId, Timestamp,
+    UploadOperation, UploadSessionId, User, UserId, UserStatus,
 };
 use synveil_metadata::{
-    DatabaseConfig, DatabasePool, DomainRepository, MigrationRunner, NewUploadSession,
-    ObjectGcExecutionMetadataBackend, ObjectGcExecutionMetadataError, ObjectGcPlanResult,
-    ObjectGcPlanningService, ObjectGcReplicaDirective, ObjectGcReplicaObservation,
+    BackupService, DatabaseConfig, DatabasePool, DomainRepository, MigrationRunner,
+    NewUploadSession, ObjectGcExecutionMetadataBackend, ObjectGcExecutionMetadataError,
+    ObjectGcLease, ObjectGcOperation, ObjectGcPlanResult, ObjectGcPlanningService,
+    ObjectGcReplicaAction, ObjectGcReplicaDirective, ObjectGcReplicaObservation,
     PostgresObjectGcExecutionRepository, PostgresObjectGcWorkerRepository,
     PostgresUploadRepository, UploadClaim, UploadDurabilityReceipt, UploadMetadataBackend,
     VersionRestoreService,
@@ -73,6 +74,7 @@ struct AmbiguousDeleteStore {
     inner: Arc<LocalFilesystemObjectStore>,
     next_delete: Mutex<AmbiguousDeleteMode>,
     get_calls: AtomicUsize,
+    delete_calls: AtomicUsize,
     conditional_delete_calls: AtomicUsize,
 }
 
@@ -82,6 +84,7 @@ impl AmbiguousDeleteStore {
             inner,
             next_delete: Mutex::new(mode),
             get_calls: AtomicUsize::new(0),
+            delete_calls: AtomicUsize::new(0),
             conditional_delete_calls: AtomicUsize::new(0),
         }
     }
@@ -99,6 +102,10 @@ impl AmbiguousDeleteStore {
 
     fn conditional_delete_calls(&self) -> usize {
         self.conditional_delete_calls.load(Ordering::SeqCst)
+    }
+
+    fn destructive_delete_calls(&self) -> usize {
+        self.delete_calls.load(Ordering::SeqCst) + self.conditional_delete_calls()
     }
 }
 
@@ -186,6 +193,7 @@ impl ObjectStore for AmbiguousDeleteStore {
     }
 
     async fn delete(&self, key: &ObjectKey) -> Result<DeleteOutcome, ObjectStoreError> {
+        self.delete_calls.fetch_add(1, Ordering::SeqCst);
         self.inner.delete(key).await
     }
 
@@ -214,6 +222,159 @@ impl ObjectStore for AmbiguousDeleteStore {
         key: &ObjectKey,
     ) -> Result<DeleteReconciliation, ObjectStoreError> {
         self.inner.reconcile_delete(key).await
+    }
+}
+
+/// Fault-injection metadata adapter for the physical-GC final fence. It
+/// deliberately introduces a malformed-but-durable backup pin after the
+/// storage service has fenced an action but immediately before it asks the
+/// authoritative metadata port to authorize the destructive ObjectStore call.
+///
+/// Normal pin creation cannot race into `GC_DELETING`: the production triggers
+/// reject it. The disposable test transaction temporarily disables user
+/// triggers, inserts a malformed persisted row, and re-enables them before
+/// commit. This proves the final fence itself is not merely relying on normal
+/// writer behavior.
+struct BackupPinBeforeDeleteMetadata {
+    inner: PostgresObjectGcExecutionRepository,
+    inspection: PgPool,
+    snapshot_id: SnapshotId,
+    object: ObjectReference,
+    pin_node_id: NodeId,
+    injected: AtomicBool,
+}
+
+impl BackupPinBeforeDeleteMetadata {
+    fn new(
+        inner: PostgresObjectGcExecutionRepository,
+        inspection: PgPool,
+        snapshot_id: SnapshotId,
+        object: ObjectReference,
+    ) -> Self {
+        Self {
+            inner,
+            inspection,
+            snapshot_id,
+            object,
+            pin_node_id: NodeId::new(),
+            injected: AtomicBool::new(false),
+        }
+    }
+
+    async fn inject_pin_once(&self) {
+        if self.injected.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let mut injection = self
+            .inspection
+            .begin()
+            .await
+            .expect("test-only corruption transaction must begin");
+        sqlx::query("ALTER TABLE backup_snapshot_content_pins DISABLE TRIGGER USER")
+            .execute(&mut *injection)
+            .await
+            .expect("test-only pin invariant bypass must disable user triggers");
+        sqlx::query(
+            "INSERT INTO backup_snapshot_content_pins
+                (snapshot_id, manifest_node_id, file_version_id,
+                 object_id, object_dedup_domain_id, created_at)
+             VALUES ($1, $2, $3, $4, $5, clock_timestamp())",
+        )
+        .bind(self.snapshot_id.into_uuid())
+        .bind(self.pin_node_id.into_uuid())
+        .bind(FileVersionId::new().into_uuid())
+        .bind(self.object.object_id().into_uuid())
+        .bind(self.object.dedup_domain_id().into_uuid())
+        .execute(&mut *injection)
+        .await
+        .expect("fault-injected private retention pin must persist");
+        sqlx::query("ALTER TABLE backup_snapshot_content_pins ENABLE TRIGGER USER")
+            .execute(&mut *injection)
+            .await
+            .expect("test-only pin invariant bypass must re-enable user triggers");
+        injection
+            .commit()
+            .await
+            .expect("test-only corruption transaction must restore invariants");
+    }
+}
+
+#[async_trait]
+impl ObjectGcExecutionMetadataBackend for BackupPinBeforeDeleteMetadata {
+    async fn renew_execution_lease(
+        &self,
+        lease: ObjectGcLease,
+    ) -> Result<ObjectGcLease, ObjectGcExecutionMetadataError> {
+        self.inner.renew_execution_lease(lease).await
+    }
+
+    async fn start_gc_execution(
+        &self,
+        lease: ObjectGcLease,
+    ) -> Result<ObjectGcOperation, ObjectGcExecutionMetadataError> {
+        self.inner.start_gc_execution(lease).await
+    }
+
+    async fn resume_gc_execution(
+        &self,
+        lease: ObjectGcLease,
+    ) -> Result<ObjectGcOperation, ObjectGcExecutionMetadataError> {
+        self.inner.resume_gc_execution(lease).await
+    }
+
+    async fn fence_next_replica(
+        &self,
+        operation_id: ObjectGcOperationId,
+        lease: ObjectGcLease,
+    ) -> Result<ObjectGcReplicaDirective, ObjectGcExecutionMetadataError> {
+        self.inner.fence_next_replica(operation_id, lease).await
+    }
+
+    async fn authorize_replica_delete(
+        &self,
+        action: &ObjectGcReplicaAction,
+        lease: ObjectGcLease,
+    ) -> Result<(), ObjectGcExecutionMetadataError> {
+        self.inject_pin_once().await;
+        self.inner.authorize_replica_delete(action, lease).await
+    }
+
+    async fn record_replica_observation(
+        &self,
+        action: &ObjectGcReplicaAction,
+        lease: ObjectGcLease,
+        observation: ObjectGcReplicaObservation,
+        retry_policy: Option<GcWorkerRetryPolicy>,
+    ) -> Result<ObjectGcOperation, ObjectGcExecutionMetadataError> {
+        self.inner
+            .record_replica_observation(action, lease, observation, retry_policy)
+            .await
+    }
+
+    async fn mark_gc_execution_needs_attention(
+        &self,
+        operation_id: ObjectGcOperationId,
+        lease: ObjectGcLease,
+        error_code: &'static str,
+    ) -> Result<ObjectGcOperation, ObjectGcExecutionMetadataError> {
+        self.inner
+            .mark_gc_execution_needs_attention(operation_id, lease, error_code)
+            .await
+    }
+
+    async fn complete_gc_execution(
+        &self,
+        operation_id: ObjectGcOperationId,
+        lease: ObjectGcLease,
+    ) -> Result<ObjectGcOperation, ObjectGcExecutionMetadataError> {
+        self.inner.complete_gc_execution(operation_id, lease).await
+    }
+
+    async fn load_gc_execution(
+        &self,
+        operation_id: ObjectGcOperationId,
+    ) -> Result<ObjectGcOperation, ObjectGcExecutionMetadataError> {
+        self.inner.load_gc_execution(operation_id).await
     }
 }
 
@@ -2296,4 +2457,171 @@ async fn postgres_concurrent_workers_do_not_duplicate_a_physical_operation() {
     inspection.close().await;
     pool_b.close().await;
     pool_a.close().await;
+}
+
+/// The physical-GC authorization transaction is the final destructive fence.
+/// This test injects a durable backup pin after the replica action has been
+/// selected and storage reconciliation has finished, but immediately before
+/// the ObjectStore deletion could be authorized. The existing counted
+/// ObjectStore double proves that neither delete API is called.
+#[tokio::test]
+#[ignore = "set SYNVEIL_TEST_DATABASE_URL to a fresh disposable PostgreSQL database"]
+async fn postgres_backup_pin_at_final_physical_gc_fence_performs_zero_storage_deletes() {
+    let url = std::env::var("SYNVEIL_TEST_DATABASE_URL")
+        .expect("SYNVEIL_TEST_DATABASE_URL must identify a disposable test database");
+    let config = DatabaseConfig::from_url(&url).expect("test URL must use PostgreSQL");
+    let pool = DatabasePool::connect(&config)
+        .await
+        .expect("test PostgreSQL must accept a connection");
+    MigrationRunner::new()
+        .run(&pool)
+        .await
+        .expect("SQLx migrations must succeed");
+    let inspection = PgPool::connect(&url)
+        .await
+        .expect("inspection connection must succeed");
+    let repository = DomainRepository::new(&pool);
+    let policy = ObjectGcPolicy::new(Duration::from_secs(1), Duration::from_secs(30), 1)
+        .expect("focused physical-GC policy is valid");
+
+    // A valid completed snapshot supplies the owner relation for the injected
+    // private pin. Its empty manifest is intentional: the pin is a persisted
+    // drift fixture inserted only at the exact final-fence boundary.
+    let observed_at = timestamp("2026-08-29T00:00:00.123456Z");
+    let owner_id = UserId::new();
+    repository
+        .insert_user(&User::new(
+            owner_id,
+            synveil_core::LoginIdentifier::new("backup-final-fence", owner_id.to_string())
+                .expect("fixture login is valid"),
+            UserStatus::Active,
+            observed_at,
+        ))
+        .await
+        .expect("fixture owner must persist");
+    let library_id = LibraryId::new();
+    let dedup_domain_id = DedupDomainId::new();
+    let root_node = Node::new_root(NodeId::new(), library_id, name("backup-root"), observed_at);
+    let library = Library::new(
+        library_id,
+        owner_id,
+        name("Backup final fence"),
+        &root_node,
+        dedup_domain_id,
+        observed_at,
+    )
+    .expect("fixture library is valid");
+    repository
+        .insert_library_with_root(&library, &root_node)
+        .await
+        .expect("fixture library must persist");
+    let backup = BackupService::new(pool.clone());
+    let set_id = BackupSetId::new();
+    backup
+        .create_backup_set(
+            owner_id,
+            set_id,
+            name("final-fence-set"),
+            library_id,
+            Some(30),
+            observed_at,
+        )
+        .await
+        .expect("fixture backup set must persist");
+    let snapshot = backup
+        .capture_snapshot(
+            owner_id,
+            set_id,
+            SnapshotId::new(),
+            "final-fence-snapshot-0001".to_owned(),
+        )
+        .await
+        .expect("empty snapshot must complete");
+    assert_eq!(snapshot.content_reference_count(), 0);
+
+    const BYTES: &[u8] = b"backup pin must stop the final physical deletion";
+    let object = ObjectReference::new(
+        ObjectId::new(),
+        dedup_domain_id,
+        digest(BYTES),
+        BYTES.len() as u64,
+    );
+    repository
+        .insert_object(object, observed_at)
+        .await
+        .expect("physical-GC object must persist");
+    let temp_root = TempRoot::new();
+    let local_store =
+        Arc::new(LocalFilesystemObjectStore::open(temp_root.path()).expect("test store must open"));
+    let (_replica, key, _version) = insert_replica(
+        &inspection,
+        &local_store,
+        object,
+        "objects/v1/gc_backup_final_fence",
+        BYTES,
+    )
+    .await;
+    let planner = ObjectGcPlanningService::new(pool.clone(), policy);
+    let ready = ready_lease(&planner, &inspection, object).await;
+
+    let counted_store = Arc::new(AmbiguousDeleteStore::new(
+        local_store.clone(),
+        AmbiguousDeleteMode::Delegate,
+    ));
+    let metadata = Arc::new(BackupPinBeforeDeleteMetadata::new(
+        PostgresObjectGcExecutionRepository::new(pool.clone(), policy),
+        inspection.clone(),
+        snapshot.id(),
+        object,
+    ));
+    let service = ObjectGcExecutionService::with_metadata_backend(
+        metadata,
+        vec![counted_store.clone() as Arc<dyn ObjectStore>],
+    )
+    .expect("counted physical-GC service is valid");
+    let operation = service
+        .start_gc_execution(ready)
+        .await
+        .expect("candidate reaches controlled pre-execution state");
+
+    assert_eq!(
+        service
+            .delete_next_replica(operation.operation_id(), ready)
+            .await,
+        Err(ObjectGcExecutionError::ReferenceExists),
+        "the final authorization transaction must see the injected backup pin"
+    );
+    assert_eq!(
+        counted_store.destructive_delete_calls(),
+        0,
+        "no ObjectStore delete or conditional-delete call may occur while pinned"
+    );
+    assert!(
+        local_store
+            .exists(&key)
+            .await
+            .expect("retained physical key is inspectable"),
+        "bytes remain because final authorization denied deletion"
+    );
+    let safe_metadata = sqlx::query_as::<_, (i64, i64, i64, String)>(
+        "SELECT
+            (SELECT count(*) FROM backup_snapshot_content_pins
+             WHERE snapshot_id = $1 AND object_id = $2 AND object_dedup_domain_id = $3),
+            (SELECT count(*) FROM object_replicas
+             WHERE object_id = $2 AND object_dedup_domain_id = $3),
+            (SELECT count(*) FROM objects
+             WHERE id = $2 AND dedup_domain_id = $3),
+            (SELECT lifecycle_state FROM objects
+             WHERE id = $2 AND dedup_domain_id = $3)",
+    )
+    .bind(snapshot.id().into_uuid())
+    .bind(object.object_id().into_uuid())
+    .bind(object.dedup_domain_id().into_uuid())
+    .fetch_one(&inspection)
+    .await
+    .expect("post-fence metadata must remain inspectable");
+    assert_eq!(safe_metadata, (1, 1, 1, "GC_DELETING".to_owned()));
+
+    inspection.close().await;
+    pool.close().await;
 }
