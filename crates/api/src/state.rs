@@ -7,9 +7,9 @@ use axum::http::HeaderMap;
 use synveil_auth::{PasswordHasherConfig, SessionConfig};
 use synveil_core::TrashRetentionPolicy;
 use synveil_metadata::{
-    ClientMutationBackend, ConflictManagementBackend, DatabasePool, FileMetadataBackend,
-    FileMetadataService, VersionHistoryBackend, VersionHistoryService, VersionRestoreBackend,
-    VersionRestoreService,
+    BackupMutationBackend, BackupReadBackend, BackupService, ClientMutationBackend,
+    ConflictManagementBackend, DatabasePool, FileMetadataBackend, FileMetadataService,
+    VersionHistoryBackend, VersionHistoryService, VersionRestoreBackend, VersionRestoreService,
 };
 use synveil_platform::{HealthInfo, PlatformRuntime};
 
@@ -17,6 +17,7 @@ use crate::{
     auth::{
         AuthenticationBackend, PostgresAuthenticationBackend, UnavailableAuthenticationBackend,
     },
+    backups::{UnavailableBackupMutationBackend, UnavailableBackupReadBackend},
     conflicts::{
         ConflictCursorKey, PostgresConflictManagementBackend, UnavailableConflictManagementBackend,
     },
@@ -146,6 +147,8 @@ pub struct ApiState {
     auth_backend: Arc<dyn AuthenticationBackend>,
     device_auth_backend: Arc<dyn DeviceAuthenticationBackend>,
     file_metadata_backend: Arc<dyn FileMetadataBackend>,
+    backup_read_backend: Arc<dyn BackupReadBackend>,
+    backup_mutation_backend: Arc<dyn BackupMutationBackend>,
     client_mutation_backend: Arc<dyn ClientMutationBackend>,
     conflict_management_backend: Arc<dyn ConflictManagementBackend>,
     version_history_backend: Arc<dyn VersionHistoryBackend>,
@@ -177,6 +180,8 @@ impl ApiState {
             auth_backend: Arc::new(UnavailableAuthenticationBackend),
             device_auth_backend: Arc::new(UnavailableDeviceAuthenticationBackend),
             file_metadata_backend: Arc::new(UnavailableFileMetadataBackend),
+            backup_read_backend: Arc::new(UnavailableBackupReadBackend),
+            backup_mutation_backend: Arc::new(UnavailableBackupMutationBackend),
             client_mutation_backend: Arc::new(UnavailableClientMutationBackend),
             conflict_management_backend: Arc::new(UnavailableConflictManagementBackend),
             version_history_backend: Arc::new(UnavailableVersionHistoryBackend),
@@ -210,6 +215,8 @@ impl ApiState {
             auth_backend: Arc::new(UnavailableAuthenticationBackend),
             device_auth_backend: Arc::new(UnavailableDeviceAuthenticationBackend),
             file_metadata_backend: Arc::new(UnavailableFileMetadataBackend),
+            backup_read_backend: Arc::new(UnavailableBackupReadBackend),
+            backup_mutation_backend: Arc::new(UnavailableBackupMutationBackend),
             client_mutation_backend: Arc::new(UnavailableClientMutationBackend),
             conflict_management_backend: Arc::new(UnavailableConflictManagementBackend),
             version_history_backend: Arc::new(UnavailableVersionHistoryBackend),
@@ -275,6 +282,18 @@ impl ApiState {
     #[must_use]
     pub fn with_file_metadata_backend(mut self, backend: Arc<dyn FileMetadataBackend>) -> Self {
         self.file_metadata_backend = backend;
+        self
+    }
+
+    #[must_use]
+    pub fn with_backup_read_backend(mut self, backend: Arc<dyn BackupReadBackend>) -> Self {
+        self.backup_read_backend = backend;
+        self
+    }
+
+    #[must_use]
+    pub fn with_backup_mutation_backend(mut self, backend: Arc<dyn BackupMutationBackend>) -> Self {
+        self.backup_mutation_backend = backend;
         self
     }
 
@@ -363,11 +382,14 @@ impl ApiState {
             .with_rebaseline_token_key(rebaseline_token_key);
         let trash_retention_policy = state.trash_retention_policy;
         let pool = pool.as_ref().clone();
+        let backup_service = Arc::new(BackupService::new(pool.clone()));
         state
             .with_file_metadata_backend(Arc::new(FileMetadataService::new_with_policy(
                 pool.clone(),
                 trash_retention_policy,
             )))
+            .with_backup_read_backend(backup_service.clone())
+            .with_backup_mutation_backend(backup_service)
             .with_version_history_backend(Arc::new(VersionHistoryService::new(pool.clone())))
             .with_version_restore_backend(Arc::new(VersionRestoreService::new(pool)))
     }
@@ -438,6 +460,16 @@ impl ApiState {
     #[must_use]
     pub(crate) fn file_metadata_backend(&self) -> &Arc<dyn FileMetadataBackend> {
         &self.file_metadata_backend
+    }
+
+    #[must_use]
+    pub(crate) fn backup_read_backend(&self) -> &Arc<dyn BackupReadBackend> {
+        &self.backup_read_backend
+    }
+
+    #[must_use]
+    pub(crate) fn backup_mutation_backend(&self) -> &Arc<dyn BackupMutationBackend> {
+        &self.backup_mutation_backend
     }
 
     #[must_use]

@@ -22,6 +22,7 @@ pub(crate) async fn request_context(mut request: Request, next: Next) -> Respons
     let is_auth_route = path.starts_with("/api/v1/auth/");
     let is_private_no_store_route = path.starts_with("/api/v1/devices/")
         || path == "/api/v1/device-enrollment/exchange"
+        || path.starts_with("/api/v1/backups/")
         || (request
             .headers()
             .contains_key(axum::http::header::AUTHORIZATION)

@@ -20,6 +20,65 @@ use crate::{
 
 use super::errors::DomainError;
 
+/// The closed set of durable backup workflows exposed by the unified
+/// observability read model. Execution receipts are evidence for their parent
+/// restore/prune plans and are therefore not operation kinds of their own.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum BackupOperationKind {
+    Maintenance,
+    Restore,
+    Prune,
+}
+
+impl BackupOperationKind {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Maintenance => "MAINTENANCE",
+            Self::Restore => "RESTORE",
+            Self::Prune => "PRUNE",
+        }
+    }
+
+    /// Stable cross-kind ordering rank used by the heterogeneous activity
+    /// feed. It is deliberately independent of display/localization text.
+    #[must_use]
+    pub const fn rank(self) -> u8 {
+        match self {
+            Self::Maintenance => 1,
+            Self::Restore => 2,
+            Self::Prune => 3,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BackupOperationKindParseError;
+
+impl fmt::Display for BackupOperationKindParseError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("backup operation kind is unknown")
+    }
+}
+
+impl std::error::Error for BackupOperationKindParseError {}
+
+impl FromStr for BackupOperationKind {
+    type Err = BackupOperationKindParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value.eq_ignore_ascii_case("MAINTENANCE") {
+            Ok(Self::Maintenance)
+        } else if value.eq_ignore_ascii_case("RESTORE") {
+            Ok(Self::Restore)
+        } else if value.eq_ignore_ascii_case("PRUNE") {
+            Ok(Self::Prune)
+        } else {
+            Err(BackupOperationKindParseError)
+        }
+    }
+}
+
 /// Identifies what is being backed up. The initial bounded implementation
 /// supports only library snapshots. Future extensions may add external
 /// directories, volumes, or device roots without changing the schema shape.

@@ -2,12 +2,15 @@ openapi: 3.1.0
 info:
   title: Synveil API
   version: 0.1.0-blueprint
-  summary: Device enrollment, scoped bearer authentication, desktop inbound synchronization, browser metadata mutations, and bounded content transport
+  summary: Authenticated logical file, synchronization, and bounded backup-operation transport
   description: |
     This is the checked-in OpenAPI contract for the authenticated logical
     file/folder metadata, one-way device synchronization, immutable
     version-history metadata, immutable content-download, resumable-upload,
-    and metadata-only Trash retention slices.
+    metadata-only Trash retention slices, authenticated backup discovery,
+    unified read-only backup-operation observability, explicit idempotent
+    manual backup maintenance, and explicit two-phase backup-retention
+    pruning.
     It records transport-wide conventions, foundation health routes, browser
     authentication transport, the first-run bootstrap boundary, owner-scoped
     library/root/node operations, immutable file-version listing and direct
@@ -34,8 +37,19 @@ info:
     physical-GC pipeline is implemented behind trusted PostgreSQL/ObjectStore
     services and a private opt-in worker, but it has no public HTTP operation,
     scheduling control, or user-facing purge route. Download UI, multi-range
-    responses, backup, sharing, pairing GUI, and all public physical-GC
-    controls remain planned. One-time enrollment groundwork, scoped revocable
+    responses, backup-content access, sharing, pairing GUI, and all
+    public physical-GC controls remain planned. The authenticated backup read
+    surface exposes owner-scoped backup sets, snapshot summaries, immutable
+    logical manifest nodes, the current retention-policy revision,
+    maintenance-run history, and a bounded heterogeneous activity projection
+    over maintenance, restore, and prune lifecycles. Its bounded CSRF-protected POST surface creates
+    backup sets, appends retention-policy revisions, creates manual maintenance
+    runs, and explicitly advances Prompt 49 orchestration with durable UUIDv7
+    idempotency keys. It also supports a durable plan-first, confirmation-gated
+    prune flow for an already EXPIRED snapshot. That flow can release only the
+    target snapshot's retention pins through the canonical internal service;
+    it never exposes restore, direct expiry, GC, physical deletion, or
+    ObjectStore controls. One-time enrollment groundwork, scoped revocable
     device bearer authentication, durable desktop profiles, secure credential
     persistence and the production HTTP inbound adapter are implemented.
     One-way server change-feed polling, durable
@@ -58,13 +72,18 @@ info:
   license:
     name: MIT
     identifier: MIT
-  x-synveil-status: DESKTOP_PROFILES_ENROLLMENT_DEVICE_AUTH_AND_HTTP_INBOUND_IMPLEMENTED
-  x-synveil-gate: SYNVEIL_DESKTOP_REMOTE_READY
+  x-synveil-status: DESKTOP_PROFILES_ENROLLMENT_DEVICE_AUTH_HTTP_INBOUND_AND_BACKUP_OPERATION_OBSERVABILITY_IMPLEMENTED
+  x-synveil-gate: SYNVEIL_BACKUP_OPERATION_OBSERVABILITY_READY
   x-synveil-next-step: |
     Keep physical GC internal and operator-configured. Client logical mutation
     submission and optimistic-concurrency conflict detection are implemented;
-    automatic conflict resolution, backup, sharing, watcher/outbound generation
-    and desktop GUI remain out of scope. Prompt 38 captures local observations
+    automatic conflict resolution and backup-content access, sharing,
+    watcher/outbound generation and desktop GUI remain out of scope. The
+    authenticated backup API includes bounded manual mutation, restore-plan,
+    explicit two-phase prune-plan workflows, and read-only unified operation
+    observability. Direct expiry, background execution, and physical-GC HTTP
+    remain out of scope.
+    Prompt 38 captures local observations
     and durable outbound intent only; it must not automatically submit mutations.
 servers:
   - url: /
@@ -84,6 +103,8 @@ tags:
     description: Implemented authenticated current and historical full or single-range immutable content reads; no multi-range or UI surface.
   - name: Versions
     description: Implemented authenticated immutable file-version history, safe owner restore, and direct safe metadata lookup; no physical purge operation.
+  - name: Backups
+    description: Implemented authenticated owner-scoped reads, unified maintenance/restore/prune operation observability, bounded manual backup mutations, explicit restore plans, and plan-first confirmation-gated prune execution for already EXPIRED snapshots. No direct expiry, GC, deletion, or physical-storage control is public.
   - name: Uploads
     description: Implemented authenticated, CSRF-protected exact-offset upload sessions with bounded streaming byte append.
   - name: Synchronization
@@ -1176,6 +1197,974 @@ paths:
           $ref: '#/components/responses/ConflictInternalError'
         '503':
           $ref: '#/components/responses/ConflictServiceUnavailable'
+  /api/v1/backups/sets:
+    get:
+      tags: [Backups]
+      operationId: listBackupSets
+      summary: List the authenticated owner's backup sets
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Backup Metadata / Rust Backend
+      description: |
+        Return a bounded owner-scoped page of logical backup-set metadata in
+        deterministic UUIDv7 order. The cursor is collection-scoped and the
+        response contains no storage-provider identity. This authenticated GET
+        never captures a snapshot, starts maintenance, or changes canonical
+        metadata.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/BackupSetCursor'
+        - $ref: '#/components/parameters/BackupSetLimit'
+      responses:
+        '200':
+          description: A bounded owner-scoped backup-set page.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupSetList'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      tags: [Backups]
+      operationId: createBackupSet
+      summary: Create one owner-scoped logical backup set
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Backup Metadata / Rust Backend
+      x-synveil-max-body-bytes: 16384
+      description: |
+        Create a CREATED backup set through the canonical backup service. The
+        required canonical UUIDv7 Idempotency-Key is deterministically scoped
+        by authenticated owner; replay of the same semantic request returns the
+        same backup_set_id with 201, while different semantics conflict. A
+        foreign library is concealed as not_found. This operation does not
+        configure physical storage, capture a snapshot, or start maintenance.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/BackupIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBackupSetRequest'
+      responses:
+        '201':
+          description: The newly created or canonically replayed backup set.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupSetResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/BackupConflict'
+        '413':
+          $ref: '#/components/responses/BackupPayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/backups/sets/{backup_set_id}:
+    get:
+      tags: [Backups]
+      operationId: getBackupSet
+      summary: Read one owner-scoped backup set
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Backup Metadata / Rust Backend
+      description: |
+        Return one logical backup set. Missing and foreign identifiers are
+        concealed as not_found. This read has no backup lifecycle side effect.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/BackupSetId'
+      responses:
+        '200':
+          description: One safe logical backup-set summary.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupSetResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/backups/sets/{backup_set_id}/snapshots:
+    get:
+      tags: [Backups]
+      operationId: listBackupSnapshots
+      summary: List immutable snapshots for one backup set
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Backup Metadata / Rust Backend
+      description: |
+        Return a bounded owner- and backup-set-scoped page in deterministic
+        newest-first `(committed_at or created_at DESC, snapshot_id DESC)`
+        order. Optional state filtering accepts only the documented public
+        snapshot lifecycle values. Expired snapshots remain historical read
+        results, including after their retention authority has been pruned.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/BackupSetId'
+        - $ref: '#/components/parameters/BackupSnapshotState'
+        - $ref: '#/components/parameters/BackupCursor'
+        - $ref: '#/components/parameters/BackupLimit'
+      responses:
+        '200':
+          description: A bounded deterministic snapshot page.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupSnapshotList'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/backups/snapshots/{snapshot_id}:
+    get:
+      tags: [Backups]
+      operationId: getBackupSnapshot
+      summary: Read one immutable backup snapshot summary
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Backup Metadata / Rust Backend
+      description: |
+        Return owner-scoped logical snapshot history. COMPLETED and EXPIRED
+        snapshots remain readable after later retention reduction or prune
+        execution; this endpoint never downloads content or consults physical
+        storage.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/BackupSnapshotId'
+      responses:
+        '200':
+          description: One safe immutable snapshot summary.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupSnapshotResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/backups/snapshots/{snapshot_id}/nodes:
+    get:
+      tags: [Backups]
+      operationId: listBackupSnapshotNodes
+      summary: Inspect one immutable snapshot tree page
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Backup Metadata / Rust Backend
+      description: |
+        Read direct logical children from an immutable COMPLETED or EXPIRED
+        snapshot manifest. Omitting parent_id returns the manifest root;
+        supplying a directory node identifier returns that directory's direct
+        children. Results use bounded ascending node-id keyset pagination.
+        Content nodes expose only historical logical version, length, and hash
+        metadata. No bytes or provider locator is returned.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/BackupSnapshotId'
+        - $ref: '#/components/parameters/BackupParentId'
+        - $ref: '#/components/parameters/BackupCursor'
+        - $ref: '#/components/parameters/BackupLimit'
+      responses:
+        '200':
+          description: A bounded page of direct logical manifest children.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupSnapshotNodeList'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidState'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/backups/sets/{backup_set_id}/retention-policy:
+    get:
+      tags: [Backups]
+      operationId: getBackupRetentionPolicy
+      summary: Read the current immutable retention-policy revision
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Backup Metadata / Rust Backend
+      description: |
+        Return the current policy revision for the owner-scoped backup set.
+        Policy revisions are immutable and this endpoint does not create a
+        default. A set with no configured policy uses the same concealed
+        not_found response as an inaccessible set.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/BackupSetId'
+      responses:
+        '200':
+          description: The current configured immutable retention-policy revision.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupRetentionPolicy'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      tags: [Backups]
+      operationId: configureBackupRetentionPolicy
+      summary: Append one immutable retention-policy revision
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Backup Metadata / Rust Backend
+      x-synveil-max-body-bytes: 16384
+      description: |
+        Call the canonical retention-policy service with exactly the accepted
+        keep-latest and age fields. The owner-scoped UUIDv7 Idempotency-Key is
+        mapped into the durable operation identity; same-key replay returns the
+        same revision with 201 and changed values return 409. Configuration
+        never expires a snapshot, creates a maintenance run, prunes, or invokes
+        GC.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/BackupSetId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/BackupIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfigureBackupRetentionPolicyRequest'
+      responses:
+        '201':
+          description: The newly appended or canonically replayed policy revision.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupRetentionPolicy'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/BackupConflict'
+        '413':
+          $ref: '#/components/responses/BackupPayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/backups/sets/{backup_set_id}/operations:
+    get:
+      tags: [Backups]
+      operationId: listBackupOperations
+      summary: List unified backup-operation activity for one backup set
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Backup Metadata / Rust Backend
+      description: |
+        Return one bounded owner- and backup-set-scoped activity feed covering
+        MAINTENANCE, RESTORE, and PRUNE semantic operations. Restore and prune
+        execution receipts update their parent activity item; they never add a
+        second row. Ordering is deterministic by `(created_at DESC,
+        operation-kind-rank ASC, operation_id DESC)`, and the opaque cursor is
+        bound to this backup-set scope and optional kind filter. This GET reads
+        durable PostgreSQL lifecycle evidence only and performs no lifecycle,
+        journal, sync, GC, or ObjectStore work.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/BackupSetId'
+        - $ref: '#/components/parameters/BackupOperationKindFilter'
+        - $ref: '#/components/parameters/BackupOperationCursor'
+        - $ref: '#/components/parameters/BackupOperationLimit'
+      responses:
+        '200':
+          description: A bounded heterogeneous backup-operation activity page.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupOperationList'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/backups/operations/{operation_kind}/{operation_id}:
+    get:
+      tags: [Backups]
+      operationId: getBackupOperation
+      summary: Read one kind-qualified backup operation
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Backup Metadata / Rust Backend
+      description: |
+        Return a rich kind-specific projection of one semantic MAINTENANCE,
+        RESTORE, or PRUNE operation. The path kind is part of lookup identity;
+        a UUID belonging to another kind is concealed as not_found. State,
+        phase, step progress, terminal status, and next action are derived only
+        from durable lifecycle rows. A PRUNE operation with
+        `next_action=EXECUTE` still requires the existing Prompt 54 explicit
+        snapshot-bound confirmation at its separate execute endpoint.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/BackupOperationKindPath'
+        - $ref: '#/components/parameters/BackupOperationIdPath'
+      responses:
+        '200':
+          description: One safe kind-specific backup-operation projection.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupOperationResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/backups/sets/{backup_set_id}/maintenance-runs:
+    get:
+      tags: [Backups]
+      operationId: listBackupMaintenanceRuns
+      summary: List historical maintenance-run evidence
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Backup Metadata / Rust Backend
+      description: |
+        Return bounded owner- and backup-set-scoped maintenance history in
+        deterministic `(created_at DESC, maintenance_run_id DESC)` order.
+        Reading a CREATED or nonterminal run never advances orchestration or
+        creates child work.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/BackupSetId'
+        - $ref: '#/components/parameters/BackupMaintenanceCursor'
+        - $ref: '#/components/parameters/BackupMaintenanceLimit'
+      responses:
+        '200':
+          description: A bounded page of immutable/logically monotonic maintenance evidence.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupMaintenanceRunList'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      tags: [Backups]
+      operationId: createBackupMaintenanceRun
+      summary: Create one explicit manual maintenance run
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Backup Metadata / Rust Backend
+      x-synveil-max-body-bytes: 16384
+      description: |
+        Create a durable CREATED Prompt 49 run bound to the current retention
+        revision. The request has no semantic body. The canonical service
+        persists child operation identities, enforces one active run per set,
+        and replays the same owner-scoped UUIDv7 Idempotency-Key without
+        capturing a snapshot or performing expiry work.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/BackupSetId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/BackupIdempotencyKey'
+      responses:
+        '201':
+          description: The newly created or canonically replayed CREATED maintenance run.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupMaintenanceRunResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/BackupConflict'
+        '413':
+          $ref: '#/components/responses/BackupPayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/backups/maintenance-runs/{run_id}:
+    get:
+      tags: [Backups]
+      operationId: getBackupMaintenanceRun
+      summary: Read one owner-scoped maintenance run
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Backup Metadata / Rust Backend
+      description: |
+        Return canonical logical orchestration evidence for one run. State and
+        child references are read from the durable run shape; GET does not
+        recover, advance, capture, plan, execute, prune, expire, or otherwise
+        mutate the run.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/BackupMaintenanceRunId'
+      responses:
+        '200':
+          description: One safe maintenance-run summary.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupMaintenanceRunResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/backups/maintenance-runs/{run_id}/advance:
+    post:
+      tags: [Backups]
+      operationId: advanceBackupMaintenanceRun
+      summary: Explicitly advance one manual maintenance run
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Backup Metadata / Rust Backend
+      x-synveil-max-body-bytes: 16384
+      description: |
+        Invoke the canonical Prompt 49 coordinator once. The run's persisted
+        capture and expiry-plan operation identities recover child work across
+        concurrent calls, crashes, and lost responses; the required UUIDv7
+        Idempotency-Key supplies HTTP retry discipline and is not a second child
+        identity. COMPLETED replays return the same run. STALE returns 409 and
+        never replans or rebinds policy. Orchestration stops after expiry
+        execution and never prunes, releases pins, invokes GC, or deletes data.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/BackupMaintenanceRunId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/BackupIdempotencyKey'
+      responses:
+        '200':
+          description: The canonically advanced or already-COMPLETED maintenance run.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupMaintenanceRunResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/BackupConflict'
+        '413':
+          $ref: '#/components/responses/BackupPayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/backups/snapshots/{snapshot_id}/restore-plans:
+    post:
+      tags: [Backups]
+      operationId: createRestorePlan
+      summary: Create a durable restore plan from a completed snapshot
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Backup Metadata / Rust Backend
+      x-synveil-max-body-bytes: 16384
+      description: |
+        Create a durable, non-destructive restore plan for a COMPLETED backup
+        snapshot. The plan captures the planning provenance, preflight collision
+        basis, and planned NodeId allocations without creating any live namespace
+        state. Idempotent replay via the UUIDv7 Idempotency-Key. STALE plans
+        cannot be re-executed; collision with existing destination name is rejected
+        at planning time.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/BackupSnapshotId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/BackupIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBackupRestorePlanRequest'
+      responses:
+        '201':
+          description: A durable restore plan in PLANNED state.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupRestorePlanResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/BackupConflict'
+        '413':
+          $ref: '#/components/responses/BackupPayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/backups/restore-plans/{restore_plan_id}:
+    get:
+      tags: [Backups]
+      operationId: getRestorePlan
+      summary: Read one owner-scoped restore plan
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Backup Metadata / Rust Backend
+      description: |
+        Read one immutable owner-scoped restore plan. Observational only;
+        does not revalidate target namespace, execute, or mutate state.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/BackupRestorePlanId'
+      responses:
+        '200':
+          description: The requested restore plan.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupRestorePlanResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/backups/restore-plans/{restore_plan_id}/execute:
+    post:
+      tags: [Backups]
+      operationId: executeRestorePlan
+      summary: Execute one PLANNED restore plan atomically
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Backup Metadata / Rust Backend
+      x-synveil-max-body-bytes: 16384
+      description: |
+        Execute a PLANNED restore plan as one authoritative atomic metadata
+        transaction. Revalidates target namespace basis, collision fences, and
+        retained content before committing the full restored tree, new live
+        FileVersion IDs, journal evidence, and execution receipt together.
+        Already-EXECUTED plans return the canonical receipt (idempotent replay).
+        STALE plans return 409 Conflict. CSRF and UUIDv7 Idempotency-Key required.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/BackupRestorePlanId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/BackupIdempotencyKey'
+      responses:
+        '200':
+          description: The canonical restore execution receipt.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupRestoreExecutionResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/BackupConflict'
+        '413':
+          $ref: '#/components/responses/BackupPayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/backups/restore-executions/{restore_execution_id}:
+    get:
+      tags: [Backups]
+      operationId: getRestoreExecution
+      summary: Read one owner-scoped restore execution receipt
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Backup Metadata / Rust Backend
+      description: |
+        Read one immutable owner-scoped restore execution receipt.
+        GET is observational only; no retry or execution occurs.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/BackupRestoreExecutionId'
+      responses:
+        '200':
+          description: The requested restore execution receipt.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupRestoreExecutionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/backups/snapshots/{snapshot_id}/prune-plans:
+    post:
+      tags: [Backups]
+      operationId: createBackupPrunePlan
+      summary: Create a durable non-destructive prune plan for one expired snapshot
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Backup Metadata / Rust Backend
+      x-synveil-max-body-bytes: 16384
+      description: |
+        Perform canonical Prompt 45 retention-impact planning for exactly one
+        owner-scoped EXPIRED snapshot. The request has no semantic body. The
+        canonical lowercase UUIDv7 Idempotency-Key becomes the durable
+        owner-scoped operation identity; same-key replay returns the same plan
+        and immutable reference basis, while reuse for another snapshot returns
+        an idempotency conflict. Planning does not release retention pins,
+        change snapshot lifecycle, create a GC candidate, access ObjectStore,
+        or delete metadata or physical bytes. COMPLETED, BUILDING, and FAILED
+        snapshots are not made EXPIRED by this operation.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/BackupSnapshotId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/BackupIdempotencyKey'
+      responses:
+        '201':
+          description: The newly created or canonically replayed persisted prune plan.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupPrunePlanResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/BackupConflict'
+        '413':
+          $ref: '#/components/responses/BackupPayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/backups/prune-plans/{prune_plan_id}:
+    get:
+      tags: [Backups]
+      operationId: getBackupPrunePlan
+      summary: Read one persisted owner-scoped prune plan
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Backup Metadata / Rust Backend
+      description: |
+        Return the immutable logical plan and aggregate retention-impact
+        evidence exactly as persisted. GET is observational: it never
+        recomputes references, marks a plan stale, releases a retention pin,
+        creates a GC candidate, executes a prune, or accesses ObjectStore.
+        Missing and foreign plans are both concealed as not_found.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/BackupPrunePlanId'
+      responses:
+        '200':
+          description: The requested persisted prune plan.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupPrunePlanResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/backups/prune-plans/{prune_plan_id}/execute:
+    post:
+      tags: [Backups]
+      operationId: executeBackupPrunePlan
+      summary: Execute exactly one confirmed persisted prune plan
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Backup Metadata / Rust Backend
+      x-synveil-max-body-bytes: 16384
+      description: |
+        Execute canonical Prompt 46 against exactly the prune_plan_id in the
+        path after authenticating the owner, validating CSRF and a canonical
+        lowercase UUIDv7 Idempotency-Key, and requiring confirm_snapshot_id to
+        equal the snapshot bound to the persisted plan. A missing, malformed,
+        or mismatched confirmation returns invalid_request before canonical
+        execution. An EXECUTED plan returns its one immutable receipt; a STALE
+        or reference-drifted plan returns conflict and is never refreshed or
+        replanned automatically. Successful execution releases all and only
+        the target snapshot's retention pins and may hand now-unreferenced
+        content to the internal GC candidate pipeline. It never runs GC,
+        deletes an Object, invokes ObjectStore deletion, or promises physical
+        reclamation.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/BackupPrunePlanId'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - $ref: '#/components/parameters/BackupIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExecuteBackupPrunePlanRequest'
+      responses:
+        '200':
+          description: The one canonical committed prune-execution receipt, including replay.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupPruneExecutionResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/BackupConflict'
+        '413':
+          $ref: '#/components/responses/BackupPayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/backups/prune-executions/{prune_execution_id}:
+    get:
+      tags: [Backups]
+      operationId: getBackupPruneExecution
+      summary: Read one immutable owner-scoped prune execution receipt
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Backup Metadata / Rust Backend
+      description: |
+        Return one committed logical prune receipt. GET is observational and
+        never retries pin release, mutates plan or snapshot history, accesses
+        ObjectStore, or advances the internal GC pipeline. Missing and foreign
+        receipts are both concealed as not_found.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/BackupPruneExecutionId'
+      responses:
+        '200':
+          description: The requested immutable prune execution receipt.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupPruneExecutionResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/libraries:
     get:
       tags: [Files]
@@ -2112,6 +3101,170 @@ components:
       description: Active directory parent; omitted means the library root.
       schema:
         $ref: '#/components/schemas/OpaqueId'
+    BackupSetId:
+      name: backup_set_id
+      in: path
+      required: true
+      description: Opaque UUIDv7 logical backup-set identifier; possession is not authorization.
+      schema:
+        $ref: '#/components/schemas/OpaqueId'
+    BackupSnapshotId:
+      name: snapshot_id
+      in: path
+      required: true
+      description: Opaque UUIDv7 immutable backup-snapshot identifier; possession is not authorization.
+      schema:
+        $ref: '#/components/schemas/OpaqueId'
+    BackupMaintenanceRunId:
+      name: run_id
+      in: path
+      required: true
+      description: Opaque UUIDv7 maintenance-run identifier; possession is not authorization.
+      schema:
+        $ref: '#/components/schemas/OpaqueId'
+    BackupRestorePlanId:
+      name: restore_plan_id
+      in: path
+      required: true
+      description: Opaque UUIDv7 restore-plan identifier; possession is not authorization.
+      schema:
+        $ref: '#/components/schemas/OpaqueId'
+    BackupRestoreExecutionId:
+      name: restore_execution_id
+      in: path
+      required: true
+      description: Opaque UUIDv7 restore-execution identifier; possession is not authorization.
+      schema:
+        $ref: '#/components/schemas/OpaqueId'
+    BackupPrunePlanId:
+      name: prune_plan_id
+      in: path
+      required: true
+      description: Opaque UUIDv7 prune-plan identifier; possession is not authorization and the plan remains owner-scoped.
+      schema:
+        $ref: '#/components/schemas/OpaqueId'
+    BackupPruneExecutionId:
+      name: prune_execution_id
+      in: path
+      required: true
+      description: Opaque UUIDv7 prune-execution receipt identifier; possession is not authorization.
+      schema:
+        $ref: '#/components/schemas/OpaqueId'
+    BackupParentId:
+      name: parent_id
+      in: query
+      required: false
+      description: Logical directory node in this immutable snapshot; omitted to select the snapshot root.
+      schema:
+        $ref: '#/components/schemas/OpaqueId'
+    BackupSnapshotState:
+      name: state
+      in: query
+      required: false
+      description: Optional exact public snapshot lifecycle filter.
+      schema:
+        $ref: '#/components/schemas/BackupSnapshotState'
+    BackupSetCursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque bounded keyset cursor for the owner-scoped backup-set collection.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+    BackupSetLimit:
+      name: limit
+      in: query
+      required: false
+      description: Bounded backup-set page size; canonical unsigned decimal text only.
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 500
+        default: 100
+    BackupCursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque bounded keyset cursor scoped to this backup collection, snapshot filter, and tree parent.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+    BackupLimit:
+      name: limit
+      in: query
+      required: false
+      description: Bounded logical backup page size; canonical unsigned decimal text only.
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 1000
+        default: 200
+    BackupMaintenanceCursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque bounded keyset cursor for one backup-set maintenance history collection.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+    BackupMaintenanceLimit:
+      name: limit
+      in: query
+      required: false
+      description: Bounded maintenance-history page size; canonical unsigned decimal text only.
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 1000
+        default: 200
+    BackupOperationKindFilter:
+      name: kind
+      in: query
+      required: false
+      description: Optional exact filter for one unified activity kind.
+      schema:
+        $ref: '#/components/schemas/BackupOperationKind'
+    BackupOperationCursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque bounded keyset cursor bound to this backup set, kind filter, created-at tuple, kind rank, and operation identity.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+    BackupOperationLimit:
+      name: limit
+      in: query
+      required: false
+      description: Bounded heterogeneous activity page size; canonical unsigned decimal text only.
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 500
+        default: 100
+    BackupOperationKindPath:
+      name: operation_kind
+      in: path
+      required: true
+      description: Kind-qualified semantic operation identity; execution receipts are not accepted as kinds.
+      schema:
+        $ref: '#/components/schemas/BackupOperationKind'
+    BackupOperationIdPath:
+      name: operation_id
+      in: path
+      required: true
+      description: Opaque UUIDv7 identity interpreted only within operation_kind.
+      schema:
+        $ref: '#/components/schemas/OpaqueId'
     Cursor:
       name: cursor
       in: query
@@ -2209,6 +3362,17 @@ components:
         minLength: 8
         maxLength: 256
         pattern: '^[A-Za-z0-9._~-]+$'
+    BackupIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Canonical lowercase UUIDv7 mutation identity. It is scoped by authenticated owner and deterministic endpoint kind; it is never accepted in the request body and never contains session or CSRF material.
+      schema:
+        type: string
+        format: uuid
+        minLength: 36
+        maxLength: 36
+        pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
     Range:
       name: Range
       in: header
@@ -2663,6 +3827,28 @@ components:
           $ref: '#/components/headers/PrivateNoStore'
         Retry-After:
           $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    BackupConflict:
+      description: The owner-scoped operation conflicts with canonical state. Stable codes include idempotency_conflict, backup_set_conflict, retention_policy_not_configured, maintenance_already_running, and maintenance_run_stale. No raw SQL, operation fingerprint, child operation ID, or foreign-resource detail is exposed.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    BackupPayloadTooLarge:
+      description: The backup mutation request exceeds the 16 KiB transport limit; the stable code is payload_too_large and no domain service is invoked.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
       content:
         application/json:
           schema:
@@ -4069,6 +5255,770 @@ components:
       properties:
         parent_id:
           $ref: '#/components/schemas/OpaqueId'
+    CreateBackupSetRequest:
+      type: object
+      additionalProperties: false
+      required: [library_id, name]
+      properties:
+        library_id:
+          $ref: '#/components/schemas/OpaqueId'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: Owner-visible logical configuration name; never a path or physical storage locator.
+    ConfigureBackupRetentionPolicyRequest:
+      type: object
+      additionalProperties: false
+      required: [keep_latest_completed, expire_after_seconds]
+      properties:
+        keep_latest_completed:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036854775807
+        expire_after_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036854775807
+    BackupSetList:
+      type: object
+      additionalProperties: false
+      required: [data, page, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/BackupSet'
+        page:
+          $ref: '#/components/schemas/Page'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    BackupSetResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/BackupSet'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    BackupSet:
+      type: object
+      additionalProperties: false
+      required: [backup_set_id, name, library_id, state, created_at, updated_at]
+      properties:
+        backup_set_id:
+          $ref: '#/components/schemas/OpaqueId'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        library_id:
+          $ref: '#/components/schemas/OpaqueId'
+        state:
+          $ref: '#/components/schemas/BackupSetState'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    BackupSetState:
+      type: string
+      enum: [CREATED, ACTIVE, DISABLED]
+    BackupSnapshotList:
+      type: object
+      additionalProperties: false
+      required: [data, page, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/BackupSnapshot'
+        page:
+          $ref: '#/components/schemas/Page'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    BackupSnapshotResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/BackupSnapshot'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    BackupSnapshot:
+      type: object
+      additionalProperties: false
+      required: [snapshot_id, backup_set_id, library_id, state, created_at, logical_node_count, content_reference_count]
+      properties:
+        snapshot_id:
+          $ref: '#/components/schemas/OpaqueId'
+        backup_set_id:
+          $ref: '#/components/schemas/OpaqueId'
+        library_id:
+          $ref: '#/components/schemas/OpaqueId'
+        state:
+          $ref: '#/components/schemas/BackupSnapshotState'
+        created_at:
+          type: string
+          format: date-time
+        committed_at:
+          type: string
+          format: date-time
+          description: Present after the snapshot reaches COMPLETED.
+        expired_at:
+          type: string
+          format: date-time
+          description: Present only after the snapshot reaches EXPIRED.
+        logical_node_count:
+          $ref: '#/components/schemas/U64Decimal'
+        content_reference_count:
+          $ref: '#/components/schemas/U64Decimal'
+    BackupSnapshotState:
+      type: string
+      enum: [BUILDING, COMPLETED, FAILED, EXPIRED]
+    BackupSnapshotNodeList:
+      type: object
+      additionalProperties: false
+      required: [data, page, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/BackupSnapshotNode'
+        page:
+          $ref: '#/components/schemas/Page'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    BackupSnapshotNode:
+      type: object
+      additionalProperties: false
+      required: [snapshot_node_id, name, kind, state, revision, created_at, updated_at]
+      properties:
+        snapshot_node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        parent_snapshot_node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        kind:
+          $ref: '#/components/schemas/BackupSnapshotNodeKind'
+        state:
+          $ref: '#/components/schemas/BackupSnapshotNodeState'
+        revision:
+          $ref: '#/components/schemas/U64Decimal'
+        file_version_id:
+          $ref: '#/components/schemas/OpaqueId'
+          description: Historical logical FileVersion identity for a content node.
+        byte_length:
+          $ref: '#/components/schemas/U64Decimal'
+        sha256:
+          $ref: '#/components/schemas/Hash'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    BackupSnapshotNodeKind:
+      type: string
+      enum: [FILE, DIRECTORY]
+    BackupSnapshotNodeState:
+      type: string
+      enum: [ACTIVE, TRASHED]
+    BackupRetentionPolicy:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/BackupRetentionPolicyData'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    BackupRetentionPolicyData:
+      type: object
+      additionalProperties: false
+      required: [policy_revision_id, backup_set_id, revision_number, keep_latest_completed, expire_after_seconds, created_at]
+      properties:
+        policy_revision_id:
+          $ref: '#/components/schemas/OpaqueId'
+        backup_set_id:
+          $ref: '#/components/schemas/OpaqueId'
+        revision_number:
+          $ref: '#/components/schemas/U64Decimal'
+        keep_latest_completed:
+          $ref: '#/components/schemas/U64Decimal'
+        expire_after_seconds:
+          $ref: '#/components/schemas/U64Decimal'
+        created_at:
+          type: string
+          format: date-time
+    BackupMaintenanceRunList:
+      type: object
+      additionalProperties: false
+      required: [data, page, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/BackupMaintenanceRun'
+        page:
+          $ref: '#/components/schemas/Page'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    BackupMaintenanceRunResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/BackupMaintenanceRun'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    BackupMaintenanceRun:
+      type: object
+      additionalProperties: false
+      required: [maintenance_run_id, backup_set_id, state, policy_revision_id, policy_revision_number, created_at]
+      properties:
+        maintenance_run_id:
+          $ref: '#/components/schemas/OpaqueId'
+        backup_set_id:
+          $ref: '#/components/schemas/OpaqueId'
+        state:
+          $ref: '#/components/schemas/BackupMaintenanceRunState'
+        policy_revision_id:
+          $ref: '#/components/schemas/OpaqueId'
+        policy_revision_number:
+          $ref: '#/components/schemas/U64Decimal'
+        captured_snapshot_id:
+          $ref: '#/components/schemas/OpaqueId'
+        expiry_plan_id:
+          $ref: '#/components/schemas/OpaqueId'
+        expiry_execution_id:
+          $ref: '#/components/schemas/OpaqueId'
+        created_at:
+          type: string
+          format: date-time
+        snapshot_captured_at:
+          type: string
+          format: date-time
+        expiry_planned_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        stale_at:
+          type: string
+          format: date-time
+    BackupMaintenanceRunState:
+      type: string
+      enum: [CREATED, SNAPSHOT_CAPTURED, EXPIRY_PLANNED, COMPLETED, STALE]
+    BackupOperationKind:
+      type: string
+      enum: [MAINTENANCE, RESTORE, PRUNE]
+      description: Closed semantic operation vocabulary; child execution receipts are not activity items.
+    BackupOperationState:
+      type: string
+      enum: [CREATED, SNAPSHOT_CAPTURED, EXPIRY_PLANNED, PLANNED, EXECUTED, COMPLETED, STALE]
+      description: Operation-kind-specific durable state; interpret it together with operation_kind.
+    BackupOperationPhase:
+      type: string
+      enum: [AWAITING_ADVANCE, SNAPSHOT_CAPTURED, EXPIRY_PLANNED, AWAITING_EXECUTION, AWAITING_CONFIRMATION, COMPLETED, STALE]
+      description: Truthful UI phase derived from durable state; no background-running claim is made.
+    BackupOperationNextAction:
+      type: string
+      enum: [ADVANCE, EXECUTE, CREATE_NEW_RUN, CREATE_NEW_PLAN, NONE]
+      description: Advisory explicit action vocabulary. It never performs a mutation.
+    BackupOperationProgress:
+      type: object
+      additionalProperties: false
+      required: [completed_steps, total_steps]
+      properties:
+        completed_steps:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Number of canonical durable steps completed; it must not exceed total_steps.
+        total_steps:
+          type: integer
+          format: int32
+          minimum: 1
+          description: Total known steps for this operation kind.
+      description: Step-based progress only; no percentage, ETA, or live throughput is exposed.
+    BackupOperationSummary:
+      type: object
+      additionalProperties: false
+      required: [operation_kind, operation_id, backup_set_id, state, phase, progress, terminal, next_action, created_at, last_transition_at]
+      properties:
+        operation_kind:
+          $ref: '#/components/schemas/BackupOperationKind'
+        operation_id:
+          $ref: '#/components/schemas/OpaqueId'
+        backup_set_id:
+          $ref: '#/components/schemas/OpaqueId'
+        snapshot_id:
+          $ref: '#/components/schemas/OpaqueId'
+        state:
+          $ref: '#/components/schemas/BackupOperationState'
+        phase:
+          $ref: '#/components/schemas/BackupOperationPhase'
+        progress:
+          $ref: '#/components/schemas/BackupOperationProgress'
+        terminal:
+          type: boolean
+        next_action:
+          $ref: '#/components/schemas/BackupOperationNextAction'
+        created_at:
+          type: string
+          format: date-time
+        last_transition_at:
+          type: string
+          format: date-time
+          description: Latest timestamp actually persisted for the observed lifecycle state.
+        completed_at:
+          type: string
+          format: date-time
+    BackupOperationList:
+      type: object
+      additionalProperties: false
+      required: [data, page, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/BackupOperationSummary'
+        page:
+          $ref: '#/components/schemas/Page'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    BackupOperationResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/BackupOperationDetail'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    BackupOperationDetail:
+      oneOf:
+        - $ref: '#/components/schemas/BackupMaintenanceOperation'
+        - $ref: '#/components/schemas/BackupRestoreOperation'
+        - $ref: '#/components/schemas/BackupPruneOperation'
+      discriminator:
+        propertyName: operation_kind
+        mapping:
+          MAINTENANCE: '#/components/schemas/BackupMaintenanceOperation'
+          RESTORE: '#/components/schemas/BackupRestoreOperation'
+          PRUNE: '#/components/schemas/BackupPruneOperation'
+      description: Explicit kind-specific detail union; no untyped JSON blob or physical storage identity.
+    BackupMaintenanceOperation:
+      type: object
+      additionalProperties: false
+      required: [operation_kind, operation_id, maintenance_run_id, backup_set_id, state, phase, progress, terminal, next_action, policy_revision_id, policy_revision_number, created_at, last_transition_at]
+      properties:
+        operation_kind:
+          const: MAINTENANCE
+        operation_id:
+          $ref: '#/components/schemas/OpaqueId'
+        maintenance_run_id:
+          $ref: '#/components/schemas/OpaqueId'
+        backup_set_id:
+          $ref: '#/components/schemas/OpaqueId'
+        snapshot_id:
+          $ref: '#/components/schemas/OpaqueId'
+        state:
+          $ref: '#/components/schemas/BackupMaintenanceRunState'
+        phase:
+          $ref: '#/components/schemas/BackupOperationPhase'
+        progress:
+          $ref: '#/components/schemas/BackupOperationProgress'
+        terminal:
+          type: boolean
+        next_action:
+          $ref: '#/components/schemas/BackupOperationNextAction'
+        policy_revision_id:
+          $ref: '#/components/schemas/OpaqueId'
+        policy_revision_number:
+          $ref: '#/components/schemas/U64Decimal'
+        captured_snapshot_id:
+          $ref: '#/components/schemas/OpaqueId'
+        expiry_plan_id:
+          $ref: '#/components/schemas/OpaqueId'
+        expiry_execution_id:
+          $ref: '#/components/schemas/OpaqueId'
+        created_at:
+          type: string
+          format: date-time
+        last_transition_at:
+          type: string
+          format: date-time
+        snapshot_captured_at:
+          type: string
+          format: date-time
+        expiry_planned_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        stale_at:
+          type: string
+          format: date-time
+    BackupRestoreOperation:
+      type: object
+      additionalProperties: false
+      required: [operation_kind, operation_id, restore_plan_id, backup_set_id, snapshot_id, source_snapshot_id, target_library_id, target_parent_node_id, destination_name, state, phase, progress, terminal, next_action, planned_entry_count, planned_directory_count, planned_file_count, created_at, last_transition_at]
+      properties:
+        operation_kind:
+          const: RESTORE
+        operation_id:
+          $ref: '#/components/schemas/OpaqueId'
+        restore_plan_id:
+          $ref: '#/components/schemas/OpaqueId'
+        backup_set_id:
+          $ref: '#/components/schemas/OpaqueId'
+        snapshot_id:
+          $ref: '#/components/schemas/OpaqueId'
+        source_snapshot_id:
+          $ref: '#/components/schemas/OpaqueId'
+        target_library_id:
+          $ref: '#/components/schemas/OpaqueId'
+        target_parent_node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        destination_name:
+          type: string
+        state:
+          $ref: '#/components/schemas/BackupRestorePlanState'
+        phase:
+          $ref: '#/components/schemas/BackupOperationPhase'
+        progress:
+          $ref: '#/components/schemas/BackupOperationProgress'
+        terminal:
+          type: boolean
+        next_action:
+          $ref: '#/components/schemas/BackupOperationNextAction'
+        planned_entry_count:
+          $ref: '#/components/schemas/U64Decimal'
+        planned_directory_count:
+          $ref: '#/components/schemas/U64Decimal'
+        planned_file_count:
+          $ref: '#/components/schemas/U64Decimal'
+        restore_execution_id:
+          $ref: '#/components/schemas/OpaqueId'
+        created_at:
+          type: string
+          format: date-time
+        last_transition_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        executed_at:
+          type: string
+          format: date-time
+        stale_at:
+          type: string
+          format: date-time
+    BackupPruneOperation:
+      type: object
+      additionalProperties: false
+      required: [operation_kind, operation_id, prune_plan_id, backup_set_id, snapshot_id, state, phase, progress, terminal, next_action, planned_pin_release_count, distinct_content_count, retained_by_other_reference_count, would_become_unreferenced_count, created_at, last_transition_at]
+      properties:
+        operation_kind:
+          const: PRUNE
+        operation_id:
+          $ref: '#/components/schemas/OpaqueId'
+        prune_plan_id:
+          $ref: '#/components/schemas/OpaqueId'
+        backup_set_id:
+          $ref: '#/components/schemas/OpaqueId'
+        snapshot_id:
+          $ref: '#/components/schemas/OpaqueId'
+        state:
+          $ref: '#/components/schemas/BackupPrunePlanState'
+        phase:
+          $ref: '#/components/schemas/BackupOperationPhase'
+        progress:
+          $ref: '#/components/schemas/BackupOperationProgress'
+        terminal:
+          type: boolean
+        next_action:
+          $ref: '#/components/schemas/BackupOperationNextAction'
+        planned_pin_release_count:
+          $ref: '#/components/schemas/U64Decimal'
+        distinct_content_count:
+          $ref: '#/components/schemas/U64Decimal'
+        retained_by_other_reference_count:
+          $ref: '#/components/schemas/U64Decimal'
+        would_become_unreferenced_count:
+          $ref: '#/components/schemas/U64Decimal'
+        prune_execution_id:
+          $ref: '#/components/schemas/OpaqueId'
+        released_content_reference_count:
+          $ref: '#/components/schemas/U64Decimal'
+        gc_handoff_count:
+          allOf:
+            - $ref: '#/components/schemas/U64Decimal'
+          description: Logical count handed to the separate GC pipeline; it is not physical reclamation.
+        created_at:
+          type: string
+          format: date-time
+        last_transition_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        executed_at:
+          type: string
+          format: date-time
+        stale_at:
+          type: string
+          format: date-time
+    BackupRestorePlanState:
+      type: string
+      enum: [PLANNED, STALE, EXECUTED]
+    CreateBackupRestorePlanRequest:
+      type: object
+      additionalProperties: false
+      required: [target_library_id, target_parent_node_id, destination_name]
+      properties:
+        target_library_id:
+          $ref: '#/components/schemas/OpaqueId'
+        target_parent_node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        destination_name:
+          type: string
+          minLength: 1
+          maxLength: 1024
+    BackupRestorePlanResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/BackupRestorePlan'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    BackupRestorePlan:
+      type: object
+      additionalProperties: false
+      required:
+        - restore_plan_id
+        - source_snapshot_id
+        - source_backup_set_id
+        - target_library_id
+        - target_parent_node_id
+        - destination_name
+        - state
+        - planned_entry_count
+        - planned_directory_count
+        - planned_file_count
+        - created_at
+      properties:
+        restore_plan_id:
+          $ref: '#/components/schemas/OpaqueId'
+        source_snapshot_id:
+          $ref: '#/components/schemas/OpaqueId'
+        source_backup_set_id:
+          $ref: '#/components/schemas/OpaqueId'
+        target_library_id:
+          $ref: '#/components/schemas/OpaqueId'
+        target_parent_node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        destination_name:
+          type: string
+        state:
+          $ref: '#/components/schemas/BackupRestorePlanState'
+        planned_entry_count:
+          type: string
+        planned_directory_count:
+          type: string
+        planned_file_count:
+          type: string
+        created_at:
+          type: string
+        stale_at:
+          type: [string, 'null']
+    BackupRestoreExecutionResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/BackupRestoreExecution'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    BackupRestoreExecution:
+      type: object
+      additionalProperties: false
+      required:
+        - restore_execution_id
+        - restore_plan_id
+        - source_snapshot_id
+        - target_library_id
+        - created_directory_count
+        - created_file_count
+        - journal_start_sequence
+        - journal_end_sequence
+        - executed_at
+      properties:
+        restore_execution_id:
+          $ref: '#/components/schemas/OpaqueId'
+        restore_plan_id:
+          $ref: '#/components/schemas/OpaqueId'
+        source_snapshot_id:
+          $ref: '#/components/schemas/OpaqueId'
+        target_library_id:
+          $ref: '#/components/schemas/OpaqueId'
+        created_directory_count:
+          type: string
+        created_file_count:
+          type: string
+        journal_start_sequence:
+          type: string
+        journal_end_sequence:
+          type: string
+        executed_at:
+          type: string
+    BackupPrunePlanState:
+      type: string
+      enum: [PLANNED, STALE, EXECUTED]
+      description: Public durable prune-plan lifecycle; no persistence-only assembly state is exposed.
+    BackupPruneImpact:
+      type: string
+      enum: [RETAINED_BY_OTHER_REFERENCE, WOULD_BECOME_UNREFERENCED]
+      description: |
+        Aggregate logical retention impact after excluding only the target
+        snapshot's pins. WOULD_BECOME_UNREFERENCED means the content would have
+        no known live FileVersion or other snapshot-pin references after prune
+        execution. It does not mean physical deletion has occurred or is
+        authorized.
+    BackupPruneImpactSummary:
+      type: object
+      additionalProperties: false
+      required: [impact, content_count]
+      properties:
+        impact:
+          $ref: '#/components/schemas/BackupPruneImpact'
+        content_count:
+          $ref: '#/components/schemas/U64Decimal'
+    BackupPrunePlanResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/BackupPrunePlan'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    BackupPrunePlan:
+      type: object
+      additionalProperties: false
+      required:
+        - prune_plan_id
+        - snapshot_id
+        - backup_set_id
+        - state
+        - entry_count
+        - distinct_content_count
+        - retained_by_other_reference_count
+        - would_become_unreferenced_count
+        - impact_summary
+        - created_at
+      properties:
+        prune_plan_id:
+          $ref: '#/components/schemas/OpaqueId'
+        snapshot_id:
+          $ref: '#/components/schemas/OpaqueId'
+        backup_set_id:
+          $ref: '#/components/schemas/OpaqueId'
+        state:
+          $ref: '#/components/schemas/BackupPrunePlanState'
+        entry_count:
+          $ref: '#/components/schemas/U64Decimal'
+        distinct_content_count:
+          $ref: '#/components/schemas/U64Decimal'
+        retained_by_other_reference_count:
+          $ref: '#/components/schemas/U64Decimal'
+        would_become_unreferenced_count:
+          $ref: '#/components/schemas/U64Decimal'
+        impact_summary:
+          type: array
+          minItems: 2
+          maxItems: 2
+          description: Two bounded aggregate buckets; never an unbounded per-content listing.
+          items:
+            $ref: '#/components/schemas/BackupPruneImpactSummary'
+        created_at:
+          type: string
+          format: date-time
+        stale_at:
+          type: string
+          format: date-time
+          description: Present only when canonical revalidation has made the plan STALE.
+    ExecuteBackupPrunePlanRequest:
+      type: object
+      additionalProperties: false
+      required: [confirm_snapshot_id]
+      properties:
+        confirm_snapshot_id:
+          allOf:
+            - $ref: '#/components/schemas/OpaqueId'
+          description: Must exactly equal the snapshot_id bound to the persisted prune plan; it confirms only retention-pin release and never physical deletion.
+    BackupPruneExecutionResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/BackupPruneExecution'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    BackupPruneExecution:
+      type: object
+      additionalProperties: false
+      required:
+        - prune_execution_id
+        - prune_plan_id
+        - snapshot_id
+        - backup_set_id
+        - released_content_reference_count
+        - distinct_content_count
+        - retained_elsewhere_count
+        - gc_handoff_count
+        - executed_at
+      properties:
+        prune_execution_id:
+          $ref: '#/components/schemas/OpaqueId'
+        prune_plan_id:
+          $ref: '#/components/schemas/OpaqueId'
+        snapshot_id:
+          $ref: '#/components/schemas/OpaqueId'
+        backup_set_id:
+          $ref: '#/components/schemas/OpaqueId'
+        released_content_reference_count:
+          $ref: '#/components/schemas/U64Decimal'
+        distinct_content_count:
+          $ref: '#/components/schemas/U64Decimal'
+        retained_elsewhere_count:
+          $ref: '#/components/schemas/U64Decimal'
+        gc_handoff_count:
+          allOf:
+            - $ref: '#/components/schemas/U64Decimal'
+          description: Number of now-unreferenced content objects handed to the internal GC candidate pipeline; not deleted objects, freed bytes, or physically reclaimed bytes.
+        executed_at:
+          type: string
+          format: date-time
     LibraryCollectionResponse:
       type: object
       additionalProperties: false

@@ -161,6 +161,17 @@ async fn postgres_backup_set_capture_is_owner_scoped_and_idempotent() {
     assert_eq!(set.source_library_id(), library_id);
     assert_eq!(set.retention_days(), Some(30));
 
+    let replayed_set = backup
+        .create_backup_set(user_id, set_id, name("daily"), library_id, Some(30), at)
+        .await
+        .expect("the same caller-supplied set identity must replay");
+    assert_eq!(replayed_set, set);
+
+    let changed_replay = backup
+        .create_backup_set(user_id, set_id, name("changed"), library_id, Some(30), at)
+        .await;
+    assert_eq!(changed_replay, Err(BackupError::BackupSetOperationConflict));
+
     // A duplicate name is a conflict.
     let duplicate = backup
         .create_backup_set(

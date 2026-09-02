@@ -1,9 +1,10 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AuthApi, AuthSessionResponse } from '../api/auth'
 import type { BootstrapApi, BootstrapStatusResponse } from '../api/bootstrap'
 import { ApiRequestError, type ApiErrorPayload } from '../api/errors'
+import { mutationRecoveryStore } from '../api/mutationRecovery'
 import { App } from './App'
 
 const openStatus: BootstrapStatusResponse = {
@@ -90,6 +91,8 @@ function fillLoginForm() {
 }
 
 describe('web authentication and bootstrap routes', () => {
+  beforeEach(() => mutationRecoveryStore.clear())
+
   it('routes an open server to the setup page', async () => {
     render(<App router="memory" initialEntries={['/']} {...makeApis({ setupRequired: true })} />)
 
@@ -181,11 +184,32 @@ describe('web authentication and bootstrap routes', () => {
     expect(apis.authApi.logout).toHaveBeenCalledOnce()
   })
 
+  it('intentional logout clears protected UI without deleting safe same-tab retry identity', async () => {
+    const getCurrentSession = vi.fn().mockResolvedValue(session)
+    const apis = makeApis({ getCurrentSession })
+    render(<App router="memory" initialEntries={['/']} {...apis} />)
+    await screen.findByRole('heading', { name: /welcome to synveil/i })
+    const record = mutationRecoveryStore.add({
+      action_kind: 'create_backup_set',
+      idempotency_key: '01925000-0000-7000-8000-000000000099',
+      request_scope: {},
+      request: { library_id: 'library-1', name: 'Safe retry' },
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /logout/i }))
+
+    expect(await screen.findByRole('heading', { name: /sign in/i })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /welcome to synveil/i })).not.toBeInTheDocument()
+    expect(mutationRecoveryStore.all().map((item) => item.action_id)).toEqual([record.action_id])
+    expect(apis.authApi.logout).toHaveBeenCalledOnce()
+  })
+
   it('treats an expired or missing session as unauthenticated', async () => {
     const apis = makeApis({ getCurrentSession: vi.fn().mockRejectedValue(apiError(401, 'authentication_failed')) })
     render(<App router="memory" initialEntries={['/health/dev']} {...apis} />)
 
     expect(await screen.findByRole('heading', { name: /sign in/i })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Diagnostics' })).not.toBeInTheDocument()
     await waitFor(() => {
       expect(screen.queryByRole('heading', { name: /welcome to synveil/i })).not.toBeInTheDocument()
     })

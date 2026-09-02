@@ -1,4 +1,5 @@
 import { StatusPill } from '../../components/ui/StatusPill'
+import { SafeDiagnosticsPanel } from '../../diagnostics/SafeDiagnosticsPanel'
 
 const healthRoutes = [
   {
@@ -45,6 +46,8 @@ export function DevHealthPage() {
           ))}
         </ul>
       </section>
+
+      <SafeDiagnosticsPanel />
     </div>
   )
 }

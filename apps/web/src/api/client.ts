@@ -1,4 +1,13 @@
 import { ApiRequestError } from './errors'
+import {
+  recordApiFailure,
+  recordMalformedApiResponse,
+} from '../diagnostics/record'
+import type { DiagnosticOperation } from '../diagnostics/types'
+
+export interface ApiRequestInit extends RequestInit {
+  readonly diagnosticOperation?: DiagnosticOperation
+}
 
 export interface ApiClientOptions {
   readonly baseUrl?: string
@@ -49,10 +58,11 @@ export class ApiClient {
     this.fetchImpl = fetchImpl
   }
 
-  async requestResponse(path: string, init: RequestInit = {}): Promise<Response> {
+  async requestResponse(path: string, init: ApiRequestInit = {}): Promise<Response> {
     const normalizedPath = path.startsWith('/') ? path : `/${path}`
-    const headers = new Headers(init.headers)
-    const method = (init.method ?? 'GET').toUpperCase()
+    const { diagnosticOperation, ...requestInit } = init
+    const headers = new Headers(requestInit.headers)
+    const method = (requestInit.method ?? 'GET').toUpperCase()
     if (!headers.has('Accept')) {
       headers.set('Accept', 'application/json')
     }
@@ -63,37 +73,50 @@ export class ApiClient {
       }
     }
 
-    const response = await this.fetchImpl(`${this.baseUrl}${normalizedPath}`, {
-      ...init,
-      credentials: init.credentials ?? this.credentials,
-      headers,
-    })
+    let response: Response
+    try {
+      response = await this.fetchImpl(`${this.baseUrl}${normalizedPath}`, {
+        ...requestInit,
+        credentials: requestInit.credentials ?? this.credentials,
+        headers,
+      })
+    } catch (error) {
+      recordApiFailure({ operation: diagnosticOperation, method, error })
+      throw error
+    }
 
     if (!response.ok) {
-      throw await ApiRequestError.fromResponse(response)
+      const error = await ApiRequestError.fromResponse(response)
+      recordApiFailure({ operation: diagnosticOperation, method, error })
+      throw error
     }
 
     return response
   }
 
-  async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  async request<T>(path: string, init: ApiRequestInit = {}): Promise<T> {
     const response = await this.requestResponse(path, init)
 
     if (response.status === 204) {
       return undefined as T
     }
 
-    return (await response.json()) as T
+    try {
+      return (await response.json()) as T
+    } catch (error) {
+      recordMalformedApiResponse(init.diagnosticOperation, (init.method ?? 'GET').toUpperCase())
+      throw error
+    }
   }
 
-  get<T>(path: string, init: Omit<RequestInit, 'method'> = {}): Promise<T> {
+  get<T>(path: string, init: Omit<ApiRequestInit, 'method'> = {}): Promise<T> {
     return this.request<T>(path, { ...init, method: 'GET' })
   }
 
   post<T>(
     path: string,
     body?: unknown,
-    init: Omit<RequestInit, 'method' | 'body'> = {},
+    init: Omit<ApiRequestInit, 'method' | 'body'> = {},
   ): Promise<T> {
     const headers = new Headers(init.headers)
     if (body !== undefined && !headers.has('Content-Type')) {

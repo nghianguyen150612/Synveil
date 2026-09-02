@@ -7,6 +7,7 @@
 //! codes; application/domain errors are translated at this boundary.
 
 mod auth;
+mod backups;
 mod conflicts;
 mod cookies;
 mod csrf;
@@ -53,8 +54,8 @@ pub use rebaseline::{
 };
 pub use request_id::{REQUEST_ID_HEADER, RequestContext, RequestId};
 pub use router::{
-    API_VERSION_PREFIX, BOOTSTRAP_BODY_LIMIT_BYTES, DEFAULT_BODY_LIMIT_BYTES,
-    LOGIN_BODY_LIMIT_BYTES, router,
+    API_VERSION_PREFIX, BACKUP_MUTATION_BODY_LIMIT_BYTES, BOOTSTRAP_BODY_LIMIT_BYTES,
+    DEFAULT_BODY_LIMIT_BYTES, LOGIN_BODY_LIMIT_BYTES, router,
 };
 pub use state::{
     ApiState, DenySystemHealth, PlatformReadiness, ReadinessProbe, ReadinessSnapshot,

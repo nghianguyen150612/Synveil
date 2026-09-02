@@ -8,8 +8,9 @@ use tracing::{Span, info};
 
 use crate::{
     ApiError, ApiState, CLIENT_MUTATION_BODY_LIMIT_BYTES, CONFLICT_RESOLUTION_BODY_LIMIT_BYTES,
-    FILE_METADATA_BODY_LIMIT_BYTES, UPLOAD_JSON_BODY_LIMIT_BYTES, auth, conflicts, device_auth,
-    downloads, files, health, middleware, mutations, rebaseline, sync, uploads, versions,
+    FILE_METADATA_BODY_LIMIT_BYTES, UPLOAD_JSON_BODY_LIMIT_BYTES, auth, backups, conflicts,
+    device_auth, downloads, files, health, middleware, mutations, rebaseline, sync, uploads,
+    versions,
 };
 
 /// Stable product API prefix for versioned resources.
@@ -22,6 +23,7 @@ pub const LOGIN_BODY_LIMIT_BYTES: usize = auth::LOGIN_BODY_LIMIT_BYTES;
 pub const BOOTSTRAP_BODY_LIMIT_BYTES: usize = auth::BOOTSTRAP_BODY_LIMIT_BYTES;
 pub const SYNC_ACK_BODY_LIMIT_BYTES: usize = sync::SYNC_ACK_BODY_LIMIT_BYTES;
 pub const REBASELINE_BODY_LIMIT_BYTES: usize = rebaseline::REBASELINE_BODY_LIMIT_BYTES;
+pub const BACKUP_MUTATION_BODY_LIMIT_BYTES: usize = 16 * 1024;
 
 /// Construct the Axum application router.
 pub fn router(state: ApiState) -> Router {
@@ -88,6 +90,94 @@ pub fn router(state: ApiState) -> Router {
         .route("/nodes/{node_id}/versions", get(versions::list_versions))
         // Version history is an authenticated read and deliberately does not
         // pass through the mutation CSRF layer.
+        .layer(from_fn_with_state(
+            state.clone(),
+            auth::require_authentication,
+        ))
+        .with_state(state.clone());
+    let protected_backups = Router::new()
+        .route(
+            "/backups/sets",
+            get(backups::list_backup_sets).post(backups::create_backup_set),
+        )
+        .route(
+            "/backups/sets/{backup_set_id}",
+            get(backups::get_backup_set),
+        )
+        .route(
+            "/backups/sets/{backup_set_id}/snapshots",
+            get(backups::list_backup_snapshots),
+        )
+        .route(
+            "/backups/sets/{backup_set_id}/operations",
+            get(backups::list_backup_operations),
+        )
+        .route(
+            "/backups/snapshots/{snapshot_id}",
+            get(backups::get_backup_snapshot),
+        )
+        .route(
+            "/backups/snapshots/{snapshot_id}/nodes",
+            get(backups::list_backup_snapshot_nodes),
+        )
+        .route(
+            "/backups/sets/{backup_set_id}/retention-policy",
+            get(backups::get_backup_retention_policy)
+                .post(backups::configure_backup_retention_policy),
+        )
+        .route(
+            "/backups/sets/{backup_set_id}/maintenance-runs",
+            get(backups::list_backup_maintenance_runs).post(backups::create_backup_maintenance_run),
+        )
+        .route(
+            "/backups/maintenance-runs/{run_id}",
+            get(backups::get_backup_maintenance_run),
+        )
+        .route(
+            "/backups/operations/{operation_kind}/{operation_id}",
+            get(backups::get_backup_operation),
+        )
+        .route(
+            "/backups/maintenance-runs/{run_id}/advance",
+            post(backups::advance_backup_maintenance_run),
+        )
+        .route(
+            "/backups/snapshots/{snapshot_id}/restore-plans",
+            post(backups::create_restore_plan),
+        )
+        .route(
+            "/backups/restore-plans/{restore_plan_id}",
+            get(backups::get_restore_plan),
+        )
+        .route(
+            "/backups/restore-plans/{restore_plan_id}/execute",
+            post(backups::execute_restore_plan),
+        )
+        .route(
+            "/backups/restore-executions/{restore_execution_id}",
+            get(backups::get_restore_execution),
+        )
+        .route(
+            "/backups/snapshots/{snapshot_id}/prune-plans",
+            post(backups::create_prune_plan),
+        )
+        .route(
+            "/backups/prune-plans/{prune_plan_id}",
+            get(backups::get_prune_plan),
+        )
+        .route(
+            "/backups/prune-plans/{prune_plan_id}/execute",
+            post(backups::execute_prune_plan),
+        )
+        .route(
+            "/backups/prune-executions/{prune_execution_id}",
+            get(backups::get_prune_execution),
+        )
+        .layer(RequestBodyLimitLayer::new(BACKUP_MUTATION_BODY_LIMIT_BYTES))
+        .layer(from_fn_with_state(
+            state.clone(),
+            auth::require_csrf_for_mutations,
+        ))
         .layer(from_fn_with_state(
             state.clone(),
             auth::require_authentication,
@@ -291,6 +381,7 @@ pub fn router(state: ApiState) -> Router {
         .merge(protected_device_enrollment)
         .merge(public_device_exchange)
         .merge(protected_versions)
+        .merge(protected_backups)
         .merge(protected_version_restore)
         .merge(protected_sync)
         .merge(protected_rebaseline)

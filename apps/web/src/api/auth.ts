@@ -40,21 +40,29 @@ export function login(
   credentials: LoginRequest,
   client: ApiClient = apiClient,
 ): Promise<AuthSessionResponse> {
-  return client.post<AuthSessionResponse>('/api/v1/auth/login', credentials)
+  return client.post<AuthSessionResponse>('/api/v1/auth/login', credentials, {
+    diagnosticOperation: 'AUTH_LOGIN',
+  })
 }
 
 export function getCurrentSession(
   client: ApiClient = apiClient,
 ): Promise<AuthSessionResponse> {
-  return client.get<AuthSessionResponse>('/api/v1/auth/session')
+  return client.get<AuthSessionResponse>('/api/v1/auth/session', {
+    diagnosticOperation: 'AUTH_SESSION_CHECK',
+  })
 }
 
 export function getCsrfToken(client: ApiClient = apiClient): Promise<CsrfResponse> {
-  return client.get<CsrfResponse>('/api/v1/auth/csrf')
+  return client.get<CsrfResponse>('/api/v1/auth/csrf', {
+    diagnosticOperation: 'AUTH_CSRF',
+  })
 }
 
 export function logout(client: ApiClient = apiClient): Promise<void> {
-  return client.post<void>('/api/v1/auth/logout')
+  return client.post<void>('/api/v1/auth/logout', undefined, {
+    diagnosticOperation: 'AUTH_LOGOUT',
+  })
 }
 
 /** Default dependency-injection boundary used by AuthProvider and its tests. */

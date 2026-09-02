@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { ApiClient } from './client'
-import { ApiRequestError } from './errors'
+import { ApiRequestError, normalizeApiError, toUserFacingMessage } from './errors'
 
 describe('ApiClient', () => {
   it('maps the reviewed API error envelope without exposing transport details', async () => {
@@ -89,5 +89,38 @@ describe('ApiClient', () => {
 
     const headers = new Headers(fetchImpl.mock.calls[0]?.[1]?.headers)
     expect(headers.get('X-CSRF-Token')).toBe('caller-proof')
+  })
+
+  it('never adds CSRF to an observational GET', async () => {
+    document.cookie = 'synveil_csrf=get-must-ignore-this; path=/'
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ data: [] }), { status: 200 }),
+    )
+    const client = new ApiClient({ fetchImpl })
+
+    await client.get('/api/v1/backups/sets')
+
+    const headers = new Headers(fetchImpl.mock.calls[0]?.[1]?.headers)
+    expect(headers.get('X-CSRF-Token')).toBeNull()
+  })
+
+  it.each([
+    [401, 'AuthenticationRequired'],
+    [400, 'ValidationError'],
+    [404, 'NotFoundError'],
+    [409, 'ConflictError'],
+    [503, 'DependencyUnavailable'],
+    [500, 'UnexpectedServerError'],
+  ] as const)('normalizes status %s to %s without rendering server diagnostics', (status, kind) => {
+    const error = new ApiRequestError(status, {
+      code: 'server_code',
+      message: 'raw implementation diagnostic',
+      request_id: 'request-1',
+      retryable: status >= 500,
+      details: { safe_key: 'preserved internally' },
+    })
+
+    expect(normalizeApiError(error)).toMatchObject({ kind, status, code: 'server_code' })
+    expect(toUserFacingMessage(error)).not.toContain('raw implementation diagnostic')
   })
 })
