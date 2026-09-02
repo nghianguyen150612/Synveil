@@ -1,12 +1,13 @@
 use std::{
     collections::{HashMap, HashSet},
-    fs,
-    path::PathBuf,
+    fs, io,
+    path::{Path, PathBuf},
     str::FromStr,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
+    time::{Duration, Instant},
 };
 
 use async_trait::async_trait;
@@ -28,6 +29,32 @@ use synveil_core::{
 
 fn timestamp(value: &str) -> Timestamp {
     Timestamp::from_str(value).unwrap()
+}
+
+/// Bounded Windows-safe test teardown. SQLite WAL/SHM descriptors and watcher
+/// handles can keep files open for a moment after the last handle is dropped;
+/// ERROR_SHARING_VIOLATION (32) / ERROR_LOCK_VIOLATION (33) are retried with a
+/// bounded backoff while every unrelated IO error fails immediately.
+fn remove_dir_all_bounded(path: &Path) -> io::Result<()> {
+    if !cfg!(windows) {
+        return fs::remove_dir_all(path);
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match fs::remove_dir_all(path) {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if cfg!(windows)
+                    && error
+                        .raw_os_error()
+                        .is_some_and(|code| matches!(code, 32 | 33))
+                    && Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 fn digest(bytes: &[u8]) -> Sha256Digest {
@@ -657,7 +684,7 @@ impl Harness {
     }
 
     fn cleanup(self) {
-        fs::remove_dir_all(self.base).unwrap();
+        remove_dir_all_bounded(&self.base).unwrap();
     }
 }
 
