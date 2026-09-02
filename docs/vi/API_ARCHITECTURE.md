@@ -5,8 +5,9 @@ exact-offset resumable upload HTTP transport, content-read bất biến trung l�
 transport đã authorize theo owner và HTTP download full/single-range đã
 implement, cùng metadata version-history bất biến, safe historical-version
 restore và retention metadata của Trash đã authenticate; metadata purge
-execution nội bộ đã implement; upload UI, physical object purge/GC, download
-UI, sync và backup còn PLANNED**
+execution nội bộ, physical object GC nội bộ crash-safe và GC-worker
+orchestration/reconciliation nội bộ bounded đã implement; upload UI, download
+UI, sync, backup và sharing còn PLANNED**
 
 Tài liệu này xác định HTTP contract mục tiêu và blueprint cho
 `api/openapi.yaml`. Foundation hiện triển khai transport health hữu hạn, subset
@@ -57,6 +58,17 @@ và không tạo `UploadSession`. Ý
 nghĩa và state entity chuẩn đến từ [DOMAIN_MODEL.md](DOMAIN_MODEL.md); đặc tả
 storage, upload, sync, backup, photo, AI và integration tinh chỉnh hành vi mà
 không phát minh ID, error hay mutation semantic thay thế.
+
+GC planning và execution là boundary nội bộ trung lập transport, cố ý không có
+HTTP route hay OpenAPI operation. Execution chỉ nhận candidate `READY` có
+lease/generation matching còn hạn, lặp proof reference/hold trong transaction
+PostgreSQL ngắn trước mỗi action, ghi operation bền trước ObjectStore I/O và
+xóa/đối soát từng replica đã verify. `GC_DELETING` reject FileVersion, replica
+và active hold mới; completion chỉ dọn metadata sau khi mọi replica absent.
+`synveil-worker` opt-in gọi các service đã chấp thuận đó qua cycle `run_once()`
+nội bộ bounded, không có HTTP route, OpenAPI operation hay control dành cho
+người dùng thông thường. Producer hold backup/share/sync vẫn PLANNED, không
+được suy ra từ status API nội bộ này.
 
 ## Ranh giới contract
 

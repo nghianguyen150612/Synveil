@@ -34,8 +34,10 @@ Implementation hiện cung cấp:
   an toàn, recovery offset có thẩm quyền và browser API helper typed.
 
 `UploadPart`, ordered manifest, fingerprint idempotency phong phú hơn, quota
-reservation, worker scheduling và thực thi GC vẫn là công việc về sau và không
-được suy ra từ subset HTTP exact-offset này. Content-read application service
+reservation và upload-specific worker scheduling vẫn là công việc về sau và
+không được suy ra từ subset HTTP exact-offset này. Pipeline execution/worker GC
+nội bộ đã implement được mô tả trong `STORAGE.md`; nó không phải capability của
+protocol upload. Content-read application service
 trung lập transport và HTTP download transport authenticate được mô tả trong
 [STORAGE.md](STORAGE.md) và [API_ARCHITECTURE.md](API_ARCHITECTURE.md); upload UI
 product, download UI, sync và backup vẫn được hoạch định.

@@ -8,8 +8,12 @@ content-read application service IMPLEMENTED/VALIDATED; authenticated HTTP
 full/single-range download transport IMPLEMENTED/VALIDATED; authenticated
 immutable version-history metadata listing/lookup IMPLEMENTED/VALIDATED; safe
 historical-version restore IMPLEMENTED; metadata-only Trash retention and purge
-execution plus FileVersion reference accounting IMPLEMENTED; physical object
-GC, download UI, and higher-level lifecycle PLANNED**
+execution plus FileVersion reference accounting VALIDATED; GC grace-period,
+lease planning, and crash-safe internal physical Object/ObjectReplica deletion
+IMPLEMENTED/VALIDATED; bounded internal GC-worker orchestration and
+stuck-operation reconciliation IMPLEMENTED; unknown physical-orphan auto-delete
+NOT IMPLEMENTED; download UI, sync, backup, sharing, and higher-level lifecycle
+PLANNED**
 
 This document specifies Synveil's canonical byte-storage contract and the
 logical lifecycle that sits above it. It is subordinate to accepted ADRs and
@@ -34,13 +38,17 @@ are still normative planning material unless explicitly marked otherwise.
 | authenticated immutable version-history metadata listing and lookup | `IMPLEMENTED/VALIDATED` |
 | authenticated safe historical-version restore as a new immutable `FileVersion` | `IMPLEMENTED` |
 | canonical Trash timestamp, derived retention status, and metadata-only `PURGING` begin | `IMPLEMENTED` |
-| trusted metadata purge execution, FileVersion reference release, and GC-candidate metadata | `IMPLEMENTED` |
+| trusted metadata purge execution, FileVersion reference release, and GC-candidate metadata | `IMPLEMENTED/VALIDATED` |
+| GC grace-period, bounded claims, leases, revalidation, and ready planning | `IMPLEMENTED/VALIDATED` |
+| internal physical `Object`/`ObjectReplica` deletion and object-byte cleanup | `IMPLEMENTED/VALIDATED` |
+| internal GC worker orchestration, cycle caps, retry scheduling, and stuck-operation reconciliation | `IMPLEMENTED` |
+| unknown physical orphan auto-delete | `NOT IMPLEMENTED` |
 | download UI | `PLANNED` |
-| GC | `PLANNED` |
 | compression | `PLANNED` |
 | filesystem optimizations | `PLANNED` |
 | sync | `PLANNED` |
 | backup | `PLANNED` |
+| sharing | `PLANNED` |
 
 ## Scope and ownership
 
@@ -374,9 +382,12 @@ service are contract/conformance or focused application-test validated. The
 authenticated exact-offset HTTP transport streams bounded request frames
 through the upload service, and authenticated full/single-range download routes
 stream verified content through the content-read service. The API does not
-expose storage keys or physical paths. Download UI, broader object lifecycle,
-GC, sync, backup, or deployment-installer work remains planned. The upload service's PostgreSQL
-finalization transaction creates
+expose storage keys or physical paths. The internal object-GC pipeline is
+implemented/validated: metadata-only planning, crash-safe physical
+Object/ObjectReplica execution, and the bounded private worker have no public
+HTTP control surface. Download UI, broader physical object lifecycle beyond
+that internal pipeline, sync, backup, and deployment-installer work remain
+planned. The upload service's PostgreSQL finalization transaction creates
 the first visible `FileVersion` only after durable object verification. NAS and
 other filesystems still require their own capability and crash evidence before
 production support is claimed.
@@ -668,6 +679,134 @@ candidate object through a new `FileVersion` clears the candidate in the same
 transaction. PostgreSQL advisory and row locks serialize reference release and
 re-reference decisions for shared canonical objects across libraries.
 
+### Implemented GC eligibility and lease planning
+
+Prompt 27 implements the metadata-only planning half of object GC. The typed
+`ObjectGcPolicy` uses a 24-hour grace period, a 15-minute worker lease, and a
+default claim batch of 100 (bounded by a hard maximum of 500). Deployments may
+override these values with `SYNVEIL_OBJECT_GC_GRACE_SECONDS`,
+`SYNVEIL_OBJECT_GC_LEASE_SECONDS`, and `SYNVEIL_OBJECT_GC_MAX_BATCH_SIZE`.
+Zero or invalid durations and out-of-range batches are rejected. PostgreSQL
+`clock_timestamp()` is authoritative; the grace rule is inclusive:
+`now >= unreferenced_at + grace_period`.
+
+The internal transport-neutral `ObjectGcPlanningService` exposes bounded
+candidate claim, lease renewal, safe release, reference revalidation, and
+metadata-only `READY` planning. Claims use `FOR UPDATE SKIP LOCKED` in stable
+`(unreferenced_at ASC, object_id ASC, dedup_domain_id ASC)` order. Each claimed
+row is rechecked under the canonical candidate-row -> Object advisory lock ->
+Object-row order, and only a missing committed `FileVersion` reference can
+produce a lease. Lease IDs are opaque UUIDv7 values; the stored generation is
+monotonic and stale generations cannot renew, release, or revalidate a
+successor. Expired `LEASED` or `READY` rows are reclaimable, while a live lease
+blocks another claim.
+
+`READY` is a revocable metadata state, not a delete command. A newly committed
+`FileVersion` clears an `ELIGIBLE`, `LEASED`, or `READY` candidate under the
+same canonical lock order, so a worker that resumes after cancellation sees a
+stale lease or a missing candidate. Revalidation and ready planning repeat the
+authoritative `NOT EXISTS` FileVersion check. The physical executor performs
+one further final check after acquiring its action fence, and uses the planning
+lease/generation only as a capability rather than as a delete command.
+
+### Implemented physical GC execution
+
+`ObjectGcExecutionService` is an internal application boundary with
+`start_gc_execution`, bounded one-replica `delete_next_replica`/
+`reconcile_replica`, resume, and completion operations. Start requires `READY`
+and a live matching lease/generation. A short PostgreSQL transaction locks the
+candidate and canonical Object, repeats the exact `FileVersion` zero-reference
+and active-hold checks, records `object_gc_operations` and deterministic
+`object_gc_replica_actions`, changes verified replicas to `DELETING`, and sets
+the Object lifecycle to `GC_DELETING` before any external side effect.
+
+Before every external delete the executor renews the lease and repeats the
+candidate/Object/action proof. It routes the stored backend kind only to a
+configured `ObjectStore` adapter, validates the opaque key plus expected
+length/SHA-256/backend version, and uses conditional delete whenever the
+adapter proves that capability. One action is persisted as fenced before one
+delete call; response ambiguity is resolved by `reconcile_delete`, never by a
+byte read or guess. Exact absence (including an already-absent replica) is the
+only route that removes the matching `ObjectReplica` row. Retryable presence,
+in-progress deletion, unknown outcome, and evidence mismatch remain durable
+recovery states.
+
+The local adapter atomically renames a managed hashed object directory to a
+private `.deleting` tombstone before removing files. It rejects redirected or
+unexpected entries, reports an interrupted tombstone as `InProgress`, and only
+reports absence once its managed content, commit marker, metadata, and
+tombstone directory are gone. After all action rows are `DELETED`, a final
+short PostgreSQL transaction rechecks reference/hold/lease truth, removes the
+candidate and Object, and marks the operation `COMPLETED`. A completed replay
+is deterministic. The `object_gc_holds` table is an explicit future boundary:
+backup/share/sync producers are not implemented and must register active holds
+before they can coexist with physical GC. There is no public GC API. The
+opt-in worker below is the only runtime scheduler and is an internal process,
+not a normal-user deletion control.
+
+### Implemented internal GC worker and bounded reconciliation
+
+`GcWorker` is a transport-neutral coordinator layered above
+`ObjectGcPlanningService`, `ObjectGcExecutionService`, and a PostgreSQL-only
+recovery repository. It has no filesystem path or `ObjectStore` deletion
+capability. Runtime composition is the private `synveil-worker` binary; it has
+no HTTP listener and is disabled unless explicitly enabled.
+
+`run_once()` is the deterministic test and application boundary. An enabled
+cycle first performs a bounded, metadata-only reconciliation report, then
+reclaims due incomplete operations in oldest-update order. If recovery claims
+exist, new candidate planning waits for a later cycle. Otherwise it claims a
+bounded new-work slice. Every selected operation receives at most one physical
+replica step in that cycle. A nonterminal slice releases its planning lease, so
+the next due cycle reclaims a fresh opaque lease/generation instead of holding a
+worker-owned lease while sleeping.
+
+The following environment variables are validated before the worker runs. All
+durations are whole seconds; invalid, zero, contradictory, or out-of-range
+values fail configuration parsing.
+
+| Variable | Default | Purpose |
+|---|---:|---|
+| `SYNVEIL_GC_WORKER_ENABLED` | `false` | Explicit opt-in for the private worker. |
+| `SYNVEIL_GC_WORKER_CYCLE_INTERVAL_SECONDS` | `60` | Minimum delay between completed cycles; no sub-second polling. |
+| `SYNVEIL_GC_WORKER_MAX_CANDIDATE_CLAIMS` | `8` | New planning claims per cycle. |
+| `SYNVEIL_GC_WORKER_MAX_ACTIVE_OPERATIONS` | `2` | Operation slices considered per cycle. |
+| `SYNVEIL_GC_WORKER_MAX_REPLICA_ACTIONS` | `4` | Replica steps/reconciliation inspection cap per cycle. |
+| `SYNVEIL_GC_WORKER_MAX_CONCURRENT_EXECUTIONS` | `2` | Maximum concurrent operation tasks; it cannot exceed active operations. |
+| `SYNVEIL_GC_WORKER_MAX_CONCURRENT_REPLICA_DELETES` | `1` | Process-wide worker semaphore for storage side effects; it cannot exceed executions. |
+| `SYNVEIL_GC_WORKER_RETRY_BASE_SECONDS` / `SYNVEIL_GC_WORKER_RETRY_MAX_SECONDS` | `30` / `900` | Bounded exponential retry window. |
+| `SYNVEIL_GC_WORKER_MAX_ATTEMPTS` | `12` | Maximum durable action attempts before intervention. |
+| `SYNVEIL_GC_WORKER_SHUTDOWN_TIMEOUT_SECONDS` | `30` | Maximum drain time for the current bounded cycle. |
+
+Retry state belongs to the durable replica action: `attempt_count` and
+`next_attempt_at` use PostgreSQL time. Retryable storage presence, an
+in-progress delete, ambiguous/reconciliation-required responses, database
+unavailability, and stale/expired lease outcomes do not produce completion.
+The delay is exponential, capped at the configured maximum, and adds at most
+10% deterministic identity-derived jitter. Unsafe persisted metadata, replica
+evidence mismatch, unsupported backend routing, or an exhausted retry budget
+become `NEEDS_ATTENTION`, never an infinite retry loop. The worker logs only
+safe counters/status/error classes and per-cycle duration; no key, path,
+credential, raw provider error, or normal-user control surface is exposed.
+
+Reconciliation is bounded and metadata-driven. It counts `GC_DELETING` Objects
+without operations, operations without candidates, expired `READY` candidates
+without incomplete work, terminal action cleanup still pending, and existing
+`NEEDS_ATTENTION` operations. It never recursively lists a storage root and
+never auto-deletes unknown physical files. A replica discovered absent outside
+an active action remains an integrity/reconciliation concern rather than a
+reason to erase Object metadata.
+
+During database outage no new destructive claim can be persisted and the
+cycle returns a safe error. During ObjectStore outage the lower execution
+service leaves a fenced durable recovery state with a due retry; candidate,
+replica, and Object metadata are not falsely completed. The binary stops
+claiming on Ctrl-C, waits only for the configured bounded drain, and leaves a
+timed-out in-flight fence for Prompt 28 reconciliation after restart. Multiple
+workers are safe without leader election: PostgreSQL `SKIP LOCKED`, short
+transactions, lease generations, and final Prompt 28 revalidation remain
+authoritative.
+
 ### Trash transaction
 
 For one node or directory subtree, a single PostgreSQL transaction:
@@ -742,11 +881,13 @@ separately so users can understand why deletion has not freed capacity.
 
 ## Garbage collection and orphan reconciliation
 
-Metadata purge produces only an `object_gc_candidates` handoff keyed by the
-canonical object identity. It does not implement physical object GC, replica
-deletion, backend cleanup, sync, backup, or sharing. The sections below remain
-the broader planned eligibility and delete-job contract and must not be inferred
-from metadata purge completion alone.
+Metadata purge produces an `object_gc_candidates` handoff keyed by canonical
+object identity. Prompt 27 implements the bounded grace/lease/revalidation
+planning layer and Prompt 28 implements its internal fenced physical execution
+through `ObjectStore`. Prompt 29 implements bounded scheduling, durable retry,
+and worker concurrency controls. Orphan inventory reconciliation, broader
+rate-limiting policy, sync, backup, and sharing remain future work. The broader
+contract below must not be mistaken for a public deletion API.
 
 ### Eligibility proof
 

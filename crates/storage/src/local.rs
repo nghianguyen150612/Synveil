@@ -20,9 +20,10 @@ use sha2::{Digest, Sha256};
 use synveil_core::Sha256Digest;
 use synveil_object_store::{
     ByteRange, ByteStream, CapabilityEvidence, CapabilitySupport, DeleteOutcome,
-    IntegrityExpectation, ObjectKey, ObjectMetadata, ObjectRead, ObjectStore, ObjectStoreError,
-    ObjectVersion, PromotionReceipt, PutRequest, StagedMetadata, StagingHandle, StagingProgress,
-    StorageAvailability, StorageBackendKind, StorageCapabilities, StorageCapability, boxed_stream,
+    DeleteReconciliation, IntegrityExpectation, ObjectKey, ObjectMetadata, ObjectRead, ObjectStore,
+    ObjectStoreError, ObjectVersion, PromotionReceipt, PutRequest, StagedMetadata, StagingHandle,
+    StagingProgress, StorageAvailability, StorageBackendKind, StorageCapabilities,
+    StorageCapability, boxed_stream,
 };
 use tokio::{
     fs as async_fs,
@@ -41,6 +42,7 @@ const OBJECT_CONTENT_NAME: &str = "content";
 const OBJECT_METADATA_NAME: &str = "metadata";
 const OBJECT_COMMITTED_NAME: &str = "committed";
 const OBJECT_COMMITTED_CONTENT: &[u8] = b"synveil-object-committed-v1\n";
+const OBJECT_DELETING_SUFFIX: &str = ".deleting";
 const STAGING_UPLOAD_SUFFIX: &str = ".upload";
 const STAGING_VERIFIED_SUFFIX: &str = ".verified";
 const STAGING_METADATA_SUFFIX: &str = ".metadata";
@@ -68,6 +70,7 @@ pub struct LocalFilesystemObjectStore {
 
 struct ObjectLocator {
     directory: PathBuf,
+    deleting_directory: PathBuf,
     content: PathBuf,
     metadata: PathBuf,
     committed: PathBuf,
@@ -173,12 +176,28 @@ impl LocalFilesystemObjectStore {
         let encoded = hex_digest(&hash);
         let prefix = &encoded[..2];
         let directory = self.object_layout_dir.join(prefix).join(&encoded);
+        let deleting_directory = self
+            .object_layout_dir
+            .join(prefix)
+            .join(format!("{encoded}{OBJECT_DELETING_SUFFIX}"));
         Ok(ObjectLocator {
             content: directory.join(OBJECT_CONTENT_NAME),
             metadata: directory.join(OBJECT_METADATA_NAME),
             committed: directory.join(OBJECT_COMMITTED_NAME),
             directory,
+            deleting_directory,
         })
+    }
+
+    fn deletion_locator(locator: &ObjectLocator) -> ObjectLocator {
+        let directory = locator.deleting_directory.clone();
+        ObjectLocator {
+            content: directory.join(OBJECT_CONTENT_NAME),
+            metadata: directory.join(OBJECT_METADATA_NAME),
+            committed: directory.join(OBJECT_COMMITTED_NAME),
+            deleting_directory: directory.clone(),
+            directory,
+        }
     }
 
     fn staging_paths(&self, handle: &StagingHandle) -> Result<StagingPaths, ObjectStoreError> {
@@ -257,9 +276,22 @@ impl LocalFilesystemObjectStore {
                 }
             }
             Err(error) if error.kind() == ErrorKind::NotFound => {
-                return Err(ObjectStoreError::NotFound);
+                return match async_fs::symlink_metadata(&locator.deleting_directory).await {
+                    Ok(_) => Err(ObjectStoreError::StorageUnavailable),
+                    Err(tombstone_error) if tombstone_error.kind() == ErrorKind::NotFound => {
+                        Err(ObjectStoreError::NotFound)
+                    }
+                    Err(tombstone_error) => Err(map_io_error(tombstone_error)),
+                };
             }
             Err(error) => return Err(map_io_error(error)),
+        }
+
+        if async_fs::symlink_metadata(&locator.deleting_directory)
+            .await
+            .is_ok()
+        {
+            return Err(ObjectStoreError::StorageUnavailable);
         }
 
         require_file_async(&locator.committed).await?;
@@ -364,8 +396,24 @@ impl LocalFilesystemObjectStore {
 
     async fn remove_committed_object(
         &self,
+        key: &ObjectKey,
         locator: &ObjectLocator,
+        expected_version: Option<&ObjectVersion>,
     ) -> Result<DeleteOutcome, ObjectStoreError> {
+        let deleting = Self::deletion_locator(locator);
+        match async_fs::symlink_metadata(&deleting.directory).await {
+            Ok(_) => {
+                if async_fs::symlink_metadata(&locator.directory).await.is_ok() {
+                    return Err(ObjectStoreError::StorageUnavailable);
+                }
+                self.finish_deletion_tombstone(key, &deleting, expected_version)
+                    .await?;
+                return Ok(DeleteOutcome::Deleted);
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(map_io_error(error)),
+        }
+
         match async_fs::symlink_metadata(&locator.directory).await {
             Ok(metadata) => {
                 if is_redirected(&metadata) || !metadata.is_dir() {
@@ -378,6 +426,35 @@ impl LocalFilesystemObjectStore {
             Err(error) => return Err(map_io_error(error)),
         }
 
+        self.validate_object_directory_entries(locator).await?;
+        let record = self.read_object_record(key).await?;
+        if expected_version.is_some_and(|expected| record.version != *expected) {
+            return Err(ObjectStoreError::PreconditionFailed);
+        }
+
+        async_fs::rename(&locator.directory, &deleting.directory)
+            .await
+            .map_err(map_io_error)?;
+        let prefix = locator
+            .directory
+            .parent()
+            .ok_or(ObjectStoreError::InvalidKey)?;
+        self.sync_managed_directory(prefix).await?;
+        self.finish_deletion_tombstone(key, &deleting, expected_version)
+            .await?;
+        Ok(DeleteOutcome::Deleted)
+    }
+
+    async fn validate_object_directory_entries(
+        &self,
+        locator: &ObjectLocator,
+    ) -> Result<(), ObjectStoreError> {
+        let metadata = async_fs::symlink_metadata(&locator.directory)
+            .await
+            .map_err(map_io_error)?;
+        if is_redirected(&metadata) || !metadata.is_dir() {
+            return Err(ObjectStoreError::StorageUnavailable);
+        }
         let mut entries = async_fs::read_dir(&locator.directory)
             .await
             .map_err(map_io_error)?;
@@ -390,29 +467,105 @@ impl LocalFilesystemObjectStore {
                 return Err(ObjectStoreError::StorageUnavailable);
             }
         }
+        Ok(())
+    }
 
-        require_file_async(&locator.committed).await?;
-        require_file_async(&locator.content).await?;
-        require_file_async(&locator.metadata).await?;
-        let marker = read_small_file(&locator.committed).await?;
-        if marker.as_slice() != OBJECT_COMMITTED_CONTENT {
+    async fn deletion_record(
+        &self,
+        key: &ObjectKey,
+        locator: &ObjectLocator,
+    ) -> Result<Option<ObjectRecord>, ObjectStoreError> {
+        match async_fs::symlink_metadata(&locator.metadata).await {
+            Ok(_) => require_file_async(&locator.metadata).await?,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(map_io_error(error)),
+        };
+        let fields = parse_record(&read_small_file(&locator.metadata).await?)?;
+        if fields.get("kind").map(String::as_str) != Some(OBJECT_RECORD_KIND) {
+            return Err(ObjectStoreError::StorageUnavailable);
+        }
+        let stored_key = ObjectKey::new(
+            fields
+                .get("key")
+                .ok_or(ObjectStoreError::StorageUnavailable)?
+                .clone(),
+        )
+        .map_err(|_| ObjectStoreError::StorageUnavailable)?;
+        if stored_key != *key {
+            return Err(ObjectStoreError::StorageUnavailable);
+        }
+        let length = parse_length(fields.get("length"))?;
+        let sha256 = parse_digest(fields.get("sha256"))?;
+        let version = ObjectVersion::new(
+            fields
+                .get("version")
+                .ok_or(ObjectStoreError::StorageUnavailable)?
+                .clone(),
+        )
+        .map_err(|_| ObjectStoreError::StorageUnavailable)?;
+        Ok(Some(ObjectRecord {
+            key: stored_key,
+            length,
+            sha256,
+            version,
+        }))
+    }
+
+    async fn finish_deletion_tombstone(
+        &self,
+        key: &ObjectKey,
+        locator: &ObjectLocator,
+        expected_version: Option<&ObjectVersion>,
+    ) -> Result<(), ObjectStoreError> {
+        self.validate_object_directory_entries(locator).await?;
+        let stored_record = self.deletion_record(key, locator).await?;
+        if let (Some(expected), Some(stored)) = (expected_version, stored_record.as_ref())
+            && &stored.version != expected
+        {
+            return Err(ObjectStoreError::PreconditionFailed);
+        }
+        if stored_record.is_none()
+            && (async_fs::symlink_metadata(&locator.content).await.is_ok()
+                || async_fs::symlink_metadata(&locator.committed).await.is_ok())
+        {
             return Err(ObjectStoreError::StorageUnavailable);
         }
 
-        match async_fs::remove_file(&locator.committed).await {
-            Ok(()) => {}
-            Err(error) if error.kind() == ErrorKind::NotFound => {
-                return Ok(DeleteOutcome::AlreadyAbsent);
+        match async_fs::symlink_metadata(&locator.content).await {
+            Ok(_) => {
+                require_file_async(&locator.content).await?;
+                async_fs::remove_file(&locator.content)
+                    .await
+                    .map_err(map_io_error)?;
             }
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(map_io_error(error)),
+        }
+        match async_fs::symlink_metadata(&locator.committed).await {
+            Ok(_) => {
+                require_file_async(&locator.committed).await?;
+                if read_small_file(&locator.committed).await?.as_slice() != OBJECT_COMMITTED_CONTENT
+                {
+                    return Err(ObjectStoreError::StorageUnavailable);
+                }
+                async_fs::remove_file(&locator.committed)
+                    .await
+                    .map_err(map_io_error)?;
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
             Err(error) => return Err(map_io_error(error)),
         }
         self.sync_managed_directory(&locator.directory).await?;
-        async_fs::remove_file(&locator.metadata)
-            .await
-            .map_err(map_io_error)?;
-        async_fs::remove_file(&locator.content)
-            .await
-            .map_err(map_io_error)?;
+        match async_fs::symlink_metadata(&locator.metadata).await {
+            Ok(_) => {
+                require_file_async(&locator.metadata).await?;
+                async_fs::remove_file(&locator.metadata)
+                    .await
+                    .map_err(map_io_error)?;
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(map_io_error(error)),
+        }
         async_fs::remove_dir(&locator.directory)
             .await
             .map_err(map_io_error)?;
@@ -420,8 +573,7 @@ impl LocalFilesystemObjectStore {
             .directory
             .parent()
             .ok_or(ObjectStoreError::InvalidKey)?;
-        self.sync_managed_directory(prefix).await?;
-        Ok(DeleteOutcome::Deleted)
+        self.sync_managed_directory(prefix).await
     }
 
     async fn destination_is_committed(
@@ -429,6 +581,11 @@ impl LocalFilesystemObjectStore {
         key: &ObjectKey,
         locator: &ObjectLocator,
     ) -> Result<bool, ObjectStoreError> {
+        match async_fs::symlink_metadata(&locator.deleting_directory).await {
+            Ok(_) => return Err(ObjectStoreError::StorageUnavailable),
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(map_io_error(error)),
+        }
         match async_fs::symlink_metadata(&locator.directory).await {
             Ok(metadata) => {
                 if is_redirected(&metadata) || !metadata.is_dir() {
@@ -904,7 +1061,16 @@ impl ObjectStore for LocalFilesystemObjectStore {
         self.verify_layout().await?;
         let record = self.read_object_record(key).await?;
         let locator = self.object_locator(key)?;
-        let file = File::open(&locator.content).await.map_err(map_io_error)?;
+        let mut file = File::open(&locator.content).await.map_err(map_io_error)?;
+        // A full HTTP response advertises the verified length and SHA-256
+        // before body framing begins. Verify the already-open descriptor
+        // first, rather than emitting an entire same-length corrupt body and
+        // discovering the mismatch only at EOF. This uses one fixed-size
+        // buffer and rewinds the same descriptor, so it preserves bounded
+        // streaming memory and avoids a close/reopen race. Keep the streaming
+        // digest below as a defense against a later external modification.
+        verify_open_file_contents(&mut file, record.length, record.sha256).await?;
+        file.seek(SeekFrom::Start(0)).await.map_err(map_io_error)?;
         let body = file_stream(file, record.length, Some(record.sha256));
         Ok(ObjectRead::new(
             ObjectMetadata::new(
@@ -970,14 +1136,8 @@ impl ObjectStore for LocalFilesystemObjectStore {
     async fn delete(&self, key: &ObjectKey) -> Result<DeleteOutcome, ObjectStoreError> {
         let _guard = self.mutation_lock.lock().await;
         self.verify_layout().await?;
-        let record = match self.read_object_record(key).await {
-            Ok(record) => record,
-            Err(ObjectStoreError::NotFound) => return Ok(DeleteOutcome::AlreadyAbsent),
-            Err(error) => return Err(error),
-        };
-        let _ = record;
         let locator = self.object_locator(key)?;
-        self.remove_committed_object(&locator).await
+        self.remove_committed_object(key, &locator, None).await
     }
 
     async fn conditional_delete(
@@ -987,16 +1147,61 @@ impl ObjectStore for LocalFilesystemObjectStore {
     ) -> Result<DeleteOutcome, ObjectStoreError> {
         let _guard = self.mutation_lock.lock().await;
         self.verify_layout().await?;
-        let record = match self.read_object_record(key).await {
-            Ok(record) => record,
-            Err(ObjectStoreError::NotFound) => return Ok(DeleteOutcome::AlreadyAbsent),
-            Err(error) => return Err(error),
-        };
-        if record.version != *expected_version {
-            return Err(ObjectStoreError::PreconditionFailed);
-        }
         let locator = self.object_locator(key)?;
-        self.remove_committed_object(&locator).await
+        self.remove_committed_object(key, &locator, Some(expected_version))
+            .await
+    }
+
+    async fn reconcile_delete(
+        &self,
+        key: &ObjectKey,
+    ) -> Result<DeleteReconciliation, ObjectStoreError> {
+        let _guard = self.mutation_lock.lock().await;
+        self.verify_layout().await?;
+        let locator = self.object_locator(key)?;
+        let live = async_fs::symlink_metadata(&locator.directory).await;
+        let deleting = async_fs::symlink_metadata(&locator.deleting_directory).await;
+        match (live, deleting) {
+            (Ok(_), Ok(_)) => Err(ObjectStoreError::StorageUnavailable),
+            (Ok(_), Err(error)) if error.kind() == ErrorKind::NotFound => {
+                self.read_object_record(key).await.map(|record| {
+                    DeleteReconciliation::Present(ObjectMetadata::new(
+                        record.key,
+                        record.length,
+                        Some(record.sha256),
+                        Some(record.version),
+                    ))
+                })
+            }
+            (Err(error), Ok(_)) if error.kind() == ErrorKind::NotFound => {
+                let deleting = Self::deletion_locator(&locator);
+                self.validate_object_directory_entries(&deleting).await?;
+                let record = self.deletion_record(key, &deleting).await?;
+                if record.is_none()
+                    && (async_fs::symlink_metadata(&deleting.content).await.is_ok()
+                        || async_fs::symlink_metadata(&deleting.committed)
+                            .await
+                            .is_ok())
+                {
+                    return Err(ObjectStoreError::StorageUnavailable);
+                }
+                Ok(DeleteReconciliation::InProgress(record.map(|record| {
+                    ObjectMetadata::new(
+                        record.key,
+                        record.length,
+                        Some(record.sha256),
+                        Some(record.version),
+                    )
+                })))
+            }
+            (Err(live_error), Err(deleting_error))
+                if live_error.kind() == ErrorKind::NotFound
+                    && deleting_error.kind() == ErrorKind::NotFound =>
+            {
+                Ok(DeleteReconciliation::Absent)
+            }
+            (Err(error), _) | (_, Err(error)) => Err(map_io_error(error)),
+        }
     }
 }
 

@@ -8,8 +8,11 @@ transport đã authorize theo owner IMPLEMENTED/VALIDATED; HTTP download
 full/single-range đã authenticate IMPLEMENTED/VALIDATED; metadata
 version-history bất biến listing/lookup IMPLEMENTED/VALIDATED; safe
 historical-version restore IMPLEMENTED; metadata retention và purge execution
-metadata-only cùng reference accounting theo FileVersion IMPLEMENTED; physical
-object GC, download UI và lifecycle cấp cao PLANNED**
+metadata-only cùng reference accounting theo FileVersion VALIDATED; planning
+grace-period/lease và xóa Object/ObjectReplica vật lý nội bộ crash-safe đã
+IMPLEMENTED/VALIDATED; GC-worker orchestration nội bộ có giới hạn và đối soát
+operation bị kẹt IMPLEMENTED; auto-delete orphan vật lý không rõ NOT IMPLEMENTED;
+download UI, sync, backup, sharing và lifecycle cấp cao PLANNED**
 
 Tài liệu này đặc tả hợp đồng lưu trữ byte chuẩn của Synveil và vòng đời logic
 nằm bên trên hợp đồng đó. Tài liệu tuân theo các ADR đã được chấp thuận và sử
@@ -35,13 +38,17 @@ tài liệu quy chuẩn kế hoạch trừ khi được đánh dấu khác.
 | metadata version-history bất biến listing và lookup đã authenticate | `IMPLEMENTED/VALIDATED` |
 | safe historical-version restore thành `FileVersion` bất biến mới đã authenticate | `IMPLEMENTED` |
 | timestamp Trash chuẩn, retention status dẫn xuất và begin `PURGING` metadata-only | `IMPLEMENTED` |
-| trusted metadata purge execution, release reference FileVersion và GC-candidate metadata | `IMPLEMENTED` |
+| trusted metadata purge execution, release reference FileVersion và GC-candidate metadata | `IMPLEMENTED/VALIDATED` |
+| GC grace-period, bounded claim, lease, revalidation và ready planning | `IMPLEMENTED/VALIDATED` |
+| xóa vật lý nội bộ `Object`/`ObjectReplica` và cleanup object byte | `IMPLEMENTED/VALIDATED` |
+| GC worker nội bộ, cycle cap, retry scheduling và đối soát operation bị kẹt | `IMPLEMENTED` |
+| auto-delete orphan vật lý không rõ | `NOT IMPLEMENTED` |
 | download UI | `PLANNED` |
-| GC | `PLANNED` |
 | compression | `PLANNED` |
 | filesystem optimization | `PLANNED` |
 | sync | `PLANNED` |
 | backup | `PLANNED` |
+| sharing | `PLANNED` |
 
 ## Phạm vi và quyền sở hữu
 
@@ -370,8 +377,11 @@ authorize theo owner đã được validate bằng contract/conformance hoặc f
 application test. HTTP transport exact-offset đã authenticate stream request
 frame có giới hạn qua upload service; route download full/single-range cũng
 stream content đã verify qua content-read service. API không expose storage key
-hay physical path. Download UI, lifecycle object rộng hơn, GC, sync, backup và
-installer deployment vẫn là kế hoạch. Transaction finalization
+hay physical path. Pipeline object-GC nội bộ đã
+`IMPLEMENTED/VALIDATED`: metadata-only planning, physical execution
+`Object`/`ObjectReplica` an toàn khi crash và worker private bounded không có
+HTTP control surface. Download UI, lifecycle object rộng hơn ngoài pipeline nội
+bộ này, sync, backup và installer deployment vẫn là `PLANNED`. Transaction finalization
 PostgreSQL của upload service chỉ tạo `FileVersion` nhìn thấy được đầu
 tiên sau khi object đã durable và được verify. NAS và filesystem khác vẫn cần
 capability/crash evidence riêng trước khi tuyên bố production support.
@@ -580,7 +590,7 @@ bao giờ bị viết lại.
 | Restore old version | Tạo head version mới tham chiếu byte object lịch sử và ghi source `RESTORE`; không bao giờ lùi head pointer để viết lại lịch sử. |
 | Conflict | Bảo toàn byte incoming trong conflict version/node theo [SYNC.md](SYNC.md); không bao giờ âm thầm thay winning head. |
 | Trash | Giữ version và object reference trong suốt retention của Trash. |
-| Purge eligibility / begin | Chọn metadata đủ điều kiện theo batch bounded và chuyển một node sang `PURGING`; `FileVersion`, `Object`, `ObjectReplica` và byte vẫn nguyên vẹn. Physical purge/GC vẫn tách riêng và PLANNED. |
+| Purge eligibility / begin | Chọn metadata đủ điều kiện theo batch bounded và chuyển một node sang `PURGING`; `FileVersion`, `Object`, `ObjectReplica` và byte vẫn nguyên vẹn. Physical GC là execution nội bộ tách riêng; bước này không tự xóa byte. |
 | Metadata purge execution | Yêu cầu `PURGING`, recheck invariant owner/library/root/parent/child/revision, xóa nguyên tử Node cùng mọi FileVersion của nó và ghi candidate metadata-only cho Object mất reference FileVersion cuối; row object, replica và byte vẫn giữ nguyên. |
 
 Mỗi content mutation cung cấp base version phù hợp với operation. Node revision
@@ -656,6 +666,125 @@ reference lại object đang là candidate, candidate được clear trong cùng
 transaction. PostgreSQL advisory và row lock serialize quyết định release và
 re-reference cho canonical object dùng chung giữa các library.
 
+### GC eligibility và lease planning đã implement
+
+Prompt 27 implement phần planning metadata-only của object GC. `ObjectGcPolicy`
+typed dùng grace period 24 giờ, worker lease 15 phút và claim batch mặc định
+100 (giới hạn cứng 500). Deployment có thể override bằng
+`SYNVEIL_OBJECT_GC_GRACE_SECONDS`, `SYNVEIL_OBJECT_GC_LEASE_SECONDS` và
+`SYNVEIL_OBJECT_GC_MAX_BATCH_SIZE`. Duration bằng zero/không hợp lệ và batch
+ngoài bound đều bị reject. `clock_timestamp()` của PostgreSQL là authoritative;
+quy tắc grace inclusive là `now >= unreferenced_at + grace_period`.
+
+`ObjectGcPlanningService` nội bộ, trung lập transport, expose claim candidate
+có bound, renew lease, release an toàn, revalidate reference và planning
+metadata-only sang `READY`. Claim dùng `FOR UPDATE SKIP LOCKED` theo thứ tự ổn
+định `(unreferenced_at ASC, object_id ASC, dedup_domain_id ASC)`. Mỗi row được
+recheck theo lock order canonical candidate row -> advisory Object -> Object
+row; chỉ khi không có `FileVersion` committed mới tạo lease. Lease ID là UUIDv7
+mờ đục; generation lưu trong DB tăng dần và generation cũ không được renew,
+release hay revalidate successor. `LEASED`/`READY` hết hạn có thể reclaim; lease
+còn hạn chặn claim khác.
+
+`READY` chỉ là metadata state có thể revoke, không phải delete command. Khi có
+`FileVersion` mới commit, candidate `ELIGIBLE`, `LEASED` hoặc `READY` bị clear
+theo cùng lock order, nên worker resume sau cancellation chỉ gặp stale lease
+hoặc candidate đã mất. Revalidation và ready planning đều lặp lại `NOT EXISTS`
+FileVersion authoritative. Executor vật lý lặp lại final check sau khi lấy
+action fence riêng và chỉ dùng lease/generation planning như capability, không
+phải delete command.
+
+### Physical GC execution đã implement
+
+`ObjectGcExecutionService` là application boundary nội bộ có
+`start_gc_execution`, `delete_next_replica`/`reconcile_replica` mỗi lần đúng
+một replica, resume và completion. Start yêu cầu `READY` và lease/generation
+matching còn hạn. Transaction PostgreSQL ngắn lock candidate cùng Object,
+lặp lại zero-reference `FileVersion` và active-hold check, ghi
+`object_gc_operations` và `object_gc_replica_actions` theo thứ tự xác định,
+đổi replica verified sang `DELETING` và Object sang `GC_DELETING` trước external
+side effect.
+
+Trước mỗi external delete executor renew lease rồi lặp proof candidate/Object/
+action. Nó chỉ route backend kind đã persist tới adapter `ObjectStore` đã cấu
+hình, validate opaque key cùng length/SHA-256/backend version expected và dùng
+conditional delete khi adapter chứng minh capability. Một action được persist
+fenced trước một delete call; ambiguity được đối soát bằng `reconcile_delete`,
+không byte read hay đoán. Chỉ exact absence, kể cả replica đã absent, mới dọn
+row `ObjectReplica`; retryable presence, delete in progress, unknown và
+evidence mismatch là recovery state bền.
+
+Adapter local rename object directory được managed/hashed sang tombstone riêng
+`.deleting` trước khi remove file. Nó reject entry redirect/không mong đợi,
+trả tombstone bị ngắt là `InProgress`, và chỉ báo absence khi content, commit
+marker, metadata và tombstone directory đều mất. Sau mọi action `DELETED`, một
+transaction cuối recheck reference/hold/lease, xóa candidate/Object và mark
+operation `COMPLETED`. `object_gc_holds` là boundary tương lai: producer
+backup/share/sync chưa implement và phải đăng ký active hold trước khi coexist
+với physical GC. Không có public GC API. Worker opt-in bên dưới là scheduler
+runtime duy nhất và là process nội bộ, không phải control xóa dành cho người
+dùng thông thường.
+
+### GC worker nội bộ và reconciliation có giới hạn đã implement
+
+`GcWorker` là coordinator trung lập transport nằm trên
+`ObjectGcPlanningService`, `ObjectGcExecutionService` và repository recovery
+chỉ PostgreSQL. Nó không có filesystem path hay capability xóa trực tiếp qua
+`ObjectStore`. Runtime composition là binary private `synveil-worker`; binary
+không có HTTP listener và bị disable cho tới khi được bật tường minh.
+
+`run_once()` là application/test boundary xác định. Một cycle khi enabled trước
+hết tạo report reconciliation chỉ từ metadata có giới hạn, sau đó reclaim
+operation incomplete đến hạn theo thứ tự update cũ nhất. Nếu có recovery claim,
+planning candidate mới chờ cycle sau. Nếu không, worker claim một slice new-work
+có giới hạn. Mỗi operation được chọn chỉ nhận tối đa một bước replica vật lý
+trong cycle. Slice nonterminal release planning lease để cycle đến hạn tiếp theo
+reclaim lease/generation opaque mới thay vì giữ lease do worker sở hữu khi ngủ.
+
+Các environment variable sau được validate trước khi worker chạy. Mọi duration
+là giây nguyên; giá trị invalid, zero, mâu thuẫn hoặc ngoài range làm config
+parse fail.
+
+| Variable | Default | Mục đích |
+|---|---:|---|
+| `SYNVEIL_GC_WORKER_ENABLED` | `false` | Opt-in rõ ràng cho worker private. |
+| `SYNVEIL_GC_WORKER_CYCLE_INTERVAL_SECONDS` | `60` | Delay tối thiểu giữa các cycle hoàn tất; không polling sub-second. |
+| `SYNVEIL_GC_WORKER_MAX_CANDIDATE_CLAIMS` | `8` | Claim planning mới mỗi cycle. |
+| `SYNVEIL_GC_WORKER_MAX_ACTIVE_OPERATIONS` | `2` | Số operation slice xét trong mỗi cycle. |
+| `SYNVEIL_GC_WORKER_MAX_REPLICA_ACTIONS` | `4` | Cap cho replica step/reconciliation inspection mỗi cycle. |
+| `SYNVEIL_GC_WORKER_MAX_CONCURRENT_EXECUTIONS` | `2` | Tối đa task operation concurrent; không vượt active operation. |
+| `SYNVEIL_GC_WORKER_MAX_CONCURRENT_REPLICA_DELETES` | `1` | Semaphore toàn worker process cho storage side effect; không vượt execution. |
+| `SYNVEIL_GC_WORKER_RETRY_BASE_SECONDS` / `SYNVEIL_GC_WORKER_RETRY_MAX_SECONDS` | `30` / `900` | Cửa sổ retry exponential có giới hạn. |
+| `SYNVEIL_GC_WORKER_MAX_ATTEMPTS` | `12` | Số attempt action bền tối đa trước intervention. |
+| `SYNVEIL_GC_WORKER_SHUTDOWN_TIMEOUT_SECONDS` | `30` | Thời gian drain tối đa cho cycle hiện tại. |
+
+Retry state thuộc replica action bền: `attempt_count` và `next_attempt_at` dùng
+giờ PostgreSQL. Storage presence retryable, delete đang tiến hành, response
+ambiguous/reconciliation-required, database unavailable và outcome lease stale/
+expired không tạo completion. Delay exponential, cap tại maximum cấu hình và
+thêm jitter xác định theo identity tối đa 10%. Metadata bền không an toàn,
+evidence replica mismatch, backend routing không hỗ trợ hoặc retry budget cạn
+chuyển thành `NEEDS_ATTENTION`, không retry vô hạn. Worker chỉ log counter/
+status/error class an toàn và duration từng cycle; không expose key, path,
+credential, raw provider error hay control của người dùng thông thường.
+
+Reconciliation có giới hạn và chỉ dựa metadata. Nó đếm Object `GC_DELETING`
+không có operation, operation không có candidate, candidate `READY` hết hạn
+không có work incomplete, terminal action còn cleanup pending và operation
+`NEEDS_ATTENTION` hiện có. Nó không recursive-list storage root và không
+auto-delete file vật lý không rõ. Replica được phát hiện absent ngoài active
+action vẫn là concern integrity/reconciliation, không phải lý do xóa Object
+metadata.
+
+Khi database outage, không claim destructive mới nào có thể persist và cycle
+trả lỗi an toàn. Khi ObjectStore outage, execution service bên dưới giữ recovery
+state bền đã fenced với retry đến hạn; metadata candidate, replica và Object
+không bị false-complete. Binary dừng claim khi Ctrl-C, chỉ đợi drain có giới hạn
+theo config, và để lại fence in-flight timeout cho Prompt 28 reconciliation sau
+restart. Nhiều worker vẫn an toàn không cần leader election: PostgreSQL
+`SKIP LOCKED`, transaction ngắn, lease generation và final revalidation Prompt
+28 vẫn authoritative.
+
 ### Transaction đưa vào Trash
 
 Đối với một node hoặc subtree directory, một PostgreSQL transaction duy nhất:
@@ -727,10 +856,12 @@ physical byte để người dùng hiểu vì sao xóa chưa giải phóng capac
 
 ## Garbage collection và đối soát orphan
 
-Metadata purge chỉ tạo handoff `object_gc_candidates` theo canonical object
-identity. Nó không implement physical object GC, xóa replica, cleanup backend,
-sync, backup hay sharing. Các phần dưới đây vẫn là contract GC/delete-job rộng
-hơn và không được suy ra chỉ từ việc metadata purge đã hoàn tất.
+Metadata purge tạo handoff `object_gc_candidates` theo canonical object
+identity. Prompt 27 implement lớp planning grace/lease/revalidation, và Prompt
+28 implement execution vật lý nội bộ có fence qua `ObjectStore`. Prompt 29
+implement scheduling bounded, durable retry và worker concurrency control.
+Đối soát inventory orphan, policy rate-limit rộng hơn, sync, backup và sharing
+vẫn là future work. Contract rộng hơn dưới đây không phải public deletion API.
 
 ### Bằng chứng đủ điều kiện
 

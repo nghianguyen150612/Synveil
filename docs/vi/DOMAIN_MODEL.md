@@ -1,6 +1,6 @@
 # Domain model chuẩn của Synveil
 
-Trạng thái: **SKELETON_IMPLEMENTED — entity và invariant chuẩn ban đầu đã được validate; canonical schema PostgreSQL, mapping SQLx tường minh, logical node metadata workflow authenticated, subset persisted upload-session/verified-replica, exact-offset HTTP upload transport, content-read bất biến đã authorize theo owner, HTTP download full/single-range đã authenticate, metadata version-history bất biến đã authenticate, safe historical-version restore, metadata Trash retention/purge execution và reference accounting theo FileVersion đã IMPLEMENTED; physical object GC, download UI và content protocol rộng hơn vẫn PLANNED**
+Trạng thái: **SKELETON_IMPLEMENTED — entity và invariant chuẩn ban đầu đã được validate; canonical schema PostgreSQL, mapping SQLx tường minh, logical node metadata workflow authenticated, subset persisted upload-session/verified-replica, exact-offset HTTP upload transport, content-read bất biến đã authorize theo owner, HTTP download full/single-range đã authenticate, metadata version-history bất biến đã authenticate, safe historical-version restore, metadata Trash retention/purge execution, reference accounting theo FileVersion, GC grace/lease planning metadata-only và xóa vật lý Object/ObjectReplica nội bộ an toàn khi crash đã IMPLEMENTED/VALIDATED; GC-worker orchestration nội bộ bounded và đối soát operation bị kẹt đã IMPLEMENTED; download UI và content protocol rộng hơn vẫn PLANNED**
 
 Tài liệu này sở hữu ý nghĩa chuẩn, field, relationship, lifecycle state và
 transaction invariant của các domain entity trong Synveil. Tài liệu không áp
@@ -389,8 +389,17 @@ thay vì alias. Implementation hiện tại dùng relation `FileVersion -> Objec
 làm truy vấn logical reference có thẩm quyền, không dùng global counter
 mutable. Row metadata-only `object_gc_candidates` ghi `unreferenced_at` và
 source sau khi reference FileVersion cuối được release. Row này không phải
-deadline xóa byte; GC tương lai phải recheck mọi reference class, lease, hold và
-safety window trước khi đổi state Object hoặc replica.
+deadline xóa byte. Planner thêm grace bounded, worker lease, generation fence,
+reference revalidation và planning `READY` có thể revoke. Executor vật lý nội
+bộ sau đó lấy `GC_DELETING` theo lock order candidate -> Object, ghi operation
+bền cùng action replica theo thứ tự xác định, và lặp lại proof FileVersion/
+hold/lease cuối cùng trước mỗi external delete. Object chỉ `AVAILABLE` hoặc
+`GC_DELETING`; state sau reject FileVersion/ObjectReplica reference và active
+hold mới. Chỉ replica đã được xác nhận absent mới bị dọn metadata; chỉ sau mọi
+replica absent executor mới xóa candidate/Object và complete operation. Worker
+nội bộ đã implement chỉ phối hợp recovery/new-work slice bounded qua các service
+đó; nó persist retry scheduling và báo inconsistency chỉ metadata, nhưng không
+auto-delete file vật lý không rõ. Producer hold backup/share/sync vẫn PLANNED.
 
 ### `StorageBackend`
 

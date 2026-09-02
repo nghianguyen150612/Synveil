@@ -27,8 +27,9 @@ pub use errors::ObjectStoreError;
 pub use keys::{ObjectKey, ObjectKeyError, ObjectVersion, OpaqueTokenError, StagingHandle};
 pub use store::ObjectStore;
 pub use types::{
-    ByteRange, ByteStream, DeleteOutcome, IntegrityExpectation, ObjectMetadata, ObjectRead,
-    PromotionReceipt, PutRequest, StagedMetadata, StagingProgress, boxed_stream,
+    ByteRange, ByteStream, DeleteOutcome, DeleteReconciliation, IntegrityExpectation,
+    ObjectMetadata, ObjectRead, PromotionReceipt, PutRequest, StagedMetadata, StagingProgress,
+    boxed_stream,
 };
 
 pub use synveil_core;

@@ -66,15 +66,25 @@ only begins the metadata `PURGING` state after owner/revision/transaction
 checks. It does not delete physical bytes or implement physical purge/GC.
 Metadata purge execution is an internal trusted operation: after a node is
 `PURGING`, it removes that node and its `FileVersion` rows transactionally,
-records metadata-only unreferenced-object candidates, and preserves `Object`,
-`ObjectReplica`, and object bytes. Physical object GC remains planned. The
+records metadata-only unreferenced-object candidates. The internal physical-GC
+execution service is now implemented: a `READY` candidate with a live
+lease/generation is revalidated transactionally, a durable operation and one
+action per replica are recorded, and exact replicas are reconciled and deleted
+one at a time through `ObjectStore`. The object enters `GC_DELETING`, which
+rejects new durable references; metadata is removed only after every replica is
+confirmed absent. The opt-in internal `synveil-worker` now drives bounded
+planning/recovery cycles through those accepted services: it resumes durable
+work before starting new work, persists retry scheduling, and records
+metadata-only reconciliation findings. It has no HTTP route or normal-user
+control surface, and it does not implement unknown-physical-orphan deletion,
+sync, backup, or sharing. The
 content service resolves active
 owner-authorized current content or an allowed immutable historical version to
 a verified replica, streams full bytes or a validated application-level range,
 and cross-checks object metadata before yielding bytes. The HTTP download
 routes keep filename/content-type/ETag/cache policy at the API boundary and
 stream through the content service. They do not provide upload UI, download UI,
-object-byte GC, journals, sync, backup, or sharing.
+physical-GC controls, journals, sync, backup, or sharing.
 
 The initial PostgreSQL canonical schema and explicit SQLx persistence mappings
 for the validated domain subset are implemented. Disposable PostgreSQL
@@ -112,11 +122,13 @@ implemented capabilities.
 
 Synveil combines several related, but explicitly separated, domains:
 
-- `IMPLEMENTED` (metadata, exact-offset upload, authenticated immutable
-  version-history metadata, safe historical-version restore, Trash retention
-  metadata/purge eligibility, and authenticated full/single-range
-  content-download transport) / `PLANNED` (download UI, physical purge/GC, and
-  broader lifecycle) —
+- `IMPLEMENTED/VALIDATED` (metadata, exact-offset upload, authenticated
+  immutable version-history metadata, safe historical-version restore, Trash
+  retention metadata/purge eligibility, authenticated full/single-range
+  content-download transport, metadata-only GC planning, and physical
+  Object/ObjectReplica GC) plus `IMPLEMENTED` bounded internal GC-worker
+  orchestration/reconciliation / `PLANNED` (download UI and broader lifecycle)
+  —
   authenticated files and folders, logical metadata, bounded streaming
   resumable upload, immutable full/range content reads, versions, trash,
   sharing, and integrity checks;

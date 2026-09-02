@@ -1,6 +1,6 @@
 # Synveil canonical domain model
 
-Status: **SKELETON_IMPLEMENTED — initial canonical entities and invariants are validated; the PostgreSQL canonical schema, explicit SQLx mappings, authenticated logical node metadata workflows, persisted upload-session/verified-replica subset, exact-offset HTTP upload transport, owner-authorized immutable content reads, authenticated HTTP full/single-range download transport, authenticated immutable version-history metadata, safe historical-version restore, metadata-only Trash retention/purge execution, and FileVersion-based object reference accounting are IMPLEMENTED; physical object GC, download UI, and broader content protocols remain PLANNED**
+Status: **SKELETON_IMPLEMENTED — initial canonical entities and invariants are validated; the PostgreSQL canonical schema, explicit SQLx mappings, authenticated logical node metadata workflows, persisted upload-session/verified-replica subset, exact-offset HTTP upload transport, owner-authorized immutable content reads, authenticated HTTP full/single-range download transport, authenticated immutable version-history metadata, safe historical-version restore, metadata-only Trash retention/purge execution, FileVersion-based object reference accounting, metadata-only GC grace/lease planning, and crash-safe internal physical Object/ObjectReplica deletion are IMPLEMENTED/VALIDATED; bounded internal GC-worker orchestration and stuck-operation reconciliation are IMPLEMENTED; download UI and broader content protocols remain PLANNED**
 
 This document owns the canonical meanings, fields, relationships, lifecycle
 states, and transaction invariants of Synveil domain entities. It does not
@@ -399,8 +399,19 @@ quarantined rather than aliased. The current implementation uses the
 it does not maintain a mutable global counter. A metadata-only
 `object_gc_candidates` row records `unreferenced_at` and source after the last
 FileVersion reference is released. That row is not a physical deletion
-deadline: future GC must recheck all reference classes, leases, holds, and its
-safety window before changing Object or replica state.
+deadline. The implemented planner adds bounded grace, worker leases, generation
+fencing, reference revalidation, and revocable `READY` planning. The internal
+physical executor then acquires `GC_DELETING` under the canonical candidate ->
+Object lock order, records a durable operation and deterministic replica action
+plan, and repeats the final FileVersion/hold/lease proof before every external
+delete. An Object may be `AVAILABLE` or `GC_DELETING`; the latter rejects new
+FileVersion/ObjectReplica references and active holds. Confirmed absence is
+recorded per replica before its metadata is removed; only after all replicas
+are absent can the executor remove the candidate and Object and complete the
+operation. The implemented internal worker only coordinates bounded recovery
+and new-work slices through those services; it persists retry scheduling and
+reports metadata-only inconsistencies, but does not auto-delete unknown physical
+files. Backup/share/sync hold producers remain planned.
 
 ### `StorageBackend`
 

@@ -3,15 +3,18 @@ use std::time::Duration;
 use sqlx::PgPool;
 use synveil_core::{
     DedupDomainId, Device, DeviceId, FileVersion, FileVersionId, Library, LibraryId, LogicalName,
-    Node, NodeId, NodeKind, ObjectId, ObjectReference, ObjectReplicaId, Revision, Sha256Digest,
-    Timestamp, TrashRetentionPolicy, UploadOperation, UploadSessionId, User, UserId, UserStatus,
+    Node, NodeId, NodeKind, ObjectGcPolicy, ObjectId, ObjectReference, ObjectReplicaId, Revision,
+    Sha256Digest, Timestamp, TrashRetentionPolicy, UploadOperation, UploadSessionId, User, UserId,
+    UserStatus,
 };
 use synveil_metadata::{
     DatabaseConfig, DatabaseError, DatabaseErrorKind, DatabasePool, DomainRepository,
     FileMetadataError, FileMetadataService, MetadataError, MigrationRunner, NewUploadSession,
-    ObjectRow, PostgresUploadRepository, PurgeError, PurgeExecutionResult, TrashRetentionService,
-    UploadClaim, UploadDurabilityReceipt, UploadFinalization, UploadMetadataBackend, UserRow,
-    VersionHistoryError, VersionHistoryService, VersionRestoreError, VersionRestoreService,
+    ObjectGcCandidateState, ObjectGcError, ObjectGcLeaseReleaseResult, ObjectGcPlanResult,
+    ObjectGcPlanningService, ObjectRow, PostgresUploadRepository, PurgeError, PurgeExecutionResult,
+    TrashRetentionService, UploadClaim, UploadDurabilityReceipt, UploadFinalization,
+    UploadMetadataBackend, UserRow, VersionHistoryError, VersionHistoryService,
+    VersionRestoreError, VersionRestoreService,
 };
 
 fn timestamp(value: &str) -> Timestamp {
@@ -91,6 +94,163 @@ async fn count_gc_candidates(pool: &PgPool, object: ObjectReference) -> i64 {
     .fetch_one(pool)
     .await
     .expect("object GC-candidate count query must succeed")
+}
+
+async fn count_gc_candidates_in_state(pool: &PgPool, object: ObjectReference, state: &str) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT count(*)
+         FROM object_gc_candidates
+         WHERE object_id = $1
+           AND object_dedup_domain_id = $2
+           AND state = $3",
+    )
+    .bind(object.object_id().into_uuid())
+    .bind(object.dedup_domain_id().into_uuid())
+    .bind(state)
+    .fetch_one(pool)
+    .await
+    .expect("object GC-candidate state count query must succeed")
+}
+
+async fn age_gc_candidate(pool: &PgPool, object: ObjectReference, age_seconds: i64) {
+    sqlx::query(
+        "UPDATE object_gc_candidates
+         SET unreferenced_at = clock_timestamp()
+             - ($3::BIGINT * INTERVAL '1 second')
+         WHERE object_id = $1 AND object_dedup_domain_id = $2",
+    )
+    .bind(object.object_id().into_uuid())
+    .bind(object.dedup_domain_id().into_uuid())
+    .bind(age_seconds)
+    .execute(pool)
+    .await
+    .expect("object GC-candidate age update must succeed");
+}
+
+async fn expire_gc_lease(pool: &PgPool, object: ObjectReference) {
+    sqlx::query(
+        "UPDATE object_gc_candidates
+         SET lease_acquired_at = clock_timestamp() - INTERVAL '2 seconds',
+             lease_expires_at = clock_timestamp() - INTERVAL '1 second'
+         WHERE object_id = $1 AND object_dedup_domain_id = $2",
+    )
+    .bind(object.object_id().into_uuid())
+    .bind(object.dedup_domain_id().into_uuid())
+    .execute(pool)
+    .await
+    .expect("object GC lease expiry update must succeed");
+}
+
+async fn insert_gc_candidate(pool: &PgPool, object: ObjectReference, age_seconds: i64) {
+    sqlx::query(
+        "INSERT INTO object_gc_candidates
+            (object_id, object_dedup_domain_id, unreferenced_at, source)
+         VALUES ($1, $2, clock_timestamp()
+                    - ($3::BIGINT * INTERVAL '1 second'), 'METADATA_PURGE')
+         ON CONFLICT (object_id, object_dedup_domain_id) DO UPDATE
+         SET unreferenced_at = EXCLUDED.unreferenced_at,
+             state = 'ELIGIBLE', lease_id = NULL,
+             lease_acquired_at = NULL, lease_expires_at = NULL,
+             validated_at = NULL",
+    )
+    .bind(object.object_id().into_uuid())
+    .bind(object.dedup_domain_id().into_uuid())
+    .bind(age_seconds)
+    .execute(pool)
+    .await
+    .expect("object GC-candidate insert must succeed");
+}
+
+async fn count_objects_in_dedup_domain(pool: &PgPool, dedup_domain_id: DedupDomainId) -> i64 {
+    sqlx::query_scalar::<_, i64>("SELECT count(*) FROM objects WHERE dedup_domain_id = $1")
+        .bind(dedup_domain_id.into_uuid())
+        .fetch_one(pool)
+        .await
+        .expect("object count query must succeed")
+}
+
+async fn count_replicas_in_dedup_domain(pool: &PgPool, dedup_domain_id: DedupDomainId) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM object_replicas WHERE object_dedup_domain_id = $1",
+    )
+    .bind(dedup_domain_id.into_uuid())
+    .fetch_one(pool)
+    .await
+    .expect("replica count query must succeed")
+}
+
+async fn insert_gc_object(
+    repository: &DomainRepository<'_>,
+    inspection_pool: &PgPool,
+    dedup_domain_id: DedupDomainId,
+    marker: u8,
+) -> ObjectReference {
+    let observed_at = timestamp("2026-08-26T00:00:00.123456Z");
+    let object = ObjectReference::new(
+        ObjectId::new(),
+        dedup_domain_id,
+        Sha256Digest::from_bytes([marker; 32]),
+        u64::from(marker),
+    );
+    repository
+        .insert_object(object, observed_at)
+        .await
+        .expect("GC object must persist");
+    sqlx::query(
+        "INSERT INTO object_replicas
+            (id, object_id, object_dedup_domain_id, backend_kind, storage_key,
+             stored_length, stored_sha256, backend_version, state, created_at, verified_at)
+         VALUES ($1, $2, $3, 'LOCAL_FILESYSTEM', $4,
+                 $5::NUMERIC, $6, 'v1', 'VERIFIED', $7, $7)",
+    )
+    .bind(ObjectReplicaId::new().into_uuid())
+    .bind(object.object_id().into_uuid())
+    .bind(object.dedup_domain_id().into_uuid())
+    .bind(format!("prompt-27-{marker}-{}", object.object_id()))
+    .bind(object.plaintext_length().to_string())
+    .bind(object.canonical_hash().as_bytes().to_vec())
+    .bind(observed_at.as_offset_datetime())
+    .execute(inspection_pool)
+    .await
+    .expect("GC object replica must persist");
+    object
+}
+
+async fn insert_gc_file_version(
+    repository: &DomainRepository<'_>,
+    library: &Library,
+    root: &Node,
+    object: ObjectReference,
+    label: &str,
+) -> (Node, FileVersion) {
+    let observed_at = timestamp("2026-08-26T00:00:00.123456Z");
+    let node = Node::new_child(
+        NodeId::new(),
+        library.id(),
+        root,
+        NodeKind::File,
+        name(label),
+        observed_at,
+    )
+    .expect("GC reference node must satisfy domain invariants");
+    repository
+        .insert_node(&node)
+        .await
+        .expect("GC reference node must persist");
+    let version = FileVersion::new(
+        FileVersionId::new(),
+        library,
+        &node,
+        object,
+        None,
+        observed_at,
+    )
+    .expect("GC reference version must satisfy domain invariants");
+    repository
+        .insert_file_version(version)
+        .await
+        .expect("GC reference version must persist");
+    (node, version)
 }
 
 fn assert_query_failed(result: Result<(), MetadataError>) {
@@ -2739,5 +2899,444 @@ async fn postgres_metadata_purge_releases_references_without_deleting_objects() 
     assert_eq!(count_gc_candidates(&inspection_pool, zero_object).await, 1);
 
     inspection_pool.close().await;
+    pool.close().await;
+}
+
+/// Prompt 27's planner test is intentionally ignored unless a caller supplies
+/// a fresh disposable PostgreSQL database. It exercises the authoritative
+/// candidate relation, bounded `SKIP LOCKED` claims, lease fencing and
+/// metadata-only cancellation while leaving physical object storage intact.
+#[tokio::test]
+#[ignore = "set SYNVEIL_TEST_DATABASE_URL to a fresh disposable PostgreSQL database"]
+async fn postgres_object_gc_planning_is_bounded_fenced_and_non_destructive() {
+    let url = std::env::var("SYNVEIL_TEST_DATABASE_URL")
+        .expect("SYNVEIL_TEST_DATABASE_URL must identify a disposable test database");
+    let config = DatabaseConfig::from_url(&url).expect("test URL must use PostgreSQL");
+    let pool = DatabasePool::connect(&config)
+        .await
+        .expect("test PostgreSQL must accept a connection");
+    MigrationRunner::new()
+        .run(&pool)
+        .await
+        .expect("SQLx migration execution must succeed");
+    let inspection_pool = PgPool::connect(&url)
+        .await
+        .expect("GC inspection connection must succeed");
+
+    let repository = DomainRepository::new(&pool);
+    let owner_id = UserId::new();
+    let observed_at = timestamp("2026-08-26T00:00:00.123456Z");
+    let owner = User::new(
+        owner_id,
+        synveil_core::LoginIdentifier::new("gc-owner", owner_id.to_string())
+            .expect("GC test login identifier is valid"),
+        UserStatus::Active,
+        observed_at,
+    );
+    repository
+        .insert_user(&owner)
+        .await
+        .expect("GC owner must persist");
+
+    let library_id = LibraryId::new();
+    let dedup_domain_id = DedupDomainId::new();
+    let root = Node::new_root(NodeId::new(), library_id, name("gc-root"), observed_at);
+    let library = Library::new(
+        library_id,
+        owner_id,
+        name("GC Library"),
+        &root,
+        dedup_domain_id,
+        observed_at,
+    )
+    .expect("GC library must satisfy domain invariants");
+    repository
+        .insert_library_with_root(&library, &root)
+        .await
+        .expect("GC library must persist");
+
+    let before = insert_gc_object(&repository, &inspection_pool, dedup_domain_id, 0x21).await;
+    let exact = insert_gc_object(&repository, &inspection_pool, dedup_domain_id, 0x22).await;
+    let first = insert_gc_object(&repository, &inspection_pool, dedup_domain_id, 0x23).await;
+    let second = insert_gc_object(&repository, &inspection_pool, dedup_domain_id, 0x24).await;
+    let third = insert_gc_object(&repository, &inspection_pool, dedup_domain_id, 0x25).await;
+    let ready = insert_gc_object(&repository, &inspection_pool, dedup_domain_id, 0x26).await;
+    let referenced = insert_gc_object(&repository, &inspection_pool, dedup_domain_id, 0x27).await;
+    let blocked = insert_gc_object(&repository, &inspection_pool, dedup_domain_id, 0x28).await;
+    let claim_race_a = insert_gc_object(&repository, &inspection_pool, dedup_domain_id, 0x29).await;
+    let claim_race_b = insert_gc_object(&repository, &inspection_pool, dedup_domain_id, 0x2a).await;
+    let reference_race =
+        insert_gc_object(&repository, &inspection_pool, dedup_domain_id, 0x2b).await;
+    let ready_race = insert_gc_object(&repository, &inspection_pool, dedup_domain_id, 0x2c).await;
+    // The disposable database is intentionally shareable across integration
+    // test binaries. Scope this non-destructive planner assertion to this
+    // test's fresh dedup domain, rather than accidentally observing physical
+    // GC fixtures owned by another test binary.
+    let initial_object_count =
+        count_objects_in_dedup_domain(&inspection_pool, dedup_domain_id).await;
+    let initial_replica_count =
+        count_replicas_in_dedup_domain(&inspection_pool, dedup_domain_id).await;
+
+    insert_gc_candidate(&inspection_pool, before, 1).await;
+    insert_gc_candidate(&inspection_pool, exact, 10).await;
+    insert_gc_candidate(&inspection_pool, first, 60).await;
+    insert_gc_candidate(&inspection_pool, second, 50).await;
+    insert_gc_candidate(&inspection_pool, third, 40).await;
+    insert_gc_candidate(&inspection_pool, ready, 30).await;
+    let (_referenced_node, _referenced_version) = insert_gc_file_version(
+        &repository,
+        &library,
+        &root,
+        referenced,
+        "already-referenced",
+    )
+    .await;
+    // A candidate row alone is not authority: the planner must remove this
+    // row after its locked `NOT EXISTS` reference recheck.
+    insert_gc_candidate(&inspection_pool, referenced, 20).await;
+
+    let policy = ObjectGcPolicy::new(Duration::from_secs(10), Duration::from_secs(5), 2)
+        .expect("focused GC policy must be valid");
+    let service = ObjectGcPlanningService::new(pool.clone(), policy);
+    assert_eq!(
+        service.claim_candidates(3).await,
+        Err(ObjectGcError::InvalidRequest)
+    );
+
+    let first_claim = service
+        .claim_candidates(2)
+        .await
+        .expect("first bounded GC claim must succeed");
+    assert_eq!(first_claim.len(), 2);
+    assert_eq!(first_claim[0].object_id(), first.object_id());
+    assert_eq!(first_claim[1].object_id(), second.object_id());
+    assert_eq!(
+        count_gc_candidates_in_state(&inspection_pool, before, "ELIGIBLE").await,
+        1
+    );
+    assert_eq!(
+        count_gc_candidates_in_state(&inspection_pool, before, "LEASED").await,
+        0
+    );
+    assert_eq!(count_gc_candidates(&inspection_pool, referenced).await, 1);
+
+    let second_claim = service
+        .claim_candidates(2)
+        .await
+        .expect("second bounded GC claim must succeed");
+    assert_eq!(second_claim.len(), 2);
+    assert!(
+        second_claim
+            .iter()
+            .any(|lease| lease.object_id() == third.object_id())
+    );
+    assert!(
+        second_claim
+            .iter()
+            .any(|lease| lease.object_id() == ready.object_id())
+    );
+
+    // The next bounded claim encounters the referenced row, cancels it, and
+    // still leases the exact-grace candidate. The unit policy test proves the
+    // mathematical boundary; this PostgreSQL assertion proves the query uses
+    // the inclusive cutoff against server time.
+    let third_claim = service
+        .claim_candidates(2)
+        .await
+        .expect("third bounded GC claim must succeed");
+    assert_eq!(third_claim.len(), 1);
+    assert_eq!(third_claim[0].object_id(), exact.object_id());
+    assert_eq!(count_gc_candidates(&inspection_pool, referenced).await, 0);
+
+    // All mature rows are now leased and the one intentionally young row is
+    // not claimable. This is the non-expired lease blocking assertion.
+    assert!(
+        service
+            .claim_candidates(2)
+            .await
+            .expect("empty GC claim must succeed")
+            .is_empty()
+    );
+
+    insert_gc_candidate(&inspection_pool, blocked, 60).await;
+    let blocked_lease = service
+        .claim_candidates(1)
+        .await
+        .expect("blocked candidate claim must succeed")
+        .pop()
+        .expect("blocked candidate must be claimed");
+    assert_eq!(blocked_lease.object_id(), blocked.object_id());
+    assert!(
+        service
+            .claim_candidates(1)
+            .await
+            .expect("non-expired blocked claim must succeed")
+            .is_empty()
+    );
+
+    let reconnected = DatabasePool::connect(&config)
+        .await
+        .expect("GC worker reconnect must succeed");
+    MigrationRunner::new()
+        .run(&reconnected)
+        .await
+        .expect("reconnected GC worker must see current migrations");
+    let reconnected_service = ObjectGcPlanningService::new(reconnected.clone(), policy);
+    assert!(
+        reconnected_service
+            .claim_candidates(1)
+            .await
+            .expect("reconnected worker claim must succeed")
+            .is_empty()
+    );
+
+    age_gc_candidate(&inspection_pool, blocked, 60).await;
+    expire_gc_lease(&inspection_pool, blocked).await;
+    let reclaimed_lease = reconnected_service
+        .claim_candidates(1)
+        .await
+        .expect("expired GC lease must be reclaimable")
+        .pop()
+        .expect("expired blocked candidate must be reclaimed");
+    assert_eq!(reclaimed_lease.object_id(), blocked.object_id());
+    assert_eq!(
+        reclaimed_lease.lease_generation(),
+        blocked_lease.lease_generation() + 1
+    );
+    assert_ne!(reclaimed_lease.lease_id(), blocked_lease.lease_id());
+    assert_eq!(
+        service.renew_lease(blocked_lease).await,
+        Err(ObjectGcError::StaleLease)
+    );
+
+    let renewed = reconnected_service
+        .renew_lease(reclaimed_lease)
+        .await
+        .expect("matching unexpired GC lease must renew");
+    assert_eq!(renewed.lease_id(), reclaimed_lease.lease_id());
+    assert_eq!(
+        renewed.lease_generation(),
+        reclaimed_lease.lease_generation()
+    );
+    assert!(renewed.lease_expires_at() > reclaimed_lease.lease_expires_at());
+    assert_eq!(
+        reconnected_service
+            .release_lease(renewed)
+            .await
+            .expect("matching GC lease release must succeed"),
+        ObjectGcLeaseReleaseResult::Released
+    );
+    assert_eq!(
+        reconnected_service
+            .release_lease(renewed)
+            .await
+            .expect("GC lease release retry must be safe"),
+        ObjectGcLeaseReleaseResult::AlreadyReleased
+    );
+
+    // A committed FileVersion reference cancels an eligible candidate in the
+    // same candidate-first/object-second lock order.
+    let (blocked_reference_node, _blocked_reference_version) = insert_gc_file_version(
+        &repository,
+        &library,
+        &root,
+        blocked,
+        "reference-after-release",
+    )
+    .await;
+    assert_eq!(count_gc_candidates(&inspection_pool, blocked).await, 0);
+
+    // Purging that reference creates a fresh metadata candidate lifecycle.
+    // Its generation starts from the new row's zero baseline, while the old
+    // opaque lease IDs remain unusable even if a future row reuses a number.
+    let metadata = FileMetadataService::new(pool.clone());
+    let retention = TrashRetentionService::new(
+        pool.clone(),
+        TrashRetentionPolicy::new(Duration::from_secs(1)).expect("GC purge policy must be valid"),
+    );
+    let trashed_reference = metadata
+        .delete_node(
+            owner_id,
+            blocked_reference_node.id(),
+            blocked_reference_node.revision(),
+        )
+        .await
+        .expect("reference node must enter Trash");
+    sqlx::query(
+        "UPDATE nodes
+         SET trashed_at = clock_timestamp() - INTERVAL '60 seconds'
+         WHERE id = $1 AND library_id = $2",
+    )
+    .bind(blocked_reference_node.id().into_uuid())
+    .bind(library_id.into_uuid())
+    .execute(&inspection_pool)
+    .await
+    .expect("reference Trash timestamp must be aged");
+    let purging_reference = retention
+        .begin_node_purge(
+            owner_id,
+            blocked_reference_node.id(),
+            trashed_reference.revision(),
+        )
+        .await
+        .expect("reference node must enter PURGING");
+    assert_eq!(
+        retention
+            .execute_metadata_purge(
+                owner_id,
+                blocked_reference_node.id(),
+                purging_reference.revision(),
+            )
+            .await,
+        Ok(PurgeExecutionResult::Completed)
+    );
+    age_gc_candidate(&inspection_pool, blocked, 60).await;
+    let fresh_lease = reconnected_service
+        .claim_candidates(1)
+        .await
+        .expect("fresh GC lifecycle must be claimable")
+        .pop()
+        .expect("freshly unreferenced object must be claimed");
+    assert_eq!(fresh_lease.lease_generation(), 1);
+    assert_ne!(fresh_lease.lease_id(), reclaimed_lease.lease_id());
+    assert_eq!(
+        reconnected_service.renew_lease(reclaimed_lease).await,
+        Err(ObjectGcError::StaleLease)
+    );
+
+    let ready_result = reconnected_service
+        .mark_ready_for_deletion(fresh_lease)
+        .await
+        .expect("ready transition must revalidate references");
+    let ready_candidate = match ready_result {
+        ObjectGcPlanResult::Valid(candidate) => candidate,
+        ObjectGcPlanResult::Invalidated => {
+            panic!("unreferenced candidate was unexpectedly invalidated")
+        }
+    };
+    assert_eq!(ready_candidate.state(), ObjectGcCandidateState::Ready);
+    assert_eq!(
+        ready_candidate
+            .lease()
+            .expect("ready candidate retains its lease")
+            .state(),
+        ObjectGcCandidateState::Ready
+    );
+    let revalidated = reconnected_service
+        .revalidate_candidate(fresh_lease)
+        .await
+        .expect("ready candidate must remain revalidatable");
+    assert!(matches!(
+        revalidated,
+        ObjectGcPlanResult::Valid(candidate)
+            if candidate.state() == ObjectGcCandidateState::Ready
+    ));
+
+    let (_ready_reference_node, _ready_reference_version) = insert_gc_file_version(
+        &repository,
+        &library,
+        &root,
+        blocked,
+        "reference-after-ready",
+    )
+    .await;
+    assert_eq!(count_gc_candidates(&inspection_pool, blocked).await, 0);
+    assert_eq!(
+        reconnected_service.revalidate_candidate(fresh_lease).await,
+        Err(ObjectGcError::NotFound)
+    );
+
+    // Two workers claiming two disjoint candidates concurrently must not
+    // double-lease a row.
+    insert_gc_candidate(&inspection_pool, claim_race_a, 60).await;
+    insert_gc_candidate(&inspection_pool, claim_race_b, 60).await;
+    let claim_worker_a = ObjectGcPlanningService::new(pool.clone(), policy);
+    let claim_worker_b = ObjectGcPlanningService::new(pool.clone(), policy);
+    let (claim_a, claim_b) = tokio::join!(
+        claim_worker_a.claim_candidates(1),
+        claim_worker_b.claim_candidates(1),
+    );
+    let claim_a = claim_a.expect("first concurrent GC claim must succeed");
+    let claim_b = claim_b.expect("second concurrent GC claim must succeed");
+    assert_eq!(claim_a.len(), 1);
+    assert_eq!(claim_b.len(), 1);
+    assert_ne!(claim_a[0].object_id(), claim_b[0].object_id());
+    assert!([claim_race_a.object_id(), claim_race_b.object_id()].contains(&claim_a[0].object_id()));
+    assert!([claim_race_a.object_id(), claim_race_b.object_id()].contains(&claim_b[0].object_id()));
+
+    // Claim versus committed reference: whichever transaction wins, the
+    // final candidate relation is cancelled and cannot be treated as ready.
+    insert_gc_candidate(&inspection_pool, reference_race, 60).await;
+    let reference_race_service = ObjectGcPlanningService::new(pool.clone(), policy);
+    let (claim_result, (_race_reference_node, _race_reference_version)) = tokio::join!(
+        reference_race_service.claim_candidates(1),
+        insert_gc_file_version(
+            &repository,
+            &library,
+            &root,
+            reference_race,
+            "claim-reference-race",
+        ),
+    );
+    let claim_result = claim_result.expect("claim/reference race must not fail");
+    assert!(claim_result.len() <= 1);
+    assert_eq!(
+        count_gc_candidates(&inspection_pool, reference_race).await,
+        0
+    );
+
+    // Ready transition versus committed reference has the same final safety
+    // invariant: no candidate survives with a committed FileVersion ref.
+    insert_gc_candidate(&inspection_pool, ready_race, 60).await;
+    let ready_race_lease = reference_race_service
+        .claim_candidates(1)
+        .await
+        .expect("ready/reference candidate claim must succeed")
+        .pop()
+        .expect("ready/reference candidate must be claimed");
+    let (ready_result, (_ready_race_node, _ready_race_version)) = tokio::join!(
+        reference_race_service.mark_ready_for_deletion(ready_race_lease),
+        insert_gc_file_version(
+            &repository,
+            &library,
+            &root,
+            ready_race,
+            "ready-reference-race",
+        ),
+    );
+    let ready_result = ready_result.expect("ready/reference race must not fail");
+    assert!(matches!(
+        ready_result,
+        ObjectGcPlanResult::Valid(_) | ObjectGcPlanResult::Invalidated
+    ));
+    assert_eq!(count_gc_candidates(&inspection_pool, ready_race).await, 0);
+
+    // No planner operation is permitted to delete physical metadata. The
+    // Object and ObjectReplica row counts therefore remain exactly stable.
+    assert_eq!(
+        count_objects_in_dedup_domain(&inspection_pool, dedup_domain_id).await,
+        initial_object_count
+    );
+    assert_eq!(
+        count_replicas_in_dedup_domain(&inspection_pool, dedup_domain_id).await,
+        initial_replica_count
+    );
+    assert!(
+        repository
+            .find_object(blocked.object_id())
+            .await
+            .expect("preserved object lookup must succeed")
+            .is_some()
+    );
+
+    drop(metadata);
+    drop(retention);
+    drop(service);
+    drop(reconnected_service);
+    drop(claim_worker_a);
+    drop(claim_worker_b);
+    drop(reference_race_service);
+    inspection_pool.close().await;
+    reconnected.close().await;
     pool.close().await;
 }
