@@ -163,6 +163,21 @@ impl SessionRow {
     }
 }
 
+/// A durable per-device/per-library synchronization checkpoint. Journal
+/// payloads are intentionally not stored here; this row records only consumer
+/// progress and server-observed timestamps.
+#[derive(Clone, Debug, FromRow, PartialEq, Eq)]
+pub struct DeviceSyncCheckpointRow {
+    pub owner_user_id: Uuid,
+    pub device_id: Uuid,
+    pub library_id: Uuid,
+    pub journal_epoch: i64,
+    pub acknowledged_sequence: i64,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
+    pub last_seen_high_watermark: Option<i64>,
+}
+
 impl fmt::Debug for SessionRow {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter

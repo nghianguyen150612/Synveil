@@ -33,6 +33,10 @@ impl RequestId {
     fn from_header_value(value: &HeaderValue) -> Option<Self> {
         let value = value.to_str().ok()?;
         if !(8..=128).contains(&value.len())
+            // Correlation hints are logged. Reserve machine-secret prefixes,
+            // including tokens accidentally pasted inside a longer hint.
+            || value.contains("svd1_")
+            || value.contains("sve1_")
             || !value
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || b"._~-".contains(&byte))

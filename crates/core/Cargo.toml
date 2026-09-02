@@ -7,5 +7,8 @@ publish.workspace = true
 description = "Platform-neutral foundation boundary for Synveil domain contracts"
 
 [dependencies]
+sha2.workspace = true
+subtle.workspace = true
 time.workspace = true
 uuid.workspace = true
+zeroize.workspace = true

@@ -7,30 +7,50 @@
 //! codes; application/domain errors are translated at this boundary.
 
 mod auth;
+mod conflicts;
 mod cookies;
 mod csrf;
+mod device_auth;
 mod downloads;
 mod error;
 mod etag;
 mod files;
 mod health;
 mod middleware;
+mod mutations;
+mod rebaseline;
 mod request_id;
 mod router;
 mod state;
+mod sync;
 mod telemetry;
 mod uploads;
 mod versions;
 
 pub use auth::{
-    AuthenticationBackend, BootstrapStatus, IssuedSession, PostgresAuthenticationBackend,
+    AuthenticatedPrincipal, AuthenticationBackend, BootstrapStatus, IssuedSession,
+    PostgresAuthenticationBackend,
+};
+pub use conflicts::{
+    CONFLICT_RESOLUTION_BODY_LIMIT_BYTES, ConflictCursorError, ConflictCursorKey,
+    MAX_CONFLICT_CURSOR_BYTES, PostgresConflictManagementBackend,
 };
 pub use cookies::{CSRF_COOKIE_NAME, CookieConfig, CookieSameSite, SESSION_COOKIE_NAME};
 pub use csrf::CsrfKey;
+pub use device_auth::{
+    DEVICE_ENROLLMENT_BODY_LIMIT_BYTES, DeviceAuthenticationBackend,
+    PostgresDeviceAuthenticationBackend,
+};
 pub use downloads::{DownloadBackend, DownloadMetadata, DownloadRead};
 pub use error::{ApiError, ErrorBody, ErrorResponse, map_auth_error, map_core_error};
 pub use etag::EtagKey;
 pub use files::FILE_METADATA_BODY_LIMIT_BYTES;
+pub use mutations::{CLIENT_MUTATION_BODY_LIMIT_BYTES, PostgresClientMutationBackend};
+pub use rebaseline::{
+    MAX_REBASELINE_COMPLETION_TOKEN_BYTES, MAX_REBASELINE_CURSOR_BYTES, PostgresRebaselineBackend,
+    REBASELINE_BODY_LIMIT_BYTES, RebaselineBackend, RebaselineTokenError, RebaselineTokenKey,
+    RebaselineTokenKeyParseError,
+};
 pub use request_id::{REQUEST_ID_HEADER, RequestContext, RequestId};
 pub use router::{
     API_VERSION_PREFIX, BOOTSTRAP_BODY_LIMIT_BYTES, DEFAULT_BODY_LIMIT_BYTES,
@@ -39,6 +59,10 @@ pub use router::{
 pub use state::{
     ApiState, DenySystemHealth, PlatformReadiness, ReadinessProbe, ReadinessSnapshot,
     StaticReadiness, SystemHealthAuthorizer,
+};
+pub use sync::{
+    MAX_SYNC_ACK_TOKEN_BYTES, PostgresSyncFeedBackend, SYNC_ACK_BODY_LIMIT_BYTES, SyncAckKey,
+    SyncAckTokenError, SyncFeedBackend,
 };
 pub use telemetry::init_tracing;
 pub use uploads::{UPLOAD_JSON_BODY_LIMIT_BYTES, UPLOAD_OFFSET_HEADER_NAME, UploadBackend};

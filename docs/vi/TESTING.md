@@ -282,6 +282,239 @@ Coverage pure/unit tối thiểu gồm:
 Test state-transition liệt kê mọi state và bảo đảm transition undefined fail mà
 không mutation.
 
+## Validation change journal bền vững của Prompt 31
+
+Foundation journal bền vững có live-PostgreSQL gate tường minh trong
+`crates/metadata/tests/postgres.rs`. Trên database disposable mới, suite ignored
+được enable chứng minh migration apply, schema typed round-trip, một event cho
+mỗi logical mutation được hỗ trợ, replay idempotent của upload và restore
+version, tombstone purge còn lại sau khi xóa Node, owner/library scope, paging
+bounded có thứ tự, cursor resume, interleaving reader/write, writer đồng thời,
+rollback khi lỗi journal ở cuối transaction và append-only history được enforce
+bởi database. Test finalize upload còn chạy hai completion đồng thời và assert
+một completion được lưu cùng một journal fact.
+
+Unit test riêng cho foundation cover vocabulary change canonical, xử lý
+version/length/integrity/overflow của cursor, boundary PostgreSQL `BIGINT` và
+việc tách namespace với cursor file-history/purge. Live suite không chạy trên
+database development persistent. Một lệnh explicit đại diện là:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://<disposable-loopback-db> \
+  cargo test -p synveil-metadata --test postgres --locked -- \
+  --ignored --test-threads=1
+```
+
+Đây chỉ validate foundation journal. Test checkpoint/feed Prompt 32,
+rebaseline server-side Prompt 33 và client mutation Prompt 34 được mô tả bên
+dưới. Client-side staged installation và automatic conflict resolution vẫn là
+test của sync phase sau.
+
+## Trạng thái và validation synchronization Prompt 35
+
+| Capability | Status |
+|---|---|
+| durable change journal | `VALIDATED` |
+| device checkpoints/feed | `VALIDATED` |
+| snapshot/rebaseline | `VALIDATED` |
+| client mutation submission | `VALIDATED` |
+| optimistic conflict detection | `VALIDATED` |
+| durable conflict records | `IMPLEMENTED` |
+| manual conflict inspection | `IMPLEMENTED` |
+| explicit manual resolution | `IMPLEMENTED` |
+| automatic conflict resolution | `NOT IMPLEMENTED` |
+| desktop sync agent | `NOT IMPLEMENTED` |
+
+Live PostgreSQL test Prompt 32 dùng database disposable mới và cover tạo/unique
+checkpoint, create đồng thời, concealment owner/library, epoch và sequence zero
+khởi tạo deterministic, feed page bounded tăng dần, repeat read ổn định trước
+ack, signed delivery evidence, compare-and-set monotonic, replay cùng page và
+token cũ, reject gap/out-of-order và future progress, device/library độc lập,
+reader đồng thời, ack đồng thời, writer chạy chồng feed, history expiry, epoch
+rollover và từ chối device revoked. API test cover session auth, CSRF bất đối
+xứng, header private/no-store, body/limit bounded, safe error, scope
+concealment, DTO chỉ logical và không lộ token. Lệnh live bắt buộc là:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-metadata --test postgres --locked -- \
+  --ignored --test-threads=1
+```
+
+Suite API và metadata của Prompt 34 đã implement và test logical mutation
+boundary authenticated. Local watcher, staged desktop agent, conflict
+auto-resolver, WebSocket/SSE và broker vẫn nằm ngoài phase này.
+
+## Validation snapshot/rebaseline logical Prompt 33
+
+Unit coverage chứng minh vocabulary state bootstrap đóng; invariant projection
+logical có type; shape canonical root/directory/file; cursor round trip, scope
+binding, reject tamper/oversize; completion-token round trip và binding claim
+owner/device/library/session/generation; HMAC domain cursor/token riêng; encoding
+terminal manifest rỗng; cùng `Debug` secret đã redact. API coverage kiểm tra auth
+và CSRF cho start/complete, auth GET không CSRF, body 2 KiB, strict JSON field,
+bound page limit, cursor/completion token malformed/tampered/oversized,
+cross-owner concealment, từ chối device revoked/unknown, response success/error
+private/no-store, mapping page/retry tất định, terminal proof, exact checkpoint,
+response-loss replay và DTO allowlist không có field storage vật lý.
+
+Live PostgreSQL test ignored
+`postgres_sync_rebaseline_bootstrap_is_coherent_bounded_and_fenced` là bắt buộc
+trên database disposable mới. Test apply migration Prompt 33, verify schema
+state/manifest đúng scope và không có physical column, rồi chứng minh:
+
+- library rỗng theo nội dung user vẫn complete canonical root tại sequence zero;
+  Node `ACTIVE`/`TRASHED` hiện tại được include; `PURGING`/đã purge bị exclude;
+  current version/length/hash được project an toàn;
+- epoch/resume cut nhất quán được capture cùng manifest bất biến, keyset order
+  Node-ID ổn định, page read bounded `limit + 1`, retry first/terminal page tất
+  định, tiếp tục sau service restart và checkpoint giữ nguyên từng byte trong
+  mọi page read;
+- concurrency PostgreSQL thật cho directory create, rename, move, Trash,
+  metadata purge, upload finalization/content replacement đã verify và version
+  restore. Mỗi assertion yêu cầu outcome committed nằm trong projection đúng
+  khi journal event ở trước/tại cut; nếu không event phải nghiêm ngặt sau cut;
+- snapshot nhiều page vẫn trả projection cũ đã capture sau khi rename, move,
+  Trash, create và content finalization đồng thời xảy ra sau page 1. Feed sau cut
+  reconcile các change đó và mọi sequence trả về đều lớn hơn resume sequence;
+- completion reject evidence không terminal mà không đổi checkpoint, rồi thay
+  epoch/acknowledged sequence nguyên tử đúng cut; replay sau mất response là
+  idempotent;
+- checkpoint đã đi trước, generation expired/replaced, epoch rotation hay
+  minimum-retained-sequence invalidation đều fail closed không rewind; start
+  đồng thời trả cùng một bootstrap `OPEN`; và
+- cleanup session retired có giới hạn chỉ xóa state bootstrap/manifest, giữ
+  canonical root cùng journal fact.
+
+Các lệnh live focused chính xác là:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-metadata --test postgres --locked -- \
+  postgres_change_journal_is_ordered_scoped_resumable_and_atomic \
+  --ignored --exact --test-threads=1
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-metadata --test postgres --locked -- \
+  postgres_device_sync_checkpoints_and_feed_are_bounded_monotonic_and_scoped \
+  --ignored --exact --test-threads=1
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-metadata --test postgres --locked -- \
+  postgres_sync_rebaseline_bootstrap_is_coherent_bounded_and_fenced \
+  --ignored --exact --test-threads=1
+```
+
+Fake backend hoặc test ignored chưa chạy không phải evidence PostgreSQL/no-gap
+Prompt 33. Gate cuối còn chạy lại upload finalization, version restore,
+Trash/restore, metadata purge, journal atomicity, sync feed/ack, GC
+planning/execution/worker, local ObjectStore conformance và regression upload
+durability Windows hiện có.
+
+## Validation client mutation submission Prompt 34
+
+Unit coverage trong `synveil-core` và `synveil-metadata` chứng minh mutation
+vocabulary đóng, identity UUIDv7 canonical, typed payload construction,
+boundary decimal epoch/sequence, fingerprint SHA-256 có version và deterministic,
+parse conflict reason, exact logical result replay và marker `replayed` rõ ràng.
+Contract không chứa arbitrary JSON patch, byte payload, object identity hay
+physical storage field.
+
+API coverage chứng minh allowlist field strict cho envelope và mọi payload typed,
+parse kind chính xác, authentication và CSRF bind session, reject body quá 16
+KiB, response success/error private/no-store, concealment owner/device/library,
+applied result logical an toàn, conflict detail an toàn, mapping mutation-ID
+conflict và rebaseline-required.
+
+Hai live PostgreSQL test
+`postgres_client_mutations_are_atomic_idempotent_scoped_and_bootstrap_safe` và
+`postgres_client_mutations_are_race_safe_for_duplicate_and_stale_pairs` chạy
+trên database disposable mới và chứng minh:
+
+- cả năm namespace/state mutation được hỗ trợ commit một canonical Node change,
+  một journal event và một operation row terminal trong cùng transaction;
+- retry sau lost response trả đúng Node/event hoặc conflict đã persist với
+  `replayed: true`; checkpoint của device gửi không đổi và device khác đọc
+  được event qua feed;
+- stale revision, parent/name thay đổi, future base sequence, sai epoch,
+  retention expiry và resource đã purge đều thất bại deterministic;
+- dùng lại ID với payload khác bị từ chối, scope cross-owner/library/device bị
+  conceal, transient rollback không để lại operation hay journal fact;
+- duplicate đồng thời, rename-vs-rename, move-vs-move, Trash-vs-rename,
+  create directory trùng tên và stale write từ hai device được serialize bởi
+  namespace guard theo library mà không deadlock hay duplicate fact; và
+- bootstrap cut rồi client mutation tạo event post-cut cho feed trong khi
+  manifest bootstrap bất biến không đổi.
+
+Lệnh live chính xác:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-metadata --test postgres --locked -- \
+  --ignored --test-threads=1
+```
+
+Focused test dùng row lock PostgreSQL, foreign-key scope, advisory namespace
+guard theo transaction và journal/feed thật, không dùng fake backend. Automatic
+conflict resolution, staged local apply, content-byte mutation và desktop sync
+vẫn chưa implement.
+
+## Validation durable conflict và manual resolution Prompt 35
+
+Unit coverage chứng minh parse conflict/resolution UUIDv7 có type, vocabulary
+lifecycle/action đóng, fingerprint SHA-256 typed canonical ổn định và đổi khi
+semantic đổi, bound page limit, DTO resolution strict deny-unknown-fields, cùng
+cursor bind owner/device/library round trip và reject oversize/sai scope/tamper.
+API coverage chứng minh auth cho list/detail, GET không CSRF, POST cần
+session-bound CSRF, reject body quá 16 KiB, success/error private/no-store,
+concealment cross-scope/Device revoked, envelope stale/terminal ổn định, exact
+replay projection và DTO allowlist không có field storage vật lý.
+
+Hai test PostgreSQL disposable mới
+`postgres_sync_conflicts_are_durable_inspectable_and_manually_resolvable` và
+`postgres_sync_conflict_resolution_is_fenced_race_safe_and_replayable` chứng
+minh:
+
+- managed terminal conflict Prompt 34 và operation row link one-to-one trong
+  cùng transaction, original replay trả cùng conflict ID, managed reason được
+  persist và non-managed failure không tạo conflict;
+- evidence lịch sử bất biến, page keyset OPEN bounded có descending order ổn
+  định, detail lookup, concealment owner/Device/Library, từ chối Device revoked
+  và evidence sống qua rebaseline cùng Node purge;
+- `ACCEPT_SERVER` chuyển OPEN thành DISMISSED mà không đổi Node/journal, replay
+  chính xác theo ID/fingerprint và fence decision thứ hai khác;
+- `APPLY_CLIENT_INTENT` bắt buộc fresh current revision đúng theo mutation, dùng
+  executor Prompt 34 thật, commit đúng một Node change/event cùng RESOLVED
+  linkage, giữ operation gốc CONFLICT và replay timestamp/event gốc sau mất
+  response;
+- winner revision/rename/move/purge làm stale persist explicit stale result,
+  giữ conflict OPEN và tạo zero resolution mutation/event;
+- race APPLY/APPLY và ACCEPT/APPLY cho tối đa một terminal decision và một
+  resource event; replay original mutation trong resolution không duplicate
+  conflict hay đổi canonical state; và
+- apply success nhìn thấy từ Device khác qua feed Prompt 32, checkpoint nguồn
+  giữ nguyên từng byte, accept-server không có feed event, và fresh apply sau
+  rebaseline success hoặc conflict an toàn.
+
+Test Prompt 35 dùng advisory/row lock PostgreSQL thật cùng timeout 10 giây cho
+mỗi race và assert không deadlock. Test còn inspect migration schema tìm column
+vật lý bị cấm và thử rewrite evidence trực tiếp để chứng minh trigger database
+reject. Lệnh focused là:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-metadata --test postgres --locked -- \
+  postgres_sync_conflicts_are_durable_inspectable_and_manually_resolvable \
+  --ignored --exact --test-threads=1
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-metadata --test postgres --locked -- \
+  postgres_sync_conflict_resolution_is_fenced_race_safe_and_replayable \
+  --ignored --exact --test-threads=1
+```
+
+Gate cuối còn chạy tuần tự mọi test metadata PostgreSQL ignored trên một
+database mới, suite auth và storage-GC ignored, toàn workspace non-live,
+Clippy strict, cargo-deny, OpenAPI lint, diff check và scan field security/scope
+bị cấm. Automatic conflict resolution và desktop sync agent vẫn chưa implement.
+
 ## Integration test PostgreSQL
 
 Dùng version PostgreSQL được hỗ trợ, không dùng SQLite hay repository mock đơn
@@ -446,6 +679,17 @@ test hợp lệ.
 Synchronization nhận testing sâu bất thường vì defect order/retry có vẻ nhỏ có
 thể âm thầm làm mất thay đổi trên mọi thiết bị.
 
+Phạm vi Prompt 31 đã implement là foundation journal server-side: publication
+transaction-local, projection có type, ordering theo library, cursor read
+bounded và evidence rollback/idempotency/concurrency. Prompt 32 thêm server
+feed một chiều đã authenticate, checkpoint bền theo device/library, signed ack
+evidence và outcome rebaseline-required tường minh. Prompt 33 thêm manifest
+logical bất biến server-side, coherent cut, page bounded retryable, terminal
+proof và exact checkpoint handoff. Prompt 34 thêm authenticated typed logical
+mutation submission, durable identity/fingerprint, optimistic precondition và
+deterministic conflict outcome. Client staged install, arbitrary content-byte
+mutation và automatic conflict resolution vẫn là kế hoạch.
+
 ### Bất biến sync
 
 Với một `Library` và journal epoch:
@@ -466,10 +710,13 @@ Với một `Library` và journal epoch:
    giờ bị bỏ giữa chúng.
 7. Cùng `client_mutation_id`/fingerprint tạo một mutation/event. Tái sử dụng
    payload khác bị từ chối.
-8. Content dựa trên stale version bảo toàn byte incoming và current trong
-   conflict representation đã định nghĩa. Không mất byte last-writer-wins.
-9. Metadata conflict trả current state/rebase instruction; ancestry directory
-   vẫn acyclic và sibling name vẫn unique theo portable profile.
+8. Mutation boundary Prompt 34 chỉ nhận namespace/state operation có type; không
+   nhận file byte, object/replica identity hay storage locator. Content protocol
+   tương lai phải giữ cả incoming/current byte, không làm mất byte theo
+   last-writer-wins.
+9. Precondition fail trả projection conflict expected/current đã persist và
+   không silent overwrite, merge hay tạo conflict copy. Directory ancestry vẫn
+   acyclic và sibling name vẫn unique theo portable profile.
 10. Tombstone/history tồn tại lâu hơn active cursor window được ghi. Client dưới
     retention hoặc sai epoch nhận rebaseline tường minh, không bao giờ empty page
     hàm ý deletion convergence.
@@ -574,6 +821,14 @@ macOS, Linux Desktop và Linux Server được tuyên bố phải test:
 - policy symlink/reparse/junction, hard link, sparse file, hỗ trợ permission/
   xattr và file identity;
 - watcher overflow/lost notification/coalescing cộng authoritative rescan;
+- test watcher deterministic Prompt 38 cho create/modify/delete, paired
+  rename/move, fallback ambiguous cho remove+create unpaired, suppression inbound,
+  race user-edit-after-inbound, bounded queue overflow, restart scan recovery và
+  loại trừ control-path;
+- test native Linux `notify` cho live create cùng disposable-root rename/move,
+  editor-style temp replace, delete và safety symlink/special-entry khi host có
+  semantics đó; bằng chứng Windows là cross-target compile trừ khi chạy thật trên
+  host Windows native;
 - temp-write/hash/replace local nguyên tử, file locked/open, process kill và low
   disk/inode;
 - transaction, corruption, backup/rebuild local state database và apply cursor;
@@ -1194,3 +1449,203 @@ Trước khi gate owner ghi roadmap token bất kỳ:
   release-blocking invariant;
 - status và docs Anh/Việt mô tả chính xác support, degradation, residual risk và
   non-goal.
+
+## Bằng chứng inbound desktop Prompt 36
+
+Suite client-sync dùng file SQLite disposable và managed root dưới temporary
+directory của OS. Test không đụng root thật do user chọn. `SyncRemote`
+deterministic in-process ép semantics rebaseline completion, checkpoint theo
+device, feed/ack có giới hạn và download content logical theo chunk mà không cần
+internet ngoài.
+
+Coverage trực tiếp hiện gồm:
+
+- migration từ zero, schema version, reopen, pragma WAL/FULL/foreign-key/
+  busy-timeout, reject foreign-key/check, restart pending ack/operation/
+  bootstrap, scope theo library và chặn writer thứ hai bằng exclusive lock;
+- relative path strict, name Windows reserved/control/trailing/separator,
+  Unicode/case collision key, cập nhật path hậu duệ Unicode, root marker cùng
+  wrong scope/root binding và reject symlink redirect Linux;
+- bootstrap root-only và multi-page, manifest page bền, chứng minh topology
+  terminal, materialize parent-first, retry mất response, recovery local-
+  complete, sweep generation tracked và giữ unknown file;
+- feed page rỗng, single-event, multi-event, đủ tám journal kind hiện tại,
+  transition applied/acknowledged chính xác, độc lập cross-device, wrong epoch,
+  sequence gap, unknown kind, replay page/event và offline state;
+- replay create/rename/move/Trash/restore/purge directory, collision case managed
+  lẫn unknown, destination occupied, source missing, quarantine stale, file
+  divergence khi replace/purge và attribution unknown-directory trong race;
+- download multi-chunk tuần tự, mismatch length/SHA-256, giữ file visible cũ,
+  restart sau stage, recovery replace trước database và cleanup receipt cuối; và
+- failure deterministic sau page intent, trước filesystem action, sau staged
+  content, sau filesystem receipt nhưng trước SQLite state, sau local event
+  commit, sau server ack, sau bootstrap page, giữa bootstrap apply, sau local
+  bootstrap complete và sau server completion trước local handoff.
+
+Command local có thẩm quyền là:
+
+```text
+cargo test -p synveil-client-sync --all-targets --locked
+cargo clippy -p synveil-client-sync --all-targets --all-features --locked -- -D warnings
+```
+
+Handoff release còn rerun toàn bộ locked workspace gate và integration case
+PostgreSQL ignored Prompt 31-35 hiện có trên database disposable mới. Linux cung
+cấp filesystem runtime evidence cho Prompt 36. Không được suy diễn native
+Windows execution, power-loss test hay hostile same-user path-race test từ
+Linux; chúng vẫn là gate platform/release-lab sau. Lệnh locked `cargo check
+-p synveil-client-sync --target x86_64-pc-windows-gnu` với official Rust 1.98
+toolchain khớp đã pass, nên Rust path conditional Windows đã được compile-
+audit; check này không claim link hay runtime Windows native.
+
+## Bằng chứng remote desktop Prompt 37
+
+[`PROMPT37_CONTINUATION_AUDIT.md`](../PROMPT37_CONTINUATION_AUDIT.md) ghi riêng
+worktree dirty kế thừa, phân loại requirement, lỗi có bằng chứng và kết quả cuối.
+Kết quả test cũ không thay thế việc rerun source tree cuối.
+
+### Coverage client, protocol và credential
+
+Suite client-sync Linux có 55 unit test (23 HTTP adapter, 21 profile/SecretStore,
+11 local-state/path hiện có) cùng 12 inbound integration test. HTTP test dùng
+fixture Axum/TCP/TLS local thật và adapter reqwest production; policy HTTP
+numeric-loopback explicit không làm yếu constructor HTTPS production. Coverage:
+
+- method, route, query, DTO, bearer header, scope và evidence chính xác cho đủ
+  bảy method `SyncRemote`; ID/decimal canonical, unknown field/kind, epoch/
+  sequence/generation, Node revision zero, revision drift, tombstone và proof
+  terminal rebaseline;
+- giới hạn JSON/error khi có hoặc không có `Content-Length`, body JSON lỗi/HTML,
+  content encoding nén hoặc lặp, typed HTTP error, deadline connect/header/
+  metadata/idle/total, không auto-retry, tối đa 500 feed event hoặc 1.000
+  manifest Node cho mỗi request;
+- chunk streaming có giới hạn, immutable version/validator chính xác, mismatch
+  length/SHA-256, EOF sớm, byte thừa, deadline độc lập với idle progress; không
+  buffer toàn bộ file response;
+- fixture redirect hai server với destination nhận zero request, không bearer/
+  cookie; sai profile/owner/Device bị chặn trước network; fixture TLS self-signed
+  tạm thời bị reject trước khi gửi HTTP authentication;
+- normalize/reject URL strict, profile và replica/root binding bền, migration
+  từ SQLite schema đầu, secure-store envelope có version, isolation khi copy/
+  reconstruct SQLite, scan database/WAL/SHM tìm plaintext secret synthetic;
+- lỗi store/read-back/delete, restart sau cleanup intent, replacement và forget
+  explicit, secure storage unavailable không fallback plaintext, store đồng
+  thời, engine đang sống bị chặn sau forget hoặc re-enroll; và
+- bảo toàn managed byte, bootstrap state, sequence applied/acknowledged, pending
+  ACK evidence và local issue khi offline/auth/revocation failure.
+
+Core test kiểm tra syntax secret 256 bit có version, digest vector khác domain,
+ID canonical, Debug redact và parse có giới hạn. API test kiểm tra tách principal
+browser/device, CSRF, duplicate/mixed auth, route giới hạn, enrollment JSON
+strict, error và tracing không lộ secret. Test trace chạy trong process test mới
+để tracing callsite cache của test song song không làm mất capture. Test bắt
+buộc quan sát trace event thật và không được lộ secret, kể cả bearer/grant bị
+copy vào `X-Request-Id` hoặc URI không match route.
+
+### PostgreSQL mới và acceptance HTTP thật
+
+Có 27 PostgreSQL case ignored. Mỗi case phải chạy trên database disposable vừa
+tạo riêng, được test apply toàn bộ forward migration. Dùng
+`SYNVEIL_TEST_DATABASE_URL`, không `DATABASE_URL`; tái sử dụng database làm sai
+giả định single-owner/count trong fixture. Continuation dùng container
+PostgreSQL 17 mới, chỉ bind loopback, giữ nguyên container của session bị ngắt.
+
+| Package / integration target | Số case |
+|---|---:|
+| `synveil-metadata` / `postgres` | 14 |
+| `synveil-auth` / `postgres` | 2 |
+| `synveil-storage` / `gc` | 5 |
+| `synveil-metadata` / `device_credentials_postgres` | 1 |
+| `synveil-auth` / `device_credentials_postgres` | 3 |
+| `synveil-auth` / `bootstrap_precision_postgres` | 1 |
+| `synveil-api` / `desktop_remote` | 1 |
+
+Lấy tên case bằng `cargo test -p <package> --test <target> --locked -- --list
+--ignored`, rồi dùng database mới cho từng lần gọi:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5432/fresh_test_database \
+  cargo test -p <package> --test <target> --locked -- <exact_test_name> \
+  --ignored --exact --test-threads=1
+```
+
+Credential case kiểm tra schema constraint, chỉ lưu digest, sai owner/Device,
+owner/Device inactive, revoke một/toàn bộ credential, concurrent exchange chỉ
+một winner, reject replay khi mất response và recovery bằng grant mới. Test
+lock-expiry giữ Device row lock tới sau expiry; production exchange đang chờ
+phải giữ Device PENDING, không tạo credential hay consumption record. Timestamp
+trước khi chờ lock không đủ để kiểm tra expiry.
+
+Acceptance dùng router thật, PostgreSQL mới, logical storage/upload service
+thật, `HttpSyncRemote` production, SQLite mới và managed root tạm. Chỉ platform
+SecretStore là implementation test explicit. Test bootstrap owner/session
+browser, tạo và exchange grant, download file 192 KiB, bootstrap replica,
+consume/ACK browser mutation, replace content 128 KiB, rồi inject failure sau
+local apply trước ACK. Test revoke credential, xác nhận mọi route sync/
+rebaseline/content từ chối, giữ byte và pending progress, re-enroll explicit
+cùng Device và recover ACK. Cùng router thật còn chặn sai owner/library/Device/
+content, thiếu browser CSRF, mixed auth, và device gọi upload/mutation/conflict/
+admin route.
+
+### Secure storage native và bằng chứng Windows
+
+Persistence Linux native là test ignored riêng, không suy ra từ test store.
+Chạy trong `dbus-run-session` riêng với `XDG_DATA_HOME`, `XDG_CONFIG_HOME`,
+`XDG_RUNTIME_DIR` tạm mới và vault GNOME Secret Service synthetic đã unlock.
+Không trỏ fixture tới keyring cá nhân. Chờ `org.freedesktop.DBus.NameHasOwner`
+cho `org.freedesktop.secrets`; introspection có thể vô tình auto-activate daemon
+thứ hai trước khi daemon của fixture sẵn sàng. Password unlock synthetic đi qua
+stdin, không argv hay file.
+
+```text
+cargo test -p synveil-platform --lib --locked -- \
+  native_secrets::tests::native_secret_survives_backend_recreation_and_is_deleted \
+  --ignored --exact
+```
+
+Test ghi key opaque mới, mở process mới để đọc entry qua native adapter, sau đó
+xóa và verify không còn entry. Child chỉ nhận tên key không bí mật; secret không
+đi trong argument hay environment. Sau test chỉ dừng daemon/session do fixture
+tạo.
+
+Với official Rust 1.98 host/Windows standard library khớp nhau, MinGW GCC,
+header, library và binutils, đặt `RUSTC`, `CARGO_TARGET_DIR`,
+`CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER`, `CC_x86_64_pc_windows_gnu` và
+`AR_x86_64_pc_windows_gnu` tới toolchain cô lập, rồi chạy:
+
+```text
+cargo check --workspace --all-targets --locked --target x86_64-pc-windows-gnu
+cargo test -p synveil-client-sync -p synveil-platform --all-targets --locked \
+  --target x86_64-pc-windows-gnu --no-run
+```
+
+Đây là workspace check và link Windows test executable thật, gồm bundled
+SQLite và adapter Windows Credential Manager. Không dùng workaround pkg-config
+trỏ vào host SQLite để chỉ type-check. Không claim runtime Windows native,
+Credential Manager persistence, TLS, NTFS, reboot hay power-loss; đây vẫn là
+gate platform/release-lab sau.
+
+### Validation cuối và dependency policy
+
+Sau code change cuối, rerun các case database/native mới ở trên cùng:
+
+```text
+cargo fmt --all -- --check
+cargo check --workspace --all-targets --locked
+cargo test --workspace --all-targets --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test -p synveil-client-sync --all-targets --locked
+cargo clippy -p synveil-client-sync --all-targets --all-features --locked -- -D warnings
+cargo deny check
+npx --yes @redocly/cli lint api/openapi.yaml
+git diff --check
+```
+
+License TLS mới đã review được giới hạn bằng exception đúng version trong
+`deny.toml`: ISC cho `ring@0.17.14`, `rustls-webpki@0.103.15`,
+`untrusted@0.9.0`, CDLA-Permissive-2.0 cho `webpki-roots@1.0.9`. Global allowlist
+giữ nguyên; upgrade phải review lại. Bản phân phối phải giữ license notice và
+root-data agreement tương ứng từ upstream. Không suppress advisory. Warning
+OpenAPI lint về 4xx của public probe/status và shared component chưa dùng được
+báo riêng, không sửa bằng cách bịa hành vi API. DeviceBearer không được quảng bá
+cho system health có đặc quyền.

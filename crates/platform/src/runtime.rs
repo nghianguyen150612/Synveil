@@ -1,7 +1,8 @@
 use crate::{
-    ComponentHealth, HealthComponent, HealthInfo, HealthState, HostInfo, PathResolver, Platform,
-    ReadOnlyStorageDiscovery, SecretStore, SecretStoreState, ServiceLifecycle,
-    StorageCapabilityDiscovery, UnsupportedSecureSecretStore, UnsupportedServiceLifecycle,
+    ComponentHealth, HealthComponent, HealthInfo, HealthState, HostInfo, NativeSecureSecretStore,
+    PathResolver, Platform, ReadOnlyStorageDiscovery, SecretStore, SecretStoreState,
+    ServiceLifecycle, StorageCapabilityDiscovery, UnsupportedSecureSecretStore,
+    UnsupportedServiceLifecycle,
 };
 
 use std::path::Path;
@@ -30,13 +31,14 @@ pub trait PlatformRuntime: Send + Sync {
     }
 }
 
-/// Shared read-only runtime composition used by the minimal adapter namespaces.
+/// Shared runtime composition; native secret stores are selected only for the
+/// current compiled Linux/Windows target, never for a simulated adapter.
 pub struct MinimalPlatformRuntime {
     platform: Platform,
     host_info: HostInfo,
     path_resolver: Box<dyn PathResolver>,
     storage_discovery: ReadOnlyStorageDiscovery,
-    secret_store: UnsupportedSecureSecretStore,
+    secret_store: Box<dyn SecretStore>,
     service_lifecycle: UnsupportedServiceLifecycle,
 }
 
@@ -47,7 +49,13 @@ impl MinimalPlatformRuntime {
             host_info: HostInfo::for_platform(platform),
             path_resolver,
             storage_discovery: ReadOnlyStorageDiscovery,
-            secret_store: UnsupportedSecureSecretStore::new(),
+            secret_store: if platform == Platform::detect()
+                && matches!(platform, Platform::Linux | Platform::Windows)
+            {
+                Box::new(NativeSecureSecretStore::new())
+            } else {
+                Box::new(UnsupportedSecureSecretStore::new())
+            },
             service_lifecycle: UnsupportedServiceLifecycle::new(),
         }
     }
@@ -73,8 +81,8 @@ impl MinimalPlatformRuntime {
     }
 
     #[must_use]
-    pub const fn secret_store(&self) -> &UnsupportedSecureSecretStore {
-        &self.secret_store
+    pub fn secret_store(&self) -> &dyn SecretStore {
+        self.secret_store.as_ref()
     }
 
     #[must_use]

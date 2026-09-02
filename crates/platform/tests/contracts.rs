@@ -126,14 +126,25 @@ fn current_runtime_has_a_clear_boundary_and_restricted_health() {
 
     assert_eq!(runtime.platform(), detect_platform());
     assert_eq!(runtime.host_info().platform(), detect_platform());
-    assert_eq!(
-        runtime.secret_store().state(),
-        SecretStoreState::Unsupported
-    );
-    assert_eq!(
-        runtime.health().component(HealthComponent::SecretStore),
-        Some(HealthState::Unavailable)
-    );
+    if matches!(detect_platform(), Platform::Linux | Platform::Windows) {
+        assert!(matches!(
+            runtime.secret_store().state(),
+            SecretStoreState::Available | SecretStoreState::Unavailable
+        ));
+        assert!(matches!(
+            runtime.health().component(HealthComponent::SecretStore),
+            Some(HealthState::Healthy | HealthState::Unavailable)
+        ));
+    } else {
+        assert_eq!(
+            runtime.secret_store().state(),
+            SecretStoreState::Unsupported
+        );
+        assert_eq!(
+            runtime.health().component(HealthComponent::SecretStore),
+            Some(HealthState::Unavailable)
+        );
+    }
     assert!(!runtime.health().readiness());
 }
 
@@ -154,10 +165,19 @@ fn all_adapter_namespaces_expose_the_same_portable_runtime_boundary() {
     for (runtime, expected_platform) in runtimes {
         assert_eq!(runtime.platform(), expected_platform);
         assert_eq!(runtime.host_info().platform(), expected_platform);
-        assert_eq!(
-            runtime.secret_store().state(),
-            SecretStoreState::Unsupported
-        );
+        if expected_platform == detect_platform()
+            && matches!(expected_platform, Platform::Linux | Platform::Windows)
+        {
+            assert!(matches!(
+                runtime.secret_store().state(),
+                SecretStoreState::Available | SecretStoreState::Unavailable
+            ));
+        } else {
+            assert_eq!(
+                runtime.secret_store().state(),
+                SecretStoreState::Unsupported
+            );
+        }
         assert!(!runtime.service_lifecycle().status().is_supported());
     }
 }

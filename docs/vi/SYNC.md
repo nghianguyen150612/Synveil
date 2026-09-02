@@ -1,6 +1,10 @@
 # Giao thức đồng bộ change journal
 
-Trạng thái: **Blueprint quy chuẩn PLANNED**
+Trạng thái: **Foundation Prompt 31–36 và desktop inbound core đã VALIDATED.
+Server profile, enrollment groundwork, device authentication, secure credential
+persistence và production HTTP SyncRemote Prompt 37 đã IMPLEMENTED. Automatic
+resolution và synchronization hai chiều rộng hơn vẫn là blueprint quy chuẩn
+PLANNED.**
 
 Tài liệu này đặc tả mô hình đồng bộ đa thiết bị của Synveil. Tài liệu tuân theo
 ADR-006 và từ vựng domain trong [DOMAIN_MODEL.md](DOMAIN_MODEL.md). Quy tắc
@@ -12,6 +16,138 @@ Giao thức được thiết kế cho web, desktop dùng chung core Rust và cli
 với Android, iPhone và iPad là mobile profile tương lai. Tài liệu không tuyên bố
 các client đó đã được implement. Windows, macOS, Linux Desktop và Linux Server
 chỉ là first-class host target khi client/service evidence gate của chúng đạt.
+
+Prompt 34 implement server boundary authenticated
+`POST /api/v1/devices/{device_id}/libraries/{library_id}/mutations`: mỗi request
+đúng một logical `CREATE_DIRECTORY`, `RENAME_NODE`, `MOVE_NODE`, `TRASH_NODE`
+hoặc `RESTORE_NODE`, UUID idempotency bền, fingerprint canonical,
+optimistic precondition explicit, conflict deterministic đã persist và đúng
+một journal event khi success. Route không nhận file byte hay physical storage
+identity, không tự động tạo conflict copy, merge hay last-writer-wins. Phần
+Prompt 35 thêm durable conflict evidence, inspection bounded đã authenticate và
+manual decision explicit/idempotent. Phần content mutation và outbound client
+apply bên dưới vẫn là thiết kế protocol tương lai, không phải product behavior
+đã implement. Prompt 36 implement inbound apply; Prompt 37 kết nối core đó tới
+server thật bằng device credential.
+
+## Trạng thái đồng bộ Prompt 37
+
+| Capability | Status |
+|---|---|
+| durable change journal | `VALIDATED` |
+| device checkpoints/feed | `VALIDATED` |
+| snapshot/rebaseline | `VALIDATED` |
+| client mutation submission | `VALIDATED` |
+| optimistic conflict detection | `VALIDATED` |
+| durable conflict records | `IMPLEMENTED` |
+| manual conflict inspection | `IMPLEMENTED` |
+| explicit manual resolution | `IMPLEMENTED` |
+| desktop inbound sync core | `VALIDATED` |
+| desktop server profiles | `IMPLEMENTED` |
+| device enrollment groundwork | `IMPLEMENTED` |
+| device bearer authentication | `IMPLEMENTED` |
+| secure desktop credential persistence | `IMPLEMENTED` |
+| production HTTP SyncRemote | `IMPLEMENTED` |
+| filesystem observation | `IMPLEMENTED` |
+| self-generated change suppression | `IMPLEMENTED` |
+| durable outbound intent capture | `IMPLEMENTED` |
+| rename/move attribution | `IMPLEMENTED with conservative fallback` |
+| watcher overflow/reconciliation | `IMPLEMENTED` |
+| automatic outbound mutation submission | `NOT IMPLEMENTED` |
+| automatic conflict resolution | `NOT IMPLEMENTED` |
+| desktop GUI/pairing UX | `NOT IMPLEMENTED` |
+
+## Observation filesystem local và durable outbound intent đã implement
+
+Prompt 38 thêm lớp observation local trong `crates/client-sync`. Đây chỉ là
+control-plane boundary: event từ watcher native `notify` và watcher test xác định
+chỉ phát bounded hint, còn quyết định logical luôn dựa trên SQLite bền vững,
+managed-root validation, operation evidence Prompt 36 và reinspection filesystem
+qua `LocalReplica`. Observer ghi `outbound_intents` typed (`CREATE_DIRECTORY`,
+`CREATE_FILE`, `RENAME_NODE`, `MOVE_NODE`, `DELETE_OR_TRASH_NODE`,
+`MODIFY_FILE_CONTENT`) với UUIDv7 local intent, base epoch/applied sequence,
+revision/version của Node, path/fingerprint observed và semantic dedupe hash.
+Không lưu file byte.
+
+`.synveil/`, staging, quarantine, operation receipt và SQLite/control file local
+không thuộc namespace user. Inbound apply Prompt 36 ghi `observation_suppressions`
+bền vững bind operation ID, NodeId, expected path/presence/type và fingerprint
+content khi cần; suppression không dựa trên timer. Sau khi filesystem result do
+Synveil tạo được chứng minh, edit user ngay sau đó với fingerprint khác vẫn được
+capture thành outbound intent thật. Observation không bao giờ advance
+`applied_sequence` hoặc `acknowledged_sequence`.
+
+Watcher overflow, event drop, backend error, rename unpaired ambiguous, hash
+unstable, file bị khóa/không đọc được, tên không represent được, collision theo
+portable-name policy, symlink/reparse point và special file Linux đều trở thành
+observation issue bền vững hoặc `RESCAN_REQUIRED`; engine không đoán. Startup
+luôn yêu cầu reconciliation và scan bounded để đóng downtime gap. Rename/move
+intent cần paired native/evidence-based attribution; remove+create gần nhau không
+đủ evidence thì fallback `AMBIGUOUS_RENAME`/rescan. Observer không có
+`SyncRemote`/HTTP transport và không gọi `POST /mutations`, không tạo upload
+session, không complete upload và không resolve conflict.
+
+## Protocol durable conflict và manual resolution đã implement
+
+Managed resource conflict Prompt 34 là evidence bền vững của client intent bị
+từ chối. Trong cùng PostgreSQL transaction terminalize mutation gốc thành
+CONFLICT, server tạo đúng một `SyncConflictId` UUIDv7 và một record scope theo
+owner/Device nguồn/Library. Operation gốc giữ terminal vĩnh viễn. Replay cùng
+ID/fingerprint trả cùng conflict ID và không tạo record thứ hai.
+Authentication, CSRF, input malformed, mutation-ID reuse, infrastructure
+failure và yêu cầu rebaseline không phải resource conflict nên không tạo row.
+
+Record chỉ chứa field intent Prompt 34 đóng và historical logical observation
+bất biến. Nó không có raw JSON, content byte, physical storage identity hay Node
+foreign key. Lifecycle chính xác là OPEN, RESOLVED, DISMISSED. Vì vậy conflict
+của resource đã purge vẫn inspect/dismiss được nhưng apply không thể recreate
+Node.
+
+Các route đã implement:
+
+- `GET /api/v1/devices/{device_id}/libraries/{library_id}/conflicts` cho page
+  OPEN-only mặc định 50, tối đa 100, order bất biến
+  `(created_at DESC, conflict_id DESC)`, không OFFSET, dùng keyset cursor opaque
+  có HMAC và bind scope;
+- `GET /api/v1/devices/{device_id}/libraries/{library_id}/conflicts/{conflict_id}`
+  cho original intent typed, server observation được gọi rõ là historical,
+  lifecycle và terminal-resolution linkage; và
+- `POST /api/v1/devices/{device_id}/libraries/{library_id}/conflicts/{conflict_id}/resolve`
+  cho đúng một decision strict `ACCEPT_SERVER` hoặc `APPLY_CLIENT_INTENT`.
+
+Mọi route authorize lại owner đã authenticate, Device ACTIVE, Library thuộc
+owner và exact conflict scope. Sở hữu conflict ID không cấp quyền. GET là read
+không cần CSRF; POST bắt buộc session-bound CSRF proof. Mọi result/error là
+private/no-store và body resolution tối đa 16 KiB.
+
+Mỗi decision có `resolution_id` UUIDv7 và fingerprint SHA-256 typed canonical
+trên conflict ID, action cùng presence/value của fresh precondition explicit.
+Raw JSON serialization không liên quan. Cùng ID/fingerprint replay chính xác
+terminal outcome, completion time và journal linkage sau mất response; semantic
+khác trả `resolution_id_conflict`.
+
+`ACCEPT_SERVER` chọn current canonical server state một cách explicit. Nó ghi
+decision nguyên tử và chuyển OPEN thành DISMISSED nhưng không đổi Node, không
+phát resource journal event và không advance checkpoint.
+
+`APPLY_CLIENT_INTENT` không bao giờ reuse revision stale gốc. Resolver phải gửi
+current resource revision cho mọi kind được hỗ trợ, cộng current
+parent/destination revision cho move và restore. Service lấy library namespace
+guard và scoped row lock hiện có, đọc lại current state, reconstruct intent
+semantic đã giữ cùng fresh precondition rồi gọi chung executor canonical Prompt
+34 trong transaction. Success commit nguyên tử đúng một Node mutation, một
+resource event thông thường, resolution result/linkage và conflict RESOLVED.
+Nó không reopen mutation gốc hay advance checkpoint. Device khác observe event
+qua feed thông thường.
+
+Nếu server rename, move, purge hay canonical mutation khác thắng trước, apply
+ghi durable stale resolution result có thể replay, trả `resolution_conflict`,
+giữ conflict OPEN và commit zero Node change/journal event. Nó không refresh,
+retry, merge, rename, copy hay chọn action khác. Evidence OPEN sống qua
+rebaseline; sau khi Device complete rebaseline, con người có thể inspect current
+state rồi gửi fresh precondition mới. Race APPLY/APPLY hay ACCEPT/APPLY tạo tối
+đa một terminal conflict decision và một resource event. Không có policy
+automatic conflict resolution.
 
 ## Sync so với backup
 
@@ -38,12 +174,13 @@ tách biệt.
    authorization capability và client không bao giờ parse, increment hay tạo nó.
 5. Change page có thể được giao lại. Client áp dụng trọn page và lưu returned
    cursor trong một local transaction.
-6. Mọi logical mutation mang `client_mutation_id` ổn định và base
-   version/revision phù hợp operation. Mutation lặp lại trả persisted outcome và
-   không append event khác.
-7. Content conflict bảo toàn cả hai verified byte stream. Metadata conflict trả
-   current authoritative state để rebase tường minh; không có silent
-   last-writer-wins.
+6. Mọi logical mutation được hỗ trợ mang `client_mutation_id` ổn định,
+   fingerprint canonical, base epoch/sequence và precondition typed phù hợp
+   operation. Mutation lặp lại trả persisted outcome và không append event khác.
+7. Prompt 34 không nhận content byte. Metadata conflict trả current
+   authoritative logical state để rebase tường minh; không có silent
+   last-writer-wins hay automatic conflict copy. Content protocol tương lai
+   phải bảo toàn cả hai verified byte stream.
 8. `ChangeEvent` là resulting fact/invalidation bền vững, không phải object-store
    command, authorization grant, arbitrary plugin event hay audit log hoàn chỉnh.
 9. Trash phát recursive tombstone cho subtree bị ảnh hưởng. Physical purge và
@@ -303,6 +440,11 @@ local mutation trong durable outbound queue; sau rebaseline chúng rebase/submit
 bằng original base fact và conflict rule.
 
 ## Push mutation
+
+Subset push đã implement của Prompt 34 là route logical strict mô tả ở trên.
+Profile content/namespace phong phú hơn trong phần còn lại là extension tương
+lai; không phải lý do để thêm arbitrary JSON patch, file byte, object identity
+hay automatic conflict resolution vào route hiện tại.
 
 File/folder API thông thường và/hoặc sync mutation endpoint đã review nhận:
 
@@ -694,3 +836,159 @@ Needed by: Schema/API freeze Phase 1, trước Trash recursive Phase 2
 Options: subtree revision theo directory được update dọc ancestor; opaque snapshot token cộng journal descendant-conflict query; library-head precondition làm coarse guard bảo thủ
 Recommendation: expose opaque subtree ETag ban đầu được hỗ trợ bởi per-directory subtree revision update dưới namespace guard; giữ nó tách khỏi display-metadata revision để client biết đang trình precondition nào
 Decision evidence: model test delete-versus-descendant-edit, benchmark deep-tree write, race move/Trash và fixture offline client
+
+## Boundary apply inbound desktop đã implement (Prompt 36)
+
+`synveil-client-sync` là sync core phía desktop có thể tái sử dụng đầu tiên.
+Crate chỉ nhận inbound và không phụ thuộc Axum handler. Transport adapter
+implement `SyncRemote` cho checkpoint read, feed page có giới hạn,
+acknowledgement có ký, start/page/completion rebaseline và download current
+content theo định danh logical. Test deterministic giữ cùng semantics
+checkpoint/completion; Prompt 37 thêm HTTP adapter production dùng device auth
+được mô tả bên dưới.
+
+Mỗi lần gọi engine chỉ advance một page hoặc một local bootstrap batch có giới
+hạn. Thứ tự feed bền vững là:
+
+1. validate rồi persist page cùng event;
+2. prepare local operation có type trước filesystem action;
+3. stage/thực hiện và ghi receipt bền cho kết quả filesystem;
+4. persist nguyên tử Node mapping, event evidence và `applied_sequence`;
+5. persist opaque evidence `ACK_PENDING`;
+6. acknowledge server;
+7. persist `acknowledged_sequence` đã confirm rồi dọn page.
+
+SQLite ép `acknowledged_sequence <= applied_sequence`. Crash sau local commit
+retry đúng acknowledgement evidence đã che thay vì refetch hay apply mù page.
+Mất response sau khi server ack vẫn an toàn vì acknowledgement idempotent. Sai
+epoch/scope/schema/event kind, sequence lùi hoặc gap đều fail closed.
+
+Bootstrap page được persist thành desired manifest, không chỉ giữ trong memory.
+Terminal manifest chỉ được chấp nhận sau khi chứng minh đúng item count đã khai,
+đúng một root, parent là directory đầy đủ và mọi Node reachable. Node được apply
+parent-first. Sweep chỉ quarantine Node sạch đã track nhưng vắng trong generation
+hoàn tất; local object không rõ không bao giờ bị sweep. Server completion được
+retry từ completion evidence bền và handoff local đặt cả hai sequence đúng bằng
+snapshot cut server trả về.
+
+`NodeId` là identity local. Relative path, parent identity, revision, current
+version, expected content length/hash, bootstrap generation, presence và
+quarantine location là projection bền. Rename/move directory cập nhật path hậu
+duệ denormalized bằng một statement SQLite set-based; offset Unicode do SQLite
+đếm ký tự, không dùng số byte của Rust.
+
+Logical segment portable được materialize nguyên vẹn. Policy chung Windows/
+Linux bảo thủ chặn separator, control, ký tự Windows illegal, space/dot cuối,
+reserved device, segment quá dài và control name `.synveil`. NFKC cộng lowercase
+chỉ dùng làm collision key, không rewrite visible name. Collision case/
+normalization giữa managed object hoặc object local không rõ trở thành
+`LOCAL_NAME_COLLISION`.
+
+Trước replace, rename, move, Trash, restore, purge hay bootstrap sweep, engine
+verify fingerprint local bền gần nhất. Destination không rõ bị chiếm và object
+bị sửa, mất, đổi type hoặc tree diverged đều thành local blocker bền. Không có
+conflict copy, upload, merge hay last-write-wins. Server Trash chuyển object
+sạch có thể quy thuộc vào quarantine có kiểm soát; metadata server hiện chỉ cho
+Trash directory rỗng. Restore chỉ tin quarantine sau verify, nếu không sẽ dựng
+lại trạng thái file/directory canonical. Purge chỉ bỏ local state sạch có thể
+quy thuộc và vẫn giữ byte trong quarantine có kiểm soát ở phase này; chưa có
+aggressive quarantine cleanup.
+
+Current file content được stream tuần tự qua adapter chunk có giới hạn, ghi vào
+staging file có operation ID, hash trong lúc stream, kiểm tra declared length và
+SHA-256, flush/sync rồi mới expose. File visible cũ còn nguyên tới khi byte mới
+được verify. Unix dùng atomic rename cùng filesystem và sync parent directory.
+Code path Windows đóng staged handle rồi dùng backup/rename bảo thủ theo
+operation vì semantics replace Windows khác; phase này đã audit compile nhưng
+bằng chứng runtime Windows native được hoãn tới checkpoint platform Prompt 40.
+
+Failure point deterministic bao phủ persist page, trước filesystem action, sau
+stage/trước expose, sau filesystem receipt bền, sau local commit, sau server ack,
+persist bootstrap page, local bootstrap complete và mất response server
+bootstrap completion. Receipt bền dưới `.synveil/staging` phân biệt kết quả của
+Synveil với object không rõ xuất hiện trong race. Không thể quy thuộc chính xác
+trở thành `LOCAL_RECOVERY_AMBIGUOUS`; receipt chỉ bị xóa sau khi database
+operation tương ứng đã commit.
+
+Filesystem watcher, outbound mutation generation, automatic conflict
+resolution, desktop UI/pairing UX, service installer,
+WebSocket/SSE, backup và sharing không thuộc boundary này. Đồng bộ ACL, xattr,
+permission và ép local mtime theo server timestamp được hoãn rõ ràng.
+
+## Remote connection và credential lifecycle đã implement (Prompt 37)
+
+Profile là cấu hình HTTPS origin-root bất biến với local UUIDv7
+`ServerProfileId`. Adapter thêm route segment đóng `/api/v1/...` bằng URL
+operation, không nhận path tùy ý từ caller. Userinfo, query, fragment, subpath,
+port sai và parser repair đều fail closed. Numeric loopback HTTP chỉ được nhận
+qua construction policy test explicit. Certificate verification bắt buộc; mọi
+redirect bị chặn; không cookie jar hay ambient proxy; transparent decompression
+không được thay đổi logical length/hash. Server chưa expose stable installation
+identity; binding là origin/TLS đã verify, không suy luận từ hostname/LibraryId.
+
+Browser owner đã authenticate tạo grant một lần, có giới hạn và TTL ngắn, qua
+CSRF hiện có. Desktop exchange đúng một lần, nhận identity owner/Device/
+credential cùng bearer secret đã che. Server chỉ lưu digest domain-separated.
+Exchange cố ý không auto-retry: nếu đã commit nhưng mất response, owner phải
+revoke credential chưa nhận/đã cấp rồi tạo grant mới. Process desktop mất trước
+khi secure persistence hoàn tất cũng cần recovery explicit; SQLite không lưu
+enrollment token hay bearer.
+
+Lifecycle desktop:
+
+1. persist cấu hình `ServerProfile` không bí mật;
+2. exchange grant một lần qua HTTPS đã verify;
+3. đưa opaque exchange receipt bind profile/origin vào `store_enrollment`
+   (hoặc `replace_enrollment` explicit), ghi cleanup intent không bí mật,
+   store/read-back bearer qua
+   `PlatformRuntime::SecretStore`, rồi commit enrollment identity metadata;
+4. sau restart load `LoadedDeviceCredential` bind profile, construct
+   `HttpSyncRemote` từ profile, Device, credential và config có giới hạn;
+5. initialize/open managed root V2 cùng profile rồi chạy engine inbound
+   bootstrap/feed/apply/ack/download hiện có.
+
+Không có public raw bearer-import API để đổi nhãn exchange Server A thành
+enrollment Server B. SecretStore key dùng profile ID cộng credential ID, không
+URL alias. Envelope có version/giới hạn còn bind canonical origin, transport
+policy, profile, owner, Device và credential ID bên trong secure storage.
+SQLite bị copy/reconstruct cùng ID nhưng origin khác không thể load, overwrite
+hay xóa secure entry đó. HTTP constructor so sánh secure origin đã load với
+profile được yêu cầu trước khi tạo bearer header. Envelope malformed, version
+lạ, quá lớn hay entry raw secret cũ bị chặn, không fallback. Linux dùng
+persistent native Secret Service; Windows dùng Credential Manager; native
+builder được chọn không fallback mock backend. Secure store thiếu/bị khóa/lỗi
+fail closed. In-memory store synthetic chỉ có trong test. Native Linux
+persistence đã được chạy với test vault cô lập; cross-target compile không
+tuyên bố native Windows credential-store/TLS đã chạy. Persistence macOS vẫn
+Unsupported.
+
+Migration SQLite V2 giữ nguyên schema/checksum V1. Nó chỉ lưu profile, ID
+owner/Device/credential, timestamp enrollment/forget và cleanup intent của
+secure entry. Replica row lẫn physical root marker V2 bind đúng một profile.
+Profile khác, dù cùng LibraryId, không thể mở replica đó. Legacy unbound
+replica không được biến thành production replica ngầm; chưa có auto-rebind.
+
+Local forget ghi disconnected marker bền trước, rồi xóa secure entry; vẫn giữ
+owner/Device binding cho re-enrollment explicit. Lỗi để lại cleanup metadata
+retry được và không reload secret cũ sau restart. Replacement chỉ nhận cùng
+owner/Device, stage/read-verify secret mới, commit credential ID mới rồi dọn key
+cũ qua cleanup bền. Engine kiểm tra credential generation active trước mỗi lần
+gọi nên engine cũ dừng sau forget/replacement. Caller phải bỏ direct HTTP object
+đã giữ secret cũ. Forget không đồng nghĩa server revoke khi offline.
+
+Device bearer chỉ cấp quyền checkpoint/feed/ack, rebaseline start/page/complete
+và logical read/download cần cho inbound apply. Từng route ép authenticated
+Device ID cùng Library thuộc owner. Browser-cookie write vẫn cần CSRF; chỉ
+bearer authenticate thành công được miễn trên inbound route. Device bearer
+không được gửi mutation Prompt 34, inspect/resolve conflict Prompt 35 hay dùng
+browser administration. Device/credential revocation được kiểm tra lại ở
+request tiếp theo.
+
+HTTP error giữ phân loại authentication, revocation, checkpoint/rebaseline/
+evidence, rate-limit, dependency/internal, protocol, offline, timeout, TLS,
+body-limit và redirect. Health dùng readiness endpoint hiện có cộng checkpoint
+đã authenticate; chặn HTML/payload không tương thích. Metadata body, download
+byte, stream chunk đều có giới hạn, timeout hữu hạn. Adapter không auto-retry;
+engine có thể retry cùng ack/completion proof bền sau gián đoạn. Auth,
+revocation hay offline error giữ file local, sequence applied/acknowledged và
+pending evidence; không wipe hay rebind replica.

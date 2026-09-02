@@ -1346,7 +1346,7 @@ async fn lock_object_identity(
 ) -> Result<(), ObjectGcExecutionMetadataError> {
     sqlx::query(
         "SELECT pg_advisory_xact_lock(
-            hashtextextended($1::TEXT || ':' || $2::TEXT, 0)
+            hashtextextended($1::UUID::TEXT || ':' || $2::UUID::TEXT, 0)
          )",
     )
     .bind(object_id.into_uuid())

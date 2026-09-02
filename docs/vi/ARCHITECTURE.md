@@ -20,7 +20,7 @@ SDK, S3, worker độc lập và scale ngang khi có số đo chứng minh.
 flowchart TB
     subgraph Untrusted["Client không tin cậy hoặc chỉ tin một phần"]
         Web["React web"]
-        Desktop["Desktop client tương lai\ncore sync Rust dùng chung"]
+        Desktop["Core inbound desktop và HTTP adapter\nGUI và outbound sync vẫn là tương lai"]
         Mobile["Apple/mobile client tương lai"]
     end
 
@@ -495,3 +495,129 @@ State machine chi tiết nằm trong đặc tả storage, upload, sync và backu
 
 Câu hỏi triển khai khác theo thứ tự ADR/spec trong
 `CONTRIBUTING_ARCHITECTURE.md`.
+
+## Boundary inbound desktop Prompt 36
+
+`crates/client-sync` là core apply inbound desktop trung lập transport. Boundary
+chủ ý tách thành ba port rõ ràng:
+
+- `SyncRemote` lấy page bootstrap, page change feed, chunk content và thực
+  hiện hai handoff server (ack feed và complete bootstrap). Core vẫn trung lập
+  transport; Prompt 37 cung cấp HTTP implementation production nhưng không thêm
+  background scheduling.
+- `LocalStateStore` sở hữu một SQLite single-writer theo vị trí app-state
+  desktop. Nó lưu scope, intent manifest/feed, checkpoint applied và
+  acknowledged, operation receipt, tiến trình bootstrap, projection node/path
+  và local apply issue bền vững.
+- `LocalReplica` là mutation surface filesystem duy nhất. Nó bind root rỗng
+  explicit với identity owner/device/library, validate từng relative path và
+  ancestor thật ngay trước mutation, stage content đã verify, và chỉ
+  expose operation directory/file/trash/restore/purge có kiểu.
+
+Engine cố ý xử lý mỗi lần một page hoặc batch có giới hạn. Feed
+page được lưu trước filesystem work; mọi event được apply và commit
+local trước khi ack page token từ xa; checkpoint acknowledged local chỉ
+tiến sau khi server chấp nhận token. Page bootstrap bền vững trước
+reconcile, manifest đầy đủ được validate trước terminal apply,
+materialization chạy parent-first, generation sweep chỉ xóa node stale đã
+tracked, và completion handoff chỉ xảy ra sau khi local complete.
+
+Vocabulary phase public là `Uninitialized`, `Bootstrapping`, `Ready`, `Offline`,
+`Diverged`, `Paused` và `NeedsRebaseline`. Prompt 36 triển khai inbound core
+sau boundary này. Prompt 37 thêm remote connection và credential boundary bên
+dưới. Prompt 38 thêm filesystem observation local và durable outbound-intent
+queue; automatic mutation submission, GUI/background lifecycle, automatic
+conflict resolution, native packaging và claim platform release-lab vẫn nằm
+ngoài component này.
+
+## Boundary remote identity Prompt 37 và observation local Prompt 38
+
+Desktop inbound core đã **VALIDATED**. Server profile bền vững, device enrollment
+groundwork, device bearer authentication, secure desktop credential persistence
+và production HTTP `SyncRemote` đã **VALIDATED**. Filesystem observation,
+self-generated change suppression, durable outbound intent capture, rename/move
+attribution với conservative fallback, và watcher overflow/rescan handling đã
+**IMPLEMENTED**. Automatic outbound mutation submission, automatic conflict
+resolution và desktop GUI/pairing UX đều **NOT IMPLEMENTED**.
+
+`OutboundObservationEngine` observe đúng một managed root và không giữ remote
+transport. `LocalChangeWatcher` chỉ phát raw hint `CREATE_HINT`, `MODIFY_HINT`,
+`REMOVE_HINT`, `RENAME_HINT`, `METADATA_HINT` hoặc `RESCAN_REQUIRED`; classification
+chỉ xảy ra sau managed-root validation và reinspection qua `LocalReplica`.
+Migration SQLite `0003_outbound_observation.sql` persist `outbound_intents`,
+observation issue, rescan state/progress, overlay observed Node local và
+suppression evidence từ operation Prompt 36. Overflow, backend loss, shutdown
+uncertain và startup gap đều buộc bounded reconciliation thay vì claim complete
+ngầm. Observer loại trừ `.synveil/`, không follow symlink/reparse path, hash file
+bằng streaming, và ghi fact unsupported/collision/ambiguous thành local issue
+thay vì intent mất an toàn.
+
+`ServerProfileId` là UUIDv7 local opaque, không phải hostname, LibraryId hay
+bearer. `ServerProfile` chỉ chứa canonical origin bất biến, display label,
+creation time và thời điểm kết nối thành công gần nhất. Parser `url` chuẩn hóa
+scheme, host/IDNA, IPv6 và port. Production chỉ nhận HTTPS origin root: không
+userinfo, query, fragment, reverse-proxy subpath, port sai, sửa lỗi URL ngầm hay
+tùy chọn bỏ certificate verification. Constructor test explicit chỉ cho HTTP
+với numeric loopback IP. Server hiện chưa expose stable installation identity;
+binding hiện là TLS/origin đã verify, không tạo pseudo-ID yếu từ hostname.
+
+Ba binding profile được kiểm tra độc lập:
+
+- Migration SQLite `0002_server_profiles.sql` thêm profile và enrollment
+  owner/Device/credential metadata không bí mật. Replica row bất biến có
+  `server_profile_id`.
+- Managed root production dùng `SYNVEIL_MANAGED_ROOT_V2`, ghi cùng profile ID
+  bên cạnh owner, Device, Library và root binding ID.
+- `HttpSyncRemote` giữ profile bất biến cùng `LoadedDeviceCredential` lấy từ
+  SecretStore entry của profile đó. Enrollment storage chỉ nhận opaque exchange
+  receipt bind profile cùng exact origin, không có raw bearer-import API.
+  Constructor transport chặn profile/Device khác, và
+  từng request kiểm tra owner/Device scope.
+
+Engine verify cả ba trước network/local apply, gồm credential ID đang active.
+Local forget hoặc replacement explicit vì thế chặn engine cũ đã tạo. Root V1
+và replica row unbound sau migration vẫn dùng được cho legacy test trung lập
+transport; không thể suy luận profile production từ chúng. Chưa có explicit
+rebind workflow. SQLite database thứ hai không thể override profile trong
+physical root marker.
+
+`PlatformRuntime::SecretStore` hiện có là boundary persist bearer duy nhất.
+Linux native dùng persistent Secret Service qua D-Bus session mã hóa; Windows
+dùng Credential Manager qua native builder `keyring` explicit. Thay global
+keyring mock không thể thay builder production. Adapter macOS/generic vẫn
+Unsupported rõ ràng ở phase này. Secure store bị khóa, thiếu hoặc lỗi đều
+fail closed qua error đã sanitize, không fallback plaintext SQLite/file.
+`SecretValue` hiện có và shared machine-secret wrapper che Debug và zeroize
+owned storage.
+
+Secret entry dùng opaque profile ID cộng credential ID, không raw URL. Value
+bên trong secure store là envelope có version và giới hạn, chứa canonical
+origin, transport policy, ID profile/owner/Device/credential và bearer. Load,
+overwrite và cleanup delete đều validate envelope; copy/reconstruct SQLite
+cùng ID nhưng origin khác không thể load, thay hay xóa credential origin gốc.
+Loaded credential giữ origin đã verify từ secure store, và HTTP constructor
+kiểm tra lại trước khi tạo Authorization header. Raw legacy value/envelope không
+tương thích fail closed; không có credential-import fallback dễ dãi. Lifecycle
+ghi cleanup intent không bí mật trước khi store secret mới, read-back rồi commit
+enrollment metadata. Replacement phải explicit và cùng owner/Device; xóa key cũ
+bền vững và retry được. Forget ghi disconnected marker bền trước khi xóa secure
+entry. Delete lỗi được báo và retry sau restart; engine không reload credential
+cũ. Forget giữ file local, sequence applied/acknowledged và pending evidence,
+không hứa server revoke khi offline. Caller phải drop direct transport object
+đã load; engine còn kiểm tra enrollment hiện tại trước mỗi lần synchronize.
+
+Middleware server phân biệt browser-session principal với principal
+owner/Device/credential. Browser state change vẫn bắt buộc CSRF. Chỉ bearer
+authenticate thành công mới được miễn CSRF trên inbound route; device credential
+không cấp quyền mutation Prompt 34 hay resolution Prompt 35. Enrollment một lần
+không retry sau response mơ hồ; recovery là owner revoke explicit rồi tạo grant
+mới.
+
+HTTP adapter production tắt redirect, cookie storage, ambient proxy và
+transparent compression, validate timeout/body budget hữu hạn, stream logical
+byte với verify length/hash có giới hạn. Native Linux Secret Service persistence
+được test bằng synthetic vault cô lập, gồm đọc entry đã lưu từ process mới
+trước khi xóa. Validation Windows gồm cross-target compile toàn workspace và
+link test executable client-sync/platform bằng MinGW. Chưa chạy các executable
+này trên host Windows native: bằng chứng runtime Credential Manager, TLS và
+filesystem vẫn đợi checkpoint Prompt 40.

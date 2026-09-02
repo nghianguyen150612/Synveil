@@ -21,7 +21,9 @@ use synveil_storage::{
     ContentReadApplicationService, ContentReadError,
 };
 
-use crate::{ApiError, ApiState, RequestContext, auth::AuthContext, error::map_content_read_error};
+use crate::{
+    ApiError, ApiState, RequestContext, auth::AuthenticatedPrincipal, error::map_content_read_error,
+};
 
 /// Application-facing port for authenticated content transport. The API never
 /// receives a storage key or opens an object store directly.
@@ -302,7 +304,7 @@ enum RangeSpec {
 
 pub(crate) async fn current_content(
     State(state): State<ApiState>,
-    Extension(auth): Extension<AuthContext>,
+    Extension(auth): Extension<AuthenticatedPrincipal>,
     Extension(context): Extension<RequestContext>,
     Path(node_id): Path<String>,
     headers: HeaderMap,
@@ -310,7 +312,7 @@ pub(crate) async fn current_content(
     let node_id = parse_id::<NodeId>(&node_id)?;
     serve_content(
         state,
-        auth.principal().user_id(),
+        auth.owner_user_id(),
         ContentTarget::Current(node_id),
         &context,
         headers,
@@ -320,7 +322,7 @@ pub(crate) async fn current_content(
 
 pub(crate) async fn historical_content(
     State(state): State<ApiState>,
-    Extension(auth): Extension<AuthContext>,
+    Extension(auth): Extension<AuthenticatedPrincipal>,
     Extension(context): Extension<RequestContext>,
     Path(file_version_id): Path<String>,
     headers: HeaderMap,
@@ -328,7 +330,7 @@ pub(crate) async fn historical_content(
     let file_version_id = parse_id::<FileVersionId>(&file_version_id)?;
     serve_content(
         state,
-        auth.principal().user_id(),
+        auth.owner_user_id(),
         ContentTarget::Historical(file_version_id),
         &context,
         headers,

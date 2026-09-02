@@ -140,6 +140,8 @@ macro_rules! domain_id {
 
 domain_id!(UserId);
 domain_id!(DeviceId);
+domain_id!(DeviceCredentialId);
+domain_id!(DeviceEnrollmentGrantId);
 domain_id!(LibraryId);
 domain_id!(DedupDomainId);
 domain_id!(NodeId);
@@ -152,12 +154,22 @@ domain_id!(BackupSetId);
 domain_id!(SnapshotId);
 domain_id!(ShareId);
 domain_id!(ChangeEventId);
+domain_id!(SyncBootstrapId);
+domain_id!(ClientMutationId);
+// A local control-plane ID. This is deliberately distinct from the server
+// ClientMutationId used only after an explicit future submission phase.
+domain_id!(OutboundIntentId);
+domain_id!(SyncConflictId);
+domain_id!(ConflictResolutionId);
 
 #[cfg(test)]
 mod tests {
     use std::{any::TypeId, str::FromStr};
 
-    use super::{IdParseError, NodeId, UserId};
+    use super::{
+        ClientMutationId, ConflictResolutionId, DeviceCredentialId, DeviceEnrollmentGrantId,
+        IdParseError, NodeId, OutboundIntentId, SyncConflictId, UserId,
+    };
     use uuid::Uuid;
 
     #[test]
@@ -170,6 +182,32 @@ mod tests {
         assert_eq!(UserId::from_str(&serialized), Ok(id));
         assert_eq!(id.as_uuid().as_bytes()[6] >> 4, 7);
         assert_eq!(id.as_uuid().as_bytes()[8] & 0xc0, 0x80);
+    }
+
+    #[test]
+    fn credential_and_grant_ids_are_distinct_nonsecret_uuidv7_identities() {
+        let credential = DeviceCredentialId::new();
+        let grant = DeviceEnrollmentGrantId::new();
+        assert_eq!(
+            DeviceCredentialId::parse_str(&credential.to_string()),
+            Ok(credential)
+        );
+        assert_eq!(
+            DeviceEnrollmentGrantId::parse_str(&grant.to_string()),
+            Ok(grant)
+        );
+        assert_eq!(
+            DeviceCredentialId::try_from_uuid(Uuid::nil()),
+            Err(IdParseError::NotUuidV7)
+        );
+        assert_eq!(
+            DeviceEnrollmentGrantId::try_from_uuid(Uuid::nil()),
+            Err(IdParseError::NotUuidV7)
+        );
+        assert_ne!(
+            TypeId::of::<DeviceCredentialId>(),
+            TypeId::of::<DeviceEnrollmentGrantId>()
+        );
     }
 
     #[test]
@@ -188,5 +226,57 @@ mod tests {
     #[test]
     fn domain_id_types_are_distinct() {
         assert_ne!(TypeId::of::<UserId>(), TypeId::of::<NodeId>());
+        assert_ne!(TypeId::of::<ClientMutationId>(), TypeId::of::<NodeId>());
+    }
+
+    #[test]
+    fn client_mutation_ids_use_the_same_canonical_uuidv7_boundary() {
+        let id = ClientMutationId::new();
+        assert_eq!(ClientMutationId::from_str(&id.to_string()), Ok(id));
+        assert_eq!(
+            ClientMutationId::from_str(&id.to_string().to_ascii_uppercase()),
+            Err(IdParseError::NonCanonical)
+        );
+        assert_eq!(
+            ClientMutationId::try_from_uuid(Uuid::nil()),
+            Err(IdParseError::NotUuidV7)
+        );
+    }
+
+    #[test]
+    fn outbound_intent_ids_are_local_uuidv7_values_not_server_mutation_ids() {
+        let intent = OutboundIntentId::new();
+        assert_eq!(OutboundIntentId::from_str(&intent.to_string()), Ok(intent));
+        assert_eq!(
+            OutboundIntentId::try_from_uuid(Uuid::nil()),
+            Err(IdParseError::NotUuidV7)
+        );
+        assert_ne!(
+            TypeId::of::<OutboundIntentId>(),
+            TypeId::of::<ClientMutationId>()
+        );
+    }
+
+    #[test]
+    fn conflict_and_resolution_ids_use_the_canonical_uuidv7_boundary() {
+        let conflict_id = SyncConflictId::new();
+        let resolution_id = ConflictResolutionId::new();
+
+        assert_eq!(
+            SyncConflictId::from_str(&conflict_id.to_string()),
+            Ok(conflict_id)
+        );
+        assert_eq!(
+            ConflictResolutionId::from_str(&resolution_id.to_string()),
+            Ok(resolution_id)
+        );
+        assert_eq!(
+            SyncConflictId::try_from_uuid(Uuid::nil()),
+            Err(IdParseError::NotUuidV7)
+        );
+        assert_ne!(
+            TypeId::of::<SyncConflictId>(),
+            TypeId::of::<ConflictResolutionId>()
+        );
     }
 }
