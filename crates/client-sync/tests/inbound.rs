@@ -676,6 +676,7 @@ impl Harness {
                     .is_none()
             {
                 drop(engine);
+                state.close_pool().await;
                 drop(state);
                 return;
             }
@@ -816,6 +817,7 @@ async fn bootstrap_then_all_eight_feed_kinds_converge_without_cross_device_leaka
             .is_none()
     );
     drop(engine);
+    state.close_pool().await;
     drop(state);
     harness.cleanup();
 
@@ -858,6 +860,7 @@ async fn bootstrap_then_all_eight_feed_kinds_converge_without_cross_device_leaka
         b"unknown local bytes"
     );
     drop(engine);
+    state.close_pool().await;
     drop(state);
     harness.cleanup();
 
@@ -891,6 +894,7 @@ async fn bootstrap_then_all_eight_feed_kinds_converge_without_cross_device_leaka
             .any(|issue| issue.kind() == LocalIssueKind::ContentIntegrityMismatch)
     );
     drop(engine);
+    state.close_pool().await;
     drop(state);
     harness.cleanup();
 }
@@ -934,6 +938,7 @@ async fn unknown_destination_and_local_file_divergence_are_durable_blockers() {
         LocalIssueKind::LocalPathOccupied
     );
     drop(engine);
+    state.close_pool().await;
     drop(state);
     harness.cleanup();
 
@@ -960,6 +965,7 @@ async fn unknown_destination_and_local_file_divergence_are_durable_blockers() {
             .any(|issue| issue.kind() == LocalIssueKind::LocalDivergence)
     );
     drop(engine);
+    state.close_pool().await;
     drop(state);
     harness.cleanup();
 
@@ -971,6 +977,7 @@ async fn unknown_destination_and_local_file_divergence_are_durable_blockers() {
         engine.synchronize_once().await.unwrap();
     }
     drop(engine);
+    state.close_pool().await;
     drop(state);
 
     let (state, engine) = harness
@@ -994,6 +1001,7 @@ async fn unknown_destination_and_local_file_divergence_are_durable_blockers() {
     assert_eq!(interrupted.applied_sequence(), Sequence::new(5));
     assert_eq!(interrupted.acknowledged_sequence(), Sequence::new(5));
     drop(engine);
+    state.close_pool().await;
     drop(state);
 
     let (state, engine) = harness.open(Arc::new(NoFailure)).await;
@@ -1010,6 +1018,7 @@ async fn unknown_destination_and_local_file_divergence_are_durable_blockers() {
         b"version two is streamed"
     );
     drop(engine);
+    state.close_pool().await;
     drop(state);
     harness.cleanup();
 }
@@ -1062,6 +1071,7 @@ async fn feed_crash_matrix_reopens_and_converges_without_early_ack() {
             _ => {}
         }
         drop(engine);
+        state.close_pool().await;
         drop(state);
 
         let (state, engine) = harness.open(Arc::new(NoFailure)).await;
@@ -1097,6 +1107,7 @@ async fn feed_crash_matrix_reopens_and_converges_without_early_ack() {
             assert!(remote.ack_attempts() >= 2);
         }
         drop(engine);
+        state.close_pool().await;
         drop(state);
         harness.cleanup();
     }
@@ -1128,6 +1139,7 @@ async fn bootstrap_completion_crashes_retry_without_rebuilding_the_manifest() {
         }
         assert!(failed, "failure point was not reached: {point:?}");
         drop(engine);
+        state.close_pool().await;
         drop(state);
 
         let (state, engine) = harness.open(Arc::new(NoFailure)).await;
@@ -1164,6 +1176,7 @@ async fn bootstrap_completion_crashes_retry_without_rebuilding_the_manifest() {
             assert!(remote.completion_attempts() >= 2);
         }
         drop(engine);
+        state.close_pool().await;
         drop(state);
         harness.cleanup();
     }
@@ -1210,6 +1223,7 @@ async fn corrupt_download_is_never_visible_and_staged_download_resumes_after_res
             .any(|issue| issue.kind() == LocalIssueKind::ContentIntegrityMismatch)
     );
     drop(engine);
+    state.close_pool().await;
     drop(state);
     harness.cleanup();
 
@@ -1221,6 +1235,7 @@ async fn corrupt_download_is_never_visible_and_staged_download_resumes_after_res
         engine.synchronize_once().await.unwrap();
     }
     drop(engine);
+    state.close_pool().await;
     drop(state);
 
     let (state, engine) = harness
@@ -1237,6 +1252,7 @@ async fn corrupt_download_is_never_visible_and_staged_download_resumes_after_res
         b"version one"
     );
     drop(engine);
+    state.close_pool().await;
     drop(state);
 
     let (state, engine) = harness.open(Arc::new(NoFailure)).await;
@@ -1253,6 +1269,7 @@ async fn corrupt_download_is_never_visible_and_staged_download_resumes_after_res
     assert_eq!(record.applied_sequence(), Sequence::new(6));
     assert_eq!(record.acknowledged_sequence(), Sequence::new(6));
     drop(engine);
+    state.close_pool().await;
     drop(state);
     harness.cleanup();
 }
@@ -1318,6 +1335,7 @@ async fn completed_manifest_sweeps_only_tracked_clean_nodes_and_preserves_unknow
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0].node_id(), ids.root);
     drop(engine);
+    state.close_pool().await;
     drop(state);
     harness.cleanup();
 }
@@ -1383,6 +1401,7 @@ async fn collision_missing_source_and_stale_quarantine_fail_closed() {
     #[cfg(target_os = "linux")]
     assert!(!harness.root.join("file").exists());
     drop(engine);
+    state.close_pool().await;
     drop(state);
     harness.cleanup();
 
@@ -1405,6 +1424,7 @@ async fn collision_missing_source_and_stale_quarantine_fail_closed() {
             .any(|issue| issue.kind() == LocalIssueKind::LocalDivergence)
     );
     drop(engine);
+    state.close_pool().await;
     drop(state);
     harness.cleanup();
 
@@ -1440,6 +1460,7 @@ async fn collision_missing_source_and_stale_quarantine_fail_closed() {
             .any(|issue| issue.kind() == LocalIssueKind::LocalDivergence)
     );
     drop(engine);
+    state.close_pool().await;
     drop(state);
     harness.cleanup();
 }
@@ -1507,6 +1528,7 @@ async fn divergent_file_is_not_purged_or_quarantined() {
         Sequence::new(0)
     );
     drop(engine);
+    state.close_pool().await;
     drop(state);
     harness.cleanup();
 }
@@ -1568,6 +1590,7 @@ async fn multi_event_page_applies_atomically_before_one_server_ack() {
     assert!(harness.root.join("first").is_dir());
     assert!(harness.root.join("second").is_dir());
     drop(engine);
+    state.close_pool().await;
     drop(state);
     harness.cleanup();
 }
@@ -1611,6 +1634,7 @@ async fn wrong_epoch_sequence_gap_and_unknown_kind_fail_closed() {
     assert_eq!(record.acknowledged_sequence(), Sequence::new(0));
     assert!(!harness.root.join("wrong-epoch").exists());
     drop(engine);
+    state.close_pool().await;
     drop(state);
     harness.cleanup();
 
@@ -1648,6 +1672,7 @@ async fn wrong_epoch_sequence_gap_and_unknown_kind_fail_closed() {
     assert_eq!(record.acknowledged_sequence(), Sequence::new(0));
     assert!(!harness.root.join("gap").exists());
     drop(engine);
+    state.close_pool().await;
     drop(state);
     harness.cleanup();
 }
@@ -1688,6 +1713,7 @@ async fn prepared_directory_operation_never_adopts_a_racing_unknown_directory() 
         Err(ClientSyncError::InjectedFailure)
     ));
     drop(engine);
+    state.close_pool().await;
     drop(state);
 
     fs::create_dir(harness.root.join("raced")).unwrap();
@@ -1713,6 +1739,7 @@ async fn prepared_directory_operation_never_adopts_a_racing_unknown_directory() 
     assert_eq!(record.applied_sequence(), Sequence::new(0));
     assert_eq!(record.acknowledged_sequence(), Sequence::new(0));
     drop(engine);
+    state.close_pool().await;
     drop(state);
     harness.cleanup();
 }
@@ -1754,6 +1781,7 @@ async fn unrepresentable_name_offline_retry_and_wrong_root_binding_are_safe() {
     );
     assert!(!harness.root.join("CON").exists());
     drop(engine);
+    state.close_pool().await;
     drop(state);
     harness.cleanup();
 
@@ -1773,6 +1801,7 @@ async fn unrepresentable_name_offline_retry_and_wrong_root_binding_are_safe() {
     assert_eq!(record.acknowledged_sequence(), Sequence::new(0));
     assert_eq!(record.status(), EngineStatus::Offline);
     drop(engine);
+    state.close_pool().await;
     drop(state);
 
     let second_root = harness.base.join("second-managed-root");
@@ -1794,6 +1823,7 @@ async fn unrepresentable_name_offline_retry_and_wrong_root_binding_are_safe() {
         .await,
         Err(ClientSyncError::WrongRootBinding)
     ));
+    state.close_pool().await;
     drop(state);
     harness.cleanup();
 }
