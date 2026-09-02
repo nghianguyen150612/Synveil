@@ -179,23 +179,32 @@ async fn enroll(
     credential_id
 }
 
-async fn assert_no_secret_on_disk(state: &LocalStateStore, secret: &DeviceCredentialSecret) {
+async fn assert_no_secret_on_disk(state: &LocalStateStore, secrets: &[&DeviceCredentialSecret]) {
     sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
         .execute(&state.pool)
         .await
         .unwrap();
+    // Release the SQLite pool before scanning the directory: Windows keeps a
+    // byte-range lock on the WAL/SHM descriptors until the pool is closed, so
+    // reading those files would otherwise fail with ERROR_LOCK_VIOLATION.
+    state.close_pool().await;
     for entry in fs::read_dir(state.database_path().parent().unwrap()).unwrap() {
         let entry = entry.unwrap();
         if entry.file_type().unwrap().is_file() {
             let bytes = read_file_bounded(&entry.path()).unwrap();
-            assert!(
-                !bytes
-                    .windows(secret.expose_secret().len())
-                    .any(|window| window == secret.expose_secret().as_bytes())
-            );
+            for secret in secrets {
+                assert!(
+                    !bytes
+                        .windows(secret.expose_secret().len())
+                        .any(|window| window == secret.expose_secret().as_bytes())
+                );
+            }
         }
     }
-    assert!(!format!("{state:?}").contains(secret.expose_secret()));
+    let debug = format!("{state:?}");
+    for secret in secrets {
+        assert!(!debug.contains(secret.expose_secret()));
+    }
 }
 
 #[test]
@@ -340,7 +349,7 @@ async fn profile_and_secret_survive_reopen_without_plaintext_in_sqlite_or_debug(
     assert_eq!(loaded.credential_id(), credential_id);
     assert_eq!(loaded.secret(), &secret);
     assert!(!format!("{loaded:?} {profile:?}").contains(secret.expose_secret()));
-    assert_no_secret_on_disk(&state, &secret).await;
+    assert_no_secret_on_disk(&state, &[&secret]).await;
     drop(loaded);
     drop(state);
     let state = LocalStateStore::open(&config).await.unwrap();
@@ -363,7 +372,7 @@ async fn profile_and_secret_survive_reopen_without_plaintext_in_sqlite_or_debug(
             .secret(),
         &secret
     );
-    assert_no_secret_on_disk(&state, &secret).await;
+    assert_no_secret_on_disk(&state, &[&secret]).await;
     state.close_pool().await;
     drop(state);
     remove_dir_all_bounded(&directory).unwrap();
@@ -516,7 +525,7 @@ async fn enrollment_receipt_cannot_be_imported_under_another_profile_or_origin()
         Err(ClientSyncError::WrongServerProfile)
     ));
     assert_eq!(store.count(), 1);
-    assert_no_secret_on_disk(&state, &secret).await;
+    assert_no_secret_on_disk(&state, &[&secret]).await;
     state.close_pool().await;
     drop(state);
     remove_dir_all_bounded(&directory).unwrap();
@@ -590,8 +599,8 @@ async fn reconstructed_sqlite_cannot_load_overwrite_or_forget_another_origins_se
             .secret(),
         &secret_a
     );
-    assert_no_secret_on_disk(&state_a, &secret_a).await;
-    assert_no_secret_on_disk(&state_b, &secret_a).await;
+    assert_no_secret_on_disk(&state_a, &[&secret_a]).await;
+    assert_no_secret_on_disk(&state_b, &[&secret_a]).await;
     state_a.close_pool().await;
     state_b.close_pool().await;
     drop(state_a);
@@ -819,8 +828,7 @@ async fn forget_preserves_replica_progress_and_explicit_reenrollment_keeps_devic
         state.replica(scope.library_id()).await.unwrap().unwrap(),
         replica
     );
-    assert_no_secret_on_disk(&state, &first).await;
-    assert_no_secret_on_disk(&state, &second).await;
+    assert_no_secret_on_disk(&state, &[&first, &second]).await;
     state.close_pool().await;
     drop(state);
     remove_dir_all_bounded(&directory).unwrap();
@@ -854,7 +862,7 @@ async fn unavailable_secret_store_never_falls_back_to_plaintext() {
             .unwrap()
             .is_none()
     );
-    assert_no_secret_on_disk(&state, &secret).await;
+    assert_no_secret_on_disk(&state, &[&secret]).await;
     state.close_pool().await;
     drop(state);
     remove_dir_all_bounded(&directory).unwrap();
@@ -890,7 +898,7 @@ async fn interrupted_first_store_has_only_non_secret_cleanup_intent() {
             .unwrap()
             .is_none()
     );
-    assert_no_secret_on_disk(&state, &secret).await;
+    assert_no_secret_on_disk(&state, &[&secret]).await;
     drop(state);
     store.fail_get_when_present.store(false, Ordering::SeqCst);
     let state = LocalStateStore::open(&config).await.unwrap();
@@ -957,7 +965,7 @@ async fn failed_put_never_marks_enrollment_completed_and_can_be_retried_locally(
         .await
         .unwrap();
     assert_eq!(store.count(), 1);
-    assert_no_secret_on_disk(&state, &secret).await;
+    assert_no_secret_on_disk(&state, &[&secret]).await;
     state.close_pool().await;
     drop(state);
     remove_dir_all_bounded(&directory).unwrap();
@@ -1009,7 +1017,7 @@ async fn failed_forget_is_durable_and_restart_never_reloads_the_old_credential()
             .is_none()
     );
     assert_eq!(store.count(), 0);
-    assert_no_secret_on_disk(&state, &secret).await;
+    assert_no_secret_on_disk(&state, &[&secret]).await;
     state.close_pool().await;
     drop(state);
     remove_dir_all_bounded(&directory).unwrap();
