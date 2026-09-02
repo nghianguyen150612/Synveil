@@ -48,7 +48,7 @@ Transport chuẩn hiện tại cố ý nhỏ hơn blueprint part-manifest tươn
 
 | Method và path | Contract đã implement |
 |---|---|
-| `POST /api/v1/upload-sessions` | JSON tagged strict 16 KiB cho `CREATE_FILE` hoặc `REPLACE_CONTENT`; identity đã authenticate là owner và mutation cần CSRF proof hiện có. |
+| `POST /api/v1/upload-sessions` | JSON tagged strict 16 KiB cho `CREATE_FILE` hoặc `REPLACE_CONTENT` với `idempotency_key` UUIDv7 bắt buộc; identity đã authenticate là owner và mutation cần CSRF proof hiện có. |
 | `GET /api/v1/upload-sessions/{upload_session_id}` | State an toàn theo owner cùng `Upload-Offset` có thẩm quyền; cần authentication nhưng không cần CSRF. |
 | `PATCH /api/v1/upload-sessions/{upload_session_id}` | `application/octet-stream` không rỗng, một `Upload-Offset` unsigned-decimal chuẩn và aggregate chunk limit do service cấu hình (mặc định 8 MiB). |
 | `POST /api/v1/upload-sessions/{upload_session_id}/complete` | Chỉ gọi completion service đã validate và trả completion metadata chuẩn, ổn định khi retry. |

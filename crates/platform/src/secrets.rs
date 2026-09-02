@@ -1,4 +1,5 @@
 use std::fmt;
+use zeroize::Zeroize;
 
 /// A non-secret identifier for a value held by a secure credential backend.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -111,7 +112,7 @@ impl fmt::Debug for SecretValue {
 
 impl Drop for SecretValue {
     fn drop(&mut self) {
-        self.0.fill(0);
+        self.0.zeroize();
     }
 }
 
@@ -130,6 +131,7 @@ pub enum SecretStoreError {
     Unavailable,
     InvalidName,
     EmptySecret,
+    SecretTooLarge,
 }
 
 impl fmt::Display for SecretStoreError {
@@ -139,6 +141,7 @@ impl fmt::Display for SecretStoreError {
             Self::Unavailable => "secure secret storage is unavailable",
             Self::InvalidName => "secret name is invalid",
             Self::EmptySecret => "secret value is empty",
+            Self::SecretTooLarge => "secret value exceeds secure storage limit",
         })
     }
 }

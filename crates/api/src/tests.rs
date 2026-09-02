@@ -28,14 +28,23 @@ use synveil_auth::{
     SessionExpiry, SessionPrincipal, SessionToken, StoredPasswordHash,
 };
 use synveil_core::{
-    DomainError, ErrorCode, FileVersionId, Library, LibraryId, LogicalName, LoginIdentifier, Node,
-    NodeId, NodeKind, NodeState, ObjectId, Revision, Sha256Digest, Timestamp, UploadSessionId,
+    ChangeEvent, ChangeEventId, ChangeKind, ChangeResourceKind, ClientMutationId,
+    ClientMutationRequest, ConflictLifecycle, ConflictResolutionAction, ConflictResolutionId,
+    ConflictResolutionRequest, DeviceId, DeviceSyncCheckpoint, DomainError, ErrorCode,
+    FileVersionId, Library, LibraryId, LogicalName, LogicalSnapshotNode, LoginIdentifier, Node,
+    NodeId, NodeKind, NodeState, ObjectId, OutboundIntentId, Revision, Sequence, Sha256Digest,
+    SyncBootstrap, SyncBootstrapId, SyncBootstrapState, SyncConflictId, Timestamp, UploadSessionId,
     UploadSessionState, UserId,
 };
 use synveil_metadata::{
-    AuthorizedContent, ContentReadMetadataBackend, ContentReadResolution, FileMetadataBackend,
-    FileMetadataError, FileVersionMetadata, FileVersionPage, LibraryPage, MetadataError, NodePage,
-    RestoredFileVersion, UploadCompletion, VersionHistoryBackend, VersionHistoryError,
+    AuthorizedContent, BootstrapCompletion, BootstrapCompletionEvidence, BootstrapPagePosition,
+    BootstrapTerminalEvidence, ClientMutationBackend, ClientMutationError, ClientMutationResult,
+    ConflictManagementBackend, ConflictManagementError, ConflictPage, ConflictResolutionResult,
+    ContentReadMetadataBackend, ContentReadResolution, FileMetadataBackend, FileMetadataError,
+    FileVersionMetadata, FileVersionPage, JournalHighWatermark, LibraryPage, MetadataError,
+    MutationConflict, MutationConflictReason, NodePage, RebaselineError, RebaselineReason,
+    RestoredFileVersion, SnapshotNodePage, SyncAckEvidence, SyncConflictRecord, SyncError,
+    SyncFeedPage, UploadCompletion, VersionHistoryBackend, VersionHistoryError,
     VersionRestoreBackend, VersionRestoreError,
 };
 use synveil_storage::{
@@ -48,14 +57,18 @@ use tower::ServiceExt;
 
 use super::{
     ApiError, ApiState, AuthenticationBackend, BOOTSTRAP_BODY_LIMIT_BYTES, BootstrapStatus,
+    CLIENT_MUTATION_BODY_LIMIT_BYTES, CONFLICT_RESOLUTION_BODY_LIMIT_BYTES, ConflictCursorKey,
     CookieConfig, DownloadBackend, DownloadMetadata, DownloadRead, EtagKey, IssuedSession,
-    RequestId, StaticReadiness, SystemHealthAuthorizer, UPLOAD_JSON_BODY_LIMIT_BYTES,
+    REBASELINE_BODY_LIMIT_BYTES, RebaselineBackend, RebaselineTokenKey, RequestId, StaticReadiness,
+    SyncAckKey, SyncFeedBackend, SystemHealthAuthorizer, UPLOAD_JSON_BODY_LIMIT_BYTES,
     UploadBackend, map_core_error, router,
 };
 
 const TEST_LOGIN: &str = "alice";
 const TEST_LOGIN_KEY: &str = "alice-key";
 const TEST_PASSWORD: &str = "correct horse battery staple";
+
+mod device_auth;
 
 struct TestHealthAuthorizer;
 
@@ -239,6 +252,529 @@ impl AuthenticationBackend for TestAuthenticationBackend {
         };
         session.revoked = true;
         Ok(())
+    }
+}
+
+struct TestSyncBackend {
+    checkpoint: DeviceSyncCheckpoint,
+    feed: Option<SyncFeedPage>,
+    ack_error: Option<SyncError>,
+}
+
+#[async_trait]
+impl SyncFeedBackend for TestSyncBackend {
+    async fn checkpoint(
+        &self,
+        owner_user_id: UserId,
+        device_id: DeviceId,
+        library_id: LibraryId,
+    ) -> Result<DeviceSyncCheckpoint, SyncError> {
+        let checkpoint = self.checkpoint;
+        if checkpoint.owner_user_id() == owner_user_id
+            && checkpoint.device_id() == device_id
+            && checkpoint.library_id() == library_id
+        {
+            Ok(checkpoint)
+        } else {
+            Err(SyncError::NotFound)
+        }
+    }
+
+    async fn fetch_feed(
+        &self,
+        _owner_user_id: UserId,
+        _device_id: DeviceId,
+        _library_id: LibraryId,
+        limit: u32,
+    ) -> Result<SyncFeedPage, SyncError> {
+        if !(1..=500).contains(&limit) {
+            return Err(SyncError::InvalidLimit);
+        }
+        self.feed.clone().ok_or(SyncError::DependencyUnavailable)
+    }
+
+    async fn acknowledge(
+        &self,
+        owner_user_id: UserId,
+        device_id: DeviceId,
+        library_id: LibraryId,
+        evidence: SyncAckEvidence,
+    ) -> Result<DeviceSyncCheckpoint, SyncError> {
+        if evidence.owner_user_id() != owner_user_id
+            || evidence.device_id() != device_id
+            || evidence.library_id() != library_id
+        {
+            return Err(SyncError::InvalidAckToken);
+        }
+        if let Some(error) = self.ack_error {
+            return Err(error);
+        }
+        Ok(self.checkpoint)
+    }
+}
+
+struct TestClientMutationBackend {
+    owner_user_id: UserId,
+    device_id: DeviceId,
+    library_id: LibraryId,
+    node: Node,
+    event_id: ChangeEventId,
+    journal_sequence: Sequence,
+    conflict_id: synveil_core::SyncConflictId,
+    conflict: Option<MutationConflict>,
+    error: Option<ClientMutationError>,
+    calls: AtomicUsize,
+}
+
+impl TestClientMutationBackend {
+    fn applied(
+        owner_user_id: UserId,
+        device_id: DeviceId,
+        library_id: LibraryId,
+        node: Node,
+    ) -> Self {
+        Self {
+            owner_user_id,
+            device_id,
+            library_id,
+            node,
+            event_id: ChangeEventId::new(),
+            journal_sequence: Sequence::new(10),
+            conflict_id: synveil_core::SyncConflictId::new(),
+            conflict: None,
+            error: None,
+            calls: AtomicUsize::new(0),
+        }
+    }
+
+    fn with_conflict(mut self, conflict: MutationConflict) -> Self {
+        self.conflict = Some(conflict);
+        self
+    }
+
+    fn with_error(mut self, error: ClientMutationError) -> Self {
+        self.error = Some(error);
+        self
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl ClientMutationBackend for TestClientMutationBackend {
+    async fn submit(
+        &self,
+        owner_user_id: UserId,
+        device_id: DeviceId,
+        library_id: LibraryId,
+        request: ClientMutationRequest,
+    ) -> Result<ClientMutationResult, ClientMutationError> {
+        if owner_user_id != self.owner_user_id
+            || device_id != self.device_id
+            || library_id != self.library_id
+        {
+            return Err(ClientMutationError::NotFound);
+        }
+        if let Some(error) = self.error {
+            return Err(error);
+        }
+        let replayed = self.calls.fetch_add(1, Ordering::SeqCst) > 0;
+        if let Some(conflict) = &self.conflict {
+            return Ok(ClientMutationResult::Conflict {
+                mutation_id: request.mutation_id(),
+                kind: request.kind(),
+                conflict_id: self.conflict_id,
+                conflict: conflict.clone(),
+                replayed,
+            });
+        }
+        Ok(ClientMutationResult::Applied {
+            mutation_id: request.mutation_id(),
+            kind: request.kind(),
+            node: self.node.clone(),
+            journal_event_id: self.event_id,
+            journal_sequence: self.journal_sequence,
+            replayed,
+        })
+    }
+}
+
+struct TestConflictManagementBackend {
+    record: SyncConflictRecord,
+    resolution_error: Option<ConflictManagementError>,
+    calls: AtomicUsize,
+}
+
+impl TestConflictManagementBackend {
+    fn new(
+        owner_user_id: UserId,
+        device_id: DeviceId,
+        library_id: LibraryId,
+        node_id: NodeId,
+    ) -> Self {
+        let conflict_id = SyncConflictId::new();
+        let historical = MutationConflict::new(
+            MutationConflictReason::RevisionMismatch,
+            node_id,
+            Some(Revision::new(3)),
+            Some(Revision::new(4)),
+            Some(NodeState::Active),
+            None,
+            Some(LogicalName::new("server-name").expect("valid conflict name")),
+            Sequence::new(1),
+            Sequence::new(9),
+        );
+        Self {
+            record: SyncConflictRecord::new(
+                conflict_id,
+                owner_user_id,
+                device_id,
+                library_id,
+                ClientMutationId::new(),
+                node_id,
+                synveil_core::ClientMutation::rename_node(
+                    node_id,
+                    Revision::new(3),
+                    LogicalName::new("client-name").expect("valid intent name"),
+                ),
+                historical,
+                Timestamp::parse("2026-08-27T00:00:00.123456Z").expect("valid conflict timestamp"),
+                ConflictLifecycle::Open,
+                None,
+            ),
+            resolution_error: None,
+            calls: AtomicUsize::new(0),
+        }
+    }
+
+    fn with_resolution_error(mut self, error: ConflictManagementError) -> Self {
+        self.resolution_error = Some(error);
+        self
+    }
+
+    fn conflict_id(&self) -> SyncConflictId {
+        self.record.conflict_id()
+    }
+}
+
+#[async_trait]
+impl ConflictManagementBackend for TestConflictManagementBackend {
+    async fn list_open(
+        &self,
+        owner_user_id: UserId,
+        device_id: DeviceId,
+        library_id: LibraryId,
+        _position: Option<synveil_metadata::ConflictPagePosition>,
+        _limit: u32,
+    ) -> Result<ConflictPage, ConflictManagementError> {
+        if owner_user_id != self.record.owner_user_id()
+            || device_id != self.record.device_id()
+            || library_id != self.record.library_id()
+        {
+            return Err(ConflictManagementError::NotFound);
+        }
+        Ok(ConflictPage::new(vec![self.record.clone()], false, None))
+    }
+
+    async fn detail(
+        &self,
+        owner_user_id: UserId,
+        device_id: DeviceId,
+        library_id: LibraryId,
+        conflict_id: SyncConflictId,
+    ) -> Result<SyncConflictRecord, ConflictManagementError> {
+        if owner_user_id != self.record.owner_user_id()
+            || device_id != self.record.device_id()
+            || library_id != self.record.library_id()
+            || conflict_id != self.record.conflict_id()
+        {
+            return Err(ConflictManagementError::NotFound);
+        }
+        Ok(self.record.clone())
+    }
+
+    async fn resolve(
+        &self,
+        owner_user_id: UserId,
+        device_id: DeviceId,
+        library_id: LibraryId,
+        conflict_id: SyncConflictId,
+        request: ConflictResolutionRequest,
+    ) -> Result<ConflictResolutionResult, ConflictManagementError> {
+        if owner_user_id != self.record.owner_user_id()
+            || device_id != self.record.device_id()
+            || library_id != self.record.library_id()
+            || conflict_id != self.record.conflict_id()
+        {
+            return Err(ConflictManagementError::NotFound);
+        }
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if let Some(error) = &self.resolution_error {
+            return Err(error.clone());
+        }
+        let completed_at =
+            Timestamp::parse("2026-08-27T00:01:00.123456Z").expect("valid resolution timestamp");
+        match request.action() {
+            ConflictResolutionAction::AcceptServer => {
+                Ok(ConflictResolutionResult::AcceptedServer {
+                    conflict_id,
+                    resolution_id: request.resolution_id(),
+                    completed_at,
+                    replayed: self.calls.load(Ordering::SeqCst) > 1,
+                })
+            }
+            ConflictResolutionAction::ApplyClientIntent => {
+                Ok(ConflictResolutionResult::AppliedClientIntent {
+                    conflict_id,
+                    resolution_id: request.resolution_id(),
+                    journal_event_id: ChangeEventId::new(),
+                    journal_sequence: Sequence::new(10),
+                    completed_at,
+                    replayed: self.calls.load(Ordering::SeqCst) > 1,
+                })
+            }
+        }
+    }
+}
+
+struct TestRebaselineBackend {
+    bootstrap: SyncBootstrap,
+    nodes: Vec<LogicalSnapshotNode>,
+    checkpoint: DeviceSyncCheckpoint,
+    completion_calls: AtomicUsize,
+    completion_error: Option<RebaselineError>,
+}
+
+impl TestRebaselineBackend {
+    fn new(owner_user_id: UserId, device_id: DeviceId, library_id: LibraryId) -> Self {
+        let created_at =
+            Timestamp::parse("2026-08-27T00:00:00Z").expect("valid bootstrap test time");
+        let expires_at = Timestamp::parse("2026-08-27T01:00:00Z").expect("valid bootstrap expiry");
+        let root_id = NodeId::new();
+        let file_id = NodeId::new();
+        let version_id = FileVersionId::new();
+        let mut nodes = vec![
+            LogicalSnapshotNode::new(
+                root_id,
+                None,
+                LogicalName::new("root").expect("valid root name"),
+                NodeKind::Directory,
+                NodeState::Active,
+                Revision::new(1),
+                None,
+                None,
+                None,
+            )
+            .expect("valid root projection"),
+            LogicalSnapshotNode::new(
+                file_id,
+                Some(root_id),
+                LogicalName::new("safe.txt").expect("valid file name"),
+                NodeKind::File,
+                NodeState::Trashed,
+                Revision::new(7),
+                Some(version_id),
+                Some(42),
+                Some(Sha256Digest::from_bytes([0xab; 32])),
+            )
+            .expect("valid file projection"),
+        ];
+        nodes.sort_by_key(LogicalSnapshotNode::node_id);
+        let terminal_node_id = nodes.last().map(LogicalSnapshotNode::node_id);
+        let bootstrap = SyncBootstrap::new(
+            SyncBootstrapId::new(),
+            owner_user_id,
+            device_id,
+            library_id,
+            Sequence::new(3),
+            Sequence::new(2),
+            Sequence::new(19),
+            nodes.len() as u64,
+            terminal_node_id,
+            SyncBootstrapState::Open,
+            created_at,
+            expires_at,
+            None,
+        );
+        let checkpoint = DeviceSyncCheckpoint::new(
+            owner_user_id,
+            device_id,
+            library_id,
+            Sequence::new(2),
+            Sequence::new(19),
+            created_at,
+            created_at,
+            Some(Sequence::new(19)),
+        );
+        Self {
+            bootstrap,
+            nodes,
+            checkpoint,
+            completion_calls: AtomicUsize::new(0),
+            completion_error: None,
+        }
+    }
+
+    fn with_completion_error(mut self, error: RebaselineError) -> Self {
+        self.completion_error = Some(error);
+        self
+    }
+
+    fn scope_matches(
+        &self,
+        owner_user_id: UserId,
+        device_id: DeviceId,
+        library_id: LibraryId,
+    ) -> bool {
+        self.bootstrap.owner_user_id() == owner_user_id
+            && self.bootstrap.device_id() == device_id
+            && self.bootstrap.library_id() == library_id
+    }
+
+    fn terminal_evidence(&self) -> BootstrapTerminalEvidence {
+        BootstrapTerminalEvidence::new(
+            self.bootstrap.owner_user_id(),
+            self.bootstrap.device_id(),
+            self.bootstrap.library_id(),
+            self.bootstrap.id(),
+            self.bootstrap.generation(),
+            self.bootstrap.snapshot_epoch(),
+            self.bootstrap.snapshot_resume_sequence(),
+            self.bootstrap.manifest_item_count(),
+            self.bootstrap.terminal_node_id(),
+        )
+    }
+
+    fn completed_bootstrap(&self) -> SyncBootstrap {
+        let completed_at = Timestamp::parse("2026-08-27T00:05:00Z").expect("valid completion time");
+        SyncBootstrap::new(
+            self.bootstrap.id(),
+            self.bootstrap.owner_user_id(),
+            self.bootstrap.device_id(),
+            self.bootstrap.library_id(),
+            self.bootstrap.generation(),
+            self.bootstrap.snapshot_epoch(),
+            self.bootstrap.snapshot_resume_sequence(),
+            self.bootstrap.manifest_item_count(),
+            self.bootstrap.terminal_node_id(),
+            SyncBootstrapState::Completed,
+            self.bootstrap.created_at(),
+            self.bootstrap.expires_at(),
+            Some(completed_at),
+        )
+    }
+}
+
+#[async_trait]
+impl RebaselineBackend for TestRebaselineBackend {
+    async fn start(
+        &self,
+        owner_user_id: UserId,
+        device_id: DeviceId,
+        library_id: LibraryId,
+    ) -> Result<SyncBootstrap, RebaselineError> {
+        if self.scope_matches(owner_user_id, device_id, library_id) {
+            Ok(self.bootstrap)
+        } else {
+            Err(RebaselineError::NotFound)
+        }
+    }
+
+    async fn page_nodes(
+        &self,
+        owner_user_id: UserId,
+        device_id: DeviceId,
+        library_id: LibraryId,
+        bootstrap_id: SyncBootstrapId,
+        position: Option<BootstrapPagePosition>,
+        limit: u32,
+    ) -> Result<SnapshotNodePage, RebaselineError> {
+        if !(1..=1_000).contains(&limit) {
+            return Err(RebaselineError::InvalidLimit);
+        }
+        if !self.scope_matches(owner_user_id, device_id, library_id)
+            || bootstrap_id != self.bootstrap.id()
+        {
+            return Err(RebaselineError::NotFound);
+        }
+        let start_index = match position {
+            Some(position) => {
+                if position.owner_user_id() != owner_user_id
+                    || position.device_id() != device_id
+                    || position.library_id() != library_id
+                    || position.bootstrap_id() != bootstrap_id
+                    || position.generation() != self.bootstrap.generation()
+                    || position.snapshot_epoch() != self.bootstrap.snapshot_epoch()
+                    || position.snapshot_resume_sequence()
+                        != self.bootstrap.snapshot_resume_sequence()
+                {
+                    return Err(RebaselineError::InvalidCursor);
+                }
+                self.nodes
+                    .iter()
+                    .position(|node| node.node_id() == position.after_node_id())
+                    .map(|index| index + 1)
+                    .ok_or(RebaselineError::InvalidCursor)?
+            }
+            None => 0,
+        };
+        let end = start_index
+            .saturating_add(limit as usize)
+            .min(self.nodes.len());
+        let nodes = self.nodes[start_index..end].to_vec();
+        let has_more = end < self.nodes.len();
+        let next_position = has_more.then(|| {
+            BootstrapPagePosition::new(
+                owner_user_id,
+                device_id,
+                library_id,
+                bootstrap_id,
+                self.bootstrap.generation(),
+                self.bootstrap.snapshot_epoch(),
+                self.bootstrap.snapshot_resume_sequence(),
+                nodes
+                    .last()
+                    .expect("nonterminal page is nonempty")
+                    .node_id(),
+            )
+        });
+        let terminal_evidence = (!has_more).then(|| self.terminal_evidence());
+        Ok(SnapshotNodePage::new(
+            self.bootstrap,
+            nodes,
+            has_more,
+            next_position,
+            terminal_evidence,
+        ))
+    }
+
+    async fn complete(
+        &self,
+        owner_user_id: UserId,
+        device_id: DeviceId,
+        library_id: LibraryId,
+        bootstrap_id: SyncBootstrapId,
+        evidence: BootstrapCompletionEvidence,
+    ) -> Result<BootstrapCompletion, RebaselineError> {
+        if !self.scope_matches(owner_user_id, device_id, library_id)
+            || bootstrap_id != self.bootstrap.id()
+        {
+            return Err(RebaselineError::NotFound);
+        }
+        if evidence.terminal() != self.terminal_evidence() {
+            return Err(RebaselineError::InvalidBootstrapToken);
+        }
+        if let Some(error) = self.completion_error {
+            return Err(error);
+        }
+        let call = self.completion_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(BootstrapCompletion::new(
+            self.completed_bootstrap(),
+            self.checkpoint,
+            call > 0,
+        ))
     }
 }
 
@@ -1197,7 +1733,20 @@ impl UploadBackend for TestUploadBackend {
         &self,
         request: CreateUploadSessionRequest,
     ) -> Result<UploadSessionView, UploadError> {
-        let session_id = UploadSessionId::new();
+        let requested_session_id =
+            UploadSessionId::try_from_uuid(*request.idempotency_key.as_uuid())
+                .map_err(|_| UploadError::InvalidRequest)?;
+        if let Some(existing) = self
+            .state
+            .lock()
+            .expect("upload state lock")
+            .sessions
+            .get(&requested_session_id)
+        {
+            return Ok(existing.view.clone());
+        }
+        let session_id = UploadSessionId::try_from_uuid(*request.idempotency_key.as_uuid())
+            .map_err(|_| UploadError::InvalidRequest)?;
         let target = match request.target {
             UploadTargetRequest::CreateFile {
                 library_id,
@@ -1592,7 +2141,8 @@ async fn create_test_upload(
         Method::POST,
         "/api/v1/upload-sessions",
         Body::from(format!(
-            r#"{{"operation":"CREATE_FILE","library_id":"{library_id}","parent_id":"{parent_id}","name":"report.bin","expected_bytes":"{expected_bytes}"}}"#
+            r#"{{"operation":"CREATE_FILE","idempotency_key":"{}","library_id":"{library_id}","parent_id":"{parent_id}","name":"report.bin","expected_bytes":"{expected_bytes}"}}"#,
+            OutboundIntentId::new()
         )),
         session,
         csrf,
@@ -3540,7 +4090,8 @@ async fn upload_create_requires_authentication_and_csrf_and_uses_tagged_targets(
     let library_id = LibraryId::new();
     let parent_id = NodeId::new();
     let create_body = format!(
-        r#"{{"operation":"CREATE_FILE","library_id":"{library_id}","parent_id":"{parent_id}","name":"report.bin","expected_bytes":"8"}}"#
+        r#"{{"operation":"CREATE_FILE","idempotency_key":"{}","library_id":"{library_id}","parent_id":"{parent_id}","name":"report.bin","expected_bytes":"8"}}"#,
+        OutboundIntentId::new()
     );
 
     let unauthenticated = router(state.clone())
@@ -3622,7 +4173,8 @@ async fn upload_create_requires_authentication_and_csrf_and_uses_tagged_targets(
         Method::POST,
         "/api/v1/upload-sessions",
         Body::from(format!(
-            r#"{{"operation":"REPLACE_CONTENT","library_id":"{library_id}","node_id":"{replace_node_id}","expected_revision":"7","expected_bytes":"8","expected_sha256":"{digest}"}}"#
+            r#"{{"operation":"REPLACE_CONTENT","idempotency_key":"{}","library_id":"{library_id}","node_id":"{replace_node_id}","expected_revision":"7","expected_bytes":"8","expected_sha256":"{digest}"}}"#,
+            OutboundIntentId::new()
         )),
         &session,
         &csrf,
@@ -3686,6 +4238,7 @@ async fn upload_status_requires_auth_without_csrf_and_conceals_cross_owner_sessi
 
     let foreign = upload_backend
         .create_upload_session(CreateUploadSessionRequest {
+            idempotency_key: OutboundIntentId::new(),
             owner_user_id: UserId::new(),
             target: UploadTargetRequest::CreateFile {
                 library_id: LibraryId::new(),
@@ -4131,6 +4684,11 @@ async fn upload_complete_and_abort_are_csrf_protected_and_retry_safe() {
     assert_eq!(completed_body["data"]["attributes"]["node_revision"], "1");
     assert!(completed_body["data"]["attributes"]["file_version_id"].is_string());
     assert!(completed_body["data"]["attributes"]["sha256"].is_string());
+    assert!(
+        completed_body["data"]["attributes"]
+            .get("object_id")
+            .is_none()
+    );
     assert!(completed_body.to_string().find("object_replica").is_none());
 
     let mut repeat_complete = authenticated_request(Method::POST, &complete_path, &session, &csrf);
@@ -4170,4 +4728,1405 @@ async fn upload_complete_and_abort_are_csrf_protected_and_retry_safe() {
             "ABORTED"
         );
     }
+}
+
+#[tokio::test]
+async fn sync_routes_enforce_auth_csrf_scope_bounds_and_safe_cache_errors() {
+    let auth_backend = Arc::new(TestAuthenticationBackend::new());
+    let device_id = DeviceId::new();
+    let library_id = LibraryId::new();
+    let checkpoint = DeviceSyncCheckpoint::new(
+        auth_backend.user_id,
+        device_id,
+        library_id,
+        Sequence::new(1),
+        Sequence::new(0),
+        Timestamp::parse("2026-08-27T00:00:00Z").expect("valid checkpoint time"),
+        Timestamp::parse("2026-08-27T00:00:00Z").expect("valid checkpoint time"),
+        None,
+    );
+    let sync_state = state(true)
+        .with_auth_backend(auth_backend.clone())
+        .with_sync_backend(Arc::new(TestSyncBackend {
+            checkpoint,
+            feed: None,
+            ack_error: None,
+        }))
+        .with_sync_ack_key(SyncAckKey::from_bytes([0x37; 32]))
+        .with_cookie_config(CookieConfig::production())
+        .with_allowed_origin("https://app.example");
+    let checkpoint_path = format!("/api/v1/devices/{device_id}/libraries/{library_id}/checkpoint");
+    let feed_path = format!("/api/v1/devices/{device_id}/libraries/{library_id}/changes");
+    let ack_path = format!("{feed_path}/ack");
+
+    let unauthenticated = router(sync_state.clone())
+        .oneshot(request(Method::GET, &feed_path, Body::empty()))
+        .await
+        .expect("unauthenticated feed request must not fail");
+    assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+
+    let (session, csrf) = login_cookies(&sync_state).await;
+    let feed = router(sync_state.clone())
+        .oneshot(authenticated_request(
+            Method::GET,
+            &feed_path,
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("feed request must not fail");
+    assert_eq!(feed.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        feed.headers().get("cache-control").unwrap(),
+        "private, no-store"
+    );
+    assert_eq!(
+        json_body(feed).await["error"]["code"],
+        "internal_dependency_unavailable"
+    );
+
+    let invalid_limit_path = format!("{feed_path}?limit=0");
+    let invalid_limit = router(sync_state.clone())
+        .oneshot(authenticated_request(
+            Method::GET,
+            &invalid_limit_path,
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("invalid feed limit request must not fail");
+    assert_eq!(invalid_limit.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        json_body(invalid_limit).await["error"]["code"],
+        "invalid_limit"
+    );
+
+    let checkpoint_response = router(sync_state.clone())
+        .oneshot(authenticated_request(
+            Method::GET,
+            &checkpoint_path,
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("checkpoint request must not fail");
+    assert_eq!(checkpoint_response.status(), StatusCode::OK);
+    assert_eq!(
+        checkpoint_response.headers().get("cache-control").unwrap(),
+        "private, no-store"
+    );
+    let checkpoint_body = json_body(checkpoint_response).await;
+    assert_eq!(checkpoint_body["data"]["device_id"], device_id.to_string());
+    assert_eq!(checkpoint_body["data"]["acknowledged_sequence"], "0");
+
+    let mut missing_csrf = authenticated_body_request(
+        Method::POST,
+        &ack_path,
+        Body::from(r#"{"ack_token":"not-a-token"}"#),
+        &session,
+        &csrf,
+    );
+    mark_same_origin(&mut missing_csrf);
+    let missing_csrf = router(sync_state.clone())
+        .oneshot(missing_csrf)
+        .await
+        .expect("missing ack CSRF request must not fail");
+    assert_eq!(missing_csrf.status(), StatusCode::FORBIDDEN);
+
+    let mut invalid_token = authenticated_body_request(
+        Method::POST,
+        &ack_path,
+        Body::from(r#"{"ack_token":"not-a-token"}"#),
+        &session,
+        &csrf,
+    );
+    invalid_token
+        .headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/json"));
+    mark_same_origin(&mut invalid_token);
+    add_csrf_header(&mut invalid_token, &csrf);
+    let invalid_token = router(sync_state.clone())
+        .oneshot(invalid_token)
+        .await
+        .expect("invalid ack token request must not fail");
+    assert_eq!(invalid_token.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        invalid_token.headers().get("cache-control").unwrap(),
+        "private, no-store"
+    );
+    let invalid_token_body = json_body(invalid_token).await;
+    assert_eq!(invalid_token_body["error"]["code"], "invalid_ack_token");
+    assert!(!invalid_token_body.to_string().contains("not-a-token"));
+
+    let foreign_owner = UserId::new();
+    let foreign_token = SyncAckKey::from_bytes([0x37; 32]).issue(SyncAckEvidence::new(
+        foreign_owner,
+        device_id,
+        library_id,
+        Sequence::new(1),
+        Sequence::new(0),
+        Sequence::new(1),
+        Sequence::new(1),
+    ));
+    let mut foreign = authenticated_body_request(
+        Method::POST,
+        &ack_path,
+        Body::from(format!(r#"{{"ack_token":"{foreign_token}"}}"#)),
+        &session,
+        &csrf,
+    );
+    foreign
+        .headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/json"));
+    mark_same_origin(&mut foreign);
+    add_csrf_header(&mut foreign, &csrf);
+    let foreign = router(sync_state.clone())
+        .oneshot(foreign)
+        .await
+        .expect("cross-owner ack request must not fail");
+    assert_eq!(foreign.status(), StatusCode::NOT_FOUND);
+    assert_eq!(json_body(foreign).await["error"]["code"], "not_found");
+
+    let rebaseline_auth = Arc::new(TestAuthenticationBackend::new());
+    let rebaseline_user = rebaseline_auth.user_id;
+    let rebaseline_state = state(true)
+        .with_auth_backend(rebaseline_auth)
+        .with_sync_backend(Arc::new(TestSyncBackend {
+            checkpoint: DeviceSyncCheckpoint::new(
+                rebaseline_user,
+                device_id,
+                library_id,
+                Sequence::new(1),
+                Sequence::new(0),
+                Timestamp::parse("2026-08-27T00:00:00Z").expect("valid checkpoint time"),
+                Timestamp::parse("2026-08-27T00:00:00Z").expect("valid checkpoint time"),
+                None,
+            ),
+            feed: None,
+            ack_error: Some(SyncError::RebaselineRequired {
+                reason: synveil_metadata::RebaselineReason::EpochMismatch,
+                current_epoch: Sequence::new(2),
+                minimum_retained_sequence: Sequence::new(5),
+            }),
+        }))
+        .with_sync_ack_key(SyncAckKey::from_bytes([0x37; 32]))
+        .with_cookie_config(CookieConfig::production())
+        .with_allowed_origin("https://app.example");
+    let (rebaseline_session, rebaseline_csrf) = login_cookies(&rebaseline_state).await;
+    let rebaseline_token = SyncAckKey::from_bytes([0x37; 32]).issue(SyncAckEvidence::new(
+        rebaseline_user,
+        device_id,
+        library_id,
+        Sequence::new(1),
+        Sequence::new(0),
+        Sequence::new(1),
+        Sequence::new(1),
+    ));
+    let mut rebaseline = authenticated_body_request(
+        Method::POST,
+        &ack_path,
+        Body::from(format!(r#"{{"ack_token":"{rebaseline_token}"}}"#)),
+        &rebaseline_session,
+        &rebaseline_csrf,
+    );
+    rebaseline
+        .headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/json"));
+    mark_same_origin(&mut rebaseline);
+    add_csrf_header(&mut rebaseline, &rebaseline_csrf);
+    let rebaseline = router(rebaseline_state)
+        .oneshot(rebaseline)
+        .await
+        .expect("rebaseline request must not fail");
+    assert_eq!(rebaseline.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        rebaseline.headers().get("cache-control").unwrap(),
+        "private, no-store"
+    );
+    let rebaseline_body = json_body(rebaseline).await;
+    assert_eq!(rebaseline_body["error"]["code"], "sync_rebaseline_required");
+    assert_eq!(
+        rebaseline_body["error"]["details"]["reason"],
+        "epoch_mismatch"
+    );
+    assert_eq!(rebaseline_body["error"]["details"]["current_epoch"], "2");
+    assert_eq!(
+        rebaseline_body["error"]["details"]["minimum_retained_sequence"],
+        "5"
+    );
+}
+
+#[tokio::test]
+async fn sync_feed_serializes_logical_events_and_issues_ack_evidence() {
+    let auth_backend = Arc::new(TestAuthenticationBackend::new());
+    let owner_user_id = auth_backend.user_id;
+    let device_id = DeviceId::new();
+    let library_id = LibraryId::new();
+    let observed_at =
+        Timestamp::parse("2026-08-27T00:00:00Z").expect("valid synchronization test time");
+    let checkpoint = DeviceSyncCheckpoint::new(
+        owner_user_id,
+        device_id,
+        library_id,
+        Sequence::new(1),
+        Sequence::new(0),
+        observed_at,
+        observed_at,
+        None,
+    );
+    let event = ChangeEvent::new(
+        ChangeEventId::new(),
+        owner_user_id,
+        library_id,
+        Sequence::new(1),
+        Sequence::new(1),
+        1,
+        ChangeResourceKind::Node,
+        NodeId::new(),
+        ChangeKind::NodeCreated,
+        observed_at,
+        Revision::new(0),
+        None,
+        Some(NodeKind::Directory),
+        Some(NodeState::Active),
+        None,
+    );
+    let page = SyncFeedPage::new(
+        checkpoint,
+        Sequence::new(0),
+        Sequence::new(1),
+        JournalHighWatermark::new(library_id, Sequence::new(1), Sequence::new(1)),
+        vec![event],
+        false,
+    );
+    let sync_state = state(true)
+        .with_auth_backend(auth_backend)
+        .with_sync_backend(Arc::new(TestSyncBackend {
+            checkpoint,
+            feed: Some(page),
+            ack_error: None,
+        }))
+        .with_sync_ack_key(SyncAckKey::from_bytes([0x52; 32]))
+        .with_cookie_config(CookieConfig::production())
+        .with_allowed_origin("https://app.example");
+    let feed_path = format!("/api/v1/devices/{device_id}/libraries/{library_id}/changes");
+    let ack_path = format!("{feed_path}/ack");
+    let (session, csrf) = login_cookies(&sync_state).await;
+
+    let feed = router(sync_state.clone())
+        .oneshot(authenticated_request(
+            Method::GET,
+            &feed_path,
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("successful feed request must not fail");
+    assert_eq!(feed.status(), StatusCode::OK);
+    assert_eq!(
+        feed.headers().get("cache-control").unwrap(),
+        "private, no-store"
+    );
+    let feed_body = json_body(feed).await;
+    assert_eq!(feed_body["data"]["epoch"], "1");
+    assert_eq!(feed_body["data"]["from_sequence"], "0");
+    assert_eq!(feed_body["data"]["through_sequence"], "1");
+    assert_eq!(feed_body["data"]["high_watermark"], "1");
+    assert_eq!(feed_body["data"]["has_more"], false);
+    assert_eq!(feed_body["data"]["changes"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        feed_body["data"]["changes"][0]["change_kind"],
+        "NODE_CREATED"
+    );
+    assert_eq!(feed_body["data"]["changes"][0]["resource_kind"], "NODE");
+    assert!(feed_body["data"]["changes"][0]["object_id"].is_null());
+    assert!(feed_body["data"]["ack_token"].is_string());
+    let ack_token = feed_body["data"]["ack_token"]
+        .as_str()
+        .expect("feed must issue an acknowledgment token");
+    assert!(ack_token.len() <= super::MAX_SYNC_ACK_TOKEN_BYTES);
+
+    let mut ack = authenticated_body_request(
+        Method::POST,
+        &ack_path,
+        Body::from(format!(r#"{{"ack_token":"{ack_token}"}}"#)),
+        &session,
+        &csrf,
+    );
+    ack.headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/json"));
+    mark_same_origin(&mut ack);
+    add_csrf_header(&mut ack, &csrf);
+    let ack = router(sync_state)
+        .oneshot(ack)
+        .await
+        .expect("successful acknowledgment request must not fail");
+    assert_eq!(ack.status(), StatusCode::OK);
+    assert_eq!(json_body(ack).await["data"]["acknowledged_sequence"], "0");
+}
+
+#[tokio::test]
+async fn rebaseline_routes_enforce_terminal_proof_scope_csrf_bounds_and_logical_only_dto() {
+    let auth_backend = Arc::new(TestAuthenticationBackend::new());
+    let owner_user_id = auth_backend.user_id;
+    let device_id = DeviceId::new();
+    let library_id = LibraryId::new();
+    let rebaseline_backend = Arc::new(TestRebaselineBackend::new(
+        owner_user_id,
+        device_id,
+        library_id,
+    ));
+    let token_key = RebaselineTokenKey::from_bytes([0x63; 32]);
+    let rebaseline_state = state(true)
+        .with_auth_backend(auth_backend)
+        .with_rebaseline_backend(rebaseline_backend.clone())
+        .with_rebaseline_token_key(token_key.clone())
+        .with_cookie_config(CookieConfig::production())
+        .with_allowed_origin("https://app.example");
+    let start_path = format!("/api/v1/devices/{device_id}/libraries/{library_id}/rebaseline");
+    let page_path = format!("{start_path}/{}/nodes", rebaseline_backend.bootstrap.id());
+    let complete_path = format!(
+        "{start_path}/{}/complete",
+        rebaseline_backend.bootstrap.id()
+    );
+
+    let unauthenticated = router(rebaseline_state.clone())
+        .oneshot(json_request(Method::POST, &start_path, "{}"))
+        .await
+        .expect("unauthenticated bootstrap start must not fail");
+    assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        unauthenticated.headers().get("cache-control").unwrap(),
+        "private, no-store"
+    );
+
+    let (session, csrf) = login_cookies(&rebaseline_state).await;
+    let mut missing_start_csrf =
+        authenticated_body_request(Method::POST, &start_path, Body::from("{}"), &session, &csrf);
+    missing_start_csrf
+        .headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/json"));
+    mark_same_origin(&mut missing_start_csrf);
+    let missing_start_csrf = router(rebaseline_state.clone())
+        .oneshot(missing_start_csrf)
+        .await
+        .expect("missing start CSRF rejection must not fail");
+    assert_eq!(missing_start_csrf.status(), StatusCode::FORBIDDEN);
+
+    let mut start =
+        authenticated_body_request(Method::POST, &start_path, Body::from("{}"), &session, &csrf);
+    start
+        .headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/json"));
+    mark_same_origin(&mut start);
+    add_csrf_header(&mut start, &csrf);
+    let start = router(rebaseline_state.clone())
+        .oneshot(start)
+        .await
+        .expect("bootstrap start must not fail");
+    assert_eq!(start.status(), StatusCode::OK);
+    assert_eq!(
+        start.headers().get("cache-control").unwrap(),
+        "private, no-store"
+    );
+    let start_body = json_body(start).await;
+    assert_eq!(
+        start_body["data"]["bootstrap_id"],
+        rebaseline_backend.bootstrap.id().to_string()
+    );
+    assert_eq!(start_body["data"]["state"], "OPEN");
+    assert_eq!(start_body["data"]["snapshot_epoch"], "2");
+    assert_eq!(start_body["data"]["snapshot_resume_sequence"], "19");
+
+    let mut unknown_start = authenticated_body_request(
+        Method::POST,
+        &start_path,
+        Body::from(r#"{"unexpected":true}"#),
+        &session,
+        &csrf,
+    );
+    unknown_start
+        .headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/json"));
+    mark_same_origin(&mut unknown_start);
+    add_csrf_header(&mut unknown_start, &csrf);
+    let unknown_start = router(rebaseline_state.clone())
+        .oneshot(unknown_start)
+        .await
+        .expect("unknown start field rejection must not fail");
+    assert_eq!(unknown_start.status(), StatusCode::BAD_REQUEST);
+
+    let oversized_body = format!(
+        r#"{{"padding":"{}"}}"#,
+        "x".repeat(REBASELINE_BODY_LIMIT_BYTES)
+    );
+    let mut oversized_start = authenticated_body_request(
+        Method::POST,
+        &start_path,
+        Body::from(oversized_body),
+        &session,
+        &csrf,
+    );
+    oversized_start
+        .headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/json"));
+    mark_same_origin(&mut oversized_start);
+    add_csrf_header(&mut oversized_start, &csrf);
+    let oversized_start = router(rebaseline_state.clone())
+        .oneshot(oversized_start)
+        .await
+        .expect("oversized start rejection must not fail");
+    assert_eq!(oversized_start.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        oversized_start.headers().get("cache-control").unwrap(),
+        "private, no-store"
+    );
+
+    let invalid_limit = router(rebaseline_state.clone())
+        .oneshot(authenticated_request(
+            Method::GET,
+            &format!("{page_path}?limit=0"),
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("invalid bootstrap page limit must not fail");
+    assert_eq!(invalid_limit.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        json_body(invalid_limit).await["error"]["code"],
+        "invalid_limit"
+    );
+
+    let invalid_cursor_value = "not-a-bootstrap-cursor";
+    let invalid_cursor = router(rebaseline_state.clone())
+        .oneshot(authenticated_request(
+            Method::GET,
+            &format!("{page_path}?cursor={invalid_cursor_value}"),
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("invalid bootstrap cursor request must not fail");
+    assert_eq!(invalid_cursor.status(), StatusCode::BAD_REQUEST);
+    let invalid_cursor_body = json_body(invalid_cursor).await;
+    assert_eq!(invalid_cursor_body["error"]["code"], "invalid_cursor");
+    assert!(
+        !invalid_cursor_body
+            .to_string()
+            .contains(invalid_cursor_value)
+    );
+
+    let oversized_cursor = "x".repeat(super::MAX_REBASELINE_CURSOR_BYTES + 1);
+    let oversized_cursor_response = router(rebaseline_state.clone())
+        .oneshot(authenticated_request(
+            Method::GET,
+            &format!("{page_path}?cursor={oversized_cursor}"),
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("oversized bootstrap cursor request must not fail");
+    assert_eq!(oversized_cursor_response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        json_body(oversized_cursor_response).await["error"]["code"],
+        "invalid_cursor"
+    );
+
+    // GET is authenticated but deliberately CSRF-free. Repeating the same
+    // session/cursor yields the same immutable DTO and token.
+    let first_page = router(rebaseline_state.clone())
+        .oneshot(authenticated_request(
+            Method::GET,
+            &format!("{page_path}?limit=1"),
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("first bootstrap page must not fail");
+    assert_eq!(first_page.status(), StatusCode::OK);
+    assert_eq!(
+        first_page.headers().get("cache-control").unwrap(),
+        "private, no-store"
+    );
+    let first_page_body = json_body(first_page).await;
+    assert_eq!(
+        first_page_body["data"]["nodes"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(first_page_body["data"]["has_more"], true);
+    assert!(first_page_body["data"]["next_cursor"].is_string());
+    assert!(first_page_body["data"]["completion_token"].is_null());
+    let first_page_serialized = first_page_body.to_string();
+    for forbidden in [
+        "object_id",
+        "object_replica_id",
+        "storage_key",
+        "staging_handle",
+        "filesystem_path",
+        "backend_version",
+        "credentials",
+    ] {
+        assert!(!first_page_serialized.contains(forbidden));
+    }
+    let cursor = first_page_body["data"]["next_cursor"]
+        .as_str()
+        .expect("first page must issue a cursor")
+        .to_owned();
+    assert!(cursor.len() <= super::MAX_REBASELINE_CURSOR_BYTES);
+
+    let repeated_first_page = router(rebaseline_state.clone())
+        .oneshot(authenticated_request(
+            Method::GET,
+            &format!("{page_path}?limit=1"),
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("first bootstrap page retry must not fail");
+    assert_eq!(
+        json_body(repeated_first_page).await["data"],
+        first_page_body["data"]
+    );
+
+    let wrong_owner_position = BootstrapPagePosition::new(
+        UserId::new(),
+        device_id,
+        library_id,
+        rebaseline_backend.bootstrap.id(),
+        rebaseline_backend.bootstrap.generation(),
+        rebaseline_backend.bootstrap.snapshot_epoch(),
+        rebaseline_backend.bootstrap.snapshot_resume_sequence(),
+        rebaseline_backend.nodes[0].node_id(),
+    );
+    let wrong_owner_cursor = token_key.issue_cursor(wrong_owner_position);
+    let wrong_owner_page = router(rebaseline_state.clone())
+        .oneshot(authenticated_request(
+            Method::GET,
+            &format!("{page_path}?cursor={wrong_owner_cursor}&limit=1"),
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("cross-owner cursor request must not fail");
+    assert_eq!(wrong_owner_page.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        json_body(wrong_owner_page).await["error"]["code"],
+        "not_found"
+    );
+
+    let terminal_page = router(rebaseline_state.clone())
+        .oneshot(authenticated_request(
+            Method::GET,
+            &format!("{page_path}?cursor={cursor}&limit=1"),
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("terminal bootstrap page must not fail");
+    assert_eq!(terminal_page.status(), StatusCode::OK);
+    let terminal_body = json_body(terminal_page).await;
+    assert_eq!(terminal_body["data"]["has_more"], false);
+    assert!(terminal_body["data"]["next_cursor"].is_null());
+    assert!(terminal_body["data"]["completion_token"].is_string());
+    let completion_token = terminal_body["data"]["completion_token"]
+        .as_str()
+        .expect("terminal page must issue completion proof")
+        .to_owned();
+    assert!(completion_token.len() <= super::MAX_REBASELINE_COMPLETION_TOKEN_BYTES);
+    let terminal_serialized = terminal_body.to_string();
+    assert!(terminal_serialized.contains("current_content"));
+    assert!(terminal_serialized.contains("sha256:abab"));
+    assert!(!terminal_serialized.contains("storage_key"));
+
+    let mut missing_complete_csrf = authenticated_body_request(
+        Method::POST,
+        &complete_path,
+        Body::from(format!(r#"{{"completion_token":"{completion_token}"}}"#)),
+        &session,
+        &csrf,
+    );
+    missing_complete_csrf
+        .headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/json"));
+    mark_same_origin(&mut missing_complete_csrf);
+    let missing_complete_csrf = router(rebaseline_state.clone())
+        .oneshot(missing_complete_csrf)
+        .await
+        .expect("missing completion CSRF rejection must not fail");
+    assert_eq!(missing_complete_csrf.status(), StatusCode::FORBIDDEN);
+
+    let oversized_completion = "x".repeat(super::MAX_REBASELINE_COMPLETION_TOKEN_BYTES + 1);
+    let mut invalid_complete = authenticated_body_request(
+        Method::POST,
+        &complete_path,
+        Body::from(format!(
+            r#"{{"completion_token":"{oversized_completion}"}}"#
+        )),
+        &session,
+        &csrf,
+    );
+    invalid_complete
+        .headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/json"));
+    mark_same_origin(&mut invalid_complete);
+    add_csrf_header(&mut invalid_complete, &csrf);
+    let invalid_complete = router(rebaseline_state.clone())
+        .oneshot(invalid_complete)
+        .await
+        .expect("invalid completion token request must not fail");
+    assert_eq!(invalid_complete.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        invalid_complete.headers().get("cache-control").unwrap(),
+        "private, no-store"
+    );
+    assert_eq!(
+        json_body(invalid_complete).await["error"]["code"],
+        "invalid_bootstrap_token"
+    );
+
+    for expected_replayed in [false, true] {
+        let mut complete = authenticated_body_request(
+            Method::POST,
+            &complete_path,
+            Body::from(format!(r#"{{"completion_token":"{completion_token}"}}"#)),
+            &session,
+            &csrf,
+        );
+        complete
+            .headers_mut()
+            .insert("content-type", HeaderValue::from_static("application/json"));
+        mark_same_origin(&mut complete);
+        add_csrf_header(&mut complete, &csrf);
+        let complete = router(rebaseline_state.clone())
+            .oneshot(complete)
+            .await
+            .expect("bootstrap completion request must not fail");
+        assert_eq!(complete.status(), StatusCode::OK);
+        assert_eq!(
+            complete.headers().get("cache-control").unwrap(),
+            "private, no-store"
+        );
+        let complete_body = json_body(complete).await;
+        assert_eq!(complete_body["data"]["bootstrap"]["state"], "COMPLETED");
+        assert_eq!(complete_body["data"]["checkpoint"]["journal_epoch"], "2");
+        assert_eq!(
+            complete_body["data"]["checkpoint"]["acknowledged_sequence"],
+            "19"
+        );
+        assert_eq!(complete_body["data"]["replayed"], expected_replayed);
+    }
+
+    let revoked_device_path = format!(
+        "/api/v1/devices/{}/libraries/{library_id}/rebaseline",
+        DeviceId::new()
+    );
+    let mut revoked_start = authenticated_body_request(
+        Method::POST,
+        &revoked_device_path,
+        Body::from("{}"),
+        &session,
+        &csrf,
+    );
+    revoked_start
+        .headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/json"));
+    mark_same_origin(&mut revoked_start);
+    add_csrf_header(&mut revoked_start, &csrf);
+    let revoked_start = router(rebaseline_state)
+        .oneshot(revoked_start)
+        .await
+        .expect("revoked-device-shaped denial must not fail");
+    assert_eq!(revoked_start.status(), StatusCode::NOT_FOUND);
+    assert_eq!(json_body(revoked_start).await["error"]["code"], "not_found");
+}
+
+#[tokio::test]
+async fn rebaseline_completion_maps_expiry_conflict_and_rebaseline_errors_stably() {
+    let cases = [
+        (
+            RebaselineError::BootstrapExpired,
+            StatusCode::GONE,
+            "bootstrap_expired",
+            None,
+        ),
+        (
+            RebaselineError::BootstrapConflict,
+            StatusCode::CONFLICT,
+            "bootstrap_conflict",
+            None,
+        ),
+        (
+            RebaselineError::RebaselineRequired {
+                reason: RebaselineReason::HistoryUnavailable,
+                current_epoch: Sequence::new(4),
+                minimum_retained_sequence: Sequence::new(21),
+            },
+            StatusCode::CONFLICT,
+            "sync_rebaseline_required",
+            Some(("history_unavailable", "4", "21")),
+        ),
+        (
+            RebaselineError::DependencyUnavailable,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "dependency_unavailable",
+            None,
+        ),
+        (
+            RebaselineError::InvalidPersistedData,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "invalid_persisted_data",
+            None,
+        ),
+    ];
+
+    for (error, expected_status, expected_code, expected_details) in cases {
+        let auth_backend = Arc::new(TestAuthenticationBackend::new());
+        let owner_user_id = auth_backend.user_id;
+        let device_id = DeviceId::new();
+        let library_id = LibraryId::new();
+        let backend = Arc::new(
+            TestRebaselineBackend::new(owner_user_id, device_id, library_id)
+                .with_completion_error(error),
+        );
+        let token_key = RebaselineTokenKey::from_bytes([0x64; 32]);
+        let completion_token = token_key.issue_completion(backend.terminal_evidence());
+        let api_state = state(true)
+            .with_auth_backend(auth_backend)
+            .with_rebaseline_backend(backend.clone())
+            .with_rebaseline_token_key(token_key)
+            .with_cookie_config(CookieConfig::production())
+            .with_allowed_origin("https://app.example");
+        let (session, csrf) = login_cookies(&api_state).await;
+        let path = format!(
+            "/api/v1/devices/{device_id}/libraries/{library_id}/rebaseline/{}/complete",
+            backend.bootstrap.id()
+        );
+        let mut request = authenticated_body_request(
+            Method::POST,
+            &path,
+            Body::from(format!(r#"{{"completion_token":"{completion_token}"}}"#)),
+            &session,
+            &csrf,
+        );
+        request
+            .headers_mut()
+            .insert("content-type", HeaderValue::from_static("application/json"));
+        mark_same_origin(&mut request);
+        add_csrf_header(&mut request, &csrf);
+        let response = router(api_state)
+            .oneshot(request)
+            .await
+            .expect("stable rebaseline error request must not fail");
+        assert_eq!(response.status(), expected_status);
+        assert_eq!(
+            response.headers().get("cache-control").unwrap(),
+            "private, no-store"
+        );
+        let body = json_body(response).await;
+        assert_eq!(body["error"]["code"], expected_code);
+        if let Some((reason, current_epoch, minimum_retained_sequence)) = expected_details {
+            assert_eq!(body["error"]["details"]["reason"], reason);
+            assert_eq!(body["error"]["details"]["current_epoch"], current_epoch);
+            assert_eq!(
+                body["error"]["details"]["minimum_retained_sequence"],
+                minimum_retained_sequence
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn client_mutation_route_enforces_auth_csrf_bounds_scope_and_replay_contract() {
+    let auth_backend = Arc::new(TestAuthenticationBackend::new());
+    let owner_user_id = auth_backend.user_id;
+    let device_id = DeviceId::new();
+    let library_id = LibraryId::new();
+    let observed_at = Timestamp::parse("2026-08-27T00:00:00Z").expect("valid mutation time");
+    let root = Node::new_root(
+        NodeId::new(),
+        library_id,
+        LogicalName::new("root").expect("valid root name"),
+        observed_at,
+    );
+    let mutation_backend = Arc::new(TestClientMutationBackend::applied(
+        owner_user_id,
+        device_id,
+        library_id,
+        root.clone(),
+    ));
+    let mutation_state = state(true)
+        .with_auth_backend(auth_backend.clone())
+        .with_client_mutation_backend(mutation_backend.clone())
+        .with_cookie_config(CookieConfig::production())
+        .with_allowed_origin("https://app.example");
+    let path = format!("/api/v1/devices/{device_id}/libraries/{library_id}/mutations");
+    let mutation_id = ClientMutationId::new();
+    let body = format!(
+        r#"{{"mutation_id":"{mutation_id}","base_epoch":"1","base_sequence":"9","kind":"RENAME_NODE","payload":{{"node_id":"{}","expected_revision":"0","new_name":"renamed"}}}}"#,
+        root.id()
+    );
+
+    let unauthenticated = router(mutation_state.clone())
+        .oneshot(json_request(Method::POST, &path, &body))
+        .await
+        .expect("unauthenticated mutation request must not fail");
+    assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        unauthenticated.headers().get("cache-control").unwrap(),
+        "private, no-store"
+    );
+
+    let (session, csrf) = login_cookies(&mutation_state).await;
+    let mut missing_csrf = authenticated_body_request(
+        Method::POST,
+        &path,
+        Body::from(body.clone()),
+        &session,
+        &csrf,
+    );
+    missing_csrf
+        .headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/json"));
+    mark_same_origin(&mut missing_csrf);
+    let missing_csrf = router(mutation_state.clone())
+        .oneshot(missing_csrf)
+        .await
+        .expect("missing mutation CSRF request must not fail");
+    assert_eq!(missing_csrf.status(), StatusCode::FORBIDDEN);
+
+    let mut unknown_field = authenticated_body_request(
+        Method::POST,
+        &path,
+        Body::from(format!(
+            r#"{{"mutation_id":"{mutation_id}","base_epoch":"1","base_sequence":"9","kind":"RENAME_NODE","payload":{{"node_id":"{}","expected_revision":"0","new_name":"renamed"}},"unexpected":true}}"#,
+            root.id()
+        )),
+        &session,
+        &csrf,
+    );
+    unknown_field
+        .headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/json"));
+    mark_same_origin(&mut unknown_field);
+    add_csrf_header(&mut unknown_field, &csrf);
+    let unknown_field = router(mutation_state.clone())
+        .oneshot(unknown_field)
+        .await
+        .expect("unknown mutation field request must not fail");
+    assert_eq!(unknown_field.status(), StatusCode::BAD_REQUEST);
+
+    let mut invalid_kind = authenticated_body_request(
+        Method::POST,
+        &path,
+        Body::from(body.replace("RENAME_NODE", "PATCH")),
+        &session,
+        &csrf,
+    );
+    invalid_kind
+        .headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/json"));
+    mark_same_origin(&mut invalid_kind);
+    add_csrf_header(&mut invalid_kind, &csrf);
+    let invalid_kind = router(mutation_state.clone())
+        .oneshot(invalid_kind)
+        .await
+        .expect("invalid mutation kind request must not fail");
+    assert_eq!(invalid_kind.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        json_body(invalid_kind).await["error"]["code"],
+        "invalid_mutation"
+    );
+
+    let oversized_body = format!(
+        r#"{{"mutation_id":"{mutation_id}","base_epoch":"1","base_sequence":"9","kind":"RENAME_NODE","payload":{{"node_id":"{}","expected_revision":"0","new_name":"{}"}}}}"#,
+        root.id(),
+        "x".repeat(CLIENT_MUTATION_BODY_LIMIT_BYTES)
+    );
+    let mut oversized = authenticated_body_request(
+        Method::POST,
+        &path,
+        Body::from(oversized_body),
+        &session,
+        &csrf,
+    );
+    oversized
+        .headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/json"));
+    mark_same_origin(&mut oversized);
+    add_csrf_header(&mut oversized, &csrf);
+    let oversized = router(mutation_state.clone())
+        .oneshot(oversized)
+        .await
+        .expect("oversized mutation request must not fail");
+    assert_eq!(oversized.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        oversized.headers().get("cache-control").unwrap(),
+        "private, no-store"
+    );
+
+    let mut first = authenticated_body_request(
+        Method::POST,
+        &path,
+        Body::from(body.clone()),
+        &session,
+        &csrf,
+    );
+    first
+        .headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/json"));
+    mark_same_origin(&mut first);
+    add_csrf_header(&mut first, &csrf);
+    let first = router(mutation_state.clone())
+        .oneshot(first)
+        .await
+        .expect("first client mutation request must not fail");
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(
+        first.headers().get("cache-control").unwrap(),
+        "private, no-store"
+    );
+    let first_body = json_body(first).await;
+    assert_eq!(first_body["data"]["outcome"], "APPLIED");
+    assert_eq!(first_body["data"]["mutation_id"], mutation_id.to_string());
+    assert_eq!(first_body["data"]["kind"], "RENAME_NODE");
+    assert_eq!(first_body["data"]["replayed"], false);
+    assert_eq!(first_body["data"]["node"]["name"], "root");
+    assert_eq!(first_body["data"]["journal_sequence"], "10");
+    for forbidden in [
+        "object_id",
+        "object_replica_id",
+        "storage_key",
+        "staging_handle",
+        "filesystem_path",
+        "credentials",
+        "csrf_secret",
+    ] {
+        assert!(!first_body.to_string().contains(forbidden));
+    }
+
+    let mut retry =
+        authenticated_body_request(Method::POST, &path, Body::from(body), &session, &csrf);
+    retry
+        .headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/json"));
+    mark_same_origin(&mut retry);
+    add_csrf_header(&mut retry, &csrf);
+    let retry = router(mutation_state.clone())
+        .oneshot(retry)
+        .await
+        .expect("replayed client mutation request must not fail");
+    assert_eq!(retry.status(), StatusCode::OK);
+    let retry_body = json_body(retry).await;
+    assert_eq!(retry_body["data"]["replayed"], true);
+    assert_eq!(retry_body["data"]["node"], first_body["data"]["node"]);
+    assert_eq!(
+        retry_body["data"]["journal_event_id"],
+        first_body["data"]["journal_event_id"]
+    );
+    assert_eq!(mutation_backend.calls(), 2);
+
+    let cross_owner_device = format!(
+        "/api/v1/devices/{}/libraries/{library_id}/mutations",
+        DeviceId::new()
+    );
+    let mut cross_owner_device_request = authenticated_body_request(
+        Method::POST,
+        &cross_owner_device,
+        Body::from(
+            r#"{"mutation_id":"00000000-0000-7000-8000-000000000001","base_epoch":"1","base_sequence":"9","kind":"TRASH_NODE","payload":{"node_id":"00000000-0000-7000-8000-000000000002","expected_revision":"0"}}"#,
+        ),
+        &session,
+        &csrf,
+    );
+    cross_owner_device_request
+        .headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/json"));
+    mark_same_origin(&mut cross_owner_device_request);
+    add_csrf_header(&mut cross_owner_device_request, &csrf);
+    let cross_owner_device = router(mutation_state.clone())
+        .oneshot(cross_owner_device_request)
+        .await
+        .expect("cross-owner device request must not fail");
+    assert_eq!(cross_owner_device.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        json_body(cross_owner_device).await["error"]["code"],
+        "not_found"
+    );
+
+    let mut cross_owner_library = authenticated_body_request(
+        Method::POST,
+        &format!(
+            "/api/v1/devices/{device_id}/libraries/{}/mutations",
+            LibraryId::new()
+        ),
+        Body::from(
+            r#"{"mutation_id":"00000000-0000-7000-8000-000000000003","base_epoch":"1","base_sequence":"9","kind":"TRASH_NODE","payload":{"node_id":"00000000-0000-7000-8000-000000000004","expected_revision":"0"}}"#,
+        ),
+        &session,
+        &csrf,
+    );
+    cross_owner_library
+        .headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/json"));
+    mark_same_origin(&mut cross_owner_library);
+    add_csrf_header(&mut cross_owner_library, &csrf);
+    let cross_owner_library = router(mutation_state)
+        .oneshot(cross_owner_library)
+        .await
+        .expect("cross-owner library request must not fail");
+    assert_eq!(cross_owner_library.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn client_mutation_route_maps_conflict_id_conflict_and_rebaseline_safely() {
+    let observed_at = Timestamp::parse("2026-08-27T00:00:00Z").expect("valid mutation time");
+    let cases = [
+        ("conflict", None, StatusCode::CONFLICT, "mutation_conflict"),
+        (
+            "id-conflict",
+            Some(ClientMutationError::MutationIdConflict),
+            StatusCode::CONFLICT,
+            "mutation_id_conflict",
+        ),
+        (
+            "rebaseline",
+            Some(ClientMutationError::RebaselineRequired {
+                reason: RebaselineReason::HistoryUnavailable,
+                current_epoch: Sequence::new(3),
+                minimum_retained_sequence: Sequence::new(12),
+            }),
+            StatusCode::CONFLICT,
+            "sync_rebaseline_required",
+        ),
+    ];
+
+    for (label, error, expected_status, expected_code) in cases {
+        let auth_backend = Arc::new(TestAuthenticationBackend::new());
+        let owner_user_id = auth_backend.user_id;
+        let device_id = DeviceId::new();
+        let library_id = LibraryId::new();
+        let node = Node::new_root(
+            NodeId::new(),
+            library_id,
+            LogicalName::new("root").expect("valid root name"),
+            observed_at,
+        );
+        let conflict = MutationConflict::new(
+            MutationConflictReason::RevisionMismatch,
+            node.id(),
+            Some(Revision::new(0)),
+            Some(Revision::new(1)),
+            Some(NodeState::Active),
+            None,
+            Some(LogicalName::new("root").expect("valid conflict name")),
+            Sequence::new(1),
+            Sequence::new(11),
+        );
+        let backend =
+            TestClientMutationBackend::applied(owner_user_id, device_id, library_id, node.clone());
+        let backend = match (label, error) {
+            ("conflict", None) => backend.with_conflict(conflict),
+            (_, Some(error)) => backend.with_error(error),
+            _ => panic!("invalid client mutation route test case"),
+        };
+        let api_state = state(true)
+            .with_auth_backend(auth_backend)
+            .with_client_mutation_backend(Arc::new(backend))
+            .with_cookie_config(CookieConfig::production())
+            .with_allowed_origin("https://app.example");
+        let (session, csrf) = login_cookies(&api_state).await;
+        let path = format!("/api/v1/devices/{device_id}/libraries/{library_id}/mutations");
+        let body = format!(
+            r#"{{"mutation_id":"{}","base_epoch":"1","base_sequence":"9","kind":"TRASH_NODE","payload":{{"node_id":"{}","expected_revision":"0"}}}}"#,
+            ClientMutationId::new(),
+            node.id()
+        );
+        let mut request =
+            authenticated_body_request(Method::POST, &path, Body::from(body), &session, &csrf);
+        request
+            .headers_mut()
+            .insert("content-type", HeaderValue::from_static("application/json"));
+        mark_same_origin(&mut request);
+        add_csrf_header(&mut request, &csrf);
+        let response = router(api_state)
+            .oneshot(request)
+            .await
+            .expect("client mutation error request must not fail");
+        assert_eq!(response.status(), expected_status, "{label}");
+        assert_eq!(
+            response.headers().get("cache-control").unwrap(),
+            "private, no-store"
+        );
+        let body = json_body(response).await;
+        assert_eq!(body["error"]["code"], expected_code, "{label}");
+        if label == "conflict" {
+            assert_eq!(body["error"]["details"]["outcome"], "CONFLICT");
+            assert_eq!(body["error"]["details"]["replayed"], false);
+            assert_eq!(body["error"]["details"]["reason"], "REVISION_MISMATCH");
+            assert_eq!(body["error"]["details"]["current_revision"], "1");
+            assert_eq!(body["error"]["details"]["server_sequence"], "11");
+        }
+        assert!(!body.to_string().contains("storage_key"));
+        assert!(!body.to_string().contains("filesystem_path"));
+    }
+}
+
+#[tokio::test]
+async fn conflict_routes_enforce_auth_csrf_bounds_scope_cache_and_safe_dtos() {
+    let auth_backend = Arc::new(TestAuthenticationBackend::new());
+    let device_id = DeviceId::new();
+    let library_id = LibraryId::new();
+    let node_id = NodeId::new();
+    let conflict_backend = Arc::new(TestConflictManagementBackend::new(
+        auth_backend.user_id,
+        device_id,
+        library_id,
+        node_id,
+    ));
+    let conflict_id = conflict_backend.conflict_id();
+    let api_state = state(true)
+        .with_auth_backend(auth_backend)
+        .with_conflict_management_backend(conflict_backend)
+        .with_conflict_cursor_key(ConflictCursorKey::from_bytes([0x35; 32]))
+        .with_cookie_config(CookieConfig::production())
+        .with_allowed_origin("https://app.example");
+    let list_path = format!("/api/v1/devices/{device_id}/libraries/{library_id}/conflicts");
+    let detail_path = format!("{list_path}/{conflict_id}");
+    let resolve_path = format!("{detail_path}/resolve");
+
+    let unauthenticated = router(api_state.clone())
+        .oneshot(request(Method::GET, &list_path, Body::empty()))
+        .await
+        .expect("unauthenticated conflict list must not fail");
+    assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        unauthenticated.headers()["cache-control"],
+        "private, no-store"
+    );
+
+    let (session, csrf) = login_cookies(&api_state).await;
+    let list = router(api_state.clone())
+        .oneshot(authenticated_request(
+            Method::GET,
+            &format!("{list_path}?limit=50"),
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("authenticated conflict list must not fail");
+    assert_eq!(list.status(), StatusCode::OK);
+    assert_eq!(list.headers()["cache-control"], "private, no-store");
+    let list_body = json_body(list).await;
+    assert_eq!(
+        list_body["data"]["conflicts"][0]["conflict_id"],
+        conflict_id.to_string()
+    );
+    assert_eq!(
+        list_body["data"]["conflicts"][0]["reason"],
+        "REVISION_MISMATCH"
+    );
+    assert_eq!(list_body["data"]["page"]["has_more"], false);
+
+    let detail = router(api_state.clone())
+        .oneshot(authenticated_request(
+            Method::GET,
+            &detail_path,
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("authenticated conflict detail must not fail");
+    assert_eq!(detail.status(), StatusCode::OK);
+    assert_eq!(detail.headers()["cache-control"], "private, no-store");
+    let detail_body = json_body(detail).await;
+    assert_eq!(detail_body["data"]["lifecycle"], "OPEN");
+    assert_eq!(
+        detail_body["data"]["original_intent"]["requested_name"],
+        "client-name"
+    );
+    assert_eq!(
+        detail_body["data"]["historical_server_observation"]["server_name_at_conflict"],
+        "server-name"
+    );
+    let serialized = detail_body.to_string();
+    for forbidden in [
+        "object_store",
+        "replica_locator",
+        "filesystem_path",
+        "staging_handle",
+        "backend_credential",
+        "csrf_secret",
+        "raw_request",
+    ] {
+        assert!(!serialized.contains(forbidden));
+    }
+
+    let wrong_device = router(api_state.clone())
+        .oneshot(authenticated_request(
+            Method::GET,
+            &format!(
+                "/api/v1/devices/{}/libraries/{library_id}/conflicts/{conflict_id}",
+                DeviceId::new()
+            ),
+            &session,
+            &csrf,
+        ))
+        .await
+        .expect("wrong-device detail must not fail");
+    assert_eq!(wrong_device.status(), StatusCode::NOT_FOUND);
+
+    let missing_csrf_body = format!(
+        r#"{{"resolution_id":"{}","action":"ACCEPT_SERVER"}}"#,
+        ConflictResolutionId::new()
+    );
+    let mut missing_csrf = authenticated_body_request(
+        Method::POST,
+        &resolve_path,
+        Body::from(missing_csrf_body),
+        &session,
+        &csrf,
+    );
+    missing_csrf
+        .headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/json"));
+    mark_same_origin(&mut missing_csrf);
+    let missing_csrf = router(api_state.clone())
+        .oneshot(missing_csrf)
+        .await
+        .expect("missing-CSRF resolution must not fail");
+    assert_eq!(missing_csrf.status(), StatusCode::FORBIDDEN);
+
+    let unknown_body = format!(
+        r#"{{"resolution_id":"{}","action":"ACCEPT_SERVER","automatic":true}}"#,
+        ConflictResolutionId::new()
+    );
+    let mut unknown = authenticated_body_request(
+        Method::POST,
+        &resolve_path,
+        Body::from(unknown_body),
+        &session,
+        &csrf,
+    );
+    unknown
+        .headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/json"));
+    mark_same_origin(&mut unknown);
+    add_csrf_header(&mut unknown, &csrf);
+    let unknown = router(api_state.clone())
+        .oneshot(unknown)
+        .await
+        .expect("unknown-field resolution must not fail");
+    assert_eq!(unknown.status(), StatusCode::BAD_REQUEST);
+
+    let mut oversized = authenticated_body_request(
+        Method::POST,
+        &resolve_path,
+        Body::from(vec![b'x'; CONFLICT_RESOLUTION_BODY_LIMIT_BYTES + 1]),
+        &session,
+        &csrf,
+    );
+    oversized
+        .headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/json"));
+    mark_same_origin(&mut oversized);
+    add_csrf_header(&mut oversized, &csrf);
+    let oversized = router(api_state.clone())
+        .oneshot(oversized)
+        .await
+        .expect("oversized resolution must not fail");
+    assert_eq!(oversized.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+    let resolution_id = ConflictResolutionId::new();
+    let body = format!(r#"{{"resolution_id":"{resolution_id}","action":"ACCEPT_SERVER"}}"#);
+    let mut accept = authenticated_body_request(
+        Method::POST,
+        &resolve_path,
+        Body::from(body),
+        &session,
+        &csrf,
+    );
+    accept
+        .headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/json"));
+    mark_same_origin(&mut accept);
+    add_csrf_header(&mut accept, &csrf);
+    let accept = router(api_state)
+        .oneshot(accept)
+        .await
+        .expect("accept-server resolution must not fail");
+    assert_eq!(accept.status(), StatusCode::OK);
+    assert_eq!(accept.headers()["cache-control"], "private, no-store");
+    let accept_body = json_body(accept).await;
+    assert_eq!(accept_body["data"]["outcome"], "ACCEPTED_SERVER");
+    assert_eq!(accept_body["data"]["lifecycle"], "DISMISSED");
+    assert!(accept_body["data"].get("journal_event_id").is_none());
+}
+
+#[tokio::test]
+async fn conflict_resolution_errors_are_stable_private_and_replay_explicit() {
+    let auth_backend = Arc::new(TestAuthenticationBackend::new());
+    let device_id = DeviceId::new();
+    let library_id = LibraryId::new();
+    let node_id = NodeId::new();
+    let resolution_id = ConflictResolutionId::new();
+    let stale = MutationConflict::new(
+        MutationConflictReason::RevisionMismatch,
+        node_id,
+        Some(Revision::new(4)),
+        Some(Revision::new(5)),
+        Some(NodeState::Active),
+        None,
+        Some(LogicalName::new("newer-server-name").expect("valid name")),
+        Sequence::new(1),
+        Sequence::new(10),
+    );
+    let completed_at =
+        Timestamp::parse("2026-08-27T00:02:00.123456Z").expect("valid stale timestamp");
+    let backend = Arc::new(
+        TestConflictManagementBackend::new(auth_backend.user_id, device_id, library_id, node_id)
+            .with_resolution_error(ConflictManagementError::ResolutionConflict {
+                resolution_id,
+                conflict: Box::new(stale),
+                completed_at,
+                replayed: true,
+            }),
+    );
+    let conflict_id = backend.conflict_id();
+    let api_state = state(true)
+        .with_auth_backend(auth_backend)
+        .with_conflict_management_backend(backend)
+        .with_cookie_config(CookieConfig::production())
+        .with_allowed_origin("https://app.example");
+    let (session, csrf) = login_cookies(&api_state).await;
+    let path = format!(
+        "/api/v1/devices/{device_id}/libraries/{library_id}/conflicts/{conflict_id}/resolve"
+    );
+    let body = format!(
+        r#"{{"resolution_id":"{resolution_id}","action":"APPLY_CLIENT_INTENT","expected_current_revision":"4"}}"#
+    );
+    let mut request =
+        authenticated_body_request(Method::POST, &path, Body::from(body), &session, &csrf);
+    request
+        .headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/json"));
+    mark_same_origin(&mut request);
+    add_csrf_header(&mut request, &csrf);
+    let response = router(api_state)
+        .oneshot(request)
+        .await
+        .expect("stale resolution request must not fail");
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(response.headers()["cache-control"], "private, no-store");
+    let body = json_body(response).await;
+    assert_eq!(body["error"]["code"], "resolution_conflict");
+    assert_eq!(
+        body["error"]["details"]["resolution_id"],
+        resolution_id.to_string()
+    );
+    assert_eq!(body["error"]["details"]["current_revision"], "5");
+    assert_eq!(body["error"]["details"]["replayed"], true);
+    assert_eq!(
+        body["error"]["details"]["completed_at"],
+        completed_at.to_string()
+    );
 }

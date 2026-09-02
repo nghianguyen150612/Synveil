@@ -51,7 +51,7 @@ part-manifest blueprint:
 
 | Method and path | Implemented contract |
 |---|---|
-| `POST /api/v1/upload-sessions` | Strict 16 KiB tagged JSON for `CREATE_FILE` or `REPLACE_CONTENT`; authenticated identity is the owner and mutations require the existing CSRF proof. |
+| `POST /api/v1/upload-sessions` | Strict 16 KiB tagged JSON for `CREATE_FILE` or `REPLACE_CONTENT` with a required UUIDv7 `idempotency_key`; authenticated identity is the owner and mutations require the existing CSRF proof. |
 | `GET /api/v1/upload-sessions/{upload_session_id}` | Owner-scoped safe state plus authoritative `Upload-Offset`; authentication is required but CSRF is not. |
 | `PATCH /api/v1/upload-sessions/{upload_session_id}` | Non-empty `application/octet-stream`, one canonical unsigned-decimal `Upload-Offset`, and an aggregate service-configured chunk limit (8 MiB by default). |
 | `POST /api/v1/upload-sessions/{upload_session_id}/complete` | Calls only the validated completion service and returns canonical, retry-stable completion metadata. |
@@ -503,7 +503,7 @@ very late retry.
 
 ### Races
 
-- Two initiations with one idempotency key return one session.
+- Two initiations with one idempotency key and the same canonical payload return one session; key reuse with different semantics is rejected.
 - Two uploads of the same part may both write staging, but only one verified
   receipt wins; the loser is cleaned later.
 - Part upload versus seal is serialized by the session row. Either the part row

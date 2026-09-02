@@ -27,6 +27,92 @@ evidence of a deployable production image. Production download
 configuration/preflight, deployment topologies, installer lifecycle, and
 production support remain planned.
 
+Prompt 37 separately implements the production HTTP `SyncRemote` library,
+desktop server profiles, one-time enrollment/device bearer auth, and the
+existing platform SecretStore's native persistence adapters. This is not a
+shipped desktop application, installer, or new public server TLS listener.
+
+## Prompt 37 desktop connection operations
+
+The API binary still serves HTTP on `127.0.0.1:3000` by default. Production
+deployment must put it behind a trusted HTTPS reverse proxy and keep the
+cleartext API listener loopback/private; do not expose it directly to an
+untrusted network. `SYNVEIL_BIND_ADDR` does not enable TLS. Set the browser's
+`SYNVEIL_PUBLIC_ORIGIN` to the canonical HTTPS origin for existing CSRF checks.
+The desktop profile points to that origin root, not `/api/v1` or a proxy
+subpath. TLS certificate and hostname verification are mandatory; self-signed
+bypass, trust-all, TOFU, and certificate pinning are not implemented.
+
+Production profiles accept only HTTPS. A separately named non-production
+constructor accepts HTTP only at literal loopback IPv4/IPv6 addresses; it is
+for deterministic tests, not a deployment escape hatch. Redirects are disabled
+entirely, including HTTP → HTTPS redirects: configure the final HTTPS origin
+up front. No proxy environment or browser cookie jar is used by the adapter.
+Finite defaults are connect 10 s, headers 20 s, metadata 30 s, stream idle
+30 s, and total download 1 hour; metadata bodies are capped at 8 MiB and API
+error bodies at 64 KiB. Configuration remains bounded, and automatic retries
+are disabled, especially for one-time exchange.
+
+Enrollment and recovery are explicit application operations:
+
+1. An authenticated browser owner obtains the existing CSRF proof and POSTs a
+   strict target to `/api/v1/devices/enrollment-grants`: either a new display
+   name or an owned PENDING/ACTIVE Device ID. This returns one high-entropy
+   enrollment token, its Device ID, and a 10-minute expiry.
+2. Transfer the token privately to the desktop and exchange it once at
+   `/api/v1/device-enrollment/exchange` over verified HTTPS. Do not put either
+   token in command-line arguments, URLs, logs, SQLite, profile exports, or
+   browser storage. No GUI, QR code, or pairing deep-link UX is supplied.
+3. Store the returned bearer immediately in `PlatformRuntime::SecretStore`
+   under the profile/credential identity. SQLite stores only non-secret
+   profile/enrollment IDs and timestamps. Linux requires an available unlocked
+   Secret Service; Windows uses Credential Manager. Other native platforms are
+   explicitly unsupported at this boundary. Missing/locked/unavailable secure
+   storage fails closed, without plaintext or in-memory production fallback.
+4. If exchange committed but the response was lost, do not retry the grant.
+   Browser owner + CSRF POSTs `{}` to
+   `/api/v1/devices/{device_id}/credentials/revoke-all`, invalidating all Device
+   credentials and outstanding grants while preserving its ACTIVE lifecycle.
+   Create a fresh grant for the same Device and explicitly replace the local
+   credential. If the credential ID is known, individual revoke is available
+   at `/api/v1/devices/{device_id}/credentials/{credential_id}/revoke`.
+5. Local forget/disconnect removes the local secret only. It does not imply
+   server revocation while offline and does not delete replica data/progress.
+   Server revoke/new enrollment is explicit; automatic rotation is deferred.
+
+Keep `20260828000000_device_credentials_enrollment.sql` in the ordered server
+migration set. It adds digest-only credentials/grants with composite owner/
+Device FKs, TTL/consumption/revocation checks, and audit linkage. Grant consume,
+new-device activation, and credential issuance are atomic. Credential/Device/
+owner status is checked in PostgreSQL per request, so revocation takes effect
+on the next request rather than after an auth cache expiry. An already running
+download is not forcibly recalled. The local forward-only
+`crates/client-sync/migrations/0002_server_profiles.sql` adds profile/replica
+binding and non-secret enrollment/cleanup metadata without changing the
+initial SQLite migration or copying any bearer secret.
+
+The server does not expose a stable installation ID. Verified origin/TLS is
+the current binding; changing a profile origin or a replica's bound profile is
+not an implicit migration/re-enrollment operation. Use typed connection health
+(`ONLINE`, `AUTH_REQUIRED`, `DEVICE_REVOKED`, `SERVER_UNAVAILABLE`, `TLS_ERROR`,
+`PROTOCOL_ERROR`) rather than deleting local state when a connection fails.
+Native SecretStore runtime evidence requires an unlocked actual OS backend;
+test-store success and cross-compilation alone do not establish native parity.
+
+| Prompt 38 capability | Status |
+|---|---|
+| desktop inbound sync core | `VALIDATED` |
+| desktop server profiles | `IMPLEMENTED` |
+| device enrollment groundwork | `IMPLEMENTED` |
+| device bearer authentication | `IMPLEMENTED` |
+| secure desktop credential persistence | `IMPLEMENTED` |
+| production HTTP SyncRemote | `IMPLEMENTED` |
+| filesystem observation | `IMPLEMENTED` |
+| durable outbound intent capture | `IMPLEMENTED` |
+| automatic outbound mutation submission | `NOT IMPLEMENTED` |
+| automatic conflict resolution | `NOT IMPLEMENTED` |
+| desktop GUI/pairing UX | `NOT IMPLEMENTED` |
+
 ## Supported deployment profiles
 
 | Profile | Purpose | Required services | Support level target |
@@ -258,11 +344,19 @@ routes; an unset root fails closed rather than selecting a default. The storage
 crate's content-read application service and API download transport use the same
 metadata/`ObjectStore` ports. Safe version restore is implemented at the
 authenticated API/metadata boundary but still requires the PostgreSQL metadata
-service; its disposable end-to-end gate is environment-dependent. HTTP
-download production configuration/preflight, sync, backup, and installer wiring
-remain `PLANNED`; metadata-only GC planning and the internal physical execution
-service are `IMPLEMENTED/VALIDATED`, while the private bounded GC worker is
-`IMPLEMENTED`.
+service. With `DATABASE_URL`, the API also requires
+`SYNVEIL_REBASELINE_TOKEN_KEY` as exactly 64 lowercase hexadecimal characters
+(32 random bytes). It is a deployment secret: keep the same value across
+process restarts and replicas, inject it through the supported secret boundary,
+and never print it or commit it. Missing/malformed configuration fails startup
+closed; rotating it deliberately invalidates outstanding bootstrap cursor and
+completion tokens, so OPEN sessions must restart. HTTP download production
+configuration/preflight, automatic conflict resolution, backup, and installer
+wiring remain `PLANNED`; typed client mutation submission, per-device
+feed/checkpoint validation, and the server-side logical rebaseline bootstrap
+are implemented/validated at their respective boundaries. Metadata-only GC
+planning and the internal physical execution service are
+`IMPLEMENTED/VALIDATED`, while the private bounded GC worker is `IMPLEMENTED`.
 Version-history metadata itself remains available from the configured metadata
 service without object-root setup.
 

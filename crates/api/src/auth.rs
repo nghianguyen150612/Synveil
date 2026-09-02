@@ -1,4 +1,4 @@
-//! HTTP authentication boundary for browser sessions.
+//! HTTP authentication boundary for distinct browser and device principals.
 //!
 //! This module owns request extraction, JSON shapes, cookie presentation, and
 //! middleware. Password/session policy remains in `synveil-auth`; persistence
@@ -17,15 +17,68 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use synveil_auth::{
     AuthError, AuthenticatedSession, AuthenticationService, PasswordHasherConfig,
-    PlaintextPassword, SessionConfig, SessionExpiry, SessionPrincipal, SessionToken,
+    PlaintextPassword, SessionConfig, SessionExpiry, SessionId, SessionPrincipal, SessionToken,
 };
-use synveil_core::LoginIdentifier;
+use synveil_core::{DeviceCredentialId, DeviceCredentialSecret, DeviceId, LoginIdentifier, UserId};
 use synveil_metadata::DatabasePool;
 
-use crate::{ApiError, ApiState, RequestContext, cookies, csrf, error::map_auth_error};
+use crate::{
+    ApiError, ApiState, RequestContext, cookies, csrf, device_auth::map_device_auth_error,
+    error::map_auth_error,
+};
 
 pub const LOGIN_BODY_LIMIT_BYTES: usize = 16 * 1024;
 pub const BOOTSTRAP_BODY_LIMIT_BYTES: usize = 16 * 1024;
+
+/// Authentication classes are explicit: a device is never represented by a
+/// fabricated browser session. This extension is installed only after the
+/// corresponding authentication backend has verified the request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AuthenticatedPrincipal {
+    BrowserSession {
+        owner_user_id: UserId,
+        session_id: SessionId,
+    },
+    DeviceCredential {
+        owner_user_id: UserId,
+        device_id: DeviceId,
+        credential_id: DeviceCredentialId,
+    },
+}
+
+impl AuthenticatedPrincipal {
+    #[must_use]
+    pub const fn owner_user_id(self) -> UserId {
+        match self {
+            Self::BrowserSession { owner_user_id, .. }
+            | Self::DeviceCredential { owner_user_id, .. } => owner_user_id,
+        }
+    }
+
+    #[must_use]
+    pub const fn auth_class(self) -> &'static str {
+        match self {
+            Self::BrowserSession { .. } => "BROWSER_SESSION",
+            Self::DeviceCredential { .. } => "DEVICE_CREDENTIAL",
+        }
+    }
+
+    pub(crate) fn require_device(self, requested: DeviceId) -> Result<(), ApiError> {
+        if matches!(self, Self::DeviceCredential { device_id, .. } if device_id != requested) {
+            return Err(ApiError::Core(synveil_core::ErrorCode::NotFound));
+        }
+        Ok(())
+    }
+}
+
+impl From<SessionPrincipal> for AuthenticatedPrincipal {
+    fn from(principal: SessionPrincipal) -> Self {
+        Self::BrowserSession {
+            owner_user_id: principal.user_id(),
+            session_id: principal.session_id(),
+        }
+    }
+}
 
 /// Safe transport-neutral view of the persistent one-time bootstrap state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -471,6 +524,14 @@ pub(crate) async fn require_authentication(
     mut request: Request,
     next: Next,
 ) -> Response {
+    // Browser-only routes never downgrade an invalid/unauthorized bearer to
+    // cookie authority, even if a valid browser session is also supplied.
+    if request
+        .headers()
+        .contains_key(axum::http::header::AUTHORIZATION)
+    {
+        return ApiError::Unauthorized.into_response();
+    }
     let token = match session_token_from_request(&request) {
         Ok(token) => token,
         Err(error) => return error.into_response(),
@@ -479,8 +540,69 @@ pub(crate) async fn require_authentication(
         Ok(context) => context,
         Err(error) => return error.into_response(),
     };
+    request
+        .extensions_mut()
+        .insert(AuthenticatedPrincipal::from(context.principal()));
     request.extensions_mut().insert(context);
     next.run(request).await
+}
+
+/// Installed only on the explicitly enumerated inbound-sync/read routes.
+/// Bearer parsing is centralized, bounded and never falls back to cookies.
+pub(crate) async fn require_inbound_authentication(
+    State(state): State<ApiState>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    if !request
+        .headers()
+        .contains_key(axum::http::header::AUTHORIZATION)
+    {
+        return require_authentication(State(state), request, next).await;
+    }
+    if request.headers().contains_key(axum::http::header::COOKIE) {
+        return ApiError::Unauthorized.into_response();
+    }
+    let secret = match device_secret_from_headers(request.headers()) {
+        Ok(secret) => secret,
+        Err(error) => return error.into_response(),
+    };
+    if let Some(value) = request
+        .headers_mut()
+        .get_mut(axum::http::header::AUTHORIZATION)
+    {
+        value.set_sensitive(true);
+    }
+    let principal = match state.device_auth_backend().authenticate(&secret).await {
+        Ok(principal) => principal,
+        Err(error) => return map_device_auth_error(error).into_response(),
+    };
+    // Deliberately no AuthContext/session token is installed for this class.
+    request.extensions_mut().remove::<AuthContext>();
+    request
+        .extensions_mut()
+        .insert(AuthenticatedPrincipal::DeviceCredential {
+            owner_user_id: principal.owner_user_id,
+            device_id: principal.device_id,
+            credential_id: principal.credential_id,
+        });
+    next.run(request).await
+}
+
+fn device_secret_from_headers(
+    headers: &axum::http::HeaderMap,
+) -> Result<DeviceCredentialSecret, ApiError> {
+    let mut values = headers.get_all(axum::http::header::AUTHORIZATION).iter();
+    let value = values.next().ok_or(ApiError::Unauthorized)?;
+    if values.next().is_some() || value.as_bytes().len() > 128 {
+        return Err(ApiError::Unauthorized);
+    }
+    let value = value.to_str().map_err(|_| ApiError::Unauthorized)?;
+    let (scheme, secret) = value.split_once(' ').ok_or(ApiError::Unauthorized)?;
+    if !scheme.eq_ignore_ascii_case("bearer") {
+        return Err(ApiError::Unauthorized);
+    }
+    DeviceCredentialSecret::parse(secret).map_err(|_| ApiError::Unauthorized)
 }
 
 /// Enforce the browser CSRF contract for authenticated state-changing
@@ -497,6 +619,12 @@ pub(crate) async fn require_csrf_for_mutations(
             | &axum::http::Method::PATCH
             | &axum::http::Method::DELETE
     ) {
+        if matches!(
+            request.extensions().get::<AuthenticatedPrincipal>(),
+            Some(AuthenticatedPrincipal::DeviceCredential { .. })
+        ) {
+            return next.run(request).await;
+        }
         let Some(context) = request.extensions().get::<AuthContext>() else {
             return ApiError::Unauthorized.into_response();
         };
@@ -515,6 +643,12 @@ pub(crate) async fn logout_boundary(
     mut request: Request,
     next: Next,
 ) -> Response {
+    if request
+        .headers()
+        .contains_key(axum::http::header::AUTHORIZATION)
+    {
+        return ApiError::Unauthorized.into_response();
+    }
     let Some(raw_token) = cookies::read_cookie(request.headers(), cookies::SESSION_COOKIE_NAME)
     else {
         request.extensions_mut().insert(LogoutContext(None));

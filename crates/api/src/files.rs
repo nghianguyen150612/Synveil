@@ -26,7 +26,7 @@ use synveil_metadata::{
 
 use crate::{
     ApiError, ApiState, EtagKey, RequestContext,
-    auth::{AuthContext, ResponseMeta},
+    auth::{AuthContext, AuthenticatedPrincipal, ResponseMeta},
 };
 
 /// The metadata routes accept only small JSON command documents. This is an
@@ -201,6 +201,8 @@ pub(crate) struct NodeAttributes {
     name: String,
     kind: &'static str,
     state: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current_version_id: Option<String>,
     created_at: String,
     updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -306,14 +308,14 @@ pub(crate) async fn create_directory(
 
 pub(crate) async fn get_node(
     State(state): State<ApiState>,
-    Extension(auth): Extension<AuthContext>,
+    Extension(auth): Extension<AuthenticatedPrincipal>,
     Extension(context): Extension<RequestContext>,
     Path(node_id): Path<String>,
 ) -> Result<Response, ApiError> {
     let node_id = parse_id::<NodeId>(&node_id)?;
     let node = state
         .file_metadata_backend()
-        .get_node(auth.principal().user_id(), node_id)
+        .get_node(auth.owner_user_id(), node_id)
         .await
         .map_err(|error| map_file_error(error, Some(node_id), state.etag_key()))?;
     Ok(node_response(
@@ -531,6 +533,7 @@ fn node_resource(node: &Node, policy: TrashRetentionPolicy) -> NodeResource {
             name: node.name().as_str().to_owned(),
             kind: node.kind().as_str(),
             state: node.state().as_str(),
+            current_version_id: node.current_version_id().map(|id| id.to_string()),
             created_at: node.created_at().to_string(),
             updated_at: node.updated_at().to_string(),
             trashed_at: trashed_at.map(|timestamp| timestamp.to_string()),

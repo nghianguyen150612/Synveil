@@ -9,13 +9,14 @@ use std::{fmt, str::FromStr};
 use async_trait::async_trait;
 use sqlx::{Postgres, Transaction};
 use synveil_core::{
-    FileVersion, FileVersionId, Library, LibraryId, LibraryStatus, LogicalName, Node, NodeId,
-    NodeKind, ObjectId, ObjectReference, ObjectReplicaId, Revision, Sha256Digest, Timestamp,
-    UploadOperation, UploadSessionId, UploadSessionState, UserId,
+    ChangeKind, FileVersion, FileVersionId, Library, LibraryId, LibraryStatus, LogicalName, Node,
+    NodeId, NodeKind, ObjectId, ObjectReference, ObjectReplicaId, Revision, Sha256Digest,
+    Timestamp, UploadOperation, UploadSessionId, UploadSessionState, UserId,
 };
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+use crate::journal::{JournalChange, acquire_namespace_guard, append_changes};
 use crate::{
     DatabasePool, DomainRepository, FileVersionRow, LibraryRow, MappingError, MetadataError,
     NodeRow, ObjectReplicaRow, ObjectRow, UploadSessionRow,
@@ -597,7 +598,7 @@ async fn load_upload_for_update(
         .map_err(Into::into)
 }
 
-async fn load_owned_library_for_update(
+async fn load_owned_library(
     transaction: &mut Transaction<'_, Postgres>,
     owner_user_id: UserId,
     library_id: LibraryId,
@@ -605,7 +606,7 @@ async fn load_owned_library_for_update(
     let row = sqlx::query_as::<_, LibraryRow>(
         "SELECT id, owner_user_id, name, root_node_id, dedup_domain_id, status,
                 created_at, updated_at, revision::TEXT AS revision
-         FROM libraries WHERE id = $1 AND owner_user_id = $2 FOR UPDATE",
+         FROM libraries WHERE id = $1 AND owner_user_id = $2",
     )
     .bind(library_id.into_uuid())
     .bind(owner_user_id.into_uuid())
@@ -618,7 +619,7 @@ async fn load_owned_library_for_update(
     let root = sqlx::query_as::<_, NodeRow>(
         "SELECT id, library_id, parent_node_id, kind, name, current_version_id,
                 state, trashed_at, created_at, updated_at, revision::TEXT AS revision
-         FROM nodes WHERE id = $1 AND library_id = $2 FOR UPDATE",
+         FROM nodes WHERE id = $1 AND library_id = $2",
     )
     .bind(row.root_node_id)
     .bind(row.id)
@@ -805,6 +806,18 @@ fn completed_from_record(record: &UploadSessionRecord) -> Result<UploadCompletio
         }))
 }
 
+fn same_upload_create_semantics(record: &UploadSessionRecord, input: &NewUploadSession) -> bool {
+    record.owner_user_id == input.owner_user_id
+        && record.library_id == input.library_id
+        && record.operation == input.operation
+        && record.target_node_id == input.target_node_id
+        && record.target_parent_node_id == input.target_parent_node_id
+        && record.target_name == input.target_name
+        && record.expected_node_revision == input.expected_node_revision
+        && record.expected_length == input.expected_length
+        && record.expected_sha256 == input.expected_sha256
+}
+
 #[async_trait]
 impl UploadMetadataBackend for PostgresUploadRepository {
     async fn create_upload_session(
@@ -818,8 +831,7 @@ impl UploadMetadataBackend for PostgresUploadRepository {
             .await
             .map_err(MetadataError::from)?;
         let Some(library) =
-            load_owned_library_for_update(&mut transaction, input.owner_user_id, input.library_id)
-                .await?
+            load_owned_library(&mut transaction, input.owner_user_id, input.library_id).await?
         else {
             return Err(MetadataError::Mapping(MappingError::RelationMismatch {
                 relation: "upload_sessions.library",
@@ -830,6 +842,7 @@ impl UploadMetadataBackend for PostgresUploadRepository {
                 synveil_core::DomainError::LibraryNotWritable,
             )));
         }
+        acquire_namespace_guard(&mut transaction, input.library_id).await?;
         let active_sessions: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM upload_sessions
              WHERE owner_user_id = $1 AND library_id = $2
@@ -900,7 +913,7 @@ impl UploadMetadataBackend for PostgresUploadRepository {
         }
 
         let row = record_from_new(&input);
-        sqlx::query(
+        let insert = sqlx::query(
             "INSERT INTO upload_sessions
                 (id, owner_user_id, library_id, operation, target_node_id,
                  target_parent_node_id, target_name, expected_node_revision,
@@ -935,8 +948,28 @@ impl UploadMetadataBackend for PostgresUploadRepository {
         .bind(encode_timestamp(row.updated_at))
         .bind(encode_timestamp(row.expires_at))
         .execute(&mut *transaction)
-        .await
-        .map_err(MetadataError::from)?;
+        .await;
+        if let Err(error) = insert {
+            let duplicate = matches!(
+                error.as_database_error().and_then(|database| database.code()),
+                Some(code) if code.as_ref() == "23505"
+            );
+            transaction.rollback().await.map_err(MetadataError::from)?;
+            if !duplicate {
+                return Err(MetadataError::from(error));
+            }
+            let existing = load_upload(&self.pool, input.owner_user_id, input.id)
+                .await?
+                .ok_or(MetadataError::Mapping(MappingError::RelationMismatch {
+                    relation: "upload_sessions.id",
+                }))?;
+            if !same_upload_create_semantics(&existing, &input) {
+                return Err(MetadataError::Mapping(MappingError::RelationMismatch {
+                    relation: "upload_sessions.idempotency_key",
+                }));
+            }
+            return Ok(existing);
+        }
         transaction.commit().await.map_err(MetadataError::from)?;
         Ok(row)
     }
@@ -1286,8 +1319,7 @@ impl UploadMetadataBackend for PostgresUploadRepository {
             },
         ))?;
         let Some(library) =
-            load_owned_library_for_update(&mut transaction, owner_user_id, record.library_id)
-                .await?
+            load_owned_library(&mut transaction, owner_user_id, record.library_id).await?
         else {
             return Ok(UploadFinalization::NotReady(record));
         };
@@ -1295,6 +1327,7 @@ impl UploadMetadataBackend for PostgresUploadRepository {
             transaction.commit().await.map_err(MetadataError::from)?;
             return Ok(UploadFinalization::Terminal(record));
         }
+        acquire_namespace_guard(&mut transaction, record.library_id).await?;
 
         let node = match record.operation {
             UploadOperation::CreateFile => {
@@ -1391,6 +1424,16 @@ impl UploadMetadataBackend for PostgresUploadRepository {
         insert_replica(&mut transaction, record.object_replica_id, object, &receipt).await?;
         insert_file_version(&mut transaction, version).await?;
         update_node(&mut transaction, &next_node).await?;
+        append_changes(
+            &mut transaction,
+            owner_user_id,
+            record.library_id,
+            &[JournalChange::from_node(
+                ChangeKind::FileContentCommitted,
+                &next_node,
+            )],
+        )
+        .await?;
 
         let completion = UploadCompletion {
             session_id,

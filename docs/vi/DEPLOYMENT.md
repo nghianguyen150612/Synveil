@@ -28,6 +28,89 @@ lifecycle và production support bên dưới vẫn là kế hoạch; GC plannin
 metadata-only, execution vật lý và worker orchestration nội bộ đã có boundary
 được mô tả.
 
+Prompt 37 implement riêng production HTTP `SyncRemote` library, desktop server
+profile, one-time enrollment/device bearer auth và native persistence adapter
+của platform SecretStore hiện có. Đây không phải desktop app đã phát hành,
+installer hay public TLS listener mới của server.
+
+## Vận hành desktop connection Prompt 37
+
+API binary vẫn phục vụ HTTP ở `127.0.0.1:3000` mặc định. Production deployment
+phải đặt nó sau trusted HTTPS reverse proxy và giữ listener cleartext
+loopback/private; không expose trực tiếp ra mạng không tin cậy.
+`SYNVEIL_BIND_ADDR` không bật TLS. Đặt `SYNVEIL_PUBLIC_ORIGIN` của browser thành
+canonical HTTPS origin cho CSRF check hiện có. Desktop profile trỏ tới origin
+root đó, không phải `/api/v1` hay proxy subpath. Certificate và hostname
+verification là bắt buộc; không implement self-signed bypass, trust-all, TOFU
+hay certificate pinning.
+
+Profile production chỉ nhận HTTPS. Constructor non-production riêng chỉ nhận
+HTTP tại literal loopback IPv4/IPv6 cho test deterministic, không phải escape
+hatch deployment. Tắt mọi redirect, kể cả HTTP → HTTPS: phải cấu hình HTTPS
+origin cuối ngay từ đầu. Adapter không dùng proxy environment hay browser
+cookie jar. Default hữu hạn: connect 10 giây, header 20 giây, metadata 30 giây,
+stream idle 30 giây, toàn download 1 giờ; body metadata tối đa 8 MiB, API error
+tối đa 64 KiB. Configuration vẫn bounded và không bật automatic retry, đặc
+biệt one-time exchange.
+
+Enrollment và recovery là application operation tường minh:
+
+1. Browser owner đã authenticate lấy CSRF proof hiện có rồi POST strict target
+   tới `/api/v1/devices/enrollment-grants`: display name mới hoặc ID Device
+   PENDING/ACTIVE thuộc mình. Response trả một enrollment token high-entropy,
+   Device ID và expiry 10 phút.
+2. Truyền token riêng tư tới desktop rồi exchange đúng một lần ở
+   `/api/v1/device-enrollment/exchange` qua verified HTTPS. Không đặt token nào
+   trong command-line argument, URL, log, SQLite, profile export hay browser
+   storage. Không cung cấp GUI, QR code hay pairing deep-link UX.
+3. Lưu bearer trả về ngay trong `PlatformRuntime::SecretStore` dưới profile/
+   credential identity. SQLite chỉ lưu ID/timestamp profile và enrollment không
+   bí mật. Linux cần Secret Service available đã unlock; Windows dùng Credential
+   Manager. Native platform khác chưa được hỗ trợ tại boundary này. Secure
+   storage thiếu/locked/unavailable fail closed, không fallback plaintext hay
+   in-memory production.
+4. Nếu exchange đã commit nhưng mất response, không retry grant. Browser owner
+   + CSRF POST `{}` tới `/api/v1/devices/{device_id}/credentials/revoke-all`,
+   invalidate mọi credential và grant chưa dùng của Device nhưng giữ lifecycle
+   ACTIVE. Tạo grant mới cho cùng Device rồi replace local credential tường minh.
+   Nếu biết credential ID, có thể revoke riêng qua
+   `/api/v1/devices/{device_id}/credentials/{credential_id}/revoke`.
+5. Local forget/disconnect chỉ xóa local secret; không hàm ý đã revoke trên
+   server khi offline, không xóa replica data/progress. Server revoke/enrollment
+   mới là explicit; automatic rotation bị hoãn.
+
+Giữ `20260828000000_device_credentials_enrollment.sql` trong ordered server
+migration. Migration thêm digest-only credential/grant, composite owner/Device
+FK, TTL/consumption/revocation check và audit linkage. Consume grant, activate
+Device mới và issue credential là atomic. Mỗi request check trạng thái
+credential/Device/owner trong PostgreSQL nên revoke có hiệu lực ở request kế
+tiếp, không đợi auth cache expiry. Không ép thu hồi download đã chạy. Local
+forward-only `crates/client-sync/migrations/0002_server_profiles.sql` thêm
+profile/replica binding và non-secret enrollment/cleanup metadata, không sửa
+initial SQLite migration hay copy bearer secret.
+
+Server chưa expose stable installation ID. Verified origin/TLS là binding
+hiện tại; đổi origin của profile hoặc profile bind vào replica không phải
+implicit migration/re-enrollment. Dùng typed connection health (`ONLINE`,
+`AUTH_REQUIRED`, `DEVICE_REVOKED`, `SERVER_UNAVAILABLE`, `TLS_ERROR`,
+`PROTOCOL_ERROR`) thay vì xóa local state khi mất kết nối. Bằng chứng native
+SecretStore cần OS backend thật đã unlock; test-store thành công và
+cross-compilation không chứng minh native parity.
+
+| Capability Prompt 38 | Status |
+|---|---|
+| desktop inbound sync core | `VALIDATED` |
+| desktop server profiles | `IMPLEMENTED` |
+| device enrollment groundwork | `IMPLEMENTED` |
+| device bearer authentication | `IMPLEMENTED` |
+| secure desktop credential persistence | `IMPLEMENTED` |
+| production HTTP SyncRemote | `IMPLEMENTED` |
+| filesystem observation | `IMPLEMENTED` |
+| durable outbound intent capture | `IMPLEMENTED` |
+| automatic outbound mutation submission | `NOT IMPLEMENTED` |
+| automatic conflict resolution | `NOT IMPLEMENTED` |
+| desktop GUI/pairing UX | `NOT IMPLEMENTED` |
+
 ## Profile deployment được hỗ trợ
 
 | Profile | Mục đích | Service bắt buộc | Target mức hỗ trợ |
@@ -254,13 +337,20 @@ Composition root API developer nhận `SYNVEIL_OBJECT_ROOT` chỉ cùng
 route đã authenticate; root chưa đặt sẽ fail closed thay vì tự chọn default.
 Content-read application service và API download transport dùng chung port
 metadata/`ObjectStore`. Safe version restore đã implement ở boundary
-API/metadata authenticate nhưng vẫn cần metadata service PostgreSQL; gate
-end-to-end disposable của nó phụ thuộc môi trường. Configuration/preflight
-download production, lifecycle object logic rộng hơn, sync, backup và installer
-wiring vẫn `PLANNED`; metadata-only GC planning và internal physical execution
-service đã `IMPLEMENTED/VALIDATED`, còn GC worker private bounded đã
-`IMPLEMENTED`. Metadata version-history vẫn có thể dùng từ metadata service đã
-cấu hình mà không cần object-root setup.
+API/metadata authenticate nhưng vẫn cần metadata service PostgreSQL. Khi có
+`DATABASE_URL`, API còn bắt buộc `SYNVEIL_REBASELINE_TOKEN_KEY` gồm chính xác 64
+ký tự hexadecimal chữ thường (32 byte ngẫu nhiên). Đây là deployment secret:
+giữ cùng giá trị qua process restart và mọi replica, inject qua secret boundary
+được hỗ trợ, không print hay commit. Cấu hình thiếu/sai làm startup fail closed;
+rotate key cố ý vô hiệu cursor/completion token bootstrap đang tồn tại nên
+session `OPEN` phải restart. Configuration/preflight download production,
+automatic conflict resolution, backup và installer wiring vẫn `PLANNED`; typed
+client mutation submission, feed/checkpoint theo device và bootstrap rebaseline
+logical server-side đã implement/validate tại boundary tương ứng. Metadata-only
+GC planning và internal
+physical execution service đã `IMPLEMENTED/VALIDATED`, còn GC worker private
+bounded đã `IMPLEMENTED`. Metadata version-history vẫn có thể dùng từ metadata
+service đã cấu hình mà không cần object-root setup.
 
 ### Validation object-root local
 

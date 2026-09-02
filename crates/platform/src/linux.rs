@@ -12,8 +12,8 @@ impl PathResolver for LinuxPathResolver {
     }
 }
 
-/// Minimal Linux runtime. Service and secure-secret operations remain
-/// explicitly unsupported until their native adapters are reviewed.
+/// Linux runtime with persistent native Secret Service storage on Linux.
+/// Service lifecycle operations remain explicitly unsupported.
 pub struct LinuxPlatformRuntime {
     inner: MinimalPlatformRuntime,
 }

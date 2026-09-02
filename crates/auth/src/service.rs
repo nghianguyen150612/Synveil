@@ -92,6 +92,11 @@ impl<'pool> AuthenticationService<'pool> {
         password: PlaintextPassword,
         observed_at: Timestamp,
     ) -> Result<User, AuthError> {
+        // A live server clock commonly contains nanoseconds while the
+        // PostgreSQL metadata boundary deliberately accepts microseconds only.
+        // Normalize once, as session creation already does, so user,
+        // credential, initial library and root share one durable timestamp.
+        let observed_at = truncate_to_microseconds(observed_at);
         let password_hash = StoredPasswordHash::hash(self.password_config, &password)?;
         let user = User::rehydrate_with_admin(
             UserId::new(),

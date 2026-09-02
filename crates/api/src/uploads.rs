@@ -17,7 +17,8 @@ use axum::{
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use synveil_core::{
-    LibraryId, LogicalName, NodeId, Revision, Sha256Digest, UploadSessionId, UserId,
+    LibraryId, LogicalName, NodeId, OutboundIntentId, Revision, Sha256Digest, UploadSessionId,
+    UserId,
 };
 use synveil_metadata::UploadCompletion;
 use synveil_storage::{
@@ -28,7 +29,7 @@ use synveil_storage::{
 
 use crate::{
     ApiError, ApiState, RequestContext,
-    auth::{AuthContext, ResponseMeta},
+    auth::{AuthenticatedPrincipal, ResponseMeta},
 };
 
 /// Create-session commands are deliberately small JSON documents.
@@ -186,6 +187,7 @@ impl UploadBackend for UnavailableUploadBackend {
 pub(crate) enum CreateUploadSessionRequest {
     #[serde(rename = "CREATE_FILE")]
     CreateFile {
+        idempotency_key: String,
         library_id: String,
         parent_id: String,
         name: String,
@@ -194,6 +196,7 @@ pub(crate) enum CreateUploadSessionRequest {
     },
     #[serde(rename = "REPLACE_CONTENT")]
     ReplaceContent {
+        idempotency_key: String,
         library_id: String,
         node_id: String,
         expected_revision: String,
@@ -266,7 +269,6 @@ struct UploadCompletionResource {
 struct UploadCompletionAttributes {
     node_id: String,
     file_version_id: String,
-    object_id: String,
     node_revision: String,
     bytes: String,
     sha256: String,
@@ -275,11 +277,11 @@ struct UploadCompletionAttributes {
 
 pub(crate) async fn create_upload_session(
     State(state): State<ApiState>,
-    Extension(auth): Extension<AuthContext>,
+    Extension(principal): Extension<AuthenticatedPrincipal>,
     Extension(context): Extension<RequestContext>,
     Json(payload): Json<CreateUploadSessionRequest>,
 ) -> Result<Response, ApiError> {
-    let request = create_application_request(auth.principal().user_id(), payload)?;
+    let request = create_application_request(principal.owner_user_id(), payload)?;
     let session = state
         .upload_backend()
         .create_upload_session(request)
@@ -295,14 +297,14 @@ pub(crate) async fn create_upload_session(
 
 pub(crate) async fn get_upload_session(
     State(state): State<ApiState>,
-    Extension(auth): Extension<AuthContext>,
+    Extension(principal): Extension<AuthenticatedPrincipal>,
     Extension(context): Extension<RequestContext>,
     Path(session_id): Path<String>,
 ) -> Result<Response, ApiError> {
     let session_id = parse_id::<UploadSessionId>(&session_id)?;
     let session = state
         .upload_backend()
-        .get_upload_session(auth.principal().user_id(), session_id)
+        .get_upload_session(principal.owner_user_id(), session_id)
         .await
         .map_err(ApiError::from)?;
     Ok(session_response(StatusCode::OK, session, &context, false))
@@ -310,7 +312,7 @@ pub(crate) async fn get_upload_session(
 
 pub(crate) async fn append_upload_chunk(
     State(state): State<ApiState>,
-    Extension(auth): Extension<AuthContext>,
+    Extension(principal): Extension<AuthenticatedPrincipal>,
     Path(session_id): Path<String>,
     headers: HeaderMap,
     body: Body,
@@ -326,7 +328,7 @@ pub(crate) async fn append_upload_chunk(
     let progress = state
         .upload_backend()
         .append_upload_stream(
-            auth.principal().user_id(),
+            principal.owner_user_id(),
             session_id,
             expected_offset,
             boxed_upload_stream(stream),
@@ -342,14 +344,14 @@ pub(crate) async fn append_upload_chunk(
 
 pub(crate) async fn complete_upload(
     State(state): State<ApiState>,
-    Extension(auth): Extension<AuthContext>,
+    Extension(principal): Extension<AuthenticatedPrincipal>,
     Extension(context): Extension<RequestContext>,
     Path(session_id): Path<String>,
 ) -> Result<Response, ApiError> {
     let session_id = parse_id::<UploadSessionId>(&session_id)?;
     let completion = state
         .upload_backend()
-        .complete_upload(auth.principal().user_id(), session_id)
+        .complete_upload(principal.owner_user_id(), session_id)
         .await
         .map_err(ApiError::from)?;
     let mut response = Json(ResourceResponse {
@@ -363,14 +365,14 @@ pub(crate) async fn complete_upload(
 
 pub(crate) async fn abort_upload(
     State(state): State<ApiState>,
-    Extension(auth): Extension<AuthContext>,
+    Extension(principal): Extension<AuthenticatedPrincipal>,
     Extension(context): Extension<RequestContext>,
     Path(session_id): Path<String>,
 ) -> Result<Response, ApiError> {
     let session_id = parse_id::<UploadSessionId>(&session_id)?;
     let session = state
         .upload_backend()
-        .abort_upload(auth.principal().user_id(), session_id)
+        .abort_upload(principal.owner_user_id(), session_id)
         .await
         .map_err(ApiError::from)?;
     Ok(session_response(StatusCode::OK, session, &context, false))
@@ -380,14 +382,16 @@ fn create_application_request(
     owner_user_id: UserId,
     payload: CreateUploadSessionRequest,
 ) -> Result<ApplicationCreateRequest, ApiError> {
-    let (target, expected_bytes, expected_sha256) = match payload {
+    let (idempotency_key, target, expected_bytes, expected_sha256) = match payload {
         CreateUploadSessionRequest::CreateFile {
+            idempotency_key,
             library_id,
             parent_id,
             name,
             expected_bytes,
             expected_sha256,
         } => (
+            idempotency_key,
             UploadTargetRequest::CreateFile {
                 library_id: parse_id::<LibraryId>(&library_id)?,
                 parent_node_id: parse_id::<NodeId>(&parent_id)?,
@@ -397,12 +401,14 @@ fn create_application_request(
             expected_sha256,
         ),
         CreateUploadSessionRequest::ReplaceContent {
+            idempotency_key,
             library_id,
             node_id,
             expected_revision,
             expected_bytes,
             expected_sha256,
         } => (
+            idempotency_key,
             UploadTargetRequest::ReplaceContent {
                 library_id: parse_id::<LibraryId>(&library_id)?,
                 node_id: parse_id::<NodeId>(&node_id)?,
@@ -415,6 +421,7 @@ fn create_application_request(
     };
 
     Ok(ApplicationCreateRequest {
+        idempotency_key: parse_id::<OutboundIntentId>(&idempotency_key)?,
         owner_user_id,
         target,
         expected_length: parse_decimal(&expected_bytes).map_err(|_| ApiError::InvalidRequest)?,
@@ -577,7 +584,6 @@ fn completion_resource(completion: &UploadCompletion) -> UploadCompletionResourc
         attributes: UploadCompletionAttributes {
             node_id: completion.node_id.to_string(),
             file_version_id: completion.file_version_id.to_string(),
-            object_id: completion.object_id.to_string(),
             node_revision: completion.node_revision.to_string(),
             bytes: completion.length.to_string(),
             sha256: completion.sha256.to_string(),

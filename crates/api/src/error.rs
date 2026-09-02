@@ -6,7 +6,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::Map;
 use synveil_auth::AuthError;
-use synveil_core::ErrorCode;
+use synveil_core::{ConflictLifecycle, ConflictResolutionId, ErrorCode, SyncConflictId, Timestamp};
+use synveil_metadata::MutationConflict;
 use synveil_storage::{ContentReadError, UploadError};
 
 /// Stable public error envelope matching the reviewed API contract.
@@ -35,14 +36,53 @@ pub enum ApiError {
         current_etag: Option<String>,
     },
     IdempotencyConflict,
+    MutationIdConflict,
+    MutationConflict {
+        conflict_id: SyncConflictId,
+        conflict: Box<MutationConflict>,
+        replayed: bool,
+    },
+    InvalidConflictResolution,
+    ResolutionIdConflict,
+    ConflictNotOpen {
+        lifecycle: ConflictLifecycle,
+    },
+    ResolutionConflict {
+        resolution_id: ConflictResolutionId,
+        conflict: Box<MutationConflict>,
+        completed_at: Timestamp,
+        replayed: bool,
+    },
+    ConflictDependencyUnavailable,
+    ConflictInvalidPersistedData,
     PreconditionRequired,
     InvalidRequest,
+    InvalidMutation,
     InvalidUploadOffset,
     PayloadTooLarge,
     UnsupportedMediaType,
     Unauthorized,
+    InvalidEnrollment,
+    DeviceRevoked,
     Forbidden,
     BootstrapClosed,
+    SyncInvalidLimit,
+    SyncInvalidAckToken,
+    SyncCheckpointConflict,
+    RebaselineInvalidLimit,
+    RebaselineInvalidCursor,
+    RebaselineInvalidBootstrapToken,
+    RebaselineBootstrapExpired,
+    RebaselineBootstrapConflict,
+    RebaselineDependencyUnavailable,
+    RebaselineInvalidPersistedData,
+    MutationDependencyUnavailable,
+    MutationInvalidPersistedData,
+    SyncRebaselineRequired {
+        reason: &'static str,
+        current_epoch: String,
+        minimum_retained_sequence: String,
+    },
     ReadinessUnavailable,
     Internal,
     RangeNotSatisfiable {
@@ -89,16 +129,38 @@ impl ApiError {
             },
             Self::VersionConflict { .. } => StatusCode::CONFLICT,
             Self::IdempotencyConflict => StatusCode::CONFLICT,
+            Self::MutationIdConflict
+            | Self::MutationConflict { .. }
+            | Self::ResolutionIdConflict
+            | Self::ConflictNotOpen { .. }
+            | Self::ResolutionConflict { .. } => StatusCode::CONFLICT,
             Self::PreconditionRequired => StatusCode::PRECONDITION_REQUIRED,
             Self::InvalidRequest => StatusCode::BAD_REQUEST,
+            Self::InvalidMutation | Self::InvalidConflictResolution => StatusCode::BAD_REQUEST,
             Self::InvalidUploadOffset => StatusCode::BAD_REQUEST,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
+            Self::InvalidEnrollment | Self::DeviceRevoked => StatusCode::UNAUTHORIZED,
             Self::Forbidden => StatusCode::FORBIDDEN,
             Self::BootstrapClosed => StatusCode::CONFLICT,
-            Self::ReadinessUnavailable => StatusCode::SERVICE_UNAVAILABLE,
-            Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::SyncInvalidLimit
+            | Self::SyncInvalidAckToken
+            | Self::RebaselineInvalidLimit
+            | Self::RebaselineInvalidCursor
+            | Self::RebaselineInvalidBootstrapToken => StatusCode::BAD_REQUEST,
+            Self::RebaselineBootstrapExpired => StatusCode::GONE,
+            Self::SyncCheckpointConflict
+            | Self::RebaselineBootstrapConflict
+            | Self::SyncRebaselineRequired { .. } => StatusCode::CONFLICT,
+            Self::ReadinessUnavailable
+            | Self::RebaselineDependencyUnavailable
+            | Self::MutationDependencyUnavailable
+            | Self::ConflictDependencyUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+            Self::Internal
+            | Self::RebaselineInvalidPersistedData
+            | Self::MutationInvalidPersistedData
+            | Self::ConflictInvalidPersistedData => StatusCode::INTERNAL_SERVER_ERROR,
             Self::RangeNotSatisfiable { .. } => StatusCode::RANGE_NOT_SATISFIABLE,
             Self::Upload(error) => match error {
                 UploadError::NotFound => StatusCode::NOT_FOUND,
@@ -128,14 +190,38 @@ impl ApiError {
             Self::Core(error) => error.as_str(),
             Self::VersionConflict { .. } => "version_conflict",
             Self::IdempotencyConflict => "idempotency_conflict",
+            Self::MutationIdConflict => "mutation_id_conflict",
+            Self::MutationConflict { .. } => "mutation_conflict",
+            Self::InvalidConflictResolution => "invalid_conflict_resolution",
+            Self::ResolutionIdConflict => "resolution_id_conflict",
+            Self::ConflictNotOpen { .. } => "conflict_not_open",
+            Self::ResolutionConflict { .. } => "resolution_conflict",
+            Self::ConflictDependencyUnavailable => "dependency_unavailable",
+            Self::ConflictInvalidPersistedData => "invalid_persisted_data",
             Self::PreconditionRequired => "precondition_required",
             Self::InvalidRequest => "invalid_request",
+            Self::InvalidMutation => "invalid_mutation",
             Self::InvalidUploadOffset => "invalid_offset",
             Self::PayloadTooLarge => "payload_too_large",
             Self::UnsupportedMediaType => "unsupported_media_type",
             Self::Unauthorized => "authentication_failed",
+            Self::InvalidEnrollment => "invalid_enrollment",
+            Self::DeviceRevoked => "device_revoked",
             Self::Forbidden => "permission_denied",
             Self::BootstrapClosed => "bootstrap_closed",
+            Self::SyncInvalidLimit => "invalid_limit",
+            Self::SyncInvalidAckToken => "invalid_ack_token",
+            Self::SyncCheckpointConflict => "checkpoint_conflict",
+            Self::RebaselineInvalidLimit => "invalid_limit",
+            Self::RebaselineInvalidCursor => "invalid_cursor",
+            Self::RebaselineInvalidBootstrapToken => "invalid_bootstrap_token",
+            Self::RebaselineBootstrapExpired => "bootstrap_expired",
+            Self::RebaselineBootstrapConflict => "bootstrap_conflict",
+            Self::RebaselineDependencyUnavailable => "dependency_unavailable",
+            Self::RebaselineInvalidPersistedData => "invalid_persisted_data",
+            Self::MutationDependencyUnavailable => "dependency_unavailable",
+            Self::MutationInvalidPersistedData => "invalid_persisted_data",
+            Self::SyncRebaselineRequired { .. } => "sync_rebaseline_required",
             Self::ReadinessUnavailable => "internal_dependency_unavailable",
             Self::Internal => "internal_error",
             Self::RangeNotSatisfiable { .. } => "invalid_range",
@@ -154,16 +240,41 @@ impl ApiError {
             Self::Core(error) => error.retryable(),
             Self::VersionConflict { .. }
             | Self::IdempotencyConflict
+            | Self::MutationIdConflict
+            | Self::MutationConflict { .. }
+            | Self::InvalidConflictResolution
+            | Self::ResolutionIdConflict
+            | Self::ConflictNotOpen { .. }
+            | Self::ResolutionConflict { .. }
             | Self::PreconditionRequired
             | Self::InvalidRequest
+            | Self::InvalidMutation
             | Self::InvalidUploadOffset
             | Self::PayloadTooLarge
             | Self::UnsupportedMediaType
             | Self::Unauthorized
+            | Self::InvalidEnrollment
+            | Self::DeviceRevoked
             | Self::Forbidden
             | Self::BootstrapClosed
+            | Self::SyncInvalidLimit
+            | Self::SyncInvalidAckToken
+            | Self::SyncCheckpointConflict
+            | Self::RebaselineInvalidLimit
+            | Self::RebaselineInvalidCursor
+            | Self::RebaselineInvalidBootstrapToken
+            | Self::RebaselineBootstrapExpired
+            | Self::RebaselineBootstrapConflict
+            | Self::RebaselineInvalidPersistedData
+            | Self::MutationInvalidPersistedData
+            | Self::ConflictInvalidPersistedData
+            | Self::SyncRebaselineRequired { .. }
             | Self::RangeNotSatisfiable { .. } => false,
-            Self::ReadinessUnavailable | Self::Internal => true,
+            Self::ReadinessUnavailable
+            | Self::RebaselineDependencyUnavailable
+            | Self::MutationDependencyUnavailable
+            | Self::ConflictDependencyUnavailable
+            | Self::Internal => true,
             Self::Upload(error) => error.retryable(),
         }
     }
@@ -193,8 +304,27 @@ impl ApiError {
             Self::IdempotencyConflict => {
                 "The idempotency key was already used for a different restore request."
             }
+            Self::MutationIdConflict => {
+                "The mutation ID was already used for a different mutation."
+            }
+            Self::MutationConflict { .. } => "The mutation conflicts with newer canonical state.",
+            Self::InvalidConflictResolution => "The conflict resolution request is invalid.",
+            Self::ResolutionIdConflict => {
+                "The resolution ID was already used for a different decision."
+            }
+            Self::ConflictNotOpen { .. } => "The conflict is no longer open.",
+            Self::ResolutionConflict { .. } => {
+                "The canonical resource changed before the resolution was applied."
+            }
+            Self::ConflictDependencyUnavailable => {
+                "A required conflict-management dependency is unavailable."
+            }
+            Self::ConflictInvalidPersistedData => {
+                "Conflict management encountered invalid persisted data."
+            }
             Self::PreconditionRequired => "An If-Match precondition is required.",
             Self::InvalidRequest => "The request is invalid.",
+            Self::InvalidMutation => "The client mutation is invalid.",
             Self::InvalidUploadOffset => {
                 "Upload-Offset must be one canonical unsigned decimal value."
             }
@@ -203,8 +333,39 @@ impl ApiError {
                 "The request content type must be application/octet-stream."
             }
             Self::Unauthorized => "Authentication is required.",
+            Self::InvalidEnrollment => "The enrollment grant is invalid or no longer available.",
+            Self::DeviceRevoked => "The device credential is no longer active.",
             Self::Forbidden => "The request could not be verified.",
             Self::BootstrapClosed => "Initial setup is no longer available.",
+            Self::SyncInvalidLimit => "The synchronization feed limit is invalid.",
+            Self::SyncInvalidAckToken => "The synchronization acknowledgment token is invalid.",
+            Self::SyncCheckpointConflict => {
+                "The synchronization checkpoint changed; fetch the feed again."
+            }
+            Self::RebaselineInvalidLimit => "The snapshot bootstrap page limit is invalid.",
+            Self::RebaselineInvalidCursor => "The snapshot bootstrap cursor is invalid.",
+            Self::RebaselineInvalidBootstrapToken => {
+                "The snapshot bootstrap completion token is invalid."
+            }
+            Self::RebaselineBootstrapExpired => "The snapshot bootstrap session has expired.",
+            Self::RebaselineBootstrapConflict => {
+                "The snapshot bootstrap conflicts with newer synchronization progress."
+            }
+            Self::RebaselineDependencyUnavailable => {
+                "A required snapshot bootstrap dependency is unavailable."
+            }
+            Self::RebaselineInvalidPersistedData => {
+                "The snapshot bootstrap encountered invalid persisted data."
+            }
+            Self::MutationDependencyUnavailable => {
+                "A required client mutation dependency is unavailable."
+            }
+            Self::MutationInvalidPersistedData => {
+                "The client mutation encountered invalid persisted data."
+            }
+            Self::SyncRebaselineRequired { .. } => {
+                "The synchronization checkpoint requires rebaseline."
+            }
             Self::ReadinessUnavailable => "Required service dependencies are not ready.",
             Self::Internal => "Synveil could not complete the request.",
             Self::RangeNotSatisfiable { .. } => "The requested byte range cannot be satisfied.",
@@ -302,6 +463,95 @@ impl ApiError {
                 }
                 Some(details)
             }
+            Self::MutationConflict {
+                conflict_id,
+                conflict,
+                replayed,
+            } => {
+                let mut details = Map::new();
+                details.insert(
+                    "outcome".to_owned(),
+                    serde_json::Value::String("CONFLICT".to_owned()),
+                );
+                details.insert("replayed".to_owned(), serde_json::Value::Bool(*replayed));
+                details.insert(
+                    "conflict_id".to_owned(),
+                    serde_json::Value::String(conflict_id.to_string()),
+                );
+                details.insert(
+                    "reason".to_owned(),
+                    serde_json::Value::String(conflict.reason().as_str().to_owned()),
+                );
+                details.insert(
+                    "resource_id".to_owned(),
+                    serde_json::Value::String(conflict.resource_id().to_string()),
+                );
+                if let Some(revision) = conflict.expected_revision() {
+                    details.insert(
+                        "expected_revision".to_owned(),
+                        serde_json::Value::String(revision.to_string()),
+                    );
+                }
+                if let Some(revision) = conflict.current_revision() {
+                    details.insert(
+                        "current_revision".to_owned(),
+                        serde_json::Value::String(revision.to_string()),
+                    );
+                }
+                if let Some(state) = conflict.current_state() {
+                    details.insert(
+                        "current_state".to_owned(),
+                        serde_json::Value::String(state.as_str().to_owned()),
+                    );
+                }
+                if let Some(parent_id) = conflict.current_parent_id() {
+                    details.insert(
+                        "current_parent_id".to_owned(),
+                        serde_json::Value::String(parent_id.to_string()),
+                    );
+                }
+                if let Some(name) = conflict.current_name() {
+                    details.insert(
+                        "current_name".to_owned(),
+                        serde_json::Value::String(name.as_str().to_owned()),
+                    );
+                }
+                details.insert(
+                    "server_epoch".to_owned(),
+                    serde_json::Value::String(conflict.server_epoch().to_string()),
+                );
+                details.insert(
+                    "server_sequence".to_owned(),
+                    serde_json::Value::String(conflict.server_sequence().to_string()),
+                );
+                Some(details)
+            }
+            Self::ConflictNotOpen { lifecycle } => {
+                let mut details = Map::new();
+                details.insert(
+                    "lifecycle".to_owned(),
+                    serde_json::Value::String(lifecycle.as_str().to_owned()),
+                );
+                Some(details)
+            }
+            Self::ResolutionConflict {
+                resolution_id,
+                conflict,
+                completed_at,
+                replayed,
+            } => {
+                let mut details = mutation_conflict_details(conflict);
+                details.insert(
+                    "resolution_id".to_owned(),
+                    serde_json::Value::String(resolution_id.to_string()),
+                );
+                details.insert("replayed".to_owned(), serde_json::Value::Bool(*replayed));
+                details.insert(
+                    "completed_at".to_owned(),
+                    serde_json::Value::String(completed_at.to_string()),
+                );
+                Some(details)
+            }
             Self::Upload(UploadError::InvalidOffset { current_offset }) => {
                 let mut details = Map::new();
                 details.insert(
@@ -336,9 +586,80 @@ impl ApiError {
                 );
                 Some(details)
             }
+            Self::SyncRebaselineRequired {
+                reason,
+                current_epoch,
+                minimum_retained_sequence,
+            } => {
+                let mut details = Map::new();
+                details.insert(
+                    "reason".to_owned(),
+                    serde_json::Value::String((*reason).to_owned()),
+                );
+                details.insert(
+                    "current_epoch".to_owned(),
+                    serde_json::Value::String(current_epoch.clone()),
+                );
+                details.insert(
+                    "minimum_retained_sequence".to_owned(),
+                    serde_json::Value::String(minimum_retained_sequence.clone()),
+                );
+                Some(details)
+            }
             _ => None,
         }
     }
+}
+
+fn mutation_conflict_details(conflict: &MutationConflict) -> Map<String, serde_json::Value> {
+    let mut details = Map::new();
+    details.insert(
+        "reason".to_owned(),
+        serde_json::Value::String(conflict.reason().as_str().to_owned()),
+    );
+    details.insert(
+        "resource_id".to_owned(),
+        serde_json::Value::String(conflict.resource_id().to_string()),
+    );
+    if let Some(revision) = conflict.expected_revision() {
+        details.insert(
+            "expected_revision".to_owned(),
+            serde_json::Value::String(revision.to_string()),
+        );
+    }
+    if let Some(revision) = conflict.current_revision() {
+        details.insert(
+            "current_revision".to_owned(),
+            serde_json::Value::String(revision.to_string()),
+        );
+    }
+    if let Some(state) = conflict.current_state() {
+        details.insert(
+            "current_state".to_owned(),
+            serde_json::Value::String(state.as_str().to_owned()),
+        );
+    }
+    if let Some(parent_id) = conflict.current_parent_id() {
+        details.insert(
+            "current_parent_id".to_owned(),
+            serde_json::Value::String(parent_id.to_string()),
+        );
+    }
+    if let Some(name) = conflict.current_name() {
+        details.insert(
+            "current_name".to_owned(),
+            serde_json::Value::String(name.as_str().to_owned()),
+        );
+    }
+    details.insert(
+        "server_epoch".to_owned(),
+        serde_json::Value::String(conflict.server_epoch().to_string()),
+    );
+    details.insert(
+        "server_sequence".to_owned(),
+        serde_json::Value::String(conflict.server_sequence().to_string()),
+    );
+    details
 }
 
 /// Map transport-neutral immutable content-read failures to the stable HTTP

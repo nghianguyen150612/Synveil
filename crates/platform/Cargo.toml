@@ -9,3 +9,7 @@ description = "Portable platform runtime contracts and safe adapter boundaries f
 [dependencies]
 synveil-core.workspace = true
 synveil-object-store.workspace = true
+zeroize.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
+keyring.workspace = true

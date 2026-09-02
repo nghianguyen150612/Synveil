@@ -5,9 +5,33 @@ exact-offset resumable upload HTTP transport, transport-neutral owner-authorized
 immutable content reads, authenticated HTTP full/single-range download
 transport, authenticated immutable version-history metadata, safe
 historical-version restore, additive Trash retention metadata, internal
-metadata purge execution, crash-safe internal physical object GC, and bounded
-internal GC-worker orchestration/reconciliation implemented; upload UI, sync,
-backup, and sharing remain PLANNED**
+metadata purge execution, crash-safe internal physical object GC, bounded
+internal GC-worker orchestration/reconciliation, the durable
+owner/library-scoped change-journal foundation, per-device sync checkpoints,
+the authenticated bounded server change feed, checkpoint acknowledgment, and
+the materialized logical snapshot/rebaseline bootstrap and the authenticated
+client logical mutation submission protocol implemented; durable conflict
+records, manual conflict inspection, and explicit manual resolution are also
+implemented; Prompt 37 implements one-time Device enrollment, revocable scoped
+bearer authentication, durable desktop profiles, native SecretStore adapters,
+and production inbound HTTP synchronization. Upload UI, automatic conflict
+resolution, backup, sharing, desktop GUI, watching, and outbound generation
+remain PLANNED**
+
+## Prompt 35 synchronization status (historical phase boundary)
+
+| Capability | Status |
+|---|---|
+| durable change journal | `VALIDATED` |
+| device checkpoints/feed | `VALIDATED` |
+| snapshot/rebaseline | `VALIDATED` |
+| client mutation submission | `VALIDATED` |
+| optimistic conflict detection | `VALIDATED` |
+| durable conflict records | `IMPLEMENTED` |
+| manual conflict inspection | `IMPLEMENTED` |
+| explicit manual resolution | `IMPLEMENTED` |
+| automatic conflict resolution | `NOT IMPLEMENTED` |
+| desktop sync agent | `NOT IMPLEMENTED` |
 
 This document defines the target HTTP contract and the blueprint for
 `api/openapi.yaml`. The foundation currently implements bounded health transport,
@@ -35,20 +59,95 @@ The owner-scoped logical metadata subset is also implemented:
   owner restore that appends one new immutable version from a verified
   historical object.
 
+The metadata crate also exposes transport-neutral `ChangeJournalService`,
+`DeviceSyncService`, and `SyncBootstrapService` boundaries. The sync service
+creates one durable checkpoint for each
+registered active owner device and owned library, reads the journal with the
+checkpoint as an ascending keyset boundary, returns a stable high watermark,
+and advances progress only after signed delivery evidence is verified. The
+checkpoint row is never mutation authority. A current journal epoch mismatch
+or a checkpoint below the minimum retained sequence returns explicit
+rebaseline-required metadata. The bootstrap service establishes a coherent
+replacement baseline without deleting or resetting the checkpoint at start.
+
+The public one-way transport is:
+
+- `GET /devices/{device_id}/libraries/{library_id}/checkpoint` — authenticated
+  checkpoint status/create-on-first-use;
+- `GET /devices/{device_id}/libraries/{library_id}/changes?limit=100` — an
+  authenticated, private/no-store, ascending page bounded to 1..500; and
+- `POST /devices/{device_id}/libraries/{library_id}/changes/ack` — a
+  browser-CSRF-protected, bounded acknowledgment carrying only a server-issued signed
+  page-evidence token;
+- `POST /devices/{device_id}/libraries/{library_id}/rebaseline` — a
+  browser-CSRF-protected, 2 KiB-bounded start/retry operation;
+- `GET /devices/{device_id}/libraries/{library_id}/rebaseline/{bootstrap_id}/nodes`
+  — a private/no-store immutable logical-manifest page, default 200 and maximum
+  1000 Nodes, with a bounded signed keyset cursor; and
+- `POST /devices/{device_id}/libraries/{library_id}/rebaseline/{bootstrap_id}/complete`
+  — a browser-CSRF-protected, 2 KiB-bounded terminal-proof completion operation; and
+- `POST /devices/{device_id}/libraries/{library_id}/mutations` — a
+  CSRF-protected, 16 KiB-bounded submission of exactly one typed logical
+  mutation with a durable UUID mutation ID, canonical semantic fingerprint,
+  base epoch/sequence, and explicit revision/parent preconditions. Successful
+  mutations append exactly one journal event and do not advance the originating
+  checkpoint; stale state returns a persisted safe conflict. File bytes do not
+  pass through this route;
+- `GET /devices/{device_id}/libraries/{library_id}/conflicts` — authenticated,
+  CSRF-free, private/no-store OPEN listing with a 1..100 limit and an opaque,
+  384-byte-bounded HMAC-authenticated `(created_at, conflict_id)` keyset cursor;
+- `GET /devices/{device_id}/libraries/{library_id}/conflicts/{conflict_id}` —
+  authenticated, CSRF-free, private/no-store inspection of immutable typed
+  intent, explicitly historical server observation, lifecycle, and terminal
+  resolution metadata; and
+- `POST /devices/{device_id}/libraries/{library_id}/conflicts/{conflict_id}/resolve`
+  — an authenticated, CSRF-protected, private/no-store, 16 KiB-bounded strict
+  manual decision with a durable UUIDv7 resolution ID.
+
+The resolution body permits only `ACCEPT_SERVER` or `APPLY_CLIENT_INTENT`.
+Accepting server state transitions OPEN to DISMISSED without changing a Node,
+publishing a journal event, or advancing a checkpoint. Applying client intent
+requires fresh current revision fields, including parent/destination revision
+for move and restore, and runs through the shared transaction-local Prompt 34
+canonical executor. Success commits exactly one normal resource journal event
+with RESOLVED and resolution linkage. Stale current state persists a replayable
+`resolution_conflict`, leaves the conflict OPEN, and commits zero canonical
+mutation/event. The canonical typed SHA-256 resolution fingerprint covers the
+conflict ID, action, and presence/value of every fresh precondition; it never
+hashes raw JSON. Same resolution ID and fingerprint returns the exact committed
+result after response loss; different semantics return
+`resolution_id_conflict`. A different decision after terminal state returns
+`conflict_not_open`. Purged resources cannot be resurrected, while their
+conflict evidence remains inspectable. No automatic policy selects an action.
+
+All operations scope through an authenticated owner and an owned library. The
+six checkpoint/feed/rebaseline operations also accept a verified Device bearer
+bound to the exact route Device; only that principal class bypasses browser
+CSRF. Mutation and conflict routes remain browser-session-only. Prompt 37
+implements one-time enrollment and revocable Device credentials as described
+below. Automatic conflict resolution, last-write-wins,
+conflict-copy renaming, merge engines, watcher, broker, WebSocket, and SSE are
+not implemented.
+
 These metadata routes use slash-separated action paths because the current
 Axum path grammar does not support a parameter followed by a literal suffix in
 one segment. They remain metadata-only. The repository also exposes the
 transport-neutral persisted upload-session service through authenticated
 `/upload-sessions` create/status/exact-offset append/complete/abort routes.
-Mutations use the existing CSRF boundary, PATCH bodies stream raw bytes under
-the service-configured limit, and status is the authoritative recovery path
-after an ambiguous response. The content-read service is wired to authenticated
+Existing node PATCH/upload mutations use the existing CSRF boundary, stream raw
+bytes only through their separately bounded upload path, and use status as the
+authoritative recovery path after an ambiguous response. The client mutation
+route above is strict logical JSON and carries no bytes. The content-read
+service is wired to authenticated
 `GET /nodes/{node_id}/content` and `GET /versions/{version_id}/content` routes.
 Those routes perform owner-scoped current or immutable-version resolution,
 single-range parsing, strong SHA-256 validation, safe headers, and bounded
-streaming without exposing storage keys or physical paths. Download UI, sync,
-backup, sharing, device, and other product endpoints described below remain
-planned. Version-history reads and version restore are authenticated; reads are
+streaming without exposing storage keys or physical paths. Download UI,
+automatic conflict resolution,
+backup, sharing, guided device-pairing UI, and other product endpoints described below
+remain planned. The server-side one-way sync and rebaseline endpoints above are
+implemented.
+Version-history reads and version restore are authenticated; reads are
 CSRF-free while restore requires CSRF, a signed current-node `If-Match`, and a
 bounded `Idempotency-Key`. Both are active-file-only and private/no-store, and
 neither opens an ObjectStore; unknown, cross-owner, trashed, and purging
@@ -331,24 +430,40 @@ API expires it instead of silently mixing incompatible rankings.
 
 ### Sync rebaseline
 
-An initial or stale client uses the server-directed sync bootstrap:
+The implemented server-side bootstrap uses a materialized logical manifest,
+not a high-watermark followed by later reads of mutable `nodes` rows:
 
-1. `POST /libraries/{library_id}/sync-bootstrap` creates a bounded bootstrap
-   lease, captures current epoch/head `H` on the primary, and pins required
-   journal retention. It does not expose a usable resume cursor prematurely.
-2. The client pages the current node projection in immutable ID order using
-   the bootstrap token. Mutations may continue; repeats are harmless.
-3. After the listing finishes, completion returns a server cursor positioned
-   at exactly `H`.
-4. The client atomically installs its staged listing, consumes `changes` after
-   that cursor, and applies events idempotently by node revision/version.
-5. If the bootstrap lease or journal retention expires, the client discards
-   the incomplete staged view and restarts.
+1. Start takes the existing transaction-scoped library namespace guard, locks
+   the library/head and scoped checkpoint, verifies the authenticated owner,
+   ACTIVE device, and owned library, then increments the checkpoint's
+   rebaseline generation.
+2. In that same PostgreSQL transaction it captures `snapshot_epoch` and
+   `snapshot_resume_sequence`, copies the canonical root plus current `ACTIVE`
+   and `TRASHED` Node projections into `sync_bootstrap_nodes`, and seals the
+   immutable item count and terminal Node ID. `PURGING`/purged rows, historical
+   versions, bytes, and all physical storage fields are excluded.
+3. Later GETs page only the durable manifest by `node_id > after_node_id`,
+   never `OFFSET` or mutable name/path order. The default is 200, maximum 1000,
+   and SQL reads at most `limit + 1`; no whole-library Rust buffer exists.
+4. The 320-byte maximum cursor binds version, owner, device, library, session,
+   generation, epoch, resume sequence, and last Node ID under a cursor-specific
+   HMAC domain. Only the real terminal page returns a 336-byte maximum token
+   additionally binding manifest count and terminal marker under a separate
+   HMAC domain. Tokens prove integrity, not authorization.
+5. Completion rechecks scope, PostgreSQL/server-time expiry, session state,
+   generation, current journal epoch, retained-history boundary, terminal
+   proof, and checkpoint position while holding row locks. It atomically marks
+   the session `COMPLETED` and sets the checkpoint exactly to the captured
+   epoch/resume sequence. It refuses to rewind newer progress.
+6. A committed completion replay returns the current completed result. Normal
+   change-feed reads then begin strictly after the captured resume sequence.
 
-This avoids a database transaction spanning HTTP requests. A node created
-after `H` may appear in both listing and journal; a node deleted after `H` may
-be absent from listing but still has a deletion event. Revision-aware
-application converges both cases.
+This keeps no database transaction open across HTTP requests yet gives every
+page one restart-safe cut. Mutations serialized before capture are reflected in
+the manifest; mutations serialized after capture have journal sequence greater
+than the cut. Thus no committed logical mutation can be absent from both the
+snapshot and subsequent feed. Expiry, generation replacement, epoch rotation,
+or retention invalidation fails closed and requires a new bootstrap.
 
 ## Error contract
 
@@ -1056,3 +1171,107 @@ Needed by: Phase 2 bulk and recursive operation gate
 Options: always asynchronous; synchronous below a fixed item/work estimate; client-selected preference constrained by server
 Recommendation: use a server-fixed, operation-specific work bound and return `202` above it; never decide from item count alone when subtree expansion or byte work is unknown
 Decision evidence: transaction-lock duration benchmark, worker recovery tests, API timeout limits, and partial-result UX review
+
+## Prompt 36 client/HTTP boundary
+
+Prompt 36 does not add or change a public HTTP route or OpenAPI schema. The
+desktop inbound core consumes typed bootstrap, feed, acknowledgement,
+completion, and logical-content contracts through the `SyncRemote` trait. This
+keeps server transport, authentication, token redaction, HTTP error mapping,
+backoff, and connection lifecycle outside filesystem and SQLite recovery code.
+
+Prompt 37 implements that adapter without changing the engine's apply-before-
+acknowledge, durable evidence, or filesystem recovery semantics. It preserves
+server evidence byte-for-byte, bounds JSON while receiving it, streams content
+under a strict length/hash budget, and returns sanitized typed errors.
+
+## Prompt 37 implemented Device enrollment and inbound HTTP boundary
+
+This section is the implemented contract. Broader challenge, discovery,
+refresh-token, guided-pairing, and remote-relay families elsewhere in this
+blueprint are not implemented by this phase.
+
+All paths below use `/api/v1`. Bodies are strict JSON, at most 2 KiB, with no
+unknown fields. Enrollment success and all auth errors are `private, no-store`.
+
+| Method and path | Principal and request | Result |
+|---|---|---|
+| `POST /devices/enrollment-grants` | Browser + CSRF; `target` is `{"kind":"new","display_name":"Desktop"}` or `{"kind":"existing","device_id":"<canonical UUIDv7>"}` | `201`: owner/Device/grant IDs, one-time token, creation and expiry timestamps |
+| `POST /device-enrollment/exchange` | No browser session; one `enrollment_token` | `201`: owner/Device/credential IDs, one bearer secret, creation timestamp |
+| `POST /devices/{device_id}/credentials/{credential_id}/revoke` | Browser + CSRF; `{}` | `204`: owner-scoped credential revoked |
+| `POST /devices/{device_id}/credentials/revoke-all` | Browser + CSRF; `{}` | `204`: all Device credentials and open grants revoked |
+
+The existing canonical `Device` owns credentials; there is no parallel device
+identity. New enrollment creates a `PENDING` Device and activates it in the
+same transaction that consumes the grant and inserts the credential. The
+default grant lifetime is ten minutes. A grant is high-entropy, digest-only,
+single-use under PostgreSQL row locks, and cannot yield two credentials under
+concurrent exchange. A lost successful exchange response is not retried or
+replayed: the browser revokes credentials for that Device, creates another
+grant, and explicitly re-enrolls. Expired/reused/unknown grants share the same
+safe `invalid_enrollment` response. The API never recovers a secret from a
+digest. Revocation is checked on every request, including metadata/downloads.
+
+`BrowserSession { owner_user_id, session_id }` and
+`DeviceCredential { owner_user_id, device_id, credential_id }` are distinct
+authenticated principals. Bearer requests never synthesize a SessionId. Any
+Authorization header chooses bearer parsing; malformed, duplicate, invalid, or
+mixed Cookie/Authorization authentication never falls back to a cookie. Only a
+successfully verified Device principal skips CSRF on the three inbound POSTs.
+
+Device bearer is admitted to exactly six checkpoint/feed/rebaseline
+operations plus `GET /nodes/{node_id}`, `GET /versions/{version_id}`, and their
+two `/content` routes. It is denied login/session administration, enrollment
+grant creation/revocation, library browsing, upload, mutation submission,
+conflict management, version restoration, and all future routes unless
+explicitly reviewed. Logical content authorization remains the existing
+owner/file/version service: wrong-owner, unknown, trashed, and purging content
+is concealed; ObjectStore keys and physical paths never enter desktop URLs.
+
+`HttpSyncRemote` implements all seven typed `SyncRemote` methods. Incremental
+events carry `schema_version: 1`; canonical Node responses add
+`current_version_id`. Current Node and immutable version metadata resolve
+feed projections. A changed revision triggers rebaseline instead of inventing
+historical names. Revision zero is valid for newly created Nodes; epoch and
+generation positivity and all canonical decimal/UUID rules remain strict.
+
+Profiles accept only verified HTTPS origins, normalize host/default port with
+the `url` parser, and reject userinfo, query/fragment, non-root/dot-segment
+paths, malformed ports, controls, whitespace, and URL repair. The explicit
+numeric-loopback test constructor is the only HTTP exception. There is no
+stable server-installation ID yet: binding is to the verified canonical
+origin, not a hostname-derived pseudo-ID. Secure-store envelopes additionally
+bind the origin and profile/owner/Device/credential IDs; copied SQLite metadata
+cannot reassign an existing secret to another origin. Public enrollment
+persistence accepts only a receipt bound to its HTTP exchange profile.
+
+The reqwest/rustls client uses normal certificate verification, minimum TLS
+1.2, no redirect following, no proxy, no cookie jar, no referer, no transparent
+compression, and no automatic retry. The sensitive Authorization header is
+attached separately to each same-origin request. Defaults: connect 10 seconds,
+headers 20 seconds, metadata 30 seconds, stream idle 30 seconds, download total
+one hour. Configured durations must be positive and no more than 24 hours.
+JSON is capped at 8 MiB, errors at 64 KiB, manifest pages at 1,000 Nodes, feed
+pages at 500 events, and emitted content chunks at 1 MiB. Downloads use exact
+immutable version IDs, enforce expected length (maximum 1 TiB), and verify
+SHA-256 incrementally. Redirect, encoding, scope, schema, ID, sequence,
+bootstrap-generation, content-type, or evidence inconsistencies fail closed.
+
+401 distinguishes `AuthRequired` from a proved revoked credential's
+`DeviceRevoked`; 403/404 remain forbidden/not-found, 409/410 preserve explicit
+checkpoint/rebaseline/evidence outcomes, 429 is rate-limited, and 5xx stays a
+safe dependency/internal error. TLS, timeout, body-limit, redirect, malformed
+JSON, and unexpected responses have distinct sanitized transport categories.
+Connection health exposes `ONLINE`, `AUTH_REQUIRED`, `DEVICE_REVOKED`,
+`SERVER_UNAVAILABLE`, `TLS_ERROR`, or `PROTOCOL_ERROR`. It does not expose
+server response messages, URLs, credentials, or TLS implementation text.
+
+Tracing records route templates and request IDs, never raw URI/query, body,
+Authorization, cookie, or enrollment/ack/completion tokens. A client request-ID
+hint containing a reserved machine-secret prefix (`svd1_` or `sve1_`) is
+replaced with a fresh server ID before tracing or response headers. Deployment
+proxies must also disable sensitive headers/body/query logging. Auth and offline
+failures leave managed files, bootstrap state, applied/acknowledged sequences,
+and pending evidence intact. Local forget is not server revocation; callers
+drop any direct transport and the engine checks persisted credential identity
+before every synchronization call.

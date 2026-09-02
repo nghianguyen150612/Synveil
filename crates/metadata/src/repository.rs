@@ -4,22 +4,28 @@ use std::str::FromStr;
 
 use sqlx::FromRow;
 use synveil_core::{
+    ChangeEvent, ChangeKind, ClientMutation, ClientMutationKind, ClientMutationRequest,
     DedupDomainId, Device, DomainError, FileVersion, FileVersionId, Library, LibraryId,
     LibraryStatus, LogicalName, Node, NodeId, NodeKind, NodeState, ObjectGcPolicy, ObjectId,
-    ObjectReference, Revision, Sha256Digest, Timestamp, User, UserId,
+    ObjectReference, Revision, Sequence, Sha256Digest, SyncConflictId, Timestamp, User, UserId,
 };
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+use crate::conflicts::persist_sync_conflict;
 use crate::gc::{
     GcLeaseId, GcPlanMutation, GcReleaseMutation, GcRenewalMutation, ObjectGcCandidate,
     ObjectGcCandidateRow, ObjectGcCandidateState, ObjectGcLease, map_object_gc_candidate_row,
 };
+use crate::journal::{JournalChange, acquire_namespace_guard, append_changes};
+use crate::mutations::{
+    ClientMutationError, ClientMutationResult, MutationConflict, MutationConflictReason,
+};
 use crate::purge::PurgeCursor;
 use crate::versions::{VersionCursor, VersionRecord, restore_request_fingerprint};
 use crate::{
-    DatabasePool, DeviceRow, FileVersionRow, LibraryRow, MappingError, MetadataError, NodeRow,
-    ObjectRow, UserRow,
+    DatabaseError, DatabaseErrorKind, DatabasePool, DeviceRow, FileVersionRow, LibraryRow,
+    MappingError, MetadataError, NodeRow, ObjectRow, UserRow,
 };
 use crate::{files::MAX_ANCESTOR_DEPTH, files::NodeMutation};
 
@@ -151,6 +157,60 @@ struct RestoreOperationRow {
     request_fingerprint: Vec<u8>,
     result_version_id: Option<Uuid>,
     result_node_revision: Option<String>,
+}
+
+#[derive(Debug, FromRow)]
+struct ClientMutationScopeRow {
+    device_owner_user_id: Uuid,
+    device_status: String,
+    library_owner_user_id: Uuid,
+    library_status: String,
+    journal_epoch: i64,
+    sync_head: i64,
+    minimum_retained_sequence: i64,
+}
+
+#[derive(Debug, FromRow)]
+struct ClientMutationOperationRow {
+    owner_user_id: Uuid,
+    device_id: Uuid,
+    library_id: Uuid,
+    client_mutation_id: Uuid,
+    fingerprint_version: i16,
+    fingerprint: Vec<u8>,
+    kind: String,
+    base_epoch: i64,
+    base_sequence: i64,
+    outcome: String,
+    resource_id: Option<Uuid>,
+    result_parent_node_id: Option<Uuid>,
+    result_kind: Option<String>,
+    result_name: Option<String>,
+    result_state: Option<String>,
+    result_current_version_id: Option<Uuid>,
+    result_revision: Option<String>,
+    result_trashed_at: Option<OffsetDateTime>,
+    result_created_at: Option<OffsetDateTime>,
+    result_updated_at: Option<OffsetDateTime>,
+    journal_event_id: Option<Uuid>,
+    journal_sequence: Option<i64>,
+    conflict_reason: Option<String>,
+    conflict_expected_revision: Option<String>,
+    conflict_current_revision: Option<String>,
+    conflict_current_state: Option<String>,
+    conflict_current_parent_id: Option<Uuid>,
+    conflict_current_name: Option<String>,
+    conflict_id: Option<Uuid>,
+    server_epoch: i64,
+    server_sequence: i64,
+    completed_at: Option<OffsetDateTime>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ClientMutationScope {
+    journal_epoch: Sequence,
+    sync_head: Sequence,
+    minimum_retained_sequence: Sequence,
 }
 
 struct OwnedVersionScope {
@@ -634,6 +694,11 @@ impl<'pool> DomainRepository<'pool> {
             return Ok(VersionRestoreMutation::NotFound);
         };
 
+        // The namespace guard is acquired before the idempotency row so a
+        // concurrent metadata purge cannot hold the guard while waiting for a
+        // restore-operation row that this transaction already owns.
+        acquire_namespace_guard(&mut transaction, library_id).await?;
+
         let inserted = sqlx::query(
             "INSERT INTO file_version_restore_operations
                 (owner_user_id, idempotency_key, request_fingerprint, library_id,
@@ -704,11 +769,12 @@ impl<'pool> DomainRepository<'pool> {
                     field: "file_version_restore_operations.result_node_revision",
                 })
             })?;
-            let library = Self::lock_owned_library(&mut transaction, user_id, library_id)
-                .await?
-                .ok_or(MetadataError::Mapping(MappingError::RelationMismatch {
-                    relation: "file_version_restore_operations.library",
-                }))?;
+            let library =
+                Self::load_owned_library_in_transaction(&mut transaction, user_id, library_id)
+                    .await?
+                    .ok_or(MetadataError::Mapping(MappingError::RelationMismatch {
+                        relation: "file_version_restore_operations.library",
+                    }))?;
             let node = Self::lock_node_in_library(&mut transaction, library_id, node_id)
                 .await?
                 .ok_or(MetadataError::Mapping(MappingError::RelationMismatch {
@@ -732,7 +798,8 @@ impl<'pool> DomainRepository<'pool> {
             });
         }
 
-        let Some(library) = Self::lock_owned_library(&mut transaction, user_id, library_id).await?
+        let Some(library) =
+            Self::load_owned_library_in_transaction(&mut transaction, user_id, library_id).await?
         else {
             return Ok(VersionRestoreMutation::NotFound);
         };
@@ -808,6 +875,16 @@ impl<'pool> DomainRepository<'pool> {
         let next_node = node.with_current_version(&version, observed_at)?;
         Self::insert_file_version_in_transaction(&mut transaction, version).await?;
         Self::update_node_in_transaction(&mut transaction, &next_node).await?;
+        append_changes(
+            &mut transaction,
+            user_id,
+            library_id,
+            &[JournalChange::from_node(
+                ChangeKind::FileVersionRestored,
+                &next_node,
+            )],
+        )
+        .await?;
         let updated = sqlx::query(
             "UPDATE file_version_restore_operations
              SET result_version_id = $3, result_node_revision = $4::NUMERIC
@@ -865,6 +942,189 @@ impl<'pool> DomainRepository<'pool> {
             .map_err(Into::into)
     }
 
+    /// Submit exactly one typed client mutation. The operation identity row,
+    /// canonical node update, and one journal append share this transaction.
+    /// The namespace guard is acquired before any Node row lock, matching the
+    /// existing metadata mutation and rebaseline paths.
+    pub(crate) async fn submit_client_mutation(
+        &self,
+        owner_user_id: UserId,
+        device_id: synveil_core::DeviceId,
+        library_id: LibraryId,
+        request: ClientMutationRequest,
+    ) -> Result<ClientMutationResult, ClientMutationError> {
+        let fingerprint = request.fingerprint();
+        if request.base_epoch().get() == 0 {
+            return Err(ClientMutationError::InvalidMutation);
+        }
+        let mut transaction = self
+            .pool
+            .sqlx_pool()
+            .begin()
+            .await
+            .map_err(map_client_sqlx_error)?;
+
+        // Establish the namespace lock before the operation insert. The
+        // operation's owner-pair foreign keys take PostgreSQL key-share locks
+        // on the Device/Library rows; inserting first and acquiring the
+        // namespace guard second would deadlock against another mutation
+        // that already owns the guard and is waiting for those row locks.
+        acquire_namespace_guard(&mut transaction, library_id)
+            .await
+            .map_err(map_client_metadata_error)?;
+        let scope = load_client_mutation_scope(
+            &mut transaction,
+            owner_user_id,
+            device_id,
+            library_id,
+            true,
+        )
+        .await?;
+        let base_epoch = i64_from_client_sequence(request.base_epoch())?;
+        let base_sequence = i64_from_client_sequence(request.base_sequence())?;
+        let fingerprint_version = i16::try_from(fingerprint.version())
+            .map_err(|_| ClientMutationError::InvalidMutation)?;
+
+        sqlx::query(
+            "INSERT INTO device_mutation_operations
+                (owner_user_id, device_id, library_id, client_mutation_id,
+                 fingerprint_version, fingerprint, kind, base_epoch, base_sequence,
+                 outcome, server_epoch, server_sequence, created_at, completed_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'IN_PROGRESS',
+                     $10, $11, CURRENT_TIMESTAMP, NULL)
+             ON CONFLICT (owner_user_id, device_id, library_id, client_mutation_id)
+             DO NOTHING",
+        )
+        .bind(owner_user_id.into_uuid())
+        .bind(device_id.into_uuid())
+        .bind(library_id.into_uuid())
+        .bind(request.mutation_id().into_uuid())
+        .bind(fingerprint_version)
+        .bind(fingerprint.sha256().to_vec())
+        .bind(request.kind().as_str())
+        .bind(base_epoch)
+        .bind(base_sequence)
+        .bind(i64_from_client_sequence(scope.journal_epoch)?)
+        .bind(i64_from_client_sequence(scope.sync_head)?)
+        .execute(&mut *transaction)
+        .await
+        .map_err(map_client_sqlx_error)?;
+
+        let operation = load_client_mutation_operation(
+            &mut transaction,
+            owner_user_id,
+            device_id,
+            library_id,
+            request.mutation_id(),
+        )
+        .await?
+        .ok_or(ClientMutationError::InvalidPersistedData)?;
+        if operation.fingerprint_version != fingerprint_version
+            || operation.fingerprint.as_slice() != fingerprint.sha256().as_slice()
+        {
+            return Err(ClientMutationError::MutationIdConflict);
+        }
+
+        if operation.outcome != "IN_PROGRESS" {
+            let result = map_client_mutation_operation(
+                operation,
+                &request,
+                owner_user_id,
+                device_id,
+                library_id,
+                true,
+            )?;
+            transaction.commit().await.map_err(map_client_sqlx_error)?;
+            return Ok(result);
+        }
+
+        // The namespace and exact owner/device/library rows were locked before
+        // the operation identity insert. This scope therefore remains the one
+        // current PostgreSQL journal clock for the mutation decision.
+        validate_client_mutation_base(&request, scope)?;
+
+        let observed_at = Self::database_now(&mut transaction)
+            .await
+            .map_err(map_client_metadata_error)?;
+        let decision = prepare_canonical_client_mutation(
+            &mut transaction,
+            owner_user_id,
+            library_id,
+            scope.journal_epoch,
+            scope.sync_head,
+            observed_at,
+            request.mutation(),
+        )
+        .await?;
+
+        match decision {
+            ClientMutationDecision::Conflict(conflict) => {
+                let conflict_id = persist_sync_conflict(
+                    &mut transaction,
+                    owner_user_id,
+                    device_id,
+                    library_id,
+                    &request,
+                    &conflict,
+                )
+                .await?;
+                persist_client_mutation_conflict(
+                    &mut transaction,
+                    owner_user_id,
+                    device_id,
+                    library_id,
+                    request.mutation_id(),
+                    conflict_id,
+                    &conflict,
+                )
+                .await?;
+                let result = ClientMutationResult::Conflict {
+                    mutation_id: request.mutation_id(),
+                    kind: request.kind(),
+                    conflict_id,
+                    conflict,
+                    replayed: false,
+                };
+                transaction.commit().await.map_err(map_client_sqlx_error)?;
+                Ok(result)
+            }
+            ClientMutationDecision::Applied { node, change_kind } => {
+                let events = append_changes(
+                    &mut transaction,
+                    owner_user_id,
+                    library_id,
+                    &[JournalChange::from_node(change_kind, &node)],
+                )
+                .await
+                .map_err(map_client_metadata_error)?;
+                let event = events
+                    .into_iter()
+                    .next()
+                    .ok_or(ClientMutationError::InvalidPersistedData)?;
+                persist_client_mutation_applied(
+                    &mut transaction,
+                    owner_user_id,
+                    device_id,
+                    library_id,
+                    request.mutation_id(),
+                    &node,
+                    event,
+                )
+                .await?;
+                let result = ClientMutationResult::Applied {
+                    mutation_id: request.mutation_id(),
+                    kind: request.kind(),
+                    node,
+                    journal_event_id: event.id(),
+                    journal_sequence: event.sequence(),
+                    replayed: false,
+                };
+                transaction.commit().await.map_err(map_client_sqlx_error)?;
+                Ok(result)
+            }
+        }
+    }
+
     pub(crate) async fn create_directory_owned(
         &self,
         user_id: UserId,
@@ -879,11 +1139,13 @@ impl<'pool> DomainRepository<'pool> {
             .begin()
             .await
             .map_err(MetadataError::from)?;
-        let Some(library) = Self::lock_owned_library(&mut transaction, user_id, library_id).await?
+        let Some(library) =
+            Self::load_owned_library_in_transaction(&mut transaction, user_id, library_id).await?
         else {
             return Ok(None);
         };
         ensure_library_writable(&library)?;
+        acquire_namespace_guard(&mut transaction, library_id).await?;
         let parent_node_id = parent_node_id.unwrap_or(library.root_node_id());
         let Some(parent) =
             Self::lock_node_in_library(&mut transaction, library_id, parent_node_id).await?
@@ -900,6 +1162,13 @@ impl<'pool> DomainRepository<'pool> {
         )?;
         let row = NodeRow::from_domain(&node)?;
         Self::insert_node_row_in_transaction(&mut transaction, &row).await?;
+        append_changes(
+            &mut transaction,
+            user_id,
+            library_id,
+            &[JournalChange::from_node(ChangeKind::NodeCreated, &node)],
+        )
+        .await?;
         transaction.commit().await.map_err(MetadataError::from)?;
         Ok(Some(node))
     }
@@ -923,11 +1192,13 @@ impl<'pool> DomainRepository<'pool> {
         else {
             return Ok(NodeMutation::NotFound);
         };
-        let Some(library) = Self::lock_owned_library(&mut transaction, user_id, library_id).await?
+        let Some(library) =
+            Self::load_owned_library_in_transaction(&mut transaction, user_id, library_id).await?
         else {
             return Ok(NodeMutation::NotFound);
         };
         ensure_library_writable(&library)?;
+        acquire_namespace_guard(&mut transaction, library_id).await?;
         let Some(mut node) =
             Self::lock_node_in_library(&mut transaction, library_id, node_id).await?
         else {
@@ -936,8 +1207,18 @@ impl<'pool> DomainRepository<'pool> {
         if node.revision() != expected_revision {
             return Ok(NodeMutation::VersionConflict(node));
         }
+        let previous_revision = node.revision();
         node.rename(name, observed_at)?;
         Self::update_node_in_transaction(&mut transaction, &node).await?;
+        if node.revision() != previous_revision {
+            append_changes(
+                &mut transaction,
+                user_id,
+                library_id,
+                &[JournalChange::from_node(ChangeKind::NodeRenamed, &node)],
+            )
+            .await?;
+        }
         transaction.commit().await.map_err(MetadataError::from)?;
         Ok(NodeMutation::Applied(node))
     }
@@ -961,11 +1242,13 @@ impl<'pool> DomainRepository<'pool> {
         else {
             return Ok(NodeMutation::NotFound);
         };
-        let Some(library) = Self::lock_owned_library(&mut transaction, user_id, library_id).await?
+        let Some(library) =
+            Self::load_owned_library_in_transaction(&mut transaction, user_id, library_id).await?
         else {
             return Ok(NodeMutation::NotFound);
         };
         ensure_library_writable(&library)?;
+        acquire_namespace_guard(&mut transaction, library_id).await?;
         let Some(mut node) =
             Self::lock_node_in_library(&mut transaction, library_id, node_id).await?
         else {
@@ -996,9 +1279,19 @@ impl<'pool> DomainRepository<'pool> {
             return Ok(NodeMutation::NotFound);
         };
         let ancestors = load_ancestors(&mut transaction, &destination).await?;
+        let previous_revision = node.revision();
         node.validate_move_parent(&destination, &ancestors)?;
         node.move_to(&destination, observed_at)?;
         Self::update_node_in_transaction(&mut transaction, &node).await?;
+        if node.revision() != previous_revision {
+            append_changes(
+                &mut transaction,
+                user_id,
+                library_id,
+                &[JournalChange::from_node(ChangeKind::NodeMoved, &node)],
+            )
+            .await?;
+        }
         transaction.commit().await.map_err(MetadataError::from)?;
         Ok(NodeMutation::Applied(node))
     }
@@ -1021,11 +1314,13 @@ impl<'pool> DomainRepository<'pool> {
         else {
             return Ok(NodeMutation::NotFound);
         };
-        let Some(library) = Self::lock_owned_library(&mut transaction, user_id, library_id).await?
+        let Some(library) =
+            Self::load_owned_library_in_transaction(&mut transaction, user_id, library_id).await?
         else {
             return Ok(NodeMutation::NotFound);
         };
         ensure_library_writable(&library)?;
+        acquire_namespace_guard(&mut transaction, library_id).await?;
         let Some(mut node) =
             Self::lock_node_in_library(&mut transaction, library_id, node_id).await?
         else {
@@ -1053,6 +1348,13 @@ impl<'pool> DomainRepository<'pool> {
         }
         node.transition_state(NodeState::Trashed, observed_at)?;
         Self::update_node_in_transaction(&mut transaction, &node).await?;
+        append_changes(
+            &mut transaction,
+            user_id,
+            library_id,
+            &[JournalChange::from_node(ChangeKind::NodeTrashed, &node)],
+        )
+        .await?;
         transaction.commit().await.map_err(MetadataError::from)?;
         Ok(NodeMutation::Applied(node))
     }
@@ -1075,11 +1377,13 @@ impl<'pool> DomainRepository<'pool> {
         else {
             return Ok(NodeMutation::NotFound);
         };
-        let Some(library) = Self::lock_owned_library(&mut transaction, user_id, library_id).await?
+        let Some(library) =
+            Self::load_owned_library_in_transaction(&mut transaction, user_id, library_id).await?
         else {
             return Ok(NodeMutation::NotFound);
         };
         ensure_library_writable(&library)?;
+        acquire_namespace_guard(&mut transaction, library_id).await?;
         let Some(mut node) =
             Self::lock_node_in_library(&mut transaction, library_id, node_id).await?
         else {
@@ -1103,6 +1407,13 @@ impl<'pool> DomainRepository<'pool> {
         node.validate_parent_relationship(&parent)?;
         node.transition_state(NodeState::Active, observed_at)?;
         Self::update_node_in_transaction(&mut transaction, &node).await?;
+        append_changes(
+            &mut transaction,
+            user_id,
+            library_id,
+            &[JournalChange::from_node(ChangeKind::NodeRestored, &node)],
+        )
+        .await?;
         transaction.commit().await.map_err(MetadataError::from)?;
         Ok(NodeMutation::Applied(node))
     }
@@ -1126,11 +1437,13 @@ impl<'pool> DomainRepository<'pool> {
         else {
             return Ok(PurgeMutation::NotFound);
         };
-        let Some(library) = Self::lock_owned_library(&mut transaction, user_id, library_id).await?
+        let Some(library) =
+            Self::load_owned_library_in_transaction(&mut transaction, user_id, library_id).await?
         else {
             return Ok(PurgeMutation::NotFound);
         };
         ensure_library_writable(&library)?;
+        acquire_namespace_guard(&mut transaction, library_id).await?;
         let Some(mut node) =
             Self::lock_node_in_library(&mut transaction, library_id, node_id).await?
         else {
@@ -1222,11 +1535,13 @@ impl<'pool> DomainRepository<'pool> {
             return Ok(mutation);
         };
 
-        let Some(library) = Self::lock_owned_library(&mut transaction, user_id, library_id).await?
+        let Some(library) =
+            Self::load_owned_library_in_transaction(&mut transaction, user_id, library_id).await?
         else {
             return Ok(PurgeExecutionMutation::NotFound);
         };
         ensure_library_writable(&library)?;
+        acquire_namespace_guard(&mut transaction, library_id).await?;
 
         let Some(node) = Self::lock_node_in_library(&mut transaction, library_id, node_id).await?
         else {
@@ -1400,6 +1715,14 @@ impl<'pool> DomainRepository<'pool> {
                 relation: "nodes.purge_delete",
             }));
         }
+
+        append_changes(
+            &mut transaction,
+            user_id,
+            library_id,
+            &[JournalChange::purged(&node)],
+        )
+        .await?;
 
         // This row intentionally has no FK to `nodes`: it is the minimal
         // replay identity that survives the permanent metadata deletion.
@@ -2241,7 +2564,7 @@ impl<'pool> DomainRepository<'pool> {
         // but cannot authorize a different object.
         sqlx::query(
             "SELECT pg_advisory_xact_lock(
-                hashtextextended($1::TEXT || ':' || $2::TEXT, 0)
+                hashtextextended($1::UUID::TEXT || ':' || $2::UUID::TEXT, 0)
              )",
         )
         .bind(object_id.into_uuid())
@@ -2361,7 +2684,7 @@ impl<'pool> DomainRepository<'pool> {
         .map_err(MetadataError::from)?;
         sqlx::query(
             "SELECT pg_advisory_xact_lock(
-                hashtextextended($1::TEXT || ':' || $2::TEXT, 0)
+                hashtextextended($1::UUID::TEXT || ':' || $2::UUID::TEXT, 0)
              )",
         )
         .bind(object_id.into_uuid())
@@ -2553,7 +2876,7 @@ impl<'pool> DomainRepository<'pool> {
             .map_err(Into::into)
     }
 
-    async fn lock_owned_library(
+    async fn load_owned_library_in_transaction(
         transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         user_id: UserId,
         library_id: LibraryId,
@@ -2562,8 +2885,7 @@ impl<'pool> DomainRepository<'pool> {
             "SELECT id, owner_user_id, name, root_node_id, dedup_domain_id, status,
                     created_at, updated_at, revision::TEXT AS revision
              FROM libraries
-             WHERE id = $1 AND owner_user_id = $2
-             FOR UPDATE",
+             WHERE id = $1 AND owner_user_id = $2",
         )
         .bind(library_id.into_uuid())
         .bind(user_id.into_uuid())
@@ -2577,8 +2899,7 @@ impl<'pool> DomainRepository<'pool> {
             "SELECT id, library_id, parent_node_id, kind, name, current_version_id,
                     state, trashed_at, created_at, updated_at, revision::TEXT AS revision
              FROM nodes
-             WHERE id = $1 AND library_id = $2
-             FOR UPDATE",
+             WHERE id = $1 AND library_id = $2",
         )
         .bind(row.root_node_id)
         .bind(row.id)
@@ -2746,6 +3067,1185 @@ impl<'pool> DomainRepository<'pool> {
             current_version_id,
         }))
     }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ClientMutationDecision {
+    Applied { node: Node, change_kind: ChangeKind },
+    Conflict(MutationConflict),
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ClientMutationPrepareContext {
+    owner_user_id: UserId,
+    library_id: LibraryId,
+    scope: ClientMutationScope,
+    observed_at: Timestamp,
+}
+
+/// Shared transaction-local executor for Prompt 34 submission and Prompt 35
+/// explicit manual apply. Callers acquire the namespace guard and validate
+/// owner/device/library scope first. A conflict decision writes neither
+/// canonical state nor a journal entry.
+pub(crate) async fn prepare_canonical_client_mutation(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    owner_user_id: UserId,
+    library_id: LibraryId,
+    journal_epoch: Sequence,
+    server_sequence: Sequence,
+    observed_at: Timestamp,
+    mutation: &ClientMutation,
+) -> Result<ClientMutationDecision, ClientMutationError> {
+    let context = ClientMutationPrepareContext {
+        owner_user_id,
+        library_id,
+        scope: ClientMutationScope {
+            journal_epoch,
+            sync_head: server_sequence,
+            minimum_retained_sequence: Sequence::new(0),
+        },
+        observed_at,
+    };
+    match mutation {
+        ClientMutation::CreateDirectory {
+            parent_node_id,
+            expected_parent_revision,
+            name,
+        } => {
+            prepare_create_directory_mutation(
+                transaction,
+                context,
+                *parent_node_id,
+                *expected_parent_revision,
+                name.clone(),
+            )
+            .await
+        }
+        ClientMutation::RenameNode {
+            node_id,
+            expected_revision,
+            new_name,
+        } => {
+            prepare_rename_mutation(
+                transaction,
+                context,
+                *node_id,
+                *expected_revision,
+                new_name.clone(),
+            )
+            .await
+        }
+        ClientMutation::MoveNode {
+            node_id,
+            expected_revision,
+            new_parent_node_id,
+            expected_new_parent_revision,
+        } => {
+            prepare_move_mutation(
+                transaction,
+                context,
+                *node_id,
+                *expected_revision,
+                *new_parent_node_id,
+                *expected_new_parent_revision,
+            )
+            .await
+        }
+        ClientMutation::TrashNode {
+            node_id,
+            expected_revision,
+        } => prepare_trash_mutation(transaction, context, *node_id, *expected_revision).await,
+        ClientMutation::RestoreNode {
+            node_id,
+            expected_revision,
+            expected_parent_node_id,
+            expected_parent_revision,
+        } => {
+            prepare_restore_mutation(
+                transaction,
+                context,
+                *node_id,
+                *expected_revision,
+                *expected_parent_node_id,
+                *expected_parent_revision,
+            )
+            .await
+        }
+    }
+}
+
+async fn load_client_mutation_scope(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    owner_user_id: UserId,
+    device_id: synveil_core::DeviceId,
+    library_id: LibraryId,
+    lock_rows: bool,
+) -> Result<ClientMutationScope, ClientMutationError> {
+    let row = if lock_rows {
+        sqlx::query_as::<_, ClientMutationScopeRow>(
+            "SELECT d.owner_user_id AS device_owner_user_id,
+                    d.status AS device_status,
+                    l.owner_user_id AS library_owner_user_id,
+                    l.status AS library_status,
+                    l.journal_epoch, l.sync_head, l.minimum_retained_sequence
+             FROM devices AS d
+             CROSS JOIN libraries AS l
+             WHERE d.id = $1 AND l.id = $2
+             FOR UPDATE OF d, l",
+        )
+        .bind(device_id.into_uuid())
+        .bind(library_id.into_uuid())
+        .fetch_optional(&mut **transaction)
+        .await
+        .map_err(map_client_sqlx_error)?
+    } else {
+        sqlx::query_as::<_, ClientMutationScopeRow>(
+            "SELECT d.owner_user_id AS device_owner_user_id,
+                    d.status AS device_status,
+                    l.owner_user_id AS library_owner_user_id,
+                    l.status AS library_status,
+                    l.journal_epoch, l.sync_head, l.minimum_retained_sequence
+             FROM devices AS d
+             CROSS JOIN libraries AS l
+             WHERE d.id = $1 AND l.id = $2",
+        )
+        .bind(device_id.into_uuid())
+        .bind(library_id.into_uuid())
+        .fetch_optional(&mut **transaction)
+        .await
+        .map_err(map_client_sqlx_error)?
+    }
+    .ok_or(ClientMutationError::NotFound)?;
+
+    validate_client_mutation_scope(row, owner_user_id)
+}
+
+fn validate_client_mutation_scope(
+    row: ClientMutationScopeRow,
+    owner_user_id: UserId,
+) -> Result<ClientMutationScope, ClientMutationError> {
+    if row.device_owner_user_id != owner_user_id.into_uuid()
+        || row.library_owner_user_id != owner_user_id.into_uuid()
+    {
+        return Err(ClientMutationError::NotFound);
+    }
+    if row.device_status != "ACTIVE" {
+        return Err(ClientMutationError::NotFound);
+    }
+    if row.library_status != "ACTIVE" {
+        return Err(ClientMutationError::InvalidMutation);
+    }
+
+    let journal_epoch = positive_client_sequence(row.journal_epoch)?;
+    let sync_head = nonnegative_client_sequence(row.sync_head)?;
+    let minimum_retained_sequence = nonnegative_client_sequence(row.minimum_retained_sequence)?;
+    if minimum_retained_sequence.get() > sync_head.get() {
+        return Err(ClientMutationError::InvalidPersistedData);
+    }
+    Ok(ClientMutationScope {
+        journal_epoch,
+        sync_head,
+        minimum_retained_sequence,
+    })
+}
+
+fn positive_client_sequence(value: i64) -> Result<Sequence, ClientMutationError> {
+    u64::try_from(value)
+        .ok()
+        .filter(|value| *value > 0)
+        .map(Sequence::new)
+        .ok_or(ClientMutationError::InvalidPersistedData)
+}
+
+fn nonnegative_client_sequence(value: i64) -> Result<Sequence, ClientMutationError> {
+    u64::try_from(value)
+        .map(Sequence::new)
+        .map_err(|_| ClientMutationError::InvalidPersistedData)
+}
+
+fn i64_from_client_sequence(value: Sequence) -> Result<i64, ClientMutationError> {
+    i64::try_from(value.get()).map_err(|_| ClientMutationError::InvalidMutation)
+}
+
+fn validate_client_mutation_base(
+    request: &ClientMutationRequest,
+    scope: ClientMutationScope,
+) -> Result<(), ClientMutationError> {
+    if request.base_epoch().get() == 0 {
+        return Err(ClientMutationError::InvalidMutation);
+    }
+    if request.base_epoch() != scope.journal_epoch {
+        return Err(ClientMutationError::RebaselineRequired {
+            reason: crate::RebaselineReason::EpochMismatch,
+            current_epoch: scope.journal_epoch,
+            minimum_retained_sequence: scope.minimum_retained_sequence,
+        });
+    }
+    if request.base_sequence().get() < scope.minimum_retained_sequence.get() {
+        return Err(ClientMutationError::RebaselineRequired {
+            reason: crate::RebaselineReason::HistoryUnavailable,
+            current_epoch: scope.journal_epoch,
+            minimum_retained_sequence: scope.minimum_retained_sequence,
+        });
+    }
+    if request.base_sequence().get() > scope.sync_head.get() {
+        return Err(ClientMutationError::InvalidMutation);
+    }
+    Ok(())
+}
+
+async fn load_client_mutation_operation(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    owner_user_id: UserId,
+    device_id: synveil_core::DeviceId,
+    library_id: LibraryId,
+    mutation_id: synveil_core::ClientMutationId,
+) -> Result<Option<ClientMutationOperationRow>, ClientMutationError> {
+    sqlx::query_as::<_, ClientMutationOperationRow>(
+        "SELECT owner_user_id, device_id, library_id, client_mutation_id,
+                fingerprint_version, fingerprint, kind, base_epoch, base_sequence,
+                outcome, resource_id, result_parent_node_id, result_kind,
+                result_name, result_state, result_current_version_id,
+                result_revision::TEXT AS result_revision, result_trashed_at,
+                result_created_at, result_updated_at, journal_event_id,
+                journal_sequence, conflict_reason,
+                conflict_expected_revision::TEXT AS conflict_expected_revision,
+                conflict_current_revision::TEXT AS conflict_current_revision,
+                conflict_current_state, conflict_current_parent_id,
+                conflict_current_name, conflict_id, server_epoch, server_sequence,
+                completed_at
+         FROM device_mutation_operations
+         WHERE owner_user_id = $1
+           AND device_id = $2
+           AND library_id = $3
+           AND client_mutation_id = $4
+         FOR UPDATE",
+    )
+    .bind(owner_user_id.into_uuid())
+    .bind(device_id.into_uuid())
+    .bind(library_id.into_uuid())
+    .bind(mutation_id.into_uuid())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(map_client_sqlx_error)
+}
+
+async fn persist_client_mutation_conflict(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    owner_user_id: UserId,
+    device_id: synveil_core::DeviceId,
+    library_id: LibraryId,
+    mutation_id: synveil_core::ClientMutationId,
+    conflict_id: SyncConflictId,
+    conflict: &MutationConflict,
+) -> Result<(), ClientMutationError> {
+    let updated = sqlx::query(
+        "UPDATE device_mutation_operations
+         SET outcome = 'CONFLICT',
+             resource_id = $5,
+             result_parent_node_id = NULL,
+             result_kind = NULL,
+             result_name = NULL,
+             result_state = NULL,
+             result_current_version_id = NULL,
+             result_revision = NULL,
+             result_trashed_at = NULL,
+             result_created_at = NULL,
+             result_updated_at = NULL,
+             journal_event_id = NULL,
+             journal_sequence = NULL,
+             conflict_reason = $6,
+             conflict_expected_revision = $7::NUMERIC,
+             conflict_current_revision = $8::NUMERIC,
+             conflict_current_state = $9,
+             conflict_current_parent_id = $10,
+             conflict_current_name = $11,
+             conflict_id = $12,
+             server_epoch = $13,
+             server_sequence = $14,
+             completed_at = CURRENT_TIMESTAMP
+         WHERE owner_user_id = $1
+           AND device_id = $2
+           AND library_id = $3
+           AND client_mutation_id = $4
+           AND outcome = 'IN_PROGRESS'",
+    )
+    .bind(owner_user_id.into_uuid())
+    .bind(device_id.into_uuid())
+    .bind(library_id.into_uuid())
+    .bind(mutation_id.into_uuid())
+    .bind(conflict.resource_id().into_uuid())
+    .bind(conflict.reason().as_str())
+    .bind(
+        conflict
+            .expected_revision()
+            .map(|revision| revision.get().to_string()),
+    )
+    .bind(
+        conflict
+            .current_revision()
+            .map(|revision| revision.get().to_string()),
+    )
+    .bind(conflict.current_state().map(NodeState::as_str))
+    .bind(conflict.current_parent_id().map(NodeId::into_uuid))
+    .bind(conflict.current_name().map(LogicalName::as_str))
+    .bind(conflict_id.into_uuid())
+    .bind(i64_from_client_sequence(conflict.server_epoch())?)
+    .bind(i64_from_client_sequence(conflict.server_sequence())?)
+    .execute(&mut **transaction)
+    .await
+    .map_err(map_client_sqlx_error)?;
+    if updated.rows_affected() != 1 {
+        return Err(ClientMutationError::InvalidPersistedData);
+    }
+    Ok(())
+}
+
+async fn persist_client_mutation_applied(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    owner_user_id: UserId,
+    device_id: synveil_core::DeviceId,
+    library_id: LibraryId,
+    mutation_id: synveil_core::ClientMutationId,
+    node: &Node,
+    event: ChangeEvent,
+) -> Result<(), ClientMutationError> {
+    let updated = sqlx::query(
+        "UPDATE device_mutation_operations
+         SET outcome = 'APPLIED',
+             resource_id = $5,
+             result_parent_node_id = $6,
+             result_kind = $7,
+             result_name = $8,
+             result_state = $9,
+             result_current_version_id = $10,
+             result_revision = $11::NUMERIC,
+             result_trashed_at = $12,
+             result_created_at = $13,
+             result_updated_at = $14,
+             journal_event_id = $15,
+             journal_sequence = $16,
+             conflict_reason = NULL,
+             conflict_expected_revision = NULL,
+             conflict_current_revision = NULL,
+             conflict_current_state = NULL,
+             conflict_current_parent_id = NULL,
+             conflict_current_name = NULL,
+             conflict_id = NULL,
+             server_epoch = $17,
+             server_sequence = $18,
+             completed_at = CURRENT_TIMESTAMP
+         WHERE owner_user_id = $1
+           AND device_id = $2
+           AND library_id = $3
+           AND client_mutation_id = $4
+           AND outcome = 'IN_PROGRESS'",
+    )
+    .bind(owner_user_id.into_uuid())
+    .bind(device_id.into_uuid())
+    .bind(library_id.into_uuid())
+    .bind(mutation_id.into_uuid())
+    .bind(node.id().into_uuid())
+    .bind(node.parent_node_id().map(NodeId::into_uuid))
+    .bind(node.kind().as_str())
+    .bind(node.name().as_str())
+    .bind(node.state().as_str())
+    .bind(
+        node.current_version_id()
+            .map(synveil_core::FileVersionId::into_uuid),
+    )
+    .bind(node.revision().get().to_string())
+    .bind(
+        node.trashed_at()
+            .map(|timestamp| timestamp.as_offset_datetime()),
+    )
+    .bind(node.created_at().as_offset_datetime())
+    .bind(node.updated_at().as_offset_datetime())
+    .bind(event.id().into_uuid())
+    .bind(i64_from_client_sequence(event.sequence())?)
+    .bind(i64_from_client_sequence(event.journal_epoch())?)
+    .bind(i64_from_client_sequence(event.sequence())?)
+    .execute(&mut **transaction)
+    .await
+    .map_err(map_client_sqlx_error)?;
+    if updated.rows_affected() != 1 {
+        return Err(ClientMutationError::InvalidPersistedData);
+    }
+    Ok(())
+}
+
+fn map_client_mutation_operation(
+    row: ClientMutationOperationRow,
+    request: &ClientMutationRequest,
+    owner_user_id: UserId,
+    device_id: synveil_core::DeviceId,
+    library_id: LibraryId,
+    replayed: bool,
+) -> Result<ClientMutationResult, ClientMutationError> {
+    let expected_owner = owner_user_id.into_uuid();
+    if row.owner_user_id != expected_owner
+        || row.device_id != device_id.into_uuid()
+        || row.library_id != library_id.into_uuid()
+        || row.client_mutation_id != request.mutation_id().into_uuid()
+        || row.fingerprint_version
+            != i16::try_from(synveil_core::CLIENT_MUTATION_FINGERPRINT_VERSION)
+                .map_err(|_| ClientMutationError::InvalidPersistedData)?
+        || row.base_epoch != i64::try_from(request.base_epoch().get()).unwrap_or(i64::MIN)
+        || row.base_sequence != i64::try_from(request.base_sequence().get()).unwrap_or(i64::MIN)
+    {
+        return Err(ClientMutationError::InvalidPersistedData);
+    }
+    let kind = ClientMutationKind::from_str(&row.kind)
+        .map_err(|_| ClientMutationError::InvalidPersistedData)?;
+    if kind != request.kind() || row.completed_at.is_none() {
+        return Err(ClientMutationError::InvalidPersistedData);
+    }
+    let server_epoch = positive_client_sequence(row.server_epoch)?;
+    let server_sequence = nonnegative_client_sequence(row.server_sequence)?;
+
+    match row.outcome.as_str() {
+        "APPLIED" => {
+            let node_id = decode_client_node_id(
+                row.resource_id
+                    .ok_or(ClientMutationError::InvalidPersistedData)?,
+            )?;
+            let parent_node_id = row
+                .result_parent_node_id
+                .map(decode_client_node_id)
+                .transpose()?;
+            let node_kind = match row
+                .result_kind
+                .as_deref()
+                .ok_or(ClientMutationError::InvalidPersistedData)?
+            {
+                "FILE" => NodeKind::File,
+                "DIRECTORY" => NodeKind::Directory,
+                _ => return Err(ClientMutationError::InvalidPersistedData),
+            };
+            let state = match row
+                .result_state
+                .as_deref()
+                .ok_or(ClientMutationError::InvalidPersistedData)?
+            {
+                "ACTIVE" => NodeState::Active,
+                "TRASHED" => NodeState::Trashed,
+                _ => return Err(ClientMutationError::InvalidPersistedData),
+            };
+            let name = LogicalName::new(
+                row.result_name
+                    .ok_or(ClientMutationError::InvalidPersistedData)?,
+            )
+            .map_err(|_| ClientMutationError::InvalidPersistedData)?;
+            let current_version_id = row
+                .result_current_version_id
+                .map(|value| {
+                    synveil_core::FileVersionId::try_from_uuid(value)
+                        .map_err(|_| ClientMutationError::InvalidPersistedData)
+                })
+                .transpose()?;
+            let revision = Revision::from_str(
+                &row.result_revision
+                    .ok_or(ClientMutationError::InvalidPersistedData)?,
+            )
+            .map_err(|_| ClientMutationError::InvalidPersistedData)?;
+            let created_at = row
+                .result_created_at
+                .ok_or(ClientMutationError::InvalidPersistedData)?;
+            let updated_at = row
+                .result_updated_at
+                .ok_or(ClientMutationError::InvalidPersistedData)?;
+            let node = Node::rehydrate_with_trash(
+                node_id,
+                library_id,
+                parent_node_id,
+                node_kind,
+                name,
+                current_version_id,
+                state,
+                row.result_trashed_at.map(Timestamp::from_offset_datetime),
+                Timestamp::from_offset_datetime(created_at),
+                Timestamp::from_offset_datetime(updated_at),
+                revision,
+            )
+            .map_err(|_| ClientMutationError::InvalidPersistedData)?;
+            let journal_event_id = synveil_core::ChangeEventId::try_from_uuid(
+                row.journal_event_id
+                    .ok_or(ClientMutationError::InvalidPersistedData)?,
+            )
+            .map_err(|_| ClientMutationError::InvalidPersistedData)?;
+            let journal_sequence = positive_client_sequence(
+                row.journal_sequence
+                    .ok_or(ClientMutationError::InvalidPersistedData)?,
+            )?;
+            if server_epoch != request.base_epoch() || journal_sequence != server_sequence {
+                return Err(ClientMutationError::InvalidPersistedData);
+            }
+            Ok(ClientMutationResult::Applied {
+                mutation_id: request.mutation_id(),
+                kind,
+                node,
+                journal_event_id,
+                journal_sequence,
+                replayed,
+            })
+        }
+        "CONFLICT" => {
+            let conflict_id = SyncConflictId::try_from_uuid(
+                row.conflict_id
+                    .ok_or(ClientMutationError::InvalidPersistedData)?,
+            )
+            .map_err(|_| ClientMutationError::InvalidPersistedData)?;
+            let resource_id = decode_client_node_id(
+                row.resource_id
+                    .ok_or(ClientMutationError::InvalidPersistedData)?,
+            )?;
+            let reason = MutationConflictReason::from_str(
+                row.conflict_reason
+                    .as_deref()
+                    .ok_or(ClientMutationError::InvalidPersistedData)?,
+            )
+            .map_err(|_| ClientMutationError::InvalidPersistedData)?;
+            let expected_revision = row
+                .conflict_expected_revision
+                .as_deref()
+                .map(Revision::from_str)
+                .transpose()
+                .map_err(|_| ClientMutationError::InvalidPersistedData)?;
+            let current_revision = row
+                .conflict_current_revision
+                .as_deref()
+                .map(Revision::from_str)
+                .transpose()
+                .map_err(|_| ClientMutationError::InvalidPersistedData)?;
+            let current_state = row
+                .conflict_current_state
+                .as_deref()
+                .map(parse_client_node_state)
+                .transpose()?;
+            let current_parent_id = row
+                .conflict_current_parent_id
+                .map(decode_client_node_id)
+                .transpose()?;
+            let current_name = row
+                .conflict_current_name
+                .map(|value| {
+                    LogicalName::new(value).map_err(|_| ClientMutationError::InvalidPersistedData)
+                })
+                .transpose()?;
+            Ok(ClientMutationResult::Conflict {
+                mutation_id: request.mutation_id(),
+                kind,
+                conflict_id,
+                conflict: MutationConflict::new(
+                    reason,
+                    resource_id,
+                    expected_revision,
+                    current_revision,
+                    current_state,
+                    current_parent_id,
+                    current_name,
+                    server_epoch,
+                    server_sequence,
+                ),
+                replayed,
+            })
+        }
+        _ => Err(ClientMutationError::InvalidPersistedData),
+    }
+}
+
+fn decode_client_node_id(value: Uuid) -> Result<NodeId, ClientMutationError> {
+    NodeId::try_from_uuid(value).map_err(|_| ClientMutationError::InvalidPersistedData)
+}
+
+fn parse_client_node_state(value: &str) -> Result<NodeState, ClientMutationError> {
+    match value {
+        "ACTIVE" => Ok(NodeState::Active),
+        "TRASHED" => Ok(NodeState::Trashed),
+        "PURGING" => Ok(NodeState::Purging),
+        _ => Err(ClientMutationError::InvalidPersistedData),
+    }
+}
+
+fn node_conflict(
+    reason: MutationConflictReason,
+    node: &Node,
+    expected_revision: Option<Revision>,
+    scope: ClientMutationScope,
+) -> ClientMutationDecision {
+    ClientMutationDecision::Conflict(MutationConflict::new(
+        reason,
+        node.id(),
+        expected_revision,
+        Some(node.revision()),
+        Some(node.state()),
+        node.parent_node_id(),
+        Some(node.name().clone()),
+        scope.journal_epoch,
+        scope.sync_head,
+    ))
+}
+
+fn resource_conflict(
+    reason: MutationConflictReason,
+    resource_id: NodeId,
+    expected_revision: Option<Revision>,
+    current_revision: Option<Revision>,
+    scope: ClientMutationScope,
+) -> ClientMutationDecision {
+    ClientMutationDecision::Conflict(MutationConflict::new(
+        reason,
+        resource_id,
+        expected_revision,
+        current_revision,
+        None,
+        None,
+        None,
+        scope.journal_epoch,
+        scope.sync_head,
+    ))
+}
+
+async fn latest_purged_revision(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    owner_user_id: UserId,
+    library_id: LibraryId,
+    node_id: NodeId,
+) -> Result<Option<Revision>, ClientMutationError> {
+    let value = sqlx::query_scalar::<_, String>(
+        "SELECT resource_revision::TEXT
+         FROM change_journal
+         WHERE owner_user_id = $1
+           AND library_id = $2
+           AND resource_kind = 'NODE'
+           AND resource_id = $3
+           AND change_kind = 'NODE_PURGED'
+         ORDER BY sequence DESC
+         LIMIT 1",
+    )
+    .bind(owner_user_id.into_uuid())
+    .bind(library_id.into_uuid())
+    .bind(node_id.into_uuid())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(map_client_sqlx_error)?;
+    value
+        .map(|value| {
+            Revision::from_str(&value).map_err(|_| ClientMutationError::InvalidPersistedData)
+        })
+        .transpose()
+}
+
+async fn missing_client_resource(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    owner_user_id: UserId,
+    library_id: LibraryId,
+    resource_id: NodeId,
+    expected_revision: Option<Revision>,
+    scope: ClientMutationScope,
+) -> Result<ClientMutationDecision, ClientMutationError> {
+    if let Some(current_revision) =
+        latest_purged_revision(transaction, owner_user_id, library_id, resource_id).await?
+    {
+        return Ok(resource_conflict(
+            MutationConflictReason::ResourcePurged,
+            resource_id,
+            expected_revision,
+            Some(current_revision),
+            scope,
+        ));
+    }
+    Err(ClientMutationError::NotFound)
+}
+
+async fn active_child_with_name(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    library_id: LibraryId,
+    parent_node_id: NodeId,
+    name: &LogicalName,
+    exclude_node_id: Option<NodeId>,
+) -> Result<Option<Node>, ClientMutationError> {
+    let row = sqlx::query_as::<_, NodeRow>(
+        "SELECT id, library_id, parent_node_id, kind, name, current_version_id,
+                state, trashed_at, created_at, updated_at, revision::TEXT AS revision
+         FROM nodes
+         WHERE library_id = $1
+           AND parent_node_id = $2
+           AND name = $3
+           AND state = 'ACTIVE'
+           AND ($4::UUID IS NULL OR id <> $4)
+         ORDER BY id ASC
+         LIMIT 1
+         FOR UPDATE",
+    )
+    .bind(library_id.into_uuid())
+    .bind(parent_node_id.into_uuid())
+    .bind(name.as_str())
+    .bind(exclude_node_id.map(NodeId::into_uuid))
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(map_client_sqlx_error)?;
+    row.map(NodeRow::try_into_domain)
+        .transpose()
+        .map_err(|_| ClientMutationError::InvalidPersistedData)
+}
+
+async fn prepare_create_directory_mutation(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    context: ClientMutationPrepareContext,
+    parent_node_id: NodeId,
+    expected_parent_revision: Revision,
+    name: LogicalName,
+) -> Result<ClientMutationDecision, ClientMutationError> {
+    let ClientMutationPrepareContext {
+        owner_user_id,
+        library_id,
+        scope,
+        observed_at,
+    } = context;
+    let Some(parent) =
+        DomainRepository::lock_node_in_library(transaction, library_id, parent_node_id)
+            .await
+            .map_err(map_client_metadata_error)?
+    else {
+        return missing_client_resource(
+            transaction,
+            owner_user_id,
+            library_id,
+            parent_node_id,
+            Some(expected_parent_revision),
+            scope,
+        )
+        .await;
+    };
+    if parent.revision() != expected_parent_revision {
+        return Ok(node_conflict(
+            MutationConflictReason::ParentChanged,
+            &parent,
+            Some(expected_parent_revision),
+            scope,
+        ));
+    }
+    if parent.kind() != NodeKind::Directory || parent.state() != NodeState::Active {
+        return Ok(node_conflict(
+            MutationConflictReason::NodeStateChanged,
+            &parent,
+            Some(expected_parent_revision),
+            scope,
+        ));
+    }
+    if let Some(existing) =
+        active_child_with_name(transaction, library_id, parent_node_id, &name, None).await?
+    {
+        return Ok(node_conflict(
+            MutationConflictReason::NameOccupied,
+            &existing,
+            None,
+            scope,
+        ));
+    }
+    let node = Node::new_child(
+        NodeId::new(),
+        library_id,
+        &parent,
+        NodeKind::Directory,
+        name,
+        observed_at,
+    )
+    .map_err(map_client_domain_error)?;
+    DomainRepository::insert_node_row_in_transaction(
+        transaction,
+        &NodeRow::from_domain(&node).map_err(|_| ClientMutationError::InvalidPersistedData)?,
+    )
+    .await
+    .map_err(map_client_metadata_error)?;
+    Ok(ClientMutationDecision::Applied {
+        node,
+        change_kind: ChangeKind::NodeCreated,
+    })
+}
+
+async fn prepare_rename_mutation(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    context: ClientMutationPrepareContext,
+    node_id: NodeId,
+    expected_revision: Revision,
+    new_name: LogicalName,
+) -> Result<ClientMutationDecision, ClientMutationError> {
+    let ClientMutationPrepareContext {
+        owner_user_id,
+        library_id,
+        scope,
+        observed_at,
+    } = context;
+    let Some(mut node) = DomainRepository::lock_node_in_library(transaction, library_id, node_id)
+        .await
+        .map_err(map_client_metadata_error)?
+    else {
+        return missing_client_resource(
+            transaction,
+            owner_user_id,
+            library_id,
+            node_id,
+            Some(expected_revision),
+            scope,
+        )
+        .await;
+    };
+    if node.revision() != expected_revision {
+        return Ok(node_conflict(
+            MutationConflictReason::RevisionMismatch,
+            &node,
+            Some(expected_revision),
+            scope,
+        ));
+    }
+    if node.state() != NodeState::Active {
+        return Ok(node_conflict(
+            MutationConflictReason::NodeStateChanged,
+            &node,
+            Some(expected_revision),
+            scope,
+        ));
+    }
+    if node.name() == &new_name {
+        return Err(ClientMutationError::InvalidMutation);
+    }
+    if let Some(parent_node_id) = node.parent_node_id()
+        && let Some(existing) = active_child_with_name(
+            transaction,
+            library_id,
+            parent_node_id,
+            &new_name,
+            Some(node_id),
+        )
+        .await?
+    {
+        return Ok(node_conflict(
+            MutationConflictReason::NameOccupied,
+            &existing,
+            None,
+            scope,
+        ));
+    }
+    node.rename(new_name, observed_at)
+        .map_err(map_client_domain_error)?;
+    DomainRepository::update_node_in_transaction(transaction, &node)
+        .await
+        .map_err(map_client_metadata_error)?;
+    Ok(ClientMutationDecision::Applied {
+        node,
+        change_kind: ChangeKind::NodeRenamed,
+    })
+}
+
+async fn prepare_move_mutation(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    context: ClientMutationPrepareContext,
+    node_id: NodeId,
+    expected_revision: Revision,
+    new_parent_node_id: NodeId,
+    expected_new_parent_revision: Revision,
+) -> Result<ClientMutationDecision, ClientMutationError> {
+    let ClientMutationPrepareContext {
+        owner_user_id,
+        library_id,
+        scope,
+        observed_at,
+    } = context;
+    let Some(mut node) = DomainRepository::lock_node_in_library(transaction, library_id, node_id)
+        .await
+        .map_err(map_client_metadata_error)?
+    else {
+        return missing_client_resource(
+            transaction,
+            owner_user_id,
+            library_id,
+            node_id,
+            Some(expected_revision),
+            scope,
+        )
+        .await;
+    };
+    if node.revision() != expected_revision {
+        return Ok(node_conflict(
+            MutationConflictReason::RevisionMismatch,
+            &node,
+            Some(expected_revision),
+            scope,
+        ));
+    }
+    if node.state() != NodeState::Active {
+        return Ok(node_conflict(
+            MutationConflictReason::NodeStateChanged,
+            &node,
+            Some(expected_revision),
+            scope,
+        ));
+    }
+    let Some(destination) =
+        DomainRepository::lock_node_in_library(transaction, library_id, new_parent_node_id)
+            .await
+            .map_err(map_client_metadata_error)?
+    else {
+        return missing_client_resource(
+            transaction,
+            owner_user_id,
+            library_id,
+            new_parent_node_id,
+            Some(expected_new_parent_revision),
+            scope,
+        )
+        .await;
+    };
+    if destination.revision() != expected_new_parent_revision {
+        return Ok(node_conflict(
+            MutationConflictReason::DestinationChanged,
+            &destination,
+            Some(expected_new_parent_revision),
+            scope,
+        ));
+    }
+    if destination.kind() != NodeKind::Directory || destination.state() != NodeState::Active {
+        return Ok(node_conflict(
+            MutationConflictReason::DestinationChanged,
+            &destination,
+            Some(expected_new_parent_revision),
+            scope,
+        ));
+    }
+    if node.parent_node_id() == Some(new_parent_node_id) {
+        return Err(ClientMutationError::InvalidMutation);
+    }
+    if let Some(existing) = active_child_with_name(
+        transaction,
+        library_id,
+        new_parent_node_id,
+        node.name(),
+        Some(node_id),
+    )
+    .await?
+    {
+        return Ok(node_conflict(
+            MutationConflictReason::NameOccupied,
+            &existing,
+            None,
+            scope,
+        ));
+    }
+    let ancestors = load_ancestors(transaction, &destination)
+        .await
+        .map_err(map_client_metadata_error)?;
+    node.validate_move_parent(&destination, &ancestors)
+        .map_err(map_client_domain_error)?;
+    node.move_to(&destination, observed_at)
+        .map_err(map_client_domain_error)?;
+    DomainRepository::update_node_in_transaction(transaction, &node)
+        .await
+        .map_err(map_client_metadata_error)?;
+    Ok(ClientMutationDecision::Applied {
+        node,
+        change_kind: ChangeKind::NodeMoved,
+    })
+}
+
+async fn prepare_trash_mutation(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    context: ClientMutationPrepareContext,
+    node_id: NodeId,
+    expected_revision: Revision,
+) -> Result<ClientMutationDecision, ClientMutationError> {
+    let ClientMutationPrepareContext {
+        owner_user_id,
+        library_id,
+        scope,
+        observed_at,
+    } = context;
+    let Some(mut node) = DomainRepository::lock_node_in_library(transaction, library_id, node_id)
+        .await
+        .map_err(map_client_metadata_error)?
+    else {
+        return missing_client_resource(
+            transaction,
+            owner_user_id,
+            library_id,
+            node_id,
+            Some(expected_revision),
+            scope,
+        )
+        .await;
+    };
+    if node.revision() != expected_revision {
+        return Ok(node_conflict(
+            MutationConflictReason::RevisionMismatch,
+            &node,
+            Some(expected_revision),
+            scope,
+        ));
+    }
+    if node.state() != NodeState::Active {
+        return Ok(node_conflict(
+            MutationConflictReason::NodeStateChanged,
+            &node,
+            Some(expected_revision),
+            scope,
+        ));
+    }
+    if node.kind() == NodeKind::Directory {
+        let has_children = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(
+                SELECT 1 FROM nodes WHERE library_id = $1 AND parent_node_id = $2
+            )",
+        )
+        .bind(library_id.into_uuid())
+        .bind(node.id().into_uuid())
+        .fetch_one(&mut **transaction)
+        .await
+        .map_err(map_client_sqlx_error)?;
+        if has_children {
+            return Err(ClientMutationError::InvalidMutation);
+        }
+    }
+    node.transition_state(NodeState::Trashed, observed_at)
+        .map_err(map_client_domain_error)?;
+    DomainRepository::update_node_in_transaction(transaction, &node)
+        .await
+        .map_err(map_client_metadata_error)?;
+    Ok(ClientMutationDecision::Applied {
+        node,
+        change_kind: ChangeKind::NodeTrashed,
+    })
+}
+
+async fn prepare_restore_mutation(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    context: ClientMutationPrepareContext,
+    node_id: NodeId,
+    expected_revision: Revision,
+    expected_parent_node_id: NodeId,
+    expected_parent_revision: Revision,
+) -> Result<ClientMutationDecision, ClientMutationError> {
+    let ClientMutationPrepareContext {
+        owner_user_id,
+        library_id,
+        scope,
+        observed_at,
+    } = context;
+    let Some(mut node) = DomainRepository::lock_node_in_library(transaction, library_id, node_id)
+        .await
+        .map_err(map_client_metadata_error)?
+    else {
+        return missing_client_resource(
+            transaction,
+            owner_user_id,
+            library_id,
+            node_id,
+            Some(expected_revision),
+            scope,
+        )
+        .await;
+    };
+    if node.revision() != expected_revision {
+        return Ok(node_conflict(
+            MutationConflictReason::RevisionMismatch,
+            &node,
+            Some(expected_revision),
+            scope,
+        ));
+    }
+    if node.state() != NodeState::Trashed {
+        return Ok(node_conflict(
+            MutationConflictReason::NodeStateChanged,
+            &node,
+            Some(expected_revision),
+            scope,
+        ));
+    }
+    if node.parent_node_id() != Some(expected_parent_node_id) {
+        return Ok(node_conflict(
+            MutationConflictReason::ParentChanged,
+            &node,
+            Some(expected_parent_revision),
+            scope,
+        ));
+    }
+    let Some(parent) =
+        DomainRepository::lock_node_in_library(transaction, library_id, expected_parent_node_id)
+            .await
+            .map_err(map_client_metadata_error)?
+    else {
+        return missing_client_resource(
+            transaction,
+            owner_user_id,
+            library_id,
+            expected_parent_node_id,
+            Some(expected_parent_revision),
+            scope,
+        )
+        .await;
+    };
+    if parent.revision() != expected_parent_revision
+        || parent.kind() != NodeKind::Directory
+        || parent.state() != NodeState::Active
+    {
+        return Ok(node_conflict(
+            MutationConflictReason::ParentChanged,
+            &parent,
+            Some(expected_parent_revision),
+            scope,
+        ));
+    }
+    node.validate_parent_relationship(&parent)
+        .map_err(map_client_domain_error)?;
+    if let Some(existing) = active_child_with_name(
+        transaction,
+        library_id,
+        expected_parent_node_id,
+        node.name(),
+        Some(node_id),
+    )
+    .await?
+    {
+        return Ok(node_conflict(
+            MutationConflictReason::NameOccupied,
+            &existing,
+            None,
+            scope,
+        ));
+    }
+    node.transition_state(NodeState::Active, observed_at)
+        .map_err(map_client_domain_error)?;
+    DomainRepository::update_node_in_transaction(transaction, &node)
+        .await
+        .map_err(map_client_metadata_error)?;
+    Ok(ClientMutationDecision::Applied {
+        node,
+        change_kind: ChangeKind::NodeRestored,
+    })
+}
+
+fn map_client_domain_error(error: DomainError) -> ClientMutationError {
+    match error {
+        DomainError::RevisionOverflow | DomainError::InvalidTrashTimestamp => {
+            ClientMutationError::InvalidPersistedData
+        }
+        _ => ClientMutationError::InvalidMutation,
+    }
+}
+
+fn map_client_metadata_error(error: MetadataError) -> ClientMutationError {
+    match error {
+        MetadataError::Database(DatabaseError::Failure(
+            DatabaseErrorKind::ConnectionUnavailable,
+        )) => ClientMutationError::DependencyUnavailable,
+        MetadataError::Database(error) => ClientMutationError::Database(error),
+        MetadataError::Mapping(_) => ClientMutationError::InvalidPersistedData,
+        MetadataError::CapacityUnavailable => ClientMutationError::DependencyUnavailable,
+    }
+}
+
+fn map_client_sqlx_error(error: sqlx::Error) -> ClientMutationError {
+    map_client_metadata_error(MetadataError::from(error))
 }
 
 fn gc_time_window(

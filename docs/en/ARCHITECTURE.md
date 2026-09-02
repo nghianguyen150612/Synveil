@@ -21,7 +21,7 @@ scale.
 flowchart TB
     subgraph Untrusted["Untrusted and semi-trusted clients"]
         Web["React web"]
-        Desktop["Future desktop clients\nshared Rust sync core"]
+        Desktop["Desktop inbound core and HTTP adapter\nGUI and outbound sync remain future"]
         Mobile["Future Apple/mobile clients"]
     end
 
@@ -526,3 +526,138 @@ The blueprint intentionally defers a bounded set:
 
 All other implementation questions inherit the ADR/spec precedence in
 `CONTRIBUTING_ARCHITECTURE.md`.
+
+## Prompt 36 desktop inbound boundary
+
+`crates/client-sync` is a transport-neutral desktop inbound apply core. It is
+deliberately split into three explicit ports:
+
+- `SyncRemote` obtains bootstrap pages, change-feed pages, content chunks, and
+  performs the two server handoffs (feed acknowledgement and bootstrap
+  completion). The core remains transport-neutral; Prompt 37 supplies the
+  production HTTP implementation without adding background scheduling.
+- `LocalStateStore` owns one single-writer SQLite database per desktop application
+  state location. It persists scope, manifest/feed intent, applied and
+  acknowledged checkpoints, operation receipts, bootstrap progress, node/path
+  projections, and durable local apply issues.
+- `LocalReplica` is the only filesystem mutation surface. It binds an explicit
+  empty root to owner/device/library identity, validates each relative path and
+  actual ancestor immediately before mutation, stages verified content, and
+  exposes only typed directory/file/trash/restore/purge operations.
+
+The engine is intentionally one bounded page or batch at a time. A feed page
+is persisted before filesystem work; every event is locally applied and
+committed before the page token is acknowledged remotely; the acknowledged
+checkpoint advances locally only after the server accepts that token.
+Bootstrap pages are durable before reconciliation, the complete manifest is
+validated before any terminal apply, materialization runs parent-first,
+generation sweep removes only tracked stale nodes, and the completion handoff
+occurs only after local state is complete.
+
+The public phase vocabulary is `Uninitialized`, `Bootstrapping`, `Ready`,
+`Offline`, `Diverged`, `Paused`, and `NeedsRebaseline`. Prompt 36 implements the
+inbound core behind this boundary. Prompt 37 adds the remote connection and
+credential boundary below. Prompt 38 adds local filesystem observation and a
+durable outbound-intent queue only; automatic mutation submission,
+GUI/background lifecycle, automatic conflict resolution, native packaging, and
+release-lab platform claims remain outside this component.
+
+## Prompt 37 remote identity and Prompt 38 local observation boundary
+
+The desktop inbound core is **VALIDATED**. Durable server profiles, device
+enrollment groundwork, device bearer authentication, secure desktop credential
+persistence, and the production HTTP `SyncRemote` are **VALIDATED**. Filesystem
+observation, self-generated change suppression, durable outbound intent capture,
+rename/move attribution with conservative fallback, and watcher overflow/rescan
+handling are **IMPLEMENTED**. Automatic outbound mutation submission, automatic
+conflict resolution, and desktop GUI/pairing UX are **NOT IMPLEMENTED**.
+
+`OutboundObservationEngine` observes exactly one managed root and owns no remote
+transport. `LocalChangeWatcher` emits raw `CREATE_HINT`, `MODIFY_HINT`,
+`REMOVE_HINT`, `RENAME_HINT`, `METADATA_HINT`, or `RESCAN_REQUIRED` hints;
+classification happens only after managed-root validation and `LocalReplica`
+reinspection. SQLite migration `0003_outbound_observation.sql` persists
+`outbound_intents`, observation issues, rescan state/progress, local Node
+observation overlays, and Prompt 36 operation-attribution suppressions. Overflow,
+backend loss, shutdown uncertainty, and startup gaps all force bounded
+reconciliation rather than silent completeness claims. The observer excludes
+`.synveil/` control data, never follows symlink/reparse paths, hashes file
+content by streaming, and records unsupported/colliding/ambiguous facts as local
+issues instead of lossy intents.
+
+`ServerProfileId` is a local opaque UUIDv7, not a hostname, LibraryId, or bearer.
+`ServerProfile` contains only its immutable canonical origin, display label,
+creation time, and last successful connection time. The mature `url` parser
+normalizes scheme, host/IDNA, IPv6, and ports. Production construction accepts
+HTTPS origin roots only: no userinfo, query, fragment, reverse-proxy subpath,
+malformed port, parser repair, or insecure-certificate option. The explicit
+test constructor permits HTTP only for numeric loopback IPs. The current
+server has no stable installation identity endpoint; verified TLS/origin is the
+binding, and no weak hostname-derived installation ID is invented.
+
+There are three independently checked profile bindings:
+
+- SQLite migration `0002_server_profiles.sql` adds non-secret profile and
+  owner/Device/credential enrollment metadata. The immutable replica row
+  includes `server_profile_id`.
+- A production managed root uses `SYNVEIL_MANAGED_ROOT_V2` and records that same
+  profile ID alongside its owner, Device, Library, and root binding ID.
+- `HttpSyncRemote` owns an immutable profile plus a `LoadedDeviceCredential`
+  obtained from that profile's SecretStore entry. Enrollment storage accepts
+  only an opaque exchange receipt bound to the profile and exact origin, not a
+  raw bearer-import API. Its transport construction rejects
+  another profile or Device, and every request checks owner/Device scope.
+
+The engine verifies all three before networking or local apply, including the
+currently active credential ID. Local forget or explicit replacement therefore
+stops an already constructed stale engine. Existing V1 roots and migrated
+unbound replica rows remain available to transport-neutral legacy tests; they
+cannot acquire a production profile by inference. A future explicit rebind is
+not implemented. A second SQLite database cannot override the profile recorded
+in a physical root marker.
+
+The existing `PlatformRuntime::SecretStore` is the only persistent bearer
+boundary. Native Linux uses persistent Secret Service with encrypted D-Bus
+sessions; Windows uses Credential Manager through explicit `keyring` native
+builders. Global keyring mock selection cannot replace those builders. macOS
+and generic adapters remain explicitly unsupported in this phase. Locked,
+missing, or failed secure storage fails closed with sanitized errors, never a
+plaintext SQLite/file fallback. The existing `SecretValue` and shared machine
+secret wrappers redact Debug and zeroize their owned storage.
+
+Credential entries use opaque profile ID plus credential ID, never a raw URL.
+Inside the secure store, the value is a bounded, versioned envelope containing
+the canonical origin, transport policy, profile/owner/Device/credential IDs,
+and bearer. Load, overwrite, and cleanup deletion validate that envelope;
+copying/reconstructing SQLite with the same IDs and a different origin cannot
+load, replace, or delete the original origin's credential. The loaded credential
+retains its verified secure-store origin, which HTTP construction also checks
+before creating an Authorization header. Raw legacy values or incompatible
+envelopes fail closed; there is no permissive credential-import fallback.
+The local lifecycle writes a non-secret cleanup intent before storing a new
+secret, reads it back, then commits enrollment metadata. Replacement is
+explicit and restricted to the same owner/Device; old-key deletion is durable
+and retryable. Forget writes a durable disconnected marker before deleting
+the secure entry. Failed deletion remains visible and retryable after restart;
+it cannot make the engine reload the old credential. Forget preserves local
+files, applied/acknowledged sequences, and pending evidence, and is not an
+offline promise of server revocation. Already loaded direct transport objects
+must be dropped by their caller; engine use additionally checks current local
+enrollment before each synchronization call.
+
+Server middleware distinguishes a browser session principal from an
+owner/Device/credential principal. Browser state changes retain CSRF. Only a
+successfully authenticated bearer may use the inbound-route CSRF exemption;
+device credentials do not grant Prompt 34 mutation or Prompt 35 resolution
+authority. One-time enrollment is not retried after an ambiguous response;
+the recovery contract is explicit owner revocation and a new grant.
+
+The production HTTP adapter disables redirects, cookie storage, ambient
+proxies, and transparent compression, validates finite timeout/body budgets,
+and streams logical file bytes with bounded length/hash verification. Native
+Linux Secret Service persistence is tested with an isolated synthetic vault,
+including reading the saved entry from a new process before deletion. Windows
+validation includes workspace cross-target compilation and MinGW linking of
+client-sync/platform test executables. Those executables have not run on a
+native Windows host: Credential Manager, TLS, and filesystem runtime evidence
+remains a Prompt 40 checkpoint.

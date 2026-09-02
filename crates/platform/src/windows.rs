@@ -13,7 +13,8 @@ impl PathResolver for WindowsPathResolver {
     }
 }
 
-/// Minimal Windows runtime with explicit unsupported lifecycle/secret states.
+/// Windows runtime with native Credential Manager storage on Windows and an
+/// explicitly unsupported service lifecycle.
 pub struct WindowsPlatformRuntime {
     inner: MinimalPlatformRuntime,
 }

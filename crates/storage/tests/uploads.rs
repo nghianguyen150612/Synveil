@@ -10,8 +10,8 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use sha2::{Digest, Sha256};
 use synveil_core::{
-    FileVersionId, LibraryId, LogicalName, NodeId, Revision, Sha256Digest, Timestamp,
-    UploadSessionId, UploadSessionState, UserId,
+    FileVersionId, LibraryId, LogicalName, NodeId, OutboundIntentId, Revision, Sha256Digest,
+    Timestamp, UploadSessionId, UploadSessionState, UserId,
 };
 use synveil_metadata::{
     MappingError, MetadataError, NewUploadSession, UploadClaim, UploadCleanupCandidate,
@@ -138,6 +138,9 @@ impl UploadMetadataBackend for TestMetadata {
     ) -> Result<UploadSessionRecord, MetadataError> {
         let mut state = self.state.lock().expect("metadata lock");
         let record = record_from_input(input);
+        if let Some(existing) = state.records.get(&record.id).cloned() {
+            return Ok(existing);
+        }
         state.records.insert(record.id, record.clone());
         Ok(record)
     }
@@ -450,6 +453,7 @@ fn create_request(
     expected_sha256: Option<Sha256Digest>,
 ) -> CreateUploadSessionRequest {
     CreateUploadSessionRequest {
+        idempotency_key: OutboundIntentId::new(),
         owner_user_id,
         target: UploadTargetRequest::CreateFile {
             library_id: LibraryId::new(),
@@ -459,6 +463,42 @@ fn create_request(
         expected_length,
         expected_sha256,
     }
+}
+
+#[tokio::test]
+async fn upload_create_replays_the_same_idempotent_session() {
+    let root = TempRoot::new();
+    let metadata = Arc::new(TestMetadata::default());
+    let owner = UserId::new();
+    let service = service(metadata.clone(), root.path());
+    let idempotency_key = OutboundIntentId::new();
+    let request = CreateUploadSessionRequest {
+        idempotency_key,
+        owner_user_id: owner,
+        target: UploadTargetRequest::CreateFile {
+            library_id: LibraryId::new(),
+            parent_node_id: NodeId::new(),
+            name: LogicalName::new("resumable.txt").expect("valid logical name"),
+        },
+        expected_length: 4,
+        expected_sha256: Some(digest(b"data")),
+    };
+
+    let first = service
+        .create_upload_session(request.clone())
+        .await
+        .expect("first create succeeds");
+    let second = service
+        .create_upload_session(request)
+        .await
+        .expect("lost response replay succeeds");
+
+    assert_eq!(first.id, second.id);
+    assert_eq!(first.id.into_uuid(), idempotency_key.into_uuid());
+    assert_eq!(
+        metadata.state.lock().expect("metadata lock").records.len(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -639,6 +679,7 @@ async fn replacement_completion_rechecks_the_expected_revision() {
     let service = service(metadata.clone(), root.path());
     let session_id = service
         .create_upload_session(CreateUploadSessionRequest {
+            idempotency_key: OutboundIntentId::new(),
             owner_user_id: owner,
             target: UploadTargetRequest::ReplaceContent {
                 library_id: LibraryId::new(),

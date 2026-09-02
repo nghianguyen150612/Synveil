@@ -1,6 +1,6 @@
 # Domain model chuẩn của Synveil
 
-Trạng thái: **SKELETON_IMPLEMENTED — entity và invariant chuẩn ban đầu đã được validate; canonical schema PostgreSQL, mapping SQLx tường minh, logical node metadata workflow authenticated, subset persisted upload-session/verified-replica, exact-offset HTTP upload transport, content-read bất biến đã authorize theo owner, HTTP download full/single-range đã authenticate, metadata version-history bất biến đã authenticate, safe historical-version restore, metadata Trash retention/purge execution, reference accounting theo FileVersion, GC grace/lease planning metadata-only và xóa vật lý Object/ObjectReplica nội bộ an toàn khi crash đã IMPLEMENTED/VALIDATED; GC-worker orchestration nội bộ bounded và đối soát operation bị kẹt đã IMPLEMENTED; download UI và content protocol rộng hơn vẫn PLANNED**
+Trạng thái: **SKELETON_IMPLEMENTED — entity và invariant chuẩn ban đầu đã được validate; canonical schema PostgreSQL, mapping SQLx tường minh, logical node metadata workflow authenticated, subset persisted upload-session/verified-replica, exact-offset HTTP upload transport, content-read bất biến đã authorize theo owner, HTTP download full/single-range đã authenticate, metadata version-history bất biến đã authenticate, safe historical-version restore, metadata Trash retention/purge execution, reference accounting theo FileVersion, GC grace/lease planning metadata-only và xóa vật lý Object/ObjectReplica nội bộ an toàn khi crash đã IMPLEMENTED/VALIDATED; GC-worker orchestration nội bộ bounded và đối soát operation bị kẹt đã IMPLEMENTED; durable change journal, checkpoint theo device, incremental change feed, acknowledgment và bootstrap snapshot/rebaseline logical materialized là VALIDATED; typed client mutation submission với durable idempotency, canonical fingerprint, optimistic concurrency, deterministic conflict persistence và exact journal integration đã IMPLEMENTED/VALIDATED; durable conflict record, manual inspection và explicit manual resolution đã IMPLEMENTED; automatic conflict resolution, desktop sync agent, download UI và content protocol rộng hơn vẫn NOT IMPLEMENTED/PLANNED**
 
 Tài liệu này sở hữu ý nghĩa chuẩn, field, relationship, lifecycle state và
 transaction invariant của các domain entity trong Synveil. Tài liệu không áp
@@ -241,10 +241,11 @@ Field chuẩn:
 - `id`, `owner_user_id`, name;
 - root `Node` ID;
 - `dedup_domain_id`;
-- `sync_head` tăng theo giao dịch;
+- `sync_head` tăng theo giao dịch (library row lock được lấy tại boundary append
+  journal, sau khi namespace mutation đã được kiểm tra);
 - `journal_epoch` và minimum retained sequence;
-- namespace-mutation guard/structural revision nội bộ dùng để sắp thứ tự các
-  commit `Node` ngắn trong correctness profile ban đầu;
+- namespace-mutation guard nội bộ theo transaction dùng để sắp thứ tự các commit
+  `Node` ngắn trong correctness profile ban đầu;
 - quota/policy reference;
 - `status`: `ACTIVE`, `READ_ONLY`, `QUARANTINED` hoặc `DELETING`;
 - timestamp và `revision`.
@@ -495,56 +496,173 @@ Part có thể đến không theo thứ tự khi đã negotiate. Retry giống h
 nhận; request tái sử dụng part identity với byte khác là conflict. Overlap, gap,
 total overflow, quá nhiều part và session hết hạn bị từ chối trước assembly.
 
-## Domain đồng bộ
+## Domain đồng bộ — trạng thái Prompt 35
+
+| Capability | Status |
+|---|---|
+| durable change journal | `VALIDATED` |
+| device checkpoints/feed | `VALIDATED` |
+| snapshot/rebaseline | `VALIDATED` |
+| client mutation submission | `VALIDATED` |
+| optimistic conflict detection | `VALIDATED` |
+| durable conflict records | `IMPLEMENTED` |
+| manual conflict inspection | `IMPLEMENTED` |
+| explicit manual resolution | `IMPLEMENTED` |
+| automatic conflict resolution | `NOT IMPLEMENTED` |
+| desktop sync agent | `NOT IMPLEMENTED` |
 
 ### `ChangeEvent`
 
 Mục đích: fact đã commit bền vững cần thiết để client tiến state.
 
-Field chuẩn:
+Field của foundation đã implement là:
 
-- `library_id`, `sequence` được cấp theo giao dịch, `journal_epoch`;
-- event ID, event kind, subject node ID;
-- resulting node revision và version ID khi áp dụng;
-- projection tối thiểu của parent/name/state cần để áp dụng hoặc invalidate
-  cache;
-- actor user/device, server commit time;
-- causal/idempotency correlation và schema version.
+- `entry_id`, `owner_user_id`, `library_id`, `sequence` được cấp theo giao
+  dịch và `journal_epoch`;
+- resource kind và change kind có type, có schema version, cùng subject node ID;
+- node revision kết quả, parent ID, node kind/state và current version ID khi
+  áp dụng;
+- `occurred_at` là timestamp mô tả theo transaction time của PostgreSQL.
 
 Unique key là (`library_id`, `journal_epoch`, `sequence`). Sequence order là
 commit order cho một library, không phải wall-clock order hay cross-library
 order. Event được append trong cùng PostgreSQL transaction với domain mutation.
+Foundation cố ý không copy name, path, object/replica identity, actor-device
+metadata hay JSON tùy ý; schema version tương lai chỉ có thể thêm projection
+bounded đã review mà không đổi ordering contract.
 
 ### `SyncCursor`
 
 Mục đích: opaque server token biểu diễn journal position và epoch cho một
 client/library.
 
-Claim được decode phía server gồm token version, library ID, epoch,
-last-delivered sequence và integrity protection. Persisted device checkpoint có
-thể ghi thêm device ID, acknowledgement sequence và last contact.
+Foundation metadata expose `JournalCursor` riêng, gồm version, library ID,
+journal epoch và last-delivered sequence. Cursor có giới hạn, opaque với caller,
+được integrity-check và revalidate với owner/library/head trong PostgreSQL.
+Public feed dùng token evidence acknowledgment HMAC bounded riêng; token chỉ
+chứng minh integrity, không phải authorization.
 
-Client coi cursor là mờ đục, không thể increment hoặc tự tạo và không được dùng
-cursor làm authorization. Cursor cho sai user/library/epoch hoặc thấp hơn
-retention bị từ chối bằng directed rescan response.
+### `DeviceSyncCheckpoint`
+
+Mục đích: consumer progress bền vững của một device đã register thuộc owner và
+một library.
+
+Field chuẩn:
+
+- `owner_user_id`, `device_id`, `library_id`, với composite foreign key theo
+  ownership và duy nhất một checkpoint cho mỗi device/library;
+- `journal_epoch`, `acknowledged_sequence`, khởi tạo bằng epoch hiện tại và
+  sequence zero ở lần dùng đầu;
+- `rebaseline_generation` tăng đơn điệu, chỉ dùng làm compare-and-set fence để
+  bootstrap cũ không thể thay thế progress synchronization mới hơn;
+- `created_at`, `updated_at` do server ghi và `last_seen_high_watermark` tùy
+  chọn.
+
+Checkpoint không lưu journal payload, object/replica identity, storage key,
+path hay device credential. Chỉ device hiện hữu ở `ACTIVE` và library thuộc
+owner mới được tạo, đọc, fetch hoặc acknowledge. Fetch không advance. Ack dùng
+row lock và compare-and-set: page start đã ký phải bằng sequence hiện tại,
+range delivered phải hiện hữu liên tục trong journal và chỉ có thể advance
+trong epoch hiện tại. Replay ack cũ hợp lệ trả row hiện tại mà không rewind;
+gap, future progress, sai epoch hay history đã mất đều trả outcome tường minh.
+
+Trust model HTTP hiện tại là owner session đã authenticate hành động thay cho
+device đã register. Pairing, credential mạnh của device và attestation chưa
+thuộc phase này.
+
+Client coi cursor và acknowledgment token là mờ đục, không thể increment hoặc tự
+tạo và không được dùng làm authorization. Cursor/checkpoint sai
+user/library/epoch hoặc thấp hơn retention bị từ chối bằng `not_found` hoặc
+`sync_rebaseline_required` ổn định.
+
+### `SyncBootstrap`
+
+Mục đích: session server-side an toàn qua restart, bind một manifest logical
+bất biến với một journal handoff cut chính xác cho một device/library.
+
+Field chuẩn gồm `SyncBootstrapId` có type, `owner_user_id`, `device_id`,
+`library_id`, generation tăng đơn điệu, `snapshot_epoch`,
+`snapshot_resume_sequence`, item count và terminal Node ID tùy chọn bất biến,
+state, cùng timestamp create/expiry/completion do PostgreSQL/server quản lý.
+State đóng gồm `OPEN`, `COMPLETED`, `ABORTED`, `EXPIRED`. Tối đa một row `OPEN`
+cho mỗi scope device/library. Retry start an toàn trả row đó; thay row đã expire
+phải tăng generation của checkpoint trước khi tạo session mới.
+
+Start không reset checkpoint. Complete cần terminal-page evidence chính xác và
+claim owner/device/library/session/generation/cut matching. Trong một transaction
+có row lock, service recheck journal epoch hiện tại và retained history, từ chối
+checkpoint đã đi trước, đặt checkpoint chính xác vào epoch/resume sequence đã
+capture, rồi đánh dấu bootstrap `COMPLETED`. Replay completed trả checkpoint đã
+commit mà không reset lần nữa.
+
+### `LogicalSnapshotNode`
+
+Mục đích: một projection logical bất biến được capture trong `SyncBootstrap`;
+nó không phải row `Node` live hay entry backup/archive.
+
+Field gồm `node_id`, `parent_node_id` tùy chọn, logical name, kind `FILE` hoặc
+`DIRECTORY`, state public `ACTIVE` hoặc `TRASHED`, revision, current version ID
+tùy chọn và—chỉ với current file—cặp content length/SHA-256. Canonical root được
+include. Row `PURGING` nội bộ và Node đã purge vĩnh viễn không có mặt; full
+history `FileVersion` không được copy. Directory không thể mang content
+metadata; file phải có cả length/hash hoặc không có cả hai theo projection
+current version.
+
+Membership và value manifest được copy trong cùng transaction đọc journal cut,
+rồi page tăng dần theo immutable Node ID. Row manifest cố ý không foreign-key
+ngược tới Node/FileVersion/Object mutable, nên rename, move, Trash, purge,
+content replacement hoặc version restore sau đó không thể đổi page đã capture.
+Manifest không có Object/ObjectReplica ID, storage key, staging handle,
+filesystem path, backend locator/version, credential, GC state hay byte content.
+Cleanup session retired chỉ cascade tới row manifest đã copy, không bao giờ tới
+Library, Node, FileVersion, Object hay journal canonical.
 
 ### Biểu diễn conflict
 
-Với chỉnh sửa đồng thời dựa trên version `v4`:
+Mỗi client mutation mang `client_mutation_id` bền vững, fingerprint canonical,
+base journal epoch/sequence và precondition resource có type. Khi precondition
+thất bại, server giữ nguyên Node canonical và trả `MutationConflict` có reason
+được hỗ trợ, expected value, current logical state an toàn nếu có, cùng
+server epoch/sequence. Resource đã purge được báo từ tombstone `NODE_PURGED`
+còn giữ trong journal, không resurrect và không biến thành kết quả rỗng.
 
-```text
-server head v4
-├── Device A commits v5A from v4 -> original Node head
-└── Device B submits v5B from v4 -> deterministic sibling conflict-copy Node
-```
+Prompt 35 cấp mỗi managed terminal mutation conflict một `SyncConflictId`
+UUIDv7 có type và đúng một row `sync_conflicts` trong cùng transaction
+terminalize row `device_mutation_operations` gốc. Quan hệ là one-to-one theo cả
+hai hướng. Replay mutation ID/fingerprint gốc trả cùng conflict ID; dùng lại ID
+với semantic khác vẫn là mutation-identity conflict. Authentication, CSRF,
+input malformed, dependency/internal failure, identity reuse và
+`sync_rebaseline_required` không bao giờ tạo managed conflict row.
 
-Server không bao giờ overwrite `v5A` bằng `v5B`. Server tạo sibling conflict
-`Node` với tên tất định không clobber, liên kết `v5B` vào đó, giữ common
-base/correlation và append journal fact bắt buộc. Replay cùng client mutation
-trả về conflict copy đó thay vì tạo bản khác. Conflict chỉ metadata trả current
-state để client rebase. Exact naming và event fixture thuộc
-[SYNC.md](SYNC.md), nhưng không được thay hành vi conflict-copy đã chấp thuận
-này bằng last-writer-wins hoặc version không được expose.
+Conflict scope theo owner, Device nguồn, Library, client mutation gốc và
+logical resource chính. Lifecycle đóng là `OPEN`, `RESOLVED`, `DISMISSED`.
+Evidence bất biến gồm identity conflict/mutation gốc, kind có type, reason,
+resource, expected context gốc, field intent typed đóng, server
+revision/state/parent/name lịch sử, epoch/sequence đã capture và created_at.
+Nó không lưu raw request JSON, path, Object/ObjectReplica identity, locator,
+staging handle, credential hay byte. Historical projection là evidence, không
+phải current canonical truth. Không có Node foreign key nên purge/rebaseline
+không xóa nó. Chỉ lifecycle và terminal resolution linkage được transition một
+lần.
+
+`sync_conflict_resolutions` là decision record nhỏ nhất đủ cho resolution
+identity UUIDv7, fingerprint SHA-256 typed có version, replay sau mất response,
+concurrency fencing, audit stale result và linkage journal event thông thường
+khi có. Action vocabulary chính xác là `ACCEPT_SERVER` và
+`APPLY_CLIENT_INTENT`. Cùng ID/fingerprint trả outcome, timestamp và event
+linkage gốc cùng replay marker; semantic khác trả `resolution_id_conflict`.
+
+`ACCEPT_SERVER` chuyển OPEN thành DISMISSED mà không đổi canonical resource hay
+journal. `APPLY_CLIENT_INTENT` bắt buộc fresh current revision do caller cung
+cấp, reconstruct semantic intent đã giữ và dùng chung executor mutation trong
+transaction cùng lock order Prompt 34. Success đổi Node, append đúng một
+`ChangeEvent` thông thường, terminalize decision và chuyển conflict thành
+RESOLVED trong một commit nguyên tử. Kết quả stale/purged chỉ terminalize
+resolution attempt đó thành stale, giữ conflict OPEN và không đổi Node, journal
+hay checkpoint. Decision đồng thời tạo tối đa một terminal conflict transition.
+Operation Prompt 34 gốc giữ CONFLICT vĩnh viễn. Không có automatic
+conflict-copy, merge, last-writer-wins, silent overwrite hay policy tự động chọn
+action.
 
 ## Domain backup
 

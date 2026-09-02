@@ -28,6 +28,25 @@ allow = [
     "Unlicense",
     "Zlib",
 ]
+# Prompt 37: reviewed, exact-version exceptions for the existing verified-TLS
+# chain. Keep the workspace-wide allowlist unchanged. Upgrades must re-review
+# these packages and preserve upstream copyright/license notices, including
+# the agreement distributed with Mozilla root-certificate data.
+exceptions = [
+    { crate = "ring@0.17.14", allow = ["Apache-2.0", "ISC"] },
+    { crate = "rustls-webpki@0.103.15", allow = ["ISC"] },
+    { crate = "untrusted@0.9.0", allow = ["ISC"] },
+    { crate = "webpki-roots@1.0.9", allow = ["CDLA-Permissive-2.0"] },
+    # Prompt 38: the reviewed cross-platform filesystem watcher is CC0-1.0.
+    # Keep this exact-version exception narrow; its Linux inotify and Windows
+    # ReadDirectoryChangesW backends only provide hints to reconciliation.
+    { crate = "notify@8.2.0", allow = ["CC0-1.0"] },
+    # notify's Linux backend depends on the small ISC inotify wrappers. They are
+    # used only to surface lossy raw hints; canonical observation comes from
+    # managed-root reinspection and durable SQLite state.
+    { crate = "inotify@0.11.5", allow = ["ISC"] },
+    { crate = "inotify-sys@0.1.8", allow = ["ISC"] },
+]
 
 [sources]
 unknown-registry = "deny"

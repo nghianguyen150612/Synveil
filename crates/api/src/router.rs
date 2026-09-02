@@ -7,8 +7,9 @@ use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
 use tracing::{Span, info};
 
 use crate::{
-    ApiError, ApiState, FILE_METADATA_BODY_LIMIT_BYTES, UPLOAD_JSON_BODY_LIMIT_BYTES, auth,
-    downloads, files, health, middleware, uploads, versions,
+    ApiError, ApiState, CLIENT_MUTATION_BODY_LIMIT_BYTES, CONFLICT_RESOLUTION_BODY_LIMIT_BYTES,
+    FILE_METADATA_BODY_LIMIT_BYTES, UPLOAD_JSON_BODY_LIMIT_BYTES, auth, conflicts, device_auth,
+    downloads, files, health, middleware, mutations, rebaseline, sync, uploads, versions,
 };
 
 /// Stable product API prefix for versioned resources.
@@ -19,6 +20,8 @@ pub const API_VERSION_PREFIX: &str = "/api/v1";
 pub const DEFAULT_BODY_LIMIT_BYTES: usize = 1024 * 1024;
 pub const LOGIN_BODY_LIMIT_BYTES: usize = auth::LOGIN_BODY_LIMIT_BYTES;
 pub const BOOTSTRAP_BODY_LIMIT_BYTES: usize = auth::BOOTSTRAP_BODY_LIMIT_BYTES;
+pub const SYNC_ACK_BODY_LIMIT_BYTES: usize = sync::SYNC_ACK_BODY_LIMIT_BYTES;
+pub const REBASELINE_BODY_LIMIT_BYTES: usize = rebaseline::REBASELINE_BODY_LIMIT_BYTES;
 
 /// Construct the Axum application router.
 pub fn router(state: ApiState) -> Router {
@@ -52,10 +55,7 @@ pub fn router(state: ApiState) -> Router {
             "/libraries/{library_id}/nodes",
             get(files::list_children).post(files::create_directory),
         )
-        .route(
-            "/nodes/{node_id}",
-            get(files::get_node).patch(files::update_node),
-        )
+        .route("/nodes/{node_id}", axum::routing::patch(files::update_node))
         .route("/nodes/{node_id}/trash", post(files::delete_node))
         .route("/nodes/{node_id}/restore", post(files::restore_node))
         .layer(RequestBodyLimitLayer::new(FILE_METADATA_BODY_LIMIT_BYTES))
@@ -81,14 +81,115 @@ pub fn router(state: ApiState) -> Router {
         // through the mutation CSRF layer.
         .layer(from_fn_with_state(
             state.clone(),
-            auth::require_authentication,
+            auth::require_inbound_authentication,
         ))
         .with_state(state.clone());
     let protected_versions = Router::new()
         .route("/nodes/{node_id}/versions", get(versions::list_versions))
-        .route("/versions/{version_id}", get(versions::get_version))
         // Version history is an authenticated read and deliberately does not
         // pass through the mutation CSRF layer.
+        .layer(from_fn_with_state(
+            state.clone(),
+            auth::require_authentication,
+        ))
+        .with_state(state.clone());
+    let protected_inbound_metadata = Router::new()
+        .route("/nodes/{node_id}", get(files::get_node))
+        .route("/versions/{version_id}", get(versions::get_version))
+        .layer(from_fn_with_state(
+            state.clone(),
+            auth::require_inbound_authentication,
+        ))
+        .with_state(state.clone());
+    let protected_sync = Router::new()
+        .route(
+            "/devices/{device_id}/libraries/{library_id}/changes",
+            get(sync::get_changes),
+        )
+        .route(
+            "/devices/{device_id}/libraries/{library_id}/checkpoint",
+            get(sync::get_checkpoint),
+        )
+        .route(
+            "/devices/{device_id}/libraries/{library_id}/changes/ack",
+            post(sync::acknowledge),
+        )
+        .layer(RequestBodyLimitLayer::new(SYNC_ACK_BODY_LIMIT_BYTES))
+        .layer(from_fn_with_state(
+            state.clone(),
+            auth::require_csrf_for_mutations,
+        ))
+        .layer(from_fn_with_state(
+            state.clone(),
+            auth::require_inbound_authentication,
+        ))
+        .with_state(state.clone());
+    let protected_rebaseline = Router::new()
+        .route(
+            "/devices/{device_id}/libraries/{library_id}/rebaseline",
+            post(rebaseline::start),
+        )
+        .route(
+            "/devices/{device_id}/libraries/{library_id}/rebaseline/{bootstrap_id}/nodes",
+            get(rebaseline::get_nodes),
+        )
+        .route(
+            "/devices/{device_id}/libraries/{library_id}/rebaseline/{bootstrap_id}/complete",
+            post(rebaseline::complete),
+        )
+        .layer(RequestBodyLimitLayer::new(REBASELINE_BODY_LIMIT_BYTES))
+        .layer(from_fn_with_state(
+            state.clone(),
+            auth::require_csrf_for_mutations,
+        ))
+        .layer(from_fn_with_state(
+            state.clone(),
+            auth::require_inbound_authentication,
+        ))
+        .with_state(state.clone());
+    let protected_mutations = Router::new()
+        .route(
+            "/devices/{device_id}/libraries/{library_id}/mutations",
+            post(mutations::submit),
+        )
+        .layer(RequestBodyLimitLayer::new(CLIENT_MUTATION_BODY_LIMIT_BYTES))
+        .layer(from_fn_with_state(
+            state.clone(),
+            auth::require_csrf_for_mutations,
+        ))
+        .layer(from_fn_with_state(
+            state.clone(),
+            auth::require_inbound_authentication,
+        ))
+        .with_state(state.clone());
+    let protected_conflict_reads = Router::new()
+        .route(
+            "/devices/{device_id}/libraries/{library_id}/conflicts",
+            get(conflicts::list),
+        )
+        .route(
+            "/devices/{device_id}/libraries/{library_id}/conflicts/{conflict_id}",
+            get(conflicts::detail),
+        )
+        // Conflict inspection is an authenticated read and deliberately does
+        // not pass through the mutation CSRF layer.
+        .layer(from_fn_with_state(
+            state.clone(),
+            auth::require_authentication,
+        ))
+        .with_state(state.clone());
+    let protected_conflict_resolution = Router::new()
+        .route(
+            "/devices/{device_id}/libraries/{library_id}/conflicts/{conflict_id}/resolve",
+            post(conflicts::resolve),
+        )
+        .layer(RequestBodyLimitLayer::new(
+            CONFLICT_RESOLUTION_BODY_LIMIT_BYTES,
+        ))
+        .layer(from_fn_with_state(
+            state.clone(),
+            auth::require_csrf_for_mutations,
+        ))
         .layer(from_fn_with_state(
             state.clone(),
             auth::require_authentication,
@@ -131,8 +232,33 @@ pub fn router(state: ApiState) -> Router {
     let protected_uploads = Router::new()
         .merge(create_upload)
         .merge(upload_session_operations)
-        // Authentication is installed last so it supplies AuthContext before
-        // CSRF evaluates upload mutations. GET status remains CSRF-free.
+        // Authentication is installed last so it supplies the explicit browser
+        // or device principal before CSRF evaluates upload mutations.
+        .layer(from_fn_with_state(
+            state.clone(),
+            auth::require_csrf_for_mutations,
+        ))
+        .layer(from_fn_with_state(
+            state.clone(),
+            auth::require_inbound_authentication,
+        ))
+        .with_state(state.clone());
+    let protected_device_enrollment = Router::new()
+        .route(
+            "/devices/enrollment-grants",
+            post(device_auth::create_grant),
+        )
+        .route(
+            "/devices/{device_id}/credentials/{credential_id}/revoke",
+            post(device_auth::revoke_credential),
+        )
+        .route(
+            "/devices/{device_id}/credentials/revoke-all",
+            post(device_auth::revoke_all_credentials),
+        )
+        .layer(RequestBodyLimitLayer::new(
+            device_auth::DEVICE_ENROLLMENT_BODY_LIMIT_BYTES,
+        ))
         .layer(from_fn_with_state(
             state.clone(),
             auth::require_csrf_for_mutations,
@@ -142,6 +268,11 @@ pub fn router(state: ApiState) -> Router {
             auth::require_authentication,
         ))
         .with_state(state.clone());
+    let public_device_exchange = Router::new()
+        .route("/device-enrollment/exchange", post(device_auth::exchange))
+        .layer(RequestBodyLimitLayer::new(
+            device_auth::DEVICE_ENROLLMENT_BODY_LIMIT_BYTES,
+        ));
     let api = Router::new()
         .route("/system/health", get(health::system_health))
         .merge(public_auth)
@@ -156,8 +287,16 @@ pub fn router(state: ApiState) -> Router {
         .merge(protected_files)
         .layer(RequestBodyLimitLayer::new(state.body_limit_bytes()))
         .merge(protected_downloads)
+        .merge(protected_inbound_metadata)
+        .merge(protected_device_enrollment)
+        .merge(public_device_exchange)
         .merge(protected_versions)
         .merge(protected_version_restore)
+        .merge(protected_sync)
+        .merge(protected_rebaseline)
+        .merge(protected_mutations)
+        .merge(protected_conflict_reads)
+        .merge(protected_conflict_resolution)
         .merge(protected_uploads);
 
     Router::new()
@@ -184,7 +323,7 @@ pub fn router(state: ApiState) -> Router {
                         request_id = %request_id,
                         trace_id = %trace_id,
                         method = %request.method(),
-                        path = %request.uri().path(),
+                        route = request.extensions().get::<axum::extract::MatchedPath>().map_or("unmatched", axum::extract::MatchedPath::as_str),
                         status_code = tracing::field::Empty,
                     )
                 })
@@ -192,7 +331,7 @@ pub fn router(state: ApiState) -> Router {
                     info!(
                         parent: span,
                         method = %request.method(),
-                        path = %request.uri().path(),
+                        route = request.extensions().get::<axum::extract::MatchedPath>().map_or("unmatched", axum::extract::MatchedPath::as_str),
                         "request started"
                     );
                 })

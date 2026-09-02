@@ -12,7 +12,14 @@ metadata-only cùng reference accounting theo FileVersion VALIDATED; planning
 grace-period/lease và xóa Object/ObjectReplica vật lý nội bộ crash-safe đã
 IMPLEMENTED/VALIDATED; GC-worker orchestration nội bộ có giới hạn và đối soát
 operation bị kẹt IMPLEMENTED; auto-delete orphan vật lý không rõ NOT IMPLEMENTED;
-download UI, sync, backup, sharing và lifecycle cấp cao PLANNED**
+nền tảng change journal bền vững theo owner/library đã IMPLEMENTED/VALIDATED;
+checkpoint theo device và incremental change feed đã VALIDATED; bootstrap
+snapshot/rebaseline logical materialized cũng đã VALIDATED; typed client
+mutation submission, optimistic concurrency conflict detection, durable
+idempotency và exact journal integration đã IMPLEMENTED; automatic conflict
+resolution, filesystem observation và durable outbound intent capture đã
+IMPLEMENTED; automatic outbound mutation submission, desktop GUI, download UI,
+backup, sharing và lifecycle cấp cao vẫn NOT IMPLEMENTED/PLANNED**
 
 Tài liệu này đặc tả hợp đồng lưu trữ byte chuẩn của Synveil và vòng đời logic
 nằm bên trên hợp đồng đó. Tài liệu tuân theo các ADR đã được chấp thuận và sử
@@ -37,6 +44,17 @@ tài liệu quy chuẩn kế hoạch trừ khi được đánh dấu khác.
 | HTTP download full/single-range đã authenticate | `IMPLEMENTED/VALIDATED` |
 | metadata version-history bất biến listing và lookup đã authenticate | `IMPLEMENTED/VALIDATED` |
 | safe historical-version restore thành `FileVersion` bất biến mới đã authenticate | `IMPLEMENTED` |
+| change-journal bền vững theo owner/library và bounded read service | `IMPLEMENTED/VALIDATED` |
+| per-device checkpoints | `VALIDATED` |
+| incremental change feed và acknowledgment | `VALIDATED` |
+| logical snapshot/rebaseline bootstrap | `VALIDATED` |
+| client mutation submission | `IMPLEMENTED` |
+| optimistic concurrency conflict detection | `IMPLEMENTED` |
+| filesystem observation | `IMPLEMENTED` |
+| durable outbound intent capture | `IMPLEMENTED` |
+| automatic outbound mutation submission | `NOT IMPLEMENTED` |
+| automatic conflict resolution | `NOT IMPLEMENTED` |
+| desktop GUI | `NOT IMPLEMENTED` |
 | timestamp Trash chuẩn, retention status dẫn xuất và begin `PURGING` metadata-only | `IMPLEMENTED` |
 | trusted metadata purge execution, release reference FileVersion và GC-candidate metadata | `IMPLEMENTED/VALIDATED` |
 | GC grace-period, bounded claim, lease, revalidation và ready planning | `IMPLEMENTED/VALIDATED` |
@@ -46,9 +64,64 @@ tài liệu quy chuẩn kế hoạch trừ khi được đánh dấu khác.
 | download UI | `PLANNED` |
 | compression | `PLANNED` |
 | filesystem optimization | `PLANNED` |
-| sync | `PLANNED` |
+| client synchronization rộng hơn | `PLANNED` |
 | backup | `PLANNED` |
 | sharing | `PLANNED` |
+
+## Nền tảng change journal bền vững đã implement
+
+Boundary metadata hiện sở hữu một table chuẩn `change_journal`. Logical namespace
+mutation trước hết lấy guard ngắn theo library trong transaction trước khi lock
+bất kỳ `Node` nào; sau khi domain work sẵn sàng, writer transaction-local mới
+lock library row, advance `journal_epoch`/`sync_head` và insert projection event
+có type trong cùng PostgreSQL transaction. Boundary này áp dụng cho tạo
+directory, rename, move, Trash, restore, finalize upload, restore version hoặc
+purge metadata. Transaction thất bại sẽ không publish domain change hay journal
+fact. PostgreSQL cũng reject UPDATE và DELETE trên `change_journal`; retention và
+compaction cố ý chưa có.
+
+Journal chỉ lưu logical ID, revision kết quả, projection parent/kind/state và
+current version ID khi hữu ích. Nó không lưu object/replica key, filesystem path,
+staging handle, credential hay file content. Purge dùng tombstone node tối thiểu
+vẫn tồn tại sau khi Node và FileVersion bị xóa. GC lease nội bộ, retry, xóa
+replica và cleanup vật lý không phải journal event.
+
+`ChangeJournalService` cung cấp bounded reader trung lập transport theo owner đã
+authorize, dùng keyset `sequence > cursor` và snapshot repeatable-read có
+high-watermark. Cursor có integrity-check nhưng không phải credential
+authorization; service vẫn phải nhận và verify owner đã authenticate riêng.
+Public feed và checkpoint theo device xây trên boundary đã validate này. Route
+client mutation authenticated hiện bổ sung một logical mutation strict mỗi
+request với identity/fingerprint bền, precondition typed và journal integration
+chính xác; nó không mang byte hay physical storage identity. Automatic conflict
+policy và client apply engine vẫn là công việc tương lai; journal service tự nó
+vẫn trung lập transport.
+
+## Bootstrap logical đã implement không phải storage vật lý
+
+Rebaseline Prompt 33 materialize một projection namespace logical trong
+PostgreSQL. Nó không đọc/list `ObjectStore`, mở local filesystem, copy object,
+tạo archive hay giữ file byte. Trong cùng transaction capture journal
+epoch/resume sequence, service copy mỗi projection Node public hiện tại vào
+manifest bất biến: Node/parent ID, logical name, kind, state
+`ACTIVE`/`TRASHED`, revision, current version ID tùy chọn và byte length/SHA-256
+đã public của current file. Canonical root được include; `PURGING` và row đã
+purge bị loại.
+
+Storage manifest cố ý không có Object/ObjectReplica ID, object key, staging
+handle, filesystem path, backend version/locator, replica/GC state, credential
+hay byte column. Nó không giữ full history FileVersion. Content endpoint hiện có
+đã authorize theo owner hydrate current version sau khi client xử lý manifest
+logical. Mutation hay collection Node/FileVersion/Object về sau không thể đổi
+manifest đã capture vì row là value copy không có foreign key ngược tới record
+mutable.
+
+Paging chỉ đọc requested limit cộng một row theo immutable Node-ID order, không
+load toàn library vào một Rust collection. Cleanup chỉ xóa bounded bootstrap
+session đã retire cùng manifest row cascade; không bao giờ xóa journal, Library,
+Node, FileVersion, Object, ObjectReplica hay dữ liệu ObjectStore. Do đó TTL
+bootstrap là retention staging synchronization, không phải retention user data
+hay backup.
 
 ## Phạm vi và quyền sở hữu
 
@@ -1191,3 +1264,54 @@ filesystem accelerator sau khi capability probe, crash evidence và hành vi
 disable/fallback được version hóa
 Decision evidence: fixture NTFS/ReFS/APFS/Btrfs/ext4/XFS/NAS, power-loss và
 disconnect test, capability false-positive test và performance evidence
+
+## Local replica và SQLite storage Prompt 36
+
+Inbound state desktop là authority local riêng cho apply progress, không thay
+PostgreSQL server. `LocalStateConfig::from_platform` resolve
+`client-sync/state.sqlite3` dưới application data directory của platform; path
+database absolute explicit cũng có cho composition và test. Database không lưu
+authentication secret hay object-backend secret.
+
+Migration set độc lập trong `crates/client-sync/migrations` hiện tạo strict
+SQLite table cho:
+
+- replica/root binding và state applied/acknowledged sequence tách biệt;
+- projection local Node theo `NodeId` cùng portable collision key;
+- bootstrap session và desired manifest row bền;
+- pending feed page cùng typed event;
+- pending opaque acknowledgement evidence;
+- local operation prepared/filesystem-applied/database-committed;
+- applied-event replay evidence có giới hạn; và
+- local apply issue unresolved/resolved bền.
+
+Foreign key, closed-value check, content tuple check, operation fact check và
+`acknowledged_sequence <= applied_sequence` được ép ở schema. Trigger ngăn
+pending acknowledgement evidence vượt local apply bền. SQLx track migration
+version/checksum và apply từ database rỗng; cùng database reopen mà không rebuild
+pending page, acknowledgement, operation, issue hay bootstrap state.
+
+Correctness profile là `journal_mode=WAL`, `synchronous=FULL`,
+`foreign_keys=ON`, `busy_timeout=5000` và một SQLite pool connection. Exclusive
+OS file lock cạnh database chặn writer thứ hai trong cùng application-state
+store. Một process có thể bind nhiều library độc lập, mỗi library có root
+identity, Node mapping, sequence, bootstrap, operation và issue riêng.
+
+Visible file không bao giờ là download target. Mỗi current version được stream
+vào `.synveil/staging/<operation>.part`, giới hạn mỗi chunk adapter yield là 1
+MiB và object bound ban đầu theo server là 1 TiB. Length cùng SHA-256 được kiểm
+tra trước file/staging-directory sync. Sau đó file đã verify mới được expose
+bằng rename cùng filesystem trên Unix. Directory mới cũng được tạo trong
+controlled staging rồi rename vào đích, tránh adopt unknown directory xuất hiện
+trong race với prepared operation.
+
+Trash, purge và bootstrap sweep chuyển byte sạch có thể quy thuộc vào
+`.synveil/quarantine`; phase này cố ý chưa có xóa quarantine theo tuổi hay
+aggressive cleanup. Operation receipt là file exact trong controlled staging,
+được validate theo operation ID và chỉ xóa sau khi SQLite operation tương ứng
+đạt `DATABASE_COMMITTED`. Startup không glob-delete temp file không rõ.
+
+ACL, xattr, ownership/mode, sparse-file behavior đa nền tảng và mapping server
+timestamp sang local mtime chưa được lưu hay apply. Rust standard hiện không có
+directory-metadata flush Windows tương đương; bằng chứng durability platform
+native vẫn là gate sau được khai báo rõ.
