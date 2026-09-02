@@ -341,6 +341,10 @@ impl NodeRow {
             name: encode_name(value.name()),
             current_version_id: value.current_version_id().map(|id| encode_id(&id)),
             state: value.state().as_str().to_owned(),
+            trashed_at: value
+                .trashed_at()
+                .map(|timestamp| encode_timestamp(timestamp, "nodes.trashed_at"))
+                .transpose()?,
             created_at: encode_timestamp(value.created_at(), "nodes.created_at")?,
             updated_at: encode_timestamp(value.updated_at(), "nodes.updated_at")?,
             revision: encode_revision(value.revision()),
@@ -348,7 +352,7 @@ impl NodeRow {
     }
 
     pub fn try_into_domain(self) -> Result<Node, MappingError> {
-        Ok(Node::rehydrate(
+        Ok(Node::rehydrate_with_trash(
             decode_id!(self.id, NodeId, "nodes.id")?,
             decode_id!(self.library_id, LibraryId, "nodes.library_id")?,
             self.parent_node_id
@@ -360,6 +364,8 @@ impl NodeRow {
                 .map(|id| decode_id!(id, FileVersionId, "nodes.current_version_id"))
                 .transpose()?,
             decode_node_state(&self.state)?,
+            self.trashed_at
+                .map(|timestamp| decode_timestamp(timestamp, "nodes.trashed_at")),
             decode_timestamp(self.created_at, "nodes.created_at"),
             decode_timestamp(self.updated_at, "nodes.updated_at"),
             revision_from_field(&self.revision, "nodes.revision")?,

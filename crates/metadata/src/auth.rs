@@ -1,10 +1,16 @@
 //! PostgreSQL persistence for password credentials and one-time bootstrap.
 
 use sqlx::FromRow;
-use synveil_core::{LoginIdentifier, UserId};
+use synveil_core::{
+    DedupDomainId, Library, LibraryId, LogicalName, LoginIdentifier, Node, NodeId, Timestamp,
+    UserId,
+};
 use time::OffsetDateTime;
 
-use crate::{DatabasePool, MetadataError, SessionRow, UserCredentialRow, UserLoginRow, UserRow};
+use crate::{
+    DatabasePool, LibraryRow, MetadataError, NodeRow, SessionRow, UserCredentialRow, UserLoginRow,
+    UserRow,
+};
 
 /// Durable bootstrap state. `Inconsistent` is intentionally not exposed as a
 /// public setup status by the authentication service.
@@ -102,6 +108,7 @@ impl<'pool> AuthRepository<'pool> {
 
         insert_user(&mut transaction, user).await?;
         insert_credential(&mut transaction, credential).await?;
+        insert_initial_library(&mut transaction, user.id, user.updated_at).await?;
 
         let closed_at = user.updated_at;
         let closed = sqlx::query(
@@ -331,6 +338,80 @@ async fn insert_credential(
     .bind(&row.password_hash)
     .bind(row.created_at)
     .bind(row.updated_at)
+    .execute(&mut **transaction)
+    .await
+    .map_err(MetadataError::from)
+    .map(|_| ())
+}
+
+/// The one-time bootstrap creates exactly one owner library and root together
+/// with the first administrator. This gives authenticated metadata operations
+/// a deterministic initial namespace without introducing multi-library policy.
+async fn insert_initial_library(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    owner_user_id: uuid::Uuid,
+    observed_at: OffsetDateTime,
+) -> Result<(), MetadataError> {
+    let owner_user_id = UserId::try_from_uuid(owner_user_id).map_err(|_| {
+        MetadataError::Mapping(crate::MappingError::InvalidId {
+            field: "users.id",
+            reason: synveil_core::IdParseError::InvalidUuid,
+        })
+    })?;
+    let library_id = LibraryId::new();
+    let root = Node::new_root(
+        NodeId::new(),
+        library_id,
+        LogicalName::new("root")?,
+        Timestamp::from_offset_datetime(observed_at),
+    );
+    let library = Library::new(
+        library_id,
+        owner_user_id,
+        LogicalName::new("Primary")?,
+        &root,
+        DedupDomainId::new(),
+        Timestamp::from_offset_datetime(observed_at),
+    )?;
+    let library = LibraryRow::from_domain(&library)?;
+    let root = NodeRow::from_domain(&root)?;
+
+    sqlx::query(
+        "INSERT INTO libraries
+            (id, owner_user_id, name, root_node_id, dedup_domain_id, status,
+             created_at, updated_at, revision)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::NUMERIC)",
+    )
+    .bind(library.id)
+    .bind(library.owner_user_id)
+    .bind(&library.name)
+    .bind(library.root_node_id)
+    .bind(library.dedup_domain_id)
+    .bind(&library.status)
+    .bind(library.created_at)
+    .bind(library.updated_at)
+    .bind(&library.revision)
+    .execute(&mut **transaction)
+    .await
+    .map_err(MetadataError::from)?;
+
+    sqlx::query(
+        "INSERT INTO nodes
+            (id, library_id, parent_node_id, kind, name, current_version_id,
+             state, trashed_at, created_at, updated_at, revision)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::NUMERIC)",
+    )
+    .bind(root.id)
+    .bind(root.library_id)
+    .bind(root.parent_node_id)
+    .bind(&root.kind)
+    .bind(&root.name)
+    .bind(root.current_version_id)
+    .bind(&root.state)
+    .bind(root.trashed_at)
+    .bind(root.created_at)
+    .bind(root.updated_at)
+    .bind(&root.revision)
     .execute(&mut **transaction)
     .await
     .map_err(MetadataError::from)

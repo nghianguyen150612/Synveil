@@ -1,12 +1,81 @@
 # Giao thức upload có thể tiếp tục
 
-Trạng thái: **Blueprint quy chuẩn PLANNED**
+Trạng thái: **Blueprint quy chuẩn; subset persisted upload-session/application-service IMPLEMENTED/VALIDATED; exact-offset HTTP byte transport IMPLEMENTED**
 
 Tài liệu này đặc tả state machine upload có thể tiếp tục do server điều phối.
 Tài liệu tuân theo ADR-005, các entity chuẩn trong
 [DOMAIN_MODEL.md](DOMAIN_MODEL.md) và hợp đồng object bền vững trong
-[STORAGE.md](STORAGE.md). Đây là blueprint giao thức, không phải tuyên bố về
-implementation hay schema OpenAPI hoàn chỉnh.
+[STORAGE.md](STORAGE.md). Repository hiện đã implement subset bounded session
+được lưu bền vững và application service trung lập transport được mô tả bên
+dưới. Subset HTTP exact-offset đã authenticate hiện đã implement và được đặc tả
+trong [`api/openapi.yaml`](../../api/openapi.yaml). Protocol part-manifest lớn
+hơn vẫn là blueprint; tài liệu này không tuyên bố protocol đó đã implement.
+
+## Ranh giới implementation hiện tại của repository
+
+Implementation hiện cung cấp:
+
+- persistence PostgreSQL cho `upload_sessions` cùng record
+  `object_replicas` verified đầu tiên, gồm owner/library/target intent, identity
+  staging và object mờ đục, progress, lease, expiry, terminal error, durability
+  evidence và completion outcome;
+- semantic target `CREATE_FILE` và `REPLACE_CONTENT`, cùng recheck expected
+  node revision ở bước finalization;
+- append exact-offset, giới hạn object/chunk/session bounded, đối soát progress
+  staging, status projection an toàn và state public
+  `OPEN -> VERIFYING -> COMMITTING -> COMMITTED` với state terminal failure,
+  expiry và abort;
+- staging local bền vững, verify checksum, promotion create-only và xác nhận
+  read/integrity sau promotion thông qua port `ObjectStore` trung lập backend; và
+- storage application service cùng test restart/idempotency/integrity/version
+  conflict tập trung; và
+- route create/status/append/complete/abort cho upload session đã authenticate,
+  CSRF trên mọi mutation, raw-byte append streaming có giới hạn, error ổn định
+  an toàn, recovery offset có thẩm quyền và browser API helper typed.
+
+`UploadPart`, ordered manifest, fingerprint idempotency phong phú hơn, quota
+reservation, worker scheduling và thực thi GC vẫn là công việc về sau và không
+được suy ra từ subset HTTP exact-offset này. Content-read application service
+trung lập transport và HTTP download transport authenticate được mô tả trong
+[STORAGE.md](STORAGE.md) và [API_ARCHITECTURE.md](API_ARCHITECTURE.md); upload UI
+product, download UI, sync và backup vẫn được hoạch định.
+
+## Subset HTTP exact-offset đã implement
+
+Transport chuẩn hiện tại cố ý nhỏ hơn blueprint part-manifest tương lai:
+
+| Method và path | Contract đã implement |
+|---|---|
+| `POST /api/v1/upload-sessions` | JSON tagged strict 16 KiB cho `CREATE_FILE` hoặc `REPLACE_CONTENT`; identity đã authenticate là owner và mutation cần CSRF proof hiện có. |
+| `GET /api/v1/upload-sessions/{upload_session_id}` | State an toàn theo owner cùng `Upload-Offset` có thẩm quyền; cần authentication nhưng không cần CSRF. |
+| `PATCH /api/v1/upload-sessions/{upload_session_id}` | `application/octet-stream` không rỗng, một `Upload-Offset` unsigned-decimal chuẩn và aggregate chunk limit do service cấu hình (mặc định 8 MiB). |
+| `POST /api/v1/upload-sessions/{upload_session_id}/complete` | Chỉ gọi completion service đã validate và trả completion metadata chuẩn, ổn định khi retry. |
+| `POST /api/v1/upload-sessions/{upload_session_id}/abort` | Chỉ gọi abort service đã validate; repeat an toàn và code API không trực tiếp xóa storage. |
+
+Body PATCH được chuyển từng frame vào upload application service; HTTP handler
+không aggregate toàn bộ chunk. Mọi frame được chấp nhận đều đi qua durable
+exact-offset append và persistence progress. Do đó disconnect, timeout hoặc
+chunked request vượt aggregate limit có thể để lại một prefix đã bền vững dù
+caller không nhận success. Đây là ambiguity có thể recovery có chủ ý, không
+phải quyền đoán progress:
+
+```text
+kết quả PATCH mơ hồ
+    -> GET cùng upload session
+    -> đọc Upload-Offset / received_bytes
+    -> resume chính xác tại offset đó
+```
+
+Offset stale hoặc gap trả `409 invalid_offset`, kèm header `Upload-Offset` có
+thẩm quyền và safe detail `current_offset`, đồng thời không append byte nào.
+Browser helper gửi trực tiếp `Blob`/`ArrayBuffer` và làm theo offset được trả;
+nó không encode content thành base64 hay implement upload UI.
+
+Executable hiện tại chỉ wire service này khi cả `DATABASE_URL` và
+`SYNVEIL_OBJECT_ROOT` tuyệt đối, tường minh được cấu hình. Khi thiếu một
+dependency, route đã authenticate fail closed bằng dependency error an toàn.
+Wiring này là boundary composition runtime/developer, không phải bằng chứng hỗ
+trợ deployment production.
 
 ## Mục tiêu và non-goal
 

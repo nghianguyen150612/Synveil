@@ -7,7 +7,9 @@ publish.workspace = true
 description = "PostgreSQL and migration foundation for Synveil metadata"
 
 [dependencies]
+async-trait.workspace = true
 synveil-core.workspace = true
+sha2.workspace = true
 sqlx.workspace = true
 time.workspace = true
 uuid.workspace = true

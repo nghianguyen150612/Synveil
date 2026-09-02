@@ -1,6 +1,15 @@
 # Storage, object lifecycle, versions, and trash
 
-Status: **PLANNED normative blueprint**
+Status: **ObjectStore contract VALIDATED; in-memory adapter VALIDATED; local
+filesystem adapter IMPLEMENTED/VALIDATED; persisted upload-session and
+application-service subset IMPLEMENTED/VALIDATED; exact-offset HTTP upload
+transport IMPLEMENTED/VALIDATED; transport-neutral owner-authorized full/range
+content-read application service IMPLEMENTED/VALIDATED; authenticated HTTP
+full/single-range download transport IMPLEMENTED/VALIDATED; authenticated
+immutable version-history metadata listing/lookup IMPLEMENTED/VALIDATED; safe
+historical-version restore IMPLEMENTED; metadata-only Trash retention and purge
+execution plus FileVersion reference accounting IMPLEMENTED; physical object
+GC, download UI, and higher-level lifecycle PLANNED**
 
 This document specifies Synveil's canonical byte-storage contract and the
 logical lifecycle that sits above it. It is subordinate to accepted ADRs and
@@ -8,7 +17,30 @@ uses the entity meanings in [DOMAIN_MODEL.md](DOMAIN_MODEL.md). Upload protocol
 details are in [UPLOADS.md](UPLOADS.md), client synchronization is in
 [SYNC.md](SYNC.md), and protected backup history is in [BACKUP.md](BACKUP.md).
 
-Nothing in this document is an implementation-status claim.
+The status table below is the implementation boundary for this repository. The
+remaining lifecycle, upload, retention, reconciliation, and backend sections
+are still normative planning material unless explicitly marked otherwise.
+
+| Capability | Current repository status |
+|---|---|
+| `ObjectStore` contract | `VALIDATED` |
+| in-memory adapter | `VALIDATED` |
+| local filesystem adapter | `IMPLEMENTED/VALIDATED` |
+| persisted upload-session state | `IMPLEMENTED/VALIDATED` |
+| transport-neutral resumable upload service | `IMPLEMENTED/VALIDATED` |
+| exact-offset HTTP byte upload transport | `IMPLEMENTED/VALIDATED` |
+| transport-neutral authorized content-read service (current and historical full/range) | `IMPLEMENTED/VALIDATED` |
+| authenticated HTTP full/single-range download transport | `IMPLEMENTED/VALIDATED` |
+| authenticated immutable version-history metadata listing and lookup | `IMPLEMENTED/VALIDATED` |
+| authenticated safe historical-version restore as a new immutable `FileVersion` | `IMPLEMENTED` |
+| canonical Trash timestamp, derived retention status, and metadata-only `PURGING` begin | `IMPLEMENTED` |
+| trusted metadata purge execution, FileVersion reference release, and GC-candidate metadata | `IMPLEMENTED` |
+| download UI | `PLANNED` |
+| GC | `PLANNED` |
+| compression | `PLANNED` |
+| filesystem optimizations | `PLANNED` |
+| sync | `PLANNED` |
+| backup | `PLANNED` |
 
 ## Scope and ownership
 
@@ -29,6 +61,88 @@ The upload module owns resumable transport and calls the storage port. The sync
 module owns journal facts and conflict policy. The backup module owns snapshot
 manifests and retention. None may call a local filesystem or S3 SDK directly;
 they use the storage application service and `ObjectStore` port.
+
+## Implemented owner-authorized content reads
+
+`ContentReadApplicationService` is a transport-neutral application boundary,
+not an HTTP endpoint. It resolves the active owner's logical `Node` before it
+opens an opaque `ObjectStore` key:
+
+- a current read follows `Node.current_version_id` only for an active `FILE`;
+  absent, cross-owner, trashed, and purging nodes share the normal concealed
+  not-found outcome, while an owner-visible directory is explicitly not a
+  file;
+- a historical full read is allowed only through an owner-authorized immutable
+  `FileVersion` attached to an active file node. It does not infer a version
+  from a path or accept an object ID/key from a caller;
+- PostgreSQL selects one matching-backend `object_replicas` row only when it is
+  `VERIFIED`, then requires the replica's stored length and SHA-256 to equal
+  the canonical `Object` metadata;
+- the service verifies that the returned `ObjectStore` read reports the same
+  opaque key, full canonical length, SHA-256, and requested range before
+  yielding a descriptor. The descriptor contains safe logical IDs, immutable
+  metadata, an optional `ByteRange`, and a pull-driven byte stream; it omits
+  physical keys, paths, backend versions, and staging handles; and
+- full reads use `ObjectStore::get`; a current-file range uses the already
+  parsed `ByteRange` and `ObjectStore::range_read` only after capability and
+  canonical-bound checks. Empty/overflowing ranges are rejected by the shared
+  range type and a range past the canonical length is rejected before opening
+  storage. No read method writes metadata or storage state.
+
+The HTTP download boundary parses one safe byte range, derives the immutable
+ETag, emits safe content headers and private no-store caching, and streams the
+verified body through this service. It does not expose direct object URLs or
+provide a browser UI. Multi-range, `HEAD`, `If-Range`, and download UI remain
+out of scope.
+
+## Implemented owner-authorized version-history metadata
+
+The metadata application boundary exposes the immutable history of an active
+owned file through `GET /api/v1/nodes/{node_id}/versions` and direct lookup
+through `GET /api/v1/versions/{version_id}`. These are authenticated reads;
+they do not require CSRF and they set `Cache-Control: private, no-store`.
+
+The public version resource contains only the immutable version ID, owning
+node ID, server commit instant as `created_at`, canonical unsigned-decimal
+`byte_length`, canonical `sha256`, and an `is_current` flag. It does not expose
+`Object` IDs, object keys, replica IDs, backend kinds/versions, staging
+handles, filesystem paths, or any other physical storage identity. The
+application service reads metadata from PostgreSQL only and never opens an
+`ObjectStore`.
+
+History listing is bounded and newest-first by `(committed_at DESC, id DESC)`.
+Its cursor is opaque, node-scoped, and carries both immutable ordering keys so
+same-timestamp versions cannot be skipped or duplicated. `is_current` comes
+from the authoritative `Node.current_version_id` pointer; it is never inferred
+from a timestamp or an ID maximum. The direct lookup ID is intentionally the
+same ID accepted by `/api/v1/versions/{version_id}/content`.
+
+The existing active-file visibility contract applies: unknown, cross-owner,
+trashed, and purging nodes/versions are concealed as not found, while an
+owner-visible directory is an invalid state. The history is append-only for
+this slice. PostgreSQL end-to-end history and restore evidence remains
+environment-gated by `SYNVEIL_TEST_DATABASE_URL`.
+
+## Implemented safe historical-version restore
+
+`POST /api/v1/nodes/{node_id}/versions/{version_id}/restore` is the authenticated
+owner mutation for restoring one historical file version. It requires the
+session CSRF proof, the signed current-node `If-Match`, and a bounded
+`Idempotency-Key`. The metadata application service performs one PostgreSQL
+transaction that locks and rechecks the owner/library, active file node,
+selected source version, canonical object relation, and an exact `VERIFIED`
+replica.
+
+On success it creates exactly one new immutable `FileVersion` referencing the
+same canonical `Object`, sets its parent to the pre-restore current version,
+advances `Node.current_version_id` and the node revision, and returns safe
+version plus node concurrency metadata and an ETag. It never mutates a
+historical row, moves the pointer backward, copies bytes, opens an
+`ObjectStore`, or creates an `UploadSession`. Failed checks leave no committed
+restore operation; a committed retry replays the persisted outcome, while
+reusing the key for different request material returns a conflict. Purge,
+retention, synchronization, backup, sharing, and UI behavior remain outside
+this implementation boundary.
 
 ## Filesystem independence and capability acceleration
 
@@ -207,36 +321,65 @@ production writes.
 
 ## Local filesystem adapter
 
-The local adapter is the initial implementation target. Its safety contract is:
+The first production adapter is implemented in
+`crates/storage/src/local.rs` and re-exported through the storage composition
+crate. Its explicit-root safety contract is validated on the current host and
+uses portable Rust/Tokio filesystem primitives:
 
-- Resolve and validate the configured storage root at startup. The root has a
-  Synveil storage-identity marker tied to `StorageBackend`; an absent or
-  unexpected marker fails readiness rather than treating all objects as lost.
-- Never concatenate a user file name, path, MIME type, or public ID into a
-  filesystem path. Generated relative key components are validated again at
-  the adapter boundary.
-- Open staging and final files exclusively. Refuse symlinks, junction-like
-  redirects, non-regular targets, or traversal outside the owned root. Use
-  descriptor-relative/no-follow operations where the platform permits rather
-  than canonicalize-after-open checks with race windows.
-- Place promotion temporary data on the same filesystem as its final key.
-  Stream to a temporary file, verify length/checksum, flush file data and
-  required metadata, promote without replacement, then flush the containing
-  directory according to the selected durability profile.
-- Never expose a growing file at a final key. A crash before promotion leaves
-  only staging; a crash after promotion leaves either the complete immutable
-  file or a receipt that recovery can reconstruct with `HEAD` and hashing.
-- Treat short writes, `ENOSPC`, quota errors, read-only mounts, I/O errors, and
-  flush failures as storage failures. Do not record the affected part/object as
-  verified.
-- Do not assume every NAS-mounted filesystem provides local atomic-rename or
-  `fsync` semantics. A NAS path is accepted only after the same adapter
-  conformance and crash tests, with limitations surfaced in health output.
+- `LocalFilesystemObjectStore::open` accepts only an explicit absolute root,
+  retains its canonical resolved form, creates a Synveil layout marker plus
+  `objects/` and `staging/`, rejects a filesystem root, user home/profile,
+  current-directory root, and the build-time source-workspace root, and never
+  recursively cleans unknown content. The marker proves the expected local
+  adapter/layout version; binding it to a persisted `StorageBackend` record
+  remains higher-level work.
+- Physical paths are derived from the SHA-256 of an already validated opaque
+  `ObjectKey`, not from a user filename, public ID, MIME type, or caller path.
+  The internal layout is `objects/v1/<hash-prefix>/<key-hash>/` with content,
+  metadata, and a final committed marker; clients never see this layout.
+- Each staging handle is a UUID-backed opaque name. Bytes stream into an
+  exclusive `.upload` file, are hashed and length-checked with bounded memory,
+  then freeze as `.verified` plus a bounded metadata record. Staging remains
+  invisible to final-object reads and stale staging is not automatically wiped.
+- Promotion verifies the staged bytes again, creates the final directory and
+  content through same-root create-only hard links, writes metadata, and writes
+  the committed marker last. Existing committed keys return a stable conflict;
+  no cross-device copy fallback silently weakens promotion safety. An
+  incomplete directory without a committed marker remains invisible and is
+  quarantined rather than overwritten or automatically removed.
+- Full reads stream through bounded buffers and validate the stored SHA-256;
+  range reads validate the logical range and the complete stored object before
+  streaming only that range. Metadata exposes only the contract fields. Delete
+  and conditional delete are limited to the exact committed opaque key.
+  Conditional comparison and deletion are serialized across clones of one
+  adapter instance; they are not claimed to be atomic across independent
+  processes, which must not concurrently mutate the same local root.
+- File `sync_all` is performed for staged content, bounded metadata, and commit
+  markers. When the open-time probe proves directory synchronization, the
+  adapter also synchronizes completed staging transitions, the promotion
+  directory chain, and deletion visibility before reporting success.
+  `DurableFsync` requires the file-sync probe, while `DurableFlush` additionally
+  requires directory-sync and same-root hard-link promotion probes. These
+  capabilities describe observed behavior rather than the operating-system
+  name. Compression, snapshots, reflink/block clone, and filesystem-health
+  acceleration are explicitly unsupported in this adapter. Unit/conformance
+  tests exercise these code paths but do not constitute power-loss crash proof.
+- Managed directories and files are checked with no-follow metadata checks,
+  including Windows reparse/symlink-sensitive paths where the standard API
+  exposes them. Standard portable APIs cannot eliminate every cross-process
+  TOCTOU race, so deployment ownership and permissions remain required.
 
-The adapter must also carry platform-specific implementations behind the same
-contract: Windows path/reparse-point and service lifecycle rules, macOS APFS
-and permission/sleep behavior, and Linux filesystem/mount behavior. No platform
-path may leak into domain invariants.
+The adapter, transport-neutral upload service, and owner-authorized content-read
+service are contract/conformance or focused application-test validated. The
+authenticated exact-offset HTTP transport streams bounded request frames
+through the upload service, and authenticated full/single-range download routes
+stream verified content through the content-read service. The API does not
+expose storage keys or physical paths. Download UI, broader object lifecycle,
+GC, sync, backup, or deployment-installer work remains planned. The upload service's PostgreSQL
+finalization transaction creates
+the first visible `FileVersion` only after durable object verification. NAS and
+other filesystems still require their own capability and crash evidence before
+production support is claimed.
 
 Startup does not recursively scan all content before serving. It validates
 identity/configuration and schedules bounded reconciliation. Missing referenced
@@ -444,7 +587,8 @@ rewritten.
 | Restore old version | Create a new head version referencing the historical object's bytes and recording source `RESTORE`; never move the head pointer backward to rewrite history. |
 | Conflict | Preserve incoming bytes in a conflict version/node according to [SYNC.md](SYNC.md); never replace the winning head silently. |
 | Trash | Preserve versions and object references throughout Trash retention. |
-| Purge/retention expiry | Remove logical version references under durable purge work; physical object GC remains separate. |
+| Purge eligibility / begin | Select bounded eligible metadata and transition one node to `PURGING`; no version/object reference is released at this reversible boundary. |
+| Metadata purge execution | Require `PURGING`, recheck owner/library/root/parent/child/revision invariants, remove the Node and all its FileVersion rows transactionally, and record metadata-only candidates for Objects whose last FileVersion reference disappeared. Object rows, replicas, and bytes remain. |
 
 Every content mutation supplies an operation-appropriate base version. A node
 revision protects metadata mutations. Neither an `Object` ID nor an
@@ -460,6 +604,69 @@ references; object GC later determines whether bytes are physically deletable.
 
 Trash is a user-visible soft deletion in the live sync domain. It is not backup
 retention and it is not physical deletion.
+
+Implementation status for the current metadata API: single-node logical trash
+is implemented, root nodes are protected, and a non-empty directory is
+rejected with a stable conflict. Recursive subtree trash is intentionally not
+implemented until the subtree precondition and concurrent descendant-edit
+contract in `SYNC.md` OD-SYNC-004 is closed. Beginning the purge does not delete
+`FileVersion` or `Object` rows; execution after `PURGING` is a separate trusted
+metadata operation.
+
+### Implemented metadata retention contract
+
+The canonical persisted Trash timestamp is `nodes.trashed_at`. It is written
+from server-observed time when an `ACTIVE` node enters `TRASHED`, preserved
+while the node is `PURGING`, and cleared when the node is restored to
+`ACTIVE`. The single authoritative `TrashRetentionPolicy` defaults to 30 days
+and may be overridden in seconds with
+`SYNVEIL_TRASH_RETENTION_SECONDS`; the default is configurable policy, not an
+immutable protocol promise. `restore_deadline` is derived as
+`trashed_at + retention_duration` and is not stored redundantly.
+
+Eligibility uses server time only and the inclusive rule
+`now >= restore_deadline`. Only a non-root `TRASHED` node with a canonical
+timestamp, an active owned library and parent, and no child rows can be selected. `ACTIVE`
+and restored nodes, roots, nodes without a timestamp, and nodes already in
+`PURGING` are excluded. Because current logical Trash rejects non-empty
+directories, candidate selection also refuses any directory with children and
+never orphans descendants.
+
+The internal `TrashRetentionService` exposes a bounded candidate scan with a
+separate opaque v1 keyset cursor, a stable `(trashed_at ASC, node_id ASC)`
+order, and a maximum page size of 500. `begin_node_purge` locks the owner,
+library, and node in the same transaction, checks the expected revision and
+retention cutoff, then only transitions metadata into `PURGING`. A current
+revision retry is idempotent; a stale revision is a deterministic conflict.
+No node, `FileVersion`, `Object`, `ObjectReplica`, object reference, or object
+byte is deleted, detached, or sent to `ObjectStore` by the begin contract.
+
+### Implemented metadata purge execution
+
+`execute_metadata_purge` is an internal trusted service operation; it is not a
+public HTTP route and it has no `ObjectStore` capability. It accepts only an
+owned node, an expected revision, and a node already in `PURGING`. In one
+PostgreSQL transaction it rechecks owner/library/root/parent/child, persisted
+upload-parent references, and revision invariants, clears the node's
+current-version pointer, removes the node's restore-operation rows, deletes
+only that node's `Node` and `FileVersion` metadata, and records canonical
+Object identities whose `FileVersion` references were removed in
+`object_gc_candidates`. Object rows, replica rows, and object bytes are never
+deleted by this operation. Replica existence is not a logical reference and
+does not prevent a zero-reference candidate. A persisted upload session that
+targets the node as a create parent blocks purge until that independent
+staging/session lifecycle releases its foreign-key reference; it never counts
+as a committed `FileVersion` reference.
+
+The candidate table is metadata handoff only: eligibility for physical object
+GC remains a separate workflow and requires its own retention, lease, hold,
+backup, and reconciliation checks. A successful purge records only a compact
+owner/node/revision replay identity. A same-revision retry returns the
+successful replay result, while a different revision conflicts; no filename,
+path, content, or credential is stored in that replay record. Re-referencing a
+candidate object through a new `FileVersion` clears the candidate in the same
+transaction. PostgreSQL advisory and row locks serialize reference release and
+re-reference decisions for shared canonical objects across libraries.
 
 ### Trash transaction
 
@@ -520,19 +727,26 @@ TRASHED --retention/manual confirmation--> PURGING --batched durable job--> logi
    +--------------- restore -----------------+  (only before PURGING begins)
 ```
 
-Entering `PURGING` is a transactionally audited point of no return at the
-logical layer. A job walks the subtree in deterministic bounded batches,
-removes authoritative version/reference rows, records progress, and can resume
-after a crash. The root remains hidden and immutable while partial work exists.
-Completion retains a compact tombstone for the journal/replay policy and
-releases objects only to the separate GC eligibility workflow. A failed purge
-does not make partially purged data appear live.
+Entering `PURGING` is a transactionally guarded point of no return at the
+logical layer. The current repository executes one already-`PURGING` leaf in a
+single transaction, with retry and concurrent-worker replay semantics. It
+removes authoritative `FileVersion` references before deleting the node row,
+and commits either the complete metadata purge or none of it. Completion keeps
+only a compact replay identity and releases object identities to the separate
+GC-candidate workflow; it does not delete physical bytes. A failed purge does
+not make partially purged data appear live.
 
 Trash continues to consume retained logical quota by default. The UI reports
 live, historical-version, Trash, backup, staging-reserved, and physical bytes
 separately so users can understand why deletion has not freed capacity.
 
 ## Garbage collection and orphan reconciliation
+
+Metadata purge produces only an `object_gc_candidates` handoff keyed by the
+canonical object identity. It does not implement physical object GC, replica
+deletion, backend cleanup, sync, backup, or sharing. The sections below remain
+the broader planned eligibility and delete-job contract and must not be inferred
+from metadata purge completion alone.
 
 ### Eligibility proof
 

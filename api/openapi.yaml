@@ -2,37 +2,67 @@ openapi: 3.1.0
 info:
   title: Synveil API
   version: 0.1.0-blueprint
-  summary: Phase 0 transport-contract skeleton
+  summary: Authenticated metadata, Trash retention status, safe version restore, content-download, and exact-offset resumable upload API contract
   description: |
-    This is the checked-in Phase 0 OpenAPI skeleton for Synveil. It records
-    transport-wide conventions, foundation health routes, security schemes,
-    and shared response shapes. Product operations remain PLANNED until their
-    domain/protocol contract, examples, implementation, tests, operations
-    evidence, and bilingual documentation pass the applicable gate.
+    This is the checked-in OpenAPI contract for the authenticated logical
+    file/folder metadata, immutable version-history metadata, immutable
+    content-download, resumable-upload, and metadata-only Trash retention slices.
+    It records transport-wide conventions, foundation health routes, browser
+    authentication transport, the first-run bootstrap boundary, owner-scoped
+    library/root/node operations, immutable file-version listing and direct
+    metadata lookup, security schemes, exact-offset raw-byte upload sessions,
+    authenticated current and historical full/single-range content reads, and
+    shared response shapes.
 
-    This file is the reviewed transport contract. The foundation implements the
-    bounded health routes documented below; product operations remain contract
-    artifacts until their domain/protocol evidence passes the applicable gate.
-    Domain and protocol specifications remain authoritative for semantics.
+    Version-history listing is bounded, newest-first, node-scoped keyset
+    pagination over immutable FileVersion rows. Direct version metadata uses
+    the same opaque version ID accepted by the historical content route. Both
+    reads expose only safe logical metadata and do not open an ObjectStore.
+
+    Upload creation, owner-scoped status, bounded streaming append, retry-safe
+    completion, and abort are implemented through the transport-neutral upload
+    application service. Authenticated current-node and immutable-version
+    content downloads are implemented through the transport-neutral content-read
+    service with full responses, exactly one byte range, strong SHA-256 ETags,
+    safe attachment headers, and bounded streaming. The API never exposes
+    staging handles, object keys, physical paths, or backend credentials.
+    Safe historical-version restore is implemented as a conditional owner
+    mutation that appends one new immutable FileVersion reusing the selected
+    version's verified Object; it never mutates history, moves the current
+    pointer backward, copies bytes, or creates an UploadSession. Download UI,
+    multi-range responses, physical purge/GC, synchronization, backup, sharing,
+    and device operations remain planned. Trash eligibility and the internal
+    metadata-only `PURGING` begin transition do not expose a normal user-facing
+    purge route.
   contact:
     name: Synveil Architecture / Contracts
   license:
     name: MIT
     identifier: MIT
-  x-synveil-status: PLANNED
-  x-synveil-gate: SYNVEIL_CONTRACTS_READY
+  x-synveil-status: HTTP_VERSION_HISTORY_SAFE_RESTORE_AND_TRASH_RETENTION_IMPLEMENTED
+  x-synveil-gate: SYNVEIL_TRASH_RETENTION_IMPLEMENTED
   x-synveil-next-step: |
-    Add an operation only with a reviewed owner, authorization action,
-    idempotency/conditional behavior, limits, error details, examples, and
-    matching English/Vietnamese specification updates.
+    Validate the retention candidate and begin-purge transactions against
+    disposable PostgreSQL. Do not implement physical metadata purge, object-byte
+    GC, or synchronization yet.
 servers:
   - url: /
     description: Deployment-relative base URL; TLS is supplied by the supported proxy topology.
 tags:
   - name: Operations
     description: Foundation liveness/readiness probes and restricted health.
+  - name: Authentication
+    description: Implemented browser-session login, session inspection, CSRF issuance, and logout transport.
   - name: Bootstrap
-    description: Planned one-time setup status; not product implementation evidence.
+    description: Implemented one-time setup status and first-administrator creation; no automatic session issuance.
+  - name: Files
+    description: Implemented authenticated owner-scoped logical library, directory, node metadata, and safe Trash retention status operations.
+  - name: Downloads
+    description: Implemented authenticated current and historical full or single-range immutable content reads; no multi-range or UI surface.
+  - name: Versions
+    description: Implemented authenticated immutable file-version history, safe owner restore, and direct safe metadata lookup; no physical purge or synchronization.
+  - name: Uploads
+    description: Implemented authenticated, CSRF-protected exact-offset upload sessions with bounded streaming byte append.
 paths:
   /health/live:
     get:
@@ -123,6 +153,135 @@ paths:
                 $ref: '#/components/schemas/ReadyProbe'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/auth/login:
+    post:
+      tags: [Authentication]
+      operationId: login
+      summary: Create an authenticated browser session
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Auth / Security, Rust Backend
+      description: |
+        Verify the canonical login identifier and password, then issue a new
+        opaque browser session. The raw session credential is presented only
+        in a Secure/HttpOnly host-only cookie and is never returned in JSON.
+        Login is intentionally exempt from the authenticated-session CSRF
+        requirement; deployments still use same-origin browser defaults and
+        exact-origin policy for state-changing authenticated requests.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: A new authenticated browser session was created.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Set-Cookie:
+              $ref: '#/components/headers/SetCookie'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSessionResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/auth/logout:
+    post:
+      tags: [Authentication]
+      operationId: logout
+      summary: Revoke the current browser session
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Auth / Security, Rust Backend
+      description: |
+        Revoke the currently valid browser session and clear the matching
+        session and CSRF cookies. A missing, malformed, expired, or already
+        revoked session is handled as a safe repeated logout. A currently
+        valid session requires the session-bound X-CSRF-Token header and
+        same-origin request provenance.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Logout completed or was safely repeated.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Set-Cookie:
+              $ref: '#/components/headers/SetCookie'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/auth/session:
+    get:
+      tags: [Authentication]
+      operationId: getCurrentSession
+      summary: Return the safe current browser principal
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Auth / Security, Rust Backend
+      description: |
+        Validate the opaque browser session cookie and return only the safe
+        current principal. The response never contains the raw session
+        credential, verifier, password, or database row.
+      security:
+        - BrowserSession: []
+      responses:
+        '200':
+          description: Safe current-session identity.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSessionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/auth/csrf:
+    get:
+      tags: [Authentication]
+      operationId: getCsrfToken
+      summary: Issue a session-bound CSRF proof
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Auth / Security, Rust Backend
+      description: |
+        Issue a fresh signed double-submit proof bound to the authenticated
+        browser session. The proof is returned for the web boundary and also
+        written to a non-HttpOnly CSRF cookie; state-changing requests must
+        send it in X-CSRF-Token. It is not accepted from a query parameter.
+      security:
+        - BrowserSession: []
+      responses:
+        '200':
+          description: A fresh session-bound CSRF proof.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Set-Cookie:
+              $ref: '#/components/headers/SetCookie'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CsrfResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /api/v1/system/health:
     get:
       tags: [Operations]
@@ -155,13 +314,15 @@ paths:
       tags: [Bootstrap]
       operationId: getBootstrapStatus
       summary: Report whether first-run setup is still required
-      x-synveil-status: PLANNED
+      x-synveil-status: IMPLEMENTED
       x-synveil-owner: Auth / Security, Rust Backend
       description: |
-        Planned public setup probe. It exposes only the minimum state needed
-        to render first-run UX and never returns secrets, database details, or
-        administrator identity. The exact authorization/rate-limit policy is
-        finalized with the bootstrap contract before implementation.
+        Return only the minimum state needed to render first-run UX. The
+        response contains no setup secret, password, database detail, or
+        administrator identity and is always marked no-store. The route is
+        intentionally bounded and has no distributed rate limiter in this
+        phase; deployments must keep first-run exposure on a trusted/private
+        or correctly terminated TLS network.
       security: []
       responses:
         '200':
@@ -169,15 +330,1010 @@ paths:
           headers:
             X-Request-Id:
               $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/BootstrapStatusResponse'
-        '429':
-          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/BootstrapServiceUnavailable'
+  /api/v1/bootstrap/admin:
+    post:
+      tags: [Bootstrap]
+      operationId: createFirstAdmin
+      summary: Create the first administrator and close setup
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Auth / Security, Rust Backend
+      x-synveil-max-body-bytes: 16384
+      description: |
+        Create the first administrator through the existing race-safe
+        bootstrap service. The request is strict, bounded JSON using the
+        canonical login, login_key, and password fields. Browser requests are
+        checked for same-origin provenance when Origin or Sec-Fetch-Site is
+        present. No setup-secret field is part of the accepted contract, so
+        deployment/network exposure is an explicit first-run trust assumption
+        until a later installer or secret-gate contract is reviewed.
+
+        A successful response reports setup_required=false and contains no
+        password, verifier, session credential, or administrator record. This
+        endpoint does not issue a browser session; the client must use the
+        normal login route explicitly. Concurrent or repeated claims after the
+        first successful transaction return bootstrap_closed and never reopen
+        setup.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BootstrapAdminRequest'
+      responses:
+        '200':
+          description: The first administrator was created and setup closed.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BootstrapStatusResponse'
+        '400':
+          $ref: '#/components/responses/BootstrapInvalidRequest'
+        '413':
+          $ref: '#/components/responses/BootstrapPayloadTooLarge'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/BootstrapClosed'
+        '503':
+          $ref: '#/components/responses/BootstrapServiceUnavailable'
+  /api/v1/libraries:
+    get:
+      tags: [Files]
+      operationId: listLibraries
+      summary: List libraries owned by the authenticated user
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Metadata / Rust Backend
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A bounded owner-scoped library page.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryCollectionResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/libraries/{library_id}/nodes:
+    get:
+      tags: [Files]
+      operationId: listLibraryChildren
+      summary: List active direct children under a library root or directory
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Metadata / Rust Backend
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/LibraryId'
+        - $ref: '#/components/parameters/ParentId'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A bounded active-child page in immutable node-ID order.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeCollectionResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      tags: [Files]
+      operationId: createDirectory
+      summary: Create an empty logical directory
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Metadata / Rust Backend
+      x-synveil-max-body-bytes: 16384
+      description: |
+        Create a directory under the supplied active parent, or under the
+        library root when parent_id is omitted. The operation writes only
+        metadata. Raw logical-name semantics are preserved; this contract does
+        not add filesystem normalization, case folding, reserved-name rules,
+        or a sibling uniqueness policy.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/LibraryId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDirectoryRequest'
+      responses:
+        '201':
+          description: The empty directory was created.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidState'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/nodes/{node_id}:
+    get:
+      tags: [Files]
+      operationId: getNode
+      summary: Read safe logical metadata for an owned node
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Metadata / Rust Backend
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/NodeId'
+      responses:
+        '200':
+          description: Safe node metadata without bytes, object paths, or provider fields.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    patch:
+      tags: [Files]
+      operationId: updateNodeMetadata
+      summary: Rename or move an owned node
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Metadata / Rust Backend
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/NodeId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateNodeRequest'
+      responses:
+        '200':
+          description: The renamed or moved node metadata.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/VersionConflict'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/nodes/{node_id}/trash:
+    post:
+      tags: [Files]
+      operationId: trashNode
+      summary: Logically delete an empty owned node
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Metadata / Rust Backend
+      description: |
+        Transition one non-root node to TRASHED without deleting file versions
+        or object references. A directory with any child is rejected with
+        invalid_state because the recursive subtree-precondition contract is
+        still open. The response includes the server-observed `trashed_at`, a
+        derived `restore_deadline`, and `purge_eligible`; this route does not
+        purge data.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/NodeId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: The node is logically trashed.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidState'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/nodes/{node_id}/restore:
+    post:
+      tags: [Files]
+      operationId: restoreNode
+      summary: Restore an owned trashed node under its active parent
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Metadata / Rust Backend
+      description: |
+        Restore a node only when its existing parent is present, active, and
+        still valid. No guessed recovery destination or TrashEntry model is
+        introduced by this metadata-only slice.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/NodeId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: The node is active again.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidState'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/nodes/{node_id}/versions:
+    get:
+      tags: [Versions]
+      operationId: listNodeVersions
+      summary: List immutable version-history metadata for an owned file
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Metadata / Rust Backend
+      description: |
+        Return a bounded newest-first page ordered by committed_at descending
+        and immutable version ID descending. The cursor is opaque, node-scoped,
+        and safe to resume only for this collection. Only active owned file
+        nodes are visible; unknown, cross-owner, trashed, and purging nodes are
+        concealed as not found. This read does not require a CSRF header and
+        does not open an ObjectStore.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/NodeId'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A bounded newest-first immutable version-history page.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionCollectionResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidState'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/nodes/{node_id}/versions/{version_id}/restore:
+    post:
+      tags: [Versions]
+      operationId: restoreFileVersion
+      summary: Restore an immutable file version as one new current version
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Metadata / Rust Backend
+      description: |
+        Restore one owner-authorized historical FileVersion by appending exactly
+        one new immutable FileVersion that references the same canonical Object.
+        The historical row is never mutated, the current pointer never moves
+        backward, bytes are never copied, and no UploadSession is created. The
+        active file, source version, owner/library relationship, and a matching
+        VERIFIED replica are rechecked inside one PostgreSQL transaction. The
+        current node revision is the parent of the restore and is protected by
+        If-Match. Idempotency-Key replay returns the committed safe outcome.
+        Object, replica, backend, staging, and filesystem identifiers are never
+        returned.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/NodeId'
+        - $ref: '#/components/parameters/VersionId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: The newly appended current version and updated node concurrency metadata.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionRestoreResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/VersionRestoreConflict'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/versions/{version_id}:
+    get:
+      tags: [Versions]
+      operationId: getVersionMetadata
+      summary: Read safe metadata for an owned immutable file version
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Metadata / Rust Backend
+      description: |
+        Return safe logical metadata for one immutable FileVersion. The
+        version ID is the same identifier accepted by the historical content
+        route `/api/v1/versions/{version_id}/content`, so callers can use the
+        response without an ID translation step. Unknown, cross-owner,
+        trashed, and purging versions are concealed as not found. This read
+        does not require a CSRF header and does not open an ObjectStore.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/VersionId'
+      responses:
+        '200':
+          description: Safe immutable file-version metadata.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidState'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/nodes/{node_id}/content:
+    get:
+      tags: [Downloads]
+      operationId: getCurrentNodeContent
+      summary: Download the current immutable content of an owned file node
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Storage / Downloads, Rust Backend
+      description: |
+        Resolve the current committed file version through the authenticated
+        content-read application service and stream its verified bytes. A
+        request may include exactly one `bytes` range in one of the forms
+        `bytes=start-end`, `bytes=start-`, or `bytes=-suffix`. Multi-range,
+        malformed, and unsatisfiable ranges return `416` with
+        `Content-Range: bytes */length`. `If-None-Match` is evaluated from
+        immutable SHA-256 metadata before opening the byte stream. This safe
+        read does not require a CSRF header.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/NodeId'
+        - $ref: '#/components/parameters/Range'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The complete verified content stream.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Accept-Ranges:
+              $ref: '#/components/headers/AcceptRanges'
+            Content-Length:
+              $ref: '#/components/headers/ContentLength'
+            Content-Type:
+              $ref: '#/components/headers/ContentType'
+            Content-Disposition:
+              $ref: '#/components/headers/ContentDisposition'
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '206':
+          description: The requested single verified byte range.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Accept-Ranges:
+              $ref: '#/components/headers/AcceptRanges'
+            Content-Range:
+              $ref: '#/components/headers/ContentRange'
+            Content-Length:
+              $ref: '#/components/headers/ContentLength'
+            Content-Type:
+              $ref: '#/components/headers/ContentType'
+            Content-Disposition:
+              $ref: '#/components/headers/ContentDisposition'
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '304':
+          description: The supplied `If-None-Match` validator matches the immutable content.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Accept-Ranges:
+              $ref: '#/components/headers/AcceptRanges'
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidState'
+        '416':
+          $ref: '#/components/responses/InvalidRange'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/versions/{version_id}/content:
+    get:
+      tags: [Downloads]
+      operationId: getHistoricalVersionContent
+      summary: Download the immutable content of an owned historical file version
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Storage / Downloads, Rust Backend
+      description: |
+        Resolve the requested immutable file version through the authenticated
+        content-read application service and stream its verified bytes. A
+        request may include exactly one `bytes` range in one of the forms
+        `bytes=start-end`, `bytes=start-`, or `bytes=-suffix`. Multi-range,
+        malformed, and unsatisfiable ranges return `416` with
+        `Content-Range: bytes */length`. `If-None-Match` is evaluated from
+        immutable SHA-256 metadata before opening the byte stream. This safe
+        read does not require a CSRF header.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/VersionId'
+        - $ref: '#/components/parameters/Range'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The complete verified content stream.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Accept-Ranges:
+              $ref: '#/components/headers/AcceptRanges'
+            Content-Length:
+              $ref: '#/components/headers/ContentLength'
+            Content-Type:
+              $ref: '#/components/headers/ContentType'
+            Content-Disposition:
+              $ref: '#/components/headers/ContentDisposition'
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '206':
+          description: The requested single verified byte range.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Accept-Ranges:
+              $ref: '#/components/headers/AcceptRanges'
+            Content-Range:
+              $ref: '#/components/headers/ContentRange'
+            Content-Length:
+              $ref: '#/components/headers/ContentLength'
+            Content-Type:
+              $ref: '#/components/headers/ContentType'
+            Content-Disposition:
+              $ref: '#/components/headers/ContentDisposition'
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '304':
+          description: The supplied `If-None-Match` validator matches the immutable content.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Accept-Ranges:
+              $ref: '#/components/headers/AcceptRanges'
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidState'
+        '416':
+          $ref: '#/components/responses/InvalidRange'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/upload-sessions:
+    post:
+      tags: [Uploads]
+      operationId: createUploadSession
+      summary: Create an owner-scoped resumable upload session
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Storage / Uploads, Rust Backend
+      x-synveil-max-json-body-bytes: 16384
+      description: |
+        Freeze either a CREATE_FILE destination or a REPLACE_CONTENT target and
+        its canonical expected revision. The authenticated principal is the
+        owner; no user_id is accepted from the client. Object keys, replica
+        identifiers, staging handles, and physical paths are never returned.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUploadSessionRequest'
+      responses:
+        '201':
+          description: The upload session was created with authoritative offset zero.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Upload-Offset:
+              $ref: '#/components/headers/UploadOffset'
+            Location:
+              $ref: '#/components/headers/UploadLocation'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadSessionResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/UploadConflict'
+        '413':
+          $ref: '#/components/responses/UploadPayloadTooLarge'
+        '507':
+          $ref: '#/components/responses/CapacityUnavailable'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/upload-sessions/{upload_session_id}:
+    get:
+      tags: [Uploads]
+      operationId: getUploadSession
+      summary: Read safe upload status and the authoritative resume offset
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Storage / Uploads, Rust Backend
+      description: |
+        Return the owner-scoped upload projection and Upload-Offset header.
+        Clients use this operation after any ambiguous PATCH outcome and resume
+        from received_bytes. This safe read does not require a CSRF header.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/UploadSessionId'
+      responses:
+        '200':
+          description: Safe upload state and authoritative current offset.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Upload-Offset:
+              $ref: '#/components/headers/UploadOffset'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadSessionResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/UploadNotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    patch:
+      tags: [Uploads]
+      operationId: appendUploadChunk
+      summary: Stream a bounded raw-byte chunk at one exact offset
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Storage / Uploads, Rust Backend
+      x-synveil-default-max-chunk-bytes: 8388608
+      description: |
+        Stream application/octet-stream bytes through the authoritative upload
+        service. Upload-Offset is one canonical unsigned decimal value. A
+        stale or gap offset appends nothing and returns the current offset with
+        invalid_offset. The configured service chunk limit, 8 MiB by default,
+        bounds the aggregate body without collecting it in memory.
+
+        A connection may fail after one or more frames are durable but before
+        the client receives the response. The recovery contract is always GET
+        status, accept its Upload-Offset/received_bytes value as canonical, and
+        resume from there. Never replay blindly or increment progress locally.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/UploadSessionId'
+        - $ref: '#/components/parameters/UploadOffset'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+              description: Non-empty raw bytes; never multipart, JSON, or base64.
+      responses:
+        '204':
+          description: Accepted frames are durable and the returned offset is authoritative.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Upload-Offset:
+              $ref: '#/components/headers/UploadOffset'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+        '400':
+          $ref: '#/components/responses/InvalidUploadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/UploadNotFound'
+        '409':
+          $ref: '#/components/responses/InvalidUploadOffset'
+        '410':
+          $ref: '#/components/responses/UploadExpired'
+        '413':
+          $ref: '#/components/responses/UploadPayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedUploadMediaType'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '507':
+          $ref: '#/components/responses/CapacityUnavailable'
+  /api/v1/upload-sessions/{upload_session_id}/complete:
+    post:
+      tags: [Uploads]
+      operationId: completeUpload
+      summary: Verify, promote, and logically commit an upload once
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Storage / Uploads, Rust Backend
+      description: |
+        Delegate completion to the validated upload application service. It
+        verifies expected length and optional SHA-256, reconciles ambiguous
+        promotion, rechecks REPLACE_CONTENT revision, and returns the same
+        canonical completion on a successful retry. HTTP code does not write
+        object, FileVersion, or replica rows directly.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/UploadSessionId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Canonical completion metadata, including on a safe repeat.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadCompletionResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/UploadNotFound'
+        '409':
+          $ref: '#/components/responses/UploadConflict'
+        '410':
+          $ref: '#/components/responses/UploadExpired'
+        '412':
+          $ref: '#/components/responses/UploadPreconditionFailed'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/upload-sessions/{upload_session_id}/abort:
+    post:
+      tags: [Uploads]
+      operationId: abortUpload
+      summary: Abort an upload session through the application service
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Storage / Uploads, Rust Backend
+      description: |
+        Request abort through the owner-scoped upload service. A repeat is safe.
+        API code never removes staging files or committed recoverable content.
+      security:
+        - BrowserSession: []
+      parameters:
+        - $ref: '#/components/parameters/UploadSessionId'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Current safe session state after abort or a safe repeat.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Upload-Offset:
+              $ref: '#/components/headers/UploadOffset'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadSessionResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/UploadNotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 components:
+  parameters:
+    UploadSessionId:
+      name: upload_session_id
+      in: path
+      required: true
+      description: Opaque UUIDv7 upload-session identifier; possession is not authorization.
+      schema:
+        $ref: '#/components/schemas/OpaqueId'
+    UploadOffset:
+      name: Upload-Offset
+      in: header
+      required: true
+      description: Exact authoritative starting offset as canonical bounded unsigned decimal text.
+      schema:
+        $ref: '#/components/schemas/U64Decimal'
+    LibraryId:
+      name: library_id
+      in: path
+      required: true
+      description: Opaque UUIDv7 library identifier owned by the current principal.
+      schema:
+        $ref: '#/components/schemas/OpaqueId'
+    NodeId:
+      name: node_id
+      in: path
+      required: true
+      description: Opaque UUIDv7 node identifier owned by the current principal.
+      schema:
+        $ref: '#/components/schemas/OpaqueId'
+    VersionId:
+      name: version_id
+      in: path
+      required: true
+      description: Opaque UUIDv7 immutable file-version identifier owned by the current principal.
+      schema:
+        $ref: '#/components/schemas/OpaqueId'
+    ParentId:
+      name: parent_id
+      in: query
+      required: false
+      description: Active directory parent; omitted means the library root.
+      schema:
+        $ref: '#/components/schemas/OpaqueId'
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque bounded listing cursor scoped to this collection and parent.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Bounded page size.
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 100
+        default: 50
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: Signed opaque node ETag returned by a prior safe read or mutation.
+      schema:
+        type: string
+        minLength: 3
+        maxLength: 256
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Bounded authenticated mutation identity; an identical retry replays the stored restore outcome.
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 256
+        pattern: '^[A-Za-z0-9._~-]+$'
+    Range:
+      name: Range
+      in: header
+      required: false
+      description: 'Exactly one byte range: `bytes=start-end`, `bytes=start-`, or `bytes=-suffix`; multi-range and unsatisfiable values return 416.'
+      schema:
+        type: string
+        minLength: 7
+        maxLength: 256
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      required: false
+      description: Optional quoted SHA-256 content validator; a matching value returns 304 before opening the stream.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 1024
+    CsrfHeader:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      description: Session-bound CSRF proof issued by the authenticated CSRF endpoint; never use a query parameter.
+      schema:
+        type: string
+        minLength: 128
+        maxLength: 128
+        pattern: '^[A-Fa-f0-9]{128}$'
   securitySchemes:
     BrowserSession:
       type: apiKey
@@ -209,12 +1365,249 @@ components:
       description: Seconds or HTTP date for bounded retry backoff.
       schema:
         type: string
+    SetCookie:
+      description: Browser cookie attributes are defined by the server; raw session credentials are never JSON fields.
+      schema:
+        type: string
+    CacheControl:
+      description: Sensitive authentication, bootstrap, and upload responses are not cacheable.
+      schema:
+        type: string
+        const: no-store
+    PrivateNoStore:
+      description: Authenticated content is private and must not be stored by an intermediary or browser cache.
+      schema:
+        type: string
+        const: private, no-store
+    AcceptRanges:
+      description: The configured content backend accepts single byte ranges.
+      schema:
+        type: string
+        const: bytes
+    ContentLength:
+      description: Exact decimal byte length of the response body; on 206 this is the selected range length.
+      schema:
+        $ref: '#/components/schemas/U64Decimal'
+    ContentRange:
+      description: Inclusive selected byte range and complete immutable content length.
+      schema:
+        type: string
+        pattern: '^bytes [0-9]+-[0-9]+/[0-9]+$'
+    ContentType:
+      description: Safe fallback media type for the downloaded attachment.
+      schema:
+        type: string
+        const: application/octet-stream
+    ContentDisposition:
+      description: Attachment disposition with a safe fallback and RFC 5987 encoded logical filename when available.
+      schema:
+        type: string
+    UploadOffset:
+      description: Authoritative durable byte offset for this upload session.
+      schema:
+        $ref: '#/components/schemas/U64Decimal'
+    UploadLocation:
+      description: Canonical status/resume resource for the created upload session.
+      schema:
+        type: string
+        pattern: '^/api/v1/upload-sessions/[0-9a-f-]{36}$'
   responses:
+    InvalidRequest:
+      description: The request body or bounded input is invalid.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InvalidUploadRequest:
+      description: The upload request, empty body, Upload-Offset header, or bounded input is invalid.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InvalidUploadOffset:
+      description: The exact offset or current upload state conflicts; invalid_offset includes the authoritative Upload-Offset header and current_offset detail.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Upload-Offset:
+          $ref: '#/components/headers/UploadOffset'
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    UploadConflict:
+      description: The upload state, expected length, target revision, or completion result conflicts with the requested operation.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    UploadNotFound:
+      description: The upload session does not exist or is not owned by the authenticated principal.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    UploadExpired:
+      description: The upload session expired and cannot accept the requested mutation.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    UploadPreconditionFailed:
+      description: Uploaded content does not match the declared canonical SHA-256 digest.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    UploadPayloadTooLarge:
+      description: The JSON command or aggregate raw-byte chunk exceeds its operation-specific limit.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    UnsupportedUploadMediaType:
+      description: Raw upload append requires exactly application/octet-stream.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    CapacityUnavailable:
+      description: The upload cannot be admitted within current configured capacity.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: The resource was not found or is not visible to the current principal.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    VersionConflict:
+      description: The node revision changed before the conditional mutation was applied.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    VersionRestoreConflict:
+      description: The restore conflicted with the current node revision, resource state, or an existing idempotency-key request.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    PreconditionRequired:
+      description: A required If-Match node ETag was omitted.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InvalidState:
+      description: The metadata operation is not valid for the resource state.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: The server could not safely complete the content read.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InvalidRange:
+      description: The requested range is malformed, contains multiple ranges, or is not satisfiable for the immutable content length.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Content-Range:
+          description: Unsatisfiable content length in the required `bytes */length` form.
+          schema:
+            type: string
+            pattern: '^bytes \\*/[0-9]+$'
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     Unauthorized:
       description: Authentication is required for the requested restricted operation.
       headers:
         X-Request-Id:
           $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Request provenance or CSRF proof could not be verified.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
       content:
         application/json:
           schema:
@@ -241,7 +1634,578 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    BootstrapInvalidRequest:
+      description: The bounded first-run request body is invalid.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    BootstrapClosed:
+      description: First-run setup was already closed by an earlier successful claim.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    BootstrapPayloadTooLarge:
+      description: The first-run request body exceeds the 16 KiB transport limit.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    BootstrapServiceUnavailable:
+      description: The bootstrap state or first-administrator operation is unavailable.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/CacheControl'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
   schemas:
+    CreateUploadSessionRequest:
+      oneOf:
+        - $ref: '#/components/schemas/CreateFileUploadRequest'
+        - $ref: '#/components/schemas/ReplaceContentUploadRequest'
+      discriminator:
+        propertyName: operation
+        mapping:
+          CREATE_FILE: '#/components/schemas/CreateFileUploadRequest'
+          REPLACE_CONTENT: '#/components/schemas/ReplaceContentUploadRequest'
+    CreateFileUploadRequest:
+      type: object
+      additionalProperties: false
+      required: [operation, library_id, parent_id, name, expected_bytes]
+      properties:
+        operation:
+          type: string
+          const: CREATE_FILE
+        library_id:
+          $ref: '#/components/schemas/OpaqueId'
+        parent_id:
+          $ref: '#/components/schemas/OpaqueId'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: Raw logical name, never interpreted as an operating-system path.
+        expected_bytes:
+          $ref: '#/components/schemas/U64Decimal'
+        expected_sha256:
+          $ref: '#/components/schemas/Hash'
+    ReplaceContentUploadRequest:
+      type: object
+      additionalProperties: false
+      required: [operation, library_id, node_id, expected_revision, expected_bytes]
+      properties:
+        operation:
+          type: string
+          const: REPLACE_CONTENT
+        library_id:
+          $ref: '#/components/schemas/OpaqueId'
+        node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        expected_revision:
+          $ref: '#/components/schemas/U64Decimal'
+        expected_bytes:
+          $ref: '#/components/schemas/U64Decimal'
+        expected_sha256:
+          $ref: '#/components/schemas/Hash'
+    UploadSessionResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/UploadSessionResource'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    UploadSessionResource:
+      type: object
+      additionalProperties: false
+      required: [id, type, attributes]
+      properties:
+        id:
+          $ref: '#/components/schemas/OpaqueId'
+        type:
+          type: string
+          const: upload_session
+        attributes:
+          $ref: '#/components/schemas/UploadSessionAttributes'
+    UploadSessionAttributes:
+      type: object
+      additionalProperties: false
+      required:
+        - operation
+        - state
+        - received_bytes
+        - expected_bytes
+        - created_at
+        - updated_at
+        - expires_at
+        - target
+      properties:
+        operation:
+          type: string
+          enum: [CREATE_FILE, REPLACE_CONTENT]
+        state:
+          $ref: '#/components/schemas/UploadSessionState'
+        received_bytes:
+          $ref: '#/components/schemas/U64Decimal'
+        expected_bytes:
+          $ref: '#/components/schemas/U64Decimal'
+        expected_sha256:
+          $ref: '#/components/schemas/Hash'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        target:
+          $ref: '#/components/schemas/UploadTarget'
+        last_error_code:
+          type: string
+          pattern: '^[a-z][a-z0-9_]{1,63}$'
+          description: Allow-listed stable diagnostic code only.
+        terminal_failure_code:
+          type: string
+          pattern: '^[a-z][a-z0-9_]{1,63}$'
+          description: Allow-listed stable terminal failure code only.
+        completion:
+          $ref: '#/components/schemas/UploadCompletionResource'
+    UploadSessionState:
+      type: string
+      enum: [OPEN, VERIFYING, COMMITTING, COMMITTED, FAILED, EXPIRED, ABORTED]
+    UploadTarget:
+      oneOf:
+        - $ref: '#/components/schemas/CreateFileUploadTarget'
+        - $ref: '#/components/schemas/ReplaceContentUploadTarget'
+      discriminator:
+        propertyName: operation
+        mapping:
+          CREATE_FILE: '#/components/schemas/CreateFileUploadTarget'
+          REPLACE_CONTENT: '#/components/schemas/ReplaceContentUploadTarget'
+    CreateFileUploadTarget:
+      type: object
+      additionalProperties: false
+      required: [operation, library_id, parent_id, node_id, name]
+      properties:
+        operation:
+          type: string
+          const: CREATE_FILE
+        library_id:
+          $ref: '#/components/schemas/OpaqueId'
+        parent_id:
+          $ref: '#/components/schemas/OpaqueId'
+        node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 1024
+    ReplaceContentUploadTarget:
+      type: object
+      additionalProperties: false
+      required: [operation, library_id, node_id, expected_revision]
+      properties:
+        operation:
+          type: string
+          const: REPLACE_CONTENT
+        library_id:
+          $ref: '#/components/schemas/OpaqueId'
+        node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        expected_revision:
+          $ref: '#/components/schemas/U64Decimal'
+    UploadCompletionResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/UploadCompletionResource'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    UploadCompletionResource:
+      type: object
+      additionalProperties: false
+      required: [id, type, attributes]
+      properties:
+        id:
+          $ref: '#/components/schemas/OpaqueId'
+        type:
+          type: string
+          const: upload_completion
+        attributes:
+          $ref: '#/components/schemas/UploadCompletionAttributes'
+    UploadCompletionAttributes:
+      type: object
+      additionalProperties: false
+      required:
+        - node_id
+        - file_version_id
+        - object_id
+        - node_revision
+        - bytes
+        - sha256
+        - committed_at
+      properties:
+        node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        file_version_id:
+          $ref: '#/components/schemas/OpaqueId'
+        object_id:
+          $ref: '#/components/schemas/OpaqueId'
+        node_revision:
+          $ref: '#/components/schemas/U64Decimal'
+        bytes:
+          $ref: '#/components/schemas/U64Decimal'
+        sha256:
+          $ref: '#/components/schemas/Hash'
+        committed_at:
+          type: string
+          format: date-time
+    CreateDirectoryRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: Raw logical directory name; no host-filesystem normalization is applied.
+        parent_id:
+          $ref: '#/components/schemas/OpaqueId'
+    UpdateNodeRequest:
+      oneOf:
+        - $ref: '#/components/schemas/RenameNodeRequest'
+        - $ref: '#/components/schemas/MoveNodeRequest'
+      description: Exactly one logical metadata change is accepted per request.
+    RenameNodeRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 1024
+    MoveNodeRequest:
+      type: object
+      additionalProperties: false
+      required: [parent_id]
+      properties:
+        parent_id:
+          $ref: '#/components/schemas/OpaqueId'
+    LibraryCollectionResponse:
+      type: object
+      additionalProperties: false
+      required: [data, page, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/LibraryResource'
+        page:
+          $ref: '#/components/schemas/Page'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    NodeCollectionResponse:
+      type: object
+      additionalProperties: false
+      required: [data, page, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/NodeResource'
+        page:
+          $ref: '#/components/schemas/Page'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    VersionCollectionResponse:
+      type: object
+      additionalProperties: false
+      required: [data, page, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/VersionResource'
+        page:
+          $ref: '#/components/schemas/Page'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    VersionResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/VersionResource'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    VersionRestoreResponse:
+      type: object
+      additionalProperties: false
+      required: [data, node, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/VersionResource'
+        node:
+          $ref: '#/components/schemas/RestoreNodeConcurrency'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    RestoreNodeConcurrency:
+      type: object
+      additionalProperties: false
+      required: [id, revision]
+      properties:
+        id:
+          $ref: '#/components/schemas/OpaqueId'
+        revision:
+          $ref: '#/components/schemas/U64Decimal'
+    VersionResource:
+      type: object
+      additionalProperties: false
+      required: [id, type, attributes]
+      properties:
+        id:
+          $ref: '#/components/schemas/OpaqueId'
+        type:
+          type: string
+          const: file_version
+        attributes:
+          $ref: '#/components/schemas/VersionAttributes'
+    VersionAttributes:
+      type: object
+      additionalProperties: false
+      required: [node_id, created_at, byte_length, sha256, is_current]
+      properties:
+        node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        created_at:
+          type: string
+          format: date-time
+        byte_length:
+          $ref: '#/components/schemas/U64Decimal'
+        sha256:
+          $ref: '#/components/schemas/Hash'
+        is_current:
+          type: boolean
+    Page:
+      type: object
+      additionalProperties: false
+      required: [has_more]
+      properties:
+        next_cursor:
+          type: string
+          maxLength: 512
+        has_more:
+          type: boolean
+    LibraryResource:
+      type: object
+      additionalProperties: false
+      required: [id, type, revision, attributes]
+      properties:
+        id:
+          $ref: '#/components/schemas/OpaqueId'
+        type:
+          type: string
+          const: library
+        revision:
+          $ref: '#/components/schemas/U64Decimal'
+        attributes:
+          $ref: '#/components/schemas/LibraryAttributes'
+    LibraryAttributes:
+      type: object
+      additionalProperties: false
+      required: [name, root_node_id, status, created_at, updated_at]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        root_node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        status:
+          type: string
+          enum: [ACTIVE, READ_ONLY, QUARANTINED]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    NodeResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/NodeResource'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    NodeResource:
+      type: object
+      additionalProperties: false
+      required: [id, type, revision, attributes]
+      properties:
+        id:
+          $ref: '#/components/schemas/OpaqueId'
+        type:
+          type: string
+          const: node
+        revision:
+          $ref: '#/components/schemas/U64Decimal'
+        attributes:
+          $ref: '#/components/schemas/NodeAttributes'
+    NodeAttributes:
+      type: object
+      additionalProperties: false
+      required: [library_id, name, kind, state, created_at, updated_at, purge_eligible]
+      properties:
+        library_id:
+          $ref: '#/components/schemas/OpaqueId'
+        parent_id:
+          $ref: '#/components/schemas/OpaqueId'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        kind:
+          type: string
+          enum: [FILE, DIRECTORY]
+        state:
+          type: string
+          enum: [ACTIVE, TRASHED, PURGING]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        trashed_at:
+          type: string
+          format: date-time
+          description: Server-observed timestamp when the node entered TRASHED; omitted for ACTIVE nodes.
+        restore_deadline:
+          type: string
+          format: date-time
+          description: Derived inclusive retention deadline; omitted for ACTIVE nodes and never accepted from clients.
+        purge_eligible:
+          type: boolean
+          description: Server-evaluated internal eligibility hint; true does not expose a public delete-now operation.
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [login, login_key, password]
+      properties:
+        login:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: Canonical user-visible login identifier.
+        login_key:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: Adapter-supplied canonical uniqueness key paired with login.
+        password:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          format: password
+    BootstrapAdminRequest:
+      type: object
+      additionalProperties: false
+      required: [login, login_key, password]
+      properties:
+        login:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: Canonical user-visible login identifier.
+        login_key:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: Adapter-supplied canonical uniqueness key paired with login.
+        password:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          format: password
+          description: Initial administrator password; never returned or logged.
+    AuthSessionResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/AuthSessionData'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    AuthSessionData:
+      type: object
+      additionalProperties: false
+      required: [authenticated, user_id, is_instance_admin, session_id]
+      properties:
+        authenticated:
+          type: boolean
+          const: true
+        user_id:
+          $ref: '#/components/schemas/OpaqueId'
+        is_instance_admin:
+          type: boolean
+        session_id:
+          $ref: '#/components/schemas/OpaqueId'
+        expires_at:
+          type: string
+          format: date-time
+          description: Present on login issuance; current-session inspection may omit it.
+    CsrfResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/CsrfData'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    CsrfData:
+      type: object
+      additionalProperties: false
+      required: [csrf_token]
+      properties:
+        csrf_token:
+          type: string
+          minLength: 128
+          maxLength: 128
+          pattern: '^[A-Fa-f0-9]{128}$'
     OpaqueRequestId:
       type: string
       minLength: 8

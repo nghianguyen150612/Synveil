@@ -65,6 +65,11 @@ button:active,
   transform: translateY(1px);
 }
 
+button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 :focus-visible {
   outline: 0.2rem solid var(--color-focus);
   outline-offset: 0.2rem;
@@ -229,6 +234,18 @@ code {
   font-size: 0.85rem;
 }
 
+.shell-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.signed-in-label {
+  color: var(--color-muted);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
 .page-stack {
   display: grid;
   gap: var(--space-7);
@@ -369,6 +386,76 @@ code {
   padding: clamp(var(--space-5), 5vw, var(--space-7));
 }
 
+.auth-layout {
+  display: grid;
+  min-height: calc(100vh - 8rem);
+  place-items: center;
+  padding-block: var(--space-6);
+}
+
+.auth-card {
+  width: min(100%, 34rem);
+}
+
+.auth-card h1 {
+  max-width: 16ch;
+}
+
+.form-stack {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-6);
+}
+
+.field {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.field label {
+  color: var(--color-ink);
+  font-weight: 700;
+}
+
+.field input {
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-small);
+  background: white;
+  color: var(--color-ink);
+}
+
+.field input:focus {
+  border-color: var(--color-focus);
+  outline: 0.15rem solid var(--color-focus);
+  outline-offset: 0.08rem;
+}
+
+.form-error,
+.form-note {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-left: 0.25rem solid var(--color-focus);
+  background: var(--color-warning-soft);
+  color: var(--color-warning-ink);
+}
+
+.form-note {
+  border-left-color: var(--color-brand);
+  background: var(--color-brand-soft);
+  color: var(--color-brand-strong);
+}
+
+.session-summary {
+  max-width: 42rem;
+}
+
+.session-summary p:last-child {
+  margin-bottom: 0;
+}
+
 .route-list {
   display: grid;
   gap: var(--space-3);
@@ -404,6 +491,11 @@ code {
   .next-step-panel {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .shell-actions {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .header-inner {

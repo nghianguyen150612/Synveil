@@ -1,5 +1,7 @@
 import { BrowserRouter, MemoryRouter } from 'react-router-dom'
 
+import type { AuthApi } from '../api/auth'
+import type { BootstrapApi } from '../api/bootstrap'
 import { AuthProvider } from '../auth/AuthProvider'
 import { AppErrorBoundary } from './AppErrorBoundary'
 import { AppRoutes } from './routes'
@@ -7,11 +9,18 @@ import { AppRoutes } from './routes'
 export interface AppProps {
   readonly router?: 'browser' | 'memory'
   readonly initialEntries?: readonly string[]
+  readonly authApi?: AuthApi
+  readonly bootstrapApi?: BootstrapApi
 }
 
-function ApplicationContent() {
+interface ApplicationContentProps {
+  readonly authApi?: AuthApi
+  readonly bootstrapApi?: BootstrapApi
+}
+
+function ApplicationContent({ authApi, bootstrapApi }: ApplicationContentProps) {
   return (
-    <AuthProvider>
+    <AuthProvider authApi={authApi} bootstrapApi={bootstrapApi}>
       <AppErrorBoundary>
         <AppRoutes />
       </AppErrorBoundary>
@@ -19,18 +28,23 @@ function ApplicationContent() {
   )
 }
 
-export function App({ router = 'browser', initialEntries = ['/'] }: AppProps) {
+export function App({
+  router = 'browser',
+  initialEntries = ['/'],
+  authApi,
+  bootstrapApi,
+}: AppProps) {
   if (router === 'memory') {
     return (
       <MemoryRouter initialEntries={[...initialEntries]}>
-        <ApplicationContent />
+        <ApplicationContent authApi={authApi} bootstrapApi={bootstrapApi} />
       </MemoryRouter>
     )
   }
 
   return (
     <BrowserRouter>
-      <ApplicationContent />
+      <ApplicationContent authApi={authApi} bootstrapApi={bootstrapApi} />
     </BrowserRouter>
   )
 }

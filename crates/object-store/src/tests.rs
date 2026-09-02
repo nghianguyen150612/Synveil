@@ -20,6 +20,7 @@ struct MemoryState {
     next_staging: u64,
     next_version: u64,
     staging: BTreeMap<StagingHandle, Option<StoredStaging>>,
+    partial_staging: BTreeMap<StagingHandle, Vec<u8>>,
     objects: BTreeMap<ObjectKey, StoredObject>,
 }
 
@@ -81,6 +82,7 @@ impl MemoryStore {
                 next_staging: 0,
                 next_version: 0,
                 staging: BTreeMap::new(),
+                partial_staging: BTreeMap::new(),
                 objects: BTreeMap::new(),
             })),
             capabilities,
@@ -200,6 +202,7 @@ impl ObjectStore for MemoryStore {
         let mut state = self.state.lock().expect("memory store lock");
         let handle = Self::next_staging(&mut state);
         state.staging.insert(handle.clone(), None);
+        state.partial_staging.insert(handle.clone(), Vec::new());
         Ok(handle)
     }
 
@@ -216,6 +219,107 @@ impl ObjectStore for MemoryStore {
         let Some(staging) = state.staging.get_mut(handle) else {
             return Err(ObjectStoreError::StagingNotFound);
         };
+        *staging = Some(StoredStaging {
+            bytes,
+            metadata: metadata.clone(),
+        });
+        state.partial_staging.remove(handle);
+        Ok(metadata)
+    }
+
+    async fn append_staged(
+        &self,
+        handle: &StagingHandle,
+        expected_offset: u64,
+        chunk: Bytes,
+        maximum_length: u64,
+    ) -> Result<StagingProgress, ObjectStoreError> {
+        let mut state = self.state.lock().expect("memory store lock");
+        let Some(staging) = state.staging.get(handle) else {
+            return Err(ObjectStoreError::StagingNotFound);
+        };
+        if staging.is_some() {
+            return Err(ObjectStoreError::StagingConflict);
+        }
+        let bytes = state
+            .partial_staging
+            .get_mut(handle)
+            .ok_or(ObjectStoreError::StagingNotFound)?;
+        if bytes.len() as u64 != expected_offset {
+            return Err(ObjectStoreError::PreconditionFailed);
+        }
+        let next_length = expected_offset
+            .checked_add(chunk.len() as u64)
+            .ok_or(ObjectStoreError::IntegrityMismatch)?;
+        if next_length > maximum_length {
+            return Err(ObjectStoreError::IntegrityMismatch);
+        }
+        bytes.extend_from_slice(&chunk);
+        Ok(StagingProgress::partial(handle.clone(), next_length))
+    }
+
+    async fn staging_progress(
+        &self,
+        handle: &StagingHandle,
+    ) -> Result<StagingProgress, ObjectStoreError> {
+        let state = self.state.lock().expect("memory store lock");
+        let Some(staging) = state.staging.get(handle) else {
+            return Err(ObjectStoreError::StagingNotFound);
+        };
+        if let Some(staging) = staging {
+            return Ok(StagingProgress::verified(
+                handle.clone(),
+                staging.metadata.length(),
+                *staging
+                    .metadata
+                    .sha256()
+                    .ok_or(ObjectStoreError::IntegrityMismatch)?,
+            ));
+        }
+        let length = state
+            .partial_staging
+            .get(handle)
+            .ok_or(ObjectStoreError::StagingNotFound)?
+            .len() as u64;
+        Ok(StagingProgress::partial(handle.clone(), length))
+    }
+
+    async fn finalize_staged(
+        &self,
+        handle: &StagingHandle,
+        integrity: IntegrityExpectation,
+    ) -> Result<StagedMetadata, ObjectStoreError> {
+        let mut state = self.state.lock().expect("memory store lock");
+        let Some(staging) = state.staging.get(handle) else {
+            return Err(ObjectStoreError::StagingNotFound);
+        };
+        if let Some(staging) = staging {
+            let checksum = staging
+                .metadata
+                .sha256()
+                .copied()
+                .ok_or(ObjectStoreError::IntegrityMismatch)?;
+            if integrity
+                .expected_length()
+                .is_some_and(|expected| expected != staging.metadata.length())
+                || integrity
+                    .expected_sha256()
+                    .is_some_and(|expected| expected != checksum)
+            {
+                return Err(ObjectStoreError::IntegrityMismatch);
+            }
+            return Ok(staging.metadata.clone());
+        }
+        let bytes = state
+            .partial_staging
+            .remove(handle)
+            .ok_or(ObjectStoreError::StagingNotFound)?;
+        let checksum = verify_integrity(&bytes, integrity)?;
+        let metadata = StagedMetadata::new(handle.clone(), bytes.len() as u64, Some(checksum));
+        let staging = state
+            .staging
+            .get_mut(handle)
+            .ok_or(ObjectStoreError::StagingNotFound)?;
         *staging = Some(StoredStaging {
             bytes,
             metadata: metadata.clone(),
@@ -256,6 +360,7 @@ impl ObjectStore for MemoryStore {
     async fn abort_staged(&self, handle: &StagingHandle) -> Result<(), ObjectStoreError> {
         let mut state = self.state.lock().expect("memory store lock");
         state.staging.remove(handle);
+        state.partial_staging.remove(handle);
         Ok(())
     }
 
@@ -408,4 +513,55 @@ async fn in_memory_store_proves_streaming_staging_promotion_and_conditional_dele
         DeleteOutcome::Deleted
     );
     assert!(!store.exists(&promoted_key).await.unwrap());
+}
+
+#[tokio::test]
+async fn in_memory_store_enforces_resumable_offsets_and_idempotent_finalize() {
+    let store = MemoryStore::new();
+    let handle = store.begin_staged_write().await.expect("begin staging");
+    assert_eq!(
+        store
+            .append_staged(&handle, 0, Bytes::from_static(b"abc"), 6)
+            .await
+            .expect("append first chunk")
+            .length(),
+        3
+    );
+    assert_eq!(
+        store
+            .append_staged(&handle, 0, Bytes::from_static(b"abc"), 6)
+            .await,
+        Err(ObjectStoreError::PreconditionFailed)
+    );
+    assert_eq!(
+        store
+            .staging_progress(&handle)
+            .await
+            .expect("inspect partial progress")
+            .length(),
+        3
+    );
+    store
+        .append_staged(&handle, 3, Bytes::from_static(b"def"), 6)
+        .await
+        .expect("append second chunk");
+    let expected = digest(b"abcdef");
+    let expectation = IntegrityExpectation::none()
+        .with_length(6)
+        .with_sha256(expected);
+    let first = store
+        .finalize_staged(&handle, expectation)
+        .await
+        .expect("finalize append-built staging");
+    let second = store
+        .finalize_staged(&handle, expectation)
+        .await
+        .expect("repeat finalize");
+    assert_eq!(first, second);
+}
+
+#[tokio::test]
+async fn in_memory_store_passes_the_shared_conformance_suite() {
+    let store = MemoryStore::new();
+    crate::conformance::run_basic_conformance(&store).await;
 }

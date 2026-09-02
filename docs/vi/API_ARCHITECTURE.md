@@ -1,11 +1,60 @@
 # Kiến trúc API Synveil
 
-Trạng thái: **Blueprint quy chuẩn PLANNED**
+Trạng thái: **Foundation transport, browser/bootstrap auth, logical metadata,
+exact-offset resumable upload HTTP transport, content-read bất biến trung lập
+transport đã authorize theo owner và HTTP download full/single-range đã
+implement, cùng metadata version-history bất biến, safe historical-version
+restore và retention metadata của Trash đã authenticate; metadata purge
+execution nội bộ đã implement; upload UI, physical object purge/GC, download
+UI, sync và backup còn PLANNED**
 
 Tài liệu này xác định HTTP contract mục tiêu và blueprint cho
-`api/openapi.yaml`. Foundation hiện chỉ triển khai transport health hữu hạn:
-probe liveness/readiness và route system-health restricted fail-closed. Các
-product endpoint bên dưới vẫn là kế hoạch. Ý nghĩa và state entity chuẩn đến từ [DOMAIN_MODEL.md](DOMAIN_MODEL.md); đặc tả
+`api/openapi.yaml`. Foundation hiện triển khai transport health hữu hạn, subset
+browser authentication (`POST /auth/login`, `POST /auth/logout`,
+`GET /auth/session`, `GET /auth/csrf`) và subset first-run bootstrap
+(`GET /system/bootstrap-status`, `POST /bootstrap/admin`). Setup, login,
+session, route guard và logout shell của React được bao phủ bởi frontend test.
+Subset metadata logical theo ownership cũng đã implement:
+
+- `GET /libraries` với bounded pagination của library owner;
+- `GET /libraries/{library_id}/nodes` với bounded pagination direct child active;
+- `POST /libraries/{library_id}/nodes` cho logical directory rỗng;
+- `GET/PATCH /nodes/{node_id}` cho read an toàn, rename và move;
+- `POST /nodes/{node_id}/trash` và `POST /nodes/{node_id}/restore` cho đổi state
+  logical có điều kiện.
+- Node response thêm `trashed_at` an toàn, `restore_deadline` dẫn xuất và
+  `purge_eligible` do server evaluate; internal retention và metadata-purge
+  worker boundary không phải user API thông thường. Metadata purge giữ nguyên
+  row Object/ObjectReplica và byte.
+- `GET /nodes/{node_id}/versions` cho metadata version-history bất biến,
+  newest-first và bounded;
+- `GET /versions/{version_id}` cho direct safe metadata lookup dùng cùng
+  immutable ID mà historical content route chấp nhận.
+- `POST /nodes/{node_id}/versions/{version_id}/restore` cho owner đã
+  authenticate restore bằng cách append một immutable version mới từ object
+  historical đã verify.
+
+Route metadata dùng action path phân cách bằng slash vì path grammar hiện tại
+của Axum không hỗ trợ parameter nối với literal suffix trong cùng segment.
+Chúng vẫn chỉ là metadata. Repository cũng expose persisted upload-session
+service trung lập transport qua route `/upload-sessions` đã authenticate cho
+create/status/exact-offset append/complete/abort. Mutation dùng CSRF boundary
+hiện có, body PATCH stream raw byte dưới limit do service cấu hình và status là
+recovery path có thẩm quyền sau response mơ hồ. Content-read service đã được
+wire vào các route authenticate `GET /nodes/{node_id}/content` và
+`GET /versions/{version_id}/content`. Các route này resolve current hoặc
+immutable version theo owner, parse single range, verify SHA-256, đặt safe
+header và stream có giới hạn mà không expose storage key hay physical path.
+Download UI, sync, backup, sharing, device và product endpoint khác bên dưới
+vẫn là kế hoạch. Version-history read và version restore được authenticate;
+read không cần CSRF nhưng restore cần CSRF, signed current-node `If-Match` và
+`Idempotency-Key` bounded. Cả hai chỉ cho active file, private/no-store và
+không mở ObjectStore; node/version unknown, cross-owner, trashed và purging
+đều bị che giấu. Restore transaction lock và recheck quan hệ
+owner/library/file/source cùng một replica `VERIFIED` matching, insert đúng một
+`FileVersion` mới có parent là version current trước đó, advance revision node
+và không tạo `UploadSession`. Ý
+nghĩa và state entity chuẩn đến từ [DOMAIN_MODEL.md](DOMAIN_MODEL.md); đặc tả
 storage, upload, sync, backup, photo, AI và integration tinh chỉnh hành vi mà
 không phát minh ID, error hay mutation semantic thay thế.
 
@@ -152,13 +201,14 @@ Mọi operation còn authorize action dựa trên current ownership, quan hệ
 library/share, device scope và resource state. Có thể trả `404` thay cho `403`
 khi phân biệt existence sẽ làm rò rỉ resource của user khác.
 
-Authentication endpoint được rate-limit bằng nhiều safe signal và ghi redacted
-security audit outcome. Log, error, response list/read và mọi response trừ first
-one-time issuance response được nêu tường minh không bao giờ chứa password,
-refresh secret, credential API/device, capability share, recovery code,
-object-store credential hay Git integration token. Issuance response được phép
-dùng `Cache-Control: no-store`, bị redact khỏi tracing và loại raw material khỏi
-persisted idempotency outcome cùng replay.
+Authentication endpoint cần có abuse control ở deployment/application, nhưng
+phase này không có distributed rate-limiter subsystem. Log, error, response
+list/read và mọi response trừ first one-time issuance response được nêu tường
+minh không bao giờ chứa password, refresh secret, credential API/device,
+capability share, recovery code, object-store credential hay Git integration
+token. Response bootstrap và browser authentication dùng `Cache-Control:
+no-store`, bị redact khỏi tracing và loại raw material khỏi persisted
+idempotency outcome cùng replay.
 
 ## Conditional mutation
 
@@ -394,22 +444,27 @@ mutation đã commit bằng cách giả vờ distributed work là nguyên tử. 
 operation nêu mọi item đã commit, skip, conflict và fail để retry nhắm vào phần
 còn lại.
 
-## Danh mục endpoint dự kiến
+## Danh mục endpoint và trạng thái implementation
 
-Mọi endpoint group dưới đây là `PLANNED`. Ngoại trừ hai probe absolute
-`/health/*` được nêu rõ, path trong inventory là relative với `/api/v1`. Exact
-schema có thể review trong `api/openapi.yaml` trước implementation. Collection
-route không bao giờ loại bỏ nhu cầu authorize từng resource được trả.
+Bốn browser authentication route, hai bootstrap route, metadata route,
+exact-offset upload-session route và hai content download route authenticate
+nêu trên là `IMPLEMENTED` và được đặc tả trong `api/openapi.yaml`. Các endpoint
+group không được đánh dấu bên dưới là
+`PLANNED`. Ngoại trừ hai probe absolute `/health/*` được nêu rõ, path
+trong inventory là relative với `/api/v1`. Collection route không bao giờ loại
+bỏ nhu cầu authorize từng resource được trả.
 
 ### Bootstrap, authentication và user
 
 | Method và path | Trách nhiệm | Access và retry |
 |---|---|---|
-| `POST /system/bootstrap` | Tạo administrator đầu tiên và đóng one-time bootstrap state. | Chỉ unauthenticated khi đủ điều kiện an toàn; local/setup secret gate; idempotent terminal outcome. |
-| `GET /system/bootstrap-status` | Chỉ báo setup có cần thiết hay không, không kèm configuration secret. | Rate-limited; public response tối thiểu. |
-| `POST /auth/login` | Verify user credential và tạo/rotate session. | Public, CSRF/origin control khi áp dụng, strict rate limit; idempotency không dùng để cache secret. |
+| `GET /system/bootstrap-status` | **IMPLEMENTED** — Chỉ báo setup có cần thiết hay không, không kèm configuration secret. | Public status bounded; `no-store`; deployment phải giữ first-run exposure ở mạng trusted/private hoặc TLS terminate đúng cách. |
+| `POST /bootstrap/admin` | **IMPLEMENTED** — Tạo administrator đầu tiên qua bootstrap service race-safe hiện có và đóng setup. | Chỉ public khi setup open; JSON strict 16 KiB; provenance same-origin khi có browser header; không có setup-secret field hoặc automatic session; sau đó login tường minh. |
+| `POST /auth/login` | **IMPLEMENTED** — Verify canonical login identifier/password và issue browser session cookie. | Public; JSON input bounded; raw session chỉ ở cookie Secure/HttpOnly; không có raw token trong JSON. |
 | `POST /auth/refresh` | Consume nguyên tử refresh credential và cấp successor; phát hiện replay. | Existing refresh grant; response bị mất mơ hồ fail-closed và cần đăng nhập lại, không transparent retry. |
-| `POST /auth/logout` | Revoke current session/refresh family. | Authenticated; idempotent. |
+| `POST /auth/logout` | **IMPLEMENTED** — Revoke browser session hiện tại và clear cookie session/CSRF. | Session hợp lệ cần CSRF bound theo session và provenance same-origin; logout thiếu/expired/revoked được lặp an toàn. |
+| `GET /auth/session` | **IMPLEMENTED** — Trả về current browser principal an toàn. | Browser session authenticated; không token, verifier, password hay database row. |
+| `GET /auth/csrf` | **IMPLEMENTED** — Cấp proof mới ký và bound với browser session hiện tại. | Browser session authenticated; response `no-store`; proof đi trong `X-CSRF-Token`, không dùng query parameter. |
 | `GET /sessions` | List metadata an toàn của browser/API session của caller, marker current session, expiry, last use và revocation state; device grant link tới Devices. | Authenticated owner; keyset pagination; không token/verifier. |
 | `POST /sessions/{session_id}:revoke` | Revoke độc lập một browser/API session family được sở hữu; đây là public authority duy nhất để revoke API grant. | Authenticated owner; `If-Match` và idempotency key; current session còn clear cookie; device revoke dùng endpoint Device. |
 | `GET /api-grants` | List named API grant của caller, scope, status, expiry, last use và safe generation metadata. | Authenticated owner; keyset pagination; không credential/verifier. |
@@ -427,8 +482,19 @@ route không bao giờ loại bỏ nhu cầu authorize từng resource được 
 | `GET/POST /admin/users` | List/create account theo instance policy. | Instance administrator; keyset pagination; create cần idempotency key. |
 | `GET/PATCH /admin/users/{user_id}` | Read/lock/disable/administer account mà không âm thầm purge data. | Instance administrator; `If-Match`; audited. |
 
-Bootstrap phải fail closed nếu database state mơ hồ, administrator đã tồn tại
-hoặc thiếu setup secret. Xóa browser cookie không bao giờ re-enable bootstrap.
+Bootstrap status fail closed khi database state unavailable hoặc mơ hồ; create
+operation dùng serialized PostgreSQL service boundary hiện có nên chỉ một claim
+administrator thành công. Bootstrap đã đóng không bao giờ được re-enable bằng
+cách xóa browser cookie. HTTP contract hiện tại không có setup-secret field:
+cho tới khi có installer hoặc secret-gate contract được review, operator phải
+chỉ expose first-run endpoint trên mạng trusted/private hoặc TLS terminate đúng
+cách và dùng canonical origin cấu hình. Endpoint có body bound và provenance
+check nghiêm ngặt, nhưng phase này chưa implement distributed rate limiter.
+
+Response create thành công chỉ chứa `setup_required=false` và metadata
+correlation. Nó không issue browser session; web client chuyển sang login tường
+minh. Password, verifier, cookie và raw session/CSRF material không bao giờ
+được trả về hoặc log trong bootstrap response.
 
 Browser refresh ưu tiên ứng phó theft hơn availability trong suốt. Nếu
 transaction consume-and-issue commit nhưng response bị mất, reuse credential đã
@@ -500,21 +566,40 @@ record đã revoke.
 | Method và path | Trách nhiệm | Access và retry |
 |---|---|---|
 | `POST /libraries` | Tạo ownership/policy/sync namespace và root node. | Authenticated user; idempotency key. |
-| `GET /libraries` | List owned/shared library có thể truy cập. | Authenticated; keyset pagination và access-scoped count. |
+| `GET /libraries` | **IMPLEMENTED** — List library do authenticated user sở hữu với opaque cursor bounded. | Authenticated owner; library không access không xuất hiện. |
 | `GET/PATCH /libraries/{library_id}` | Read hoặc update safe library metadata/policy. | Authorized owner/admin; `If-Match`. |
-| `GET /libraries/{library_id}/nodes` | List một parent hoặc bounded query của active node. | Library read; cursor bind theo parent/filter/sort. |
+| `GET /libraries/{library_id}/nodes` | **IMPLEMENTED** — List direct child active dưới root hoặc directory active theo node ID ổn định. | Authenticated owner; opaque cursor bounded bind theo library và parent. |
 | `GET /libraries/{library_id}/favorites` | List favorite node active mà caller còn đọc được, không expose relation không còn access. | Current user và library read; keyset pagination; authorize lại từng result. |
 | `GET /recent-nodes?library_id=...` | List active node caller đọc được theo mutation server-side đã commit gần đây, tùy chọn trong một library; đây không phải view tracking. | Authenticated; keyset cursor có snapshot watermark và bind caller/filter; authorize lại từng result. |
-| `POST /libraries/{library_id}/nodes` | Tạo empty directory hoặc upload target intent; canonical file content dùng upload. | Library write; idempotency key; parent precondition. |
-| `GET/PATCH /nodes/{node_id}` | Read metadata hoặc rename/move/update metadata được phép. | Node read/write; `If-Match`; move validate destination và cycle. |
+| `POST /libraries/{library_id}/nodes` | **IMPLEMENTED** — Chỉ tạo logical directory rỗng; không có upload intent hoặc directory vật lý. | Authenticated owner; JSON strict 16 KiB; raw logical name; duplicate sibling vẫn được schema hiện tại cho phép. |
+| `GET/PATCH /nodes/{node_id}` | **IMPLEMENTED** — Read metadata an toàn hoặc thực hiện một rename/move có điều kiện. | Node owner; signed `ETag`/`If-Match`; move validate destination và cycle trong transaction. |
 | `PUT /nodes/{node_id}/favorite` | Bảo đảm `NodeFavorite` cá nhân của caller tồn tại và trả ETag của relation. | Current user có node read; idempotency key desired-state; relation precondition tùy chọn; không bao giờ đổi `Node`. |
 | `DELETE /nodes/{node_id}/favorite` | Bảo đảm favorite cá nhân của caller không còn. | Owner của relation; idempotent và không làm lộ trạng thái absent/inaccessible; relation `If-Match` tùy chọn. |
 | `POST /nodes/{node_id}:copy` | Copy node hoặc enqueue bounded subtree copy. | Source read cộng destination write; idempotency key và destination precondition. |
-| `POST /nodes/{node_id}:trash` | Soft-delete node/subtree. | Write; `If-Match`, idempotency key và opaque subtree precondition cho recursive directory Trash. |
+| `POST /nodes/{node_id}/trash` | **IMPLEMENTED** — Logical-delete một node không phải root; directory không rỗng bị reject khi subtree precondition còn open. Response thêm timestamp Trash chuẩn và retention status dẫn xuất. | Node owner; CSRF và `If-Match`; FileVersion/Object không bị chạm. |
+| `POST /nodes/{node_id}/restore` | **IMPLEMENTED** — Restore một node trashed khi parent cũ còn hợp lệ và active. | Node owner; CSRF và `If-Match`; không đoán recovery location. |
 | `DELETE /nodes/{node_id}` | Chỉ request purge khi retention/policy cho phép. | Owner/admin; `If-Match`, idempotency key, irreversible intent rõ ràng. |
-| `GET /nodes/{node_id}/content` | Stream current version đã authorize. | Node read; hỗ trợ validator và range. |
-| `GET /versions/{version_id}/content` | Stream một immutable historical version đã authorize. | Node/version read; hỗ trợ range. |
+| `GET /nodes/{node_id}/content` | **IMPLEMENTED** — Stream current version đã authorize. | Node read đã authenticate; không CSRF; hỗ trợ validator strong và một byte range. |
+| `GET /versions/{version_id}/content` | **IMPLEMENTED** — Stream một immutable historical version đã authorize. | Node/version read đã authenticate; không CSRF; hỗ trợ validator strong và một byte range. |
 | `POST /libraries/{library_id}/node-operations` | Execute bounded multi-item move/copy/trash/metadata command. | Per-item authorization/precondition, gồm subtree precondition khi đệ quy; idempotency; chỉ synchronous dưới reviewed bound. |
+
+Retention field trên public node DTO chỉ mang tính thông tin: `purge_eligible=true`
+nghĩa là internal worker có thể thử `begin_node_purge`, không phải capability
+delete-now public. Restore vẫn được phép sau deadline cho tới khi transition
+transactional vào `PURGING` thắng. Candidate enumeration và begin-purge là
+operation metadata nội bộ, không phải route user thông thường, và không expose
+physical metadata purge hay object-byte purge.
+
+Subset metadata hiện tại cố ý giữ rõ các quyết định chưa đóng. PostgreSQL
+schema hiện không có `name_key` của sibling hoặc unique constraint, vì vậy raw
+logical name trùng nhau dưới cùng parent vẫn hợp lệ. Service không normalize
+Unicode, fold case, reject reserved name của host platform hoặc tạo filesystem
+path. `POST /nodes/{node_id}/trash` chỉ chuyển state logical của một node:
+root được bảo vệ và directory không rỗng trả `invalid_state` cho tới khi quyết
+định subtree precondition trong `SYNC.md` OD-SYNC-004 được đóng. Restore chỉ
+dùng parent cũ; parent mất, bị xóa hoặc invalid trả conflict ổn định thay vì
+đoán recovery location. Không operation nào trong subset này thay đổi
+`FileVersion`, `Object`, journal, outbox hay content vật lý.
 
 Folder và file là variant `Node.kind`, không phải identity system không tương
 thích. Raw URL `Object` không phải browsing API.
@@ -533,16 +618,28 @@ refresh bắt đầu watermark mới và gồm mutation muộn hơn.
 
 ### Download, range và object diagnostic
 
-- Content response cung cấp `Content-Length`, safe `Content-Type`,
-  `Content-Disposition` có untrusted filename được encode đúng, immutable
-  version ETag và integrity metadata khi được authorize để expose.
-- Single byte range theo HTTP range semantic chuẩn. Range invalid hoặc
-  unsatisfiable fail mà không read content không giới hạn. Multi-range support
-  có thể bị bỏ ban đầu và phải khai báo trong OpenAPI.
-- Conditional `If-None-Match` có thể trả `304` cho exact immutable version.
-- API authorize mọi request/range; internal hoặc future signed backend URL là
-  short-lived, scope theo resource/version/range, không log được và chỉ được cấp
-  sau cùng authorization/audit decision.
+HTTP content transport đã authenticate và implement cho
+`GET /nodes/{node_id}/content` (current content) và
+`GET /versions/{version_id}/content` (immutable historical content). Hai route
+delegate resolve content cùng verified read cho application service trung lập
+transport; handler không bao giờ nhận object key, physical path hay direct
+storage URL.
+
+- Full response trả `200`; single range hợp lệ trả `206` với
+  `Content-Length` chính xác và `Content-Range` inclusive.
+- `Range` chỉ nhận đúng một dạng `bytes=start-end`, `bytes=start-` hoặc
+  `bytes=-suffix`. Giá trị malformed, duplicate, multi-range và unsatisfiable
+  trả `416` cùng `Content-Range: bytes */length` trước khi mở object stream.
+  `Accept-Ranges: bytes` chỉ được emit khi backend cấu hình chứng minh
+  capability range-read.
+- ETag strong được tạo từ SHA-256 bất biến. `If-None-Match` khớp trả `304` từ
+  metadata mà không mở byte stream.
+- Response success dùng `application/octet-stream`, disposition attachment có
+  filename encode theo RFC 5987 và `Cache-Control: private, no-store`. Safe GET
+  đã authenticate này không cần CSRF proof.
+- Body pull-driven qua content service và Axum stream; handler không aggregate
+  toàn bộ file. Multi-range, `HEAD`, `If-Range`, direct object URL, download UI
+  và object-integrity diagnostic endpoint vẫn ngoài scope.
 - `GET /objects/{object_id}/integrity` là owner/operator diagnostic nếu được giữ
   trong OpenAPI. Endpoint trả safe state/hash/verification evidence, không bao
   giờ trả storage key, backend credential hoặc content URL bỏ qua authorization.
@@ -550,6 +647,26 @@ refresh bắt đầu watermark mới và gồm mutation muộn hơn.
   với success status.
 
 ### Resumable upload
+
+Subset exact-offset hiện đã implement là:
+
+| Method và path | Trách nhiệm | Access và retry |
+|---|---|---|
+| `POST /upload-sessions` | **IMPLEMENTED** — Tạo intent tagged strict `CREATE_FILE` hoặc `REPLACE_CONTENT` cùng expected byte và SHA-256 chuẩn tùy chọn. | Principal đã authenticate trở thành owner; CSRF; JSON strict 16 KiB; không nhận `user_id`, object key hay staging handle từ client. |
+| `GET /upload-sessions/{upload_session_id}` | **IMPLEMENTED** — Trả state, target, expiry, completion an toàn và offset có thẩm quyền. | Authentication theo owner; không CSRF; sau mọi kết quả PATCH không biết chắc, đây là recovery oracle duy nhất. |
+| `PATCH /upload-sessions/{upload_session_id}` | **IMPLEMENTED** — Stream raw chunk không rỗng tại đúng `Upload-Offset`. | Owner + CSRF; chính xác `application/octet-stream`; offset unsigned decimal chuẩn; aggregate limit của service mặc định 8 MiB; success và `invalid_offset` trả offset có thẩm quyền. |
+| `POST /upload-sessions/{upload_session_id}/complete` | **IMPLEMENTED** — Delegate verify/promotion/logical commit và trả completion metadata chuẩn. | Owner + CSRF; retry dùng lại outcome exactly-once của service đã validate. |
+| `POST /upload-sessions/{upload_session_id}/abort` | **IMPLEMENTED** — Delegate abort mà không trực tiếp thao tác filesystem hay metadata. | Owner + CSRF; repeat an toàn. |
+
+Handler không aggregate toàn bộ body PATCH. Transport frame được chấp nhận sẽ
+được progress bền vững qua application service, vì vậy response bị mất hoặc
+stream failure có thể để lại prefix đã chấp nhận. Client phải GET status rồi
+resume từ `Upload-Offset`/`received_bytes`; không bao giờ blind replay offset cũ
+hay tự tăng progress. Browser helper typed gửi trực tiếp `Blob`/`ArrayBuffer` và
+không có upload UI product nào được implement.
+
+Inventory part-manifest phong phú hơn sau đây vẫn `PLANNED`; path `/uploads`
+không phải alias cho subset `/upload-sessions` đã implement:
 
 | Method và path | Trách nhiệm | Access và retry |
 |---|---|---|
@@ -569,9 +686,9 @@ metadata transaction. Complete state machine thuộc [UPLOADS.md](UPLOADS.md).
 
 | Method và path | Trách nhiệm | Access và retry |
 |---|---|---|
-| `GET /nodes/{node_id}/versions` | List immutable history cùng retention/conflict metadata. | Node history read; keyset pagination. |
-| `GET /versions/{version_id}` | Read một authorized immutable version. | Node history read. |
-| `POST /versions/{version_id}:restore` | Tạo head version mới từ historical byte. | Node write; current node `If-Match` cộng idempotency key. |
+| `GET /nodes/{node_id}/versions` | **IMPLEMENTED** — List safe immutable history metadata newest-first với keyset pagination bounded theo node. | Owner authenticate của active file; không CSRF; private/no-store; resource trashed/purging và cross-owner bị che giấu. |
+| `GET /versions/{version_id}` | **IMPLEMENTED** — Read một record safe immutable version metadata đã authorize. | Owner authenticate của active file; không CSRF; private/no-store; ID tương thích historical content route. |
+| `POST /nodes/{node_id}/versions/{version_id}/restore` | **IMPLEMENTED** — Append một current `FileVersion` bất biến mới tham chiếu object đã verify của version được chọn; row history và byte cũ không đổi. | Node write của owner; CSRF, signed current-node `If-Match`, idempotency key bounded; stale state trả revision/ETag an toàn. |
 | `GET /libraries/{library_id}/trash` | List retained trash entry. | Library read; keyset pagination. |
 | `POST /trash/{trash_entry_id}:restore` | Restore với destination/name collision policy rõ ràng. | Library write; idempotency và destination precondition. |
 | `DELETE /trash/{trash_entry_id}` | Request permanent logical purge. | Owner; `If-Match`/explicit confirmation, idempotency, audited. |
@@ -772,12 +889,13 @@ provider tùy chọn failure chỉ ảnh hưởng operation và freshness của 
 
 ## OpenAPI blueprint và review gate
 
-[`api/openapi.yaml`](../../api/openapi.yaml) đã được check-in như một
-transport-contract skeleton Phase 0 và là reviewed transport authority phía
-dưới domain/protocol specification. File chứa health route foundation đã
-validate, convention dùng chung, shape bootstrap-status và schema tái sử dụng;
-product operation vẫn `PLANNED` cho tới khi domain contract tương ứng sẵn sàng.
-Sau đó file nên chứa:
+[`api/openapi.yaml`](../../api/openapi.yaml) là reviewed transport authority
+phía dưới domain/protocol specification. File chứa health,
+browser-authentication, bootstrap và logical file/folder metadata route đã
+validate, convention dùng chung, safe resource DTO, bounded pagination,
+conditional mutation response và schema tái sử dụng. Content, sync, backup,
+sharing và device operation vẫn `PLANNED` cho tới khi domain contract tương
+ứng sẵn sàng. File tiếp tục nên chứa:
 
 ```text
 info and server/profile metadata

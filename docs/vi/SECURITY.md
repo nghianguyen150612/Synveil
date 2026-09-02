@@ -8,8 +8,25 @@ IMPLEMENTED**. Concurrency của bootstrap chỉ **VALIDATED khi test PostgreSQL
 disposable thực thi**. Persistence browser session chỉ lưu verifier và
 semantics login/session không phụ thuộc transport đã **IMPLEMENTED**; hành vi
 session trên PostgreSQL chỉ **VALIDATED khi test PostgreSQL session disposable
-thực thi**. HTTP login/logout, cookie, CSRF, credential thiết bị và recovery vẫn
-**PLANNED**.
+thực thi**. Transport HTTP login/logout/session/CSRF, policy cookie an toàn,
+typed web API boundary, first-run bootstrap HTTP flow và minimal web setup/
+login/session UI đã **IMPLEMENTED**. Exact-offset upload transport đã
+authenticate và browser API helper raw-byte cũng **IMPLEMENTED**. Content-read
+service trung lập transport đã authorize theo owner chỉ chọn replica đã verify,
+cross-check metadata object và stream byte full/current-range mà không expose
+physical key; nó đã **IMPLEMENTED**. HTTP download full/single-range đã
+authenticate cũng **IMPLEMENTED**, với ETag SHA-256 strong, attachment header
+an toàn, private no-store và không cần CSRF cho safe GET. Credential thiết bị,
+recovery, upload UI và download UI vẫn **PLANNED**. Metadata version-history
+listing và direct lookup đã **IMPLEMENTED** với owner/library scoping,
+active-file concealment, cursor bounded theo node, DTO allowlist an toàn và
+không truy cập ObjectStore; safe historical-version restore đã **IMPLEMENTED**
+với CSRF, signed `If-Match`, recheck owner/file/source, chọn replica đã verify,
+append-only FileVersion mới và replay idempotent đã persist. Response restore
+chỉ expose version metadata an toàn cùng node concurrency metadata, không expose
+object hay replica identity. Bằng chứng bootstrap/session/upload/content-read/
+version-history/restore end-to-end trên PostgreSQL vẫn phụ thuộc môi trường khi
+chưa cấu hình disposable database.
 
 Synveil lưu file cá nhân, backup, ảnh, trạng thái thiết bị, dữ liệu repository,
 credential và thông tin search dẫn xuất. Vì vậy security là điều kiện phát hành,
@@ -169,6 +186,30 @@ flowchart TB
 10. Remote content egress chỉ xảy ra theo policy hiệu lực hiện tại; không
     filename, text OCR, ảnh hay content repository nào âm thầm rời host.
 
+### An toàn retention của Trash
+
+Trash eligibility được evaluate từ `nodes.trashed_at` do server quan sát, một
+retention policy chuẩn, server time hiện tại, state library theo owner và node
+revision chuẩn. Clock của client, browser hay device không thể rút ngắn grace
+window hoặc cung cấp deletion timestamp. Candidate scan nội bộ có bound và
+cursor opaque; nó không phải global administrative API cho user. Trong cùng
+transaction lock với restore, `begin_node_purge` kiểm tra lại owner, library,
+state, directory phải rỗng, retention cutoff và expected revision. Restore vẫn
+được phép sau deadline cho tới khi `PURGING` thắng, vì vậy race chỉ commit một
+state transition. Transition này không xóa hoặc detach `FileVersion`, `Object`,
+`ObjectReplica`, object byte và không có dependency vào `ObjectStore`.
+
+Boundary nội bộ `execute_metadata_purge` hẹp hơn và được authorize riêng: nó
+chỉ nhận node thuộc owner đã ở `PURGING`, recheck expected revision cùng invariant
+root/parent/child và chạy trong một PostgreSQL transaction. Operation chỉ xóa
+metadata `Node`, `FileVersion` và restore-operation của node, sau đó ghi
+canonical object identity vào bảng GC candidate metadata-only. Nó không có
+public route, không có capability ObjectStore và không có thao tác xóa
+`Object`, `ObjectReplica` hay byte. Replay record nhỏ gọn chỉ giữ identity
+owner/node/revision, không giữ filename, path, content hay credential. Release
+reference và re-reference cross-library được serialize bằng transaction lock
+của database.
+
 ## Authentication, bootstrap và recovery
 
 ### Password và login
@@ -198,15 +239,37 @@ flowchart TB
   validation user active và revoke bền vững ngay lập tức. TTL mặc định tám giờ
   là baseline implementation có thể cấu hình, không phải protocol guarantee
   công khai.
-- Semantics login và validate session không phụ thuộc transport. HTTP
-  login/logout, thuộc tính cookie và CSRF chưa được implement trong foundation
-  này.
-- Cookie là `Secure`, `HttpOnly`, được scope path/domain và dùng policy `SameSite`
-  nghiêm ngặt nhất tương thích. Production từ chối transport không an toàn trừ
-  local development mode được cô lập có chủ ý.
-- Request mutation dùng cookie cần pattern CSRF token đã review cộng validation
-  cùng origin của `Origin`/`Sec-Fetch-Site` khi có. Chỉ `SameSite` không phải
-  phòng vệ hoàn chỉnh.
+- Semantics login và validate session không phụ thuộc transport; API boundary
+  hiện triển khai `POST /api/v1/auth/login`, `POST /api/v1/auth/logout`,
+  `GET /api/v1/auth/session` và `GET /api/v1/auth/csrf`.
+- Session cookie là host-only (bỏ qua `Domain`), dùng `Path=/`, `HttpOnly`,
+  `SameSite=Lax` và `Secure` theo policy production. Có policy insecure dành
+  riêng cho local HTTP cô lập và phải opt-in rõ ràng; đây không phải default.
+- Request state-changing đã authenticated bằng cookie cần proof double-submit
+  có ký, bound với session trong `X-CSRF-Token`, CSRF cookie tương ứng không
+  `HttpOnly`, và validation same-origin `Origin`/`Sec-Fetch-Site` khi có. Login
+  được miễn vì chưa có authenticated session; chỉ `SameSite` không phải phòng
+  vệ hoàn chỉnh.
+- Response authentication và CSRF dùng `Cache-Control: no-store`; raw session
+  credential chỉ nằm trong session cookie, không serialize, log, trace hay
+  persist.
+- First-run HTTP boundary hiện triển khai `GET /api/v1/system/bootstrap-status`
+  và `POST /api/v1/bootstrap/admin` với JSON strict 16 KiB, từ chối unknown
+  field, response chỉ chứa status an toàn, request correlation và call race-safe
+  tới bootstrap service hiện có. Nó không issue browser session; web client
+  login tường minh sau setup.
+- Mọi route `/api/v1/upload-sessions` đều cần session đã authenticate; create,
+  PATCH append, complete và abort còn cần cùng CSRF proof bound theo session và
+  provenance same-origin. Status là safe read đã authenticate nên không cần
+  CSRF header.
+- Upload create không nhận `user_id`, object key, staging handle, path hay field
+  backend. PATCH cần một `Upload-Offset` chuẩn và chính xác
+  `application/octet-stream`; handler stream frame qua application service có
+  giới hạn và không bao giờ log hay aggregate content file. Safe error body chỉ
+  expose code allow-list, request ID và offset có thẩm quyền khi recovery cần.
+- Kết quả append mơ hồ chỉ recovery qua GET status đã authenticate. Browser
+  helper không đọc HttpOnly session cookie, persist bearer material, encode
+  byte thành base64 hay giả định offset tự tăng ở client là có thẩm quyền.
 - Rotation refresh session consume và issue nguyên tử. Nó không transparently
   retryable sau response mơ hồ: reuse credential đã consume đặt family thành
   `REVOKED` nguyên tử, invalidate mọi credential material còn lại, ghi
@@ -282,9 +345,19 @@ và phải được threat-review riêng với Rust domain core:
 
 ### Bootstrap và recovery
 
-- Khi chưa có administrator, bootstrap đòi hỏi secret một lần deployment-local
-  có entropy cao, được serialize chống claim đồng thời và đóng nguyên tử sau
-  success. Không đặt secret trong log thường lệ hay image.
+- Khi chưa có administrator, HTTP bootstrap contract hiện tại chỉ expose status
+  tối thiểu và command tạo administrator đầu tiên. Nó không nhận setup-secret
+  field: browser request được check provenance same-origin khi có
+  `Origin`/`Sec-Fetch-Site`, còn operator phải giữ endpoint first-run trên mạng
+  trusted/private hoặc TLS terminate đúng cách cho tới khi installer hoặc
+  secret-gate contract tương lai được review.
+- Command tạo administrator được serialize bởi PostgreSQL bootstrap service
+  hiện có và đóng nguyên tử sau success. Nó không re-open từ browser cookie;
+  phase này không có distributed rate-limiter subsystem, nên body bound và
+  deployment exposure control là giới hạn hiện tại.
+- Bootstrap success response không chứa password, verifier, cookie, session
+  credential hay administrator record và không tạo session. Minimal web UI hiện
+  completion notice an toàn rồi chuyển sang login tường minh.
 - Recovery code là baseline đã đóng băng. Raw code của mỗi replacement set được
   sinh và hiển thị chính xác một lần, rồi chỉ lưu dạng verifier và được tiêu thụ
   nguyên tử; flow pending-then-activate đã xác thực có thể replace set an toàn
@@ -351,6 +424,9 @@ UUID. Randomness và opacity giảm guessing; không bao giờ thay thế policy
   bao giờ kết hợp wildcard origin với credential.
 - Thay đổi state được xác thực bằng cookie cần phòng vệ CSRF. API client bearer-
   token không bỏ qua control authorization/rate/idempotency.
+- Implementation browser hiện dùng nonce random cryptographic 256-bit cộng
+  HMAC-SHA-256 trên nonce và raw session credential. Proof được rotate bởi
+  `GET /api/v1/auth/csrf` và không thể validate với session khác.
 - Chỉ trust `X-Forwarded-*` từ address Caddy cấu hình. Validate canonical host
   và scheme dùng cho absolute link cùng callback origin.
 
@@ -371,11 +447,16 @@ enumeration ở nơi policy yêu cầu.
 - Physical key là component mờ đục được sinh dưới storage root/prefix cấu hình.
   Client path không bao giờ được truyền cho `open`, join vào root đó hay dùng
   làm S3 key.
-- Adapter local dùng operation descriptor-relative khi được hỗ trợ, tạo
-  temporary độc quyền và ngữ nghĩa no-follow. Nó validate mọi loại directory/
-  object và tránh pattern TOCTOU canonicalize-then-open.
-- Root cấu hình không thể là `/`, home/workspace root hay symlink/junction chưa
-  validate. Synveil không bao giờ traverse symlink trong GC đệ quy.
+- Adapter local đã implement dùng tạo temporary độc quyền và check
+  `symlink_metadata`/reparse-point trước operation trên managed path. Mọi object
+  path được derive từ hash của opaque key đã validate. Standard API portable
+  không loại bỏ mọi cửa sổ TOCTOU check/open giữa process; hardening
+  descriptor-relative vẫn là việc platform-adapter tương lai, nên root cần
+  ownership và permission độc quyền cho service.
+- Root cấu hình không thể là filesystem root, home/profile người dùng, current
+  directory, source workspace tại thời điểm build hay symlink/junction entry bị
+  redirect. GC đệ quy chưa implement trong phase này và phải giữ quy tắc
+  no-follow khi được thêm.
 - Symlink backup là metadata manifest theo policy tường minh; restore không
   follow symlink đã restore để write ra ngoài destination.
 
@@ -703,7 +784,7 @@ cấu hình.
 | Raw token/database bị đánh cắp | Token mờ đục entropy cao, chỉ lưu verifier, pending activation, expiry/rotation/revoke, redaction secret | Scan DB/log; test lost-response, race activation, replay rotation và revoke |
 | Thiết bị bị compromise | Credential có scope, trạng thái thiết bị, revoke, base version/conflict, backup được giữ | Revoke trong sync/upload; mutation stale độc hại; recovery clean-device |
 | IDOR/truy cập chéo user | Policy quan hệ resource tập trung; chỉ truy cập object qua logical reference đã authorize | Ma trận authorization dương/âm hoàn chỉnh và review query |
-| Path traversal/symlink/TOCTOU | Key được sinh, adapter local descriptor-relative no-follow, tên portable, validation root | Corpus fuzz và test adapter race symlink |
+| Path traversal/symlink/TOCTOU | Key sinh dạng hash, check no-follow/reparse cho managed entry, ownership root độc quyền, tên portable, validation root; hardening descriptor-relative vẫn planned | Test validation key và containment symlink thực tế hiện tại; corpus race/fuzz trước khi hỗ trợ deployment rộng hơn |
 | Filename độc hại/XSS/content sniffing | React escaping, CSP, disposition an toàn, `nosniff`, không active content inline | Browser E2E với tên/SVG/HTML hostile và assertion header |
 | CSRF/CORS/proxy spoof | Secure cookie, CSRF token + kiểm tra origin, CORS chính xác, danh sách trusted proxy | Test mutation cross-site, preflight và header spoof |
 | Upload quá lớn/client chậm | Limit size/time/concurrency/quota edge/API, streaming có giới hạn | Test boundary/overrun/slow stream/disk-full/load |

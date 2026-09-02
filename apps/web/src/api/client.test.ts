@@ -57,4 +57,37 @@ describe('ApiClient', () => {
     expect(failure).toBeInstanceOf(ApiRequestError)
     expect((failure as ApiRequestError).message).toBe('The request could not be completed.')
   })
+
+  it('copies only the CSRF cookie into a state-changing request header', async () => {
+    document.cookie = 'synveil_csrf=csrf-proof; path=/'
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(null, { status: 204 }),
+    )
+    const client = new ApiClient({ fetchImpl })
+
+    await client.post('/auth/logout')
+
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe('/auth/logout')
+    const init = fetchImpl.mock.calls[0]?.[1]
+    expect(init).toEqual(expect.objectContaining({ credentials: 'same-origin', method: 'POST' }))
+    const headers = new Headers(init?.headers)
+    expect(headers.get('Accept')).toBe('application/json')
+    expect(headers.get('Content-Type')).toBeNull()
+    expect(headers.get('X-CSRF-Token')).toBe('csrf-proof')
+  })
+
+  it('does not overwrite an explicitly supplied CSRF header', async () => {
+    document.cookie = 'synveil_csrf=cookie-proof; path=/'
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(null, { status: 204 }),
+    )
+    const client = new ApiClient({ fetchImpl })
+
+    await client.post('/auth/logout', undefined, {
+      headers: { 'X-CSRF-Token': 'caller-proof' },
+    })
+
+    const headers = new Headers(fetchImpl.mock.calls[0]?.[1]?.headers)
+    expect(headers.get('X-CSRF-Token')).toBe('caller-proof')
+  })
 })
