@@ -18,6 +18,7 @@ use crate::{
     LOCAL_SCHEMA_VERSION, LocalReplica, LocalStateConfig, OpaqueEvidence, RemoteCheckpoint,
     RemoteContent, RemoteError, RemoteErrorKind, RemoteFeedPage, ReplicaScope, RootBindingId,
     SyncOutcome, SyncRemote,
+    test_support::{read_file_bounded, remove_dir_all_bounded},
 };
 
 struct BoundFailingRemote {
@@ -186,7 +187,7 @@ async fn assert_no_secret_on_disk(state: &LocalStateStore, secret: &DeviceCreden
     for entry in fs::read_dir(state.database_path().parent().unwrap()).unwrap() {
         let entry = entry.unwrap();
         if entry.file_type().unwrap().is_file() {
-            let bytes = fs::read(entry.path()).unwrap();
+            let bytes = read_file_bounded(&entry.path()).unwrap();
             assert!(
                 !bytes
                     .windows(secret.expose_secret().len())
@@ -363,8 +364,9 @@ async fn profile_and_secret_survive_reopen_without_plaintext_in_sqlite_or_debug(
         &secret
     );
     assert_no_secret_on_disk(&state, &secret).await;
+    state.close_pool().await;
     drop(state);
-    fs::remove_dir_all(directory).unwrap();
+    remove_dir_all_bounded(&directory).unwrap();
 }
 
 #[tokio::test]
@@ -432,8 +434,9 @@ async fn multiple_profiles_and_origin_aliases_never_share_credential_keys() {
         &secret_b
     );
     assert_eq!(state.server_profiles().await.unwrap().len(), 3);
+    state.close_pool().await;
     drop(state);
-    fs::remove_dir_all(directory).unwrap();
+    remove_dir_all_bounded(&directory).unwrap();
 }
 
 #[tokio::test]
@@ -514,8 +517,9 @@ async fn enrollment_receipt_cannot_be_imported_under_another_profile_or_origin()
     ));
     assert_eq!(store.count(), 1);
     assert_no_secret_on_disk(&state, &secret).await;
+    state.close_pool().await;
     drop(state);
-    fs::remove_dir_all(directory).unwrap();
+    remove_dir_all_bounded(&directory).unwrap();
 }
 
 #[tokio::test]
@@ -588,10 +592,12 @@ async fn reconstructed_sqlite_cannot_load_overwrite_or_forget_another_origins_se
     );
     assert_no_secret_on_disk(&state_a, &secret_a).await;
     assert_no_secret_on_disk(&state_b, &secret_a).await;
+    state_a.close_pool().await;
+    state_b.close_pool().await;
     drop(state_a);
     drop(state_b);
-    fs::remove_dir_all(directory_a).unwrap();
-    fs::remove_dir_all(directory_b).unwrap();
+    remove_dir_all_bounded(&directory_a).unwrap();
+    remove_dir_all_bounded(&directory_b).unwrap();
 }
 
 #[tokio::test]
@@ -616,8 +622,9 @@ async fn loaded_secure_origin_cannot_be_relabelled_in_http_constructor() {
         Err(error) if error.kind() == RemoteErrorKind::Rejected)
     );
     assert_eq!(store.count(), 1);
+    state.close_pool().await;
     drop(state);
-    fs::remove_dir_all(directory).unwrap();
+    remove_dir_all_bounded(&directory).unwrap();
 }
 
 #[tokio::test]
@@ -698,8 +705,9 @@ async fn secure_envelope_requires_version_shape_origin_and_every_bound_identity(
         .await
         .unwrap();
     assert_eq!(store.count(), 0);
+    state.close_pool().await;
     drop(state);
-    fs::remove_dir_all(directory).unwrap();
+    remove_dir_all_bounded(&directory).unwrap();
 }
 
 #[tokio::test]
@@ -813,8 +821,9 @@ async fn forget_preserves_replica_progress_and_explicit_reenrollment_keeps_devic
     );
     assert_no_secret_on_disk(&state, &first).await;
     assert_no_secret_on_disk(&state, &second).await;
+    state.close_pool().await;
     drop(state);
-    fs::remove_dir_all(directory).unwrap();
+    remove_dir_all_bounded(&directory).unwrap();
 }
 
 #[tokio::test]
@@ -846,8 +855,9 @@ async fn unavailable_secret_store_never_falls_back_to_plaintext() {
             .is_none()
     );
     assert_no_secret_on_disk(&state, &secret).await;
+    state.close_pool().await;
     drop(state);
-    fs::remove_dir_all(directory).unwrap();
+    remove_dir_all_bounded(&directory).unwrap();
 }
 
 #[tokio::test]
@@ -897,8 +907,9 @@ async fn interrupted_first_store_has_only_non_secret_cleanup_intent() {
         .await
         .unwrap();
     assert_eq!(pending, 0);
+    state.close_pool().await;
     drop(state);
-    fs::remove_dir_all(directory).unwrap();
+    remove_dir_all_bounded(&directory).unwrap();
 }
 
 #[tokio::test]
@@ -947,8 +958,9 @@ async fn failed_put_never_marks_enrollment_completed_and_can_be_retried_locally(
         .unwrap();
     assert_eq!(store.count(), 1);
     assert_no_secret_on_disk(&state, &secret).await;
+    state.close_pool().await;
     drop(state);
-    fs::remove_dir_all(directory).unwrap();
+    remove_dir_all_bounded(&directory).unwrap();
 }
 
 #[tokio::test]
@@ -998,8 +1010,9 @@ async fn failed_forget_is_durable_and_restart_never_reloads_the_old_credential()
     );
     assert_eq!(store.count(), 0);
     assert_no_secret_on_disk(&state, &secret).await;
+    state.close_pool().await;
     drop(state);
-    fs::remove_dir_all(directory).unwrap();
+    remove_dir_all_bounded(&directory).unwrap();
 }
 
 #[tokio::test]
@@ -1054,8 +1067,9 @@ async fn replacement_cleanup_is_replayed_after_restart_without_changing_active_i
     assert_eq!(loaded.credential_id(), second_id);
     assert_eq!(loaded.secret(), &second);
     assert_eq!(store.count(), 1);
+    state.close_pool().await;
     drop(state);
-    fs::remove_dir_all(directory).unwrap();
+    remove_dir_all_bounded(&directory).unwrap();
 }
 
 #[tokio::test]
@@ -1088,8 +1102,9 @@ async fn simultaneous_initial_stores_cannot_silently_replace_credentials() {
     );
     assert_eq!(usize::from(a.is_ok()) + usize::from(b.is_ok()), 1);
     assert_eq!(store.count(), 1);
+    state.close_pool().await;
     drop(state);
-    fs::remove_dir_all(directory).unwrap();
+    remove_dir_all_bounded(&directory).unwrap();
 }
 
 #[tokio::test]
@@ -1173,8 +1188,9 @@ async fn replica_profile_binding_is_durable_in_database_and_physical_root() {
             .server_profile_id(),
         Some(a.profile_id())
     );
+    state.close_pool().await;
     drop(state);
-    fs::remove_dir_all(directory).unwrap();
+    remove_dir_all_bounded(&directory).unwrap();
 }
 
 #[tokio::test]
@@ -1252,8 +1268,9 @@ async fn auth_revocation_and_offline_failures_preserve_files_sequences_and_pendi
             b"unchanged local content"
         );
         drop(engine);
+        state.close_pool().await;
         drop(state);
-        fs::remove_dir_all(directory).unwrap();
+        remove_dir_all_bounded(&directory).unwrap();
     }
 }
 
@@ -1349,8 +1366,9 @@ async fn live_engine_stops_before_network_after_local_forget_or_reenrollment() {
     );
     assert_eq!(store.count(), 1);
     drop(engine);
+    state.close_pool().await;
     drop(state);
-    fs::remove_dir_all(directory).unwrap();
+    remove_dir_all_bounded(&directory).unwrap();
 }
 
 #[tokio::test]
@@ -1424,6 +1442,7 @@ async fn forward_migration_preserves_v1_and_refuses_inferred_profile_rebind() {
         Err(ClientSyncError::WrongServerProfile)
     ));
     assert!(FilesystemLocalReplica::open(&root, scope).is_ok());
+    state.close_pool().await;
     drop(state);
-    fs::remove_dir_all(directory).unwrap();
+    remove_dir_all_bounded(&directory).unwrap();
 }

@@ -2265,13 +2265,10 @@ fn coalesce_hints(
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs,
-        io::Write,
-        path::PathBuf,
-        sync::Arc,
-        time::{Duration, Instant},
-    };
+    use std::{fs, io::Write, path::PathBuf, sync::Arc, time::Duration};
+
+    #[cfg(target_os = "linux")]
+    use std::time::Instant;
 
     use synveil_core::{
         DeviceId, LibraryId, LogicalName, NodeId, NodeKind, NodeState, OutboundIntentId, Revision,
@@ -2285,8 +2282,11 @@ mod tests {
     };
     use crate::{
         FilesystemLocalReplica, LocalFingerprint, LocalNode, LocalReplica, LocalStateConfig,
-        LocalStateStore, ManagedRelativePath, NotifyLocalChangeWatcher, ReplicaScope,
+        LocalStateStore, ManagedRelativePath, ReplicaScope, test_support::remove_dir_all_bounded,
     };
+
+    #[cfg(target_os = "linux")]
+    use crate::NotifyLocalChangeWatcher;
 
     struct Harness {
         directory: PathBuf,
@@ -2439,9 +2439,10 @@ mod tests {
 
         async fn close(self) {
             self.engine.shutdown().await.unwrap();
+            self.state.close_pool().await;
             let directory = self.directory.clone();
             drop(self);
-            fs::remove_dir_all(directory).unwrap();
+            remove_dir_all_bounded(&directory).unwrap();
         }
     }
 
@@ -2747,9 +2748,10 @@ mod tests {
         }
         assert_eq!(restarted.count_pending_intents().await.unwrap(), 0);
         restarted.shutdown().await.unwrap();
+        state.close_pool().await;
         drop(restarted);
         drop(state);
-        fs::remove_dir_all(directory).unwrap();
+        remove_dir_all_bounded(&directory).unwrap();
     }
 
     #[tokio::test]
