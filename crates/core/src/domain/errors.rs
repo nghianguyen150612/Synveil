@@ -1,5 +1,6 @@
 use std::fmt;
 
+use super::backup::{BackupMaintenanceRunState, BackupSetState, SnapshotState};
 use super::models::{DeviceStatus, NodeState};
 
 /// Validation failures for the persistence-independent domain model.
@@ -44,6 +45,34 @@ pub enum DomainError {
         from: DeviceStatus,
         to: DeviceStatus,
     },
+    InvalidBackupSetStateTransition {
+        from: BackupSetState,
+        to: BackupSetState,
+    },
+    InvalidSnapshotStateTransition {
+        from: SnapshotState,
+        to: SnapshotState,
+    },
+    BackupManifestInvalidNodeState,
+    BackupManifestInvalidRootShape,
+    BackupManifestDirectoryHasContent,
+    BackupManifestIncompleteContentMetadata,
+    BackupRestoreInvalidPlanState,
+    BackupRestoreInvalidPlanEntry,
+    BackupPruneInvalidPlanState,
+    BackupPruneInvalidPlanEntry,
+    BackupRetentionPolicyInvalidConfig,
+    BackupRetentionPolicyInvalidRevision,
+    BackupSnapshotExpiryInvalidPlanState,
+    BackupSnapshotExpiryInvalidPlanEntry,
+    BackupSnapshotExpiryInvalidExecution,
+    BackupMaintenanceRunInvalidState,
+    InvalidBackupMaintenanceRunStateTransition {
+        from: BackupMaintenanceRunState,
+        to: BackupMaintenanceRunState,
+    },
+    BackupSetSourceMismatch,
+    BackupSnapshotForeignKeyMismatch,
     RevisionOverflow,
 }
 
@@ -86,6 +115,59 @@ impl fmt::Display for DomainError {
             Self::FileVersionCannotParentItself => "file version cannot parent itself",
             Self::InvalidNodeStateTransition { .. } => "node state transition is not allowed",
             Self::InvalidDeviceStateTransition { .. } => "device state transition is not allowed",
+            Self::InvalidBackupSetStateTransition { .. } => {
+                "backup set state transition is not allowed"
+            }
+            Self::InvalidSnapshotStateTransition { .. } => {
+                "snapshot state transition is not allowed"
+            }
+            Self::BackupManifestInvalidNodeState => {
+                "backup snapshot manifest contains a purging node"
+            }
+            Self::BackupManifestInvalidRootShape => {
+                "backup snapshot manifest root shape is invalid"
+            }
+            Self::BackupManifestDirectoryHasContent => {
+                "backup snapshot manifest directory has file content"
+            }
+            Self::BackupManifestIncompleteContentMetadata => {
+                "backup snapshot manifest file content metadata is incomplete"
+            }
+            Self::BackupRestoreInvalidPlanState => {
+                "backup restore plan state or counts are invalid"
+            }
+            Self::BackupRestoreInvalidPlanEntry => "backup restore plan entry shape is invalid",
+            Self::BackupPruneInvalidPlanState => {
+                "backup prune plan state or reference-accounting counts are invalid"
+            }
+            Self::BackupPruneInvalidPlanEntry => "backup prune plan entry shape is invalid",
+            Self::BackupRetentionPolicyInvalidConfig => {
+                "backup snapshot retention policy configuration is invalid"
+            }
+            Self::BackupRetentionPolicyInvalidRevision => {
+                "backup snapshot retention policy revision is invalid"
+            }
+            Self::BackupSnapshotExpiryInvalidPlanState => {
+                "backup snapshot expiry plan state or counts are invalid"
+            }
+            Self::BackupSnapshotExpiryInvalidPlanEntry => {
+                "backup snapshot expiry plan entry shape is invalid"
+            }
+            Self::BackupSnapshotExpiryInvalidExecution => {
+                "backup snapshot expiry execution evidence is invalid"
+            }
+            Self::BackupMaintenanceRunInvalidState => {
+                "backup maintenance run state or references are invalid"
+            }
+            Self::InvalidBackupMaintenanceRunStateTransition { .. } => {
+                "backup maintenance run state transition is not allowed"
+            }
+            Self::BackupSetSourceMismatch => {
+                "backup set source does not match the requested library scope"
+            }
+            Self::BackupSnapshotForeignKeyMismatch => {
+                "backup snapshot foreign key relationship is inconsistent"
+            }
             Self::RevisionOverflow => "resource revision cannot be incremented",
         };
 

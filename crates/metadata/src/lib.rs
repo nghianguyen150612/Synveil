@@ -8,6 +8,7 @@
 //! SQLite implementation or fallback.
 
 mod auth;
+mod backup;
 mod config;
 mod conflicts;
 mod content;
@@ -32,6 +33,20 @@ mod uploads;
 mod versions;
 
 pub use auth::{AuthRepository, BootstrapAttempt, BootstrapState};
+pub use backup::{
+    BackupError, BackupMaintenanceRunRow, BackupPruneExecutionObjectResultRow,
+    BackupPruneExecutionRow, BackupPrunePlanEntryRow, BackupPrunePlanRow,
+    BackupRestoreExecutionEntryRow, BackupRestoreExecutionRow, BackupRestorePlanEntryRow,
+    BackupRestorePlanRow, BackupService, BackupSetRow, BackupSnapshotExpiryExecutionEntryRow,
+    BackupSnapshotExpiryExecutionRow, BackupSnapshotExpiryPlanEntryRow,
+    BackupSnapshotExpiryPlanRow, BackupSnapshotNodeRow, BackupSnapshotRetentionPolicyRevisionRow,
+    BackupSnapshotRow, DEFAULT_BACKUP_PRUNE_PLAN_ENTRY_PAGE_LIMIT,
+    DEFAULT_BACKUP_RESTORE_PLAN_ENTRY_PAGE_LIMIT, DEFAULT_BACKUP_SET_PAGE_LIMIT,
+    DEFAULT_BACKUP_SNAPSHOT_EXPIRY_PLAN_ENTRY_PAGE_LIMIT, DEFAULT_BACKUP_SNAPSHOT_PAGE_LIMIT,
+    MAX_BACKUP_PRUNE_PLAN_ENTRY_PAGE_LIMIT, MAX_BACKUP_RESTORE_PLAN_ENTRY_PAGE_LIMIT,
+    MAX_BACKUP_SET_PAGE_LIMIT, MAX_BACKUP_SNAPSHOT_EXPIRY_PLAN_ENTRY_PAGE_LIMIT,
+    MAX_BACKUP_SNAPSHOT_PAGE_LIMIT,
+};
 pub use config::{DATABASE_URL_ENV, DatabaseConfig, PoolConfig};
 pub use conflicts::{
     ConflictManagementBackend, ConflictManagementError, ConflictManagementService, ConflictPage,

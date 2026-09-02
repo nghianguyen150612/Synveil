@@ -1746,9 +1746,9 @@ impl<'pool> DomainRepository<'pool> {
 
     /// Claim a bounded batch of metadata-only object-GC candidates. Candidate
     /// rows are locked in stable order first; each canonical Object is then
-    /// locked and the committed FileVersion reference relation is rechecked
-    /// before the lease is written. This method never touches replicas or
-    /// object bytes.
+    /// locked and every committed content-retention reference (live
+    /// FileVersion or durable backup pin) is rechecked before the lease is
+    /// written. This method never touches replicas or object bytes.
     pub(crate) async fn claim_object_gc_candidates(
         &self,
         policy: ObjectGcPolicy,
@@ -1817,7 +1817,7 @@ impl<'pool> DomainRepository<'pool> {
             // from the initial candidate-query timestamp.
             let claimed_at = Self::database_now(&mut transaction).await?;
             let (_, lease_expires_at) = gc_time_window(policy, claimed_at)?;
-            if Self::has_object_file_version_reference(
+            if Self::has_object_retention_reference(
                 &mut transaction,
                 candidate.object_id(),
                 candidate.dedup_domain_id(),
@@ -1885,8 +1885,8 @@ impl<'pool> DomainRepository<'pool> {
         Ok(leases)
     }
 
-    /// Renew a matching lease after revalidating its committed reference
-    /// relation under the canonical Object lock.
+    /// Renew a matching lease after revalidating its committed content
+    /// retention relation under the canonical Object lock.
     pub(crate) async fn renew_object_gc_lease(
         &self,
         policy: ObjectGcPolicy,
@@ -1938,7 +1938,7 @@ impl<'pool> DomainRepository<'pool> {
             transaction.commit().await.map_err(MetadataError::from)?;
             return Ok(GcRenewalMutation::GraceNotMature);
         }
-        if Self::has_object_file_version_reference(
+        if Self::has_object_retention_reference(
             &mut transaction,
             candidate.object_id(),
             candidate.dedup_domain_id(),
@@ -2114,7 +2114,7 @@ impl<'pool> DomainRepository<'pool> {
             transaction.commit().await.map_err(MetadataError::from)?;
             return Ok(GcPlanMutation::GraceNotMature);
         }
-        if Self::has_object_file_version_reference(
+        if Self::has_object_retention_reference(
             &mut transaction,
             candidate.object_id(),
             candidate.dedup_domain_id(),
@@ -2449,7 +2449,7 @@ impl<'pool> DomainRepository<'pool> {
         row.try_into_domain(&root).map(Some).map_err(Into::into)
     }
 
-    async fn insert_node_row_in_transaction(
+    pub(crate) async fn insert_node_row_in_transaction(
         transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         row: &NodeRow,
     ) -> Result<(), MetadataError> {
@@ -2476,7 +2476,7 @@ impl<'pool> DomainRepository<'pool> {
         .map(|_| ())
     }
 
-    async fn update_node_in_transaction(
+    pub(crate) async fn update_node_in_transaction(
         transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         value: &Node,
     ) -> Result<(), MetadataError> {
@@ -2534,7 +2534,7 @@ impl<'pool> DomainRepository<'pool> {
         .map_err(MetadataError::from)
     }
 
-    async fn lock_gc_candidate_row_for_reference(
+    pub(crate) async fn lock_gc_candidate_row_for_reference(
         transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         object_id: ObjectId,
         object_dedup_domain_id: DedupDomainId,
@@ -2553,7 +2553,7 @@ impl<'pool> DomainRepository<'pool> {
         .map(|_| ())
     }
 
-    async fn lock_object_for_gc(
+    pub(crate) async fn lock_object_for_gc(
         transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         object_id: ObjectId,
         object_dedup_domain_id: DedupDomainId,
@@ -2593,15 +2593,21 @@ impl<'pool> DomainRepository<'pool> {
         Ok(())
     }
 
-    async fn has_object_file_version_reference(
+    /// The authoritative logical-content relation. A durable backup pin is
+    /// intentionally independent from mutable Node/FileVersion rows, so it
+    /// remains a live reference after metadata purge and after a snapshot has
+    /// moved from `COMPLETED` to lifecycle-only `EXPIRED`.
+    async fn has_object_retention_reference(
         transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         object_id: ObjectId,
         object_dedup_domain_id: DedupDomainId,
     ) -> Result<bool, MetadataError> {
         sqlx::query_scalar(
             "SELECT EXISTS(
-                SELECT 1
-                FROM file_versions
+                SELECT 1 FROM file_versions
+                WHERE object_id = $1 AND object_dedup_domain_id = $2
+                UNION ALL
+                SELECT 1 FROM backup_snapshot_content_pins
                 WHERE object_id = $1 AND object_dedup_domain_id = $2
             )",
         )
@@ -2734,13 +2740,14 @@ impl<'pool> DomainRepository<'pool> {
     }
 
     /// Release one node's logical FileVersion references and record only the
-    /// canonical Objects whose last committed reference disappeared.
+    /// canonical Objects whose last committed content-retention reference
+    /// disappeared.
     ///
     /// The `NOT EXISTS` relation is the reference-accounting authority. The
     /// data-modifying CTE sees the statement snapshot, so the survivor query
     /// intentionally excludes the node being deleted and still sees every
-    /// committed reference from other nodes/libraries. No Object or replica
-    /// row is mutated here.
+    /// committed reference from other nodes/libraries and every durable backup
+    /// pin. No Object or replica row is mutated here.
     async fn release_purged_node_references(
         transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         node_id: NodeId,
@@ -2782,6 +2789,12 @@ impl<'pool> DomainRepository<'pool> {
                    AND survivor.object_dedup_domain_id = deleted.object_dedup_domain_id
                    AND survivor.node_id <> $1
              )
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM backup_snapshot_content_pins AS pin
+                   WHERE pin.object_id = deleted.object_id
+                     AND pin.object_dedup_domain_id = deleted.object_dedup_domain_id
+               )
              ON CONFLICT (object_id, object_dedup_domain_id) DO NOTHING",
         )
         .bind(node_id.into_uuid())
@@ -2793,7 +2806,7 @@ impl<'pool> DomainRepository<'pool> {
         .map(|_| ())
     }
 
-    async fn insert_file_version_in_transaction(
+    pub(crate) async fn insert_file_version_in_transaction(
         transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         value: FileVersion,
     ) -> Result<(), MetadataError> {
