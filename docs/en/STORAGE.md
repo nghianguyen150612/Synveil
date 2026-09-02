@@ -372,6 +372,13 @@ uses portable Rust/Tokio filesystem primitives:
   name. Compression, snapshots, reflink/block clone, and filesystem-health
   acceleration are explicitly unsupported in this adapter. Unit/conformance
   tests exercise these code paths but do not constitute power-loss crash proof.
+- On Windows, the directory barrier opens the managed directory with the native
+  directory-handle flags `FILE_FLAG_BACKUP_SEMANTICS` and
+  `FILE_FLAG_OPEN_REPARSE_POINT`, requests write access required by
+  `FlushFileBuffers`, and then uses the same `sync_all` barrier as the rest of
+  the adapter. This is a real probe and runtime path, not a Windows-only
+  capability override: if opening or flushing the directory fails,
+  `DurableFlush` remains unsupported and the upload service refuses the store.
 - Managed directories and files are checked with no-follow metadata checks,
   including Windows reparse/symlink-sensitive paths where the standard API
   exposes them. Standard portable APIs cannot eliminate every cross-process

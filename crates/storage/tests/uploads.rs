@@ -462,6 +462,23 @@ fn create_request(
 }
 
 #[tokio::test]
+async fn local_store_capability_profile_is_accepted_by_upload_service() {
+    let root = TempRoot::new();
+    let metadata = Arc::new(TestMetadata::default());
+    let owner = UserId::new();
+    let (service, _store) = service_with_store(metadata.clone(), root.path());
+
+    let view = service
+        .create_upload_session(create_request(owner, 4, None))
+        .await
+        .expect("local store capability profile must admit uploads");
+
+    assert_eq!(view.owner_user_id, owner);
+    assert_eq!(view.received_bytes, 0);
+    assert_eq!(metadata.record(view.id).state, UploadSessionState::Open);
+}
+
+#[tokio::test]
 async fn offsets_and_status_survive_store_reopen_and_completion_is_idempotent() {
     let root = TempRoot::new();
     let metadata = Arc::new(TestMetadata::default());

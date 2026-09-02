@@ -32,6 +32,15 @@ resume flow. Typed browser-helper tests prove raw `Blob`/`ArrayBuffer` transport
 and server-authoritative progress. These tests do not replace PostgreSQL
 locking/integration evidence when the disposable database is unavailable.
 
+The local upload capability regression opens the production filesystem adapter,
+asserts the required availability, promotion, checksum, read-after-write, file
+flush, directory flush, atomic-rename, and conditional-delete profile, and then
+creates an upload session through `UploadApplicationService`. On Windows, the
+adapter test additionally exercises the writable directory-handle flush used by
+the capability probe and promotion path. The test remains enabled on every
+native CI runner; a failed durability probe must keep uploads unavailable rather
+than being converted into a skipped or relaxed test.
+
 The transport-neutral content-read service additionally has focused application
 tests for owner/missing/cross-owner concealment, directories, trashed nodes,
 immutable historical versions, full and zero-byte streams, interior/final/

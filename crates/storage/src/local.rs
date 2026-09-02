@@ -1370,11 +1370,7 @@ fn probe_file_fsync(staging_dir: &Path) -> bool {
 }
 
 fn probe_directory_fsync(paths: &[&Path]) -> bool {
-    paths.iter().all(|path| {
-        fs::File::open(path)
-            .and_then(|file| file.sync_all())
-            .is_ok()
-    })
+    paths.iter().all(|path| sync_directory_sync(path).is_ok())
 }
 
 fn probe_atomic_rename(staging_dir: &Path) -> bool {
@@ -1510,9 +1506,48 @@ async fn write_new_file(path: &Path, content: &[u8]) -> Result<(), ObjectStoreEr
     file.sync_all().await.map_err(map_io_error)
 }
 
+/// Flush a managed directory using the platform's namespace-durability
+/// primitive. Windows requires a directory handle opened with backup
+/// semantics, and `FlushFileBuffers` requires write access to that handle.
+/// `FILE_FLAG_OPEN_REPARSE_POINT` keeps this barrier from following a junction
+/// or symlink if a managed path is replaced between validation and the flush.
+fn sync_directory_sync(path: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
+        return fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)?
+            .sync_all();
+    }
+
+    #[cfg(not(windows))]
+    {
+        fs::File::open(path)?.sync_all()
+    }
+}
+
 async fn sync_directory(path: &Path) -> Result<(), ObjectStoreError> {
-    let file = File::open(path).await.map_err(map_io_error)?;
-    file.sync_all().await.map_err(map_io_error)
+    #[cfg(windows)]
+    {
+        let path = path.to_path_buf();
+        tokio::task::spawn_blocking(move || sync_directory_sync(&path))
+            .await
+            .map_err(|_| ObjectStoreError::StorageUnavailable)?
+            .map_err(map_io_error)
+    }
+
+    #[cfg(not(windows))]
+    {
+        let file = File::open(path).await.map_err(map_io_error)?;
+        file.sync_all().await.map_err(map_io_error)
+    }
 }
 
 async fn verify_open_file_contents(
@@ -1733,5 +1768,26 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_directory_sync_flushes_a_writable_directory_handle() {
+        let directory =
+            std::env::temp_dir().join(format!("synveil-directory-sync-test-{}", Uuid::now_v7()));
+        fs::create_dir_all(&directory).expect("create directory-sync fixture");
+        let child = directory.join("child");
+        fs::write(&child, b"directory flush fixture").expect("write directory-sync fixture");
+
+        let sync_result = sync_directory_sync(&directory);
+        let read_result = fs::read(&child);
+        let cleanup_result = fs::remove_dir_all(&directory);
+
+        sync_result.expect("flush directory metadata");
+        assert_eq!(
+            read_result.expect("read directory-sync fixture"),
+            b"directory flush fixture"
+        );
+        cleanup_result.expect("remove directory-sync fixture");
     }
 }
