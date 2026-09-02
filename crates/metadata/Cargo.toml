@@ -1,0 +1,16 @@
+[package]
+name = "synveil-metadata"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "PostgreSQL and migration foundation for Synveil metadata"
+
+[dependencies]
+synveil-core.workspace = true
+sqlx.workspace = true
+time.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

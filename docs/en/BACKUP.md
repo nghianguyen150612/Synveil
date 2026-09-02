@@ -1,0 +1,896 @@
+# Backup, snapshots, retention, and restore
+
+Status: **PLANNED normative blueprint**
+
+This document specifies device-to-Synveil backup, immutable backup snapshots,
+retention, recovery workflows, and instance disaster recovery. It follows
+ADR-007 and the entities in [DOMAIN_MODEL.md](DOMAIN_MODEL.md). The object
+lifecycle is defined in [STORAGE.md](STORAGE.md); resumable byte transfer in
+[UPLOADS.md](UPLOADS.md); live current-state synchronization in
+[SYNC.md](SYNC.md).
+
+No backup capability is `IMPLEMENTED` merely because this blueprint exists.
+
+## Two different backup responsibilities
+
+Synveil uses the word backup for two related but distinct responsibilities:
+
+1. **User/device backup:** a `BackupSet` captures selected client sources into
+   immutable `BackupSnapshot` manifests and restores individual or complete
+   content after deletion, corruption, or device loss.
+2. **Synveil instance disaster recovery:** the operator backs up PostgreSQL,
+   object storage, configuration, and required secrets together so the server
+   itself can be rebuilt.
+
+Device snapshots stored only on the same sole disk as live Synveil data protect
+history from sync deletion but do not protect against that disk's loss. The UI
+and operations guide distinguish historical retention from an independent
+failure-domain copy.
+
+## Backup is not synchronization
+
+| Synchronization | Backup |
+|---|---|
+| Converges one current library namespace across devices. | Preserves immutable historical manifest views. |
+| Delete becomes Trash/tombstone and propagates. | Source absence changes only a newly captured manifest. |
+| Uses `Node`, `FileVersion`, `ChangeEvent`, and `SyncCursor`. | Uses `BackupSet`, `BackupSnapshot`, `BackupEntry`, and restore operations. |
+| Resolves concurrent current-state edits/conflicts. | Captures what a device observed, with a declared consistency class. |
+| Journal retention enables incremental convergence. | Snapshot retention determines recoverability. |
+
+A backup client never calls the live delete endpoint to represent a missing
+source file. Retention never emits a live sync tombstone. Restoring into a
+library intentionally creates new live nodes/versions and then uses the normal
+sync journal.
+
+## Backup invariants
+
+1. Only a `COMMITTED` snapshot is listed as restorable. `BUILDING`,
+   `VERIFYING`, `FAILED`, and `EXPIRED` are not complete recovery points.
+2. Snapshot commit is one PostgreSQL transaction that makes an already staged,
+   verified complete manifest authoritative. No partially submitted manifest
+   can become restorable.
+3. A committed snapshot is immutable. Correction creates another snapshot; it
+   never edits historical entries or the root hash.
+4. Every restorable file entry resolves to a `VERIFIED` object in the same
+   owner/dedup domain, with canonical length and SHA-256.
+5. Missing/unreadable/excluded source observations are explicit. They never
+   delete entries from older retained snapshots.
+6. Every initial snapshot is logically complete even when content objects are
+   reused. A retained snapshot does not require its parent snapshot to remain.
+7. Retention expires snapshot references first. Physical object GC occurs only
+   after all live/version/Trash/snapshot/derivative/lease/hold references are
+   absent and the storage safety window passes.
+8. Restore is durable, idempotent, restartable, non-destructive by default, and
+   verifies bytes. Overwrite, when explicitly selected, creates new file
+   versions rather than rewriting historical objects.
+9. The server never upgrades a client capture to a stronger consistency label
+   than the client evidence supports.
+10. Revoking/removing a source device stops future backup access; it does not
+    silently erase retained snapshots.
+11. Backup IDs, hashes, entry paths, and object IDs are not authorization.
+12. Optional notifications, indexing, thumbnails, and anomaly detection cannot
+    be prerequisites for snapshot commit or restore correctness.
+
+## Backup set and source policy
+
+A `BackupSet` belongs to one owner and source device. Its versioned policy
+contains:
+
+- client-stable opaque source IDs and user-facing source labels;
+- selected roots, include/exclude rules, file-size/type policy, and schedule or
+  continuous trigger;
+- symlink/mount-boundary behavior and supported metadata profile;
+- retention policy reference and quota domain;
+- consistency requirements and whether a best-effort snapshot with explicit
+  capture errors may commit;
+- pause/retire state and last successful observation.
+
+Source descriptors are untrusted device metadata. A string such as
+`C:\Users\...` or `/home/...` is never interpreted as a server path and never
+grants server filesystem access.
+
+Initial recommended source behavior:
+
+- do not follow symlinks during capture; record the link as bounded metadata if
+  the client/platform profile supports it;
+- do not cross a mount/volume boundary unless that source explicitly includes
+  it;
+- preserve original relative name components but also compute a portable
+  comparison/safety projection for restore warnings;
+- exclude sockets, device nodes, and other special files initially; report them
+  explicitly rather than serializing unsafe semantics;
+- treat hard-link preservation, ACLs, extended attributes, sparse extents, and
+  platform-specific metadata as capability-versioned additions, not implicit
+  promises.
+
+Changing a policy affects later snapshots only. A snapshot stores the effective
+policy revision used to capture it.
+
+## Snapshot state machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> BUILDING: initiate snapshot
+    BUILDING --> BUILDING: idempotent entry/content batches
+    BUILDING --> VERIFYING: seal immutable manifest
+    VERIFYING --> VERIFYING: lease retry/recovery
+    VERIFYING --> COMMITTED: atomic manifest commit
+    BUILDING --> FAILED: permanent invalid/incomplete input
+    VERIFYING --> FAILED: integrity/policy verification fails
+    BUILDING --> EXPIRED: abandoned build TTL
+    COMMITTED --> EXPIRED: retention selection
+```
+
+`FAILED` and `EXPIRED` are not restorable. An expired committed snapshot may
+retain entries temporarily while an idempotent purge job progresses, but the UI
+must not present it as a recovery point after retention's audited point of no
+return. A legal hold blocks `COMMITTED -> EXPIRED`.
+
+### `BUILDING`
+
+The snapshot has frozen set/device/parent/policy identity but accepts bounded,
+idempotent manifest batches and backup-scoped content claims. Entries are not
+authoritative restore references yet. An active snapshot build lease protects
+its verified objects/staging from GC.
+
+### `VERIFYING`
+
+The manifest is sealed: no entry, error, parent, consistency claim, or content
+binding can change. A generation-leased verifier validates topology,
+completeness, all content receipts, canonical manifest serialization/root hash,
+capture results, quotas, and policy. Retryable infrastructure errors keep this
+state and schedule another attempt. Permanent mismatch becomes `FAILED`.
+
+### `COMMITTED`
+
+One transaction changes the frozen snapshot to `COMMITTED`, making all of its
+entries authoritative references, finalizing accounting, storing idempotent
+outcome, audit, and outbox/jobs. Queries for restorable entries always join a
+committed snapshot state. The transaction does not update millions of entries;
+their visibility changes through the single locked snapshot state after they
+have already been verified and protected by the build lease.
+
+The build lease is released only after commit. GC sees either that unexpired
+lease before commit or the committed snapshot reference after commit, so there
+is no unprotected interval.
+
+## Manifest model
+
+### Full logical snapshot
+
+The initial implementation stores a complete logical manifest per snapshot.
+An incremental parent is an ingest optimization and lineage hint, not a restore
+dependency. Each new `BackupEntry` contains its own resulting metadata and
+object reference. Unchanged files may share immutable objects, but expiring the
+parent never makes a retained child snapshot incomplete.
+
+Later structurally shared/delta manifests require a versioned format and a
+retention proof showing every retained snapshot remains independently
+resolvable. They are not an invisible schema optimization.
+
+### Entry identity and topology
+
+Each entry has a client-stable source entry identity where the platform can
+provide one, plus a snapshot-local immutable entry ID and parent entry ID.
+Relative path is represented as bounded components, not a trusted concatenated
+server path.
+
+Validation requires:
+
+- exactly one manifest root for each declared source root;
+- unique snapshot-local entry IDs and unique child comparison keys under a
+  parent according to the manifest's name-policy version;
+- no cycle, missing parent, child under non-directory, absolute path, `.`/`..`
+  traversal component, NUL, excessive component length, excessive depth, or
+  checked-arithmetic overflow;
+- declared entry count and byte totals within set/user/instance bounds;
+- type-specific fields only for registered types;
+- every `PRESENT` file has exact length/hash and a verified object binding;
+- capture errors and exclusions are classified and included in completeness
+  summary rather than silently omitted.
+
+Original names, timestamps, permissions, symlink targets, and local paths are
+untrusted metadata. They can be shown to the owner but never drive a server
+filesystem operation without safe restore validation.
+
+### Canonical root hash
+
+Every manifest format has an immutable version. The server computes a canonical
+root hash from length-delimited, type-tagged entry fields and child hashes in a
+defined byte order; JSON map order, database row order, locale collation, and
+client path separators are never inputs. The snapshot records algorithm,
+format version, root hash, entry count, logical bytes, and capture-error summary.
+
+The client's expected root hash, if supplied, is cross-check evidence. The
+server-computed value is authoritative. Any format change receives a new
+version and golden cross-language fixtures before writers emit it.
+
+## Snapshot creation protocol
+
+### 1. Initiate
+
+```http
+POST /api/v1/backup-sets/{backup_set_id}/snapshots
+Idempotency-Key: <backup-run-id>
+```
+
+The authenticated source device supplies optional parent snapshot, scan start,
+client/platform/capability versions, and intended consistency mechanism. The
+server locks/checks the backup set, device, policy, concurrent run limit, quota
+reservation, parent eligibility, and idempotency fingerprint, then creates one
+`BUILDING` snapshot with TTL and build lease.
+
+An identical retry returns the same snapshot. A key reused with a different
+set/parent/capture request returns `idempotency_conflict`.
+
+### 2. Submit manifest batches
+
+```http
+POST /api/v1/backup-snapshots/{snapshot_id}/entry-batches
+Idempotency-Key: <client-batch-id>
+```
+
+Batches contain bounded entries sorted/identified according to the manifest
+protocol. The server validates structure incrementally, uses unique constraints
+for entry and parent/name identities, and stores one batch fingerprint/outcome.
+An identical retry returns it; a changed batch under the same identity fails.
+
+Batch submission does not perform long object writes in its database
+transaction. During `BUILDING`, the server may report the protocol disposition
+`UPLOAD_REQUIRED` for a new/changed file; this is not an additional persisted
+`BackupEntry.capture_result`. Final entry capture results remain exactly:
+
+- `UNCHANGED`: the client names an entry from the selected previous committed
+  snapshot; the server verifies same set/owner, retained verified object, and
+  compatible expected length/hash, then copies the object binding into this
+  snapshot entry;
+- `PRESENT`: a completed backup content claim has server-verified length/hash;
+- `UNREADABLE`, `EXCLUDED`, or `MISSING_OBSERVATION`: explicit non-content
+  capture result with a safe error class.
+
+The server does not expose arbitrary hash-existence queries. New/changed files
+upload fully and dedup only after server verification. A future proof-of-
+possession optimization requires a separate reviewed protocol.
+
+### 3. Ingest required content
+
+Backup content uses the same bounded streaming, part verification, whole-object
+SHA-256, immutable finalization, retry, lease, and orphan behavior as
+[UPLOADS.md](UPLOADS.md), but its destination is a backup-scoped content claim,
+not a visible `Node` or `FileVersion`.
+
+The internal claim freezes snapshot+entry ownership and expected size/hash. Its
+terminal result can bind only that authorized manifest entry. It must not expose
+raw `Object` creation or allow bytes verified for one owner/snapshot to be
+retargeted. OpenAPI/domain implementation may either add a registered
+`BACKUP_ENTRY` upload intent or expose a backup-specific wrapper over the same
+application service; it must not duplicate the byte-integrity state machine.
+
+### 4. Seal
+
+```http
+POST /api/v1/backup-snapshots/{snapshot_id}/complete
+Idempotency-Key: <snapshot-completion-key>
+```
+
+The request supplies final entry count, scan end, expected root hash, consistency
+evidence, and capture-error summary. A short transaction locks `BUILDING`,
+validates every submitted batch is terminal, freezes a manifest fingerprint,
+changes state to `VERIFYING`, and creates one verifier job/lease. Later calls
+cannot add or replace entries.
+
+The endpoint may return `202` and status URI. A semantically identical retry
+returns the same verification/terminal outcome. A different sealed fingerprint
+returns `manifest_conflict`.
+
+### 5. Verify and commit
+
+The verifier uses bounded/paginated database reads to check topology, content,
+totals, canonical root hash, capture policy, and object states. It does not hold
+one long transaction during the scan. It persists verification generation and
+summary, renews the build lease, then performs one short final transaction:
+
+1. lock snapshot, backup set, reservation/accounting, and verifier generation;
+2. ensure no entry batch changed after seal and all verification evidence
+   matches the frozen fingerprint;
+3. ensure the build lease safely covers commit and no referenced object is
+   invalid/quarantined/deleting;
+4. apply policy: reject required-complete snapshots with capture failures, or
+   commit an explicitly labeled best-effort snapshot;
+5. set `COMMITTED`, server commit time, final counts/hash/consistency label;
+6. convert reservation/accounting, persist terminal idempotent outcome,
+   `AuditEvent`, `backup.snapshot.committed.v1` outbox, and retention/integrity
+   follow-up jobs;
+7. commit, then return success and release staging-only resources later.
+
+If DB commit fails, the snapshot remains recoverable in `VERIFYING`; objects
+stay protected by lease. If commit succeeds and response is lost, the same key
+returns exactly the committed snapshot.
+
+## Snapshot consistency classes
+
+Every committed snapshot displays one of:
+
+- `FILESYSTEM_CONSISTENT`: the client captured from a supported point-in-time
+  filesystem/volume snapshot and supplies capability/evidence recognized by
+  the protocol;
+- `CRASH_CONSISTENT`: the client used a bounded scan with before/after stat,
+  retry/stability checks, and no known unresolved content mutation, approximating
+  what would survive an abrupt application stop;
+- `BEST_EFFORT`: files may have changed during capture or explicit
+  unreadable/unstable/unsupported entries remain.
+
+These labels describe capture, not object-storage durability. The server stores
+client method/version and verification summary and never calls an ordinary live
+scan filesystem-consistent. A policy can fail the run instead of committing
+`BEST_EFFORT`. A committed best-effort snapshot is restorable for the entries
+it actually verified, with limitations prominently reported.
+
+Client capture guidance:
+
+- detect change during file read using stable file identity plus pre/post size,
+  modification/change metadata where reliable; retry within a bounded count;
+- hash the exact bytes uploaded, not only a later pathname;
+- record rename/replacement discovered mid-scan explicitly;
+- do not follow symlinks or mounts contrary to frozen set policy;
+- enumerate in bounded batches and persist outbound progress so restart can
+  resume the same snapshot/run identity.
+
+## Unchanged files and deduplication
+
+The safest no-upload fast path references a previous retained entry, not an
+arbitrary hash:
+
+1. client claims stable source identity unchanged from parent entry and sends
+   expected metadata/hash;
+2. server authorizes both snapshots in the same backup set and verifies the
+   prior object remains `VERIFIED`;
+3. new snapshot receives its own complete `BackupEntry` referencing that object;
+4. snapshot commit makes the new reference authoritative.
+
+If prior content is missing/quarantined/expired or identity evidence is
+insufficient, server requests upload. Dedup of newly uploaded equal content
+uses the same domain-scoped post-verification rule as storage. Repeated backups
+therefore reuse bytes without coupling snapshot retention.
+
+## Source deletion and missing input
+
+If a source file was present in snapshot S1 and absent in later S2:
+
+- S2 simply has no present entry for that source/path, or records a bounded
+  `MISSING_OBSERVATION` when the scan discovered disappearance mid-run;
+- S1 remains immutable/restorable until its own retention expires;
+- no live `Node` is trashed and no S1 entry/reference is removed;
+- retention policy, not the source device, decides when S1 can expire.
+
+Unplugging a drive, permission loss, skipped root, incomplete enumeration, or
+client bug must not look like a successful mass deletion. Root presence and
+scan-completeness checks either fail the snapshot or visibly classify it
+`BEST_EFFORT` according to policy.
+
+## Retention
+
+### Policy model
+
+A versioned retention policy may combine:
+
+- keep the latest successful `N` snapshots;
+- keep snapshots younger than an age;
+- daily/weekly/monthly representative buckets;
+- minimum successful recovery points and protection after recent failure;
+- manual pin/legal/incident hold;
+- quota-pressure behavior that asks for user/admin action rather than silently
+  weakening promised retention.
+
+The effective policy revision and computed retention deadline are stored with
+each committed snapshot. Policy changes are audited and prospectively
+re-evaluated under an explicit rule; the UI previews what would expire.
+
+Recommended safety rules are: never expire a held snapshot, never let a failed
+run displace the minimum successful recovery floor, and require explicit
+confirmation before retiring a set deletes its final recovery points.
+
+### Expiry workflow
+
+1. A retention planner computes candidates deterministically from committed
+   snapshots, policy revision, holds, and server time. It records a dry-run
+   explanation.
+2. A short transaction locks the backup set and each bounded candidate,
+   re-evaluates facts, changes winners from `COMMITTED` to `EXPIRED`, and appends
+   audit/outbox plus idempotent purge jobs.
+3. An expired snapshot immediately stops being advertised as restorable, but
+   its entry rows/object references remain physically protected while purge
+   batches run.
+4. The purge worker deletes entry/reference rows in deterministic bounded
+   batches with progress/generation. Crash/retry never exposes a partial
+   snapshot as committed.
+5. Completion tombstones snapshot metadata according to audit/product policy.
+   Objects merely become candidates for the separate two-phase GC proof.
+
+Retention never calls object delete directly, never uses a cached refcount as
+proof, and never cascades into live files, Trash, another snapshot, or another
+backup set.
+
+## Restore domain
+
+### Restore targets
+
+Synveil supports/plans two explicit paths:
+
+1. **Restore to a device/filesystem:** a newly authorized client receives the
+   immutable manifest and bounded authorized content streams, writes to a
+   selected local destination, and reports verified per-entry results.
+2. **Restore into a Synveil library:** the server creates new `Node` and
+   `FileVersion` state using existing immutable objects, then emits normal
+   library `ChangeEvent` facts. It does not copy bytes unless storage policy
+   requires another replica.
+
+The default destination is non-destructive: a new user-selected directory, or
+a new top-level directory named as a restore recovery point. Restoring directly
+over an existing tree requires explicit collision policy and fresh authorization.
+
+### Restore operation state machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> PLANNING
+    PLANNING --> RUNNING: immutable plan accepted
+    RUNNING --> RUNNING: idempotent bounded entry batches
+    RUNNING --> VERIFYING: all required entries attempted
+    VERIFYING --> COMPLETED: every required result verified or accepted skip
+    VERIFYING --> PARTIAL: one or more visible unresolved failures
+    PLANNING --> CANCELED
+    RUNNING --> CANCELED: safe boundary
+    PLANNING --> FAILED: invalid source/destination
+    RUNNING --> FAILED: terminal operation-wide error
+```
+
+A restore record freezes source snapshot/version, selected entries, destination
+identity, collision/symlink/metadata policy, actor/device, and idempotency key.
+It owns a retention/object lease so the source cannot expire mid-operation.
+Per-entry rows record planned action, attempts, output identity/path projection,
+expected and observed length/hash, collision result, safe error, and terminal
+verification state.
+
+Workers claim bounded batches with generation leases and execute outside the
+claim transaction. A retry inspects the per-entry result and destination
+identity before writing. It never assumes "job ran once." Cancellation stops
+new batches and reports already restored entries; it does not undo them by
+destructive bulk deletion.
+
+### Collision policy
+
+- `RENAME` is the recommended non-destructive default: create a versioned,
+  portable alternate name and report it.
+- `FAIL` stops/reports collisions without modifying the occupant.
+- `SKIP` is allowed only as an explicit accepted result recorded per entry.
+- `OVERWRITE` requires explicit confirmation/scope. Into a Synveil library it
+  creates a new current `FileVersion` with source `BACKUP_RESTORE` under the
+  current base precondition, retaining old history. On a device, the client
+  uses platform-safe temp+verify+atomic replacement and preserves/report policy
+  as configured.
+
+Directory and file type collisions never coerce one type into another silently.
+Case/normalization collisions are detected before writing and surfaced under
+the target platform/name-policy profile.
+
+### Path and symlink safety
+
+For filesystem restore, the client treats every manifest component as
+untrusted: reject absolute paths, traversal, NUL, reserved/special names, depth
+overflow, and any resolved path outside the selected destination. Create
+directories/files without following attacker-controlled symlinks and re-check
+parent identity across races. A manifest symlink is not followed while writing
+children; initial policy skips/reports it unless the user explicitly enables a
+safe platform-specific recreation mode.
+
+Special files, ownership, ACLs, xattrs, sparse layout, and timestamps are
+restored only when both manifest profile and client capability register the
+semantics. Lack of metadata support is an explicit per-entry warning, not a
+content verification success.
+
+### Verification
+
+Every restored file streams from an authorized snapshot entry, not a raw object
+ID. It validates expected canonical length/SHA-256. A library restore references
+the already verified object and can optionally scrub/read before commit based
+on age/health policy. A filesystem client hashes the installed logical file
+after write/flush and reports result.
+
+`COMPLETED` means all required entries are verified or explicitly accepted
+skips. `PARTIAL` lists exact unresolved entries and remains resumable. A server
+cannot cryptographically prove an untrusted client wrote durable local media;
+the status distinguishes server-delivery verification from client-reported
+destination verification.
+
+### Recovery after device loss
+
+1. Revoke the lost device and its credentials; do not claim to erase bytes
+   already on it.
+2. Register/authenticate a replacement device with independently scoped
+   credentials.
+3. List authorized backup sets/snapshots with consistency class, capture
+   errors, verification health, and retention deadline.
+4. Choose a snapshot/entries and a non-destructive destination.
+5. Create one durable restore operation and resume content by entry/range after
+   interruption.
+6. Verify results and export a human-readable restore report before optionally
+   enabling normal sync/backup on the restored destination.
+
+The lost device is not required to decrypt early server-trusted backups. A
+future E2EE mode needs an independent key recovery/onboarding protocol and
+cannot inherit this assumption.
+
+## End-user recovery, uninstall, and machine migration
+
+Recovery is a product surface, not only an operator runbook. Personal / Home
+Mode presents understandable workflows for accidental deletion, an earlier
+version, a lost laptop, failed or removable storage, a corrupt object, a broken
+update, database recovery, and moving Synveil to a new computer or server.
+Advanced / Server Mode exposes the same primitives through operator diagnostics.
+
+The guided machine-migration package follows:
+
+```text
+prepare migration
+    → inspect source and destination
+    → validate release/schema, PostgreSQL, object identity, keys, capacity and host
+    → copy/transfer with resumable progress
+    → verify references, checksums, health and device re-registration
+    → activate destination and preserve a rollback window
+```
+
+The operation uses `inspect → plan → validate → execute → verify`, a durable
+operation identity, explicit source/destination ownership, and a non-destructive
+destination by default. It must account for PostgreSQL metadata, canonical
+objects/replicas, application master keys, device credentials, hostname/TLS,
+remote-access configuration, backup policy, old-instance coexistence and
+rollback. A missing key, incomplete object transfer, unsupported filesystem
+capability, or failed health check is a visible blocker; it never causes a new
+identity to be generated and presented as continuity.
+
+Uninstall and reinstall are part of recovery validation. Removing application
+binaries/services keeps PostgreSQL, objects, configuration, keys, and independent
+backups according to the selected retention choice. Permanent data deletion is
+a separate, confirmed operation with scope and recovery warning. Reinstall
+discovers a retained storage identity and runs validation before any bootstrap;
+it never treats a kept data root as empty merely because the application binary
+was removed.
+
+## Backup API blueprint
+
+Expected routes include:
+
+```text
+POST   /api/v1/backup-sets
+GET    /api/v1/backup-sets
+GET    /api/v1/backup-sets/{backup_set_id}
+PATCH  /api/v1/backup-sets/{backup_set_id}                 If-Match required
+POST   /api/v1/backup-sets/{backup_set_id}/snapshots       idempotency required
+GET    /api/v1/backup-snapshots                 keyset pagination
+GET    /api/v1/backup-snapshots/{snapshot_id}
+POST   /api/v1/backup-snapshots/{snapshot_id}/entry-batches
+POST   /api/v1/backup-snapshots/{snapshot_id}/content-claims
+POST   /api/v1/backup-snapshots/{snapshot_id}/complete
+GET    /api/v1/backup-snapshots/{snapshot_id}/entries    opaque keyset cursor
+POST   /api/v1/restores                         idempotency required
+GET    /api/v1/restores/{restore_id}
+GET    /api/v1/restores/{restore_id}/entries
+POST   /api/v1/restores/{restore_id}/resume
+POST   /api/v1/restores/{restore_id}/cancel
+```
+
+Exact route naming/schema belongs in reviewed OpenAPI. List queries scope
+authorization before filters/counts and use stable keyset pagination. Snapshot
+entry download authorizes through owner/set/snapshot/entry and committed state;
+it never accepts an object ID alone. Mutations use `If-Match`/revision and
+idempotency fingerprints. Large manifests are batched; no endpoint requires a
+million-entry JSON body or holds all entries in memory.
+
+Stable errors include `backup_set_paused`, `snapshot_not_restorable`,
+`snapshot_incomplete`, `manifest_conflict`, `capture_inconsistent`,
+`object_corrupt`, `restore_conflict`, `unsupported_entry_type`,
+`quota_exceeded`, `storage_unavailable`, `device_revoked`,
+`permission_denied`, and `internal_error`.
+
+## Quota and accounting
+
+Snapshot build reserves expected/staged capacity under bounded policy. Content
+claims cannot exceed declared entry length or aggregate run limit. Commit
+converts reservations to retained backup logical accounting and releases unused
+staging reservation atomically; failure/expiry releases once.
+
+Report separately:
+
+- logical bytes represented by each snapshot;
+- logical unique content for a backup set/reporting period;
+- physical object bytes attributable only as an estimate under shared dedup;
+- staging/reserved bytes;
+- retained versus expiring/held snapshot bytes.
+
+Dedup savings do not silently extend or reduce promised logical quota. A
+retention policy and a quota policy cannot deadlock the user: if capacity is
+insufficient, the system reports required action and protects the documented
+minimum recovery floor rather than deleting it invisibly.
+
+## Events and jobs
+
+Snapshot and restore state changes append audit and internal work, not live
+sync changes unless restore intentionally mutates a library.
+
+Registered internal events/jobs should include versioned forms of:
+
+- `backup.snapshot.verify`;
+- `backup.snapshot.committed.v1`;
+- `backup.snapshot.expire` and bounded purge;
+- `backup.object.scrub`;
+- `restore.plan`, `restore.batch`, and `restore.verify`;
+- device backup health/notification updates.
+
+Snapshot commit inserts required outbox/jobs in the same transaction. Handlers
+are at-least-once and bind idempotency to snapshot/restore ID plus immutable
+revision/entry batch. Job lease generation, retry classification, dead letters,
+and manual replay use [STORAGE.md](STORAGE.md). Optional notification/anomaly
+detection outage changes freshness/lag only.
+
+A future ransomware/anomaly signal may place an audited retention hold or ask
+for confirmation, but it must not automatically delete, rewrite, or declare a
+snapshot safe. False positives cannot block ordinary restore indefinitely.
+
+## Instance disaster recovery
+
+### Recovery set
+
+A restorable Synveil instance backup includes:
+
+- PostgreSQL metadata/transaction state, including migrations, journal,
+  snapshots, object locations, jobs, audit, and idempotency receipts;
+- every object-store key referenced by that database recovery point;
+- storage-backend identity/configuration, Compose/Caddy configuration, instance
+  identity, and exact application/schema versions;
+- authentication/storage encryption master material and referenced secrets,
+  protected separately with an operator recovery procedure;
+- a signed/hashed inventory and restore-runbook version.
+
+Database-only backup loses file bytes. Object-volume-only backup loses names,
+authorization, versions, journals, backup manifests, and key mappings. Missing
+master secrets can make otherwise present data/auth state unrecoverable.
+
+The recovery set is also the source of truth for a machine migration. It records
+which instance identity, device-credential rotation, hostname/TLS, remote-access
+configuration, platform/filesystem capability profile, and release/schema
+compatibility are being moved. A migration may preserve an old instance during a
+rollback window, but two writers must not be active against one logical identity
+without an explicitly designed protocol.
+
+### Initial recommended offline/maintenance procedure
+
+The safest Compose baseline is a documented maintenance window:
+
+1. enter maintenance/read-only mode and stop new sessions, upload completion,
+   metadata mutation, retention, GC, and migrations;
+2. drain/stop API and worker writers at a known schema/application version;
+3. take a supported PostgreSQL logical/physical backup and a filesystem/object
+   snapshot/copy while no writer or GC changes references/keys;
+4. capture configuration, storage-identity marker, migration/application
+   version, and protected required secrets;
+5. compute/store inventory/checksums outside the protected data set;
+6. restart services only after backup commands succeed or explicitly report
+   failure;
+7. regularly restore the set into an isolated deployment and verify every
+   database-referenced object plus representative full hashes.
+
+Copying a live PostgreSQL data directory is not a supported database backup.
+Stopping only PostgreSQL while API/worker continue writing objects is not a
+coordinated backup.
+
+### Future online procedure
+
+An online design can exploit durable-object-before-database-reference ordering,
+but requires an explicit GC barrier:
+
+1. create a durable disaster-recovery barrier that pins every object referenced
+   at/through database recovery point `T` and blocks relevant physical deletion;
+2. capture a PostgreSQL consistent backup at `T`;
+3. copy/snapshot object storage at a point not earlier than `T` while the barrier
+   prevents deletion of objects referenced by the DB snapshot;
+4. capture configuration/secrets/version inventory and verify all references;
+5. release the barrier only after the backup is complete or terminally failed.
+
+Extra object keys created after `T` are safe orphans on restore. Missing an
+object referenced at `T` is not safe. Taking object storage first and database
+later without quiescence can include a later DB reference whose object was not
+in the earlier object snapshot; that order is invalid.
+
+S3 versioning, replication, RAID, ZFS/Btrfs snapshots, and PostgreSQL PITR are
+useful mechanisms but none alone constitutes the coordinated recovery set.
+
+### Instance restore procedure
+
+1. Restore into an isolated network/paths, never over the only source copy.
+2. Verify backup inventory, required secrets, storage identity, application
+   version, and migration compatibility before starting writers.
+3. Restore PostgreSQL using supported tooling and attach/copy object storage
+   under the recorded backend identity.
+4. Start in maintenance/read-only mode. Run a complete reference inventory:
+   every protected object has a known key/replica; extras are reported but not
+   immediately deleted.
+5. Verify representation checksums and a policy-selected/full canonical sample;
+   quarantine/report every mismatch.
+6. Validate auth bootstrap/recovery, journal head/event constraints, snapshot
+   manifest roots, jobs/leases, and storage accounting reconciliation.
+7. Perform representative file, old-version, Trash, backup snapshot, and device
+   restore drills.
+8. Only then make the restored instance writable and establish a new backup
+   baseline. Preserve the previous source through a rollback window.
+
+Restore-time schema upgrade occurs only under the normal reviewed migration
+path. A newer binary never silently rewrites an unverified old recovery set.
+
+## Failure and recovery matrix
+
+| Failure | Required outcome |
+|---|---|
+| Client disconnects during entry/content batch | `BUILDING` remains resumable; batch/content receipt replays by idempotency key. |
+| Source file changes while read | Retry boundedly or record unstable/unreadable; never claim stronger consistency. |
+| Source root disappears/unmounts | Fail snapshot or commit visibly `BEST_EFFORT` under policy; older snapshots remain. |
+| Content object durable, entry/DB update fails | No committed snapshot reference; claim/lease enables retry, then orphan grace. |
+| Snapshot seals with missing entry/object | Verification fails; no partial restorable snapshot. |
+| Verifier crashes | Lease expires; successor recomputes/resumes from frozen manifest. |
+| Snapshot DB commit succeeds, response lost | Completion key returns same committed snapshot/root hash; no duplicate. |
+| Snapshot commit succeeds, notification worker is down | Snapshot remains restorable; durable outbox/job becomes late. |
+| Retention races restore | Restore lease/transaction or expiry wins; a started authorized restore cannot lose its source silently. |
+| Retention worker dies mid-purge | Snapshot stays non-restorable `EXPIRED`; deterministic batch progress resumes; object refs are not prematurely GCed. |
+| Object is corrupt/missing during restore | Entry fails safely/uses another verified replica; operation becomes resumable `PARTIAL`, not false success. |
+| Restore response/job completion is lost | Per-entry idempotency and destination check prevent duplicate destructive writes. |
+| Quota fills during backup | No partial snapshot commits; preserve existing recovery floor, stop/retry run with explicit error. |
+| Device is revoked mid-backup | New requests fail; current uncommitted build expires/cleans; committed snapshots remain by retention. |
+| Database backup succeeds, object backup fails | Recovery set is failed/incomplete and not rotated in as the only backup. |
+| Restored DB references missing object | Keep metadata, quarantine/report and seek another recovery set; never create empty bytes or delete the row. |
+
+## Required tests
+
+### Snapshot protocol
+
+- empty source, one file, deep tree, multiple roots, maximum policy count, and
+  large manifest with bounded memory/transactions;
+- entry batches out of order, duplicate identical batch, changed payload under
+  same key, lost response, missing batch, duplicate ID/name, missing parent,
+  cycle, file-as-parent, traversal/absolute/special component, and depth/size
+  overflow;
+- zero-byte and very large file content claims, interrupted/resumed parts,
+  checksum mismatch, durable object plus forced DB rollback;
+- seal racing final entry/content claim is linearizable; post-seal mutation is
+  rejected;
+- verifier crash at every phase, lease takeover, root-hash mismatch, object
+  becomes quarantined/deleting, DB serialization retry, commit-response loss;
+- no `BUILDING`/`VERIFYING`/`FAILED`/`EXPIRED` snapshot appears restorable;
+- repeated unchanged backup creates complete new entries and reuses object
+  references without requiring parent retention;
+- changed large file creates correct new object/version binding; equal newly
+  uploaded bytes dedup only after verification and inside the domain.
+
+### Deletion, completeness, and consistency
+
+- file present in S1, locally deleted before S2: S1 remains restorable until
+  retention; no live sync deletion emitted by backup;
+- source root unplugged, permission denied, file vanishes mid-read, file changes
+  repeatedly, excluded file, unsupported type, symlink loop, mount boundary;
+- policy requiring complete capture fails appropriately; best-effort policy
+  commits with exact error summary and never labels itself filesystem-consistent;
+- filesystem snapshot evidence, crash-consistent scan, and ordinary live scan
+  receive only their allowed labels;
+- client lies/misreports count/hash/consistency and server verification catches
+  every server-verifiable inconsistency.
+
+### Retention and GC interaction
+
+- keep-last/age/bucket policy golden timelines, clock boundary, legal/manual
+  hold, policy revision, failed run, final recovery floor, and dry-run preview;
+- retention versus new commit/restore/hold race has one locked decision;
+- crash after `COMMITTED -> EXPIRED` and after every purge batch resumes without
+  a partially restorable snapshot;
+- an object shared by live version, Trash, S1, S2, derivative, and active
+  restore is not GC-eligible until every relevant reference/lease expires;
+- cached refcount corruption cannot delete a retained snapshot object;
+- deleting/retiring a device or backup set never bypasses retention confirmation.
+
+### Restore
+
+- full snapshot, one file, directory subtree, historical file version, and
+  restart after every entry;
+- default restore creates a non-destructive destination; `RENAME`, `FAIL`,
+  `SKIP`, and explicit `OVERWRITE` have exact per-entry outcomes;
+- library overwrite creates a new `FileVersion` and journal event while old
+  history remains;
+- filesystem path traversal, absolute path, symlink-parent race, reserved/case
+  collision, depth/path limit, special file, ACL/xattr unsupported warning;
+- corrupt/truncated/download interruption, HTTP range resume, target disk full,
+  post-write hash mismatch, client crash before/after atomic replace;
+- restore job/response replay does not create duplicate nodes or overwrite
+  twice; cancel reports already completed entries without deleting them;
+- retention/GC/device revocation races and recovery on a newly registered device;
+- `COMPLETED` only after required verification; exact unresolved results produce
+  `PARTIAL` with safe resume.
+
+### Instance disaster recovery
+
+- automated isolated restore of PostgreSQL + local object store + config/secrets
+  at the supported version;
+- prove DB-only and object-only sets fail completeness checks;
+- inject object-copy failure after DB backup and ensure the recovery set is not
+  promoted/old backup not removed;
+- online prototype: object committed before DB point, concurrent new objects,
+  GC candidate at barrier, and prove every reference at `T` is copied while
+  extras are harmless;
+- missing storage marker, wrong bucket/root, wrong encryption key, migration
+  mismatch, missing/corrupt object, extra orphan, stale jobs/leases;
+- restore and verify live file, old version, Trash subtree, committed backup
+  snapshot, sync cursor constraints, and authentication recovery;
+- guided migration from old to clean destination, retained storage identity,
+  interrupted copy/resume, key/device credential rotation, hostname/TLS and
+  remote-access change, old-instance coexistence, rollback window, and explicit
+  blockers for missing key/object/capability;
+- application-only uninstall followed by reinstall discovery, permanent-data
+  deletion confirmation, and proof that removing binaries never deletes the
+  only database/object/key/backup copy;
+- document recovery time/space and repeat drill on a schedule; a backup never
+  earns `VERIFIED` status without a successful restore test.
+
+### Property/fuzz/model tests
+
+- randomized snapshot build/seal/verify/commit/expire/crash commands never make
+  an incomplete manifest restorable;
+- randomized retention/reference/lease transitions never delete an object used
+  by any committed snapshot or active restore;
+- canonical manifest golden fixtures match Rust and future client languages;
+- fuzz manifest parser, length-delimited hashing, path components, symlink
+  metadata, batch cursors, counts, and checked arithmetic;
+- model repeated backup/delete/restore sequences and prove source deletion alone
+  never removes an older retained recovery point.
+
+## Observability and release gate
+
+Metrics cover last successful backup/age by set/device, runs and snapshots by
+state/consistency, scanned/uploaded/reused/logical/physical bytes, capture error
+classes, build/verifier lease age, manifest verification time, root-hash
+mismatch, retention candidates/holds/purge backlog, restore throughput/results,
+object corruption, and instance recovery-set/drill age. Logs/traces use run,
+snapshot, restore, device, and job correlation IDs but redact content, raw local
+paths where sensitive, credentials, storage keys, and secrets.
+
+Phase 5 requires end-to-end backup from a reference desktop client, every crash
+boundary above, retention/GC proof, full and selective restore verification,
+lost-device workflow, quota/full-disk behavior, and operator runbooks. Production
+status additionally requires an automated coordinated instance backup and a
+successful isolated restore drill; "files copied somewhere" is insufficient.
+
+## Open decisions
+
+OPEN DECISION OD-BACKUP-001: canonical manifest format v1
+Owner: Backup / Clients / Storage
+Needed by: Phase 5 protocol and stored-format gate
+Options: normalized relational rows plus server Merkle root; immutable CBOR manifest object plus indexed rows; protobuf manifest with canonicalization profile
+Recommendation: use normalized bounded PostgreSQL entry rows for initial query/commit and a precisely specified server-computed Merkle root with golden fixtures; optionally export a canonical portable manifest artifact without making it the only index
+Decision evidence: million-entry memory/DB benchmark, cross-language canonical hash fixtures, corruption localization, and export/restore test
+
+OPEN DECISION OD-BACKUP-002: default retention policy
+Owner: Product / Backup / Operations
+Needed by: Phase 5 UI and policy gate
+Options: simple keep-last plus age; grandfather-father-son buckets; user-configured only with a safe minimum
+Recommendation: ship a simple understandable keep-last-plus-age default with at least one protected latest successful recovery point, dry-run preview, and explicit holds; add bucket policies only after UX/test evidence
+Decision evidence: representative household capacity simulations, accidental-deletion recovery expectations, abuse/quota review, and UI comprehension testing
+
+OPEN DECISION OD-BACKUP-003: platform metadata profile
+Owner: Backup / Desktop Clients / Security
+Needed by: each platform client release gate
+Options: portable content/names/times only; capability profiles for POSIX/Windows/macOS ACLs, xattrs, sparse files, hard links, and symlinks; opaque metadata blobs
+Recommendation: start with a documented portable subset and explicit safe symlink policy; add typed versioned platform profiles individually, never opaque replay of privileged metadata
+Decision evidence: cross-platform round-trip corpus, privilege/path threat review, and restore fidelity report
+
+OPEN DECISION OD-BACKUP-004: online instance-backup service level
+Owner: Operations / Database / Storage
+Needed by: post-baseline online backup gate; not blocking maintenance-window backups
+Options: maintenance-window coordinated backup; PostgreSQL point plus GC barrier and later object copy; infrastructure atomic snapshots of validated volumes
+Recommendation: support and drill the maintenance-window procedure first; add the DB-point-plus-GC-barrier online protocol only after fault injection proves every referenced object is captured
+Decision evidence: power/crash tests, concurrent commit/GC model, provider snapshot semantics, restore completeness, RPO/RTO measurements

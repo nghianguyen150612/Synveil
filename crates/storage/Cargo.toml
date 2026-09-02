@@ -1,0 +1,12 @@
+[package]
+name = "synveil-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Storage composition boundary for Synveil application adapters"
+
+[dependencies]
+synveil-core.workspace = true
+synveil-metadata.workspace = true
+synveil-object-store.workspace = true
