@@ -298,3 +298,70 @@ staleness. The coordinator stores only logical child references; child tables
 remain authoritative for snapshot, expiry-plan, and expiry-execution details.
 It adds no scheduler/background worker, HTTP/client surface, automatic prune,
 retention-pin release, GC handoff, physical GC, or ObjectStore I/O.
+
+`20260902000000_backup_scheduling_domain.sql` adds the Prompt 61 durable
+owner-scoped scheduling domain: one stable logical schedule per `BackupSet`, an
+append-only immutable revision history, normalized daily/weekly local-time
+configuration, explicit IANA timezone identity, a monotonic current-revision
+pointer, and idempotency evidence for both changes and semantic no-ops. The
+database scope is protected by composite ownership foreign keys, one-schedule-
+per-set uniqueness, immutable-history triggers, and a monotonic current-pointer
+trigger. It adds no scheduled-occurrence, job, lease, retry, catch-up,
+execution, scheduler, worker, snapshot, maintenance, journal, ObjectStore,
+HTTP, or client surface; automatic backups are not enabled by this migration.
+
+`20260902000001_backup_schedule_occurrences.sql` is server migration 31. It
+adds Prompt 62's dedicated `effective_from` schedule boundary and immutable
+`backup_schedule_occurrences` ledger. Existing Prompt 61 schedules are
+conservatively backfilled from their last durable `updated_at` transition.
+Composite owner/BackupSet/schedule/revision foreign keys prevent forged scope;
+the logical `(schedule_revision_id, local_calendar_date)` key and secondary
+`(schedule_id, scheduled_for_utc)` key enforce exactly-once firing identity.
+Occurrence UPDATE/DELETE is rejected. This migration adds no execution state,
+worker, lease, retry/catch-up policy, snapshot, maintenance run, journal, sync,
+ObjectStore, HTTP, or client surface; materialized does not mean executed.
+
+`20260902000002_backup_schedule_handoffs.sql` is server migration 32. It adds
+the minimal immutable `backup_schedule_occurrence_handoffs` relation for
+Prompt 63: one already-materialized occurrence binds exactly once to one
+canonical `backup_maintenance_runs` row. Composite owner/BackupSet/schedule/
+occurrence/run foreign keys and unique constraints prevent cross-scope
+forgery, occurrence reuse, and maintenance-run reuse; an append-only trigger
+rejects UPDATE and DELETE. The relation stores only logical provenance and an
+observed creation timestamp. It adds no execution state, worker, lease, retry,
+poller, scheduler, snapshot, expiry, prune/GC, journal, sync, ObjectStore,
+HTTP, or UI behavior; a handoff is not a completed backup.
+
+`20260903000000_backup_misfire_policy.sql` is server migration 33. It extends
+immutable schedule revisions with the closed `REPLAY_ONE_BY_ONE`/
+`LATEST_ONLY` policy and a 60-through-2678400-second maximum-lateness bound;
+existing rows receive the safe `LATEST_ONLY`/604800-second default without
+changing revision IDs, numbers, timestamps, pointers, occurrences, handoffs,
+or maintenance runs. Fingerprint constraints retain historical version 1
+evidence and admit policy-aware version 2 evidence. The new immutable
+`backup_schedule_misfire_skips` relation records one activation-scoped expired
+range, with composite owner/BackupSet/schedule/revision foreign keys, policy
+snapshot and activation validation, monotonic progress, bounded lookup indexes,
+and UPDATE/DELETE rejection. It adds no daemon, poller, worker lease, retry,
+maintenance advancement, snapshot, expiry, prune/GC, journal, sync,
+ObjectStore, HTTP, client, or UI behavior.
+
+`20260903000001_backup_scheduled_maintenance_claims.sql` is server migration
+34. It adds the Prompt 66 durable `backup_scheduled_maintenance_claims`
+relation: one claim authorizes exactly one canonical Prompt 49 transition from
+one expected maintenance state (`CREATED`, `SNAPSHOT_CAPTURED`, or
+`EXPIRY_PLANNED`) with the predetermined resulting state. Claim identity is
+`(maintenance_run_id, expected_state)` with database uniqueness; lease tokens
+are unique. Every lease carries an internal worker ID, an unpredictable token,
+a `lease_generation` starting at 1, and a strictly ordered
+acquired/expires pair; completion requires `completed_at` and `resulting_state`
+together. Composite owner/`BackupSet`/schedule/occurrence/run foreign keys plus
+an insert-time trigger fence provenance to a committed Prompt 63 handoff, so
+manual runs can never gain a claim. An update trigger admits only
+expiry-gated takeovers (generation N to N+1 with a fresh token and a new
+interval acquired at or after the previous expiry) and completions sealing the
+predetermined result with lease identity frozen; completed receipts reject
+UPDATE and all rows reject DELETE. It adds no daemon, polling/heartbeat loop,
+retry/backoff, scheduler, HTTP route, UI, SSE/WebSocket, notification, or
+physical-storage identity; one explicit worker invocation still performs at
+most one transition or recovery action.

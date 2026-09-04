@@ -2258,20 +2258,10 @@ impl BackupService {
             .await
             .map_err(MetadataError::from)?;
 
-        if let Some(existing) =
-            load_maintenance_run_by_operation(&mut transaction, owner_user_id, &operation_id, true)
-                .await?
-        {
-            let existing = existing.try_into_domain()?;
-            transaction.commit().await?;
-            if existing.request_fingerprint() != fingerprint {
-                return Err(BackupError::MaintenanceRunPreflight(
-                    BackupMaintenanceRunPreflightIssue::OperationConflict,
-                ));
-            }
-            return Ok(existing);
-        }
-
+        // Canonical lock order is `backup_sets -> maintenance_runs`.
+        // Acquire the parent before checking the child operation to avoid
+        // the previous `runs -> sets` inversion with the scheduled handoff
+        // path (`sets -> runs`).
         lock_owned_backup_set(&mut transaction, owner_user_id, backup_set_id).await?;
 
         if let Some(existing) =
@@ -2287,17 +2277,62 @@ impl BackupService {
             }
             return Ok(existing);
         }
-
-        let current_policy = load_current_retention_policy_for_update(
+        let run = Self::create_backup_maintenance_run_in_transaction(
             &mut transaction,
             owner_user_id,
+            &operation_id,
             backup_set_id,
+            run_id,
+            &capture_operation_id,
+            &expiry_plan_operation_id,
+            true,
         )
-        .await?
-        .ok_or(BackupError::MaintenanceRunPreflight(
-            BackupMaintenanceRunPreflightIssue::RetentionPolicyNotConfigured,
-        ))?
-        .try_into_domain()?;
+        .await?;
+        transaction.commit().await?;
+        Ok(run)
+    }
+
+    /// Create or replay a maintenance run inside an already-open transaction.
+    /// The caller must have acquired the owning BackupSet row first. Scheduled
+    /// handoff passes `allow_existing_operation = false`: a pre-existing row
+    /// under its deterministic internal operation key without a committed
+    /// handoff is impossible state, never permission to attach an arbitrary
+    /// manual run.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn create_backup_maintenance_run_in_transaction(
+        transaction: &mut Transaction<'_, Postgres>,
+        owner_user_id: UserId,
+        operation_id: &str,
+        backup_set_id: BackupSetId,
+        run_id: BackupMaintenanceRunId,
+        capture_operation_id: &str,
+        expiry_plan_operation_id: &str,
+        allow_existing_operation: bool,
+    ) -> Result<BackupMaintenanceRun, BackupError> {
+        let fingerprint = BackupMaintenanceRunRequest::new(backup_set_id).fingerprint();
+        if let Some(existing) =
+            load_maintenance_run_by_operation(transaction, owner_user_id, operation_id, true)
+                .await?
+        {
+            if !allow_existing_operation {
+                return Err(BackupError::InvalidPersistedData);
+            }
+            let existing = existing.try_into_domain()?;
+            if existing.request_fingerprint() != fingerprint {
+                return Err(BackupError::MaintenanceRunPreflight(
+                    BackupMaintenanceRunPreflightIssue::OperationConflict,
+                ));
+            }
+            return Ok(existing);
+        }
+
+        let current_policy =
+            load_current_retention_policy_for_update(transaction, owner_user_id, backup_set_id)
+                .await?
+                .ok_or(BackupError::MaintenanceRunPreflight(
+                    BackupMaintenanceRunPreflightIssue::RetentionPolicyNotConfigured,
+                ))?
+                .try_into_domain()?;
 
         let active_run = sqlx::query_scalar::<_, Uuid>(
             "SELECT id
@@ -2309,10 +2344,9 @@ impl BackupService {
              FOR SHARE",
         )
         .bind(backup_set_id.into_uuid())
-        .fetch_optional(&mut *transaction)
+        .fetch_optional(&mut **transaction)
         .await?;
         if active_run.is_some() {
-            transaction.commit().await?;
             return Err(BackupError::MaintenanceRunPreflight(
                 BackupMaintenanceRunPreflightIssue::MaintenanceAlreadyRunning,
             ));
@@ -2346,20 +2380,23 @@ impl BackupService {
             i64::try_from(current_policy.revision_number().get())
                 .map_err(|_| BackupError::InvalidPersistedData)?,
         )
-        .bind(&operation_id)
+        .bind(operation_id)
         .bind(i16::try_from(fingerprint.version()).map_err(|_| BackupError::InvalidRequest)?)
         .bind(fingerprint.as_bytes().as_slice())
-        .bind(&capture_operation_id)
-        .bind(&expiry_plan_operation_id)
-        .fetch_optional(&mut *transaction)
+        .bind(capture_operation_id)
+        .bind(expiry_plan_operation_id)
+        .fetch_optional(&mut **transaction)
         .await?;
 
         let row = if let Some(row) = inserted {
             row
         } else if let Some(row) =
-            load_maintenance_run_by_operation(&mut transaction, owner_user_id, &operation_id, true)
+            load_maintenance_run_by_operation(transaction, owner_user_id, operation_id, true)
                 .await?
         {
+            if !allow_existing_operation {
+                return Err(BackupError::InvalidPersistedData);
+            }
             row
         } else {
             let active_run = sqlx::query_scalar::<_, Uuid>(
@@ -2372,10 +2409,9 @@ impl BackupService {
                  FOR SHARE",
             )
             .bind(backup_set_id.into_uuid())
-            .fetch_optional(&mut *transaction)
+            .fetch_optional(&mut **transaction)
             .await?;
             if active_run.is_some() {
-                transaction.commit().await?;
                 return Err(BackupError::MaintenanceRunPreflight(
                     BackupMaintenanceRunPreflightIssue::MaintenanceAlreadyRunning,
                 ));
@@ -2383,7 +2419,6 @@ impl BackupService {
             return Err(BackupError::InvalidPersistedData);
         };
         let run = row.try_into_domain()?;
-        transaction.commit().await?;
         if run.request_fingerprint() != fingerprint {
             return Err(BackupError::MaintenanceRunPreflight(
                 BackupMaintenanceRunPreflightIssue::OperationConflict,
@@ -3358,7 +3393,7 @@ impl BackupService {
         .await
     }
 
-    async fn create_snapshot_expiry_plan_with_expected_policy(
+    pub(crate) async fn create_snapshot_expiry_plan_with_expected_policy(
         &self,
         owner_user_id: UserId,
         operation_id: String,
@@ -6663,7 +6698,7 @@ fn select_maintenance_run_columns(lock: bool) -> &'static str {
     }
 }
 
-async fn load_maintenance_run(
+pub(crate) async fn load_maintenance_run(
     pool: &sqlx::PgPool,
     owner_user_id: UserId,
     run_id: BackupMaintenanceRunId,
@@ -6676,12 +6711,21 @@ async fn load_maintenance_run(
         .map_err(Into::into)
 }
 
-async fn load_maintenance_run_for_update(
+pub(crate) async fn load_maintenance_run_for_update(
     transaction: &mut Transaction<'_, Postgres>,
     owner_user_id: UserId,
     run_id: BackupMaintenanceRunId,
 ) -> Result<Option<BackupMaintenanceRunRow>, BackupError> {
-    sqlx::query_as::<_, BackupMaintenanceRunRow>(select_maintenance_run_columns(true))
+    load_maintenance_run_in_transaction(transaction, owner_user_id, run_id, true).await
+}
+
+pub(crate) async fn load_maintenance_run_in_transaction(
+    transaction: &mut Transaction<'_, Postgres>,
+    owner_user_id: UserId,
+    run_id: BackupMaintenanceRunId,
+    lock: bool,
+) -> Result<Option<BackupMaintenanceRunRow>, BackupError> {
+    sqlx::query_as::<_, BackupMaintenanceRunRow>(select_maintenance_run_columns(lock))
         .bind(run_id.into_uuid())
         .bind(owner_user_id.into_uuid())
         .fetch_optional(&mut **transaction)
@@ -6723,7 +6767,7 @@ async fn load_maintenance_run_by_operation(
         .map_err(Into::into)
 }
 
-async fn maintenance_has_foreign_active_expiry_plan(
+pub(crate) async fn maintenance_has_foreign_active_expiry_plan(
     pool: &sqlx::PgPool,
     backup_set_id: BackupSetId,
     expiry_plan_operation_id: &str,
@@ -6957,7 +7001,7 @@ async fn persist_maintenance_completion(
     Ok(result)
 }
 
-async fn lock_owned_backup_set(
+pub(crate) async fn lock_owned_backup_set(
     transaction: &mut Transaction<'_, Postgres>,
     owner_user_id: UserId,
     backup_set_id: BackupSetId,
@@ -9349,7 +9393,7 @@ async fn clear_backup_pin_candidates(
     Ok(())
 }
 
-fn validate_operation_key(value: &str) -> Result<(), BackupError> {
+pub(crate) fn validate_operation_key(value: &str) -> Result<(), BackupError> {
     if (MIN_OPERATION_KEY_BYTES..=MAX_OPERATION_KEY_BYTES).contains(&value.len()) {
         Ok(())
     } else {

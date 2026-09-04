@@ -1,6 +1,11 @@
 # Backup, snapshot, retention và restore
 
-Trạng thái: **Blueprint quy chuẩn PLANNED**
+Trạng thái: **durable backup scheduling, occurrence identity, exactly-once
+scheduled-maintenance handoff, deterministic manual scheduler tick, bounded
+misfire policy an toàn sau restart, worker step
+scheduled-maintenance có fence và cycle scheduler+worker bị chặn gọi thủ công đã
+IMPLEMENTED/VALIDATED; snapshot, capture, restore và automatic execution vẫn
+là blueprint quy chuẩn PLANNED**
 
 Tài liệu này đặc tả backup từ thiết bị vào Synveil, backup snapshot bất biến,
 retention, workflow recovery và disaster recovery cho instance. Tài liệu tuân
@@ -9,7 +14,19 @@ object được định nghĩa trong [STORAGE.md](STORAGE.md); truyền byte có
 tục trong [UPLOADS.md](UPLOADS.md); đồng bộ live current-state trong
 [SYNC.md](SYNC.md).
 
-Không capability backup nào là `IMPLEMENTED` chỉ vì blueprint này tồn tại.
+Nền tảng scheduling của Prompt 61, durable occurrence ledger của Prompt 62,
+handoff occurrence-to-maintenance của Prompt 63, manual scheduler tick xác
+định của Prompt 64, bounded missed-occurrence policy của Prompt 65 và worker
+step scheduled-maintenance có fence của Prompt 66 đã được
+implement, nhưng snapshot, restore hay automatic
+backup không được coi là `IMPLEMENTED` chỉ vì blueprint này tồn tại. Occurrence
+đã materialize chỉ có nghĩa Synveil đã ghi nhận bền vững một firing identity tới
+hạn; handoff bind identity đó đúng một lần vào maintenance run chuẩn. Cả hai
+không có nghĩa automatic backup đã chạy. Synveil có thể claim và thực thi thủ
+công từng transition scheduled-maintenance có fence một; scheduled backup không
+chạy liên tục trong background. Prompt 67 bổ sung một cycle bị chặn gọi thủ
+công, gồm đúng một scheduler tick và tối đa một worker transition cho mỗi lần
+gọi; cycle không bổ sung daemon, polling loop, retry hay background execution.
 
 ## Hai trách nhiệm backup khác nhau
 
@@ -40,6 +57,262 @@ operations guide phân biệt historical retention với bản copy ở failure 
 Backup client không bao giờ gọi live delete endpoint để biểu diễn source file
 bị thiếu. Retention không bao giờ phát live sync tombstone. Restore vào library
 cố ý tạo live node/version mới rồi dùng sync journal thông thường.
+
+## Nền tảng schedule, occurrence và handoff bền vững (Prompt 61–63)
+
+Một `BackupSet` có thể có một `BackupSchedule` trong scope của owner. Stable
+schedule ID trỏ tới đúng một current `BackupScheduleRevision` immutable; các
+revision cũ vẫn đọc được. Revision chỉ lưu logical intent đã chuẩn hóa:
+`DAILY` hoặc `WEEKLY`, IANA timezone tường minh, local minute `HH:MM`, (với
+weekly) một hay nhiều weekday từ Monday đến Sunday, `REPLAY_ONE_BY_ONE` hoặc
+`LATEST_ONLY`, và `max_lateness_seconds` có giới hạn. Default an toàn là
+`LATEST_ONLY` với 604800 giây (bảy ngày); lateness hợp lệ từ 60 đến 2678400
+giây (31 ngày).
+
+Configuration write được serialize bằng lock trên BackupSet sở hữu. Chúng
+idempotent qua operation identity có giới hạn và canonical semantic fingerprint
+có version: request cùng semantic là no-op trả current revision; dùng lại
+operation identity cho semantic khác phải fail closed. Disable schedule giữ
+current và historical configuration, không tạo occurrence mới. Effective
+planning và materialization mới chỉ có hiệu lực khi schedule được enable và
+BackupSet ở `ACTIVE`.
+
+Pure planner nhận UTC reference exclusive và trả local recurrence kế tiếp
+nghiêm ngặt sau reference. Planner dùng IANA rule đã lưu, đẩy local time bị
+DST gap tới minute hợp lệ đầu tiên trong cùng ngày, và chọn absolute instant
+sớm hơn khi DST overlap.
+
+`BackupSchedule.effective_from` là activation boundary strict cho current
+enabled configuration. First configuration, semantic revision edit và
+re-enable làm boundary tiến lên; semantic no-op không đổi nó. Due candidate
+chỉ được materialize mới khi canonical UTC instant nằm nghiêm ngặt sau
+boundary, nên disabled interval và edit sang same-day time đã qua không bị
+backfill.
+
+`BackupScheduleOccurrence` là row ledger immutable theo owner cho logical key
+`(schedule_revision_id, local_calendar_date)`. Row lưu resolved local minute
+thực tế và canonical UTC instant do server tính lại từ immutable revision;
+caller không gửi các giá trị này. Database fence thứ hai chặn hai revision của
+cùng schedule tạo hai row cho cùng exact UTC instant. Request đồng thời hội tụ
+về một opaque UUIDv7 occurrence ID. Retry sau lost response trả row đã tồn tại
+dù schedule đã được edit hay disable; nếu chưa có row, historical revision
+không thể materialize mới.
+
+Materialized không phải executed. Prompt 63 thêm một relation handoff
+immutable riêng: occurrence đã materialize có thể được bind đúng một lần vào
+Prompt 49 `BackupMaintenanceRun` hiện có; run bắt đầu ở `CREATED` và bind cùng
+retention-policy revision cùng child operation identity như manual run. Handoff
+đã commit vẫn replay được sau edit hoặc disable; handoff mới cần schedule
+enabled và `BackupSet` ở `ACTIVE`. Handoff không capture snapshot, tạo expiry
+plan, advance run, hay ghi journal/sync/GC/prune evidence.
+
+Đây vẫn là capability control-plane được gọi tường minh. Không có claim hay
+execution state trên occurrence, job, lease, retry, worker, poll
+loop, cron, systemd, Task Scheduler, automatic snapshot execution, HTTP route
+hay UI. Executor tương lai phải được review riêng.
+
+### Exactly-once scheduled maintenance handoff (Prompt 63)
+
+`handoff_backup_schedule_occurrence(owner, occurrence_id, observed_at_utc)`
+chỉ nhận `BackupScheduleOccurrence` durable đã tồn tại; không dùng cặp
+revision/date để thay thế materialization. Một PostgreSQL transaction lock
+`BackupSet`, `BackupSchedule`, rồi `Occurrence` theo đúng thứ tự, kiểm tra
+handoff cũ trước fence effectivity mới, gọi canonical Prompt 49 maintenance-run
+creator và insert relation immutable trong cùng commit. Database enforce một
+handoff cho mỗi occurrence và một occurrence schedule cho mỗi maintenance run,
+đồng thời khóa scope owner, BackupSet và schedule.
+
+Kết quả typed là `CREATED`, `EXISTING` hoặc `NOT_EFFECTIVE` với reason bị giới
+hạn cho schedule disabled hoặc BackupSet inactive. Lost response và retry
+đồng thời trả cùng maintenance run và cùng child operation ID durable. Handoff
+đã commit là provenance/control metadata, không phải backup hoàn tất: progress
+vẫn thuộc canonical maintenance state machine và chỉ một lời gọi tường minh
+về sau mới được advance.
+
+### Manual single-step scheduler tick và misfire policy (Prompt 64–65)
+
+`BackupSchedulerService::run_scheduler_tick(observed_at_utc)` là một lần
+orchestration tường minh ở server. Caller cung cấp UTC observation instant; tick
+không đọc wall clock không kiểm soát, không sleep, poll hay tự lặp. Mỗi tick xử
+lý tối đa một policy action: một expired-prefix skip, hoặc một
+materialization/handoff và tối đa một `BackupMaintenanceRun` mới.
+
+Discovery dựa hoàn toàn trên state durable nên an toàn sau restart. Trong
+activation epoch hiện tại `(schedule_id, revision_id, effective_from)`,
+resolution reference là giá trị lớn nhất của `effective_from`, occurrence mới
+nhất đã handoff thành công và immutable skip boundary mới nhất. Materialization
+đơn thuần không phải progress. Mỗi schedule tạo tối đa một action; action được
+so sánh toàn cục theo firing time hoặc `resolved_through_utc`, rồi stable
+schedule/revision ID. Không cần cursor, checkpoint, lease hay scheduler state
+trong process.
+
+Cutoff là `observed_at_utc - max_lateness_seconds`. Occurrence đúng bằng cutoff
+vẫn eligible; chỉ instant nhỏ hơn cutoff mới expired cho automatic execution.
+`REPLAY_ONE_BY_ONE` ghi một skip range cho expired prefix trước, rồi ở các tick
+sau chọn occurrence eligible cũ nhất. `LATEST_ONLY` chọn occurrence eligible
+mới nhất; handoff thành công của occurrence này collapse các due date cũ hơn mà
+không materialize chúng. Nếu không còn occurrence eligible, scheduler ghi một
+immutable skip range qua canonical occurrence expired mới nhất. Skip không tạo
+occurrence, handoff, maintenance run hay số lượng skipped giả định.
+
+Path được chọn luôn compose các canonical service:
+
+1. candidate mới được materialize qua Prompt 62; service tính lại local/UTC
+   canonical và áp dụng fence current revision cùng `effective_from`;
+2. occurrence durable được handoff qua Prompt 63 và Prompt 49 maintenance-run
+   creator; và
+3. tick chỉ trả các logical reference của occurrence, schedule, revision,
+   `BackupSet`, scheduled instant và maintenance run.
+
+Scheduler path thêm một kiểm tra atomic về current revision/activation epoch
+trước handoff mới. Vì vậy schedule edit, disable/re-enable hoặc disable
+`BackupSet` không thể khiến tick âm thầm chạy work đã superseded hay thuộc
+disabled period. Occurrence đã materialize không bị xóa khi handoff ineffective
+hay thất bại. Crash sau materialization được tick sau phục hồi nhờ priority của
+unhanded occurrence; handoff đã commit được replay mà không tạo run thứ hai.
+
+Kết quả là `IDLE`, `SKIPPED_EXPIRED`, `HANDED_OFF_EXISTING` hoặc
+`MATERIALIZED_AND_HANDED_OFF`.
+`IDLE` là kết quả bình thường khi không có candidate due hợp lệ. Tick thành công
+để maintenance run ở `CREATED`, không advance run, capture snapshot, plan hay
+execute expiry, prune hoặc release pin, GC, append journal/sync, hay I/O vào
+ObjectStore. Đây không phải daemon, retry/backoff, worker lease, HTTP API hay
+web scheduling UI. Missed-occurrence policy đã tường minh nhưng chưa có
+background component gọi nó liên tục.
+
+### Worker step scheduled-maintenance có fence (Prompt 66)
+
+`ScheduledMaintenanceWorkerService` là worker primitive gọi thủ công, điều
+khiển bằng test. Mỗi lần gọi tường minh claim hoặc reconcile tối đa một
+scheduled step hợp lệ và thực thi hoặc reconcile tối đa một transition Prompt
+49 chuẩn: `CREATED → SNAPSHOT_CAPTURED`,
+`SNAPSHOT_CAPTURED → EXPIRY_PLANNED` hoặc `EXPIRY_PLANNED → COMPLETED`. Không
+bao giờ chạy `CREATED → COMPLETED` trong một lần gọi, không loop, poll, sleep,
+spawn, renew lease hay retry với backoff.
+
+Discovery chỉ áp dụng cho maintenance run đã có Prompt 63 handoff bền vững;
+manual Prompt 49 run không bao giờ bị claim. Handoff đã commit là execution
+authority: worker không recheck current schedule revision, misfire policy hay
+enabled state để thu hồi work đã handoff, vì vậy run đã authorize vẫn advance
+sau khi schedule bị disable hay policy bị edit. Prefix `SKIPPED_EXPIRED` của
+Prompt 65 không tạo run nên không tạo claim.
+
+Mỗi claim trong `backup_scheduled_maintenance_claims` authorize đúng một
+transition từ một expected state. Identity của claim là
+`(maintenance_run_id, expected_state)` với uniqueness ở database; resulting
+state tiền định không thể rebind (`CREATED` luôn complete thành
+`SNAPSHOT_CAPTURED`, tương tự các bước sau). Mỗi lease mang worker ID nội bộ,
+lease token không đoán được, `lease_generation` tăng đơn điệu từ 1 và duration
+bị chặn (mặc định 120 giây, tối thiểu 10, tối đa 900; duration ngoài biên bị
+reject, không clamp ngầm). Worker thứ hai chỉ takeover đúng tại hoặc sau
+`lease_expires_at`, xoay token và tăng generation nguyên tử; steal sớm bị cả
+service và database trigger reject. Cùng holder replay lease còn hiệu lực nhận
+lại canonical open claim mà không tạo row mới.
+
+An toàn dựa trên fencing, không dựa vào lời hứa dừng của worker. Mỗi commit
+maintenance-state đều re-verify fence
+`(worker, token, generation, expected state, lease chưa hết hạn)` trong cùng
+authoritative transaction, vì vậy generation cũ commit 0 transition ngay cả khi
+child work chuẩn (snapshot capture, expiry planning, expiry execution, đều
+replay qua durable child-operation identity của Prompt 49 trong run) đã tồn
+tại. Child logic không bao giờ bị duplicate: worker gọi các canonical
+`BackupService` operation rồi seal commit fenced của run-state và claim
+receipt. Claim đơn thuần tạo 0 snapshot, expiry, prune, GC, ObjectStore,
+journal hay sync work.
+
+Crash recovery bền vững vì mọi worker state đều nằm trong PostgreSQL. Crash
+trước advance được takeover sau expiry với cùng claim identity. Crash giữa
+transition commit và receipt được reconcile: holder tiếp theo phát hiện run đã
+bằng resulting state của claim, seal receipt thành `RECOVERED_COMPLETION` mà
+không advance thêm, rồi dừng — recovery không bao giờ chạy transition tiếp
+theo trong cùng lần gọi. Response completion bị mất được replay receipt chuẩn.
+Run state bất ngờ fail closed với typed inconsistency, run `STALE` trả typed
+stale outcome thay vì receipt thường. 12 claimant đồng thời hội tụ về một claim
+row và một lease holder; 12 executor đồng thời commit đúng một transition với
+một canonical child operation.
+
+Thứ tự discovery toàn cục là `occurrence.scheduled_for_utc`, rồi
+`schedule_id`, rồi `maintenance_run_id`: execution được schedule cũ nhất trước.
+Lease còn hiệu lực của worker khác thì skip run đó mà không chặn work mới hơn;
+lease cũ nhất đã hết hạn được takeover trước; claim incomplete cũ nhất mà run
+đã đạt resulting state được reconcile trước. Receipt đã complete là immutable,
+history không bao giờ bị xóa, claim không tạo public operation-feed entry:
+Prompt 55 vẫn expose đúng một operation `MAINTENANCE` cho mỗi run. Không có
+worker HTTP route, OpenAPI change, web UI change, `client-sync` change hay
+physical storage identity trong claim type.
+
+### Cycle scheduler + worker bị chặn gọi thủ công (Prompt 67)
+
+`ScheduledMaintenanceCycleService::run_scheduled_maintenance_cycle(worker_id,
+observed_at_utc, lease_duration_seconds)` gồm đúng một
+`run_scheduler_tick` chuẩn rồi đúng một
+`run_scheduled_maintenance_worker_step` chuẩn, dùng chung `observed_at_utc`
+được inject khi ngữ nghĩa cho phép và không tự đọc wall clock. Thứ tự
+tick-trước-worker cho phép run vừa handoff đủ điều kiện cho đúng một worker
+transition trong cùng lần gọi, nhưng global worker ordering vẫn giữ: work mới
+tạo không bao giờ được ưu tiên hơn work cũ đủ điều kiện. Kết quả hợp nhất giữ
+typed outcome của tick (`Idle`, `SkippedExpired`, `HandedOffExisting`,
+`MaterializedAndHandedOff`) và của worker (`Idle` hoặc `Stepped`) tách biệt.
+Lỗi scheduler trả về mà không chạy worker step; lỗi worker vẫn giữ scheduler
+work đã commit, không có giant transaction bao cả hai phase. Handoff Prompt 63
+vẫn là execution authority và policy Prompt 65 vẫn resolve tại fire time. Một
+cycle advance tối đa một maintenance transition, vì vậy maintenance đầy đủ cần
+ba lần gọi thủ công riêng biệt. Không có daemon, polling loop, sleep, timer,
+heartbeat, lease renewal, retry/backoff loop, API endpoint, UI, SSE hay
+background task; caller gọi cycle thủ công và database vẫn là durable source
+of truth. Không có migration hay cycle table mới.
+
+### Bất biến thứ tự khóa chuẩn cho scheduled-maintenance (Prompt 69)
+
+Mọi transaction scheduled-maintenance cạnh tranh đều tuân một thứ tự khóa chuẩn
+duy nhất. Điều này loại bỏ cấu trúc lớp deadlock `40P01` của PostgreSQL mà
+không cần retry, backoff, sleep, global mutex, advisory lock, table lock hay
+giảm concurrency.
+
+**Các lớp khóa (trên → dưới):**
+
+1. `backup_sets` — authority của BackupSet
+2. `backup_schedules` + `backup_schedule_revisions` (revision đọc `FOR SHARE` khi cần)
+3. `backup_schedule_occurrences` — firing identity đã materialize
+4. `backup_schedule_occurrence_handoffs` — binding exactly-once
+5. `backup_schedule_misfire_skips` — progress expired-prefix (khi áp dụng)
+6. `backup_maintenance_runs` — trạng thái maintenance chuẩn
+7. `backup_scheduled_maintenance_claims` — lease + fencing
+8. trạng thái child-operation chuẩn — `backup_snapshots` / nodes / pins, `backup_snapshot_expiry_plans` / entries / executions (và object lock liên quan khi cần)
+
+**Bất biến:** Nếu transaction A có thể lấy các lớp khóa X và Y và transaction
+B cũng có thể lấy X và Y, cả hai đều lấy X trước Y; không có path nào lấy
+`X → Y` trong khi path khác lấy `Y → X`.
+
+- Discovery của scheduler không khóa; `resolve_misfire_skip` và `materialize`
+  lấy `backup_sets → backup_schedules → (skips | occurrences)`.
+- Handoff lấy `backup_sets → backup_schedules → occurrences → handoffs → maintenance_runs` trước khi insert handoff.
+- Worker claim (`claim_candidate_step`) trước tiên discover parent identity mà
+  không giữ row lock, rồi lấy `backup_sets → backup_schedules → occurrences → handoffs → maintenance_runs → claims` trong một transaction ngắn, revalidate và mới insert/takeover.
+- Lease takeover, reconciliation và fence verification đều lấy
+  `maintenance_runs → claims` (parent trước child). Thứ tự cũ
+  `claims → runs` trong `load_execution_plan` / `verify_fenced_run_state` /
+  `fenced_mark_run_stale` đã bị đảo và nay là `runs → claims`.
+- Transition fenced (`CREATED → SNAPSHOT_CAPTURED → EXPIRY_PLANNED → COMPLETED`)
+  verify fence trong cùng transaction `runs → claims` rồi `UPDATE` run; child
+  work (snapshot capture, expiry planning/execution) chạy trong transaction riêng
+  qua canonical `BackupService` identity, không giữ parent lock xuyên suốt.
+- Khi nhiều row cùng lớp bị khóa, dùng ordering xác định (`claim_id ASC`,
+  `object.id ASC`, …). Discovery business giữ thứ tự `scheduled_for_utc,
+  schedule_id, run_id`; internal lock ordering chỉ dùng key xác định riêng khi
+  cần.
+
+**Mẫu discovery / mutation:** discover identity → bắt đầu transaction hẹp →
+lấy lock chuẩn → revalidate → mutate → commit. Không tin discovery cũ.
+
+**Thời gian giữ lock:** parent scheduling lock không giữ xuyên expensive child
+operation trừ khi bất biến yêu cầu; biên nguyên tử (`runs → claims` + `UPDATE`
+cuối) được giữ nguyên.
+
+**Concurrency:** Các maintenance run độc lập chạm các row `BackupSet` /
+`Schedule` / `Occurrence` / `Run` / `Claim` khác nhau nên không serialize trên
+global mutex hay advisory lock. Không cần retry tự động và `40P01` không còn
+xuất hiện dưới contention `12 × 25` cycle đồng thời.
 
 ## Bất biến backup
 

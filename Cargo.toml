@@ -19,11 +19,14 @@ publish = false
 
 # Keep dependency declarations in one place. External dependencies are added
 # here only when an active crate has an immediate, reviewed consumer. Core
-# currently consumes UUIDv7 generation and RFC 3339 timestamp support. SQLx and
-# Tokio stay in the metadata adapter boundary rather than entering core.
+# currently consumes UUIDv7 generation, RFC 3339 timestamp support, and the
+# compiled IANA timezone database for the scheduling domain. SQLx and Tokio
+# stay in the metadata adapter boundary rather than entering core.
 [workspace.dependencies]
 axum = { version = "0.8", features = ["macros"] }
 bytes = "1"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+chrono-tz = { version = "0.10", default-features = false, features = ["std"] }
 http-body-util = "0.1"
 synveil-core = { path = "crates/core" }
 synveil-auth = { path = "crates/auth" }

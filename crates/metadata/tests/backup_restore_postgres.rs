@@ -45,7 +45,7 @@ async fn fixture() -> RestoreFixture {
         .await
         .expect("full migration chain must apply");
     assert!(status.is_current(), "all migrations must be current");
-    assert_eq!(status.applied_versions().len(), 29);
+    assert_eq!(status.applied_versions().len(), 34);
     let inspection = PgPool::connect(&url)
         .await
         .expect("inspection connection must succeed");

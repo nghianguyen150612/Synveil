@@ -477,7 +477,7 @@ async fn postgres_backup_prune_api_is_confirmed_two_phase_and_preserves_history(
         .await
         .expect("all migrations must apply from empty");
     assert!(migration.is_current());
-    assert_eq!(migration.applied_versions().len(), 29);
+    assert_eq!(migration.applied_versions().len(), 34);
     let audit_pool = PgPool::connect(&url)
         .await
         .expect("audit connection must succeed");

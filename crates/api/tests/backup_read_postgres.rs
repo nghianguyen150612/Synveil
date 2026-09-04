@@ -482,7 +482,7 @@ async fn postgres_backup_read_api_is_authenticated_owner_scoped_and_side_effect_
         .await
         .expect("all migrations must apply");
     assert!(status.is_current());
-    assert_eq!(status.applied_versions().len(), 29);
+    assert_eq!(status.applied_versions().len(), 34);
     let audit_pool = PgPool::connect(&url)
         .await
         .expect("audit connection must succeed");
@@ -629,7 +629,7 @@ async fn postgres_backup_operation_observability_is_stable_scoped_and_side_effec
         .await
         .expect("all migrations must apply from empty");
     assert!(status.is_current());
-    assert_eq!(status.applied_versions().len(), 29);
+    assert_eq!(status.applied_versions().len(), 34);
     let audit_pool = PgPool::connect(&url)
         .await
         .expect("audit connection must succeed");

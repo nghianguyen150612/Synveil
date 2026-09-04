@@ -73,6 +73,18 @@ pub enum DomainError {
     },
     BackupSetSourceMismatch,
     BackupSnapshotForeignKeyMismatch,
+    InvalidTimezone,
+    InvalidLocalTime,
+    InvalidWeeklyDays,
+    InvalidBackupScheduleMaxLateness,
+    BackupScheduleInvalidRevision,
+    BackupScheduleInvalidOccurrence,
+    BackupScheduleInvalidHandoff,
+    BackupScheduleInvalidMisfireSkip,
+    BackupScheduleInvalidMaintenanceClaim,
+    BackupScheduleMaintenanceLeaseLost,
+    BackupScheduleMaintenanceStaleRun,
+    BackupScheduleMaintenanceInconsistentState,
     RevisionOverflow,
 }
 
@@ -167,6 +179,26 @@ impl fmt::Display for DomainError {
             }
             Self::BackupSnapshotForeignKeyMismatch => {
                 "backup snapshot foreign key relationship is inconsistent"
+            }
+            Self::InvalidTimezone => "timezone is not a valid IANA timezone",
+            Self::InvalidLocalTime => "local schedule time is invalid",
+            Self::InvalidWeeklyDays => "weekly schedule days are invalid",
+            Self::InvalidBackupScheduleMaxLateness => "backup schedule maximum lateness is invalid",
+            Self::BackupScheduleInvalidRevision => "backup schedule revision is invalid",
+            Self::BackupScheduleInvalidOccurrence => "backup schedule occurrence is invalid",
+            Self::BackupScheduleInvalidHandoff => "backup schedule occurrence handoff is invalid",
+            Self::BackupScheduleInvalidMisfireSkip => "backup schedule misfire skip is invalid",
+            Self::BackupScheduleInvalidMaintenanceClaim => {
+                "backup scheduled maintenance claim is invalid"
+            }
+            Self::BackupScheduleMaintenanceLeaseLost => {
+                "backup scheduled maintenance lease is lost or stale"
+            }
+            Self::BackupScheduleMaintenanceStaleRun => {
+                "backup scheduled maintenance run became stale"
+            }
+            Self::BackupScheduleMaintenanceInconsistentState => {
+                "backup scheduled maintenance run state is inconsistent with its claim"
             }
             Self::RevisionOverflow => "resource revision cannot be incremented",
         };

@@ -22,12 +22,19 @@ mod mapping;
 mod migrations;
 mod models;
 mod mutations;
+mod occurrences;
 mod physical_gc;
 mod pool;
 mod purge;
 mod readiness;
 mod rebaseline;
 mod repository;
+mod schedule_handoffs;
+mod scheduled_maintenance;
+mod scheduled_maintenance_cycle;
+mod scheduled_maintenance_cycle_runner;
+mod scheduler;
+mod scheduling;
 mod sync;
 mod uploads;
 mod versions;
@@ -113,6 +120,24 @@ pub use rebaseline::{
     MAX_SYNC_BOOTSTRAP_PAGE_LIMIT, RebaselineError, SnapshotNodePage, SyncBootstrapService,
 };
 pub use repository::DomainRepository;
+pub use schedule_handoffs::BackupScheduleHandoffError;
+pub use scheduled_maintenance::{
+    ScheduledMaintenanceWorkerError, ScheduledMaintenanceWorkerService,
+    ScheduledMaintenanceWorkerStepOutcome,
+};
+pub use scheduled_maintenance_cycle::{
+    ScheduledMaintenanceCycleError, ScheduledMaintenanceCycleResult,
+    ScheduledMaintenanceCycleService, ScheduledMaintenanceCycleTickOutcome,
+    ScheduledMaintenanceCycleWorkerOutcome,
+};
+pub use scheduled_maintenance_cycle_runner::{
+    ScheduledMaintenanceCycleRunner, ScheduledMaintenanceCycleRunnerError,
+};
+pub use scheduler::{BackupSchedulerError, BackupSchedulerService};
+pub use scheduling::{
+    BackupScheduleError, BackupScheduleService, BackupSchedulingBackend,
+    MAX_BACKUP_SCHEDULE_OPERATION_KEY_BYTES, MIN_BACKUP_SCHEDULE_OPERATION_KEY_BYTES,
+};
 pub use sync::{
     DEFAULT_SYNC_FEED_LIMIT, DeviceSyncService, MAX_SYNC_FEED_LIMIT, RebaselineReason,
     SyncAckEvidence, SyncError, SyncFeedPage,

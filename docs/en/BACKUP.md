@@ -1,6 +1,11 @@
 # Backup, snapshots, retention, and restore
 
-Status: **PLANNED normative blueprint**
+Status: **durable backup scheduling, occurrence identity, exactly-once
+scheduled-maintenance handoff, deterministic manual scheduler tick,
+bounded restart-safe misfire policy, fenced scheduled-maintenance worker
+step, manually invoked bounded scheduler+worker cycle, and service
+integration boundary IMPLEMENTED/VALIDATED; snapshot, capture, restore,
+and automatic execution remain PLANNED normative blueprint**
 
 This document specifies device-to-Synveil backup, immutable backup snapshots,
 retention, recovery workflows, and instance disaster recovery. It follows
@@ -9,7 +14,20 @@ lifecycle is defined in [STORAGE.md](STORAGE.md); resumable byte transfer in
 [UPLOADS.md](UPLOADS.md); live current-state synchronization in
 [SYNC.md](SYNC.md).
 
-No backup capability is `IMPLEMENTED` merely because this blueprint exists.
+The Prompt 61 scheduling foundation, Prompt 62 durable occurrence ledger,
+Prompt 63 occurrence-to-maintenance handoff, Prompt 64 deterministic manual
+scheduler tick, Prompt 65 bounded missed-occurrence policy, and Prompt 66
+fenced scheduled-maintenance worker step are implemented,
+but no snapshot, restore, or automatic backup
+capability is `IMPLEMENTED` merely because this blueprint exists. A materialized
+occurrence means Synveil durably recognized a due firing identity; a handoff
+binds that identity exactly once to a canonical maintenance run. Neither fact
+means an automatic backup ran. Synveil can manually claim and execute one fenced
+scheduled-maintenance transition at a time; scheduled backups do not run
+continuously in the background. Prompt 67 adds one manually invoked bounded
+cycle composing exactly one scheduler tick followed by at most one worker
+transition per invocation; it adds no daemon, polling loop, retry system, or
+background execution.
 
 ## Two different backup responsibilities
 
@@ -41,6 +59,309 @@ A backup client never calls the live delete endpoint to represent a missing
 source file. Retention never emits a live sync tombstone. Restoring into a
 library intentionally creates new live nodes/versions and then uses the normal
 sync journal.
+
+## Durable schedule, occurrence, and handoff foundation (Prompts 61–63)
+
+One `BackupSet` may have one owner-scoped `BackupSchedule`. Its stable schedule
+ID points to exactly one current immutable `BackupScheduleRevision`, while
+older revisions remain readable. A revision stores only normalized logical
+intent: `DAILY` or `WEEKLY`, an explicit IANA timezone, a local `HH:MM` minute,
+(for weekly recurrence) one or more Monday-through-Sunday weekdays,
+`REPLAY_ONE_BY_ONE` or `LATEST_ONLY`, and bounded `max_lateness_seconds`.
+`LATEST_ONLY` with 604800 seconds (seven days) is the safe default; valid
+lateness is 60 through 2678400 seconds (31 days).
+
+Configuration writes are transactionally serialized by the owning BackupSet.
+They are idempotent through a bounded operation identity and a versioned
+canonical semantic fingerprint: a same-semantic request is a no-op that
+returns the current revision, and reusing an operation identity for different
+semantics fails closed. Disabling a schedule preserves current and historical
+configuration and produces no new occurrence. Effective planning and new
+materialization require both the schedule to be enabled and the BackupSet to
+be `ACTIVE`.
+
+The pure planner takes an exclusive UTC reference and returns the next local
+recurrence strictly after it. It uses the stored IANA rules, advances a local
+time in a DST gap to the first valid minute on that date, and chooses the
+earlier absolute instant for a DST overlap.
+
+`BackupSchedule.effective_from` is the strict activation boundary for the
+current enabled configuration. First configuration, semantic revision edits,
+and re-enables move it; semantic no-ops do not. A due candidate can be newly
+materialized only when its canonical UTC instant is strictly after that
+boundary, preventing backfill from disabled intervals and edits to an earlier
+same-day time.
+
+`BackupScheduleOccurrence` is an immutable owner-scoped ledger row for one
+logical key `(schedule_revision_id, local_calendar_date)`. It records the
+actual resolved local minute and canonical UTC instant recomputed from the
+immutable revision; callers cannot submit those values. A second database
+fence prevents two revisions of one schedule from creating two rows for the
+same exact UTC instant. Concurrent requests converge to one opaque UUIDv7
+occurrence ID. A retry after a lost response returns the existing row even if
+the schedule was later edited or disabled; without an existing row, a
+historical revision cannot newly materialize.
+
+Materialized is not executed. Prompt 63 adds a separate immutable handoff
+relation: an already-materialized occurrence can be bound once to the
+existing Prompt 49 `BackupMaintenanceRun`, which starts in `CREATED` and binds
+the same retention-policy revision and child operation identities as a manual
+run. Existing handoff replay is authoritative after later schedule edits or
+disablement; a new handoff requires an enabled schedule and an `ACTIVE`
+BackupSet. The handoff itself does not capture a snapshot, create an expiry
+plan, advance the run, or emit journal/sync/GC/prune evidence.
+
+This remains a manually invoked control-plane capability. There is no claim or
+execution state on the occurrence, job, lease, retry, worker, poll
+loop, cron, systemd, Task Scheduler, automatic snapshot execution, HTTP route,
+or UI behavior. A future prompt must add any bounded executor separately.
+
+### Exactly-once scheduled maintenance handoff (Prompt 63)
+
+`handoff_backup_schedule_occurrence(owner, occurrence_id, observed_at_utc)`
+accepts only an existing durable `BackupScheduleOccurrence`; it never accepts
+a revision/date pair as a substitute for materialization. One PostgreSQL
+transaction locks `BackupSet`, `BackupSchedule`, and `Occurrence` in that
+order, checks an existing handoff before new-effectivity fences, invokes the
+canonical Prompt 49 maintenance-run creation primitive, and inserts the
+immutable relation atomically. The database enforces one handoff per
+occurrence and one scheduled occurrence per maintenance run, including owner,
+BackupSet, and schedule scope.
+
+The typed result is `CREATED`, `EXISTING`, or `NOT_EFFECTIVE` with bounded
+schedule-disabled or BackupSet-inactive reasons. A lost response or concurrent
+retry returns the same maintenance run and the same durable child operation
+IDs. A committed handoff is provenance/control metadata, not a completed
+backup: progress remains the canonical maintenance state machine and only an
+explicit later call may advance it.
+
+### Manual single-step scheduler tick and misfire policy (Prompts 64–65)
+
+`BackupSchedulerService::run_scheduler_tick(observed_at_utc)` is one explicit
+server-side orchestration attempt. The caller supplies the UTC observation
+instant; the tick does not read an uncontrolled wall clock, sleep, poll, or
+repeat internally. It performs at most one policy action: one expired-prefix
+skip, or one materialization/handoff and at most one new
+`BackupMaintenanceRun`.
+
+Discovery is state-derived and restart-safe. In the current activation epoch
+`(schedule_id, revision_id, effective_from)`, the resolution reference is the
+maximum of `effective_from`, the latest successfully handed-off occurrence,
+and the latest immutable misfire skip boundary. Materialization alone is not
+progress. Each schedule derives at most one action; actions are compared
+globally by the selected firing time or skip `resolved_through_utc`, then stable
+schedule and revision IDs. No cursor, checkpoint, lease, or process-local
+scheduler state is required.
+
+The cutoff is `observed_at_utc - max_lateness_seconds`. An occurrence exactly
+at the cutoff remains eligible; only an occurrence strictly before it is
+expired for automatic execution. `REPLAY_ONE_BY_ONE` first writes one skip
+range through an expired prefix, then on later ticks chooses the oldest
+eligible occurrence. `LATEST_ONLY` chooses the newest eligible occurrence and
+lets its successful handoff collapse all earlier unresolved due dates without
+materializing them. If no eligible occurrence exists, it writes one immutable
+skip range through the newest expired canonical occurrence. A skip creates no
+occurrence, handoff, maintenance run, or invented skipped-count value.
+
+The selected path always composes the canonical services:
+
+1. a new candidate is materialized through Prompt 62, which recomputes the
+   canonical local/UTC occurrence and applies the current revision and
+   `effective_from` fences;
+2. the durable occurrence is handed off through Prompt 63 and the Prompt 49
+   maintenance-run creator; and
+3. the tick returns only the logical occurrence, schedule, revision,
+   `BackupSet`, scheduled instant, and maintenance-run references.
+
+The scheduler path applies an additional atomic current-revision/activation
+epoch check before a new handoff. A schedule edit, disable/re-enable, or
+`BackupSet` disable therefore cannot make the tick silently execute superseded
+or disabled-period work. A materialized occurrence is never deleted when a
+handoff is ineffective or fails. A crash after materialization is recovered by
+the next tick's materialized-unhanded priority; a committed handoff replays
+without creating another run.
+
+The result is `IDLE`, `SKIPPED_EXPIRED`, `HANDED_OFF_EXISTING`, or
+`MATERIALIZED_AND_HANDED_OFF`. `IDLE` is normal when no eligible due candidate
+exists. A successful tick leaves the maintenance run in `CREATED` and does not
+advance it, capture a snapshot, plan or execute expiry, prune or release pins,
+perform GC, append journal or sync state, or perform ObjectStore I/O. This is
+not a daemon, retry/backoff mechanism, worker lease, HTTP API, or web
+scheduling UI. The missed-occurrence policy is explicit, but no background
+component invokes it continuously.
+
+### Fenced scheduled-maintenance worker step (Prompt 66)
+
+`ScheduledMaintenanceWorkerService` is a manually invoked, test-driven worker
+primitive. One explicit invocation claims or reconciles at most one eligible
+scheduled step and executes or reconciles at most one canonical Prompt 49
+maintenance transition: `CREATED → SNAPSHOT_CAPTURED`,
+`SNAPSHOT_CAPTURED → EXPIRY_PLANNED`, or `EXPIRY_PLANNED → COMPLETED`. It never
+runs `CREATED → COMPLETED` in one call, never loops, polls, sleeps, spawns,
+renews a lease, or retries with backoff.
+
+Discovery applies only to maintenance runs with a durable Prompt 63 handoff;
+manual Prompt 49 runs are never claimed. A committed handoff is execution
+authority: the worker never rechecks the current schedule revision, misfire
+policy, or enabled state to revoke handed-off work, so an already-authorized
+run still advances after a schedule disable or policy edit. A Prompt 65
+`SKIPPED_EXPIRED` prefix creates no run and therefore no claim.
+
+Each claim in `backup_scheduled_maintenance_claims` authorizes exactly one
+transition from one expected state. Claim identity is
+`(maintenance_run_id, expected_state)` with database uniqueness; the
+predetermined resulting state cannot be rebound (`CREATED` always completes to
+`SNAPSHOT_CAPTURED`, and so on). Every lease carries an opaque worker ID, an
+unpredictable lease token, a monotonically increasing `lease_generation`
+starting at 1, and a bounded duration (default 120 seconds, minimum 10,
+maximum 900; out-of-range durations are rejected, never clamped). A second
+worker takes over only at or after `lease_expires_at`, atomically rotating the
+token and incrementing the generation; an early steal is rejected by both the
+service and a database trigger. The same holder replaying a valid lease
+receives the canonical open claim without a new row.
+
+Safety rests on fencing, not on workers promising to stop. Every
+maintenance-state commit re-verifies the active
+`(worker, token, generation, expected state, unexpired lease)` fence inside
+the same authoritative transaction, so a stale generation commits zero
+transitions even when its canonical child work (snapshot capture, expiry
+planning, expiry execution, all replayed through the run's durable
+Prompt 49 child-operation identities) already exists. Child logic is never
+duplicated: the worker calls the canonical `BackupService` capture, expiry
+planning, and expiry execution operations, then seals the fenced run-state and
+claim-receipt commits. Claim acquisition alone performs zero snapshot, expiry,
+prune, GC, ObjectStore, journal, or sync work.
+
+Crash recovery is durable because all worker state lives in PostgreSQL.
+Claim-before-advance crashes are taken over after expiry with the same claim
+identity. Advance-before-receipt crashes are reconciled: the next holder
+detects that the run already equals the claim's resulting state, seals the
+receipt as `RECOVERED_COMPLETION` without advancing again, and stops — a
+recovery never runs the next transition in the same invocation. A lost
+completion response replays the canonical completed receipt. An unexpected run
+state fails closed with a typed inconsistency, and a `STALE` run reports a
+typed stale outcome instead of a normal receipt. Twelve concurrent claimants
+converge to one claim row and one lease holder; twelve concurrent executors
+commit exactly one transition with one canonical child operation.
+
+Global discovery order is `occurrence.scheduled_for_utc`, then `schedule_id`,
+then `maintenance_run_id`: oldest scheduled execution first. An unexpired
+foreign lease skips that run without blocking newer claimable work; an expired
+oldest lease is taken over first; an oldest incomplete claim whose run already
+reached its resulting state is reconciled first. Completed receipts are
+immutable, history is never deleted, and claims create no public operation-feed
+entries: Prompt 55 still exposes exactly one `MAINTENANCE` operation per run.
+There are no worker HTTP routes, OpenAPI changes, web UI changes,
+`client-sync` changes, or physical storage identities in the claim types.
+
+### Manually invoked bounded scheduler + worker cycle (Prompt 67)
+
+`ScheduledMaintenanceCycleService::run_scheduled_maintenance_cycle(worker_id,
+observed_at_utc, lease_duration_seconds)` composes exactly one canonical
+`run_scheduler_tick` followed by exactly one canonical
+`run_scheduled_maintenance_worker_step`, using the same injected
+`observed_at_utc` where semantics permit and reading no wall clock itself.
+Tick-before-worker ordering lets a newly handed-off run become eligible for
+the same invocation's single worker transition, while global worker ordering
+still applies: newly created work is never privileged over older eligible
+work. The combined result keeps the tick outcome (`Idle`, `SkippedExpired`,
+`HandedOffExisting`, `MaterializedAndHandedOff`) and the worker outcome
+(`Idle` or `Stepped`) typed and separate. A scheduler error returns without
+executing the worker step; a worker error preserves already-committed
+scheduler work, with no giant transaction spanning both phases. Prompt 63
+handoff remains execution authority and Prompt 65 policy stays resolved at
+fire time. One cycle advances at most one maintenance transition
+(`CREATED → SNAPSHOT_CAPTURED`, `SNAPSHOT_CAPTURED → EXPIRY_PLANNED`, or
+`EXPIRY_PLANNED → COMPLETED`), so full maintenance needs three distinct
+manual invocations. There is no daemon, polling loop, sleep, timer, heartbeat,
+lease renewal, retry/backoff loop, API endpoint, UI, SSE, or background task;
+the caller invokes the cycle manually and the database remains the durable
+source of truth. No new migration or cycle table was introduced.
+
+### Service integration boundary (Prompt 68)
+
+`ScheduledMaintenanceCycleRunner` establishes the application-level service
+integration boundary for manually invoking one bounded scheduled-maintenance
+cycle. It wraps the canonical Prompt 67 `ScheduledMaintenanceCycleService`
+and provides a narrow, production-oriented caller that future explicitly
+authorized lifecycle callers can invoke without constructing metadata,
+storage, and service dependencies ad hoc.
+
+The runner holds a process-scoped `BackupScheduledMaintenanceWorkerId` that
+is created once at construction and reused for all subsequent invocations.
+The identity is not persisted to a dedicated table and is not exposed as
+business/user-visible identity.
+
+`run_one_scheduled_backup_maintenance_cycle(observed_at_utc,
+lease_duration_seconds)` validates the lease duration against canonical
+bounds (10–900 seconds) without silent clamping, then delegates to the
+canonical Prompt 67 cycle. The caller supplies the observation timestamp;
+no hidden `Utc::now()` appears in the orchestration layer.
+
+The runner is composed into `ApiState` through the existing builder pattern:
+`ApiState::with_scheduled_maintenance_cycle_runner(runner)`. When PostgreSQL
+is configured via `with_postgres_auth`, the runner is automatically
+initialized with a fresh worker identity.
+
+All Prompt 67 invariants remain: exactly one scheduler tick, exactly one
+worker step (at most one maintenance transition), scheduler failure prevents
+worker execution, worker failure preserves scheduler durable commits, and
+the database remains the durable source of truth. The runner adds no daemon,
+polling loop, sleep, timer, heartbeat, lease renewal, retry/backoff, API
+endpoint, UI, SSE, or background task.
+
+### Canonical scheduled-maintenance lock-order invariant (Prompt 69)
+
+All competing scheduled-maintenance transactions follow one canonical lock
+hierarchy. This structurally removes the PostgreSQL `40P01` deadlock class
+without retry, backoff, sleep, global mutex, advisory locks, table locks,
+or reduced concurrency.
+
+**Lock classes (top → bottom):**
+
+1. `backup_sets` — BackupSet authority
+2. `backup_schedules` + `backup_schedule_revisions` (revision read `FOR SHARE` where needed)
+3. `backup_schedule_occurrences` — materialized firing identity
+4. `backup_schedule_occurrence_handoffs` — exactly-once binding
+5. `backup_schedule_misfire_skips` — expired-prefix progress (when applicable)
+6. `backup_maintenance_runs` — canonical maintenance state
+7. `backup_scheduled_maintenance_claims` — lease + fencing
+8. canonical child-operation state — `backup_snapshots` / nodes / pins, `backup_snapshot_expiry_plans` / entries / executions (and their object locks when applicable)
+
+**Invariant:** If transaction path A may acquire lock classes X and Y and
+path B may also acquire X and Y, they acquire X and Y in the same relative
+order. No path acquires `X → Y` while another acquires `Y → X`.
+
+- Scheduler due discovery is lock-free; `resolve_misfire_skip` and
+  `materialize` acquire `backup_sets → backup_schedules → (skips | occurrences)`.
+- Handoff acquires `backup_sets → backup_schedules → occurrences → handoffs → maintenance_runs` (plus `FOR SHARE` policy where needed) before inserting the handoff.
+- Worker claim acquisition (`claim_candidate_step`) first discovers parent
+  identities without row locks, then acquires `backup_sets → backup_schedules → occurrences → handoffs → maintenance_runs → claims` in one short transaction, revalidates eligibility, and then inserts or takes over the claim.
+- Lease takeover, recovery reconciliation, and fence verification all acquire
+  `maintenance_runs → claims` (parent before child). The previous
+  `claims → runs` order in `load_execution_plan` / `verify_fenced_run_state` /
+  `fenced_mark_run_stale` was inverted and is now `runs → claims`.
+- Fenced run-state transitions (`CREATED → SNAPSHOT_CAPTURED → EXPIRY_PLANNED → COMPLETED`) verify the fence inside the same `runs → claims` transaction and then `UPDATE` the run; child work (snapshot capture, expiry planning/execution) runs in its own transactions via the canonical `BackupService` identities and is not held across parent locks.
+- When multiple rows of the same class are locked, deterministic ordering is used
+  (`claim_id ASC`, `object.id ASC`, etc.). Business discovery ordering
+  (`scheduled_for_utc, schedule_id, run_id`) is preserved for candidate
+  selection; internal lock ordering uses a separate deterministic key only when
+  needed and is documented separately.
+
+**Discovery / mutation pattern:** discover candidate identity → start narrow
+mutation transaction → acquire canonical locks → revalidate candidate →
+mutate → commit. Stale discovery is never trusted.
+
+**Lock lifetime:** parent scheduling locks are not held across expensive
+canonical child operations unless required by an invariant. The atomic
+correctness boundary (fenced `runs → claims` plus the final state `UPDATE`)
+remains intact.
+
+**Concurrency:** Independent maintenance runs touch different `BackupSet` /
+`Schedule` / `Occurrence` / `Run` / `Claim` rows, so they do not serialize
+on a global mutex or advisory lock. No automatic retry or `40P01` swallowing
+is required for correctness; `SYNVEIL_BACKUP_SCHEDULED_MAINTENANCE_LOCK_ORDER_READY`
+requires `SQLSTATE 40P01 = 0` under `12 × 25` concurrent-cycle contention.
 
 ## Backup invariants
 

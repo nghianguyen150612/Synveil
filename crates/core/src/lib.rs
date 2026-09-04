@@ -43,7 +43,8 @@ pub use device_secrets::{
 };
 pub use domain::{
     BACKUP_MAINTENANCE_RUN_FINGERPRINT_VERSION, BACKUP_PRUNE_PLAN_FINGERPRINT_VERSION,
-    BACKUP_RESTORE_PLAN_FINGERPRINT_VERSION, BACKUP_SNAPSHOT_EXPIRY_BASIS_FINGERPRINT_VERSION,
+    BACKUP_RESTORE_PLAN_FINGERPRINT_VERSION, BACKUP_SCHEDULE_FINGERPRINT_VERSION,
+    BACKUP_SCHEDULE_LEGACY_FINGERPRINT_VERSION, BACKUP_SNAPSHOT_EXPIRY_BASIS_FINGERPRINT_VERSION,
     BACKUP_SNAPSHOT_EXPIRY_EXECUTION_FINGERPRINT_VERSION,
     BACKUP_SNAPSHOT_EXPIRY_PLAN_FINGERPRINT_VERSION,
     BACKUP_SNAPSHOT_RETENTION_POLICY_FINGERPRINT_VERSION, BackupMaintenanceRun,
@@ -57,8 +58,18 @@ pub use domain::{
     BackupRestoreActionParseError, BackupRestoreExecution, BackupRestoreExecutionEntry,
     BackupRestorePlan, BackupRestorePlanEntry, BackupRestorePlanIdempotencyFingerprint,
     BackupRestorePlanRequest, BackupRestorePlanState, BackupRestorePlanStateParseError,
-    BackupRestorePreflightIssue, BackupSet, BackupSetState, BackupSetStateParseError,
-    BackupSnapshot, BackupSnapshotExpiryBasisEntry, BackupSnapshotExpiryBasisFingerprint,
+    BackupRestorePreflightIssue, BackupSchedule, BackupScheduleConfig,
+    BackupScheduleIdempotencyFingerprint, BackupScheduleLocalTime, BackupScheduleMisfireMode,
+    BackupScheduleMisfireModeParseError, BackupScheduleMisfireSkip, BackupScheduleOccurrence,
+    BackupScheduleOccurrenceHandoff, BackupScheduleOccurrenceHandoffResult,
+    BackupScheduleOccurrenceMaterializationResult, BackupScheduleOccurrenceNotEffectiveReason,
+    BackupScheduleRecurrenceKind, BackupScheduleRecurrenceKindParseError, BackupScheduleRequest,
+    BackupScheduleRevision, BackupScheduleRevisionNumber, BackupScheduleTimezone,
+    BackupScheduleTimezoneParseError, BackupScheduleWeekday, BackupScheduleWeekdayParseError,
+    BackupScheduledMaintenanceClaim, BackupScheduledMaintenanceClaimOutcome,
+    BackupScheduledMaintenanceStepResult, BackupSchedulerSkipOutcome, BackupSchedulerTickOutcome,
+    BackupSchedulerTickResult, BackupSet, BackupSetState, BackupSetStateParseError, BackupSnapshot,
+    BackupSnapshotExpiryBasisEntry, BackupSnapshotExpiryBasisFingerprint,
     BackupSnapshotExpiryDecision, BackupSnapshotExpiryDecisionParseError,
     BackupSnapshotExpiryExecution, BackupSnapshotExpiryExecutionEntry,
     BackupSnapshotExpiryExecutionPreflightIssue, BackupSnapshotExpiryPlan,
@@ -73,19 +84,27 @@ pub use domain::{
     ChangeResourceKind, ChangeResourceKindParseError, ClientMutation, ClientMutationFingerprint,
     ClientMutationKind, ClientMutationKindParseError, ClientMutationRequest, ConflictLifecycle,
     ConflictLifecycleParseError, ConflictResolutionAction, ConflictResolutionActionParseError,
-    ConflictResolutionFingerprint, ConflictResolutionRequest, Device, DeviceStatus,
-    DeviceSyncCheckpoint, DomainError, FileVersion, Library, LibraryStatus, LogicalName,
-    LogicalSnapshotNode, LogicalSnapshotNodeError, LoginIdentifier,
-    MAX_BACKUP_SNAPSHOT_RETENTION_SECONDS, MAX_LOGICAL_NAME_BYTES, Node, NodeKind, NodeState,
-    ObjectReference, SnapshotState, SnapshotStateParseError, SyncBootstrap, SyncBootstrapState,
-    SyncBootstrapStateParseError, UploadOperation, UploadOperationParseError, UploadSessionState,
-    UploadSessionStateParseError, UploadStateTransitionError, User, UserStatus,
+    ConflictResolutionFingerprint, ConflictResolutionRequest,
+    DEFAULT_BACKUP_SCHEDULE_MAX_LATENESS_SECONDS,
+    DEFAULT_BACKUP_SCHEDULED_MAINTENANCE_LEASE_SECONDS, Device, DeviceStatus, DeviceSyncCheckpoint,
+    DomainError, FileVersion, Library, LibraryStatus, LogicalName, LogicalSnapshotNode,
+    LogicalSnapshotNodeError, LoginIdentifier, MAX_BACKUP_SCHEDULE_MAX_LATENESS_SECONDS,
+    MAX_BACKUP_SCHEDULED_MAINTENANCE_LEASE_SECONDS, MAX_BACKUP_SNAPSHOT_RETENTION_SECONDS,
+    MAX_LOGICAL_NAME_BYTES, MIN_BACKUP_SCHEDULE_MAX_LATENESS_SECONDS,
+    MIN_BACKUP_SCHEDULED_MAINTENANCE_LEASE_SECONDS, Node, NodeKind, NodeState, ObjectReference,
+    PlannedScheduleOccurrence, SnapshotState, SnapshotStateParseError, SyncBootstrap,
+    SyncBootstrapState, SyncBootstrapStateParseError, UploadOperation, UploadOperationParseError,
+    UploadSessionState, UploadSessionStateParseError, UploadStateTransitionError, User, UserStatus,
+    is_claimable_scheduled_maintenance_state,
 };
 pub use errors::{CoreError, ErrorCode, UnknownErrorCode};
 pub use hashes::{Hash, HashParseError, Sha256Digest};
 pub use ids::{
     BackupMaintenanceRunId, BackupPruneExecutionId, BackupPrunePlanId, BackupRestoreExecutionId,
-    BackupRestorePlanId, BackupSetId, BackupSnapshotExpiryExecutionId, BackupSnapshotExpiryPlanId,
+    BackupRestorePlanId, BackupScheduleId, BackupScheduleMisfireSkipId, BackupScheduleOccurrenceId,
+    BackupScheduleRevisionId, BackupScheduledMaintenanceClaimId,
+    BackupScheduledMaintenanceLeaseToken, BackupScheduledMaintenanceWorkerId, BackupSetId,
+    BackupSnapshotExpiryExecutionId, BackupSnapshotExpiryPlanId,
     BackupSnapshotRetentionPolicyRevisionId, ChangeEventId, ClientMutationId, ConflictResolutionId,
     DedupDomainId, DeviceCredentialId, DeviceEnrollmentGrantId, DeviceId, FileVersionId,
     IdParseError, LibraryId, NodeId, ObjectGcOperationId, ObjectId, ObjectReplicaId,
@@ -102,3 +121,9 @@ pub type ChangeJournalEntry = ChangeEvent;
 pub use numbers::{DecimalValueError, Revision, Sequence};
 pub use time::{Timestamp, TimestampParseError};
 pub use tokens::{ETag, Etag, OpaqueCursor, TokenError, VersionToken};
+
+pub use domain::{
+    last_occurrence_before, latest_occurrence_in_window, next_occurrence_after,
+    occurrence_on_local_date, oldest_occurrence_in_window, scheduled_maintenance_resulting_state,
+    validate_scheduled_maintenance_lease_duration,
+};

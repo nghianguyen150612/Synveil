@@ -6,6 +6,7 @@ mod models;
 mod mutations;
 mod names;
 mod rebaseline;
+mod scheduling;
 mod sync;
 mod uploads;
 
@@ -60,6 +61,26 @@ pub use names::{LogicalName, LoginIdentifier, MAX_LOGICAL_NAME_BYTES};
 pub use rebaseline::{
     LogicalSnapshotNode, LogicalSnapshotNodeError, SyncBootstrap, SyncBootstrapState,
     SyncBootstrapStateParseError,
+};
+pub use scheduling::{
+    BACKUP_SCHEDULE_FINGERPRINT_VERSION, BACKUP_SCHEDULE_LEGACY_FINGERPRINT_VERSION,
+    BackupSchedule, BackupScheduleConfig, BackupScheduleIdempotencyFingerprint,
+    BackupScheduleLocalTime, BackupScheduleMisfireMode, BackupScheduleMisfireModeParseError,
+    BackupScheduleMisfireSkip, BackupScheduleOccurrence, BackupScheduleOccurrenceHandoff,
+    BackupScheduleOccurrenceHandoffResult, BackupScheduleOccurrenceMaterializationResult,
+    BackupScheduleOccurrenceNotEffectiveReason, BackupScheduleRecurrenceKind,
+    BackupScheduleRecurrenceKindParseError, BackupScheduleRequest, BackupScheduleRevision,
+    BackupScheduleRevisionNumber, BackupScheduleTimezone, BackupScheduleTimezoneParseError,
+    BackupScheduleWeekday, BackupScheduleWeekdayParseError, BackupScheduledMaintenanceClaim,
+    BackupScheduledMaintenanceClaimOutcome, BackupScheduledMaintenanceStepResult,
+    BackupSchedulerSkipOutcome, BackupSchedulerTickOutcome, BackupSchedulerTickResult,
+    DEFAULT_BACKUP_SCHEDULE_MAX_LATENESS_SECONDS,
+    DEFAULT_BACKUP_SCHEDULED_MAINTENANCE_LEASE_SECONDS, MAX_BACKUP_SCHEDULE_MAX_LATENESS_SECONDS,
+    MAX_BACKUP_SCHEDULED_MAINTENANCE_LEASE_SECONDS, MIN_BACKUP_SCHEDULE_MAX_LATENESS_SECONDS,
+    MIN_BACKUP_SCHEDULED_MAINTENANCE_LEASE_SECONDS, PlannedScheduleOccurrence,
+    is_claimable_scheduled_maintenance_state, last_occurrence_before, latest_occurrence_in_window,
+    next_occurrence_after, occurrence_on_local_date, oldest_occurrence_in_window,
+    scheduled_maintenance_resulting_state, validate_scheduled_maintenance_lease_duration,
 };
 pub use sync::DeviceSyncCheckpoint;
 pub use uploads::{

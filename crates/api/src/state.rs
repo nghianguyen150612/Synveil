@@ -9,7 +9,8 @@ use synveil_core::TrashRetentionPolicy;
 use synveil_metadata::{
     BackupMutationBackend, BackupReadBackend, BackupService, ClientMutationBackend,
     ConflictManagementBackend, DatabasePool, FileMetadataBackend, FileMetadataService,
-    VersionHistoryBackend, VersionHistoryService, VersionRestoreBackend, VersionRestoreService,
+    ScheduledMaintenanceCycleRunner, VersionHistoryBackend, VersionHistoryService,
+    VersionRestoreBackend, VersionRestoreService,
 };
 use synveil_platform::{HealthInfo, PlatformRuntime};
 
@@ -166,6 +167,7 @@ pub struct ApiState {
     allowed_origin: Option<String>,
     body_limit_bytes: usize,
     trash_retention_policy: TrashRetentionPolicy,
+    scheduled_maintenance_cycle_runner: Option<ScheduledMaintenanceCycleRunner>,
 }
 
 impl ApiState {
@@ -199,6 +201,7 @@ impl ApiState {
             allowed_origin: None,
             body_limit_bytes: crate::DEFAULT_BODY_LIMIT_BYTES,
             trash_retention_policy: TrashRetentionPolicy::default(),
+            scheduled_maintenance_cycle_runner: None,
         }
     }
 
@@ -234,6 +237,7 @@ impl ApiState {
             allowed_origin: None,
             body_limit_bytes: crate::DEFAULT_BODY_LIMIT_BYTES,
             trash_retention_policy: TrashRetentionPolicy::default(),
+            scheduled_maintenance_cycle_runner: None,
         }
     }
 
@@ -383,6 +387,7 @@ impl ApiState {
         let trash_retention_policy = state.trash_retention_policy;
         let pool = pool.as_ref().clone();
         let backup_service = Arc::new(BackupService::new(pool.clone()));
+        let runner = ScheduledMaintenanceCycleRunner::new(pool.clone());
         state
             .with_file_metadata_backend(Arc::new(FileMetadataService::new_with_policy(
                 pool.clone(),
@@ -392,6 +397,7 @@ impl ApiState {
             .with_backup_mutation_backend(backup_service)
             .with_version_history_backend(Arc::new(VersionHistoryService::new(pool.clone())))
             .with_version_restore_backend(Arc::new(VersionRestoreService::new(pool)))
+            .with_scheduled_maintenance_cycle_runner(runner)
     }
 
     #[must_use]
@@ -421,6 +427,15 @@ impl ApiState {
     #[must_use]
     pub fn with_conflict_cursor_key(mut self, key: ConflictCursorKey) -> Self {
         self.conflict_cursor_key = Arc::new(key);
+        self
+    }
+
+    #[must_use]
+    pub fn with_scheduled_maintenance_cycle_runner(
+        mut self,
+        runner: ScheduledMaintenanceCycleRunner,
+    ) -> Self {
+        self.scheduled_maintenance_cycle_runner = Some(runner);
         self
     }
 
@@ -535,6 +550,11 @@ impl ApiState {
     #[must_use]
     pub(crate) fn conflict_cursor_key(&self) -> &ConflictCursorKey {
         self.conflict_cursor_key.as_ref()
+    }
+
+    #[must_use]
+    pub fn scheduled_maintenance_cycle_runner(&self) -> Option<&ScheduledMaintenanceCycleRunner> {
+        self.scheduled_maintenance_cycle_runner.as_ref()
     }
 
     #[must_use]
