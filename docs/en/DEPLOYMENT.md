@@ -394,6 +394,761 @@ separate temporary volume must not silently turn rename into a cross-device
 copy. Staging has independent accounting/expiry even when it shares the object
 root.
 
+## Linux service identity and filesystem ownership (Prompt 75)
+
+Prompt 75 establishes the Gen-1 least-privilege Linux service identity and
+ownership contract required by the Prompt 71–74 scheduled-maintenance
+deployment.
+
+### Service account
+
+| Property | Value | Notes |
+|---|---|---|
+| Account name | `synveil` | persistent system user |
+| Group name | `synveil` | persistent system group |
+| Type | system account | `systemd-sysusers` declarative, not `useradd` shell logic |
+| Login | disabled | invalid password; no interactive shell |
+| Shell | `/usr/sbin/nologin` (or distribution `nologin` equivalent) | `PrivateTmp`, `ProtectHome` etc. remain |
+| Home | `/var/lib/synveil` | stable state location, **not** `/home/*`; no conventional interactive home |
+| UID/GID | auto-allocated (`-` in `sysusers`) | **no hardcoded numeric UID**; future appliance images may reserve a fixed value, but Gen-1 assumes nothing cross-machine |
+| Supplementary groups | **none** | no `sudo`/`wheel`/`docker`/`disk`/`adm`/`root` |
+
+Declarative sources (packaging installs to `/usr/lib/...`, overrides in
+`/etc/...`):
+
+- `deploy/sysusers.d/synveil.conf` — `g synveil -` + `u synveil - "Synveil
+  service account" /var/lib/synveil /usr/sbin/nologin`
+- `deploy/tmpfiles.d/synveil.conf` — `d /var/lib/synveil 0750 synveil synveil - -`
+- `deploy/systemd/synveil-scheduled-maintenance.service` —
+  `User=synveil`, `Group=synveil`, `RuntimeDirectory=synveil`,
+  `RuntimeDirectoryMode=0750`
+
+Creation is a **packaging/deployment** responsibility. The Rust runtime
+(`synveil-scheduled-maintenance-once → DatabasePool →
+ScheduledMaintenanceCycleRunner`) never creates system users, never `chmod`s
+system directories, never invokes `systemctl`, and never escalates.
+
+### Why runtime does not use `root`
+
+The one-shot requires only PostgreSQL connectivity (TCP `AF_INET`/`AF_INET6`
+or `AF_UNIX` Unix socket). It never needs to modify its own binary, unit
+files, host configuration, or storage roots. Running as `root` would violate
+least privilege and allow an exploited process to replace its executable.
+Package **install** remains `root`-owned; **runtime** is unprivileged.
+
+### Why `DynamicUser=yes` is rejected
+
+| Requirement | `DynamicUser` behavior | Consequence for Synveil |
+|---|---|---|
+| Stable ownership of `/var/lib/synveil` | Allocates ephemeral UID per activation, hides real path under `/var/lib/private` via id-mapped mounts | Administrator cannot see/persist/inspect state; upgrades and multiple services cannot share ownership |
+| Access to `/etc/synveil` config | Transient user not in predictable group; permissions would need world-readable or per-activation ACL | Secrets would leak or access would break |
+| Future object-store / data paths | Same private-mount hiding | Storage ownership becomes non-durable |
+| Multiple first-party services sharing state | Each activation gets a different UID | No stable identity for co-owned state |
+
+`DynamicUser` is therefore suitable only for fully stateless, ephemeral
+services. The repository records the rejection; a future storage
+architecture that proves no stable filesystem ownership is required would
+trigger a STOP-and-report rather than forcing the persistent decision.
+
+### Filesystem ownership contract
+
+| Path | Ownership | Mode | Created by | Runtime access |
+|---|---|---|---|---|
+| `/usr/bin/synveil-*` | `root:root` | `0755` | package (root) | `synveil` can read/exec, **not write** — service cannot modify its own executable |
+| `/usr/lib/systemd/system/synveil-*.service` `/usr/lib/systemd/system/synveil-*.timer` | `root:root` | `0644` | package | not writable by `synveil` |
+| `/usr/lib/sysusers.d/synveil.conf` `/usr/lib/tmpfiles.d/synveil.conf` | `root:root` | `0644` | package | not writable |
+| `/etc/synveil` | `root:synveil` | `0750` | package | `synveil` reads required files (via `EnvironmentFile`), cannot freely rewrite admin config |
+| `/etc/synveil/synveil-scheduled-maintenance.env` | `root:synveil` | `0640` | admin / package | `synveil` reads optional non-secret `SYNVEIL_SCHEDULED_MAINTENANCE_LEASE_SECONDS`; `DATABASE_URL` is delivered via Prompt 77 `LoadCredential`, not this file |
+| `/var/lib/synveil` | `synveil:synveil` | `0750` | `tmpfiles.d` | persistent non-secret state; future appliance bookkeeping; empty today is acceptable, not in `/usr`/`/etc`/home |
+| `/run/synveil` | `synveil:synveil` | `0750` | `RuntimeDirectory=` | ephemeral per-activation, lifecycle-tied cleanup, never manually persisted |
+| `/var/log/synveil` | — | — | — | **intentionally not created** — journald is preferred; only add if Synveil actually writes log files |
+
+**Storage / object-store boundary:** user storage pools obey the storage
+architecture. Prompt 75 does **not** recursively `chown` arbitrary pools to
+`synveil`; only required service-state boundaries are documented.
+
+### Runtime/state directory decision
+
+- `/run/synveil` → `RuntimeDirectory=synveil` (not `tmpfiles.d`). Correct
+  ownership, automatic cleanup, no stale host state, single manager.
+- `/var/lib/synveil` → `tmpfiles.d` (`d` line) at boot/package time, **not**
+  `StateDirectory=` per-service. One host-level declaration remains
+  authoritative for all future Synveil services sharing the directory; per-service
+  `StateDirectory=synveil` would create conflicting managers for the same path.
+- `/etc/synveil` → package creates with `root:synveil 0750`; not managed via
+  `tmpfiles.d`.
+- No secret files are created via `tmpfiles.d`.
+
+### Privilege boundary
+
+| Operation | Required privilege |
+|---|---|
+| Install units/sysusers/tmpfiles/binaries/config skeleton | `root` (package) |
+| `systemd-sysusers`, `systemd-tmpfiles --create`, `daemon-reload`, `systemctl enable` | `root` |
+| `install -m 0640 -o root -g synveil /etc/synveil/synveil-scheduled-maintenance.env` (non-secret tuning) | `root` |
+| `install -m 0600 -o root -g root /etc/synveil/credentials/database-url` (database secret) | `root` |
+| One-shot execution (`synveil-scheduled-maintenance-once`) | `synveil` (TCP/`AF_UNIX` to PostgreSQL only) |
+| Modifying binaries/units/`/etc/synveil` globally | denied to `synveil` |
+
+The one-shot binary has **zero** `UID 0` dependency on its normal
+database-only path; it runs under the already-unprivileged test user in CI
+to prove rootless operation.
+
+### Database connectivity
+
+Running as `synveil` remains compatible with the current `DATABASE_URL`
+architecture (TCP or Unix socket). No PostgreSQL `peer` authentication tied to
+the Unix username is assumed; connectivity is an administrator/deployment
+choice. Authentication is not weakened.
+
+### Secret boundary
+
+Prompt 75 establishes the filesystem ownership baseline. Prompt 77 now owns
+database-secret delivery: the ordinary environment file is non-secret tuning
+only, while the administrator-controlled credential source is
+`root:root 0600` and delivered through `LoadCredential`.
+
+### Per-service account evaluation
+
+Future identities such as `synveil-api`, `synveil-maintenance`, `synveil-gc`
+were evaluated. All first-party services currently share a trusted
+backend/data boundary; separate accounts would add packaging complexity
+without materially improving least privilege. **Recommendation Gen-1:** one
+`synveil` account. The decision is recorded in ADR and `BACKUP.md`; a later
+capability separation may justify per-service accounts.
+
+### Portability
+
+Linux `User=`/`Group=`/`UID`/`GID`/systemd remain outside `crates/core` and
+portable Synveil Server APIs. No domain model gains a Linux identity field.
+
+## Linux package lifecycle and data-preserving uninstall (Prompt 76)
+
+Prompt 76 is the package-neutral installation foundation for the Gen-1
+scheduled-maintenance deployment. It defines deterministic mechanics for fresh
+install, idempotent reinstall, in-place upgrade, failed-upgrade recovery,
+uninstall, uninstall-with-preservation, explicit purge, `root` vs
+`synveil:synveil` ownership, `systemd`/`sysusers`/`tmpfiles` integration, and
+safe staged-root testing without host mutation. No distribution-specific
+`.deb`/`.rpm`/PKGBUILD/OCI/Synveil OS image is created yet — future packaging
+calls this layer.
+
+### Authoritative manifest
+
+`deploy/install/MANIFEST` is the single source of truth. All install/remove
+mechanics read it; no duplicated destination logic exists in `install.sh` or
+`uninstall.sh`.
+
+```
+source                              destination                                      mode  owner   group    class
+BINARY                              /usr/bin/synveil-scheduled-maintenance-once      0755  root    root     PACKAGE
+deploy/systemd/*.service            /usr/lib/systemd/system/synveil-*.service        0644  root    root     PACKAGE
+deploy/systemd/*.timer              /usr/lib/systemd/system/synveil-*.timer          0644  root    root     PACKAGE
+deploy/sysusers.d/synveil.conf      /usr/lib/sysusers.d/synveil.conf                 0644  root    root     PACKAGE
+deploy/tmpfiles.d/synveil.conf      /usr/lib/tmpfiles.d/synveil.conf                 0644  root    root     PACKAGE
+deploy/config/*.env.example         /usr/share/synveil/*.env.example                 0644  root    root     PACKAGE
+-                                   /etc/synveil                                     0750  root    synveil  CONFIG_DIRECTORY
+-                                   /var/lib/synveil                                 0750  synveil synveil  STATE_DIRECTORY
+-                                   /run/synveil                                     0750  synveil synveil  RUNTIME_MANAGED
+```
+
+`PACKAGE` is `root:root` immutable payload replaced on upgrade and removed on
+uninstall. `CONFIG_DIRECTORY` is `root:synveil` skeleton; `STATE_DIRECTORY` and
+`RUNTIME_MANAGED` are `synveil:synveil` managed by `tmpfiles.d` /
+`RuntimeDirectory=` (not seeded by payload). No `/var/log/synveil` is created
+(journald).
+
+### Package-neutral interface
+
+```
+deploy/install/install.sh   --root=<staged-root> [--binary=<path>]  [--destdir=<root>]
+deploy/install/uninstall.sh --root=<staged-root> [--purge]
+deploy/install/common.sh    # shared helpers (sourced, not executed)
+deploy/install/MANIFEST     # authoritative
+```
+
+All mechanics support an alternate root (`DESTDIR`):
+
+```
+DESTDIR=/tmp/synveil-root ./deploy/install/install.sh --binary=target/debug/synveil-scheduled-maintenance-once
+./deploy/install/install.sh --root=/tmp/synveil-root --binary=...
+```
+
+Tests operate on disposable `/tmp/.../root` trees and never write to
+`/usr`/`/etc`/`/var`/`/run` on the developer host unless inside a disposable
+container.
+
+### File replacement safety
+
+`install.sh` never truncates an existing executable/unit in place. It writes
+the new content to a temporary file (`cp` → `chmod` → `chown` if root →
+`mv -f` atomic rename). `uninstall.sh` unlinks known `PACKAGE` paths with
+`rm -f` without following symlink targets.
+
+### Fresh install
+
+A staged fresh install produces:
+
+- `PACKAGE` files at the five `root:root` destinations plus the template at
+  `/usr/share/synveil/...example` (`0644`).
+- `CONFIG_DIRECTORY` `/etc/synveil` (`0750 root:synveil`, empty).
+- No `/var/lib/synveil` seed, no `/run/synveil`, no `env` file.
+- No unexpected files.
+
+The binary is `synveil-scheduled-maintenance-once` built from
+`crates/api/src/bin/synveil-scheduled-maintenance-once.rs`; tests may use a
+controlled fixture for path/mode mechanics, but the contract references the real
+artifact.
+
+### Idempotent reinstall
+
+Running `install.sh` twice on the same staged root succeeds, does not duplicate,
+does not corrupt modes, does not overwrite `admin-owned` config, and leaves
+`PACKAGE` checksums identical. This is verified by snapshot/hash manifest in
+`linux_install_lifecycle.rs`.
+
+### Upgrade
+
+```
+Version N  →  Version N+1
+  binary/units/sysusers/tmpfiles may change
+  /etc/synveil + /var/lib/synveil + external pools are preserved
+```
+
+Upgrade atomically (per-file) replaces `PACKAGE` files while preserving
+administrator and runtime data. No transactional package-manager semantics are
+claimed at this layer.
+
+### Failed-upgrade recovery
+
+`SYNVEIL_INSTALL_FAIL_AFTER=N` (test-only) simulates failure after N `PACKAGE`
+artifacts. The harness proves:
+
+- `admin config` (`/etc/synveil/*.env`) remains byte-identical;
+- `persistent state` (`/var/lib/synveil/*`) remains untouched;
+- `external user-data` outside package lifecycle remains untouched;
+- `PACKAGE` version may be **partially updated** (already-replaced files stay at
+  new version).
+
+Data preservation is **LOCKED**; package-version rollback is **DEFERRED** to
+distro packaging. See ADR-024.
+
+### Ordinary uninstall
+
+```
+./deploy/install/uninstall.sh --root=/tmp/root   # default
+```
+
+Removes only `PACKAGE` artifacts:
+
+- `/usr/bin/synveil-scheduled-maintenance-once`
+- `/usr/lib/systemd/system/synveil-scheduled-maintenance.service|.timer`
+- `/usr/lib/sysusers.d/synveil.conf`
+- `/usr/lib/tmpfiles.d/synveil.conf`
+- `/usr/share/synveil/*.example`
+
+Preserves:
+
+- `/etc/synveil` and `/etc/synveil/*.env` (admin config)
+- `/var/lib/synveil` (persistent state)
+- external storage pools, backup destinations, object-store roots, home data
+- shared parent directories (`/usr/bin`, `/usr/lib/...`, `/etc`, `/var/lib`)
+- PostgreSQL data and rows
+- `synveil` system account (avoids orphaned UID; reinstall is safe)
+
+Reinstall after ordinary uninstall restores `PACKAGE` files and reuses preserved
+state — the `replace system software without destroying persistent data`
+principle.
+
+### Purge
+
+Separate, destructive, **explicit** flag:
+
+```
+./deploy/install/uninstall.sh --root=/tmp/root --purge
+```
+
+With `--purge`, after removing `PACKAGE` files, it also recursively removes
+`/etc/synveil` and `/var/lib/synveil` after allowlist + lexical containment
+(`realpath -m -s`) + symlink-unlink checks. It still **never** deletes
+external pools, backup destinations, object-store roots, mounted volumes, home
+data, or PostgreSQL. No `purge` is inferred from a plain package-manager
+`uninstall`; the flag is required. The `synveil` account is retained even on
+purge (admin may manually `userdel` after confirming no orphaned files).
+
+### Configuration installation policy
+
+Prompt 77 owns final secret delivery. Fresh install **does not** create a
+working `DATABASE_URL` file (policy **A: no file**). It:
+
+1. Creates `/etc/synveil` (`0750 root:synveil`);
+2. Installs an example template at `/usr/share/synveil/
+   synveil-scheduled-maintenance.env.example` (`0644 root:root`) that contains
+   no credentials (comments + optional non-secret lease setting).
+
+Admin creates the real env via:
+
+```
+sudo install -d -m 0750 -o root -g synveil /etc/synveil
+sudo install -m 0640 -o root -g synveil \
+  /usr/share/synveil/synveil-scheduled-maintenance.env.example \
+  /etc/synveil/synveil-scheduled-maintenance.env
+# edit only non-secret lease tuning; provision DATABASE_URL through the
+# root-owned /etc/synveil/credentials/database-url file
+```
+
+`EnvironmentFile=-/etc/synveil/synveil-scheduled-maintenance.env` (note `-`)
+means the service handles absence gracefully; no placeholder points to
+production or insecure defaults.
+
+### Service user on uninstall
+
+- **Ordinary uninstall**: retains `synveil` account while any Synveil-owned
+  files/state may remain (prevents orphaned ownership ambiguous on reinstall).
+- **Purge**: may be safe to remove `synveil` only after explicit purge and
+  administrator confirmation that no `synveil`-owned files remain. The script
+  does **not** auto-`userdel`; it logs the manual step.
+
+Documented in `uninstall.sh`.
+
+### `systemd` lifecycle ordering (real host, not staged test)
+
+```
+install PACKAGE files
+  → systemd-sysusers               # reads /usr/lib/sysusers.d/synveil.conf
+  → systemd-tmpfiles --create      # creates /var/lib/synveil
+  → systemctl daemon-reload
+  → systemctl enable synveil-scheduled-maintenance.timer  # explicit; not auto-started by package-neutral layer
+```
+
+This layer logs but does not execute those host commands during staged tests.
+Enablement is explicit; installation makes the timer available but does not
+silently start scheduled maintenance.
+
+Uninstall ordering (real host):
+
+```
+systemctl disable --now synveil-scheduled-maintenance.timer
+systemctl stop synveil-scheduled-maintenance.service  # allow bounded completion; don't kill healthy cycle
+<remove PACKAGE via packaging or uninstall.sh --root=/>
+systemctl daemon-reload
+```
+
+### Upgrade while service is active
+
+A bounded one-shot (`CREATED→SNAPSHOT_CAPTURED→EXPIRY_PLANNED→COMPLETED`)
+continues to completion using its already-loaded process image even while
+`/usr/bin/synveil-scheduled-maintenance-once` is atomically replaced. The next
+timer activation uses the new binary. No kill is issued merely to replace the
+executable.
+
+### Path, symlink, and parent safety
+
+- Every helper validates `STAGED_ROOT` is absolute, non-empty, not `/` without
+  `SYNVEIL_ALLOW_HOST_ROOT=1`, no `..` component, not a symlink.
+- Every destination is validated to stay under `STAGED_ROOT` via
+  `realpath -m -s` (lexical) plus parent-dir realpath check (catches
+  `mkdir -p` parent symlink escape).
+- Uninstall unlinks known `PACKAGE` paths without following symlink targets;
+  purge unlinks symlink `CONFIG_DIRECTORY`/`STATE_DIRECTORY` without traversing
+  the target. Tests inject malicious symlinks pointing outside the staged root.
+- No shared parent (`/usr/bin`, `/usr/lib/...`, `/etc`, `/var/lib`) is
+  `rm -rf`'d; only known Synveil leaves are removed.
+
+### Shell safety
+
+`set -euo pipefail`, all paths quoted, no `eval`, no `curl|sh`, no unquoted
+globs, `rm -rf "$full"` always validated and scoped to manifest allowlist.
+Checked via `bash -n` and `linux_install_lifecycle::shell_safety_set_euo…`.
+
+### Tests
+
+`crates/metadata/tests/linux_install_lifecycle.rs` provides 33 focused tests
+covering the 18 required behaviors plus credential lifecycle (fresh/reinstall/
+upgrade/uninstall/purge/symlink/rotation), permission, manifest, shell, and
+database-preservation invariants. All use temporary roots; no `systemctl
+enable`, `useradd`, `chown -R` on host, or `systemd-sysusers/tmpfiles` against
+host root. `crates/api/src/runtime_database_credential.rs` provides 15 unit
+tests for file/ENV precedence, missing/empty/oversized/malformed/trailing-
+newline/dual-source/secret-not-logged cases.
+
+## Linux runtime configuration & secure credential delivery (Prompt 77)
+
+Prompt 77 finalizes the Gen-1 Linux runtime configuration and secret-delivery
+architecture. The transitional `DATABASE_URL` in `EnvironmentFile` is replaced
+for production systemd deployment by `systemd` `LoadCredential=` (least privilege
+without world-readable or `synveil`-readable admin source).
+
+### Architecture
+
+```
+administrator-owned secret source (/etc/synveil/credentials/database-url, root:root 0600)
+        ↓
+systemd LoadCredential=database-url:/etc/synveil/credentials/database-url
+        ↓
+per-service credential directory ($CREDENTIALS_DIRECTORY/database-url, 0400, unswapped, read-only)
+        ↓
+Environment=SYNVEIL_DATABASE_CREDENTIAL_FILE=%d/database-url  (non-secret path)
+        ↓
+one-shot Synveil runtime reads file once (bounded 8 KiB, trims single trailing \n/CRLF)
+        ↓
+DatabaseConfig::from_url(...)  (canonical validation)
+        ↓
+DatabasePool::connect → MigrationRunner → ScheduledMaintenanceCycleRunner (exactly once)
+```
+
+`crates/core` remains free of systemd concepts; `crates/api/src/
+runtime_database_credential.rs` is the narrow runtime-edge helper.
+`LoadCredential`, `CREDENTIALS_DIRECTORY`, `/etc` are not imported into portable
+domain.
+
+### Secret source ownership
+
+| Path | Owner | Mode | Access |
+|---|---|---|---|
+| `/etc/synveil/credentials` | `root:root` | `0700` | `CREDENTIAL_DIRECTORY` in `MANIFEST`; created as skeleton, never seeds secret |
+| `/etc/synveil/credentials/database-url` | `root:root` | `0600` | administrator source; `synveil` has **no direct read** — systemd reads as PID 1 |
+| `/run/credentials/synveil-scheduled-maintenance.service/database-url` or `$CREDENTIALS_DIRECTORY/database-url` | systemd, `root:synveil` effective | `0400` | per-service credential copy; read-only, unswapped, only `synveil` (and root) can read |
+
+World-readable (`0644`/`0666`) is forbidden. `root:synveil 0640` (old transitional)
+is replaced by `root:root 0600/0700` for the actual database secret — stronger
+boundary than the prior `0640` model.
+
+### EnvironmentFile role after Prompt 77
+
+`EnvironmentFile=-/etc/synveil/synveil-scheduled-maintenance.env` remains for
+**non-secret** tuning only:
+
+```
+# non-secret example
+SYNVEIL_SCHEDULED_MAINTENANCE_LEASE_SECONDS=120
+```
+
+It **must not** contain `DATABASE_URL`, password, token, or private key in the
+production example. The service no longer requires `DATABASE_URL` in that file;
+`LoadCredential` is authoritative. The template at
+`deploy/config/synveil-scheduled-maintenance.env.example` contains no
+`DATABASE_URL=postgresql://` line with credentials (only comments and lease
+example), validated via `production_env_example_contains_no_database_url_secret`.
+
+### Config classification
+
+| Class | Examples | Delivery |
+|---|---|---|
+| `NON-SECRET` | lease duration `10..=900`, future cadence tuning, diagnostic level | `EnvironmentFile` (`/etc/synveil/*.env` `0640 root:synveil`) |
+| `SECRET` | `DATABASE_URL` (with password), future encryption/service tokens, private keys | `systemd` `LoadCredential` → `$CREDENTIALS_DIRECTORY` file, or secure secret-file mechanism |
+
+### Rust boundary
+
+The one-shot now does:
+
+```rust
+let database_config = database_config_from_runtime()?; // credential file or DATABASE_URL fallback
+// load_database_url_from_runtime_source() → bounded file read / env fallback → DatabaseConfig::from_url
+let pool = DatabasePool::connect(&database_config).await?;
+```
+
+No duplicated URL parsing; `DatabaseConfig::from_url` remains canonical validator.
+The helper is generic file-based (`load_database_url_from_file`) not systemd-
+deep; `crates/metadata` is not polluted.
+
+### Credential path mechanism
+
+The service sets:
+
+```
+LoadCredential=database-url:/etc/synveil/credentials/database-url
+Environment=SYNVEIL_DATABASE_CREDENTIAL_FILE=%d/database-url
+```
+
+`%d` is the systemd credentials-directory specifier (systemd 261, `man
+systemd.exec` `CREDENTIALS` / `man systemd.unit` `%d`). At runtime it expands
+to `$CREDENTIALS_DIRECTORY` (e.g. `/run/credentials/synveil-scheduled-
+maintenance.service`). The helper prefers `SYNVEIL_DATABASE_CREDENTIAL_FILE`
+explicit path, else `$CREDENTIALS_DIRECTORY/database-url`. This supports both
+the `%d` specifier and direct `$CREDENTIALS_DIRECTORY` use. The secret itself is
+never copied into an environment variable.
+
+### Development / non-systemd compatibility
+
+For developers, tests, manual invocation:
+
+```
+DATABASE_URL=postgresql://dev:dev@127.0.0.1:5432/synveil \
+  cargo run -p synveil-api --bin synveil-scheduled-maintenance-once
+```
+
+remains supported as a **fallback** when no credential file is configured.
+Symmetric for manual file use:
+
+```
+SYNVEIL_DATABASE_CREDENTIAL_FILE=/tmp/my-creds/database-url \
+  cargo run -p synveil-api --bin synveil-scheduled-maintenance-once
+```
+
+### Source precedence
+
+1. Explicitly delivered credential file (`SYNVEIL_DATABASE_CREDENTIAL_FILE` or
+   `$CREDENTIALS_DIRECTORY/database-url`) — authoritative if present
+2. Development fallback `DATABASE_URL` — only if no credential file source is
+   configured
+
+**Do NOT silently combine.** If both a credential file path and `DATABASE_URL`
+are set, the runtime **fails closed** with `database credential is ambiguous:
+both credential file and DATABASE_URL are set; use only one` (no secret in
+message). This is tested via `dual_source_is_ambiguous` and documented as the
+chosen policy **B** (reject ambiguous). `SYNVEIL_DATABASE_CREDENTIAL_FILE`
+empty after trim is treated as not set, allowing fallback; whitespace-only
+credential file fails as empty.
+
+### Missing / empty / oversized / malformed semantics
+
+- **Missing credential** (no file path and no `DATABASE_URL`): `database
+  credential is missing` → non-zero exit before any scheduler tick or worker
+  step, no DB connection, no default `postgres://localhost/default`.
+- **Unreadable file** (`open` fails, directory): `database credential file is
+  unreadable`.
+- **Empty or whitespace-only** (after trimming single trailing `\n`/`\r\n`):
+  `database credential is empty`.
+- **Oversized** (`> 8 KiB`): `database credential exceeds maximum size (8192
+  bytes)` — checked via `metadata.len` fast path and after read.
+- **Malformed URL** (fails `DatabaseConfig::from_url`): `database configuration
+  is invalid: database URL must use the PostgreSQL scheme` etc. No fix-up.
+
+All errors are generic and contain no credential value. Trailing single
+`\n` or `\r\n` is stripped (common for admin-managed secret files); interior
+content is not rewritten; arbitrary spaces are not trimmed.
+
+### Credential file size bound
+
+`MAX_CREDENTIAL_FILE_SIZE = 8 * 1024` (8 KiB). A `DATABASE_URL` is
+typically < 500 bytes even with long hosts; 8 KiB is ample margin without
+streaming complexity. Reported on oversized.
+
+### Secret logging rule
+
+Never logged: `DATABASE_URL`, password, file contents. Allowed diagnostics:
+`source type = systemd credential` vs `environment fallback`, `credential path
+class` is not emitted (path could reveal deployment). Errors are `database
+credential is ...` without value. Verified via `no_secret_logging_in_errors`
+that oversized/malformed errors do not contain `postgresql://`.
+
+Error messages are exactly the strings above; no credential value is
+interpolated.
+
+### systemd unit integration
+
+`deploy/systemd/synveil-scheduled-maintenance.service` now contains:
+
+```
+LoadCredential=database-url:/etc/synveil/credentials/database-url
+Environment=SYNVEIL_DATABASE_CREDENTIAL_FILE=%d/database-url
+EnvironmentFile=-/etc/synveil/synveil-scheduled-maintenance.env
+```
+
+Preserves `Type=oneshot`, `User=synveil`, `Group=synveil`,
+`NoNewPrivileges=yes`, `RuntimeDirectory=synveil`, `Restart=no`,
+`RestrictAddressFamilies`, etc. Validated via `systemd-analyze verify`
+(patched `ExecStart=/usr/bin/true` for isolated syntax check). Credential
+directives parse cleanly on systemd 261.
+
+### Installer manifest integration
+
+`deploy/install/MANIFEST` adds:
+
+```
+-  /etc/synveil/credentials  0700  root  root  CREDENTIAL_DIRECTORY
+```
+
+Package **does not** bundle a secret file. Fresh install creates/decalares
+both `/etc/synveil` (`0750 root:synveil`) and `/etc/synveil/credentials`
+(`0700 root:root`) but never invents `database-url`. `install.sh` handles
+`CREDENTIAL_DIRECTORY` like `CONFIG_DIRECTORY` (mkdir + chmod/chown if root,
+idempotent). Reinstall/upgrade preserve `database-url` byte-identical via
+directory preservation (no file creation). Ordinary uninstall preserves
+`/etc/synveil` and `/etc/synveil/credentials/database-url`; explicit
+`--purge` may remove `/etc/synveil` (including `credentials/*`). Symlink-safe
+(`realpath -m -s` lexical + parent realpath, `rm -f` without follow).
+
+### Credential template
+
+No real secret is shipped. `deploy/config/synveil-scheduled-maintenance.env.
+example` now documents `LoadCredential` and contains no
+`DATABASE_URL=postgres(at)://` functional line (only non-secret lease). If an
+example is needed, instructions are given not an installed secret.
+
+### Fresh install / reinstall / upgrade / uninstall / purge
+
+- **Fresh**: creates `/etc/synveil` + `/etc/synveil/credentials` (correct modes),
+  no `database-url` secret; activation fails safely with missing-credential
+  before DB/migration.
+- **Reinstall**: preserves `credentials/database-url` byte-identical (no overwrite)
+- **Upgrade**: preserves contents + permissions; PACKAGE artifacts may change
+- **Ordinary uninstall**: preserves `/etc/synveil`, `/etc/synveil/credentials`,
+  `database-url`, `/var/lib/synveil` (Prompt 76 contract)
+- **Purge** (`--purge`): may remove `/etc/synveil` including `credentials/*`
+  (explicit, destructive); still never deletes external pools/DB.
+
+Symlink safety extends to `credentials` dir/file (inject malicious symlink to
+external pool, prove uninstall/purge only unlinks, not traverses). Verified via
+`credential_symlink_safety_does_not_follow_external`.
+
+### Secret rotation
+
+Admin atomically replaces secret outside application:
+
+```
+write new secret to adjacent root-owned temp file (0600) + atomic rename
+# e.g. install -m 0600 -o root -g root /tmp/new-url /etc/synveil/credentials/database-url
+```
+
+Next one-shot activation receives new credential via `LoadCredential`. No
+long-running daemon restart, no watcher, no polling. Verified via
+`credential_rotation_atomic_new_invocation_reads_new_secret` (write tmp →
+`chmod 0600` → `rename` → fresh read sees new value).
+
+### systemd-creds evaluation
+
+`LoadCredentialEncrypted=` / `systemd-creds` (encrypted credentials) is a
+**stronger optional future** mechanism. Gen-1 decision: **plain
+`LoadCredential=` is LOCKED**; encrypted credentials are **SUPPORTED
+FUTURE / DEFERRED**. Rationale: systemd 261 supports `LoadCredential` out of the
+box without extra key management; encrypted credentials require a TPM2 or
+provisioned host key and `systemd-creds` tooling not yet in the minimal
+deployment target. No encrypted credential is required for Gen-1. Documented in
+ADR-025 and `DEPLOYMENT.md`.
+
+### Threat model
+
+| Threat | Mitigation | Test |
+|---|---|---|
+| World-readable secret (`0644`) | Source `0600 root:root`, credential dir `0700` | `credential_directory_ownership_contract` |
+| `synveil` reading admin source directly | `synveil` has no read on `/etc/synveil/credentials`; systemd (PID 1) exposes per-service copy `0400` | `runtime_account_isolation` (manifest + doc) |
+| Secret in process environment (`DATABASE_URL`) | Production uses credential file, not env var; `Environment=` only carries non-secret path `%d/...` | `systemd_service_contains_credential_delivery_and_no_secret_env` |
+| Secret printed in logs | Errors are generic, helper never logs URL; `no_secret_logging_in_errors` | `no_secret_logging_in_errors` |
+| Secret overwritten on package upgrade | `CONFIG_DIRECTORY` + `CREDENTIAL_DIRECTORY` preserved, PACKAGE only | `credential_upgrade_preserves_byte_identical` |
+| Secret deleted during ordinary uninstall | Ordinary uninstall preserves `credentials/*` | `credential_ordinary_uninstall_preserves` |
+| Malicious symlink (`credentials` → external) | Install/uninstall use `realpath -m -s` + `rm -f` without follow | `credential_symlink_safety_does_not_follow_external` |
+| Oversized credential file | Bounded 8 KiB, `metadata.len` + post-read check | `oversized_credential_fails` |
+| Empty credential | Fails before DB | `empty_credential_file_fails`, `whitespace_only_credential_fails` |
+| Ambiguous dual source (`file` + `DATABASE_URL`) | Fail closed `AmbiguousConfiguration` | `dual_source_is_ambiguous` |
+| Credential rotation during timer | Next activation picks new file; one-shot is stateless, no cache | `credential_rotation_atomic_new_invocation_reads_new_secret` |
+
+`/proc` / environment note: `EnvironmentFile` secrets are undesirable because
+`proc` filesystem and debugging surfaces may expose environment to privileged
+processes. Systemd credentials are placed in unswapped, read-only memory and
+visible only to `synveil` (and root); root remains trusted administrator. We do
+not claim root cannot see the secret.
+
+### No secret cache
+
+Loaded secret lives only for process lifetime in `DatabaseConfig` private
+`database_url` field (redacted in `Debug`). Not persisted to PostgreSQL,
+`/var/lib/synveil`, cache, worker table, or state file. Verified via
+portable-core audit and `crates/metadata` cache checks.
+
+## Linux systemd sandbox & runtime privilege hardening (Prompt 78)
+
+Prompt 78 hardens the Gen-1 scheduled-maintenance service with the strongest
+practical systemd sandbox proven compatible with the real one-shot runtime.
+Decision: **evidence-validated sandbox, zero Linux capabilities, zero
+writable system paths — LOCKED Gen-1** (ADR-026).
+
+### Runtime requirement inventory (measured, not assumed)
+
+| Requirement | Verdict | Evidence |
+|---|---|---|
+| Filesystem read | executable + libs, `/etc/synveil/*.env`, `$CREDENTIALS_DIRECTORY/database-url`, dynamic loader | gate runs succeed with `ProtectSystem=strict` and no `ReadWritePaths` |
+| Filesystem write | **0 required** | no `ReadWritePaths`; idle/due/work gates exit 0; negative write probes denied |
+| Network | `AF_UNIX` + `AF_INET` + `AF_INET6` | TCP gate runs + Unix-socket support retained; no other family allowed |
+| Devices | **0 required** | `PrivateDevices=yes` + `DevicePolicy=closed`; `/dev/kmsg` probe denied; minimal private `/dev` only |
+| `/proc` | minimal (`sqlx`/`tokio` self-introspection) | `ProtectProc=invisible` + `ProcSubset=pid` gates pass |
+| Linux capabilities | **0 required/granted** | empty bounding + ambient sets; measured `CapEff=0`, `NoNewPrivs=1` |
+| Kernel interfaces | **0 modification** | tunables/modules/logs/cgroups protections; gates pass |
+
+### Accepted sandbox (production unit)
+
+Privilege: `NoNewPrivileges=yes`, `RestrictSUIDSGID=yes`, empty
+`CapabilityBoundingSet=` / `AmbientCapabilities=`. Filesystem:
+`ProtectSystem=strict` (zero writable exceptions — `/var/lib/synveil` stays
+read-only because the database-backed runtime never writes it),
+`ProtectHome=yes`, `PrivateTmp=yes`, `PrivateDevices=yes` +
+`DevicePolicy=closed`, `InaccessiblePaths=/etc/synveil/credentials`,
+`UMask=0077`, `WorkingDirectory=/`, `RuntimeDirectory=synveil` (reserved,
+unused by current runtime). Kernel: `ProtectKernelTunables=yes`,
+`ProtectKernelModules=yes`, `ProtectKernelLogs=yes`,
+`ProtectControlGroups=yes`. Process: `ProtectProc=invisible`,
+`ProcSubset=pid`, `RestrictNamespaces=yes`, `RestrictRealtime=yes`,
+`LockPersonality=yes`. Network:
+`RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6` (IP allow/deny deferred —
+deployments target different DB hosts; no localhost assumption is baked in).
+Execution: `SystemCallArchitectures=native`, `MemoryDenyWriteExecute=yes`,
+`SystemCallFilter=@system-service` minus `@mount` `@raw-io` `@reboot`
+`@swap` `@module` `@debug` `@privileged` `@cpu-emulation` `@obsolete`
+`@resources` with `SystemCallErrorNumber=EPERM`. (`@clock` covers only
+time-setting syscalls; `clock_gettime`/`nanosleep` stay allowed.)
+
+### Rejected / deferred directives (with reason)
+
+- `PrivateUsers=` — **deferred**: persistent `synveil` ownership of
+  `/var/lib/synveil` and `/etc/synveil` interacts poorly with user namespaces.
+- `IPAddressDeny=any` + `IPAddressAllow=` — **deferred**: DB endpoint is a
+  packaging choice, not a unit constant.
+- `ProtectClock=` / `ProtectHostname=` — **deferred**: not required by the
+  mandatory baseline; exposure is already 1.4 OK on systemd 261.2; no score-only churn.
+- `RestrictFileSystems=` — **deferred**: brittle whitelist, no demonstrated
+  benefit for this workload.
+- `PrivateNetwork=yes` — **rejected**: would break PostgreSQL TCP.
+- Any `ReadWritePaths=` under `/var` `/etc` `/usr` `/` — **rejected**: zero
+  writes demonstrated; no hypothetical future permissions granted early.
+- Any Linux capability — **rejected**: measured zero requirement.
+
+### Credential compatibility
+
+Hardening does not weaken Prompt 77: `LoadCredential=` delivery is read by
+PID 1 before sandbox setup; the service reads only
+`$CREDENTIALS_DIRECTORY/database-url` (read-only, per-service). The source
+`/etc/synveil/credentials/database-url` (`root:root 0600`) is additionally
+denied to the runtime via `InaccessiblePaths`. Operational note: systemd
+requires an `InaccessiblePaths` target to exist — a missing credentials
+skeleton fails closed at namespace setup (`226/NAMESPACE`); packaging always
+creates it (`CREDENTIAL_DIRECTORY` in `MANIFEST`).
+
+### Validation (disposable PostgreSQL 17, real systemd-managed execution)
+
+- `systemd-analyze verify` service + timer: PASS.
+- `systemd-analyze security` exposure: **4.5 → 1.4 OK on systemd 261.2** (informational;
+  correctness authoritative).
+- Hardened one-shot idle: exit 0, `tick Idle worker Idle`.
+- Hardened due work: exit 0, one `MaterializedAndHandedOff` + one `Stepped`
+  (`CREATED→SNAPSHOT_CAPTURED`), no sandbox denial.
+- Hardened existing work: exit 0, `tick Idle` + one worker step.
+- Negative probes under identical sandbox: writes to `/usr/bin`, `/etc`,
+  `/run/user` denied; home-sentinel read denied; `/dev/kmsg` denied;
+  `InaccessiblePaths` mechanism denied; private `/dev` minimal;
+  `CapInh/Prm/Eff/Bnd/Amb` all zero, `NoNewPrivs=1`, unprivileged UID.
+- Regressions: Prompt 75 identity, Prompt 76 install lifecycle (33 tests,
+  installed unit byte-identical), Prompt 77 credential (15 tests), all live
+  PG17 suites, Prompt 69 stress (`40P01=0`), 34/34 migrations from empty.
+- Static tests: `crates/metadata/tests/linux_sandbox_hardening_units.rs`.
+
+### Threat model (service-compromise blast radius)
+
+Mitigated: binary/unit replacement, `/etc/synveil` modification, credential
+source theft (DAC `0600` + `InaccessiblePaths`), home inspection, raw-device
+access, kernel module/sysctl/cgroup manipulation, ptrace of unrelated
+processes, dangerous namespaces, setuid escalation, privileged syscalls.
+Remaining trust: root/systemd/package administrator (credentials visible to
+PID 1); no claim against malicious host admin; no container-grade isolation
+claim.
+
+### No product change
+
+Scheduler semantics, misfire policy, maintenance states, worker lease,
+fencing, lock order, one-shot cadence, timer recurrence, credential
+precedence, install lifecycle: all unchanged. Zero migrations, zero routes,
+zero background runtime, zero `crates/core` contamination.
+
 ## Configuration contract
 
 Configuration is typed, versioned and validated before a process becomes

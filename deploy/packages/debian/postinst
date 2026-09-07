@@ -1,0 +1,60 @@
+#!/bin/sh
+# postinst — DEB configure step for synveil (Prompt 79).
+# Safe Gen-1 policy: create account/directories, install units, daemon-reload.
+# DO NOT auto-enable timer, DO NOT auto-start service, DO NOT run maintenance.
+# No network downloads. Idempotent. POSIX sh.
+# SPDX-License-Identifier: MIT
+set -e
+
+log() {
+    printf '[synveil] %s\n' "$*" >&2
+}
+
+log "postinst configure (args: $*)"
+
+# 1. Service account via systemd-sysusers (accepted Prompt 75 contract; never useradd).
+if command -v systemd-sysusers >/dev/null 2>&1; then
+    log "applying sysusers (systemd-sysusers)"
+    systemd-sysusers
+else
+    log "ERROR: systemd-sysusers not found; cannot create synveil account" >&2
+    exit 1
+fi
+
+# 2. Persistent state via tmpfiles (do not duplicate paths manually).
+if command -v systemd-tmpfiles >/dev/null 2>&1; then
+    log "applying tmpfiles (systemd-tmpfiles --create)"
+    systemd-tmpfiles --create
+else
+    log "ERROR: systemd-tmpfiles not found; cannot create /var/lib/synveil" >&2
+    exit 1
+fi
+
+# 2b. Config skeleton ownership via symbolic identity (after sysusers).
+# data.tar stores root:root when built rootless; correct here where the
+# synveil group now exists. Directories only (no recursion into admin files,
+# no secret creation, no numeric UID/GID).
+log "ensuring config skeleton ownership (root:synveil 0750, root:root 0700)"
+mkdir -p /etc/synveil /etc/synveil/credentials
+chown root:synveil /etc/synveil
+chmod 0750 /etc/synveil
+chown root:root /etc/synveil/credentials
+chmod 0700 /etc/synveil/credentials
+
+# 3. systemd daemon-reload where a real manager is running.
+# Offline roots / containers without PID1 systemd skip reload explicitly (not masked).
+if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+    log "reloading systemd manager (daemon-reload)"
+    systemctl daemon-reload
+else
+    log "systemd manager not running (no /run/systemd/system); skipping daemon-reload (offline image build)"
+fi
+
+# 4. Fresh-install activation policy: NEVER auto-enable or auto-start.
+# Credential/database configuration may not exist yet; failing periodic jobs
+# must not start immediately after package installation.
+log "NOT auto-enabling synveil-scheduled-maintenance.timer (explicit administrator enablement required)"
+log "NOT auto-starting synveil-scheduled-maintenance.service (credential configuration required first)"
+log "next steps: provision /etc/synveil/credentials/database-url (root:root 0600), validate, then: systemctl enable --now synveil-scheduled-maintenance.timer"
+
+exit 0

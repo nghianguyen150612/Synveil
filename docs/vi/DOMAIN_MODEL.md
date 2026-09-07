@@ -671,17 +671,21 @@ action.
 
 ## Domain backup
 
-Trạng thái Prompt 67: **durable backup scheduling, occurrence identity,
+Trạng thái Prompt 72: **durable backup scheduling, occurrence identity,
 exactly-once occurrence-to-maintenance handoff, deterministic manual
 single-step scheduler tick, bounded misfire policy an toàn sau restart,
-worker step scheduled-maintenance có fence và cycle scheduler+worker bị chặn
-gọi thủ công đã
-IMPLEMENTED/VALIDATED**. Schedule, occurrence ledger, handoff/skip/claim
-relation cùng tick và worker step là control-plane metadata; handoff tạo
-maintenance run canonical còn worker step advance run tối đa một fenced
-transition cho mỗi lần gọi tường minh. Trạng thái này không ngụ ý
-scheduler daemon, poll loop, retry queue, heartbeat, automatic snapshot capture,
-HTTP route hay UI; scheduled backup không chạy liên tục trong background.
+worker step scheduled-maintenance có fence, cycle scheduler+worker bị chặn
+gọi thủ công, service integration boundary, bất biến thứ tự khóa chuẩn,
+runtime một lần nội bộ và lifecycle ngoài systemd oneshot+timer đã
+IMPLEMENTED/VALIDATED**. Timer ngoài sở hữu recurrence (xấp xỉ mỗi phút,
+`Persistent=true`, `RandomizedDelaySec=10s`); binary một lần sở hữu đúng một
+cycle bị chặn; không có daemon, loop, retry hay bảng lifecycle mới. Schedule,
+occurrence ledger, handoff/skip/claim relation cùng tick và worker step là
+control-plane metadata; handoff tạo maintenance run canonical còn worker step
+advance run tối đa một fenced transition cho mỗi lần gọi tường minh. Trạng
+thái này không ngụ ý scheduler daemon, poll loop, retry queue, heartbeat,
+automatic snapshot capture, HTTP route hay UI; scheduled backup không chạy
+liên tục trong background.
 
 ### `BackupSet`
 

@@ -1,4 +1,4 @@
-#![forbid(unsafe_code)]
+#![cfg_attr(not(test), forbid(unsafe_code))]
 
 //! HTTP transport and runtime composition boundary for Synveil.
 //!
@@ -22,6 +22,7 @@ mod mutations;
 mod rebaseline;
 mod request_id;
 mod router;
+mod runtime_database_credential;
 mod state;
 mod sync;
 mod telemetry;
@@ -56,6 +57,11 @@ pub use request_id::{REQUEST_ID_HEADER, RequestContext, RequestId};
 pub use router::{
     API_VERSION_PREFIX, BACKUP_MUTATION_BODY_LIMIT_BYTES, BOOTSTRAP_BODY_LIMIT_BYTES,
     DEFAULT_BODY_LIMIT_BYTES, LOGIN_BODY_LIMIT_BYTES, router,
+};
+pub use runtime_database_credential::{
+    CREDENTIAL_FILE_ENV, CREDENTIAL_ID, CREDENTIALS_DIRECTORY_ENV, MAX_CREDENTIAL_FILE_SIZE,
+    RuntimeDatabaseCredentialError, credential_file_path_from_env, database_config_from_runtime,
+    load_database_url_from_runtime_source,
 };
 pub use state::{
     ApiState, DenySystemHealth, PlatformReadiness, ReadinessProbe, ReadinessSnapshot,

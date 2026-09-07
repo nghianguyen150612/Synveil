@@ -1,0 +1,56 @@
+#!/bin/sh
+# postrm — DEB post-removal step for synveil (Prompt 79).
+# Data-preserving by design on BOTH remove and purge: native package removal
+# never deletes /var/lib/synveil, /etc/synveil, credentials, or external
+# storage. Explicit destructive cleanup lives in the package-neutral
+# administrative layer (deploy/install/uninstall.sh --purge). POSIX sh.
+# SPDX-License-Identifier: MIT
+set -e
+
+log() {
+    printf '[synveil] %s\n' "$*" >&2
+}
+
+ACTION="${1:-}"
+log "postrm action: $ACTION (args: $*)"
+
+daemon_reload_if_running() {
+    if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+        log "reloading systemd manager (daemon-reload)"
+        systemctl daemon-reload
+    else
+        log "systemd manager not running; skipping daemon-reload (offline removal)"
+    fi
+}
+
+case "$ACTION" in
+    remove|disappear)
+        # Ordinary removal: package-owned artifacts already removed by dpkg.
+        # Reload manager so the removed units cannot linger; preserve all state.
+        daemon_reload_if_running
+        log "ordinary removal complete; preserved: /var/lib/synveil, /etc/synveil, /etc/synveil/credentials/database-url, external storage, PostgreSQL"
+        ;;
+    purge)
+        # Native purge is intentionally data-preserving (parity with RPM erase).
+        # Rationale (ADR-024): DEB purge vs RPM erase have no consistent
+        # destructive parity; inventing divergent destructive behavior would
+        # risk silent user-data loss on `rpm -e`. Destructive cleanup requires
+        # explicit administrator action:
+        #   deploy/install/uninstall.sh --root=/ --purge
+        # which still never deletes external pools or PostgreSQL.
+        daemon_reload_if_running
+        log "purge requested but native purge remains data-preserving by design; /etc/synveil and /var/lib/synveil preserved"
+        log "for explicit destructive cleanup see deploy/install/uninstall.sh --purge (never deletes external storage)"
+        ;;
+    upgrade|failed-upgrade|abort-install|abort-upgrade)
+        # Upgrade path: units replaced, manager must reload; enablement preserved.
+        daemon_reload_if_running
+        log "upgrade postrm complete; timer enablement preserved, no maintenance run triggered"
+        ;;
+    *)
+        log "unknown postrm action: $ACTION; refusing to guess (no state change)" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

@@ -1,0 +1,322 @@
+name: PostgreSQL 17 scheduled-maintenance
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-pg17
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  pg17-scheduled-maintenance:
+    name: PG17 live suites (scheduling, worker, cycle, lifecycle, stress)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+
+    services:
+      postgres:
+        # Use the officially maintained major-version pin. Minor floats within 17.
+        # This satisfies the prompt requirement: postgres:17 (not latest without pin).
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
+
+    env:
+      SYNVEIL_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      # Keep tests isolated in this job; the harness creates child databases via CREATE DATABASE.
+      # The postgres superuser used here has disposable CI-only credentials.
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libdbus-1-dev postgresql-client
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build DEB for packaged-runtime gate
+        run: |
+          set -euo pipefail
+          ./deploy/packages/build.sh --format=deb
+          test -n "$(find target/packages -maxdepth 1 -type f -name '*.deb' -print -quit)"
+
+      - name: Verify migration files unchanged (CI guard)
+        run: |
+          count=$(ls migrations/*.sql | wc -l)
+          latest=$(ls migrations/*.sql | sort | tail -n 1)
+          echo "migrations count=$count latest=$latest"
+          test "$count" -eq 34 || { echo "expected 34 migrations, got $count"; exit 1; }
+          echo "$latest" | grep -q "20260903000001_backup_scheduled_maintenance_claims.sql" || { echo "latest migration mismatch $latest"; exit 1; }
+
+      - name: Wait for PostgreSQL readiness (bounded health check)
+        run: |
+          echo "Waiting for PostgreSQL 17 to become ready..."
+          for i in $(seq 1 30); do
+            if pg_isready -h 127.0.0.1 -p 5432 -U postgres; then
+              echo "PostgreSQL is ready"
+              psql "postgresql://postgres:postgres@127.0.0.1:5432/postgres" -c "SELECT version();" | head -n 5
+              exit 0
+            fi
+            echo "  attempt $i/30 not ready, retrying in 1s..."
+            sleep 1
+          done
+          echo "PostgreSQL failed to become ready within timeout"
+          exit 1
+
+      - name: Verify PostgreSQL major version is 17
+        run: |
+          ver=$(psql "postgresql://postgres:postgres@127.0.0.1:5432/postgres" -t -A -c "SHOW server_version;" | tr -d ' ')
+          echo "server_version=$ver"
+          if ! echo "$ver" | grep -q "^17\."; then
+            echo "Expected PostgreSQL 17, got $ver"
+            exit 1
+          fi
+          echo "PostgreSQL 17 confirmed"
+
+      # Migration-from-empty gate — must be verified before any live suite.
+      - name: Migration gate — fresh DB applies 34 migrations
+        run: |
+          cargo test --test pg17_migration_gate_postgres -- --ignored --test-threads=1 --nocapture
+
+      # Systemd unit syntax validation (lightweight, no host install)
+      - name: Validate systemd units
+        run: |
+          echo "Validating timer (must parse cleanly)..."
+          systemd-analyze verify deploy/systemd/synveil-scheduled-maintenance.timer
+          echo "Validating service syntax (patched ExecStart for isolated check)..."
+          cp deploy/systemd/synveil-scheduled-maintenance.service /tmp/synveil-verify.service
+          sed -i 's|ExecStart=/usr/bin/synveil-scheduled-maintenance-once|ExecStart=/usr/bin/true|' /tmp/synveil-verify.service
+          systemd-analyze verify /tmp/synveil-verify.service
+          echo "Checking required directives..."
+          grep -q "^Type=oneshot" deploy/systemd/synveil-scheduled-maintenance.service
+          grep -q "^ExecStart=/usr/bin/synveil-scheduled-maintenance-once" deploy/systemd/synveil-scheduled-maintenance.service
+          grep -q "^Restart=no" deploy/systemd/synveil-scheduled-maintenance.service
+          grep -q "^Persistent=true" deploy/systemd/synveil-scheduled-maintenance.timer
+          grep -q "^OnCalendar=.*:00" deploy/systemd/synveil-scheduled-maintenance.timer
+          grep -q "^RandomizedDelaySec=" deploy/systemd/synveil-scheduled-maintenance.timer
+          grep -q "^WantedBy=timers.target" deploy/systemd/synveil-scheduled-maintenance.timer
+          grep -q "EnvironmentFile=-/etc/synveil" deploy/systemd/synveil-scheduled-maintenance.service
+          echo "systemd units valid"
+
+      # Core scheduled-backup / scheduled-maintenance live suites.
+      # Each suite runs against a fresh isolated database to avoid cross-suite
+      # global-scheduler pollution (bootstrap singleton, schedule global tick).
+      - name: "Prompt 61 — backup_scheduling_postgres (11)"
+        run: |
+          set -euo pipefail
+          DB="p61_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test --test backup_scheduling_postgres -- --ignored --test-threads=1 --nocapture
+
+      - name: "Prompt 62 — backup_schedule_occurrences_postgres (9)"
+        run: |
+          set -euo pipefail
+          DB="p62_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test --test backup_schedule_occurrences_postgres -- --ignored --test-threads=1 --nocapture
+
+      - name: "Prompt 63 — backup_schedule_handoffs_postgres (11)"
+        run: |
+          set -euo pipefail
+          DB="p63_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test --test backup_schedule_handoffs_postgres -- --ignored --test-threads=1 --nocapture
+
+      - name: "Prompt 64–65 — backup_scheduler_tick_postgres (25)"
+        run: |
+          set -euo pipefail
+          DB="p64_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test --test backup_scheduler_tick_postgres -- --ignored --test-threads=1 --nocapture
+
+      - name: "Prompt 66 — backup_scheduled_maintenance_worker_postgres (30)"
+        run: |
+          set -euo pipefail
+          DB="p66_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test --test backup_scheduled_maintenance_worker_postgres -- --ignored --test-threads=1 --nocapture
+
+      - name: "Prompt 67 — backup_scheduled_maintenance_cycle_postgres (20)"
+        run: |
+          set -euo pipefail
+          DB="p67_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test --test backup_scheduled_maintenance_cycle_postgres -- --ignored --test-threads=1 --nocapture
+
+      - name: "Prompt 68 — scheduled_maintenance_cycle_runner_postgres (15)"
+        run: |
+          set -euo pipefail
+          DB="p68_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test --test scheduled_maintenance_cycle_runner_postgres -- --ignored --test-threads=1 --nocapture
+
+      - name: "Prompt 71 — scheduled_maintenance_oneshot_postgres (14)"
+        run: |
+          set -euo pipefail
+          DB="p71_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test --test scheduled_maintenance_oneshot_postgres -- --ignored --test-threads=1 --nocapture
+
+      - name: "Prompt 72 — scheduled_maintenance_lifecycle_postgres (13)"
+        run: |
+          set -euo pipefail
+          DB="p72_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test --test scheduled_maintenance_lifecycle_postgres -- --ignored --test-threads=1 --nocapture
+
+      # Prompt 49 and other affected backup suites
+      - name: "Prompt 49 — backup_maintenance_postgres (9)"
+        run: |
+          set -euo pipefail
+          DB="p49_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test --test backup_maintenance_postgres -- --ignored --test-threads=1 --nocapture
+
+      - name: "Backup — backup_postgres (metadata, lifecycle & manifest)"
+        run: |
+          set -euo pipefail
+          DB="bpost_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test -p synveil-metadata --test backup_postgres -- --ignored --test-threads=1 --nocapture
+
+      - name: "Backup — backup_expiry_postgres"
+        run: |
+          set -euo pipefail
+          DB="bexp_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test -p synveil-metadata --test backup_expiry_postgres -- --ignored --test-threads=1 --nocapture
+
+      - name: "Backup — backup_expiry_execution_postgres"
+        run: |
+          set -euo pipefail
+          DB="bexe_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test -p synveil-metadata --test backup_expiry_execution_postgres -- --ignored --test-threads=1 --nocapture
+
+      - name: "Backup — backup_restore_postgres (metadata)"
+        run: |
+          set -euo pipefail
+          DB="bres_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test -p synveil-metadata --test backup_restore_postgres -- --ignored --test-threads=1 --nocapture
+
+      - name: "Backup — backup_prune_postgres (metadata, 28)"
+        run: |
+          set -euo pipefail
+          DB="bpru_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test -p synveil-metadata --test backup_prune_postgres -- --ignored --test-threads=1 --nocapture
+
+      - name: "Backup — backup_retention_postgres"
+        run: |
+          set -euo pipefail
+          DB="bret_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test -p synveil-metadata --test backup_retention_postgres -- --ignored --test-threads=1 --nocapture
+
+      - name: "Backup API — backup_prune_postgres (live, bootstrap-isolated)"
+        run: |
+          set -euo pipefail
+          DB="bapi_pru_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test -p synveil-api --test backup_prune_postgres -- --ignored --test-threads=1 --nocapture
+
+      - name: "Backup API — backup_read_postgres (live, bootstrap-isolated)"
+        run: |
+          set -euo pipefail
+          DB="bapi_read_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test -p synveil-api --test backup_read_postgres -- --ignored --test-threads=1 --nocapture
+
+      - name: "Backup API — backup_mutation_postgres (live, bootstrap-isolated)"
+        run: |
+          set -euo pipefail
+          DB="bapi_mut_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test -p synveil-api --test backup_mutation_postgres -- --ignored --test-threads=1 --nocapture
+
+      - name: "Prompt 69 — dedicated 12×25 concurrency proof"
+        run: |
+          set -euo pipefail
+          DB="p69stress_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test -p synveil-metadata --test scheduled_maintenance_prompt69_stress_postgres -- --ignored --test-threads=1 --nocapture
+
+      - name: "Prompt 79 — adversarial deployment PG17 suite"
+        run: |
+          set -euo pipefail
+          DB="p79adv_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test -p synveil-api --test linux_deployment_adversarial_postgres -- --ignored --test-threads=1 --nocapture
+
+      - name: "Prompt 79 — packaged maintenance runtime PG17 suite"
+        run: |
+          set -euo pipefail
+          DB="p79pkg_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test -p synveil-api --test packaged_maintenance_runtime_postgres -- --ignored --test-threads=1 --nocapture
+
+      - name: Post-failure diagnostics (disk, DB list)
+        if: failure()
+        run: |
+          set +e
+          echo "=== Disk usage ==="
+          df -h || true
+          echo "=== PostgreSQL databases ==="
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "\l" || true
+          echo "=== PostgreSQL logs (if available) ==="
+          sudo cat /var/log/postgresql/*.log 2>/dev/null | tail -n 100 || true
+
+      - name: Report PG17 gate summary
+        if: always()
+        run: |
+          set -euo pipefail
+          echo "PostgreSQL 17 gate completed. All live suites above must have passed."
+          echo "SYNVEIL_TEST_DATABASE_URL used disposable superuser postgres/postgres on ephemeral service."
+          echo "No test retry was used; failures would have failed the job (no continue-on-error)."

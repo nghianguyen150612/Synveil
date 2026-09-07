@@ -41,6 +41,10 @@ một tệp để trạng thái và hệ quả không bị lệch giữa hai b�
 | [020](ADR-020-self-hosted-first-remote-access.md) | Self-hosted-first remote access / Remote access ưu tiên self-hosted | Proposed / Đề xuất |
 | [021](ADR-021-safe-update-uninstall-migration.md) | Safe update, uninstall, and migration / Update, uninstall và migration an toàn | Accepted / Chấp thuận |
 | [022](ADR-022-progressive-disclosure-complexity-boundary.md) | Progressive disclosure / Progressive disclosure và ranh giới phức tạp | Accepted / Chấp thuận |
+| [023](ADR-023-linux-service-identity-and-filesystem-ownership.md) | Linux service identity and filesystem ownership / Identity dịch vụ Linux và ownership filesystem | Accepted / Chấp thuận — LOCKED Gen-1 |
+| [024](ADR-024-linux-package-lifecycle-and-data-preserving-uninstall.md) | Linux package lifecycle and data-preserving uninstall / Vòng đời package Linux và uninstall bảo toàn dữ liệu | Accepted / Chấp thuận — LOCKED Gen-1 |
+| [025](ADR-025-linux-runtime-credential-delivery.md) | Linux runtime credential delivery via systemd LoadCredential / Phân phối credential runtime Linux qua systemd LoadCredential | Accepted / Chấp thuận — LOCKED Gen-1 |
+| [026](ADR-026-systemd-sandbox-hardening.md) | Systemd sandbox hardening for scheduled-maintenance service / Vỏ bọc systemd cho dịch vụ bảo trì lên lịch | Accepted / Chấp thuận — LOCKED Gen-1 |
 
 ## Process / Quy trình
 

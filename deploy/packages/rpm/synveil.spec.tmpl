@@ -1,0 +1,134 @@
+Name:           synveil
+Version:        @SYNVEIL_VERSION@
+Release:        @SYNVEIL_RELEASE@%{?dist}
+Summary:        Synveil scheduled backup maintenance runtime (Linux Gen-1)
+License:        MIT
+BuildArch:      @SYNVEIL_ARCH@
+Requires:       systemd, glibc, libgcc
+# Preserve byte-identical release binary (Prompt 79 binary integrity): disable
+# automatic stripping so the packaged binary SHA256 equals the cargo release
+# binary SHA256. The release profile already applies its own optimizations;
+# distro stripping would break hash parity without benefit for a Rust binary.
+%define __strip /bin/true
+# glibc requirement is validated by the dynamic-link audit (ldd) at build time;
+# the Rust release binary needs only the system C library + loader. No
+# PostgreSQL server, Docker, Nginx, or Redis requirement: the one-shot connects
+# to PostgreSQL over TCP/Unix socket and needs no local server package.
+
+%description
+Synveil Gen-1 one-shot scheduled-maintenance runtime with systemd
+timer/service lifecycle, systemd-sysusers/tmpfiles identity, and
+LoadCredential database-credential delivery.
+
+This package contains the release binary, systemd units, sysusers/tmpfiles
+fragments, and a non-secret configuration template. It does NOT contain
+database credentials; the administrator provisions
+/etc/synveil/credentials/database-url (root:root 0600) separately.
+The timer is NOT auto-enabled and the service is NOT auto-started on
+install; enable explicitly after configuring credentials.
+
+Package signing and YUM/DNF repository publishing are deferred to release
+engineering (unsigned CI artifact at this stage).
+
+%install
+# Payload is staged by the package-neutral layer (deploy/install/install.sh
+# reading deploy/install/MANIFEST) so MANIFEST remains the single source of
+# truth. SYNVEIL_STAGED_PAYLOAD is exported by build.sh.
+set -euo pipefail
+staged="%{SYNVEIL_STAGED_PAYLOAD}"
+if [ -z "$staged" ]; then
+  echo "SYNVEIL_STAGED_PAYLOAD is not set (build.sh must export it)" >&2
+  exit 1
+fi
+mkdir -p "%{buildroot}"
+# Copy staged payload (already root-owned/moded by install.sh + build.sh fixup).
+cp -a "$staged"/. "%{buildroot}"/
+
+%files
+%attr(0755,root,root) /usr/bin/synveil-scheduled-maintenance-once
+%attr(0644,root,root) /usr/lib/systemd/system/synveil-scheduled-maintenance.service
+%attr(0644,root,root) /usr/lib/systemd/system/synveil-scheduled-maintenance.timer
+%attr(0644,root,root) /usr/lib/sysusers.d/synveil.conf
+%attr(0644,root,root) /usr/lib/tmpfiles.d/synveil.conf
+%attr(0644,root,root) /usr/share/synveil/synveil-scheduled-maintenance.env.example
+# Config/state skeleton directories (owned by package for creation, contents preserved):
+%dir %attr(0750,root,synveil) /etc/synveil
+%dir %attr(0700,root,root) /etc/synveil/credentials
+
+%post
+# $1 == 1 fresh install, $1 == 2 upgrade. Both: sysusers + tmpfiles +
+# daemon-reload. NEVER auto-enable timer, NEVER auto-start service,
+# NEVER run maintenance. No network. No failure masking.
+set -e
+printf '[synveil] %%post synveil (arg: %s)\n' "$1" >&2
+if command -v systemd-sysusers >/dev/null 2>&1; then
+  printf '[synveil] applying sysusers (systemd-sysusers)\n' >&2
+  systemd-sysusers
+else
+  printf '[synveil] ERROR: systemd-sysusers not found\n' >&2
+  exit 1
+fi
+if command -v systemd-tmpfiles >/dev/null 2>&1; then
+  printf '[synveil] applying tmpfiles (systemd-tmpfiles --create)\n' >&2
+  systemd-tmpfiles --create
+else
+  printf '[synveil] ERROR: systemd-tmpfiles not found\n' >&2
+  exit 1
+fi
+# Config skeleton ownership via symbolic identity (after sysusers).
+# Directories only: no recursion, no secret creation, no numeric UID/GID.
+printf '[synveil] ensuring config skeleton ownership (root:synveil 0750, root:root 0700)\n' >&2
+mkdir -p /etc/synveil /etc/synveil/credentials
+chown root:synveil /etc/synveil
+chmod 0750 /etc/synveil
+chown root:root /etc/synveil/credentials
+chmod 0700 /etc/synveil/credentials
+if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+  printf '[synveil] reloading systemd manager (daemon-reload)\n' >&2
+  systemctl daemon-reload
+else
+  printf '[synveil] systemd manager not running; skipping daemon-reload (offline image build)\n' >&2
+fi
+printf '[synveil] NOT auto-enabling timer; NOT auto-starting service (explicit enablement required after credential provisioning)\n' >&2
+exit 0
+
+%preun
+# $1 == 0 final erase, $1 == 1 upgrade. Only erase disables the timer.
+# Never deletes /var/lib/synveil, /etc/synveil, credentials, or external storage.
+set -e
+printf '[synveil] %%preun synveil (arg: %s)\n' "$1" >&2
+if [ "$1" = "0" ]; then
+  if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+    printf '[synveil] disabling timer (final erase)\n' >&2
+    systemctl disable --now synveil-scheduled-maintenance.timer
+    printf '[synveil] stopping service if active (bounded completion)\n' >&2
+    systemctl stop synveil-scheduled-maintenance.service
+  else
+    printf '[synveil] systemd manager not running; skipping disable/stop (offline erase)\n' >&2
+  fi
+else
+  printf '[synveil] upgrade in progress; preserving timer enablement, not stopping running one-shot\n' >&2
+fi
+exit 0
+
+%postun
+# $1 == 0 final erase, $1 == 1 upgrade. Both reload the manager.
+# Data-preserving in both cases (parity with DEB purge decision).
+set -e
+printf '[synveil] %%postun synveil (arg: %s)\n' "$1" >&2
+if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+  printf '[synveil] reloading systemd manager (daemon-reload)\n' >&2
+  systemctl daemon-reload
+else
+  printf '[synveil] systemd manager not running; skipping daemon-reload (offline)\n' >&2
+fi
+if [ "$1" = "0" ]; then
+  printf '[synveil] erase complete; preserved: /var/lib/synveil, /etc/synveil, credentials, external storage\n' >&2
+else
+  printf '[synveil] upgrade complete; timer enablement preserved, no maintenance run triggered\n' >&2
+fi
+exit 0
+
+%changelog
+* Sun Sep 06 2026 Synveil Project <synveil-dev@example.invalid> - @SYNVEIL_VERSION@-@SYNVEIL_RELEASE@
+- Gen-1 native RPM packaging (Prompt 79). Data-preserving lifecycle. Signing deferred.

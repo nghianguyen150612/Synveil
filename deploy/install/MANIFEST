@@ -1,0 +1,46 @@
+# Synveil package-neutral Linux installation manifest (Prompt 76)
+# Authoritative mapping for Gen-1 scheduled-maintenance deployment.
+# Distribution packaging (.deb/.rpm/etc.) MUST call the package-neutral layer
+# that reads this single manifest; do NOT duplicate destination logic.
+#
+# Format: source_path  destination_path  mode  owner  group  class
+# - source_path: repository-relative path for PACKAGE files, "BINARY" for the
+#   compiled synveil-scheduled-maintenance-once artifact, or "-" for
+#   directories/state that have no source file.
+# - destination_path: absolute installed path (prepend DESTDIR/--root at install time).
+# - mode: octal file/directory mode.
+# - owner/group: intended ownership per Prompt 75 contract.
+# - class: lifecycle classification.
+#
+# Classes:
+#   PACKAGE            - root-owned immutable payload; replaced on upgrade, removed on uninstall.
+#   CONFIG_DIRECTORY   - administrator-owned config container; preserved on upgrade/uninstall; purge only with explicit flag.
+#   STATE_DIRECTORY    - persistent application state; created by tmpfiles.d / runtime, NOT by package payload seeding; preserved.
+#   RUNTIME_MANAGED    - ephemeral RuntimeDirectory= lifecycle; not created by package install payload.
+#   TEMPLATE           - alias for PACKAGE but documents that file is an example/template under /usr/share; never overwrites /etc.
+#
+# Contract preserves Prompt 75 ownership/modes and ADR-023.
+# See deploy/README.md, docs/en/DEPLOYMENT.md, and ADR-024 for interpretation.
+
+# PACKAGE-owned executables and units (root:root, non-writable by synveil runtime)
+BINARY  /usr/bin/synveil-scheduled-maintenance-once  0755  root  root  PACKAGE
+deploy/systemd/synveil-scheduled-maintenance.service  /usr/lib/systemd/system/synveil-scheduled-maintenance.service  0644  root  root  PACKAGE
+deploy/systemd/synveil-scheduled-maintenance.timer  /usr/lib/systemd/system/synveil-scheduled-maintenance.timer  0644  root  root  PACKAGE
+deploy/sysusers.d/synveil.conf  /usr/lib/sysusers.d/synveil.conf  0644  root  root  PACKAGE
+deploy/tmpfiles.d/synveil.conf  /usr/lib/tmpfiles.d/synveil.conf  0644  root  root  PACKAGE
+
+# PACKAGE-owned template/example (immutable default, not administrator /etc file)
+deploy/config/synveil-scheduled-maintenance.env.example  /usr/share/synveil/synveil-scheduled-maintenance.env.example  0644  root  root  PACKAGE
+
+# CONFIG_DIRECTORY — created by package install skeleton with restricted mode, never overwritten with working credentials
+-  /etc/synveil  0750  root  synveil  CONFIG_DIRECTORY
+
+# CREDENTIAL_DIRECTORY — administrator-owned secret source, not readable by synveil directly
+# systemd LoadCredential exposes per-service copy; fresh install declares directory but never creates a secret file
+-  /etc/synveil/credentials  0700  root  root  CREDENTIAL_DIRECTORY
+
+# STATE_DIRECTORY — persistent non-secret state; created by tmpfiles.d (not seeded by package payload); preserved across lifecycle
+-  /var/lib/synveil  0750  synveil  synveil  STATE_DIRECTORY
+
+# RUNTIME_MANAGED — ephemeral per-activation via RuntimeDirectory=synveil; lifecycle tied to unit, not tmpfiles
+-  /run/synveil  0750  synveil  synveil  RUNTIME_MANAGED

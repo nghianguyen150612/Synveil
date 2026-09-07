@@ -363,11 +363,34 @@ fn key() -> String {
     uuid::Uuid::now_v7().hyphenated().to_string()
 }
 
-#[tokio::test]
-#[ignore = "set SYNVEIL_TEST_DATABASE_URL to a fresh disposable PostgreSQL 17 database"]
-async fn postgres_backup_mutations_are_secure_idempotent_and_orchestration_safe() {
-    let url = std::env::var("SYNVEIL_TEST_DATABASE_URL")
-        .expect("SYNVEIL_TEST_DATABASE_URL must identify a fresh PostgreSQL database");
+async fn isolated_pool(label: &str) -> (Arc<DatabasePool>, PgPool) {
+    let base = std::env::var("SYNVEIL_TEST_DATABASE_URL")
+        .expect("SYNVEIL_TEST_DATABASE_URL must identify a fresh disposable PostgreSQL database");
+    let db_name = format!(
+        "p52_{}_{}",
+        label
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            })
+            .collect::<String>(),
+        uuid::Uuid::now_v7().simple()
+    );
+    let maintenance = PgPool::connect(&base)
+        .await
+        .expect("maintenance connection must succeed");
+    sqlx::query(&format!("CREATE DATABASE \"{db_name}\""))
+        .execute(&maintenance)
+        .await
+        .expect("isolated test database must be created");
+    maintenance.close().await;
+    let url = if let Some((prefix, _)) = base.rsplit_once('/') {
+        format!("{prefix}/{db_name}")
+    } else {
+        panic!("test database URL must contain a database path");
+    };
     let config = DatabaseConfig::from_url(&url).expect("test URL must use PostgreSQL");
     let pool = Arc::new(
         DatabasePool::connect(&config)
@@ -383,6 +406,13 @@ async fn postgres_backup_mutations_are_secure_idempotent_and_orchestration_safe(
     let audit_pool = PgPool::connect(&url)
         .await
         .expect("audit connection must succeed");
+    (pool, audit_pool)
+}
+
+#[tokio::test]
+#[ignore = "set SYNVEIL_TEST_DATABASE_URL to a fresh disposable PostgreSQL 17 database"]
+async fn postgres_backup_mutations_are_secure_idempotent_and_orchestration_safe() {
+    let (pool, audit_pool) = isolated_pool("mutations").await;
 
     let csrf_key = CsrfKey::from_bytes([0x52; 32]);
     let login = format!("prompt52-{}", uuid::Uuid::now_v7());
@@ -1321,4 +1351,5 @@ async fn postgres_backup_mutations_are_secure_idempotent_and_orchestration_safe(
         final_counts["device_sync_checkpoints"],
         before_invalid["device_sync_checkpoints"]
     );
+    audit_pool.close().await;
 }

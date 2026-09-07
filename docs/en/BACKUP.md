@@ -3,9 +3,11 @@
 Status: **durable backup scheduling, occurrence identity, exactly-once
 scheduled-maintenance handoff, deterministic manual scheduler tick,
 bounded restart-safe misfire policy, fenced scheduled-maintenance worker
-step, manually invoked bounded scheduler+worker cycle, and service
-integration boundary IMPLEMENTED/VALIDATED; snapshot, capture, restore,
-and automatic execution remain PLANNED normative blueprint**
+step, manually invoked bounded scheduler+worker cycle, service
+integration boundary, canonical lock ordering, internal one-shot
+runtime, and external systemd oneshot+timer lifecycle IMPLEMENTED/VALIDATED;
+snapshot, capture, restore, and automatic execution remain PLANNED
+normative blueprint**
 
 This document specifies device-to-Synveil backup, immutable backup snapshots,
 retention, recovery workflows, and instance disaster recovery. It follows
@@ -309,6 +311,347 @@ worker execution, worker failure preserves scheduler durable commits, and
 the database remains the durable source of truth. The runner adds no daemon,
 polling loop, sleep, timer, heartbeat, lease renewal, retry/backoff, API
 endpoint, UI, SSE, or background task.
+
+### Internal one-shot scheduled-maintenance runtime (Prompt 71)
+
+`synveil-scheduled-maintenance-once` (`crates/api/src/bin/synveil-scheduled-maintenance-once.rs`)
+is the internal, explicitly operator-triggered one-shot process boundary for
+scheduled backup maintenance. It is not a daemon, not a polling loop, not a
+timer, not a cron, and not an HTTP API.
+
+**Process:** `load runtime config → connect DatabasePool → MigrationRunner
+→ ScheduledMaintenanceCycleRunner::new(pool) → Timestamp::now_utc() once
+→ run_one_scheduled_backup_maintenance_cycle(observed_at_utc, lease_seconds)
+→ structured log → close pool → exit`.
+
+One process execution invokes exactly one canonical `ScheduledMaintenanceCycleRunner`
+cycle, which itself performs at most one scheduler tick plus at most one
+worker step and at most one semantic `BackupMaintenanceRun` transition
+(`CREATED → SNAPSHOT_CAPTURED → EXPIRY_PLANNED → COMPLETED`). The process then
+exits; it never loops.
+
+**Clock:** The runtime obtains `observed_at_utc` exactly once at the outer edge
+via `Timestamp::now_utc()` and injects it; scheduler/runner internals never
+read the wall clock. This preserves Prompt 67–68 explicit-time injection.
+
+**Lease:** `SYNVEIL_SCHEDULED_MAINTENANCE_LEASE_SECONDS` (optional, default 120)
+is validated against canonical bounds 10..=900 without clamping. Out-of-range
+or non-numeric values are rejected before any cycle begins with a clear
+diagnostic and non-zero exit; no partial worker execution occurs.
+
+**Database:** Reuses canonical `DatabaseConfig` (`DATABASE_URL`) and
+`MigrationRunner`. No second bootstrap path, no credential logging, no secret
+exposure.
+
+**Result:** The typed `ScheduledMaintenanceCycleResult` is preserved internally
+(tick: `Idle`/`SkippedExpired`/`HandedOffExisting`/`MaterializedAndHandedOff`;
+worker: `Idle`/`Stepped`). Structured tracing logs `tick`, `worker`,
+`is_idle`, `observed_at_utc`, `lease_seconds` without leaking physical
+identities (`ObjectId`, storage keys, etc.). Worker ID remains internal.
+
+**Exit codes:** `0` for any successful cycle including `Idle` and
+`SkippedExpired` (both canonical scheduler successes); non-zero for invalid
+config, database/migration failure, scheduler failure (worker not executed),
+or worker failure (including `LeaseLost`; scheduler writes remain committed).
+Idle is not an error.
+
+**Boundedness:** The production runtime contains no `loop`, `while`, `for`
+repetition, `tokio::interval`, `sleep`, `spawn` for cycle execution,
+`heartbeat`, `renewal`, `retry`, `backoff`, `cron`, `timer`, `run_forever`,
+or `leader election` around the cycle. One invocation never performs
+`CREATED → COMPLETED` in one call; four separate explicit invocations are
+required to drain a run.
+
+**Failure:** No automatic retry, no sleep-then-retry, no deadlock retry.
+A bounded failure is logged, resources are closed, and the process exits
+non-zero. A future external service (e.g., `systemd` timer) may invoke the
+process again; recovery relies on Prompt 66 durable fencing and the database
+as source of truth, not in-memory state. Manual Prompt 49 runs remain
+invisible to the scheduled worker path; a committed handoff remains
+execution authority after schedule disable or policy edit.
+
+**Invocation:**
+
+```sh
+DATABASE_URL=postgresql://postgres@127.0.0.1:5432/synveil \
+  cargo run -p synveil-api --bin synveil-scheduled-maintenance-once
+
+# with explicit lease (optional)
+SYNVEIL_SCHEDULED_MAINTENANCE_LEASE_SECONDS=120 \
+  DATABASE_URL=... cargo run -p synveil-api --bin synveil-scheduled-maintenance-once
+```
+
+Suitable for manual operator invocation or future `systemd` timer/service
+that invokes the process again externally. This binary is internal and
+operator-facing only: no HTTP route, OpenAPI, SSE, WebSocket, frontend,
+or client SDK changes.
+
+### External lifecycle and systemd cadence (Prompt 72)
+
+Prompt 72 wires the Prompt 71 one-shot runtime into an operating-system
+service-manager model **without turning Synveil's runtime itself into a
+daemon**. The architecture remains:
+
+```text
+systemd timer (recurrence)
+      ↓
+systemd oneshot service (Type=oneshot)
+      ↓
+synveil-scheduled-maintenance-once (one bounded cycle)
+      ↓
+exactly one ScheduledMaintenanceCycleRunner::run_one_scheduled_backup_maintenance_cycle
+      ↓
+structured result → pool.close() → exit
+```
+
+The timer owns recurrence; Synveil owns one bounded execution. A subsequent
+timer activation is a new externally scheduled bounded attempt, not an
+internal retry or lease renewal.
+
+**Repository locations:**
+
+- `deploy/systemd/synveil-scheduled-maintenance.service` — source unit
+- `deploy/systemd/synveil-scheduled-maintenance.timer` — source unit
+- Packaged installation (when produced): `/usr/lib/systemd/system/` or
+  distribution-equivalent; repository source must not be copied directly to
+  `/etc/systemd/system` during tests.
+
+**Service unit (`synveil-scheduled-maintenance.service`):**
+
+- `Type=oneshot`, `ExecStart=/usr/bin/synveil-scheduled-maintenance-once` —
+  the canonical Prompt 71 binary, not shell-wrapped, no second maintenance
+  executable.
+- `EnvironmentFile=-/etc/synveil/synveil-scheduled-maintenance.env` —
+  repository-standard file mechanism for optional non-secret
+  `SYNVEIL_SCHEDULED_MAINTENANCE_LEASE_SECONDS` tuning (default 120, bounded
+  10..=900). The required `DATABASE_URL` is delivered through Prompt 77
+  `LoadCredential`, not this file; no credentials are hardcoded in the unit.
+- `Restart=no` — systemd records a non-zero exit; that invocation ends.
+  Tight automatic restart loops are forbidden (`Restart=always` is not used).
+  A later timer firing is a new lifecycle invocation.
+- `TimeoutStartSec=300` — conservative 5-minute bound, deliberately longer
+  than the default `TimeoutStartSec` (90 s) and the default lease (120 s)
+  but below the maximum lease (900 s) and safely longer than the expected
+  bounded cycle (snapshot capture / expiry planning / expiry execution each
+  complete well under a minute in normal operation). Abrupt termination
+  remains recoverable through Prompt 66 durable claim/lease fencing; the
+  value may be raised per-site if measured bounded execution requires it,
+  or the deferred-decision default may be used with documentation.
+- Service account (Prompt 75): the one-shot executes as the persistent
+  system identity `User=synveil` `Group=synveil` (auto-allocated UID/GID via
+  `deploy/sysusers.d/synveil.conf`, shell `/usr/sbin/nologin`, home
+  `/var/lib/synveil`, no supplementary groups). It requires only PostgreSQL
+  connectivity via TCP or `AF_UNIX`; it MUST NOT run as `root`. Packaging
+  creates the account with `systemd-sysusers` at install time — the one-shot
+  binary itself never creates users, never needs `CAP_*`, and never requires
+  UID 0 for its database-only path. `RuntimeDirectory=synveil` (0750) owns
+  `/run/synveil` per-activation; see `DEPLOYMENT.md` for the full
+  `DynamicUser=no` rationale, UID/GID policy, and filesystem ownership
+  contract.
+- Hardening (Prompt 78, evidence-driven, LOCKED Gen-1): `NoNewPrivileges=yes`,
+  `RestrictSUIDSGID=yes`, empty `CapabilityBoundingSet=`/`AmbientCapabilities=`
+  (zero Linux capabilities), `ProtectSystem=strict` with zero writable
+  exceptions, `ProtectHome=yes`, `PrivateTmp=yes`, `PrivateDevices=yes` +
+  `DevicePolicy=closed`, `InaccessiblePaths=/etc/synveil/credentials`,
+  `ProtectKernelTunables=yes`, `ProtectKernelModules=yes`,
+  `ProtectKernelLogs=yes`, `ProtectControlGroups=yes`,
+  `ProtectProc=invisible` + `ProcSubset=pid`, `RestrictNamespaces=yes`,
+  `RestrictRealtime=yes`, `LockPersonality=yes`,
+  `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6` (Unix socket + TCP, no
+  `PrivateNetwork`), `SystemCallArchitectures=native`,
+  `MemoryDenyWriteExecute=yes`, `SystemCallFilter=@system-service` minus
+  dangerous classes (`@mount`, `@raw-io`, `@reboot`, `@swap`, `@module`,
+  `@debug`, `@privileged`, `@cpu-emulation`, `@obsolete`, `@resources`),
+  `UMask=0077`, `WorkingDirectory=/`. Proven compatible by executing the real
+  one-shot binary under the identical sandbox against PostgreSQL 17 (idle,
+  due-work, and existing-work gates, all exit 0) plus negative probes; see
+  `DEPLOYMENT.md` § “Linux systemd sandbox & runtime privilege hardening
+  (Prompt 78)”, ADR-026, and
+  `crates/metadata/tests/linux_sandbox_hardening_units.rs`.
+  `systemd-analyze security` exposure improved 4.5 → 1.4 OK on systemd 261.2 (informational;
+  functional correctness is authoritative).
+- Logging to the journal (`StandardOutput=journal`,
+  `StandardError=journal`); structured fields `tick`, `worker`, `is_idle`,
+  `observed_at_utc`, `lease_seconds` are logged without leaking physical
+  identities.
+
+**Timer unit (`synveil-scheduled-maintenance.timer`):**
+
+- Conservative default cadence: **approximately once per minute**
+  (`OnCalendar=*:*:00`, `AccuracySec=1s`). One activation performs at most
+  one scheduler tick + one worker step + one semantic transition
+  (`CREATED → SNAPSHOT_CAPTURED → EXPIRY_PLANNED → COMPLETED`), so a full
+  run drains in three separate activations (~3 min). The interval was chosen
+  after inspecting `DEFAULT_BACKUP_SCHEDULE_MAX_LATENESS_SECONDS=604800`
+  (7 days, minimum 60 s) and the one-transition-per-cycle bound: a 60-second
+  poll detects a due occurrence within at most one minimum lateness window
+  without tight looping, while remaining independent of both the lease
+  duration and user backup schedule recurrence.
+- `Persistent=true` — if the host was off during one or more activations,
+  systemd invokes the service **once** after boot; the scheduler's durable
+  misfire policy (`LATEST_ONLY` / `REPLAY_ONE_BY_ONE` / `SKIPPED_EXPIRED`)
+  resolves backlog, not systemd replay. No hundreds of invocations are
+  synthesized after extended downtime.
+- `RandomizedDelaySec=10s` — bounded systemd-native jitter to avoid
+  fleet-wide thundering herds at the same wall-clock second. 10 s is small
+  relative to the 60-second minimum lateness and the 604800-second default,
+  so correctness is preserved (due evaluation uses durable timestamps, not
+  arrival second). No `sleep`/`random` was added inside the Rust binary.
+- `WantedBy=timers.target`; `Unit=synveil-scheduled-maintenance.service`.
+
+**Cadence vs. backup recurrence:**
+
+The timer interval is **not** backup schedule frequency. Users configure
+`BackupSchedule` recurrence (`DAILY`/`WEEKLY`, local `HH:MM`, `LATEST_ONLY`
+/ `REPLAY_ONE_BY_ONE`, bounded lateness) independently. The timer merely
+asks “is there bounded scheduled work to perform now?” every minute.
+
+**Overlap, startup, failure, and lease relationship:**
+
+- Overlap: two activations may overlap (previous still running, manual
+  `systemctl start` plus timer firing, multiple callers). Correctness
+  continues to rely on Prompt 66 durable claims / lease generation /
+  fencing and Prompt 69 canonical lock ordering. No process-local `Mutex`,
+  advisory lock, or `LOCK TABLE` is used. Systemd's natural same-unit
+  activation serialization is **not** trusted for DB correctness; 12
+  concurrent independent processes still converge with `SQLSTATE 40P01=0`.
+- Startup: `timer` is enabled; `Persistent` evaluates missed activation;
+  one bounded cycle runs when appropriate; normal cadence resumes. API
+  server startup does **not** synchronously block on scheduled maintenance
+  and does **not** invoke the cycle from `ApiState` construction.
+- Failure: non-zero exit is recorded by systemd; that invocation ends; no
+  internal retry/backoff/heartbeat/renewal. The next timer firing is a
+  fresh attempt.
+- Lease: default 120 s, 10..=900 s — independent of the 60 s timer
+  interval; the timer is not derived from lease expiry.
+- Long invocation: a healthy bounded cycle that exceeds one timer interval
+  continues to completion; no in-process second cycle starts; the next
+  lifecycle behavior follows service-manager semantics and durable fencing.
+- API/UI: `HTTP route additions=0`, `OpenAPI=0`, `SSE=0`, `WebSocket=0`,
+  frontend/mobile changes=0. Linux systemd integration is deployment
+  infrastructure and stays outside `crates/core` and portable domain APIs;
+  no `systemctl` invocation appears in business logic.
+
+**Operator enablement (once packaged):**
+
+```sh
+# install units to /usr/lib/systemd/system (packaging does this)
+# Prompt 77: secret delivery uses systemd LoadCredential=, not EnvironmentFile.
+# The DATABASE_URL is NEVER in the EnvironmentFile in production.
+# 1. (optional) non-secret runtime tuning
+sudo install -m 0640 -o root -g synveil /dev/stdin /etc/synveil/synveil-scheduled-maintenance.env <<'EOF'
+# non-secret lease tuning only; no DATABASE_URL
+SYNVEIL_SCHEDULED_MAINTENANCE_LEASE_SECONDS=120
+EOF
+# 2. database credential via systemd-credentials (admin source, root-only)
+sudo install -d -m 0700 -o root -g root /etc/synveil/credentials
+sudo install -m 0600 -o root -g root /dev/stdin /etc/synveil/credentials/database-url <<'EOF'
+postgresql://synveil:***@127.0.0.1:5432/synveil
+EOF
+sudo systemctl daemon-reload
+sudo systemctl enable --now synveil-scheduled-maintenance.timer
+systemctl status synveil-scheduled-maintenance.timer
+journalctl -u synveil-scheduled-maintenance.service -f
+
+# ad-hoc one-shot (without timer)
+sudo systemctl start synveil-scheduled-maintenance.service
+# or directly, using the dev fallback (no credential file configured)
+DATABASE_URL=postgresql://dev@127.0.0.1:5432/synveil /usr/bin/synveil-scheduled-maintenance-once
+# or with explicit credential file (no DATABASE_URL):
+SYNVEIL_DATABASE_CREDENTIAL_FILE=/etc/synveil/credentials/database-url \
+  /usr/bin/synveil-scheduled-maintenance-once
+
+# disable
+sudo systemctl disable --now synveil-scheduled-maintenance.timer
+```
+
+Tests validate unit syntax via `systemd-analyze verify` on temporary copies
+(no host `/etc/systemd/system` mutation), static assertions for `Type`,
+`ExecStart`, `User=synveil`/`Group=synveil`, `RuntimeDirectory`,
+`NoNewPrivileges`/`ProtectSystem`, cadence, `Persistent`,
+`RandomizedDelaySec`, `Restart`, `EnvironmentFile`, install targets, plus
+`systemd-sysusers --dry-run` and `systemd-tmpfiles --dry-run` without mutating
+`/etc/passwd`/`/etc/group`/`/var/lib/synveil`, and live PostgreSQL probes for
+repeated activations, misfire policies after downtime, concurrency (12
+callers), and restart recovery — all `40P01=0` without retry. Rootless
+business execution has no UID 0 dependency. No GUI control, no cross-platform
+service manager, no heartbeat, no daemon, no leader election, no
+retry/backoff is claimed.
+
+### Linux service identity and filesystem ownership foundation (Prompt 75)
+
+Prompt 75 replaces the intentional Prompt 72 `User=` deferral with a locked
+Gen-1 identity/ownership contract.
+
+**Decision (LOCKED):** persistent system account `synveil` / group `synveil`
+via `systemd-sysusers` (`deploy/sysusers.d/synveil.conf`), executed as
+`User=synveil` `Group=synveil` in `synveil-scheduled-maintenance.service`
+(and future first-party Synveil services). See `DEPLOYMENT.md`.
+
+**Alternatives considered and rejected:**
+
+| Alternative | Reason rejected |
+|---|---|
+| `root` runtime | Violates least privilege; service never needs to modify its own binary, units, or host. Package install remains `root`, runtime is unprivileged. |
+| `DynamicUser=yes` | **Rejected** — transient UID cannot provide stable ownership of `/var/lib/synveil`, `/etc/synveil` read access, or future object-store/data paths; hides state under `/var/lib/private`/`/run/private` via id-mapped mounts, breaks admin-visible ownership, and prevents multiple services sharing one identity. Suitable only for stateless ephemeral services, not Synveil. |
+| Per-service accounts (`synveil-api`, `synveil-maintenance`, `synveil-gc`) | Deferred — today all first-party services share a trusted backend/data boundary; separate identities would not materially improve least privilege. Documented as future option if capability separation emerges. |
+| Interactive user account | Rejected — no login shell, no home `/home/*`, no `sudo`/`wheel`/`docker`/`disk`/`adm`/`root` groups, no browsing of host. |
+
+**Account properties:** system account, auto-allocated UID/GID (`-` in
+sysusers, no hardcoded numeric value), `GECOS="Synveil service account"`,
+home `/var/lib/synveil` (stable state location, not interactive), shell
+`/usr/sbin/nologin` (or default `nologin` equivalent), fully locked
+(invalid password). No supplementary groups. Stable across reboots; created
+by packaging (`systemd-sysusers`), never by application runtime; not persisted
+to a `service_users` table — Linux identity is deployment identity, not
+domain identity.
+
+**UID/GID policy:** allow `sysusers`/packaging to allocate a system UID/GID.
+No fixed numeric UID is assumed cross-machine. Future appliance images may
+reserve a fixed identity via image construction if required; Gen-1 explicitly
+documents the non-assumption.
+
+**Filesystem ownership contract (authoritative — see also `deploy/README.md`):**
+
+| Path | Ownership | Mode | Manager | Runtime access |
+|---|---|---|---|---|
+| `/usr/bin/synveil-scheduled-maintenance-once` (and future `synveil-*`) | `root:root` | `0755` | package (root) | `synveil` reads/execs, **cannot write** own binary |
+| `/usr/lib/systemd/system/synveil-*.service`, `*.timer` | `root:root` | `0644` | package | not writable by `synveil` |
+| `/usr/lib/sysusers.d/synveil.conf`, `/usr/lib/tmpfiles.d/synveil.conf` | `root:root` | `0644` | package | not writable |
+| `/etc/synveil` | `root:synveil` | `0750` | package | `synveil` reads required config, traverses; cannot freely rewrite admin config |
+| `/etc/synveil/synveil-scheduled-maintenance.env` | `root:synveil` | `0640` | admin/package | `synveil` reads optional non-secret lease tuning via `EnvironmentFile`; `DATABASE_URL` is delivered via Prompt 77 `LoadCredential` |
+| `/var/lib/synveil` | `synveil:synveil` | `0750` | `tmpfiles.d` (`d` line) | persistent non-secret runtime state; empty today is acceptable, not in `/usr`/`/etc`/home |
+| `/run/synveil` | `synveil:synveil` | `0750` | `RuntimeDirectory=synveil` | ephemeral per-activation, lifecycle-tied cleanup |
+| `/var/log/synveil` | — | — | — | **not created** — journald is authoritative |
+
+Object-store / user storage roots follow the storage architecture; Prompt 75
+does **not** recursively `chown` arbitrary user pools to `synveil`.
+
+**Creation mechanisms:**
+
+- `deploy/sysusers.d/synveil.conf` — `systemd-sysusers` declarative source
+  (installed to `/usr/lib/sysusers.d/`). Validated with `systemd-sysusers
+  --dry-run --root=/tmp/root` and `systemd-sysusers --cat-config` in tests,
+  never mutating the host account database.
+- `deploy/tmpfiles.d/synveil.conf` — `d /var/lib/synveil 0750 synveil synveil`.
+  Validated with `systemd-tmpfiles --dry-run --create --root=/tmp/root` or
+  `--cat-config`; `/run/synveil` is **not** duplicated there.
+- `RuntimeDirectory=synveil` in the service unit owns `/run/synveil`.
+- `StateDirectory=` intentionally **not** used — `tmpfiles.d` remains the
+  single authoritative host-level manager for `/var/lib/synveil` so that
+  multiple future services can share it without per-service conflicting
+  managers.
+
+**Privilege boundary:** install/upgrade (`systemd-sysusers`, `systemd-tmpfiles
+--create`, `install -m 0640` for non-secret env tuning, `install -m 0600` for the
+root-owned credential source, `daemon-reload`, `systemctl
+enable`) is `root`; one-shot runtime (`DynamicPool` → cycle) is `synveil` and
+never creates users, `chown`s, modifies units, invokes `systemctl`, or
+escalates. Database connectivity remains `DATABASE_URL`-configured (TCP or
+`AF_UNIX`) — no `peer` authentication tied to the Unix username is assumed.
+
+**Portability:** Linux username/UID/GID/systemd remain outside `crates/core`
+and portable Synveil Server APIs. No domain type gains a Unix identity field.
 
 ### Canonical scheduled-maintenance lock-order invariant (Prompt 69)
 

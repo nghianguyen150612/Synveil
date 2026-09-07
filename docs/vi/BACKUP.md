@@ -2,10 +2,11 @@
 
 Trạng thái: **durable backup scheduling, occurrence identity, exactly-once
 scheduled-maintenance handoff, deterministic manual scheduler tick, bounded
-misfire policy an toàn sau restart, worker step
-scheduled-maintenance có fence và cycle scheduler+worker bị chặn gọi thủ công đã
-IMPLEMENTED/VALIDATED; snapshot, capture, restore và automatic execution vẫn
-là blueprint quy chuẩn PLANNED**
+misfire policy an toàn sau restart, worker step scheduled-maintenance có fence,
+cycle scheduler+worker bị chặn gọi thủ công, service integration boundary,
+bất biến thứ tự khóa chuẩn, runtime một lần nội bộ và lifecycle ngoài
+systemd oneshot+timer IMPLEMENTED/VALIDATED; snapshot, capture, restore và
+automatic execution vẫn là blueprint quy chuẩn PLANNED**
 
 Tài liệu này đặc tả backup từ thiết bị vào Synveil, backup snapshot bất biến,
 retention, workflow recovery và disaster recovery cho instance. Tài liệu tuân
@@ -261,6 +262,271 @@ ba lần gọi thủ công riêng biệt. Không có daemon, polling loop, sleep
 heartbeat, lease renewal, retry/backoff loop, API endpoint, UI, SSE hay
 background task; caller gọi cycle thủ công và database vẫn là durable source
 of truth. Không có migration hay cycle table mới.
+
+### Runtime một lần nội bộ cho scheduled-maintenance (Prompt 71)
+
+`synveil-scheduled-maintenance-once` (`crates/api/src/bin/synveil-scheduled-maintenance-once.rs`)
+là biên process nội bộ được kích hoạt tường minh bởi operator cho
+scheduled backup maintenance. Nó không phải daemon, không phải polling loop,
+không phải timer/cron và không phải HTTP API.
+
+**Quy trình:** `load runtime config → connect DatabasePool → MigrationRunner
+→ ScheduledMaintenanceCycleRunner::new(pool) → Timestamp::now_utc() một lần
+→ run_one_scheduled_backup_maintenance_cycle(observed_at_utc, lease_seconds)
+→ log có cấu trúc → close pool → exit`.
+
+Một lần thực thi process chỉ gọi đúng một cycle chuẩn, vốn thực hiện tối đa
+một scheduler tick cộng tối đa một worker step và tối đa một chuyển đổi
+`BackupMaintenanceRun` (`CREATED → SNAPSHOT_CAPTURED → EXPIRY_PLANNED →
+COMPLETED`). Sau đó process thoát; không bao giờ lặp.
+
+**Clock:** Runtime lấy `observed_at_utc` đúng một lần ở biên ngoài qua
+`Timestamp::now_utc()` và inject; scheduler/runner nội bộ không tự đọc wall
+clock, giữ nguyên explicit-time injection của Prompt 67–68.
+
+**Lease:** `SYNVEIL_SCHEDULED_MAINTENANCE_LEASE_SECONDS` (tùy chọn, mặc định 120)
+được validate với biên chuẩn 10..=900 mà không clamp. Giá trị ngoài biên hoặc
+không phải số bị từ chối trước khi chạy cycle với diagnostic rõ và exit
+non-zero; không có worker execution một phần.
+
+**Database:** Tái sử dụng `DatabaseConfig` (`DATABASE_URL`) và `MigrationRunner`
+chuẩn. Không có bootstrap path thứ hai, không log credential.
+
+**Kết quả:** `ScheduledMaintenanceCycleResult` được giữ nguyên (tick:
+`Idle`/`SkippedExpired`/`HandedOffExisting`/`MaterializedAndHandedOff`;
+worker: `Idle`/`Stepped`). Log có cấu trúc `tick`, `worker`, `is_idle`,
+`observed_at_utc`, `lease_seconds` mà không lộ physical identity.
+
+**Exit code:** `0` cho mọi cycle thành công kể cả `Idle` và `SkippedExpired`;
+non-zero cho config/database/scheduler/worker failure (kể cả `LeaseLost`;
+scheduler writes đã commit vẫn giữ). Idle không phải lỗi.
+
+**Boundedness:** Runtime production không chứa `loop`, `while`, `for` lặp
+quanh cycle, `tokio::interval`, `sleep`, `spawn` cho cycle, `heartbeat`,
+`renewal`, `retry`, `backoff`, `cron`, `timer`, `run_forever` hay
+`leader election`. Một lần gọi không bao giờ thực hiện `CREATED → COMPLETED`
+trong một lần; cần bốn lần gọi tường minh riêng biệt để drain.
+
+**Failure:** Không retry tự động, không sleep-then-retry, không retry deadlock.
+Lỗi có biên được log, resource được đóng và process exit non-zero. Service bên
+ngoài (ví dụ `systemd` timer) có thể gọi lại process; recovery dựa trên fencing
+bền của Prompt 66 và database là source of truth, không phải in-memory state.
+Manual Prompt 49 run vẫn vô hình với scheduled worker path; handoff đã commit
+vẫn là execution authority sau khi schedule bị disable hoặc policy edit.
+
+**Cách gọi:**
+
+```sh
+DATABASE_URL=postgresql://postgres@127.0.0.1:5432/synveil \
+  cargo run -p synveil-api --bin synveil-scheduled-maintenance-once
+```
+
+Phù hợp cho operator gọi thủ công hoặc `systemd` timer/service gọi lại bên
+ngoài. Binary này chỉ nội bộ/operator-facing: không có HTTP route, OpenAPI,
+SSE, WebSocket, frontend hay client SDK thay đổi.
+
+### Lifecycle ngoài và cadence systemd (Prompt 72)
+
+Prompt 72 nối Prompt 71 one-shot runtime vào mô hình service-manager của OS
+mà **không biến runtime của Synveil thành daemon**. Kiến trúc vẫn là:
+
+```text
+systemd timer (recurrence)
+      ↓
+systemd oneshot service (Type=oneshot)
+      ↓
+synveil-scheduled-maintenance-once (một chu kỳ bị chặn)
+      ↓
+đúng một ScheduledMaintenanceCycleRunner::run_one_scheduled_backup_maintenance_cycle
+      ↓
+kết quả có cấu trúc → pool.close() → exit
+```
+
+Timer sở hữu recurrence; Synveil sở hữu một lần thực thi bị chặn. Lần kích
+hoạt timer tiếp theo là một nỗ lực mới được lên lịch ngoài, không phải retry
+nội bộ hay gia hạn lease.
+
+**Vị trí trong repo:**
+
+- `deploy/systemd/synveil-scheduled-maintenance.service` — unit nguồn
+- `deploy/systemd/synveil-scheduled-maintenance.timer` — unit nguồn
+- Khi đóng gói: `/usr/lib/systemd/system/` hoặc tương đương theo distro;
+  không copy trực tiếp vào `/etc/systemd/system` trong test.
+
+**Unit service (`synveil-scheduled-maintenance.service`):**
+
+- `Type=oneshot`, `ExecStart=/usr/bin/synveil-scheduled-maintenance-once` —
+  binary chuẩn Prompt 71, không bọc shell, không có executable bảo trì thứ
+  hai.
+- `EnvironmentFile=-/etc/synveil/synveil-scheduled-maintenance.env` — cơ chế
+  file chuẩn cho tuning không bí mật
+  `SYNVEIL_SCHEDULED_MAINTENANCE_LEASE_SECONDS` (tùy chọn, mặc định 120,
+  chặn 10..=900). `DATABASE_URL` bắt buộc được phân phối qua
+  `LoadCredential` của Prompt 77, không qua file này; không hardcode credential
+  trong unit.
+- `Restart=no` — systemd ghi nhận exit non-zero; lần gọi đó kết thúc.
+  Cấm vòng lặp restart chật (`Restart=always`).
+- `TimeoutStartSec=300` — biên bảo thủ 5 phút, dài hơn default 90 s và lease
+  mặc định 120 s nhưng dưới lease tối đa 900 s, an toàn cho cycle bị chặn
+  (capture/plan/execution). Kết thúc đột ngột vẫn khôi phục qua fencing
+  Prompt 66; có thể tăng theo đo đạc thực tế.
+- Service account (Prompt 75): one-shot chạy dưới identity hệ thống bền
+  `User=synveil` `Group=synveil` (UID/GID auto qua
+  `deploy/sysusers.d/synveil.conf`, shell `/usr/sbin/nologin`, home
+  `/var/lib/synveil`, không supplementary group). Chỉ cần kết nối PostgreSQL
+  qua TCP hoặc `AF_UNIX`; TUYỆT ĐỐI KHÔNG chạy `root`. Packaging tạo account
+  bằng `systemd-sysusers` lúc cài; binary không tự tạo user, không cần `CAP_*`
+  và không cần UID 0 cho đường dẫn DB-only. `RuntimeDirectory=synveil` (0750)
+  sở hữu `/run/synveil` mỗi lần kích hoạt; xem `DEPLOYMENT.md` cho lý do
+  `DynamicUser=no`, chính sách UID/GID và contract ownership.
+- Hardening (Prompt 78, dựa trên bằng chứng, LOCKED Gen-1):
+  `NoNewPrivileges=yes`, `RestrictSUIDSGID=yes`,
+  `CapabilityBoundingSet=`/`AmbientCapabilities=` rỗng (không capability
+  Linux), `ProtectSystem=strict` không ngoại lệ ghi, `ProtectHome=yes`,
+  `PrivateTmp=yes`, `PrivateDevices=yes` + `DevicePolicy=closed`,
+  `InaccessiblePaths=/etc/synveil/credentials`, bảo vệ kernel
+  (Tunables/Modules/Logs/ControlGroups), `ProtectProc=invisible` +
+  `ProcSubset=pid`, `RestrictNamespaces=yes`, `RestrictRealtime=yes`,
+  `LockPersonality=yes`, `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`
+  (Unix socket + TCP, không `PrivateNetwork`),
+  `SystemCallArchitectures=native`, `MemoryDenyWriteExecute=yes`,
+  `SystemCallFilter=@system-service` trừ các lớp nguy hiểm, `UMask=0077`,
+  `WorkingDirectory=/`. Đã chứng minh tương thích bằng cách thực thi binary
+  one-shot thật dưới sandbox tương đương với PostgreSQL 17 (idle, due-work,
+  existing-work đều exit 0) kèm probe phủ định; xem `DEPLOYMENT.md`
+  § Prompt 78, ADR-026 và
+  `crates/metadata/tests/linux_sandbox_hardening_units.rs`.
+  `systemd-analyze security` cải thiện 4.5 → 1.4 OK trên systemd 261.2 (tham khảo; correctness
+  chức năng mới có tính quyết định).
+
+**Unit timer (`synveil-scheduled-maintenance.timer`):**
+
+- Cadence mặc định bảo thủ: **xấp xỉ mỗi phút** (`OnCalendar=*:*:00`,
+  `AccuracySec=1s`). Một kích hoạt thực hiện tối đa một tick + một worker
+  step + một chuyển đổi, nên một run đầy đủ cần ba lần kích hoạt (~3 phút).
+  Được chọn sau khi xem `DEFAULT_BACKUP_SCHEDULE_MAX_LATENESS_SECONDS=604800`
+  (7 ngày, tối thiểu 60 s) và biên one-transition-per-cycle; poll 60 s phát
+  hiện due occurrence trong một cửa sổ lateness tối thiểu.
+- `Persistent=true` — nếu host tắt trong một hoặc nhiều lần kích hoạt,
+  systemd gọi service **một lần** sau boot; scheduler bền với
+  `LATEST_ONLY`/`REPLAY_ONE_BY_ONE`/`SKIPPED_EXPIRED` tự xử lý backlog,
+  không tổng hợp hàng trăm lần gọi.
+- `RandomizedDelaySec=10s` — jitter native của systemd để tránh herd tại
+  cùng giây; 10 s nhỏ so với 60 s lateness tối thiểu nên giữ correctness
+  (đánh giá due dùng timestamp bền). Không thêm `sleep` trong Rust.
+- `WantedBy=timers.target`.
+
+**Cadence vs. tần suất backup:**
+
+Interval timer **không phải** tần suất backup. Người dùng cấu hình
+`BackupSchedule` (`DAILY`/`WEEKLY`, `HH:MM` local, `LATEST_ONLY`/
+`REPLAY_ONE_BY_ONE`, lateness) độc lập. Timer chỉ hỏi “có công việc bị chặn
+nào cần làm bây giờ không?” mỗi phút.
+
+**Overlap, boot, failure, lease:**
+
+- Overlap: hai lần kích hoạt có thể chồng chéo; correctness dựa trên claim
+  bền / lease generation / fencing Prompt 66 và lock ordering Prompt 69.
+  Không dùng `Mutex` cục bộ. Hành vi serialization cùng-unit của systemd
+  **không** được tin cậy cho correctness DB; 12 caller độc lập vẫn hội tụ
+  với `40P01=0`.
+- Boot: enable `timer`; `Persistent` đánh giá missed; một chu kỳ chạy khi
+  phù hợp; cadence tiếp tục. Server API không block đồng bộ và không gọi
+  cycle từ `ApiState`.
+- Failure: exit non-zero được ghi; không retry/backoff/heartbeat. Lần kích
+  timer sau là attempt mới.
+- Lease mặc định 120 s (10..=900 s) độc lập với interval 60 s.
+- Gọi dài: cycle đang chạy vượt quá interval vẫn chạy tới hoàn tất; không
+  khởi cycle thứ hai trong process; hành vi tiếp theo theo service-manager
+  và fencing bền.
+- Không có HTTP/OpenAPI/SSE/WebSocket/frontend/mobile thay đổi. Tích hợp
+  systemd Linux là hạ tầng triển khai và nằm ngoài `crates/core`; không có
+  `systemctl` trong logic business.
+
+**Bật/tắt của operator (khi đã đóng gói):**
+
+```sh
+# Prompt 77: secret delivery dùng systemd LoadCredential=, KHÔNG dùng EnvironmentFile.
+# DATABASE_URL KHÔNG BAO GIỜ nằm trong EnvironmentFile ở production.
+# 1. (tuỳ chọn) tuning runtime non-secret
+sudo install -m 0640 -o root -g synveil /dev/stdin /etc/synveil/synveil-scheduled-maintenance.env <<'EOF'
+# chỉ lease non-secret; KHÔNG có DATABASE_URL
+SYNVEIL_SCHEDULED_MAINTENANCE_LEASE_SECONDS=120
+EOF
+# 2. credential database qua systemd-credentials (admin source, root-only)
+sudo install -d -m 0700 -o root -g root /etc/synveil/credentials
+sudo install -m 0600 -o root -g root /dev/stdin /etc/synveil/credentials/database-url <<'EOF'
+postgresql://synveil:***@127.0.0.1:5432/synveil
+EOF
+sudo systemctl daemon-reload
+sudo systemctl enable --now synveil-scheduled-maintenance.timer
+sudo systemctl disable --now synveil-scheduled-maintenance.timer
+```
+
+Test kiểm tra syntax qua `systemd-analyze verify` trên bản copy tạm (không
+đụng host `/etc/systemd/system`), khẳng định tĩnh `Type`, `ExecStart`,
+`User=synveil`/`Group=synveil`, `RuntimeDirectory`,
+`NoNewPrivileges`/`ProtectSystem`, cadence, `Persistent`,
+`RandomizedDelaySec`, `Restart`, `EnvironmentFile`, cộng
+`systemd-sysusers --dry-run` và `systemd-tmpfiles --dry-run` không đụng
+`/etc/passwd`/`/var/lib/synveil`, và probe PostgreSQL cho kích hoạt lặp lại,
+misfire policy sau downtime, concurrency 12 caller và restart recovery — mọi
+`40P01=0` không retry. Thực thi business rootless không cần UID 0. Không
+claim GUI/control đa nền tảng, heartbeat, daemon, leader election.
+
+### Nền tảng identity dịch vụ Linux & ownership filesystem (Prompt 75)
+
+Prompt 75 thay thế việc hoãn `User=` của Prompt 72 bằng contract Gen-1 đã khóa.
+
+**Quyết định (LOCKED):** account hệ thống bền `synveil`/`synveil` qua
+`systemd-sysusers` (`deploy/sysusers.d/synveil.conf`), thực thi
+`User=synveil` `Group=synveil` trong `synveil-scheduled-maintenance.service`
+(và service Synveil tương lai). Xem `DEPLOYMENT.md`.
+
+**Các phương án và lý do loại:**
+
+| Phương án | Lý do loại |
+|---|---|
+| `root` runtime | Vi phạm least privilege; service không bao giờ cần sửa binary/unit/host. Cài đặt vẫn `root`, runtime không có quyền. |
+| `DynamicUser=yes` | **LOẠI** — UID tạm thời không thể sở hữu bền `/var/lib/synveil`, `/etc/synveil`, hay path object-store tương lai; giấu state ở `/var/lib/private`/`/run/private`, gãy quyền sở hữu admin, cản nhiều service chia sẻ identity. Chỉ phù hợp service stateless tạm thời. |
+| Account riêng từng service (`synveil-api`, v.v.) | Hoãn — mọi service chia sẻ backend/data boundary tin cậy; tách thêm phức tạp đóng gói mà không cải thiện privilege. |
+| Account user tương tác | Loại — không shell login, không home `/home/*`, không `sudo`/`wheel`/`docker`. |
+
+**Thuộc tính:** system account, UID/GID auto (`-`), `GECOS="Synveil service
+account"`, home `/var/lib/synveil` (không tương tác), shell
+`/usr/sbin/nologin`, khóa (password invalid). Không supplementary group, bền
+qua reboot, tạo bởi packaging (`systemd-sysusers`), không bởi runtime, không
+lưu vào bảng `service_users`.
+
+**Chính sách UID/GID:** để `sysusers`/packaging cấp phát; không giả định số
+cố định cross-machine. Image appliance tương lai có thể reserve UID cố định.
+
+**Contract ownership (thẩm quyền — xem `deploy/README.md`):**
+
+| Path | Ownership | Mode | Quản lý | Truy cập runtime |
+|---|---|---|---|---|
+| `/usr/bin/synveil-*` | `root:root` | `0755` | package | `synveil` đọc/exec, **không ghi** |
+| `/usr/lib/systemd/system/synveil-*` | `root:root` | `0644` | package | không ghi bởi `synveil` |
+| `/usr/lib/sysusers.d`, `tmpfiles.d` | `root:root` | `0644` | package | không ghi |
+| `/etc/synveil` | `root:synveil` | `0750` | package | `synveil` đọc config cần thiết, không ghi tùy ý |
+| `/etc/synveil/*.env` | `root:synveil` | `0640` | admin/package | `synveil` đọc lease tuning không bí mật; `DATABASE_URL` được phân phối qua `LoadCredential` của Prompt 77 |
+| `/var/lib/synveil` | `synveil:synveil` | `0750` | `tmpfiles.d` | state bền không-bí-mật; hôm nay rỗng OK |
+| `/run/synveil` | `synveil:synveil` | `0750` | `RuntimeDirectory=` | tạm thời, xóa khi stop |
+| `/var/log/synveil` | — | — | — | **không tạo** — dùng journald |
+
+Gốc object-store/storage của user tuân storage architecture; không `chown` đệ
+quy pool tuỳ ý sang `synveil`.
+
+**Cơ chế tạo:** `sysusers.d` (user/group), `tmpfiles.d` (`/var/lib/synveil`),
+`RuntimeDirectory=` (`/run/synveil`); `StateDirectory=` cố ý **không dùng** —
+`tmpfiles.d` là khai báo cấp host duy nhất để nhiều service chia sẻ
+`/var/lib/synveil` không xung đột. Kiểm tra bằng `systemd-*- --dry-run`.
+
+**Ranh giới đặc quyền:** cài/upgrade = `root`; runtime one-shot =
+`synveil` (chỉ TCP/`AF_UNIX` tới PostgreSQL), không tạo user/`chown`/`systemctl`
+hay leo thang. Kết nối DB vẫn `DATABASE_URL`; không giả định `peer`
+authentication theo Unix username. Linux identity nằm ngoài `crates/core` /
+API portable.
 
 ### Bất biến thứ tự khóa chuẩn cho scheduled-maintenance (Prompt 69)
 

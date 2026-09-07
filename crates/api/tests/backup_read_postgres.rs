@@ -466,11 +466,34 @@ async fn count(pool: &PgPool, table: &str) -> i64 {
         .expect("side-effect audit count must be readable")
 }
 
-#[tokio::test]
-#[ignore = "set SYNVEIL_TEST_DATABASE_URL to a fresh disposable PostgreSQL 17 database"]
-async fn postgres_backup_read_api_is_authenticated_owner_scoped_and_side_effect_free() {
-    let url = std::env::var("SYNVEIL_TEST_DATABASE_URL")
+async fn isolated_pool(label: &str) -> (Arc<DatabasePool>, PgPool) {
+    let base = std::env::var("SYNVEIL_TEST_DATABASE_URL")
         .expect("SYNVEIL_TEST_DATABASE_URL must identify a fresh disposable PostgreSQL database");
+    let db_name = format!(
+        "p51_{}_{}",
+        label
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            })
+            .collect::<String>(),
+        Uuid::now_v7().simple()
+    );
+    let maintenance = PgPool::connect(&base)
+        .await
+        .expect("maintenance connection must succeed");
+    sqlx::query(&format!("CREATE DATABASE \"{db_name}\""))
+        .execute(&maintenance)
+        .await
+        .expect("isolated test database must be created");
+    maintenance.close().await;
+    let url = if let Some((prefix, _)) = base.rsplit_once('/') {
+        format!("{prefix}/{db_name}")
+    } else {
+        panic!("test database URL must contain a database path");
+    };
     let config = DatabaseConfig::from_url(&url).expect("test URL must use PostgreSQL");
     let pool = Arc::new(
         DatabasePool::connect(&config)
@@ -486,6 +509,13 @@ async fn postgres_backup_read_api_is_authenticated_owner_scoped_and_side_effect_
     let audit_pool = PgPool::connect(&url)
         .await
         .expect("audit connection must succeed");
+    (pool, audit_pool)
+}
+
+#[tokio::test]
+#[ignore = "set SYNVEIL_TEST_DATABASE_URL to a fresh disposable PostgreSQL 17 database"]
+async fn postgres_backup_read_api_is_authenticated_owner_scoped_and_side_effect_free() {
+    let (pool, audit_pool) = isolated_pool("read_side_effect").await;
 
     let login_name = format!("prompt51-{}", uuid::Uuid::now_v7());
     let api_state = ApiState::from_current_platform()
@@ -611,28 +641,13 @@ async fn postgres_backup_read_api_is_authenticated_owner_scoped_and_side_effect_
         .await
         .expect("unauthenticated backup GET must not fail");
     assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+    audit_pool.close().await;
 }
 
 #[tokio::test]
 #[ignore = "set SYNVEIL_TEST_DATABASE_URL to a fresh disposable PostgreSQL 17 database"]
 async fn postgres_backup_operation_observability_is_stable_scoped_and_side_effect_free() {
-    let url = std::env::var("SYNVEIL_TEST_DATABASE_URL")
-        .expect("SYNVEIL_TEST_DATABASE_URL must identify a fresh disposable PostgreSQL database");
-    let config = DatabaseConfig::from_url(&url).expect("test URL must use PostgreSQL");
-    let pool = Arc::new(
-        DatabasePool::connect(&config)
-            .await
-            .expect("test PostgreSQL must accept a connection"),
-    );
-    let status = MigrationRunner::new()
-        .run(pool.as_ref())
-        .await
-        .expect("all migrations must apply from empty");
-    assert!(status.is_current());
-    assert_eq!(status.applied_versions().len(), 34);
-    let audit_pool = PgPool::connect(&url)
-        .await
-        .expect("audit connection must succeed");
+    let (pool, audit_pool) = isolated_pool("operation_observability").await;
 
     let api_state = ApiState::from_current_platform()
         .with_postgres_auth(
@@ -1128,4 +1143,5 @@ async fn postgres_backup_operation_observability_is_stable_scoped_and_side_effec
         .await
         .expect("unauthenticated operation GET must not fail");
     assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+    audit_pool.close().await;
 }

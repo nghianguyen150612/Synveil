@@ -1,0 +1,179 @@
+[Unit]
+Description=Synveil scheduled backup maintenance (one-shot bounded cycle)
+Documentation=file:///usr/share/doc/synveil/BACKUP.md
+Wants=network-online.target
+After=network-online.target postgresql.service
+# This unit is intentionally not WantedBy=multi-user.target.
+# It is triggered only by synveil-scheduled-maintenance.timer.
+# Operator enablement: systemctl enable --now synveil-scheduled-maintenance.timer
+# Manual one-shot: systemctl start synveil-scheduled-maintenance.service
+
+[Service]
+Type=oneshot
+# Canonical Prompt 71 one-shot runtime — exactly one
+# ScheduledMaintenanceCycleRunner::run_one_scheduled_backup_maintenance_cycle
+# invocation per process, then exit. No second maintenance executable.
+ExecStart=/usr/bin/synveil-scheduled-maintenance-once
+
+# Configuration
+# Non-secret runtime tuning (e.g. lease duration) is loaded via EnvironmentFile.
+# Secret delivery (Prompt 77): DATABASE_URL is NOT taken from EnvironmentFile in
+# production. It is delivered via systemd credentials:
+#   /etc/synveil/credentials/database-url (root:root 0700/0600) on the host
+#       ↓ LoadCredential=database-url:/etc/synveil/credentials/database-url
+#       ↓ $CREDENTIALS_DIRECTORY/database-url (read-only, per-service, unswapped)
+# The service exposes the credential path as a non-secret environment variable
+# below; the secret itself never appears in Environment= or EnvironmentFile.
+LoadCredential=database-url:/etc/synveil/credentials/database-url
+Environment=SYNVEIL_DATABASE_CREDENTIAL_FILE=%d/database-url
+EnvironmentFile=-/etc/synveil/synveil-scheduled-maintenance.env
+
+# Service account (Prompt 75 — Linux Service Account & Filesystem Ownership Foundation):
+# The one-shot requires only PostgreSQL connectivity (TCP or AF_UNIX). It MUST
+# NOT run as root. The persistent system account `synveil` (group `synveil`)
+# declared in deploy/sysusers.d/synveil.conf is the authoritative Gen-1
+# first-party runtime identity for this and future Synveil services.
+# Runtime never creates users, never chmod/chowns system directories, never
+# modifies units, never invokes systemctl, and never escalates. See
+# docs/en/DEPLOYMENT.md and docs/en/BACKUP.md; rationale ADR-023.
+User=synveil
+Group=synveil
+
+# RuntimeDirectory=synveil is reserved for future bounded ephemeral state.
+# The current scheduled-maintenance one-shot runtime is database-backed and
+# does NOT write any file under /run/synveil; the directory is left empty.
+# If a future activation adds writable state here, declare it via
+# ReadWritePaths=/run/synveil under ProtectSystem=strict below.
+RuntimeDirectory=synveil
+RuntimeDirectoryMode=0750
+
+# WorkingDirectory=/ is intentional: the runtime is database-backed and does
+# not require any writable or application-specific current directory. The
+# migration runner resolves SQL files via compile-time env!("CARGO_MANIFEST_DIR")
+# so the service does not depend on CWD-relative paths at runtime.
+WorkingDirectory=/
+
+# Failure semantics: systemd records the failure; that invocation ends. No
+# tight automatic restart loop. A later timer activation is a new externally
+# scheduled bounded attempt, not an internal retry.
+Restart=no
+
+# Timeout: 5-minute bound is safely above default lease (120s) and below
+# maximum lease (900s); fenced worker semantics (Prompt 66) make abrupt
+# termination recoverable on the next invocation.
+TimeoutStartSec=300
+
+# ---------------------------------------------------------------------------
+# Hardening (Prompt 78 — evidence-driven systemd sandbox).
+#
+# Runtime requirements inventory (see docs/en/DEPLOYMENT.md and ADR-026):
+#   Filesystem read : executable+libs, migrations directory (compile-time
+#                     absolute path), /etc/synveil/synveil-scheduled-maintenance.env,
+#                     $CREDENTIALS_DIRECTORY/database-url, dynamic loader.
+#   Filesystem write: 0 verified; nothing written to /run, /var/lib, /etc, /usr.
+#   Network         : AF_UNIX (Postgres local socket) + AF_INET/AF_INET6 (TCP).
+#   Devices         : 0 (no /dev access).
+#   /proc           : minimal (sqlx/tokio read /proc/self/maps + cgroup hints).
+#   Linux caps      : 0 required.
+#   Kernel          : 0 modification (no sysctl/module/cgroup/mount).
+#
+# Capability and namespace restrictions below are validated against the
+# one-shot runtime in disposable VM/host-root tests; see deploy/README.md
+# "Hardening validation" and ADR-026. Lower exposure score is informational,
+# functional correctness is authoritative.
+# ---------------------------------------------------------------------------
+
+# Privilege escalation:
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+
+# Linux capabilities: empty bounding set; no ambient capabilities.
+# The one-shot does not need any capability for normal PostgreSQL connectivity.
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# Filesystem hardening:
+# - ProtectSystem=strict makes /usr, /boot, /efi, /etc, /var read-only and
+#   hides /home, /root. Runtime reads /etc/synveil/synveil-scheduled-maintenance.env
+#   (EnvironmentFile=) and $CREDENTIALS_DIRECTORY/database-url (LoadCredential),
+#   both of which are read-only paths. No writable exception is required today.
+# - ProtectHome hides /home, /root, /run/user — runtime does not need access.
+# - PrivateTmp isolates /tmp.
+# - PrivateDevices combined with DevicePolicy=closed denies raw device access.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+DevicePolicy=closed
+
+# Credential source isolation: runtime must NOT require direct read access to
+# /etc/synveil/credentials/database-url; the delivered copy under
+# $CREDENTIALS_DIRECTORY is the authoritative path. Explicit denial reinforces
+# the principle even though ProtectSystem=strict already shields /etc.
+# Operational note: systemd requires this path to exist at activation
+# (missing path fails closed with NAMESPACE setup error); packaging always
+# creates the /etc/synveil/credentials skeleton (see deploy/install/MANIFEST).
+InaccessiblePaths=/etc/synveil/credentials
+
+# Kernel modification:
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+
+# Process tree + namespace restrictions:
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+
+# Address families required by supported PostgreSQL deployment:
+# AF_UNIX (local socket) + AF_INET/AF_INET6 (TCP). Other families explicitly
+# denied. IP-level allow/deny is DEFERRED — Synveil deployments may target
+# different DB hosts; hardcoding localhost in the unit would break legitimate
+# remote PostgreSQL installations.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+# Architecture lock: only native syscalls (x86_64). Multi-arch execution is not
+# a supported path.
+SystemCallArchitectures=native
+
+# Memory: deny creating writable+executable mappings. The Rust binary is
+# ordinary AOT code; tokio runtime + sqlx do not require PROT_EXEC+PROT_WRITE
+# at runtime. Verified by executing the real binary under the policy.
+MemoryDenyWriteExecute=yes
+
+# Filesystem creation mask: restrictive default. Runtime does not create any
+# ordinary files; the mask is defense in depth in case future bounded state
+# needs a writable surface under RuntimeDirectory=.
+UMask=0077
+
+# SystemCallFilter: evidence-driven allowlist for a tokio + sqlx PostgreSQL
+# one-shot runtime. Start from @system-service and deny dangerous classes
+# (@mount, @raw-io, @reboot, @swap, @module, @debug, @privileged, @cpu-emulation,
+# @obsolete). @clock covers only time-setting syscalls (clock_settime and
+# friends); the clock_gettime/nanosleep reads tokio uses stay allowed via
+# @system-service. @resources (setrlimit/prlimit) is denied. Validated by
+# executing the real binary under this exact policy (idle + due-work +
+# existing-work gates against PostgreSQL 17); see ADR-026. If a future runtime
+# path requires additional syscalls, document the exception here and in ADR-026.
+SystemCallFilter=@system-service
+SystemCallFilter=~@clock
+SystemCallFilter=~@cpu-emulation
+SystemCallFilter=~@debug
+SystemCallFilter=~@module
+SystemCallFilter=~@mount
+SystemCallFilter=~@raw-io
+SystemCallFilter=~@reboot
+SystemCallFilter=~@swap
+SystemCallFilter=~@privileged
+SystemCallFilter=~@obsolete
+SystemCallFilter=~@resources
+SystemCallErrorNumber=EPERM
+
+# Logging: structured tracing from the one-shot binary goes to the journal.
+# No filesystem log path is created (journald owns durable logging). See
+# deploy/tmpfiles.d/synveil.conf: /var/log/synveil is intentionally absent.
+StandardOutput=journal
+StandardError=journal

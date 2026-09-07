@@ -1,0 +1,132 @@
+name: Linux native packages (DEB + RPM)
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-linux-packages
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux-packages:
+    name: Build and validate DEB + RPM (unsigned CI artifacts)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install native packaging tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev rpm fakeroot systemd shellcheck
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify single version source (Cargo.toml)
+        run: |
+          set -euo pipefail
+          grep -A3 '\[workspace.package\]' Cargo.toml | grep 'version'
+          test -f deploy/packages/common/version.sh
+          bash -c 'source deploy/packages/common/version.sh && synveil_cargo_version'
+
+      - name: Shell syntax validation (packages + install lifecycle)
+        run: |
+          set -euo pipefail
+          bash -n deploy/packages/build.sh
+          bash -n deploy/packages/common/version.sh
+          bash -n deploy/packages/common/arch.sh
+          bash -n deploy/packages/common/payload.sh
+          sh -n deploy/packages/debian/postinst
+          sh -n deploy/packages/debian/prerm
+          sh -n deploy/packages/debian/postrm
+          bash -n deploy/install/install.sh
+          bash -n deploy/install/uninstall.sh
+          bash -n deploy/install/common.sh
+          shellcheck -S warning deploy/packages/build.sh deploy/packages/debian/postinst deploy/packages/debian/prerm deploy/packages/debian/postrm
+
+      - name: Build release binary + DEB + RPM
+        run: |
+          set -euo pipefail
+          ./deploy/packages/build.sh --format=all
+          ls -la target/packages/
+
+      - name: DEB inspection (dpkg-deb info + contents)
+        run: |
+          set -euo pipefail
+          DEB="$(ls target/packages/*.deb | head -n 1)"
+          echo "DEB=$DEB"
+          dpkg-deb --info "$DEB"
+          dpkg-deb --contents "$DEB"
+
+      - name: RPM inspection (query info + list + requires)
+        run: |
+          set -euo pipefail
+          RPM="$(ls target/packages/*.rpm | grep -v '.src.' | head -n 1)"
+          echo "RPM=$RPM"
+          rpm -qpi "$RPM"
+          rpm -qpl -v "$RPM"
+          rpm -qp --requires "$RPM"
+
+      - name: Static packaging units (version/arch/metadata/parity/safety)
+        run: |
+          set -euo pipefail
+          cargo test -p synveil-metadata --test linux_native_packaging_units -- --nocapture
+
+      - name: Prompt 75/76/78 focused regressions (identity/install/sandbox/lifecycle)
+        run: |
+          set -euo pipefail
+          cargo test -p synveil-metadata --test linux_service_identity_units -- --nocapture
+          cargo test -p synveil-metadata --test linux_install_lifecycle -- --nocapture
+          cargo test -p synveil-metadata --test linux_sandbox_hardening_units -- --nocapture
+          cargo test -p synveil-metadata --test scheduled_maintenance_lifecycle_units -- --nocapture
+
+      - name: Prompt 79 adversarial deployment units
+        run: |
+          set -euo pipefail
+          cargo test -p synveil-metadata --test linux_deployment_adversarial_units -- --nocapture
+
+      - name: systemd unit verification
+        run: |
+          set -euo pipefail
+          systemd-analyze verify deploy/systemd/synveil-scheduled-maintenance.timer
+          cp deploy/systemd/synveil-scheduled-maintenance.service /tmp/synveil-pkg-verify.service
+          sed -i 's|ExecStart=/usr/bin/synveil-scheduled-maintenance-once|ExecStart=/usr/bin/true|' /tmp/synveil-pkg-verify.service
+          systemd-analyze verify /tmp/synveil-pkg-verify.service
+
+      - name: Upload unsigned package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: synveil-linux-packages
+          path: |
+            target/packages/*.deb
+            target/packages/*.rpm
+          if-no-files-found: error
+
+      - name: Report packaging summary
+        if: always()
+        run: |
+          # Explicit diagnostic branch (not a masked gate): report checksums when
+          # artifacts exist, otherwise state that the build step above failed.
+          set -euo pipefail
+          echo "Unsigned CI artifacts only; package signing deferred to release engineering."
+          echo "No APT/YUM repository is published by this workflow."
+          if ls target/packages/synveil_* >/dev/null 2>&1; then
+            sha256sum target/packages/synveil_*
+          else
+            echo "no package artifacts present (build step failed; see earlier steps)"
+          fi

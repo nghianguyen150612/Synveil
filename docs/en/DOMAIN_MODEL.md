@@ -691,11 +691,16 @@ automatic action-selection policy exists.
 
 ## Backup domain
 
-Prompt 67 status: **durable backup scheduling, occurrence identity,
+Prompt 72 status: **durable backup scheduling, occurrence identity,
 exactly-once occurrence-to-maintenance handoff, deterministic manual
 single-step scheduler tick, bounded restart-safe misfire policy, fenced
-scheduled-maintenance worker step, and manually invoked bounded
-scheduler+worker cycle IMPLEMENTED/VALIDATED**. The schedule,
+scheduled-maintenance worker step, manually invoked bounded
+scheduler+worker cycle, service integration boundary, canonical lock
+ordering, internal one-shot runtime, and external systemd oneshot+timer
+lifecycle IMPLEMENTED/VALIDATED**. The external timer owns recurrence
+(approx once per minute, `Persistent=true`, `RandomizedDelaySec=10s`);
+the one-shot binary owns exactly one bounded cycle; no daemon, loop,
+retry, or lifecycle table is introduced. The schedule,
 occurrence ledger, handoff, skip, and claim relations plus the tick and worker
 step are control-plane metadata; the handoff creates a canonical maintenance
 run and the worker step advances it by at most one fenced transition per

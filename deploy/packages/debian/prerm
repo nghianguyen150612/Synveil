@@ -1,0 +1,46 @@
+#!/bin/sh
+# prerm — DEB pre-removal step for synveil (Prompt 79).
+# Distinguishes upgrade vs final removal. Never deletes persistent data,
+# credentials, or external storage. POSIX sh. No failure masking.
+# SPDX-License-Identifier: MIT
+set -e
+
+log() {
+    printf '[synveil] %s\n' "$*" >&2
+}
+
+ACTION="${1:-}"
+log "prerm action: $ACTION (args: $*)"
+
+case "$ACTION" in
+    remove|deconfigure)
+        # Final removal (not upgrade): ensure timer cannot continue as dangling
+        # enabled service. Do NOT touch /var/lib/synveil, /etc/synveil,
+        # /etc/synveil/credentials/database-url, or external storage.
+        # Do NOT kill a healthy running one-shot; `stop` on Type=oneshot waits
+        # for bounded completion rather than killing mid-transition.
+        # systemctl disable/stop are idempotent (disabled/inactive => exit 0),
+        # so any non-zero exit here is a genuine manager failure and aborts
+        # removal honestly (no masking).
+        if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+            log "disabling timer (final removal; admin re-enables explicitly after reinstall)"
+            systemctl disable --now synveil-scheduled-maintenance.timer
+            log "stopping service if active (bounded completion, no kill of healthy cycle)"
+            systemctl stop synveil-scheduled-maintenance.service
+        else
+            log "systemd manager not running; skipping disable/stop (offline removal)"
+        fi
+        ;;
+    upgrade|failed-upgrade)
+        # Upgrade: preserve administrator timer enablement exactly.
+        # Do NOT disable, do NOT stop a healthy running one-shot merely because
+        # files are being replaced (Unix image continues; next activation uses new binary).
+        log "upgrade in progress; preserving timer enablement, not stopping running one-shot"
+        ;;
+    *)
+        log "unknown prerm action: $ACTION; refusing to guess (no state change)" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

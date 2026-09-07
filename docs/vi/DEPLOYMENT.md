@@ -385,6 +385,630 @@ path finalization copy-and-verify đã test. Temporary volume riêng tiện lợ
 được âm thầm biến rename thành cross-device copy. Staging có accounting/expiry
 riêng ngay cả khi dùng chung object root.
 
+## Linux service identity và filesystem ownership (Prompt 75)
+
+Prompt 75 thiết lập identity Linux ít quyền nhất và contract ownership Gen-1
+cần cho deployment Prompt 71–74.
+
+### Tài khoản dịch vụ
+
+| Thuộc tính | Giá trị | Ghi chú |
+|---|---|---|
+| Tên account | `synveil` | system user bền |
+| Tên group | `synveil` | system group bền |
+| Loại | system account | khai báo `systemd-sysusers`, không phải logic shell `useradd` |
+| Đăng nhập | vô hiệu hoá | password invalid; không shell tương tác |
+| Shell | `/usr/sbin/nologin` (hoặc `nologin` tương đương) | |
+| Home | `/var/lib/synveil` | vị trí state bền, **không** `/home/*`; không home tương tác thông thường |
+| UID/GID | cấp phát tự động (`-` trong sysusers) | **không hardcode số**; image appliance tương lai có thể reserve giá trị cố định nhưng Gen-1 không giả định cross-machine |
+| Nhóm bổ sung | **không** | không `sudo`/`wheel`/`docker`/`disk`/`adm`/`root` |
+
+Nguồn khai báo (packaging cài vào `/usr/lib/...`, override trong `/etc/...`):
+
+- `deploy/sysusers.d/synveil.conf` — `g synveil -` + `u synveil - "Synveil service account" /var/lib/synveil /usr/sbin/nologin`
+- `deploy/tmpfiles.d/synveil.conf` — `d /var/lib/synveil 0750 synveil synveil - -`
+- `deploy/systemd/synveil-scheduled-maintenance.service` — `User=synveil`, `Group=synveil`, `RuntimeDirectory=synveil`, `RuntimeDirectoryMode=0750`
+
+Tạo account là trách nhiệm **packaging/deployment**. Runtime Rust
+(`synveil-scheduled-maintenance-once → DatabasePool →
+ScheduledMaintenanceCycleRunner`) không bao giờ tạo user hệ thống, không
+`chmod` directory hệ thống, không gọi `systemctl`, không leo thang.
+
+### Vì sao runtime không dùng `root`
+
+One-shot chỉ cần kết nối PostgreSQL (TCP `AF_INET`/`AF_INET6` hoặc socket
+`AF_UNIX`). Không bao giờ cần sửa binary, file unit, cấu hình host hay gốc
+storage riêng. Chạy `root` vi phạm least privilege và cho phép process bị khai thác
+thay thế thực thi của chính nó. **Cài đặt** package vẫn `root`; **runtime**
+không có quyền.
+
+### Vì sao `DynamicUser=yes` bị loại
+
+| Yêu cầu | Hành vi `DynamicUser` | Hậu quả cho Synveil |
+|---|---|---|
+| Sở hữu bền `/var/lib/synveil` | Cấp UID tạm thời mỗi kích hoạt, giấu path thực dưới `/var/lib/private` qua id-mapped mount | Admin không thấy/persist/inspect state; upgrade và nhiều service không chia sẻ ownership |
+| Truy cập `/etc/synveil` | User tạm thời không ở group dự đoán; quyền sẽ phải world-readable hoặc ACL mỗi lần | Secret sẽ rò rỉ hoặc truy cập gãy |
+| Path object-store/data tương lai | Cùng giấu private-mount | Ownership storage không bền |
+| Nhiều service first-party chia sẻ state | Mỗi kích hoạt có UID khác | Không identity bền cho state đồng sở hữu |
+
+`DynamicUser` chỉ phù hợp service stateless tạm thời hoàn toàn. Kho lưu trữ ghi
+nhận việc loại; kiến trúc storage tương lai nào chứng minh không cần ownership
+filesystem bền sẽ trigger STOP-and-report thay vì ép quyết định bền.
+
+### Contract ownership filesystem
+
+| Path | Ownership | Mode | Tạo bởi | Truy cập runtime |
+|---|---|---|---|---|
+| `/usr/bin/synveil-*` | `root:root` | `0755` | package (root) | `synveil` đọc/exec, **không ghi** — không sửa executable của mình |
+| `/usr/lib/systemd/system/synveil-*.service` `*.timer` | `root:root` | `0644` | package | không ghi bởi `synveil` |
+| `/usr/lib/sysusers.d/synveil.conf` `tmpfiles.d/synveil.conf` | `root:root` | `0644` | package | không ghi |
+| `/etc/synveil` | `root:synveil` | `0750` | package | `synveil` đọc file cần thiết qua `EnvironmentFile`, không ghi tùy ý |
+| `/etc/synveil/synveil-scheduled-maintenance.env` | `root:synveil` | `0640` | admin/package | `synveil` đọc lease tuning không bí mật qua `EnvironmentFile`; `DATABASE_URL` được phân phối qua `LoadCredential` của Prompt 77 |
+| `/var/lib/synveil` | `synveil:synveil` | `0750` | `tmpfiles.d` | state bền không-bí-mật; hôm nay rỗng OK, không ở `/usr`/`/etc`/home |
+| `/run/synveil` | `synveil:synveil` | `0750` | `RuntimeDirectory=` | tạm thời mỗi lần kích hoạt, dọn khi stop, không persist thủ công |
+| `/var/log/synveil` | — | — | — | **cố ý không tạo** — journald là thẩm quyền; chỉ thêm nếu Synveil thực sự ghi log file |
+
+**Ranh giới storage/object-store:** pool storage của user tuân storage architecture.
+Prompt 75 **không** `chown` đệ quy pool tuỳ ý sang `synveil`.
+
+### Quyết định directory runtime/state
+
+- `/run/synveil` → `RuntimeDirectory=synveil` (không phải `tmpfiles.d`). Đúng
+  ownership, cleanup tự động, không stale host, một manager.
+- `/var/lib/synveil` → `tmpfiles.d` (`d` line) lúc boot/package, **không**
+  `StateDirectory=` cho từng service. Một khai báo cấp host vẫn là thẩm quyền
+  cho mọi service Synveil tương lai chia sẻ thư mục; `StateDirectory` mỗi
+  service sẽ tạo manager xung đột cho cùng path.
+- `/etc/synveil` → package tạo `root:synveil 0750`; không qua `tmpfiles.d`.
+- Không tạo file secret qua `tmpfiles.d`.
+
+### Ranh giới đặc quyền
+
+| Thao tác | Đặc quyền yêu cầu |
+|---|---|
+| Cài unit/sysusers/tmpfiles/binary/skeleton config | `root` (package) |
+| `systemd-sysusers`, `systemd-tmpfiles --create`, `daemon-reload`, `systemctl enable` | `root` |
+| `install -m 0640 -o root -g synveil /etc/synveil/*.env` (tuning không bí mật) | `root` |
+| `install -m 0600 -o root -g root /etc/synveil/credentials/database-url` (database secret) | `root` |
+| Thực thi one-shot (`synveil-scheduled-maintenance-once`) | `synveil` (chỉ TCP/`AF_UNIX` tới PostgreSQL) |
+| Sửa binary/unit/`/etc/synveil` toàn cục | từ chối với `synveil` |
+
+Binary one-shot có **zero** phụ thuộc `UID 0` trên đường dẫn database-only thông
+thường; nó chạy dưới test user đã không có quyền trong CI để chứng minh vận hành
+rootless.
+
+### Kết nối database
+
+Chạy dưới `synveil` vẫn tương thích kiến trúc `DATABASE_URL` hiện tại (TCP hoặc
+Unix socket). Không giả định xác thực `peer` PostgreSQL gắn với Unix username;
+kết nối là lựa chọn admin/deployment. Không làm yếu authentication.
+
+### Ranh giới secret
+
+Prompt 75 thiết lập baseline ownership filesystem. Prompt 77 hiện sở hữu phân
+phối database secret: env thông thường chỉ chứa tuning không bí mật, còn
+credential source do admin sở hữu là `root:root 0600` và được chuyển qua
+`LoadCredential`.
+
+### Đánh giá per-service account
+
+Các identity tương lai như `synveil-api`, `synveil-maintenance`, `synveil-gc`
+đã được đánh giá. Mọi service first-party hiện chia sẻ ranh giới backend/data
+tin cậy; account riêng sẽ thêm phức tạp đóng gói mà không cải thiện least
+privilege thực chất. **Khuyến nghị Gen-1:** một account `synveil`. Quyết định
+được ghi trong ADR và `BACKUP.md`; tách capability sau này có thể biện minh
+account riêng.
+
+### Tính di động
+
+Linux `User=`/`Group=`/`UID`/`GID`/systemd nằm ngoài `crates/core` và API
+Synveil Server portable. Không model domain nào có field identity Linux.
+
+## Vòng đời package Linux và uninstall bảo toàn dữ liệu (Prompt 76)
+
+Prompt 76 là nền tảng cài đặt package-neutral cho deployment Gen-1
+scheduled-maintenance. Nó định nghĩa cơ chế xác định cho cài mới, cài lại
+idempotent, nâng cấp tại chỗ, khôi phục khi nâng cấp lỗi, uninstall, uninstall
+giữ dữ liệu, purge tường minh, ownership `root` vs `synveil:synveil`,
+tích hợp `systemd`/`sysusers`/`tmpfiles`, và kiểm thử staged-root an toàn mà
+không đụng host. Chưa tạo package phân phối `.deb`/`.rpm`/PKGBUILD/OCI/Synveil
+OS image — packaging tương lai sẽ gọi layer này.
+
+### Manifest chuẩn
+
+`deploy/install/MANIFEST` là nguồn chân lý duy nhất. Mọi thao tác install/remove
+đọc nó; không có logic destination trùng lặp.
+
+```
+source                              destination                                      mode  owner   group    class
+BINARY                              /usr/bin/synveil-scheduled-maintenance-once      0755  root    root     PACKAGE
+deploy/systemd/*.service            /usr/lib/systemd/system/synveil-*.service        0644  root    root     PACKAGE
+deploy/systemd/*.timer              /usr/lib/systemd/system/synveil-*.timer          0644  root    root     PACKAGE
+deploy/sysusers.d/synveil.conf      /usr/lib/sysusers.d/synveil.conf                 0644  root    root     PACKAGE
+deploy/tmpfiles.d/synveil.conf      /usr/lib/tmpfiles.d/synveil.conf                 0644  root    root     PACKAGE
+deploy/config/*.env.example         /usr/share/synveil/*.env.example                 0644  root    root     PACKAGE
+-                                   /etc/synveil                                     0750  root    synveil  CONFIG_DIRECTORY
+-                                   /var/lib/synveil                                 0750  synveil synveil  STATE_DIRECTORY
+-                                   /run/synveil                                     0750  synveil synveil  RUNTIME_MANAGED
+```
+
+`PACKAGE` là `root:root` immutable thay khi upgrade và xóa khi uninstall.
+`CONFIG_DIRECTORY` là `root:synveil` skeleton; `STATE_DIRECTORY` và
+`RUNTIME_MANAGED` là `synveil:synveil` do `tmpfiles.d` / `RuntimeDirectory=`
+quản lý (không seed bởi payload). Không tạo `/var/log/synveil` (dùng journald).
+
+### Interface package-neutral
+
+```
+deploy/install/install.sh   --root=<staged-root> [--binary=<path>]  [--destdir=<root>]
+deploy/install/uninstall.sh --root=<staged-root> [--purge]
+deploy/install/common.sh    # helper chung (sourced)
+deploy/install/MANIFEST     # chuẩn
+```
+
+Mọi cơ chế hỗ trợ root thay thế (`DESTDIR`):
+
+```
+DESTDIR=/tmp/synveil-root ./deploy/install/install.sh --binary=target/debug/synveil-scheduled-maintenance-once
+./deploy/install/install.sh --root=/tmp/synveil-root --binary=...
+```
+
+Test chạy trên cây tạm `/tmp/.../root` và không bao giờ ghi `/usr`/`/etc`/`/var`
+trên host developer trừ khi trong container tạm.
+
+### An toàn thay file
+
+`install.sh` không bao giờ truncate file thực thi/unit tại chỗ. Nó ghi nội dung
+mới ra file tạm (`cp` → `chmod` → `chown` nếu root → `mv -f` atomic rename).
+`uninstall.sh` unlink các path `PACKAGE` đã biết bằng `rm -f` không follow
+symlink.
+
+### Cài mới
+
+Cài staged mới tạo:
+
+- File `PACKAGE` tại 5 đích `root:root` cộng template tại
+  `/usr/share/synveil/...example` (`0644`).
+- `CONFIG_DIRECTORY` `/etc/synveil` (`0750 root:synveil`, rỗng).
+- Không seed `/var/lib/synveil`, không `/run/synveil`, không file `env`.
+
+Binary là `synveil-scheduled-maintenance-once` build từ
+`crates/api/src/bin/synveil-scheduled-maintenance-once.rs`; test có thể dùng
+fixture kiểm soát cho path/mode, nhưng contract tham chiếu artifact thực.
+
+### Cài lại idempotent
+
+Chạy `install.sh` hai lần trên cùng staged root thành công, không duplicate,
+không hỏng mode, không ghi đè config của admin, và để lại checksum `PACKAGE`
+tiếp như cũ.
+
+### Nâng cấp
+
+```
+Version N  →  Version N+1
+  binary/unit/sysusers/tmpfiles có thể đổi
+  /etc/synveil + /var/lib/synveil + pool ngoài được bảo toàn
+```
+
+Nâng cấp thay thế atomically (từng file) các file `PACKAGE` trong khi bảo toàn
+dữ liệu admin và runtime. Không claim semantics transaction của package manager
+ở layer này.
+
+### Khôi phục nâng cấp lỗi
+
+`SYNVEIL_INSTALL_FAIL_AFTER=N` (chỉ test) giả lập lỗi sau N artifact `PACKAGE`.
+Harness chứng minh:
+
+- `config admin` (`/etc/synveil/*.env`) vẫn byte-identical;
+- `state bền` (`/var/lib/synveil/*`) không đụng;
+- `user-data ngoài` không đụng;
+- Version `PACKAGE` có thể **cập nhật một phần** (file đã thay vẫn ở version mới).
+
+An toàn dữ liệu là **LOCKED**; rollback version PACKAGE là **DEFERRED** cho
+packaging distro. Xem ADR-024.
+
+### Uninstall thường
+
+```
+./deploy/install/uninstall.sh --root=/tmp/root   # mặc định
+```
+
+Chỉ xóa artifact `PACKAGE`:
+
+- `/usr/bin/synveil-scheduled-maintenance-once`
+- `/usr/lib/systemd/system/synveil-*.service|.timer`
+- `/usr/lib/sysusers.d/synveil.conf`
+- `/usr/lib/tmpfiles.d/synveil.conf`
+- `/usr/share/synveil/*.example`
+
+Giữ lại:
+
+- `/etc/synveil` và `/etc/synveil/*.env` (config admin)
+- `/var/lib/synveil` (state bền)
+- pool storage ngoài, điểm backup, gốc object-store, home data
+- thư mục cha chung (`/usr/bin`, `/usr/lib/...`, `/etc`, `/var/lib`)
+- Dữ liệu PostgreSQL và rows
+- Tài khoản hệ thống `synveil` (tránh UID mồ côi; reinstall an toàn)
+
+Cài lại sau uninstall thường khôi phục file `PACKAGE` và tái dùng state đã giữ —
+nguyên tắc `thay thế phần mềm hệ thống mà không phá dữ liệu bền`.
+
+### Purge
+
+Tách rời, phá hủy, flag **tường minh**:
+
+```
+./deploy/install/uninstall.sh --root=/tmp/root --purge
+```
+
+Với `--purge`, sau khi xóa file `PACKAGE`, nó cũng xóa đệ quy
+`/etc/synveil` và `/var/lib/synveil` sau allowlist + containment (`realpath -m -s`)
++ xử lý symlink unlink. Vẫn **không bao giờ** xóa pool ngoài, backup, gốc
+object-store, volume mount, home data, hay PostgreSQL. Không suy diễn `purge`
+từ `uninstall` thường; flag là bắt buộc. Tài khoản `synveil` vẫn giữ ngay cả
+khi purge (admin có thể `userdel` thủ công sau khi xác nhận không còn file mồ côi).
+
+### Chính sách cài đặt cấu hình
+
+Prompt 77 sở hữu phân phối secret cuối. Cài mới **không** tạo file
+`DATABASE_URL` hoạt động (chính sách **A: không file**). Nó:
+
+1. Tạo `/etc/synveil` (`0750 root:synveil`);
+2. Cài template ví dụ tại `/usr/share/synveil/
+   synveil-scheduled-maintenance.env.example` (`0644 root:root`) không chứa credential.
+
+Admin tạo env thực tế qua:
+
+```
+sudo install -d -m 0750 -o root -g synveil /etc/synveil
+sudo install -m 0640 -o root -g synveil \
+  /usr/share/synveil/synveil-scheduled-maintenance.env.example \
+  /etc/synveil/synveil-scheduled-maintenance.env
+# chỉ sửa lease tuning không bí mật; cấp DATABASE_URL qua file credential
+```
+
+`EnvironmentFile=-/etc/synveil/synveil-scheduled-maintenance.env` (dấu `-`) xử lý
+thiếu file; không có placeholder trỏ tới production hay default không an toàn.
+
+### Tài khoản dịch vụ khi uninstall
+
+- **Uninstall thường**: giữ account `synveil` khi còn file/state thuộc Synveil
+  (tránh ownership mồ côi mơ hồ khi reinstall).
+- **Purge**: chỉ an toàn xóa `synveil` sau purge tường minh và xác nhận của admin
+  rằng không còn file thuộc `synveil`. Script **không** tự `userdel`; nó log bước thủ công.
+
+### Thứ tự `systemd` (host thực, không phải staged test)
+
+```
+install file PACKAGE
+  → systemd-sysusers               # đọc /usr/lib/sysusers.d/synveil.conf
+  → systemd-tmpfiles --create      # tạo /var/lib/synveil
+  → systemctl daemon-reload
+  → systemctl enable synveil-scheduled-maintenance.timer  # tường minh; không tự start bởi layer package-neutral
+```
+
+Layer này log nhưng không thực thi các lệnh host đó trong staged test.
+Enable là tường minh; cài đặt làm timer khả dụng nhưng không lặng lẽ start
+maintenance.
+
+Thứ tự uninstall (host thực):
+
+```
+systemctl disable --now synveil-scheduled-maintenance.timer
+systemctl stop synveil-scheduled-maintenance.service  # cho bounded completion; không kill healthy cycle
+<remove PACKAGE via packaging hoặc uninstall.sh --root=/>
+systemctl daemon-reload
+```
+
+### Nâng cấp khi service đang chạy
+
+Một one-shot có giới hạn (`CREATED→SNAPSHOT_CAPTURED→…`) tiếp tục hoàn tất bằng
+image process đã load ngay cả khi `/usr/bin/...` được thay atomically. Lần kích
+timer tiếp theo dùng binary mới. Không kill chỉ để thay executable.
+
+### An toàn path, symlink và parent
+
+- Mọi helper validate `STAGED_ROOT` là tuyệt đối, không rỗng, không `/` nếu thiếu
+  `SYNVEIL_ALLOW_HOST_ROOT=1`, không thành phần `..`, không phải symlink.
+- Mọi destination được validate nằm dưới `STAGED_ROOT` qua `realpath -m -s`
+  (lexical) cộng check parent-dir realpath.
+- Uninstall unlink các path `PACKAGE` đã biết không follow symlink; purge unlink
+  symlink `CONFIG_DIRECTORY`/`STATE_DIRECTORY` không duyệt target. Test chèn symlink
+  độc hại trỏ ra ngoài staged root.
+- Không có parent chung nào (`/usr/bin`, `/usr/lib/...`, `/etc`, `/var/lib`) bị
+  `rm -rf`; chỉ xóa leaf Synveil đã biết.
+
+### An toàn shell
+
+`set -euo pipefail`, mọi path quoted, không `eval`, không `curl|sh`, không glob
+không quote, `rm -rf "$full"` luôn được validate và giới hạn allowlist.
+Kiểm tra qua `bash -n`.
+
+### Kiểm thử
+
+`crates/metadata/tests/linux_install_lifecycle.rs` cung cấp 33 test tập trung
+cho 18 hành vi cộng credential lifecycle (fresh/reinstall/upgrade/uninstall/
+purge/symlink/rotation), permission, manifest, shell, database. Tất cả dùng root
+tạm; không `systemctl enable`, `useradd`, `chown -R` trên host hay
+`systemd-sysusers/tmpfiles` đụng host. `crates/api/src/
+runtime_database_credential.rs` cung cấp 15 unit test cho file/ENV precedence,
+missing/empty/oversized/malformed/trailing-newline/dual-source/log.
+
+## Cấu hình runtime Linux & phân phối credential an toàn (Prompt 77)
+
+Prompt 77 hoàn thiện kiến trúc runtime Gen-1: `DATABASE_URL` trong
+`EnvironmentFile` chuyển cho production systemd sang `LoadCredential=` (ít quyền
+hơn, không world-readable hay `synveil` đọc trực tiếp source admin).
+
+### Kiến trúc
+
+```
+nguồn secret do admin sở hữu (/etc/synveil/credentials/database-url, root:root 0600)
+        ↓
+systemd LoadCredential=database-url:/etc/synveil/credentials/database-url
+        ↓
+thư mục credential per-service ($CREDENTIALS_DIRECTORY/database-url, 0400, unswapped, read-only)
+        ↓
+Environment=SYNVEIL_DATABASE_CREDENTIAL_FILE=%d/database-url  (path không bí mật)
+        ↓
+one-shot Synveil đọc file một lần (giới hạn 8 KiB, chuẩn hóa \n/CRLF đuôi)
+        ↓
+DatabaseConfig::from_url(...)  (validation chuẩn)
+        ↓
+DatabasePool::connect → MigrationRunner → ScheduledMaintenanceCycleRunner (đúng một lần)
+```
+
+`crates/core` không chứa khái niệm systemd; helper hẹp ở runtime edge
+(`crates/api/src/runtime_database_credential.rs`).
+
+### Sở hữu nguồn secret
+
+| Path | Owner | Mode | Truy cập |
+|---|---|---|---|
+| `/etc/synveil/credentials` | `root:root` | `0700` | `CREDENTIAL_DIRECTORY`; tạo skeleton, không seed secret |
+| `/etc/synveil/credentials/database-url` | `root:root` | `0600` | nguồn admin; `synveil` **không đọc trực tiếp** — systemd đọc và expose bản copy per-service |
+| `/run/credentials/.../database-url` hay `$CREDENTIALS_DIRECTORY/database-url` | systemd, `root:synveil` hiệu dụng | `0400` | bản copy per-service, read-only, unswapped, chỉ `synveil` (và root) đọc |
+
+World-readable (`0644`) bị cấm. `root:synveil 0640` (transitional cũ) được thay
+bằng `root:root 0600/0700` — ranh giới mạnh hơn.
+
+### Vai trò EnvironmentFile sau Prompt 77
+
+`EnvironmentFile=-/etc/synveil/synveil-scheduled-maintenance.env` chỉ còn cho
+tinh chỉnh **không bí mật**:
+
+```
+SYNVEIL_SCHEDULED_MAINTENANCE_LEASE_SECONDS=120
+```
+
+**Không** chứa `DATABASE_URL`, password, token. Service không còn yêu cầu
+`DATABASE_URL` trong file này; `LoadCredential` là chuẩn. Template tại
+`deploy/config/synveil-scheduled-maintenance.env.example` không có dòng
+`DATABASE_URL=postgresql://` chức năng, đã được kiểm tra.
+
+### Phân loại cấu hình
+
+| Loại | Ví dụ | Phân phối |
+|---|---|---|
+| `NON-SECRET` | lease `10..=900`, cadence tuning | `EnvironmentFile` (`0640 root:synveil`) |
+| `SECRET` | `DATABASE_URL` kèm password, token, key | `LoadCredential` → file `$CREDENTIALS_DIRECTORY` |
+
+### Ranh giới Rust
+
+One-shot giờ:
+
+```rust
+let database_config = database_config_from_runtime()?; // file credential hoặc DATABASE_URL fallback
+let pool = DatabasePool::connect(&database_config).await?;
+```
+
+Không duplicate parsing; `DatabaseConfig::from_url` vẫn là validator chuẩn. Helper
+là file-based (`load_database_url_from_file`) không gắn sâu systemd.
+
+### Cơ chế đường dẫn credential
+
+Service đặt:
+
+```
+LoadCredential=database-url:/etc/synveil/credentials/database-url
+Environment=SYNVEIL_DATABASE_CREDENTIAL_FILE=%d/database-url
+```
+
+`%d` là specifier thư mục credentials của systemd (261, `man systemd.exec`).
+Runtime ưu tiên `SYNVEIL_DATABASE_CREDENTIAL_FILE` explicit, nếu không thì
+`$CREDENTIALS_DIRECTORY/database-url`. Secret không bao giờ copy vào biến môi trường.
+
+### Tương thích phát triển / không systemd
+
+Cho dev/test/thủ công:
+
+```
+DATABASE_URL=postgresql://dev:dev@127.0.0.1:5432/synveil \
+  cargo run -p synveil-api --bin synveil-scheduled-maintenance-once
+```
+
+vẫn hỗ trợ như **fallback** khi không có credential file.
+Hoặc:
+
+```
+SYNVEIL_DATABASE_CREDENTIAL_FILE=/tmp/my-creds/database-url cargo run ...
+```
+
+### Thứ tự nguồn (precedence)
+
+1. File credential được phân phối tường minh (`SYNVEIL_DATABASE_CREDENTIAL_FILE`
+   hoặc `$CREDENTIALS_DIRECTORY/database-url`) — authoritative nếu có
+2. Fallback `DATABASE_URL` — chỉ khi không có file
+
+**Không kết hợp lặng lẽ.** Nếu cả file và `DATABASE_URL` đều đặt, runtime
+**fail closed** `database credential is ambiguous` (không log secret). Chính sách
+**B** (reject ambiguous) được chọn và kiểm tra.
+
+### Ngữ nghĩa missing / empty / oversized / malformed
+
+- **Missing** (không file, không `DATABASE_URL`): `database credential is missing` → exit non-zero trước scheduler tick
+- **Unreadable** (`open` fail, là directory): `database credential file is unreadable`
+- **Empty / whitespace-only** (sau chuẩn hóa `\n`/`\r\n`): `database credential is empty`
+- **Oversized** (`>8 KiB`): `database credential exceeds maximum size (8192 bytes)`
+- **Malformed URL** (fail `DatabaseConfig::from_url`): `database configuration is invalid: ...`
+
+Không giá trị bí mật trong lỗi. Một `\n` hoặc `\r\n` đuôi được chuẩn hóa; nội
+dung interior không bị viết lại; space không trim bừa.
+
+### Giới hạn kích thước file credential
+
+`MAX_CREDENTIAL_FILE_SIZE = 8*1024` (8 KiB). URL thường <500 bytes; 8 KiB đủ dư
+không cần streaming. Báo khi vượt.
+
+### Quy tắc không log secret
+
+Không bao giờ log: `DATABASE_URL`, password, nội dung file. Diagnostics cho
+phép: `source type = systemd credential` vs `environment fallback` nhưng không
+in full path nếu có thể lộ deployment. Đã kiểm tra `no_secret_logging_in_errors`.
+
+### Tích hợp unit systemd
+
+`synveil-scheduled-maintenance.service` nay chứa:
+
+```
+LoadCredential=database-url:/etc/synveil/credentials/database-url
+Environment=SYNVEIL_DATABASE_CREDENTIAL_FILE=%d/database-url
+EnvironmentFile=-/etc/synveil/synveil-scheduled-maintenance.env
+```
+
+Giữ `Type=oneshot`, `User=synveil`, `Group=synveil`,
+`NoNewPrivileges=yes`, `RuntimeDirectory=synveil`, `Restart=no`. Đã `systemd-
+analyze verify` sạch trên 261.
+
+### Tích hợp manifest installer
+
+`MANIFEST` thêm:
+
+```
+-  /etc/synveil/credentials  0700  root  root  CREDENTIAL_DIRECTORY
+```
+
+Package **không** đóng gói file secret. Cài mới tạo `/etc/synveil` +
+`/etc/synveil/credentials` nhưng không tạo `database-url`. Reinstall/upgrade
+giữ `database-url` byte-identical. Uninstall thường giữ
+`/etc/synveil` + `credentials/database-url`; `--purge` mới xóa. An toàn symlink
+(`realpath -m -s` + `rm -f` không follow).
+
+### Template credential
+
+Không ship secret thật. `env.example` nay chỉ ghi `LoadCredential` và không có
+dòng `DATABASE_URL=postgres://` chức năng.
+
+### Vòng đời
+
+- **Cài mới**: tạo `/etc/synveil` + `credentials` đúng mode, không secret → kích hoạt fail an toàn do thiếu credential trước DB
+- **Reinstall**: giữ `credentials/database-url` byte-identical
+- **Upgrade**: giữ nội dung + quyền; PACKAGE có thể đổi
+- **Uninstall thường**: giữ `/etc/synveil` + `credentials` + `database-url` + `/var/lib/synveil`
+- **Purge** (`--purge`): có thể xóa `/etc/synveil` gồm `credentials/*`; vẫn không xóa pool ngoài/DB
+
+Đã kiểm tra symlink `credentials` → external.
+
+### Xoay secret
+
+Admin thay thế atomically ngoài ứng dụng:
+
+```
+install -m 0600 -o root -g root /tmp/new-url /etc/synveil/credentials/database-url
+# hoặc write temp + chmod 0600 + mv
+```
+
+Lần kích one-shot tiếp theo nhận credential mới qua `LoadCredential`. Không cần
+restart daemon, không watcher/poll. Đã kiểm tra `credential_rotation_atomic...`.
+
+### Đánh giá systemd-creds
+
+`LoadCredentialEncrypted=` / `systemd-creds` là **tùy chọn tương lai mạnh hơn**.
+Gen-1: **plain `LoadCredential=` là LOCKED**; encrypted là **DEFERRED**.
+Lý do: 261 hỗ trợ `LoadCredential` sẵn không cần TPM2/key; encrypted cần key
+host và `systemd-creds` chưa ở target tối thiểu. Không yêu cầu cho Gen-1.
+
+### Mô hình đe dọa
+
+Xem bản EN cho bảng đầy đủ; root vẫn là admin tin cậy. `EnvironmentFile`
+không mong muốn vì có thể lộ qua `proc` debugging. Credentials của systemd ở
+bộ nhớ unswapped chỉ `synveil` (và root) đọc.
+
+### Không cache secret
+
+Secret chỉ sống trong `DatabaseConfig` private (redacted `Debug`) cho vòng đời
+process. Không persist vào PostgreSQL, `/var/lib/synveil`, cache, worker table.
+
+## Vỏ bọc systemd & phân quyền runtime (Prompt 78)
+
+Prompt 78 siết service bảo trì Gen-1 bằng sandbox systemd mạnh nhất đã chứng
+minh tương thích với runtime one-shot thật. Quyết định: **sandbox kiểm chứng
+bằng bằng chứng, không capability Linux, không đường ghi hệ thống — LOCKED
+Gen-1** (ADR-026).
+
+### Kiểm kê yêu cầu runtime (đo đạc, không giả định)
+
+Đọc filesystem (binary/libs, `/etc/synveil/*.env`,
+`$CREDENTIALS_DIRECTORY/database-url`); ghi filesystem **0**; mạng `AF_UNIX` +
+`AF_INET` + `AF_INET6`; thiết bị **0**; `/proc` tối thiểu; capability **0**;
+không sửa kernel. Xem bảng đầy đủ ở bản EN.
+
+### Sandbox được chấp nhận (unit production)
+
+Quyền: `NoNewPrivileges=yes`, `RestrictSUIDSGID=yes`,
+`CapabilityBoundingSet=`/`AmbientCapabilities=` rỗng. Filesystem:
+`ProtectSystem=strict` (không ngoại lệ ghi — `/var/lib/synveil` giữ
+read-only vì runtime database-backed không ghi), `ProtectHome=yes`,
+`PrivateTmp=yes`, `PrivateDevices=yes` + `DevicePolicy=closed`,
+`InaccessiblePaths=/etc/synveil/credentials`, `UMask=0077`,
+`WorkingDirectory=/`, `RuntimeDirectory=synveil` (dự trữ). Kernel:
+Tunables/Modules/Logs/ControlGroups. Process: `ProtectProc=invisible`,
+`ProcSubset=pid`, `RestrictNamespaces=yes`, `RestrictRealtime=yes`,
+`LockPersonality=yes`. Mạng: `RestrictAddressFamilies=AF_UNIX AF_INET
+AF_INET6` (IP allow/deny được hoãn — endpoint DB là lựa chọn packaging).
+Thực thi: `SystemCallArchitectures=native`, `MemoryDenyWriteExecute=yes`,
+`SystemCallFilter=@system-service` trừ các lớp nguy hiểm (`@mount`,
+`@raw-io`, `@reboot`, `@swap`, `@module`, `@debug`, `@privileged`,
+`@cpu-emulation`, `@obsolete`, `@resources`).
+
+### Chỉ thị bị từ chối/hoãn
+
+- `PrivateUsers=` — **hoãn**: xung đột user namespace với ownership bền.
+- `IPAddressDeny=any` — **hoãn**: endpoint DB không cố định trong unit.
+- `ProtectClock=`/`ProtectHostname=` — **hoãn**: ngoài baseline bắt buộc;
+  exposure đã 1.4 OK trên systemd 261.2.
+- `RestrictFileSystems=` — **hoãn**: whitelist giòn, lợi ích chưa rõ.
+- `PrivateNetwork=yes` — **từ chối**: gãy TCP PostgreSQL.
+- Mọi `ReadWritePaths=` hệ thống — **từ chối**: đã chứng minh 0 lần ghi.
+- Mọi capability Linux — **từ chối**: đo được 0 yêu cầu.
+
+### Tương thích credential & kiểm chứng
+
+Không làm yếu Prompt 77: `LoadCredential=` do PID 1 đọc trước sandbox;
+service chỉ đọc bản copy read-only. Source (`root:root 0600`) bị chặn thêm
+qua `InaccessiblePaths` (yêu cầu skeleton tồn tại — packaging luôn tạo;
+thiếu thì fail closed `226/NAMESPACE`).
+
+Kiểm chứng (PostgreSQL 17 dùng một lần, thực thi qua systemd thật):
+`systemd-analyze verify` PASS; security 4.5 → 1.4 OK trên systemd 261.2; idle exit 0
+(`tick Idle worker Idle`); due-work exit 0 (một `MaterializedAndHandedOff` +
+một `Stepped`); existing-work exit 0 (`tick Idle` + một worker step); probe
+phủ định (ghi `/usr/bin`/`/etc` bị chặn, đọc home bị chặn, `/dev/kmsg` bị
+chặn, capabilities zero, `NoNewPrivs=1`). Hồi quy: identity Prompt 75,
+install Prompt 76 (33 tests, unit byte-identical), credential Prompt 77
+(15 tests), toàn bộ suite PG17 live, stress Prompt 69 (`40P01=0`),
+34/34 migration từ rỗng. Test tĩnh:
+`crates/metadata/tests/linux_sandbox_hardening_units.rs`.
+
+### Mô hình đe dọa & không đổi hành vi
+
+Giảm: thay binary/unit, sửa `/etc/synveil`, trộm source credential, đọc
+home, raw device, module/sysctl/cgroup, ptrace, namespace nguy hiểm, leo
+thang setuid, syscall đặc quyền. Vẫn tin cậy: root/admin host; không claim
+chống admin độc hại hay isolation cấp container. Không đổi scheduler,
+misfire, lease, fencing, cadence, credential precedence, lifecycle; 0
+migration, 0 route, 0 background runtime, 0 contamination `crates/core`.
+
 ## Contract configuration
 
 Configuration được typed, versioned và validate trước khi process trở thành

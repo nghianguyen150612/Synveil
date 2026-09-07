@@ -24,12 +24,21 @@
 //! - no loop, spawn, sleep, interval, heartbeat, retry, cron, timer, cursor,
 //!   cache, daemon, API, or UI exposure
 //!
-//! # Known concurrency limitation
+//! # Concurrency and lock ordering
 //!
-//! Concurrent cycle invocations may encounter PostgreSQL lock-order contention
-//! under heavy pile-on. The runner does not hide this with automatic retry,
-//! process-local serialization, or application-global mutex. Deadlock aborts
-//! remain bounded invocation failures.
+//! Prompt 69 established a canonical PostgreSQL lock hierarchy
+//! (`backup_sets → backup_schedules / revisions → backup_schedule_occurrences
+//! → backup_schedule_occurrence_handoffs → backup_maintenance_runs
+//! → backup_scheduled_maintenance_claims → canonical child-operation state`).
+//! All competing scheduled-maintenance transactions follow this order, which
+//! structurally removes the `SQLSTATE 40P01` deadlock class without retry,
+//! backoff, global mutex, advisory locks, or `LOCK TABLE`.
+//!
+//! Live verification: 12 concurrent callers × 25 rounds = 300 invocations
+//! requires `SQLSTATE 40P01 = 0`, `unexpected DB errors = 0`, `timeouts = 0`
+//! (`SYNVEIL_BACKUP_SCHEDULED_MAINTENANCE_LOCK_ORDER_READY`).
+//! The runner still does not hide failures with automatic retry or
+//! process-local serialization.
 
 use synveil_core::{
     BackupScheduledMaintenanceWorkerId, Timestamp, validate_scheduled_maintenance_lease_duration,

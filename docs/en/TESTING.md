@@ -533,6 +533,68 @@ non-live workspace, strict Clippy, cargo-deny, OpenAPI lint, diff checks, and a
 forbidden-scope/security-field scan. Automatic conflict resolution and the
 desktop sync agent remain unimplemented.
 
+## PostgreSQL 17 scheduled-maintenance CI gate (Prompt 73)
+
+PostgreSQL **17** is the live integration target. The dedicated GitHub
+Actions workflow `.github/workflows/postgres-17.yml` provisions an
+ephemeral `postgres:17` service (major pinned, minor floats), waits with a
+bounded `pg_isready` health check (no `sleep 30`), and exports
+
+```sh
+SYNVEIL_TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres
+```
+
+using disposable CI-only `postgres/postgres` credentials (no production secret,
+no logging of external secrets). Each test creates isolated child databases
+via `CREATE DATABASE` as the `postgres` superuser; shared-state contamination
+is avoided by the existing harness (`--test-threads=1`). After the job the
+container and all child databases are destroyed, keeping disk use bounded and
+avoiding WAL accumulation; no lifecycle or migration table is added.
+
+The job is additive to the normal `cargo fmt/check/test/clippy` and
+`cargo deny` gates and runs on every `push`/`pull_request` (`workflow_dispatch`
+allowed). Any failure in migration, live suite, deadlock stress, or
+`systemd-analyze verify` fails the job (`continue-on-error` is never used).
+No generic `cargo test || cargo test` / `retry 3` masking is present; only
+the bounded `pg_isready` readiness loop may retry.
+
+Migration-from-empty is verified first: 34 attempted, 34 successful, 0 failed,
+`is_current true`, latest `20260903000001_backup_scheduled_maintenance_claims.sql`,
+historical migrations unchanged (`crates/metadata/tests/pg17_migration_gate_postgres.rs:1`).
+
+Live suites executed (exactly the `#[ignore]` suites that were compile-only
+during Prompt 72) with `--ignored --test-threads=1`:
+
+- `backup_scheduling_postgres` (Prompt 61, 11)
+- `backup_schedule_occurrences_postgres` (Prompt 62, 9)
+- `backup_schedule_handoffs_postgres` (Prompt 63, 11)
+- `backup_scheduler_tick_postgres` (Prompt 64–65, 25/25 wall-clock independent)
+- `backup_scheduled_maintenance_worker_postgres` (Prompt 66, 30)
+- `backup_scheduled_maintenance_cycle_postgres` (Prompt 67, 20)
+- `scheduled_maintenance_cycle_runner_postgres` (Prompt 68, 15)
+- `scheduled_maintenance_oneshot_postgres` (Prompt 71, 14)
+- `scheduled_maintenance_lifecycle_postgres` (Prompt 72, 13; covers one-activation
+  boundedness, four-activation progression, `LATEST_ONLY`/`REPLAY_ONE_BY_ONE`/
+  `SKIPPED_EXPIRED` after downtime, 12 concurrent callers, restart recovery)
+- `backup_maintenance_postgres` (Prompt 49, 9) and other affected
+  `backup_postgres`/`backup_expiry_postgres`/`backup_expiry_execution_postgres`/
+  `backup_restore_postgres`/`backup_prune_postgres`/`backup_retention_postgres`
+- Prompt 69 12 callers × 25 rounds = 300 invocations remains `40P01=0`,
+  `unexpected DB errors=0`, `timeouts=0`, with no `Mutex`/`pg_advisory_lock`.
+
+The suite also validates `deploy/systemd/synveil-scheduled-maintenance.service`
+(`Type=oneshot`, `ExecStart` canonical, `Restart=no`) and
+`deploy/systemd/synveil-scheduled-maintenance.timer`
+(`Persistent=true`, `OnCalendar=*:*:00` ~60s, `RandomizedDelaySec=10s`)
+via `systemd-analyze verify` on temporary copies (no host install), proving
+recurrence is external and the Rust runtime has 0 loops.
+
+Contributors do **not** need a production PostgreSQL server; a disposable
+local `postgres:17` (Docker/podman or the CI service) is sufficient.
+Compile-only `cargo test --workspace --locked` remains the fast local gate;
+the PG17 job is the release gate for scheduler/worker/cycle/lifecycle
+correctness.
+
 ## PostgreSQL integration tests
 
 Use the supported PostgreSQL version, not SQLite or a simplistic repository

@@ -1,0 +1,50 @@
+[Unit]
+Description=Synveil scheduled backup maintenance timer (external cadence ~60s)
+Documentation=file:///usr/share/doc/synveil/BACKUP.md
+
+[Timer]
+# Conservative default cadence: approximately once per minute.
+#
+# Rationale (see BACKUP.md):
+# - DEFAULT_BACKUP_SCHEDULE_MAX_LATENESS_SECONDS is 604800 (7 days) with a
+#   minimum of 60 seconds. A 60-second external poll therefore detects a due
+#   occurrence within at most one minimum lateness interval plus jitter.
+# - One service activation performs at most one scheduler tick + one worker
+#   step + one maintenance transition (CREATED→SNAPSHOT_CAPTURED, etc.).
+#   A full run needs three separate activations. A 60-second cadence drains
+#   a backlog in ~3 minutes without tight looping.
+# - The cadence is deliberately independent of the canonical lease duration
+#   (default 120s, 10..=900s). Timer interval ≠ lease duration and is not
+#   derived from user backup schedule recurrence (daily/weekly). The timer
+#   merely asks "is there bounded scheduled work to perform now?" as defined
+#   by the durable PostgreSQL scheduler/worker claim architecture.
+# - More frequent polling would increase DB load without improving durability;
+#   less frequent polling would delay detection of due work beyond the
+#   minimum lateness window. 60s is the generation-1 conservative trade-off
+#   and may be overridden per-site via `systemctl edit`.
+OnCalendar=*:*:00
+AccuracySec=1s
+
+# Persistent timer semantics: if the host was powered off during one or more
+# activations, systemd will invoke the service once after boot rather than
+# replaying every missed firing. The Synveil scheduler itself owns misfire
+# semantics (LATEST_ONLY / REPLAY_ONE_BY_ONE / SKIPPED_EXPIRED); systemd
+# merely wakes the scheduler after downtime. This avoids hundreds of
+# timer-triggered invocations after extended downtime while preserving
+# durable convergence.
+Persistent=true
+
+# Jitter: bounded systemd-native randomized delay to avoid fleet-wide thundering
+# herds where many appliances share the same wall-clock minute. 10 seconds is
+# small relative to the 60-second minimum lateness (and default 604800s),
+# so it cannot violate scheduler correctness; due evaluation uses durable
+# timestamps, not arrival second. Implemented as timer-level RandomizedDelaySec,
+# NOT as a random sleep inside the Rust binary.
+RandomizedDelaySec=10s
+
+# The timer owns recurrence; the Rust binary owns exactly one bounded cycle.
+# No loop, interval, or daemon exists in synveil-scheduled-maintenance-once.
+Unit=synveil-scheduled-maintenance.service
+
+[Install]
+WantedBy=timers.target
