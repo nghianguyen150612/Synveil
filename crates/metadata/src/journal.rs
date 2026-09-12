@@ -670,10 +670,10 @@ impl ChangeJournalService {
     }
 
     /// Read a coherent bounded journal page inside a caller-owned transaction.
-    /// The caller is responsible for establishing a repeatable-read snapshot
-    /// and for committing or rolling back the transaction. Keeping this helper
-    /// here lets device feed reads share the exact Prompt 31 SQL and
-    /// high-watermark semantics without opening a competing journal reader.
+    /// The caller is responsible for its isolation/locking contract and for
+    /// committing or rolling back. Keeping this helper here lets device feed
+    /// reads share the exact Prompt 31 SQL and high-watermark semantics without
+    /// opening a competing journal reader.
     pub(crate) async fn list_changes_in_transaction(
         transaction: &mut Transaction<'_, Postgres>,
         owner_user_id: UserId,
@@ -719,7 +719,11 @@ impl ChangeJournalService {
             u64::try_from(head.minimum_retained_sequence)
                 .map_err(|_| JournalError::InvalidPersistedData)?,
         );
-        if position.get().saturating_add(1) < minimum_retained.get() {
+        // `minimum_retained_sequence` is the durable compacted-through
+        // boundary. A cursor exactly at the boundary can request the first
+        // retained event (`sequence > cursor`); every lower cursor is stale.
+        // This also makes an absent cursor stale after any non-zero cleanup.
+        if position < minimum_retained {
             return Err(JournalError::CursorExpired);
         }
 

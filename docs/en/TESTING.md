@@ -424,6 +424,303 @@ version restore, Trash/restore, metadata purge, journal atomicity, sync
 feed/ack, GC planning/execution/worker, local ObjectStore conformance, and
 available Windows upload-durability regression coverage.
 
+## Prompt 81 logical snapshot consistency foundation
+
+`synveil-core` unit coverage validates the library-scoped `LogicalSnapshot`
+aggregate: exactly one active directory root, immutable-Node-ID ordering,
+parent-topology validation, current `ACTIVE`/`TRASHED` state, duplicate/missing
+parent rejection, and exclusion of the internal `PURGING` shape. Metadata unit
+coverage validates checked journal sequence mapping and the typed snapshot
+boundary.
+
+The ignored PostgreSQL suite `snapshot_postgres` exercises the new
+`LogicalSnapshotService` on a fresh PostgreSQL 17 database. Its 13 tests cover
+empty/root state, a single-node hierarchy, owner and library isolation, a
+250-node deterministic-order fixture, current rename/move and Trash/restore,
+concurrent create/rename/move/Trash/restore before-or-after cuts, continuation
+after the returned cursor with no gap or duplicate pre-snapshot event, and
+unchanged device checkpoint state. Each concurrent case accepts only the two
+valid outcomes: the mutation is represented by the snapshot at or before its
+journal event, or it is absent and the event is strictly after the boundary.
+The service query is set-oriented and includes no physical storage identity.
+
+Run the focused live suite with:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-metadata --test snapshot_postgres --locked -- \
+  --ignored --test-threads=1
+```
+
+Prompt 81 itself intentionally added no migration, HTTP route, client snapshot
+application, checkpoint completion, journal retention, conflict policy, cache,
+or background runtime.
+
+## Prompt 82 durable rebaseline snapshot artifact
+
+`synveil-core` unit coverage now proves a UUIDv7 `RebaselineSnapshotId`, a
+snapshot-scoped page cursor that is type-distinct from `JournalCursor`,
+descriptor construction, page-size bounds (1..=1000, default 256), and the
+inclusive expiry boundary (`observed_at == expires_at` is expired). Metadata
+unit coverage additionally checks the descriptor's typed boundary and safe
+expiry comparison.
+
+The ignored PostgreSQL 17 suite `durable_snapshot_postgres` creates migration
+35 from empty and exercises root/hierarchy materialization, exact descriptor
+count, Prompt 81 equivalence, keyset reconstruction of a 1,001-entry fixture,
+page-size rejection, owner concealment/library isolation, cross-artifact cursor
+rejection, exact expiry, cross-connection paging, real fresh-pool restart,
+post-materialization immutability, journal continuation after the stored cut,
+checkpoint invariance, deterministic entry-copy rollback, repeated concurrent
+create/mutation cuts with a reported `40P01=0` stress result, and an upgrade
+from the historical 34-migration schema retaining owner/library/Node/journal/
+checkpoint data.
+
+Run the durable suite serially against a fresh disposable PostgreSQL 17
+database:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-metadata --test durable_snapshot_postgres --locked -- \
+  --ignored --test-threads=1
+```
+
+The Prompt 82 upgrade fixture still reconstructs the historical 35-migration
+boundary at `20260908000000_rebaseline_durable_snapshots.sql` before applying
+the current migration 36, without historical checksum drift. Prompt 82 itself
+added no HTTP/OpenAPI/SSE/WebSocket operation, client
+application, rebaseline completion, journal retention, cleanup daemon, retry
+loop, global serialization mechanism, or deployment runtime. Creation validates
+the full aggregate in temporary O(total-node-count) memory; only later page
+reads have the O(page-size) transfer bound.
+
+## Prompt 83C durable snapshot abuse boundary and direct HTTP proofs
+
+The durable creation admission rule is proven in the same PostgreSQL 17
+`durable_snapshot_postgres` suite. It seeds seven active artifacts, rejects the
+eighth-plus boundary atomically, verifies that header/entry counts, library
+journal head, journal rows, and device checkpoint are unchanged by rejection,
+then proves owner/library isolation and exact-expiry re-admission. A barrier
+starts twelve un-retried callers at the `N-1` boundary; the expected result is
+one admission, eleven typed `ActiveArtifactLimitReached` results, zero
+deadlocks (`40P01`), zero unexpected database errors, and zero timeouts. The
+existing fifteen-round snapshot/mutation coherence stress now reports the
+seven expected admission rejections separately from database failures.
+
+Run the expanded durable and direct HTTP suites serially on fresh disposable
+PostgreSQL 17 databases:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-metadata --test durable_snapshot_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-api --test rebaseline_snapshot_http_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture
+```
+
+The direct HTTP file contains 25 ignored tests: 21 Prompt 83C tests plus four
+Prompt 85 handoff tests. In addition to the existing descriptor/page, auth,
+cache, cursor, body, checkpoint, and coherence cases, it proves authorized expired descriptor/page `410 snapshot_expired`,
+foreign expired descriptor/page `404 not_found` rather than `410`, canonical
+`device_revoked` for a revoked device on create/descriptor/page, and concurrent
+HTTP admission at the durable limit with `429 rate_limited` and `Retry-After: 1`.
+The exact outbound desktop rename/content round trip is a separate required
+live regression:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-api --test desktop_remote \
+  outbound_rename_and_content_round_trip_converges_without_watcher_bounce \
+  --locked -- --ignored --nocapture
+```
+
+## Prompt 85 durable checkpoint handoff and crash-safe incremental resume
+
+Prompt 85 completes the `AppliedPendingHandoff` fence created by Prompt 84.
+The server derives the immutable snapshot boundary from an owner-scoped durable
+handoff proof (originally the snapshot header before Prompt 86),
+locks only the target device checkpoint, installs the boundary only when it is
+missing or behind, and returns a typed conflict for a checkpoint already ahead
+or in a newer epoch. The handoff never reads snapshot entries, advances the
+checkpoint through ordinary ACK evidence, expires an otherwise present proof,
+or mutates the snapshot payload or journal.
+
+The nine focused `client85_...` tests cover the seven crash boundaries:
+pending-before-request restart fencing; a server failure before commit;
+response loss after server commit; a crash after server success but before
+local commit; local SQLite rollback before commit; and the post-commit restart
+and retry pair. They also cover concurrent same-snapshot callers, outbound
+intent insertion while the network request is blocked, and rejection of a
+wrong snapshot without overriding the pending marker. The final local
+transaction sets epoch/applied/acknowledged cursor fields, returns the replica
+to `IDLE`, and deletes the marker together; the network request is outside the
+local writer lock.
+
+Run the deterministic client proof locally:
+
+```text
+cargo test -p synveil-client-sync --lib client85_ --locked -- --nocapture
+```
+
+The ignored PostgreSQL target `rebaseline_handoff_postgres` runs two tests. The
+S1-S15 test proves the real service matrix: missing/older/exact checkpoints,
+older and newer epochs, expired-but-present proofs, missing/foreign
+concealment, concurrent callers, independent devices and libraries, and
+unchanged snapshot/journal rows. Its supplemental test proves eight-caller
+missing-checkpoint initialization, concurrent C1/C2 handoffs without rewind,
+the stale-C1 conflict after C2, deterministic NG1-NG4 no-gap timing, exclusive
+post-C feed behavior, an empty feed, and the ordinary post-C ACK path. The
+four additional HTTP tests prove device-only scope, strict empty-body input,
+private/no-store responses, idempotency, unknown-boundary rejection, expired
+payload with retained-proof success, missing/foreign concealment,
+ahead-checkpoint conflict,
+browser rejection, and revoked-device rejection. The direct HTTP target has 25
+ignored tests in total.
+
+The full live chain must run serially against fresh PostgreSQL 17 databases:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-metadata --test rebaseline_handoff_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-api --test rebaseline_snapshot_http_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-api --test rebaseline_client_e2e_84c_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture
+```
+
+`rebaseline_client_e2e_84c_postgres` uses the real API and `HttpSyncRemote` to
+activate a snapshot, prove the inbound fence, complete the device handoff,
+restart the client, then apply and ACK a new feed event strictly after C. The
+PostgreSQL 17 workflow runs these commands with `set -euo pipefail`; it is a
+hard-fail gate and does not use `|| true` or continue-on-error. The final
+acceptance token `SYNVEIL_REBASELINE_CHECKPOINT_HANDOFF_READY` is valid only
+when the migration, Rust, client, direct HTTP, and live PostgreSQL gates all
+pass.
+
+## Prompt 86 journal retention and bounded physical cleanup
+
+Prompt 86 adds transport-neutral, explicitly timed one-shot maintenance through
+`SyncRetentionService`; it adds no route, daemon, timer, retry loop, client
+recovery, or conflict policy. The validated generation-one policy keeps journal
+history for 30 days, keeps each immutable handoff proof until 30 days after its
+snapshot payload expires, and defaults to batches of 10,000 journal rows, 32
+snapshot artifacts, and 128 proof rows. The corresponding hard maxima are
+100,000, 1,024, and 4,096; zero and larger values are rejected.
+
+Migration 36 reuses `libraries.minimum_retained_sequence` as the durable
+current-epoch compacted-through boundary and backfills an immutable,
+owner-scoped proof for every migration-35 snapshot. Snapshot creation writes
+the header, entries, and proof in one transaction. Payload cleanup may delete
+an expired header and its entries only while the proof exists; the proof has no
+header foreign key and therefore survives. Proof cleanup requires both the
+inclusive proof deadline and absence of payload. While a proof exists, the
+oldest matching boundary caps journal compaction. Device checkpoints do not pin
+retention and cleanup never changes them, the journal head, or the epoch.
+
+The ignored PostgreSQL 17 target `sync_retention_postgres` contains seven
+fixture groups covering the full retention matrix: migration 35 to 36 with
+representative owner, Library, journal, checkpoint, and snapshot data plus
+proof backfill; atomic new-snapshot proof creation and rollback; immutable proofs;
+exact payload/proof expiry; owner concealment; post-payload handoff and feed;
+a 25,005-row journal compacted in 10,000/10,000/5,005-row steps; persistent,
+monotone floor behavior; below/at/above/no-cursor and empty-journal feed rules;
+conservative non-monotonic timestamps; single/multiple/oldest and cross-scope
+proof pins; five 301-entry payloads deleted in 2/2/1 artifact batches
+(602/602/301 entries) and 2/2/1 proof batches; missing-proof fail-closed behavior;
+rollback injection for all three maintenance operations; deterministic
+feed/append/handoff cleanup races, including concurrent compaction capped by a
+retained handoff proof; and eight rounds of four concurrent callers with zero
+`40P01`, unexpected errors, timeouts, or retries.
+
+Run the focused gate serially on a fresh disposable database:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-metadata --test sync_retention_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture
+```
+
+The stale-feed contract is exact: a requested position below the durable floor
+returns the existing typed `RebaselineRequired`; a position at the floor is
+valid and resumes at floor + 1. No cursor means position zero, so it is stale
+when the floor is nonzero even if no physical journal rows remain. Selection is
+an age-eligible contiguous prefix starting immediately after the old floor,
+capped by both batch size and the oldest compatible proof. Row deletion and
+floor advancement commit or roll back together. Feed holds the library share
+lock through floor/head/row reads; append and cleanup acquire the corresponding
+exclusive library lock, so the feed/cleanup result is either the complete old
+page or a rebaseline result from the new floor, never silent omission.
+
+The current migration gate reports 36 attempted/36 successful, zero failed,
+`is_current true`, latest
+`20260910000000_sync_retention_handoff_proofs.sql`, and the first 35 migration
+checksums unchanged. The PostgreSQL 17 workflow runs this focused suite as a
+hard-fail step under `set -euo pipefail`.
+
+## Prompt 87 bounded rebaseline convergence
+
+The client-sync unit module `rebaseline_convergence` drives the production
+`RebaselineConvergenceCoordinator`, `InboundSyncEngine`, `RebaselineApplier`,
+and v5 SQLite state through transport-neutral scripted remotes. It proves that
+healthy incremental sync creates zero snapshots; retained-history invalidation
+and epoch mismatch create and hand off exactly one server-authored snapshot;
+the explicit no-cursor server signal starts recovery without creating legacy
+bootstrap state; a complete candidate resumes before a POST; a valid pending
+handoff finalizes without a POST; missing proof replaces H1 only through the
+atomic H1-to-H2 activation; and a second checkpoint conflict stops with
+`DidNotConverge` after one replacement. The first checkpoint-ahead conflict is
+also proved to recover with exactly one current snapshot.
+
+The same module proves non-triggering/failure boundaries: an authentication,
+revoked-device, or internal handoff failure leaves H1 and sends no create, 429 returns
+`RateLimited` with no durable candidate or retry, a lost create response leaves
+no unknown-ID candidate, candidate corruption fails closed, and a page transport
+failure leaves the exact candidate resumable without a second POST. It also
+checks same-library single-create ownership, independent library state, and
+byte-for-byte preservation of a pending outbound intent through H1-to-H2
+replacement. HTTP adapter coverage verifies the existing authenticated
+`POST /api/v1/libraries/{library_id}/rebaseline-snapshots` request, exact 201
+status, strict descriptor decoding, and the fact that the boundary comes only
+from the server response.
+
+Run the focused local gates:
+
+```text
+cargo test -p synveil-client-sync --lib --locked rebaseline_convergence
+cargo test -p synveil-client-sync --lib --locked durable_rebaseline_snapshot_create
+cargo test -p synveil-api --test rebaseline_convergence_postgres --locked -- --ignored --test-threads=1 --nocapture
+cargo test -p synveil-api --test rebaseline_client_e2e_84c_postgres --locked -- --ignored --test-threads=1 --nocapture
+```
+
+`rebaseline_convergence_postgres` is the dedicated live Prompt 87B acceptance
+target. Each ignored test creates a fresh child database, verifies PostgreSQL
+17, starts the real Axum router and device-auth exchange, and drives the real
+`HttpSyncRemote` through a loopback counting proxy. It proves the retained-floor
+path even when the physical journal is empty, exact-floor and above-floor
+incremental controls, epoch recovery, proof-loss replacement, H1 fencing while
+S2 pages, atomic H1-to-H2 replacement, checkpoint-ahead replacement, retention
+pinning during S2 download, real page-failure candidate resume, one-POST 429
+boundedness, revoked-device non-trigger behavior, and same-library concurrent
+single-owner convergence. The assertions include exact snapshot/page/handoff
+counts, server/local checkpoint equality at the server-authored boundary,
+candidate/marker cleanup, post-recovery feed and ACK progress, and unchanged
+pending outbound intent rows. The forced second recoverable handoff failure
+returns `DidNotConverge` and proves S3 is never created.
+
+The established PostgreSQL E2E remains a separate valid-pending-handoff proof:
+it confirms that the coordinator completes an existing handoff without a
+replacement POST and that Prompt 85 remains the exclusive checkpoint/finalize
+path. The deterministic client-sync tests additionally cover create-response
+loss, malformed responses, local corruption, and transport boundaries that do
+not require a raw-socket response-suppression fixture. The PostgreSQL 17
+workflow runs the dedicated target as a hard-fail step under
+`set -euo pipefail`; only after all earlier live suites pass does it emit
+`SYNVEIL_SYNC_REBASELINE_CONVERGENCE_READY`.
+
 ## Prompt 34 client mutation submission validation
 
 Unit coverage in `synveil-core` and `synveil-metadata` proves the closed
@@ -558,9 +855,11 @@ allowed). Any failure in migration, live suite, deadlock stress, or
 No generic `cargo test || cargo test` / `retry 3` masking is present; only
 the bounded `pg_isready` readiness loop may retry.
 
-Migration-from-empty is verified first: 34 attempted, 34 successful, 0 failed,
-`is_current true`, latest `20260903000001_backup_scheduled_maintenance_claims.sql`,
-historical migrations unchanged (`crates/metadata/tests/pg17_migration_gate_postgres.rs:1`).
+Migration-from-empty is verified first: 36 attempted, 36 successful, 0 failed,
+`is_current true`, latest
+`20260910000000_sync_retention_handoff_proofs.sql`, and the first 35 historical
+migrations are unchanged
+(`crates/metadata/tests/pg17_migration_gate_postgres.rs:1`).
 
 Live suites executed (exactly the `#[ignore]` suites that were compile-only
 during Prompt 72) with `--ignored --test-threads=1`:
@@ -1765,3 +2064,75 @@ upstream license notices and root-data agreement. No advisory was suppressed.
 OpenAPI lint warnings for public probe/status 4xx responses and unused shared
 components are reported separately; they are not resolved by inventing API
 behavior. DeviceBearer is not advertised for privileged system health.
+
+### Prompt 88 conflict evidence
+
+`synveil-api` target `sync_conflict_postgres` is ignored unless
+`SYNVEIL_TEST_DATABASE_URL` names a fresh disposable PostgreSQL 17 database. It
+uses the real migrations (still 36), Axum router, two enrolled device bearers,
+`HttpSyncRemote`, filesystem replicas, SQLite stores, metadata mutation
+preconditions, and resumable upload path. It creates genuine rename, move,
+remote-trash, and content divergence, verifies durable typed conflicts and no automatic resubmission,
+advances inbound state while retaining hash-verified local staged bytes, and
+exercises explicit `AcceptRemote` and idempotent content `RetryLocal`.
+
+The client `conflict_policy` tests cover canonical classification, restart
+durability, atomic/idempotent resolutions, unavailable content source,
+concurrent duplicate detection, and a real V5-to-V6 migration preserving
+outbound upload, rebaseline candidate, and pending-handoff state. State tests
+page 2,000 conflict rows without loading the complete history. Rebaseline tests
+prove only exact stale node/parent evidence creates proactive conflicts while
+the original intent remains byte-for-byte equivalent.
+
+Run the live target with one fresh database and one thread:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5432/fresh_p88 \
+  cargo test -p synveil-api --test sync_conflict_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture
+```
+
+### Prompt 89 adversarial verification
+
+Target `sync_adversarial_postgres` (`synveil-api`, ignored unless
+`SYNVEIL_TEST_DATABASE_URL` names a fresh disposable PostgreSQL 17 database)
+is the final adversarial gate for Prompts 81–88. It uses real PostgreSQL, the
+real Axum router, real device auth, real `HttpSyncRemote`, real client SQLite
+state, the real retention service, the real rebaseline coordinator, real
+outbound submission, and real conflict persistence/resolution. No central
+correctness transition is faked.
+
+Topology: one owner, one library per scenario group, two active devices
+(A primary under test, B remote-mutation adversary), plus a third enrolled
+device where independent remote mutation is required. Client A state uses real
+local persistence (remote mirror, cursor, outbound intents, upload/source
+references, conflicts, candidate/handoff).
+
+The eight live tests cover ADV89-01..72 and scenarios 1–45 plus the 25-step
+chaos sequence:
+
+- `incremental_and_concurrent_feed`: happy-path baseline, concurrent feed/mutation, cursor-at-floor.
+- `retention_rebaseline_recovery`: stale recovery, mutation during transfer, retention-vs-proof pin, payload-cleaned handoff, proof-loss S1→S2, checkpoint-ahead, multi-device retention, empty-journal floor, epoch mismatch, different-epoch proof.
+- `crash_restart_handoff`: partial-candidate resume (0 new POST), post-activation fence, lost-response idempotency, finalize rollback, multi-restart determinism.
+- `conflicts_core`: rename/content durability, three independent conflicts, concurrent same-conflict dedup.
+- `conflict_rebaseline_interactions`: conflict survives rebaseline, rebaseline exposes conflict, proof-loss with conflict, AcceptRemote/RetryLocal races, lost-response single replacement, conflict does not pin retention, handoff independence.
+- `limits_and_auth`: active-limit 429 (one POST, no retry, unchanged state), 500 no-loop, revoked recovery/outbound fail-closed with no fake conflict.
+- `chaos_and_convergence`: 25-step chaos (sync → diverge → compact → S1 → mutate → apply → lost handoff → restart → idempotent handoff → post-C feed → conflict → retention → S2 → RetryLocal → re-conflict → AcceptRemote → converge), two-library independent recovery, intent-during-rebaseline survival, 100-round local intent/conflict races, 25k-event bounded journal, ~200-entry snapshot, 200-conflict bounded ledger, 3× rebaseline leak check, two-device convergence.
+- `stress_and_failure_injection`: deterministic trigger rollbacks (journal/payload/proof), missing-conflict fail-closed, 10 live-PG rounds (feed/append/retention/snapshot/handoff/outbound) plus 100 local SQLite rounds, DB invariant audit (no orphans, no duplicate checkpoints/sequences/conflicts), 40P01=0, no retry loops, no sleeps (barriers/channels/hooks/locks only).
+
+Final-state invariants STATE-01..15, monotonicity (checkpoint/floor/head),
+uniqueness (intent/snapshot IDs), and cross-state non-mutation are asserted
+after each scenario. Full local gate (every readiness assertion):
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5439/postgres \
+  cargo test -p synveil-api --test sync_adversarial_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture
+```
+
+CI runs the same target as a bounded hard-fail subset with `set -euo pipefail`
+and no `continue-on-error` or `|| true` masking. PostgreSQL 17 is required
+(`SHOW server_version` must start with `17.`); server migrations remain 36
+(`20260910000000_sync_retention_handoff_proofs.sql`), client schema remains 6
+(`0006_sync_conflicts.sql`), with zero new migrations, routes, OpenAPI
+operations, daemons, schedulers, polling loops, retry loops, or global locks.

@@ -69,8 +69,8 @@ jobs:
           count=$(ls migrations/*.sql | wc -l)
           latest=$(ls migrations/*.sql | sort | tail -n 1)
           echo "migrations count=$count latest=$latest"
-          test "$count" -eq 34 || { echo "expected 34 migrations, got $count"; exit 1; }
-          echo "$latest" | grep -q "20260903000001_backup_scheduled_maintenance_claims.sql" || { echo "latest migration mismatch $latest"; exit 1; }
+          test "$count" -eq 36 || { echo "expected 36 migrations, got $count"; exit 1; }
+          echo "$latest" | grep -q "20260910000000_sync_retention_handoff_proofs.sql" || { echo "latest migration mismatch $latest"; exit 1; }
 
       - name: Wait for PostgreSQL readiness (bounded health check)
         run: |
@@ -98,9 +98,78 @@ jobs:
           echo "PostgreSQL 17 confirmed"
 
       # Migration-from-empty gate — must be verified before any live suite.
-      - name: Migration gate — fresh DB applies 34 migrations
+      - name: Migration gate — fresh DB applies 36 migrations
         run: |
-          cargo test --test pg17_migration_gate_postgres -- --ignored --test-threads=1 --nocapture
+          cargo test --locked --test pg17_migration_gate_postgres -- --ignored --test-threads=1 --nocapture
+
+      - name: "Prompt 86 — retention, handoff proofs, bounded cleanup and races"
+        run: |
+          set -euo pipefail
+          DB="p86_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test -p synveil-metadata --test sync_retention_postgres --locked -- --ignored --test-threads=1 --nocapture
+
+      - name: "Prompt 81–82 — logical and durable rebaseline snapshots"
+        run: |
+          set -euo pipefail
+          DB="p82_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test -p synveil-metadata --test snapshot_postgres --locked -- --ignored --test-threads=1 --nocapture
+          cargo test -p synveil-metadata --test durable_snapshot_postgres --locked -- --ignored --test-threads=1 --nocapture
+
+      - name: "Prompt 83C/85 — durable snapshot HTTP transport (25)"
+        run: |
+          set -euo pipefail
+          DB="p83_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test -p synveil-api --test rebaseline_snapshot_http_postgres --locked -- --ignored --test-threads=1 --nocapture
+
+      - name: "Prompt 85 — durable checkpoint handoff and crash-safe resume"
+        run: |
+          set -euo pipefail
+          DB="p85_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test -p synveil-metadata --test rebaseline_handoff_postgres --locked -- --ignored --test-threads=1 --nocapture
+          cargo test -p synveil-api --test rebaseline_snapshot_http_postgres --locked -- --ignored --test-threads=1 --nocapture
+          cargo test -p synveil-api --test rebaseline_client_e2e_84c_postgres --locked -- --ignored --test-threads=1 --nocapture
+
+      - name: "Prompt 87 — bounded client rebaseline convergence"
+        run: |
+          set -euo pipefail
+          DB="p87_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          # The dedicated target drives every mandatory Prompt 87B recovery
+          # branch through PostgreSQL -> Axum -> authentication -> real
+          # HttpSyncRemote -> SQLite, with bounded HTTP call assertions.
+          cargo test -p synveil-api --test rebaseline_convergence_postgres --locked -- --ignored --test-threads=1 --nocapture
+          # Retain the established valid-pending-handoff live regression.
+          cargo test -p synveil-api --test rebaseline_client_e2e_84c_postgres --locked -- --ignored --test-threads=1 --nocapture
+          cargo test -p synveil-client-sync --lib --locked rebaseline_convergence
+          cargo test -p synveil-client-sync --lib --locked durable_rebaseline_snapshot_create
+
+      - name: "Prompt 88 — deterministic durable sync conflicts"
+        run: |
+          set -euo pipefail
+          DB="p88_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          cargo test -p synveil-api --test sync_conflict_postgres --locked -- --ignored --test-threads=1 --nocapture
+          cargo test -p synveil-client-sync --lib --locked conflict_policy
+
+      - name: "Prompt 89 — adversarial full-sync verification (bounded CI subset)"
+        run: |
+          set -euo pipefail
+          DB="p89_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          # Bounded CI acceptance subset (fast, hard-fail, no retry masking).
+          # Full local gate runs all 8 adversarial targets serially; see docs/en/TESTING.md.
+          cargo test -p synveil-api --test sync_adversarial_postgres --locked -- --ignored --test-threads=1 --nocapture
 
       # Systemd unit syntax validation (lightweight, no host install)
       - name: Validate systemd units
@@ -301,6 +370,12 @@ jobs:
           psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
           export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
           cargo test -p synveil-api --test packaged_maintenance_runtime_postgres -- --ignored --test-threads=1 --nocapture
+
+      - name: Emit Prompt 88 readiness gate
+        if: success()
+        run: |
+          set -euo pipefail
+          echo SYNVEIL_SYNC_CONFLICT_POLICY_FOUNDATION_READY
 
       - name: Post-failure diagnostics (disk, DB list)
         if: failure()

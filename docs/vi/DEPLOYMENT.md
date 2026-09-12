@@ -997,7 +997,7 @@ phủ định (ghi `/usr/bin`/`/etc` bị chặn, đọc home bị chặn, `/dev
 chặn, capabilities zero, `NoNewPrivs=1`). Hồi quy: identity Prompt 75,
 install Prompt 76 (33 tests, unit byte-identical), credential Prompt 77
 (15 tests), toàn bộ suite PG17 live, stress Prompt 69 (`40P01=0`),
-34/34 migration từ rỗng. Test tĩnh:
+36/36 migration từ rỗng. Test tĩnh:
 `crates/metadata/tests/linux_sandbox_hardening_units.rs`.
 
 ### Mô hình đe dọa & không đổi hành vi

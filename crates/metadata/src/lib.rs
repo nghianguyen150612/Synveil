@@ -29,12 +29,14 @@ mod purge;
 mod readiness;
 mod rebaseline;
 mod repository;
+mod retention;
 mod schedule_handoffs;
 mod scheduled_maintenance;
 mod scheduled_maintenance_cycle;
 mod scheduled_maintenance_cycle_runner;
 mod scheduler;
 mod scheduling;
+mod snapshot;
 mod sync;
 mod uploads;
 mod versions;
@@ -120,6 +122,15 @@ pub use rebaseline::{
     MAX_SYNC_BOOTSTRAP_PAGE_LIMIT, RebaselineError, SnapshotNodePage, SyncBootstrapService,
 };
 pub use repository::DomainRepository;
+pub use retention::{
+    DEFAULT_HANDOFF_PROOF_CLEANUP_BATCH_LIMIT, DEFAULT_HANDOFF_PROOF_RETENTION_SECONDS,
+    DEFAULT_JOURNAL_COMPACTION_BATCH_LIMIT, DEFAULT_JOURNAL_RETENTION_SECONDS,
+    DEFAULT_SNAPSHOT_PAYLOAD_CLEANUP_BATCH_LIMIT, HandoffProofCleanupStepResult,
+    JournalCompactionStepResult, MAX_HANDOFF_PROOF_CLEANUP_BATCH_LIMIT,
+    MAX_JOURNAL_COMPACTION_BATCH_LIMIT, MAX_SNAPSHOT_PAYLOAD_CLEANUP_BATCH_LIMIT,
+    SnapshotPayloadCleanupStepResult, SyncRetentionError, SyncRetentionPolicy,
+    SyncRetentionService,
+};
 pub use schedule_handoffs::BackupScheduleHandoffError;
 pub use scheduled_maintenance::{
     ScheduledMaintenanceWorkerError, ScheduledMaintenanceWorkerService,
@@ -138,9 +149,15 @@ pub use scheduling::{
     BackupScheduleError, BackupScheduleService, BackupSchedulingBackend,
     MAX_BACKUP_SCHEDULE_OPERATION_KEY_BYTES, MIN_BACKUP_SCHEDULE_OPERATION_KEY_BYTES,
 };
+pub use snapshot::{
+    DEFAULT_REBASELINE_SNAPSHOT_LIFETIME_SECONDS, DEFAULT_REBASELINE_SNAPSHOT_PAGE_SIZE,
+    LogicalSnapshotService, MAX_ACTIVE_REBASELINE_SNAPSHOTS_PER_OWNER_LIBRARY,
+    MAX_REBASELINE_SNAPSHOT_PAGE_SIZE, RebaselineSnapshot, RebaselineSnapshotDescriptor,
+    RebaselineSnapshotPage, RebaselineSnapshotService, SnapshotError,
+};
 pub use sync::{
-    DEFAULT_SYNC_FEED_LIMIT, DeviceSyncService, MAX_SYNC_FEED_LIMIT, RebaselineReason,
-    SyncAckEvidence, SyncError, SyncFeedPage,
+    DEFAULT_SYNC_FEED_LIMIT, DeviceSyncService, MAX_SYNC_FEED_LIMIT, RebaselineHandoffResult,
+    RebaselineReason, SyncAckEvidence, SyncError, SyncFeedPage,
 };
 pub use uploads::{
     NewUploadSession, PostgresUploadRepository, UploadClaim, UploadCleanupCandidate,

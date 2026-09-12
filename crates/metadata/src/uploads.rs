@@ -901,12 +901,14 @@ impl UploadMetadataBackend for PostgresUploadRepository {
                         },
                     )));
                 }
-                if input.target_parent_node_id.is_some()
-                    || input.target_name.is_some()
-                    || input.expected_node_revision != Some(node.revision())
-                {
+                if input.target_parent_node_id.is_some() || input.target_name.is_some() {
                     return Err(MetadataError::Mapping(MappingError::RelationMismatch {
                         relation: "upload_sessions.replace_target",
+                    }));
+                }
+                if input.expected_node_revision != Some(node.revision()) {
+                    return Err(MetadataError::Mapping(MappingError::RevisionConflict {
+                        current_revision: node.revision(),
                     }));
                 }
             }

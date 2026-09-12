@@ -409,6 +409,285 @@ Trash/restore, metadata purge, journal atomicity, sync feed/ack, GC
 planning/execution/worker, local ObjectStore conformance và regression upload
 durability Windows hiện có.
 
+## Validation consistency logical snapshot Prompt 81
+
+Unit test trong `synveil-core` validate aggregate `LogicalSnapshot` theo scope
+Library: đúng một root directory active, order bằng immutable Node ID, validate
+topology parent, state current `ACTIVE`/`TRASHED`, reject duplicate/missing
+parent và loại shape nội bộ `PURGING`. Unit test metadata validate mapping
+journal sequence có checked arithmetic và snapshot boundary có type.
+
+Suite PostgreSQL ignored `snapshot_postgres` chạy trên database PostgreSQL 17
+mới. 13 test cover state empty/root, hierarchy một node, isolation owner và
+Library, fixture 250 node có order deterministic, current rename/move và
+Trash/restore, concurrent create/rename/move/Trash/restore với cut trước/sau,
+continuation sau cursor trả về không gap hay duplicate event trước snapshot và
+checkpoint device không đổi. Mỗi case concurrent chỉ accept hai outcome hợp lệ:
+mutation đã được snapshot phản ánh ở trước/tại journal event, hoặc vắng khỏi
+snapshot và event strictly sau boundary. Query service theo set, không include
+physical storage identity.
+
+Chạy live focused suite:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-metadata --test snapshot_postgres --locked -- \
+  --ignored --test-threads=1
+```
+
+Prompt 81 tự nó cố ý không thêm migration, HTTP route, client snapshot apply,
+checkpoint completion, journal retention, conflict policy, cache hay background
+runtime.
+
+## Artifact snapshot rebaseline durable Prompt 82
+
+Unit test `synveil-core` nay chứng minh `RebaselineSnapshotId` UUIDv7,
+page cursor scope theo snapshot khác type với `JournalCursor`, descriptor
+construction, page-size bound (1..=1000, default 256) và expiry boundary bao
+gồm (`observed_at == expires_at` là expired). Unit metadata còn kiểm tra
+boundary có type của descriptor và so sánh expiry an toàn.
+
+Suite PostgreSQL 17 ignored `durable_snapshot_postgres` tạo migration 35 từ
+rỗng và cover materialization root/hierarchy, descriptor count chính xác,
+equivalence với Prompt 81, keyset reconstruct fixture 1.001 entry, reject page
+size, owner concealment/library isolation, reject cursor giữa artifact khác,
+expiry exact, paging cross-connection, restart thật với pool mới, immutability
+sau materialization, journal continuation sau cut đã lưu, checkpoint invariance,
+rollback copy entry deterministic, create/mutation concurrent lặp lại có báo
+stress `40P01=0`, và upgrade từ schema lịch sử 34 migration vẫn giữ data owner/
+Library/Node/journal/checkpoint.
+
+Chạy suite durable tuần tự trên database PostgreSQL 17 disposable mới:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-metadata --test durable_snapshot_postgres --locked -- \
+  --ignored --test-threads=1
+```
+
+Fixture upgrade Prompt 82 vẫn dựng lại boundary lịch sử 35 migration tại
+`20260908000000_rebaseline_durable_snapshots.sql` trước khi áp dụng migration 36
+hiện tại, không làm drift checksum lịch sử. Bản thân Prompt 82 không thêm
+HTTP/OpenAPI/SSE/WebSocket, client application,
+complete rebaseline, journal retention, cleanup daemon, retry loop, global
+serialization hay deployment runtime. Creation validate aggregate đầy đủ với
+memory tạm O(total-node-count); chỉ page read sau đó mới có transfer bound
+O(page-size).
+
+## Boundary abuse durable snapshot và direct HTTP proof Prompt 83C
+
+Rule admission khi tạo durable được chứng minh trong cùng suite PostgreSQL 17
+`durable_snapshot_postgres`. Suite seed bảy artifact active, reject boundary
+thứ tám trở đi một cách atomic, verify header/entry count, library journal head,
+journal row và device checkpoint không đổi sau rejection, rồi chứng minh
+isolation owner/Library và re-admission đúng expiry. Barrier start mười hai
+caller không retry tại boundary `N-1`; kết quả kỳ vọng là một admission, mười
+một `ActiveArtifactLimitReached` typed result, zero deadlock (`40P01`), zero
+unexpected database error và zero timeout. Stress coherence snapshot/mutation
+15 round hiện báo riêng bảy admission rejection dự kiến với database failure.
+
+Chạy durable và direct HTTP suite tuần tự trên database PostgreSQL 17
+disposable mới:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-metadata --test durable_snapshot_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-api --test rebaseline_snapshot_http_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture
+```
+
+File direct HTTP có 25 ignored test: 21 test Prompt 83C và 4 test handoff
+Prompt 85. Ngoài descriptor/page, auth, cache, cursor, body, checkpoint và coherence case hiện có, suite chứng
+minh authorized expired descriptor/page trả `410 snapshot_expired`, foreign
+expired descriptor/page trả `404 not_found` thay vì `410`, device đã revoke
+trả `device_revoked` canonical trên create/descriptor/page, và concurrent HTTP
+admission tại durable limit trả `429 rate_limited` cùng `Retry-After: 1`.
+Outbound desktop rename/content round trip exact là live regression riêng bắt
+buộc phải chạy:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-api --test desktop_remote \
+  outbound_rename_and_content_round_trip_converges_without_watcher_bounce \
+  --locked -- --ignored --nocapture
+```
+
+## Handoff checkpoint bền vững và resume incremental crash-safe Prompt 85
+
+Prompt 85 hoàn tất fence `AppliedPendingHandoff` do Prompt 84 tạo ra. Server
+derive boundary từ handoff proof bền vững, immutable và theo owner (trước Prompt
+86 là snapshot header), chỉ lock checkpoint
+của đúng device, chỉ install boundary khi checkpoint thiếu hoặc còn thấp hơn,
+và trả typed conflict nếu checkpoint đã ahead hoặc ở epoch mới hơn. Handoff
+không đọc snapshot entries, không dùng ordinary ACK evidence để advance
+checkpoint, không coi proof còn tồn tại là expired, và không mutate payload
+snapshot hay journal.
+
+Chín test tập trung `client85_...` cover bảy crash boundary: fence restart
+trước request; server failure trước commit; response loss sau server commit;
+crash sau server success nhưng trước local commit; SQLite rollback trước
+commit; và cặp restart/retry sau local commit. Test còn cover caller concurrent
+cùng snapshot, insert outbound intent khi network request bị block, và reject
+snapshot sai mà không ghi đè marker. Local transaction cuối set
+epoch/applied/acknowledged cursor, đưa replica về `IDLE`, và xóa marker cùng
+nhau; network request nằm ngoài writer lock local.
+
+Chạy client proof deterministic:
+
+```text
+cargo test -p synveil-client-sync --lib client85_ --locked -- --nocapture
+```
+
+Target PostgreSQL ignored `rebaseline_handoff_postgres` chạy hai test. Test
+S1-S15 chứng minh service matrix thật: checkpoint thiếu/cũ/exact, epoch cũ/mới,
+proof đã hết hạn nhưng vẫn còn, concealment missing/foreign, caller
+concurrent, device và library độc lập, cùng snapshot/journal rows không đổi.
+Test bổ sung chứng minh race khởi tạo checkpoint thiếu với 8 caller, handoff
+đồng thời C1/C2 không rewind, conflict C1 stale sau C2, timing no-gap NG1-NG4
+deterministic, feed strictly sau C, empty feed và ordinary ACK sau C. Bốn HTTP
+test bổ sung chứng minh scope device-only, empty body strict, response private/no-store,
+idempotency, unknown boundary bị reject, payload expired nhưng proof còn vẫn
+handoff được,
+missing/foreign concealment, ahead-checkpoint conflict, browser bị reject, và
+device đã revoke bị reject. Direct HTTP target có tổng cộng 25 ignored test.
+
+Full live chain phải chạy tuần tự trên PostgreSQL 17 disposable mới:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-metadata --test rebaseline_handoff_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-api --test rebaseline_snapshot_http_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-api --test rebaseline_client_e2e_84c_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture
+```
+
+`rebaseline_client_e2e_84c_postgres` dùng API thật và `HttpSyncRemote` để
+activate snapshot, chứng minh inbound fence, complete device handoff, restart
+client, rồi apply và ACK một feed event mới chỉ sau C. Workflow PostgreSQL 17
+chạy các command này với `set -euo pipefail`; đây là hard-fail gate, không dùng
+`|| true` hay continue-on-error. Token acceptance cuối
+`SYNVEIL_REBASELINE_CHECKPOINT_HANDOFF_READY` chỉ hợp lệ khi migration, Rust,
+client, direct HTTP và live PostgreSQL gates đều pass.
+
+## Journal retention và physical cleanup bounded Prompt 86
+
+Prompt 86 thêm maintenance one-shot, transport-neutral, dùng thời gian explicit
+qua `SyncRetentionService`; không thêm route, daemon, timer, retry loop, client
+recovery hay conflict policy. Policy gen-1 đã validate giữ journal 30 ngày, giữ
+handoff proof immutable đến 30 ngày sau khi payload snapshot hết hạn, và mặc
+định batch 10.000 journal row, 32 snapshot artifact, 128 proof row. Maximum
+tương ứng là 100.000, 1.024 và 4.096; giá trị zero hoặc lớn hơn bị reject.
+
+Migration 36 tái sử dụng `libraries.minimum_retained_sequence` làm boundary
+compacted-through bền vững cho epoch hiện tại và backfill proof immutable, theo
+owner cho mọi snapshot của migration 35. Khi tạo snapshot, header, entries và
+proof được ghi trong cùng transaction. Payload cleanup chỉ được xóa header đã
+hết hạn cùng entries khi proof tồn tại; proof không có foreign key đến header
+nên vẫn còn sau đó. Proof cleanup yêu cầu đồng thời đạt deadline inclusive và
+payload không còn. Khi proof còn tồn tại, boundary nhỏ nhất cùng scope cap
+journal compaction. Device checkpoint không pin retention; cleanup không đổi
+checkpoint, journal head hay epoch.
+
+Target PostgreSQL 17 ignored `sync_retention_postgres` có bảy nhóm fixture bao
+phủ toàn bộ retention matrix: upgrade 35 lên 36 với dữ liệu owner, Library,
+journal, checkpoint và snapshot đại diện cùng proof backfill; tạo snapshot/proof
+atomic cùng rollback; proof immutable; boundary hết hạn payload/proof chính
+xác; concealment owner; handoff và feed sau khi xóa payload; journal 25.005 row
+được compact theo ba bước 10.000/10.000/5.005; floor persist và monotone; rule
+feed below/at/above/no-cursor cùng journal vật lý rỗng; timestamp không monotone
+được xử lý bảo thủ; pin single/multiple/oldest/cross-scope; batch payload và
+proof; năm payload, mỗi payload 301 entry, được xóa theo batch artifact 2/2/1
+(602/602/301 entry) và batch proof 2/2/1; fail closed khi thiếu proof; failure
+injection rollback cho cả ba operation; race feed/append/handoff với cleanup
+deterministic, gồm cả compaction đồng thời bị cap bởi handoff proof còn giữ; và
+tám vòng, bốn caller đồng thời, zero `40P01`, unexpected error, timeout hay retry.
+
+Chạy focused gate tuần tự trên database disposable mới:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://<fresh-disposable-loopback-db> \
+  cargo test -p synveil-metadata --test sync_retention_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture
+```
+
+Contract stale-feed chính xác: position được yêu cầu thấp hơn durable floor trả
+typed `RebaselineRequired` hiện có; position đúng bằng floor hợp lệ và resume từ
+floor + 1. Không cursor có nghĩa position zero, nên stale khi floor khác zero kể
+cả khi không còn journal row vật lý. Selection là prefix liên tục đủ tuổi bắt
+đầu ngay sau floor cũ, bị cap bởi batch size và proof tương thích cũ nhất. Xóa
+row và advance floor cùng commit hoặc cùng rollback. Feed giữ library share
+lock xuyên suốt đọc floor/head/row; append và cleanup lấy exclusive library
+lock tương ứng, nên feed/cleanup chỉ có thể trả page cũ đầy đủ hoặc rebaseline
+theo floor mới, không thể silently omit event.
+
+Migration gate hiện tại báo 36 attempted/36 successful, zero failed,
+`is_current true`, latest
+`20260910000000_sync_retention_handoff_proofs.sql`, với checksum của 35
+migration đầu không đổi. Workflow PostgreSQL 17 chạy focused suite này thành
+hard-fail step dưới `set -euo pipefail`.
+
+## Bounded rebaseline convergence Prompt 87
+
+Module unit client-sync `rebaseline_convergence` chạy production
+`RebaselineConvergenceCoordinator`, `InboundSyncEngine`, `RebaselineApplier` và
+SQLite state v5 qua remote scripted transport-neutral. Nó chứng minh incremental
+healthy tạo zero snapshot; invalidation retained-history và epoch mismatch
+tạo/handoff đúng một snapshot server-authored; signal server explicit no-cursor
+bắt đầu recovery mà không tạo legacy bootstrap state; candidate complete được
+resume trước POST; pending handoff hợp lệ finalize không POST; proof thiếu chỉ
+thay H1 bằng transaction activation H1-to-H2 nguyên tử; và checkpoint conflict
+thứ hai dừng với `DidNotConverge` sau đúng một replacement. Checkpoint-ahead
+conflict đầu tiên cũng được chứng minh recovery bằng đúng một snapshot current.
+
+Module cũng chứng minh boundary non-trigger/failure: authentication failure giữ
+H1 và không create, revoked-device/internal handoff failure cũng không create, 429 trả
+`RateLimited` không candidate durable/retry, create response mất không để lại
+candidate không có snapshot ID, candidate corrupt fail closed, và page transport
+failure giữ đúng candidate để resume mà không có POST thứ hai. Nó còn check
+single-create ownership cùng Library, state độc lập giữa Library và preservation
+byte-for-byte của pending outbound intent qua replacement H1-to-H2. HTTP adapter
+coverage verify request authenticated hiện có
+`POST /api/v1/libraries/{library_id}/rebaseline-snapshots`, status 201 chính
+xác, descriptor decode strict và boundary chỉ đến từ server response.
+
+Chạy focused local gate:
+
+```text
+cargo test -p synveil-client-sync --lib --locked rebaseline_convergence
+cargo test -p synveil-client-sync --lib --locked durable_rebaseline_snapshot_create
+cargo test -p synveil-api --test rebaseline_convergence_postgres --locked -- --ignored --test-threads=1 --nocapture
+cargo test -p synveil-api --test rebaseline_client_e2e_84c_postgres --locked -- --ignored --test-threads=1 --nocapture
+```
+
+`rebaseline_convergence_postgres` là target acceptance live riêng của Prompt 87B.
+Mỗi ignored test tạo child database mới, verify PostgreSQL 17, start Axum router
+thật và device-auth exchange, rồi chạy `HttpSyncRemote` thật qua loopback proxy
+để đếm call. Target chứng minh retained-floor kể cả khi journal vật lý rỗng,
+negative control tại floor và trên floor, epoch recovery, replacement khi mất
+proof, H1 fence trong lúc page S2, thay H1-to-H2 nguyên tử, replacement khi
+checkpoint-ahead, proof pin retention trong lúc download S2, candidate resume
+sau page failure thật, bounded 429 chỉ một POST, revoked-device không trigger,
+và concurrent cùng Library chỉ có một recovery owner. Assertion gồm count chính
+xác snapshot/page/handoff, equality checkpoint server/local tại boundary do
+server cấp, cleanup candidate/marker, feed và ACK sau recovery, cùng pending
+outbound intent không đổi. Handoff recoverable lần hai bị ép fail trả
+`DidNotConverge` và chứng minh không tạo S3.
+
+E2E PostgreSQL hiện có vẫn là proof riêng cho pending handoff hợp lệ: coordinator
+complete handoff sẵn có mà không replacement POST và Prompt 85 vẫn là path độc
+quyền cho checkpoint/finalize. Test client-sync deterministic tiếp tục bao phủ
+create-response loss, malformed response, local corruption và transport boundary
+không cần fixture raw-socket để suppress response. Workflow PostgreSQL 17 chạy
+target dedicated thành hard-fail dưới `set -euo pipefail`; chỉ sau khi mọi live
+suite trước đó pass mới emit
+`SYNVEIL_SYNC_REBASELINE_CONVERGENCE_READY`.
+
 ## Validation client mutation submission Prompt 34
 
 Unit coverage trong `synveil-core` và `synveil-metadata` chứng minh mutation
@@ -1649,3 +1928,67 @@ root-data agreement tương ứng từ upstream. Không suppress advisory. Warni
 OpenAPI lint về 4xx của public probe/status và shared component chưa dùng được
 báo riêng, không sửa bằng cách bịa hành vi API. DeviceBearer không được quảng bá
 cho system health có đặc quyền.
+
+### Bằng chứng xung đột Prompt 88
+
+Target `sync_conflict_postgres` của `synveil-api` bị ignore trừ khi
+`SYNVEIL_TEST_DATABASE_URL` trỏ đến PostgreSQL 17 disposable mới. Target dùng
+migration thật (vẫn 36), Axum router, hai device bearer đã enroll,
+`HttpSyncRemote`, filesystem replica, SQLite store, precondition mutation
+metadata và đường resumable upload. Test tạo phân kỳ rename, move, remote-trash
+và content thật,
+kiểm tra conflict typed bền vững và không tự gửi lại, cho inbound tiến lên trong
+khi giữ byte cục bộ staged đã xác minh hash, đồng thời chạy `AcceptRemote` tường
+minh và content `RetryLocal` idempotent.
+
+Test client `conflict_policy` bao phủ phân loại chuẩn, durability qua restart,
+resolution atomic/idempotent, thiếu nguồn content, concurrent duplicate
+detection và migration V5 sang V6 thật vẫn giữ outbound upload, rebaseline
+candidate và pending-handoff. Test state phân trang 2.000 conflict record mà
+không tải toàn bộ lịch sử. Test rebaseline chứng minh chỉ bằng chứng node/parent
+cũ chính xác mới tạo proactive conflict và intent gốc giữ nguyên từng trường.
+
+Chạy target live với một database mới và một thread:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5432/fresh_p88 \
+  cargo test -p synveil-api --test sync_conflict_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture
+```
+
+### Kiểm chứng đối kháng Prompt 89
+
+Target `sync_adversarial_postgres` (`synveil-api`, bị ignore trừ khi
+`SYNVEIL_TEST_DATABASE_URL` trỏ đến PostgreSQL 17 disposable mới) là cổng
+đối kháng cuối cùng cho Prompt 81–88. Target dùng PostgreSQL thật, Axum router
+thật, device auth thật, `HttpSyncRemote` thật, SQLite client thật, retention
+service thật, rebaseline coordinator thật, outbound submission thật và
+conflict persistence/resolution thật. Không fake chuyển đổi đúng đắn trung tâm nào.
+
+Topology: một owner, một library cho mỗi nhóm scenario, hai device hoạt động
+(A chính, B gây nhiễu từ xa), cộng device thứ ba khi cần mutation độc lập.
+State của client A dùng persistence thật (mirror, cursor, outbound intent,
+upload/source, conflict, candidate/handoff).
+
+Tám test live bao phủ ADV89-01..72, scenario 1–45 và chuỗi chaos 25 bước:
+happy-path, concurrent feed, stale recovery, mutation trong transfer,
+retention-vs-proof, payload-cleaned handoff, proof-loss S1→S2,
+checkpoint-ahead, crash/restart, handoff mất response, rename/content conflict,
+conflict×rebaseline, AcceptRemote/RetryLocal, 429/500/revoked, journal 25k sự
+kiện bounded, snapshot ~200 entry, ledger 200 conflict phân trang bounded,
+3 vòng rebaseline không leak, hội tụ hai device, stress 10 vòng live-PG + 100
+vòng SQLite, failure-injection rollback xác định, invariant STATE-01..15,
+đơn điệu checkpoint/floor/head, 40P01=0, không retry loop, không sleep.
+
+Cổng local đầy đủ:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5439/postgres \
+  cargo test -p synveil-api --test sync_adversarial_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture
+```
+
+CI chạy cùng target dưới dạng subset bounded hard-fail với `set -euo pipefail`,
+không `continue-on-error` hay `|| true`. Yêu cầu PostgreSQL 17, server
+migration vẫn 36, client schema vẫn 6, không migration/route/OpenAPI/daemon/
+scheduler/polling/retry/global-lock mới.

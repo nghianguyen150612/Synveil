@@ -605,7 +605,9 @@ fn map_sync_error(error: SyncError) -> ApiError {
         SyncError::NotFound => ApiError::Core(synveil_core::ErrorCode::NotFound),
         SyncError::InvalidLimit => ApiError::SyncInvalidLimit,
         SyncError::InvalidAckToken => ApiError::SyncInvalidAckToken,
-        SyncError::CheckpointConflict => ApiError::SyncCheckpointConflict,
+        SyncError::CheckpointConflict
+        | SyncError::CheckpointAheadOfSnapshot
+        | SyncError::CheckpointEpochConflict => ApiError::SyncCheckpointConflict,
         SyncError::RebaselineRequired {
             reason,
             current_epoch,

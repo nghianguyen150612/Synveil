@@ -473,6 +473,7 @@ fn map_metadata_error(error: MetadataError) -> ContentReadError {
         | MetadataError::Mapping(MappingError::TimestampPrecisionLoss { .. })
         | MetadataError::Mapping(MappingError::InvalidName { .. })
         | MetadataError::Mapping(MappingError::InvalidLogin { .. })
+        | MetadataError::Mapping(MappingError::RevisionConflict { .. })
         | MetadataError::Mapping(MappingError::Domain(_)) => ContentReadError::IntegrityMismatch,
     }
 }

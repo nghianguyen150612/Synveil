@@ -3,14 +3,14 @@
 //! This test is intentionally ignored unless `SYNVEIL_TEST_DATABASE_URL` points
 //! at a disposable PostgreSQL 17 database. The PG17 CI workflow executes it
 //! live to prove:
-//!   34 attempted, 34 successful, 0 failed, is_current == true,
-//!   latest == 20260903000001, and that historical migrations are unchanged.
+//!   36 attempted, 36 successful, 0 failed, is_current == true,
+//!   latest == 20260910000000, and that the first 35 migrations are unchanged.
 
 use synveil_metadata::{DatabaseConfig, DatabasePool, MigrationRunner};
 
 #[tokio::test]
 #[ignore = "set SYNVEIL_TEST_DATABASE_URL to a disposable PostgreSQL 17 database"]
-async fn pg17_migration_from_empty_is_current_34() {
+async fn pg17_migration_from_empty_is_current_36() {
     let url = std::env::var("SYNVEIL_TEST_DATABASE_URL")
         .expect("SYNVEIL_TEST_DATABASE_URL must identify a disposable PostgreSQL 17 database");
     let config = DatabaseConfig::from_url(&url).expect("test URL must use PostgreSQL");
@@ -26,13 +26,13 @@ async fn pg17_migration_from_empty_is_current_34() {
     // Explicit gate: these numbers are part of the prompt contract.
     assert_eq!(
         status.applied_versions().len(),
-        34,
-        "expected 34 migrations applied"
+        36,
+        "expected 36 migrations applied"
     );
     assert_eq!(
         status.latest_applied_version(),
-        Some(20260903000001),
-        "latest migration must be 20260903000001_backup_scheduled_maintenance_claims"
+        Some(20260910000000),
+        "latest migration must be 20260910000000_sync_retention_handoff_proofs"
     );
     assert!(
         status.is_current(),
@@ -58,7 +58,7 @@ async fn pg17_migration_from_empty_is_current_34() {
         "0 pending versions expected"
     );
     println!(
-        "migration gate: 34 attempted (applied), 34 successful, 0 failed, latest 20260903000001, is_current true"
+        "migration gate: 36 attempted (applied), 36 successful, 0 failed, latest 20260910000000, is_current true"
     );
     pool.close().await;
 }

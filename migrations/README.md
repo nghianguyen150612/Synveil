@@ -365,3 +365,52 @@ UPDATE and all rows reject DELETE. It adds no daemon, polling/heartbeat loop,
 retry/backoff, scheduler, HTTP route, UI, SSE/WebSocket, notification, or
 physical-storage identity; one explicit worker invocation still performs at
 most one transition or recovery action.
+
+`20260908000000_rebaseline_durable_snapshots.sql` is server migration 35. It
+adds the Prompt 82 library-scoped `rebaseline_snapshots` header and immutable
+`rebaseline_snapshot_entries` artifact. One `REPEATABLE READ` transaction
+under the existing per-library namespace guard captures the typed journal epoch
+and resume sequence, validates the Prompt 81 logical Node projection, inserts
+the header with its exact entry count, and copies the logical rows set-wise.
+The header and entries are therefore visible only after the one transaction
+commits. The `(snapshot_id, node_id)` primary key is the deterministic keyset
+page index; there is no OFFSET pagination or speculative cleanup index.
+
+The transfer artifact stores only current logical Node fields already admitted
+by `LogicalSnapshotNode`: ID, parent ID, name, kind, active/trashed state,
+revision, and safe current-file version/length/SHA-256 metadata. It has no
+device ID, checkpoint linkage, Object/ObjectReplica ID, storage key, backend
+or filesystem locator, staging handle, credential, or file bytes. Header and
+entry rewrites/direct deletes are rejected; a live-library deletion may
+cascade the short-lived artifact only, never in the reverse direction. Logical
+expiry is caller-observed and does not add a cleanup worker, retention policy,
+or public deletion route.
+
+Prompt 85 deliberately adds no server migration. Its original durable
+checkpoint handoff used the immutable migration-35 snapshot header as proof and
+the existing
+`device_sync_checkpoints` row as the per-device destination. A short
+owner/device-scoped transaction derives the Library and boundary from the
+header, locks the canonical checkpoint, and applies only the documented
+monotone-or-equal transition. Idempotency is header/checkpoint equality; no
+handoff table, journal retention, snapshot cleanup, or new persistence surface
+is introduced. The desktop client uses its existing schema-5
+`rebaseline_applied_handoffs` marker and `replicas` cursor fields, so no
+`0006` migration is required.
+
+`20260910000000_sync_retention_handoff_proofs.sql` is server migration 36. It
+formalizes the existing `libraries.minimum_retained_sequence` as the highest
+current-epoch sequence physically compacted through and adds the small,
+immutable `rebaseline_snapshot_handoff_proofs` relation. Migration 36 backfills
+one proof for every migration-35 snapshot with the same snapshot ID,
+owner/Library, journal epoch/boundary, and snapshot timestamps; the proof
+deadline is 30 days after payload expiry. The proof has no foreign key to the
+payload header, so bounded deletion of an expired `rebaseline_snapshots` row
+and its cascaded entries cannot remove handoff authority.
+
+New snapshot creation writes payload and proof in one application transaction.
+Prompt 85 handoff now reads the proof for both present and already-pruned
+payloads. The migration adds the minimum indexes for Library/epoch boundary
+pinning, snapshot expiry selection, and proof expiry selection, plus immutable
+proof and transaction-local controlled-delete guards. It adds no endpoint,
+daemon, timer, retry, client-local migration, or automatic recovery behavior.

@@ -15,8 +15,9 @@ use zeroize::Zeroize;
 
 use super::{EnrollmentCredentials, protocol_error};
 use crate::{
-    OpaqueEvidence, RemoteCheckpoint, RemoteError, RemoteErrorKind, ReplicaScope, UploadCompletion,
-    UploadSessionStatus, UploadTarget,
+    OpaqueEvidence, RebaselineBoundary, RebaselineHandoffConfirmation,
+    RebaselineSnapshotDescriptor, RemoteCheckpoint, RemoteError, RemoteErrorKind, ReplicaScope,
+    UploadCompletion, UploadSessionStatus, UploadTarget,
 };
 
 pub(super) fn parse<T: FromStr>(value: &str) -> Result<T, RemoteError> {
@@ -119,6 +120,45 @@ impl Checkpoint {
             return Err(protocol_error());
         }
         Ok(RemoteCheckpoint::new(scope, epoch, acknowledged))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RebaselineHandoff {
+    snapshot_id: String,
+    library_id: String,
+    checkpoint: RebaselineHandoffCheckpoint,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RebaselineHandoffCheckpoint {
+    epoch: String,
+    sequence: String,
+}
+
+impl RebaselineHandoff {
+    pub(super) fn into_domain(
+        self,
+        scope: ReplicaScope,
+        expected_snapshot_id: synveil_core::RebaselineSnapshotId,
+    ) -> Result<RebaselineHandoffConfirmation, RemoteError> {
+        if parse::<synveil_core::RebaselineSnapshotId>(&self.snapshot_id)? != expected_snapshot_id
+            || parse::<LibraryId>(&self.library_id)? != scope.library_id()
+        {
+            return Err(protocol_error());
+        }
+        let epoch = parse::<Sequence>(&self.checkpoint.epoch)?;
+        let sequence = parse::<Sequence>(&self.checkpoint.sequence)?;
+        if epoch.get() == 0 {
+            return Err(protocol_error());
+        }
+        Ok(RebaselineHandoffConfirmation::new(
+            expected_snapshot_id,
+            scope.library_id(),
+            RemoteCheckpoint::new(scope, epoch, sequence),
+        ))
     }
 }
 
@@ -259,6 +299,85 @@ pub(super) struct SnapshotPage {
     pub has_more: bool,
     pub next_cursor: Option<String>,
     pub completion_token: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DurableSnapshotPage {
+    snapshot_id: String,
+    library_id: String,
+    journal_boundary: DurableJournalBoundary,
+    entry_count: String,
+    pub(super) entries: Vec<SnapshotNode>,
+    pub(super) has_more: bool,
+    pub(super) next_cursor: Option<String>,
+}
+
+/// The create/descriptor representation intentionally validates timestamps
+/// even though the client persists only the immutable identity, boundary, and
+/// entry count needed for local recovery.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DurableSnapshotDescriptor {
+    snapshot_id: String,
+    library_id: String,
+    journal_boundary: DurableJournalBoundary,
+    entry_count: String,
+    created_at: String,
+    expires_at: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DurableJournalBoundary {
+    library_id: String,
+    journal_epoch: String,
+    resume_sequence: String,
+}
+
+impl DurableSnapshotPage {
+    pub(super) fn descriptor(&self) -> Result<RebaselineSnapshotDescriptor, RemoteError> {
+        let library_id = parse::<LibraryId>(&self.library_id)?;
+        if parse::<LibraryId>(&self.journal_boundary.library_id)? != library_id {
+            return Err(protocol_error());
+        }
+        let epoch = parse::<Sequence>(&self.journal_boundary.journal_epoch)?;
+        if epoch.get() == 0 {
+            return Err(protocol_error());
+        }
+        Ok(RebaselineSnapshotDescriptor::new(
+            parse(&self.snapshot_id)?,
+            library_id,
+            RebaselineBoundary::new(epoch, parse(&self.journal_boundary.resume_sequence)?),
+            decimal(&self.entry_count)?,
+        ))
+    }
+}
+
+impl DurableSnapshotDescriptor {
+    pub(super) fn into_domain(
+        self,
+        scope: ReplicaScope,
+    ) -> Result<RebaselineSnapshotDescriptor, RemoteError> {
+        let library_id = parse::<LibraryId>(&self.library_id)?;
+        if library_id != scope.library_id()
+            || parse::<LibraryId>(&self.journal_boundary.library_id)? != library_id
+        {
+            return Err(protocol_error());
+        }
+        let epoch = parse::<Sequence>(&self.journal_boundary.journal_epoch)?;
+        let created = parse::<Timestamp>(&self.created_at)?;
+        let expires = parse::<Timestamp>(&self.expires_at)?;
+        if epoch.get() == 0 || expires <= created {
+            return Err(protocol_error());
+        }
+        Ok(RebaselineSnapshotDescriptor::new(
+            parse(&self.snapshot_id)?,
+            library_id,
+            RebaselineBoundary::new(epoch, parse(&self.journal_boundary.resume_sequence)?),
+            decimal(&self.entry_count)?,
+        ))
+    }
 }
 
 #[derive(Deserialize)]
@@ -478,10 +597,9 @@ impl UploadSession {
         if self.attributes.operation != expected_operation {
             return Err(protocol_error());
         }
-        let _ = (
-            self.attributes.last_error_code,
-            self.attributes.terminal_failure_code,
-        );
+        let version_conflict =
+            self.attributes.terminal_failure_code.as_deref() == Some("version_conflict");
+        let _ = self.attributes.last_error_code;
         Ok(UploadSessionStatus::new(
             session_id,
             target,
@@ -490,7 +608,8 @@ impl UploadSession {
             expected_sha256,
             received,
             completion,
-        ))
+        )
+        .with_version_conflict(version_conflict))
     }
 }
 

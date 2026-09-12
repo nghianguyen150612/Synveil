@@ -9,7 +9,8 @@ use std::fmt;
 
 use sqlx::{FromRow, Postgres, Transaction};
 use synveil_core::{
-    ChangeEvent, DeviceId, DeviceSyncCheckpoint, LibraryId, Sequence, Timestamp, UserId,
+    ChangeEvent, DeviceId, DeviceSyncCheckpoint, LibraryId, RebaselineSnapshotId, Sequence,
+    Timestamp, UserId,
 };
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -34,6 +35,8 @@ pub enum SyncError {
     InvalidLimit,
     InvalidAckToken,
     CheckpointConflict,
+    CheckpointAheadOfSnapshot,
+    CheckpointEpochConflict,
     RebaselineRequired {
         reason: RebaselineReason,
         current_epoch: Sequence,
@@ -52,6 +55,10 @@ impl fmt::Display for SyncError {
             Self::InvalidLimit => "sync feed limit is invalid",
             Self::InvalidAckToken => "sync acknowledgment token is invalid",
             Self::CheckpointConflict => "sync checkpoint progress conflicts",
+            Self::CheckpointAheadOfSnapshot => {
+                "sync checkpoint is already ahead of the rebaseline snapshot"
+            }
+            Self::CheckpointEpochConflict => "sync checkpoint epoch conflicts with the snapshot",
             Self::RebaselineRequired { .. } => "sync rebaseline is required",
             Self::DependencyUnavailable => "sync dependency is unavailable",
             Self::Database(error) => return error.fmt(formatter),
@@ -82,6 +89,49 @@ pub struct SyncAckEvidence {
     from_sequence: Sequence,
     through_sequence: Sequence,
     high_watermark: Sequence,
+}
+
+/// The canonical result of one authenticated durable-snapshot handoff.
+///
+/// The snapshot ID and library ID are returned so a transport adapter can
+/// verify that the response belongs to the request it made. The checkpoint is
+/// the server-installed per-device cursor; no internal checkpoint row identity
+/// or client-supplied boundary is part of this result.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RebaselineHandoffResult {
+    snapshot_id: RebaselineSnapshotId,
+    library_id: LibraryId,
+    installed_checkpoint: DeviceSyncCheckpoint,
+}
+
+impl RebaselineHandoffResult {
+    #[must_use]
+    pub const fn new(
+        snapshot_id: RebaselineSnapshotId,
+        library_id: LibraryId,
+        installed_checkpoint: DeviceSyncCheckpoint,
+    ) -> Self {
+        Self {
+            snapshot_id,
+            library_id,
+            installed_checkpoint,
+        }
+    }
+
+    #[must_use]
+    pub const fn snapshot_id(self) -> RebaselineSnapshotId {
+        self.snapshot_id
+    }
+
+    #[must_use]
+    pub const fn library_id(self) -> LibraryId {
+        self.library_id
+    }
+
+    #[must_use]
+    pub const fn installed_checkpoint(self) -> DeviceSyncCheckpoint {
+        self.installed_checkpoint
+    }
 }
 
 impl SyncAckEvidence {
@@ -234,6 +284,13 @@ struct CheckpointRow {
     last_seen_high_watermark: Option<i64>,
 }
 
+#[derive(Clone, Debug, FromRow)]
+struct RebaselineSnapshotHandoffRow {
+    library_id: Uuid,
+    journal_epoch: i64,
+    snapshot_resume_sequence: i64,
+}
+
 impl From<CheckpointRow> for DeviceSyncCheckpointRow {
     fn from(row: CheckpointRow) -> Self {
         Self {
@@ -299,10 +356,161 @@ impl DeviceSyncService {
         Ok(checkpoint)
     }
 
+    /// Install the canonical boundary proved by a durable rebaseline snapshot
+    /// into exactly one authenticated device checkpoint.
+    ///
+    /// This is intentionally separate from [`Self::acknowledge`]. Ordinary
+    /// acknowledgment is authorized by feed-delivery evidence and therefore
+    /// cannot be reused to jump over a page. Handoff authorization comes from
+    /// the immutable, owner-scoped handoff proof instead. The transaction
+    /// first reads that proof without checking logical download expiry, then
+    /// validates the device/library scope, locks the checkpoint row, and
+    /// installs the proved boundary or returns the typed conflict required by
+    /// the monotone transition rules. It never reads snapshot entries and it
+    /// does not take the namespace mutation guard.
+    pub async fn complete_rebaseline_handoff(
+        &self,
+        owner_user_id: UserId,
+        device_id: DeviceId,
+        snapshot_id: RebaselineSnapshotId,
+    ) -> Result<RebaselineHandoffResult, SyncError> {
+        let mut transaction = self.begin_transaction(false).await?;
+        let snapshot = sqlx::query_as::<_, RebaselineSnapshotHandoffRow>(
+            "SELECT library_id, journal_epoch, snapshot_resume_sequence
+             FROM rebaseline_snapshot_handoff_proofs
+             WHERE snapshot_id = $1
+               AND owner_user_id = $2
+             FOR SHARE",
+        )
+        .bind(snapshot_id.into_uuid())
+        .bind(owner_user_id.into_uuid())
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(MetadataError::from)
+        .map_err(map_metadata_error)?
+        .ok_or(SyncError::NotFound)?;
+
+        // The durable proof is the only accepted source for the handoff
+        // boundary. A missing/foreign proof has already collapsed to
+        // NotFound above; malformed persisted values fail closed.
+        let snapshot_library_id = LibraryId::try_from_uuid(snapshot.library_id)
+            .map_err(|_| SyncError::InvalidPersistedData)?;
+        let snapshot_epoch = positive_sequence(snapshot.journal_epoch)?;
+        let snapshot_resume_sequence = nonnegative_sequence(snapshot.snapshot_resume_sequence)?;
+
+        // `load_scope` takes the same short library/device share lock used by
+        // ordinary feed/checkpoint operations. This prevents a concurrent
+        // owner-scoped library deletion from invalidating the scope after the
+        // header has been observed, while avoiding the namespace advisory
+        // guard used only for live projection materialization.
+        let scope = load_scope(
+            &mut transaction,
+            owner_user_id,
+            device_id,
+            snapshot_library_id,
+        )
+        .await?;
+        if snapshot_epoch != scope.journal_epoch {
+            return Err(SyncError::CheckpointEpochConflict);
+        }
+        if snapshot_resume_sequence.get() > scope.sync_head.get() {
+            return Err(SyncError::InvalidPersistedData);
+        }
+        if snapshot_resume_sequence.get() < scope.minimum_retained_sequence.get() {
+            return Err(SyncError::InvalidPersistedData);
+        }
+
+        // A missing row is installed at the snapshot boundary, not at the
+        // current head. ON CONFLICT closes the race with first-use checkpoint
+        // creation and lets the row lock below serialize competing handoffs.
+        sqlx::query(
+            "INSERT INTO device_sync_checkpoints
+                (owner_user_id, device_id, library_id, journal_epoch,
+                 acknowledged_sequence, created_at, updated_at,
+                 last_seen_high_watermark)
+             VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $5)
+             ON CONFLICT (device_id, library_id) DO NOTHING",
+        )
+        .bind(owner_user_id.into_uuid())
+        .bind(device_id.into_uuid())
+        .bind(snapshot_library_id.into_uuid())
+        .bind(i64_from_sequence(snapshot_epoch)?)
+        .bind(i64_from_sequence(snapshot_resume_sequence)?)
+        .execute(&mut *transaction)
+        .await
+        .map_err(MetadataError::from)
+        .map_err(map_metadata_error)?;
+
+        let row = load_checkpoint_for_update(
+            &mut transaction,
+            owner_user_id,
+            device_id,
+            snapshot_library_id,
+        )
+        .await?
+        .ok_or(SyncError::InvalidPersistedData)?;
+        let checkpoint = map_checkpoint(row.into())?;
+        if checkpoint.owner_user_id() != scope.owner_user_id
+            || checkpoint.device_id() != scope.device_id
+            || checkpoint.library_id() != scope.library_id
+        {
+            return Err(SyncError::InvalidPersistedData);
+        }
+
+        let current_epoch = checkpoint.journal_epoch();
+        let current_sequence = checkpoint.acknowledged_sequence();
+        let installed_checkpoint = if current_epoch > snapshot_epoch {
+            return Err(SyncError::CheckpointEpochConflict);
+        } else if current_epoch == snapshot_epoch {
+            if current_sequence > snapshot_resume_sequence {
+                return Err(SyncError::CheckpointAheadOfSnapshot);
+            }
+            if current_sequence == snapshot_resume_sequence {
+                checkpoint
+            } else {
+                update_handoff_checkpoint(
+                    &mut transaction,
+                    scope,
+                    snapshot_epoch,
+                    snapshot_resume_sequence,
+                    false,
+                )
+                .await?
+            }
+        } else {
+            update_handoff_checkpoint(
+                &mut transaction,
+                scope,
+                snapshot_epoch,
+                snapshot_resume_sequence,
+                true,
+            )
+            .await?
+        };
+
+        if installed_checkpoint.journal_epoch() != snapshot_epoch
+            || installed_checkpoint.acknowledged_sequence() != snapshot_resume_sequence
+        {
+            return Err(SyncError::InvalidPersistedData);
+        }
+        transaction
+            .commit()
+            .await
+            .map_err(MetadataError::from)
+            .map_err(map_metadata_error)?;
+        Ok(RebaselineHandoffResult::new(
+            snapshot_id,
+            snapshot_library_id,
+            installed_checkpoint,
+        ))
+    }
+
     /// Fetch a bounded, ordered page after the durable acknowledged sequence.
-    /// Checkpoint creation and the journal page share a repeatable-read view so
-    /// the returned high watermark and delivery evidence describe one coherent
-    /// server observation. This operation never advances acknowledged progress.
+    /// Checkpoint creation and the journal page share one short transaction.
+    /// Its library share lock prevents both append and compaction from changing
+    /// the head, retained floor, or rows until the page is complete, so READ
+    /// COMMITTED avoids a cleanup-race serialization failure without a retry.
+    /// This operation never advances acknowledged progress.
     pub async fn fetch_feed(
         &self,
         owner_user_id: UserId,
@@ -311,7 +519,7 @@ impl DeviceSyncService {
         limit: u32,
     ) -> Result<SyncFeedPage, SyncError> {
         validate_limit(limit)?;
-        let mut transaction = self.begin_transaction(true).await?;
+        let mut transaction = self.begin_transaction(false).await?;
         let scope = load_scope(&mut transaction, owner_user_id, device_id, library_id).await?;
         let checkpoint_row = ensure_checkpoint_in_transaction(&mut transaction, scope).await?;
         let checkpoint = map_checkpoint(checkpoint_row.into())?;
@@ -632,6 +840,53 @@ async fn load_checkpoint_for_update(
     .await
     .map_err(MetadataError::from)
     .map_err(map_metadata_error)
+}
+
+async fn update_handoff_checkpoint(
+    transaction: &mut Transaction<'_, Postgres>,
+    scope: SyncScope,
+    journal_epoch: Sequence,
+    acknowledged_sequence: Sequence,
+    reset_high_watermark: bool,
+) -> Result<DeviceSyncCheckpoint, SyncError> {
+    let statement = if reset_high_watermark {
+        "UPDATE device_sync_checkpoints
+         SET journal_epoch = $4,
+             acknowledged_sequence = $5,
+             last_seen_high_watermark = $5,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE owner_user_id = $1
+           AND device_id = $2
+           AND library_id = $3
+         RETURNING owner_user_id, device_id, library_id, journal_epoch,
+                   acknowledged_sequence, created_at, updated_at,
+                   last_seen_high_watermark"
+    } else {
+        "UPDATE device_sync_checkpoints
+         SET journal_epoch = $4,
+             acknowledged_sequence = $5,
+             last_seen_high_watermark = GREATEST(
+                 COALESCE(last_seen_high_watermark, 0), $5
+             ),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE owner_user_id = $1
+           AND device_id = $2
+           AND library_id = $3
+         RETURNING owner_user_id, device_id, library_id, journal_epoch,
+                   acknowledged_sequence, created_at, updated_at,
+                   last_seen_high_watermark"
+    };
+    let row = sqlx::query_as::<_, CheckpointRow>(statement)
+        .bind(scope.owner_user_id.into_uuid())
+        .bind(scope.device_id.into_uuid())
+        .bind(scope.library_id.into_uuid())
+        .bind(i64_from_sequence(journal_epoch)?)
+        .bind(i64_from_sequence(acknowledged_sequence)?)
+        .fetch_one(&mut **transaction)
+        .await
+        .map_err(MetadataError::from)
+        .map_err(map_metadata_error)?;
+    map_checkpoint(row.into())
 }
 
 fn map_checkpoint(row: DeviceSyncCheckpointRow) -> Result<DeviceSyncCheckpoint, SyncError> {

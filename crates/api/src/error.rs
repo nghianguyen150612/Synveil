@@ -94,6 +94,9 @@ pub enum ApiError {
         current_epoch: String,
         minimum_retained_sequence: String,
     },
+    SnapshotInvalidPageSize,
+    SnapshotInvalidCursor,
+    SnapshotExpired,
     ReadinessUnavailable,
     Internal,
     RangeNotSatisfiable {
@@ -174,6 +177,8 @@ impl ApiError {
             Self::SyncCheckpointConflict
             | Self::RebaselineBootstrapConflict
             | Self::SyncRebaselineRequired { .. } => StatusCode::CONFLICT,
+            Self::SnapshotInvalidPageSize | Self::SnapshotInvalidCursor => StatusCode::BAD_REQUEST,
+            Self::SnapshotExpired => StatusCode::GONE,
             Self::ReadinessUnavailable
             | Self::RebaselineDependencyUnavailable
             | Self::MutationDependencyUnavailable
@@ -255,6 +260,9 @@ impl ApiError {
             Self::MutationDependencyUnavailable => "dependency_unavailable",
             Self::MutationInvalidPersistedData => "invalid_persisted_data",
             Self::SyncRebaselineRequired { .. } => "sync_rebaseline_required",
+            Self::SnapshotInvalidPageSize => "invalid_page_size",
+            Self::SnapshotInvalidCursor => "invalid_cursor",
+            Self::SnapshotExpired => "snapshot_expired",
             Self::ReadinessUnavailable => "internal_dependency_unavailable",
             Self::Internal => "internal_error",
             Self::RangeNotSatisfiable { .. } => "invalid_range",
@@ -313,6 +321,9 @@ impl ApiError {
             | Self::MutationInvalidPersistedData
             | Self::ConflictInvalidPersistedData
             | Self::SyncRebaselineRequired { .. }
+            | Self::SnapshotInvalidPageSize
+            | Self::SnapshotInvalidCursor
+            | Self::SnapshotExpired
             | Self::RangeNotSatisfiable { .. } => false,
             Self::ReadinessUnavailable
             | Self::RebaselineDependencyUnavailable
@@ -437,6 +448,9 @@ impl ApiError {
             Self::SyncRebaselineRequired { .. } => {
                 "The synchronization checkpoint requires rebaseline."
             }
+            Self::SnapshotInvalidPageSize => "The snapshot page size is invalid.",
+            Self::SnapshotInvalidCursor => "The snapshot page cursor is invalid.",
+            Self::SnapshotExpired => "The snapshot artifact has expired.",
             Self::ReadinessUnavailable => "Required service dependencies are not ready.",
             Self::Internal => "Synveil could not complete the request.",
             Self::RangeNotSatisfiable { .. } => "The requested byte range cannot be satisfied.",

@@ -87,14 +87,15 @@ pub use domain::{
     ConflictResolutionFingerprint, ConflictResolutionRequest,
     DEFAULT_BACKUP_SCHEDULE_MAX_LATENESS_SECONDS,
     DEFAULT_BACKUP_SCHEDULED_MAINTENANCE_LEASE_SECONDS, Device, DeviceStatus, DeviceSyncCheckpoint,
-    DomainError, FileVersion, Library, LibraryStatus, LogicalName, LogicalSnapshotNode,
-    LogicalSnapshotNodeError, LoginIdentifier, MAX_BACKUP_SCHEDULE_MAX_LATENESS_SECONDS,
-    MAX_BACKUP_SCHEDULED_MAINTENANCE_LEASE_SECONDS, MAX_BACKUP_SNAPSHOT_RETENTION_SECONDS,
-    MAX_LOGICAL_NAME_BYTES, MIN_BACKUP_SCHEDULE_MAX_LATENESS_SECONDS,
-    MIN_BACKUP_SCHEDULED_MAINTENANCE_LEASE_SECONDS, Node, NodeKind, NodeState, ObjectReference,
-    PlannedScheduleOccurrence, SnapshotState, SnapshotStateParseError, SyncBootstrap,
-    SyncBootstrapState, SyncBootstrapStateParseError, UploadOperation, UploadOperationParseError,
-    UploadSessionState, UploadSessionStateParseError, UploadStateTransitionError, User, UserStatus,
+    DomainError, FileVersion, Library, LibraryStatus, LogicalName, LogicalSnapshot,
+    LogicalSnapshotError, LogicalSnapshotNode, LogicalSnapshotNodeError, LoginIdentifier,
+    MAX_BACKUP_SCHEDULE_MAX_LATENESS_SECONDS, MAX_BACKUP_SCHEDULED_MAINTENANCE_LEASE_SECONDS,
+    MAX_BACKUP_SNAPSHOT_RETENTION_SECONDS, MAX_LOGICAL_NAME_BYTES,
+    MIN_BACKUP_SCHEDULE_MAX_LATENESS_SECONDS, MIN_BACKUP_SCHEDULED_MAINTENANCE_LEASE_SECONDS, Node,
+    NodeKind, NodeState, ObjectReference, PlannedScheduleOccurrence, RebaselineSnapshotPageCursor,
+    SnapshotState, SnapshotStateParseError, SyncBootstrap, SyncBootstrapState,
+    SyncBootstrapStateParseError, UploadOperation, UploadOperationParseError, UploadSessionState,
+    UploadSessionStateParseError, UploadStateTransitionError, User, UserStatus,
     is_claimable_scheduled_maintenance_state,
 };
 pub use errors::{CoreError, ErrorCode, UnknownErrorCode};
@@ -108,8 +109,8 @@ pub use ids::{
     BackupSnapshotRetentionPolicyRevisionId, ChangeEventId, ClientMutationId, ConflictResolutionId,
     DedupDomainId, DeviceCredentialId, DeviceEnrollmentGrantId, DeviceId, FileVersionId,
     IdParseError, LibraryId, NodeId, ObjectGcOperationId, ObjectId, ObjectReplicaId,
-    OutboundIntentId, ShareId, SnapshotId, SyncBootstrapId, SyncConflictId, UploadSessionId,
-    UserId,
+    OutboundIntentId, RebaselineSnapshotId, ShareId, SnapshotId, SyncBootstrapId, SyncConflictId,
+    UploadSessionId, UserId,
 };
 
 /// Compatibility spelling for the immutable identity of one journal entry.

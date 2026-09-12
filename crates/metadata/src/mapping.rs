@@ -44,6 +44,9 @@ pub enum MappingError {
     RelationMismatch {
         relation: &'static str,
     },
+    RevisionConflict {
+        current_revision: Revision,
+    },
     Domain(DomainError),
 }
 
@@ -82,6 +85,9 @@ impl fmt::Display for MappingError {
                     formatter,
                     "persisted {relation} relationship is inconsistent"
                 )
+            }
+            Self::RevisionConflict { .. } => {
+                formatter.write_str("the resource revision changed before the operation")
             }
             Self::Domain(error) => error.fmt(formatter),
         }

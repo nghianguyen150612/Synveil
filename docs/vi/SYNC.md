@@ -439,6 +439,250 @@ upload mọi local file như file mới. Trước rebaseline, client bảo toàn
 local mutation trong durable outbound queue; sau rebaseline chúng rebase/submit
 bằng original base fact và conflict rule.
 
+### Nền tảng snapshot nội bộ Prompt 81
+
+Prompt 81 thêm seam `LogicalSnapshotService` transport-neutral để build đầy đủ
+logical state của một Library mà không thêm HTTP route hay đổi protocol bootstrap
+theo device đã có. `RebaselineSnapshot` trả về:
+
+- library ID đã được owner authorize và một `LogicalSnapshot` canonical;
+- root hiện tại cùng mọi Node logical hiện tại ở state `ACTIVE` và `TRASHED`,
+  gồm parent ID, kind, name, revision và metadata content an toàn của current file;
+- boundary `JournalHighWatermark`/`JournalCursor` lấy từ cùng database view.
+
+Builder bắt đầu transaction PostgreSQL `REPEATABLE READ`, lấy namespace guard
+theo Library hiện có trước data read đầu tiên, đọc journal head và projection Node
+theo set query, order entry bằng immutable Node ID rồi commit state cùng boundary.
+Mutation cooperative đồng thời vì vậy hoặc nằm trong snapshot và ở trước/tại
+boundary, hoặc vắng trong cả hai và còn trong feed strictly sau boundary. Wall
+clock chỉ có tính mô tả, không phải cursor.
+
+Snapshot là logical: Node `PURGING`/đã purge, physical object key,
+replica/storage locator, filesystem path, staging handle và byte file không thuộc
+contract. Build/read snapshot không tạo hay advance device checkpoint, không
+complete rebaseline, không apply state ở client và không chọn conflict resolution.
+
+### Artifact fixed-cut durable và paging Prompt 82
+
+Prompt 82 persist cut Prompt 81 thành artifact `RebaselineSnapshotId` theo scope
+Library và owner đã authorize. Creation vẫn ở một transaction `REPEATABLE READ`
+dưới namespace guard cũ: đọc/validate aggregate Prompt 81 đầy đủ, ghi header
+bất biến có boundary `JournalHighWatermark`, count và expiry inject, materialize
+entry bằng một `INSERT ... SELECT`, rồi commit. Nếu bất kỳ bước nào fail,
+rollback không để lại header, boundary hay entry row có thể đọc.
+
+Sau commit, `get_rebaseline_snapshot` và
+`read_rebaseline_snapshot_page` chỉ dùng header/entry table durable. Chúng không
+giữ transaction create, không lấy namespace guard và không query `nodes` live;
+mutation bình thường vì thế vẫn tiếp tục trong lúc transfer lớn được page qua
+connection khác hoặc process restart. Entry order theo immutable `NodeId` bằng
+keyset `(snapshot_id, node_id)`: `node_id > after_node_id`, ascending, limit
+bounded. OFFSET không phải continuation mechanism của snapshot.
+
+Mọi `RebaselineSnapshotPage` lặp descriptor (artifact ID, Library, journal
+boundary, count, timestamp) và chỉ trả `RebaselineSnapshotPageCursor` scope theo
+snapshot sau Node cuối của page. Cursor này cố ý không phải `JournalCursor`;
+journal cursor tiếp tục incremental sync strictly sau boundary capture. Page size
+default là 256, maximum là 1000. Memory page là O(page size); creation có thể
+tạm allocate aggregate O(total-node-count) đã validate trước copy set-oriented.
+
+Artifact hết hạn logic khi `observed_at >= expires_at` (default Gen-1 24 giờ)
+và sau đó fail `Expired`. Row hết hạn có thể còn vật lý tới lifecycle/retention
+phase sau; prompt này không thêm cleanup worker, delete API explicit, retry loop,
+global lock, HTTP/OpenAPI/SSE/WebSocket route hay client snapshot apply. Owner
+khác đoán Snapshot ID nhận `NotFound`, và creation/read vẫn checkpoint-neutral.
+
+### Apply nguyên tử ở client Prompt 84
+
+Client-sync nhận descriptor đã được tạo qua page source transport-neutral. Nó
+lưu tối đa một candidate mỗi Library trong bảng SQLite tách biệt, kiểm tra
+snapshot ID/Library/boundary/count bất biến, thứ tự NodeId strict, duplicate,
+cursor opaque cycle, count terminal chính xác và invariant root/parent/
+reachability trước activation. Transfer bounded dùng O(page size) memory; tái
+tạo metadata/path cuối dùng O(nodes).
+
+Một transaction SQLite ngắn chỉ thay remote mirror authoritative
+(`local_nodes`) và ghi `AppliedPendingHandoff`. Nó không xóa/ghi lại outbound
+intent, base revision, upload staging hay byte content local. Inbound incremental
+cũ bị fence tới phase handoff sau; phase này không gọi ACK/checkpoint server,
+không resolve conflict và không thêm UI, retry loop hay cleanup daemon.
+
+### Ranh giới abuse khi tạo artifact Prompt 83C
+
+Durable snapshot service không có authenticated rate limiter dùng lại được hoặc
+durable quota hiện hữu phù hợp cho artifact này. Vì vậy Gen-1 áp dụng bound
+durable hẹp `MAX_ACTIVE_REBASELINE_SNAPSHOTS_PER_OWNER_LIBRARY = 8`: tối đa tám
+artifact còn active, chưa hết hạn cho mỗi cặp owner và Library. Query admission
+chạy sau khi lấy per-Library namespace guard hiện có và trước bước materialize
+O(tổng số Node), trong cùng transaction được guard bảo vệ ở `READ COMMITTED`.
+Creation cố ý dùng `READ COMMITTED`: PostgreSQL có thể tạo snapshot
+`REPEATABLE READ` ngay khi statement advisory-lock đang chờ, khiến creator xếp
+hàng đếm bộ artifact đã commit bị stale. Sau khi lấy guard, mọi mutation
+namespace cooperative và creator đều serialized, nên head, admission count và
+projection materialize vẫn là một cut được guard bảo vệ. Đây là policy ở
+metadata transport-neutral, không phải SQL đặt trong handler, semaphore
+in-process hay global lock.
+
+Artifact active chính xác khi `observed_at < expires_at`; bằng nhau nghĩa là
+expired và có thể admit artifact mới. Row expired không bị physical delete ở
+phase này và không tính vào bound. Khi chạm bound, typed admission failure được
+HTTP map thành response canonical `429 Too Many Requests` / `rate_limited` với
+`Retry-After: 1`. Create bị reject không commit header, entry, checkpoint,
+acknowledgment hay journal change nào. Không có idempotency/retry system: nếu
+response thành công bị mất, POST lặp có thể để lại artifact duplicate, nhưng
+durable active bound vẫn được giữ riêng theo owner/Library.
+
+Bằng chứng PostgreSQL/HTTP trực tiếp cover path concurrent dưới bound, race biên
+`N-1`, isolation owner/Library, re-admission đúng expiry, atomicity của create
+bị reject, owner hợp lệ hết hạn trả HTTP `410`, owner khác với artifact expired
+trả `404`, và denial `device_revoked` hiện có trên descriptor, page và create.
+
+### Handoff checkpoint durable của rebaseline Prompt 85
+
+Prompt 85 hoàn tất trạng thái local `AppliedPendingHandoff` mà Prompt 84 để
+lại. Server chỉ thêm một operation
+`DeviceSyncService::complete_rebaseline_handoff`, với HTTP surface:
+
+```text
+POST /api/v1/rebaseline-snapshots/{snapshot_id}/handoff
+```
+
+Route này chỉ nhận authenticated device bearer. Body rỗng (client chuẩn có thể
+gửi `{}`); owner, Library, epoch và sequence không bao giờ là field trong
+request. Bearer cung cấp owner/device đã authenticate; server đọc handoff proof
+bất biến theo owner để derive Library và
+`C = (journal_epoch, snapshot_resume_sequence)`. Payload đã expired vẫn hợp lệ
+cho handoff khi proof còn; proof thiếu hoặc thuộc owner khác trả
+`404 not_found`. Transaction handoff không đọc entry, không đổi snapshot,
+journal retention, và không dùng ordinary feed ACK.
+
+Server lock device checkpoint canonical và chỉ áp dụng transition monotone:
+checkpoint thiếu hoặc cũ hơn được advance tới `C`, checkpoint đúng `C` là
+idempotent, checkpoint cùng epoch đã vượt `C` trả `409 checkpoint_conflict`,
+epoch mới hơn hoặc incompatible cũng trả conflict. Library epoch và boundary
+được validate với Library hiện tại; persisted proof sai bị fail closed. Prompt
+85 tự nó không thêm migration; Prompt 86 sau đó chuyển authority từ payload
+header lớn sang proof nhỏ ở migration 36. Idempotency vẫn derive từ proof và
+equality của checkpoint.
+
+Client transport chỉ expose
+`complete_rebaseline_handoff(snapshot_id) -> confirmation`, không có arbitrary
+checkpoint assignment hay boundary argument. HTTP adapter decode strict
+snapshot ID, Library ID và response decimal `{epoch, sequence}`. Engine chỉ
+accept response khi mọi giá trị khớp chính xác marker pending local. Mismatch,
+authentication/revocation, conflict, not-found hoặc transport/protocol failure
+đều giữ marker. Sau khi server confirm khớp, một SQLite transaction ngắn verify
+marker, set các field cursor hiện có của `replicas` là `journal_epoch`,
+`applied_sequence`, `acknowledged_sequence` về `C`, set lifecycle
+incremental-ready/idle và xóa marker. Transaction không gọi network; outbound
+intent, base observation, staged upload và local content không bị đụng tới.
+Inbound chỉ được un-fence sau khi transaction này commit; server success một
+mình không đủ để mở lại old cursor.
+
+Crash proof cover bảy boundary: trước request, server commit sau đó response
+mất, đã nhận response, server success trước local finalize, SQLite rollback
+trước commit, local commit trước process exit và restart/retry. Retry luôn an
+toàn: response mất chỉ lặp operation derive từ header và idempotent; local
+finalize đã commit trả `AlreadyComplete`, không tạo lại candidate hay snapshot.
+Network không giữ SQLite transaction hay local writer lock, nên outbound intent
+insert trong lúc handoff vẫn sống byte-for-byte và chỉ submit sau boundary.
+Cùng snapshot concurrent hội tụ; device khác giữ checkpoint riêng; Library và
+owner khác bị cô lập. Prompt 85 không thêm retention/compaction, physical
+cleanup, conflict policy, retry daemon, polling/background scheduler, UI hay
+deployment.
+
+### Retention journal và cleanup vật lý bounded Prompt 86
+
+Prompt 86 implement foundation retention journal/payload vật lý đầu tiên bằng
+các call one-shot transport-neutral của `SyncRetentionService`. Giá trị
+`libraries.minimum_retained_sequence` hiện có mang nghĩa chính xác là sequence
+cao nhất đã compact qua trong epoch hiện tại. `cursor < floor` trả
+rebaseline-required/history-unavailable hiện có; `cursor == floor` tiếp tục an
+toàn bằng các event strictly lớn hơn floor. Vì vậy no-cursor stale sau khi floor
+khác zero, kể cả journal vật lý rỗng. Compaction không đổi epoch, head hay bất kỳ
+checkpoint device nào.
+
+Horizon lịch sử incremental tối thiểu Gen-1 là 30 ngày. Một call journal chỉ
+load/xóa tối đa 10.000 row cũ nhất (hard maximum 100.000) trong một prefix đủ
+tuổi liên tục. Sequence là authority: nếu row sớm chưa đủ tuổi, mọi row sau vẫn
+được giữ dù timestamp sau đó cũ hơn. Xóa row và tăng floor commit cùng
+transaction. Lock order là namespace advisory guard, row clock/floor Library,
+quan sát proof rồi journal row. Feed giữ share lock Library trong transaction
+metadata ngắn, nên race cleanup chỉ trả feed cũ đầy đủ hoặc rebaseline theo floor
+mới; append mới không thể lọt vào target xóa đã tính.
+
+Migration 36 thêm row `rebaseline_snapshot_handoff_proofs` bất biến và backfill
+mọi snapshot durable hiện có. Tạo snapshot mới ghi header, entry và proof nguyên
+tử. Proof giữ snapshot ID, owner, Library, epoch/boundary, timestamp snapshot và
+deadline 30 ngày sau expiry payload; không có Object/replica/storage/path/
+credential và không FK cascade tới payload header.
+
+Payload chỉ đọc được khi `observed_at < expires_at`. Tại equality, cleanup có
+thể xóa tối đa 32 artifact mỗi call nhưng chỉ khi proof tồn tại; thiếu proof làm
+cleanup fail closed. Header/entry biến mất nguyên tử. Owner đọc descriptor/page
+vẫn nhận `SnapshotExpired` khi proof còn, owner khác vẫn nhận `NotFound`, và
+handoff vẫn install đúng boundary sau payload cleanup. Header/entry page read
+dùng một repeatable-read snapshot ngắn nên race không thể trả page thành công bị
+rách.
+
+Mọi proof current-epoch còn giữ pin journal tại boundary của nó:
+`compacted_through <= C`; boundary tương thích nhỏ nhất thắng. Checkpoint device
+không pin và vì thế không giữ history vô hạn. Tại/sau `proof_expires_at`, mỗi
+call có thể xóa tối đa 128 proof (hard maximum 4.096) khi payload đã vắng mặt.
+Sau đó handoff là `NotFound`, journal step sau có thể tiến lên, và Prompt 87 xử
+lý convergence client. Prompt 86 không thêm endpoint, daemon, timer, scheduler,
+retry/backoff, UI, conflict policy hay recovery client tự động.
+
+### Invalidation retained-cursor và automatic rebaseline convergence Prompt 87
+
+`RebaselineConvergenceCoordinator::run_convergence_once` là state machine client
+bounded, transport-neutral có thể gọi trực tiếp. Nó không có daemon, timer,
+poller, gọi đệ quy, retry/backoff, cleanup action hay conflict policy. Mỗi
+invocation inspect durable SQLite state theo precedence cố định:
+
+1. candidate snapshot thật đã persist tiếp tục đúng chuỗi page hữu hạn của nó;
+2. `AppliedPendingHandoff` thử handoff Prompt 85 hiện có, derive từ header; rồi
+3. incremental sync bình thường chạy nhiều nhất một operation bounded.
+
+Chỉ kết quả server-authoritative `RebaselineRequired` (retained history hoặc
+no-cursor sau floor khác zero, hay epoch incompatible) mới bắt đầu snapshot
+recovery. Với pending handoff hiện có, chỉ `NotFound` (proof bị thiếu/conceal
+cho snapshot local đã authenticate) và checkpoint conflict typed mới cho phép
+snapshot thay thế. Authentication/revocation, permission denial, 429,
+server/internal, TLS/DNS/timeout/offline, protocol malformed, SQLite local
+failure và candidate corrupt không phải trigger rebaseline; chúng giữ lỗi typed
+và durable state hiện có.
+
+Trước POST create không idempotent duy nhất được phép, coordinator ghi một claim
+inert, scope theo Library vào candidate row v5. Descriptor server thành công
+promote claim đó nguyên tử thành candidate fetching bình thường. Response create
+mất hoặc malformed sẽ release claim inert trước khi trả lỗi typed, nên cùng
+invocation không POST lại còn invocation sau có thể thử đúng một lần. Caller
+cùng Library chỉ serialize bằng guard local scope Library cộng durable claim;
+Library khác độc lập. Không SQLite write transaction nào được giữ qua HTTP.
+
+Khi recovery vì proof thiếu hoặc checkpoint conflict, H1 vẫn tồn tại nên inbound
+vẫn fence trong lúc page S2 stage. Activation candidate là một transaction
+SQLite: swap remote base authoritative và upsert H1 thành H2, rồi xóa candidate.
+Reader chỉ thấy `base(S1)+H1` hoặc `base(S2)+H2`, không bao giờ thấy pair lẫn
+hoặc không marker. Coordinator sau đó delegate handoff/finalization Prompt 85
+bình thường cho S2. Nó không bao giờ gửi old local boundary lên server. Nếu S2
+lại gặp missing-proof/checkpoint conflict, kết quả là
+`RecoveryBlocked(DidNotConverge)` và không được tạo S3.
+
+Outbound intent, ID, payload, precondition/base revision, source/upload
+reference và submission state nằm ngoài cả hai activation path nên không đổi.
+Phase này cố ý không quyết định intent đã giữ conflict thế nào với remote base
+mới; Prompt 88 sở hữu conflict policy.
+
+Restart proof là durable: descriptor/candidate đã persist được resume trước
+khi create; candidate complete được activate; marker đã activate retry handoff
+Prompt 85 idempotent; sau local finalization incremental resume strictly sau
+cùng boundary server-proved. Trong recovery proof-loss, S2 stage dở có thể cùng
+tồn tại với H1 sau restart; sau replacement activation invocation tiếp theo thấy
+H2. Proof snapshot mới tiếp tục pin retention theo Prompt 86 trong suốt
+download, activation và handoff.
+
 ## Push mutation
 
 Subset push đã implement của Prompt 34 là route logical strict mô tả ở trên.
@@ -651,14 +895,15 @@ Device/library checkpoint ghi last acknowledged cursor sequence, last contact,
 client/protocol version và health. Nó hỗ trợ UI và retention warning nhưng không
 phải trusted proof local byte tồn tại.
 
-Retention dùng cả age và storage bound và publish minimum retained sequence.
-Bootstrap session tạm pin start boundary. Mặc định offline device không thể pin
-journal mãi mãi; khi tụt sau minimum, nó thành `REBASE_REQUIRED` và dùng bootstrap
-trong khi bảo toàn outbound mutation queue.
+Retention publish sequence đã compact qua. Offline device không pin journal mãi
+mãi; khi checkpoint tụt dưới floor, nó nhận rebaseline-required canonical trong
+khi outbound mutation queue được bảo toàn. Handoff proof snapshot durable còn
+giữ mới pin tạm thời vì client có thể đã apply snapshot nguyên tử.
 
-Trước pruning, retention job lock/check epoch và head, tôn trọng active bootstrap
-pin, chỉ xóa bounded prefix và tăng `minimum_retained_sequence` atomically cùng
-progress. Cursor tại boundary có một inclusive/exclusive rule đã test. Event
+Mỗi call retention one-shot explicit lock/check epoch và head, cap target tại
+handoff proof tương thích nhỏ nhất, chỉ xóa bounded prefix và tăng
+`minimum_retained_sequence` atomically cùng progress. Cursor tại boundary hợp
+lệ; cursor thấp hơn là stale. Event
 pruning không bao giờ xóa mutation receipt, history `FileVersion`, Trash record,
 audit fact hay backup manifest như side effect.
 
@@ -816,12 +1061,10 @@ Options: original stem cộng device/date/opaque suffix; conflict directory chuy
 Recommendation: tạo sibling/recovered visible node với portable name có version dẫn xuất từ preserved display stem, safe device label, server UTC date và opaque suffix chống collision; Unicode folding chính xác tuân accepted namespace policy
 Decision evidence: fixture round-trip đa platform, accessibility/usability review, path-length limit và deterministic collision test
 
-OPEN DECISION OD-SYNC-002: service level retention journal
+LOCKED DECISION OD-SYNC-002: service level retention journal Gen-1
 Owner: Sync / Operations / Product
-Needed by: Gate vận hành production Phase 4
-Options: chỉ fixed age; chỉ size cap; age target với protected minimum size và forced rebaseline ngoài giới hạn; device-ack pinning
-Recommendation: dùng configurable age target cộng capacity guard, bounded bootstrap pin và explicit stale-device/rebaseline status; không cho abandoned device pin history mãi mãi
-Decision evidence: event-volume benchmark, kỳ vọng offline household/device, disk-capacity test và đo duration rebaseline
+Decision: horizon tuổi tối thiểu 30 ngày, chỉ xóa prefix liên tục bounded, không pin bằng device checkpoint, và tạm cap tại handoff proof snapshot durable tương thích nhỏ nhất. Xem ADR-030. Policy capacity tương lai có thể supersede minimum này nhưng không được âm thầm làm yếu invariant no-gap.
+Decision evidence: suite Prompt 86 large-journal, stale cursor, snapshot proof, rollback, restart và concurrency trên PostgreSQL 17
 
 OPEN DECISION OD-SYNC-003: representation ancestry directory
 Owner: Database / Sync / Storage
@@ -992,3 +1235,43 @@ byte, stream chunk đều có giới hạn, timeout hữu hạn. Adapter không 
 engine có thể retry cùng ack/completion proof bền sau gián đoạn. Auth,
 revocation hay offline error giữ file local, sequence applied/acknowledged và
 pending evidence; không wipe hay rebind replica.
+
+## Xung đột outbound tất định (Prompt 88)
+
+Xung đột nghĩa là precondition chuẩn trên server đã từ chối một intent cục bộ
+bền vững, hoặc snapshot rebaseline authoritative vừa activate chứng minh chính
+xác precondition đó chắc chắn thất bại. Remote base vẫn là chuẩn; intent gốc,
+base revision, metadata payload và nguồn nội dung staged (nếu có) không đổi.
+Timeout, lỗi authentication/authorization, rate limit, dependency failure và
+response sai định dạng không phải xung đột.
+
+Schema SQLite V6 lưu một bản ghi xung đột chỉ ở client cho mỗi outbound intent,
+gồm kind, bằng chứng remote an toàn ban đầu, base cục bộ gốc, status, trường audit
+phân giải và liên kết intent thay thế tùy chọn. Bản ghi không chứa byte nội dung,
+credential, cookie, object key server hoặc đường dẫn vật lý. Bằng chứng ban đầu
+bất biến dù inbound sau đó làm remote base tiến lên. Danh sách được scope theo
+library và phân trang keyset theo `(detected_at, conflict_id)`, mặc định 100 và
+tối đa 1.000.
+
+Queue outbound hiện chưa có causal-dependency graph bền vững. Vì vậy một xung
+đột chưa giải quyết tạm dừng bảo thủ toàn bộ outbound của library, kể cả intent
+độc lập xuất hiện sau; library khác vẫn độc lập. Inbound và ACK tiếp tục. Với
+xung đột nội dung, inbound chỉ đưa byte remote chuẩn mới ra replica sau khi xác
+minh byte cục bộ xung đột đã nằm trong vùng staging bền vững với length và
+SHA-256 đã ghi.
+
+Phân giải luôn tường minh và chỉ cục bộ. `AcceptRemote` giải quyết record và hủy
+intent cũ trong một transaction, không gọi/sửa server và không xóa đồng bộ nội
+dung staged. `RetryLocalAgainstCurrentBase` kiểm tra operation vẫn hợp lệ và
+nguồn staged cần thiết còn tồn tại, rồi atomically supersede intent gốc bất biến
+và tạo đúng một intent mới có liên kết với revision node/parent chuẩn hiện tại.
+Gọi lại phân giải trả cùng kết quả. Outbound engine bình thường gửi intent mới
+sau đó, nên một thay đổi server khác vẫn có thể tạo xung đột mới. `KeepBoth`,
+merge tổng quát, đặt tên conflict-copy, force overwrite, phân giải nền và tự
+chọn bên thắng chưa được hỗ trợ.
+
+Rebaseline, checkpoint handoff và conflict là cơ chế riêng. Activate snapshot
+chỉ thêm conflict khi chứng minh được precondition node hoặc parent chính xác đã
+cũ; không giải quyết conflict hay sửa intent. Conflict không trigger rebaseline
+và không pin journal retention, payload snapshot, handoff proof hoặc checkpoint
+thiết bị.

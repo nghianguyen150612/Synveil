@@ -36,6 +36,9 @@ use crate::{
         PostgresRebaselineBackend, RebaselineBackend, RebaselineTokenKey,
         UnavailableRebaselineBackend,
     },
+    rebaseline_snapshot::{
+        DurableSnapshotBackend, PostgresDurableSnapshotBackend, UnavailableDurableSnapshotBackend,
+    },
     sync::{PostgresSyncFeedBackend, SyncAckKey, SyncFeedBackend, UnavailableSyncFeedBackend},
     uploads::{UnavailableUploadBackend, UploadBackend},
     versions::{UnavailableVersionHistoryBackend, UnavailableVersionRestoreBackend},
@@ -158,6 +161,7 @@ pub struct ApiState {
     upload_backend: Arc<dyn UploadBackend>,
     sync_backend: Arc<dyn SyncFeedBackend>,
     rebaseline_backend: Arc<dyn RebaselineBackend>,
+    durable_snapshot_backend: Arc<dyn DurableSnapshotBackend>,
     csrf_key: Arc<CsrfKey>,
     etag_key: Arc<EtagKey>,
     sync_ack_key: Arc<SyncAckKey>,
@@ -192,6 +196,7 @@ impl ApiState {
             upload_backend: Arc::new(UnavailableUploadBackend),
             sync_backend: Arc::new(UnavailableSyncFeedBackend),
             rebaseline_backend: Arc::new(UnavailableRebaselineBackend),
+            durable_snapshot_backend: Arc::new(UnavailableDurableSnapshotBackend),
             csrf_key: Arc::new(CsrfKey::generate()),
             etag_key: Arc::new(EtagKey::generate()),
             sync_ack_key: Arc::new(SyncAckKey::generate()),
@@ -228,6 +233,7 @@ impl ApiState {
             upload_backend: Arc::new(UnavailableUploadBackend),
             sync_backend: Arc::new(UnavailableSyncFeedBackend),
             rebaseline_backend: Arc::new(UnavailableRebaselineBackend),
+            durable_snapshot_backend: Arc::new(UnavailableDurableSnapshotBackend),
             csrf_key: Arc::new(CsrfKey::generate()),
             etag_key: Arc::new(EtagKey::generate()),
             sync_ack_key: Arc::new(SyncAckKey::generate()),
@@ -353,6 +359,15 @@ impl ApiState {
     }
 
     #[must_use]
+    pub fn with_durable_snapshot_backend(
+        mut self,
+        backend: Arc<dyn DurableSnapshotBackend>,
+    ) -> Self {
+        self.durable_snapshot_backend = backend;
+        self
+    }
+
+    #[must_use]
     pub fn with_postgres_auth(
         self,
         pool: Arc<DatabasePool>,
@@ -374,6 +389,9 @@ impl ApiState {
                 pool.as_ref().clone(),
             )))
             .with_rebaseline_backend(Arc::new(PostgresRebaselineBackend::new(
+                pool.as_ref().clone(),
+            )))
+            .with_durable_snapshot_backend(Arc::new(PostgresDurableSnapshotBackend::new(
                 pool.as_ref().clone(),
             )))
             .with_client_mutation_backend(Arc::new(PostgresClientMutationBackend::new(
@@ -525,6 +543,11 @@ impl ApiState {
     #[must_use]
     pub(crate) fn rebaseline_backend(&self) -> &Arc<dyn RebaselineBackend> {
         &self.rebaseline_backend
+    }
+
+    #[must_use]
+    pub(crate) fn durable_snapshot_backend(&self) -> &Arc<dyn DurableSnapshotBackend> {
+        &self.durable_snapshot_backend
     }
 
     #[must_use]

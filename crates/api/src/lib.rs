@@ -20,6 +20,7 @@ mod health;
 mod middleware;
 mod mutations;
 mod rebaseline;
+mod rebaseline_snapshot;
 mod request_id;
 mod router;
 mod runtime_database_credential;
@@ -52,6 +53,9 @@ pub use rebaseline::{
     MAX_REBASELINE_COMPLETION_TOKEN_BYTES, MAX_REBASELINE_CURSOR_BYTES, PostgresRebaselineBackend,
     REBASELINE_BODY_LIMIT_BYTES, RebaselineBackend, RebaselineTokenError, RebaselineTokenKey,
     RebaselineTokenKeyParseError,
+};
+pub use rebaseline_snapshot::{
+    DurableSnapshotBackend, PostgresDurableSnapshotBackend, SNAPSHOT_CREATE_BODY_LIMIT_BYTES,
 };
 pub use request_id::{REQUEST_ID_HEADER, RequestContext, RequestId};
 pub use router::{

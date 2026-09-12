@@ -3026,6 +3026,229 @@ paths:
           $ref: '#/components/responses/UploadNotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/libraries/{library_id}/rebaseline-snapshots:
+    post:
+      tags: [Synchronization]
+      operationId: createDurableRebaselineSnapshot
+      summary: Create one durable immutable rebaseline snapshot artifact
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Sync / Metadata / Security
+      x-synveil-max-body-bytes: 2048
+      description: |
+        For an authenticated owner, create one durable immutable rebaseline
+        snapshot artifact for an owned library. The server captures the current
+        logical namespace projection and journal high-watermark boundary in a
+        single namespace-guarded transaction. The response includes a Location
+        header identifying the descriptor resource. Duplicate POSTs may create
+        independent artifacts; no ad-hoc idempotency facility is provided. At
+        most 8 active unexpired artifacts are admitted per owner/library
+        namespace. An artifact is active only while observed_at is strictly
+        before expires_at; equality is expired and can be re-admitted. A lost
+        response may therefore leave one artifact behind for a later retry,
+        but the durable bound remains enforced.
+        Browser sessions require same-origin CSRF; authenticated device bearers
+        do not. This operation does not advance any device checkpoint.
+      x-synveil-csrf: Browser cookies require session-bound CSRF and same-origin provenance; a successfully authenticated device bearer does not use CSRF.
+      x-synveil-auth-classes: [BROWSER_SESSION, DEVICE_CREDENTIAL]
+      x-synveil-device-auth: Same authenticated owner on scoped routes. Mixed Cookie and Authorization are rejected. Private/no-store for device responses and errors.
+      security:
+        - BrowserSession: []
+        - DeviceBearer: []
+      parameters:
+        - $ref: '#/components/parameters/LibraryId'
+        - $ref: '#/components/parameters/BrowserCsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DurableSnapshotCreateRequest'
+      responses:
+        '201':
+          description: The newly created durable immutable snapshot descriptor.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DurableSnapshotDescriptorResponse'
+        '400':
+          $ref: '#/components/responses/DurableSnapshotInvalidRequest'
+        '401':
+          $ref: '#/components/responses/DurableSnapshotUnauthorized'
+        '403':
+          $ref: '#/components/responses/DurableSnapshotForbidden'
+        '404':
+          $ref: '#/components/responses/DurableSnapshotNotFound'
+        '413':
+          $ref: '#/components/responses/DurableSnapshotPayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/DurableSnapshotInternalError'
+        '503':
+          $ref: '#/components/responses/DurableSnapshotServiceUnavailable'
+  /api/v1/rebaseline-snapshots/{snapshot_id}:
+    get:
+      tags: [Synchronization]
+      operationId: getDurableRebaselineSnapshotDescriptor
+      summary: Read one immutable snapshot descriptor
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Sync / Metadata / Security
+      description: |
+        Read the immutable metadata descriptor for a durable rebaseline
+        snapshot artifact. The descriptor includes snapshot identity, library
+        scope, journal boundary, entry count, creation time, and expiry time.
+        Owner-scoped lookup conceals foreign artifacts as not_found; expired
+        artifacts for the authorized owner return 410 Gone. No CSRF proof is
+        required for this authenticated GET.
+      x-synveil-auth-classes: [BROWSER_SESSION, DEVICE_CREDENTIAL]
+      x-synveil-device-auth: Same authenticated owner on scoped routes. Mixed Cookie and Authorization are rejected. Private/no-store for device responses and errors.
+      security:
+        - BrowserSession: []
+        - DeviceBearer: []
+      parameters:
+        - $ref: '#/components/parameters/DurableSnapshotId'
+      responses:
+        '200':
+          description: The immutable snapshot descriptor.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DurableSnapshotDescriptorResponse'
+        '400':
+          $ref: '#/components/responses/DurableSnapshotInvalidRequest'
+        '401':
+          $ref: '#/components/responses/DurableSnapshotUnauthorized'
+        '404':
+          $ref: '#/components/responses/DurableSnapshotNotFound'
+        '410':
+          $ref: '#/components/responses/DurableSnapshotExpired'
+        '500':
+          $ref: '#/components/responses/DurableSnapshotInternalError'
+        '503':
+          $ref: '#/components/responses/DurableSnapshotServiceUnavailable'
+  /api/v1/rebaseline-snapshots/{snapshot_id}/entries:
+    get:
+      tags: [Synchronization]
+      operationId: listDurableRebaselineSnapshotEntries
+      summary: Read one bounded keyset page from an immutable snapshot
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Sync / Metadata / Security
+      description: |
+        Read up to 256 logical entries by default and at most 1000, ordered
+        by immutable node_id keyset. The opaque hex-encoded cursor is
+        snapshot-scoped and binds snapshot identity and last-seen node ID;
+        possession is never authorization. Cross-snapshot cursor reuse is
+        rejected as invalid_cursor. Every page repeats the immutable
+        descriptor and journal boundary. No CSRF proof is required for this
+        authenticated GET.
+      x-synveil-auth-classes: [BROWSER_SESSION, DEVICE_CREDENTIAL]
+      x-synveil-device-auth: Same authenticated owner on scoped routes. Mixed Cookie and Authorization are rejected. Private/no-store for device responses and errors.
+      security:
+        - BrowserSession: []
+        - DeviceBearer: []
+      parameters:
+        - $ref: '#/components/parameters/DurableSnapshotId'
+        - $ref: '#/components/parameters/DurableSnapshotCursor'
+        - $ref: '#/components/parameters/DurableSnapshotLimit'
+      responses:
+        '200':
+          description: A bounded deterministic page from the immutable snapshot artifact.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DurableSnapshotPageResponse'
+        '400':
+          $ref: '#/components/responses/DurableSnapshotInvalidRequest'
+        '401':
+          $ref: '#/components/responses/DurableSnapshotUnauthorized'
+        '404':
+          $ref: '#/components/responses/DurableSnapshotNotFound'
+        '410':
+          $ref: '#/components/responses/DurableSnapshotExpired'
+        '500':
+          $ref: '#/components/responses/DurableSnapshotInternalError'
+        '503':
+          $ref: '#/components/responses/DurableSnapshotServiceUnavailable'
+  /api/v1/rebaseline-snapshots/{snapshot_id}/handoff:
+    post:
+      tags: [Synchronization]
+      operationId: completeDurableRebaselineSnapshotHandoff
+      summary: Complete one durable snapshot checkpoint handoff
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Sync / Metadata / Security
+      x-synveil-max-body-bytes: 2048
+      description: |
+        Complete the handoff for an already activated durable rebaseline
+        snapshot. The authenticated device credential identifies both the
+        owner and the one device checkpoint to update. The request body is
+        empty (an exact `{}` is also accepted); owner, library, epoch, and
+        sequence are never caller inputs. The server derives the canonical
+        library and journal boundary from the immutable owner-scoped snapshot
+        header, installs that boundary transactionally or returns an exact
+        idempotent result, and never reads snapshot entries. A physically
+        present but expired snapshot header remains valid for this handoff;
+        a missing or foreign header is concealed as not_found. The operation
+        does not alter snapshot entries, journal retention, or snapshot
+        lifecycle state. A device bearer does not use CSRF; browser sessions
+        are not an authentication class for this device-specific operation.
+      x-synveil-csrf: 'Not applicable: this route accepts only an authenticated device bearer.'
+      x-synveil-auth-classes: [DEVICE_CREDENTIAL]
+      x-synveil-device-auth: The bearer-bound owner/device selects the checkpoint; no device, library, epoch, or sequence may be supplied in the body.
+      security:
+        - DeviceBearer: []
+      parameters:
+        - $ref: '#/components/parameters/DurableSnapshotId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DurableSnapshotHandoffRequest'
+      responses:
+        '200':
+          description: The server-confirmed snapshot boundary installed for this authenticated device, or the same result after an idempotent retry.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/PrivateNoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DurableSnapshotHandoffResponse'
+        '400':
+          $ref: '#/components/responses/DurableSnapshotInvalidRequest'
+        '401':
+          $ref: '#/components/responses/DurableSnapshotUnauthorized'
+        '403':
+          $ref: '#/components/responses/DurableSnapshotForbidden'
+        '404':
+          $ref: '#/components/responses/DurableSnapshotNotFound'
+        '409':
+          $ref: '#/components/responses/DurableSnapshotHandoffConflict'
+        '413':
+          $ref: '#/components/responses/DurableSnapshotPayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/DurableSnapshotInternalError'
+        '503':
+          $ref: '#/components/responses/DurableSnapshotServiceUnavailable'
 components:
   parameters:
     DeviceCredentialId:
@@ -3343,6 +3566,33 @@ components:
         minimum: 1
         maximum: 1000
         default: 200
+    DurableSnapshotId:
+      name: snapshot_id
+      in: path
+      required: true
+      description: Opaque UUIDv7 identity for one durable immutable rebaseline snapshot artifact; it is never an authorization credential.
+      schema:
+        $ref: '#/components/schemas/OpaqueId'
+    DurableSnapshotCursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque hex-encoded keyset cursor snapshot-scoped to snapshot identity and after-node-id; cross-snapshot reuse is rejected.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+    DurableSnapshotLimit:
+      name: limit
+      in: query
+      required: false
+      description: Bounded entry page size; the server default is 256 and the maximum is 1000.
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 1000
+        default: 256
     IfMatch:
       name: If-Match
       in: header
@@ -3430,6 +3680,11 @@ components:
       description: Trusted diagnostic request identifier echoed in the JSON envelope.
       schema:
         $ref: '#/components/schemas/OpaqueRequestId'
+    Location:
+      description: Canonical path to the created descriptor resource.
+      schema:
+        type: string
+        format: uri-reference
     ETag:
       description: Opaque quoted resource revision used by conditional mutation.
       schema:
@@ -3595,6 +3850,107 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
     RebaselineServiceUnavailable:
+      description: PostgreSQL or another required dependency is unavailable; the stable code is dependency_unavailable without topology or credentials.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    DurableSnapshotInvalidRequest:
+      description: The scope/body is invalid, limit is outside 1..1000, or cursor is malformed/oversized. Stable codes include invalid_request, invalid_page_size, and invalid_cursor.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    DurableSnapshotUnauthorized:
+      description: Authentication is absent or invalid; the stable code is authentication_failed.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    DurableSnapshotForbidden:
+      description: The state-changing request lacks valid same-origin CSRF evidence; the stable code is permission_denied.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    DurableSnapshotNotFound:
+      description: The currently authenticated owner cannot access the snapshot or library in this exact scope; cross-owner cases are concealed with not_found.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    DurableSnapshotHandoffConflict:
+      description: The authenticated device checkpoint is already ahead of the snapshot boundary or is on a newer/incompatible journal epoch; the stable code is checkpoint_conflict and the server never rewinds progress.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    DurableSnapshotExpired:
+      description: PostgreSQL/server time has expired the durable snapshot artifact; the stable code is snapshot_expired.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    DurableSnapshotPayloadTooLarge:
+      description: The JSON body exceeds the 2048-byte transport limit; the stable code is payload_too_large.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    DurableSnapshotInternalError:
+      description: Persisted data is invalid or an internal invariant failed; stable codes are invalid_persisted_data and internal_error, and no physical detail is exposed.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    DurableSnapshotServiceUnavailable:
       description: PostgreSQL or another required dependency is unavailable; the stable code is dependency_unavailable without topology or credentials.
       headers:
         X-Request-Id:
@@ -4058,6 +4414,8 @@ components:
       headers:
         X-Request-Id:
           $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          $ref: '#/components/headers/PrivateNoStore'
         Retry-After:
           $ref: '#/components/headers/RetryAfter'
       content:
@@ -4901,6 +5259,153 @@ components:
         updated_at:
           type: string
           format: date-time
+    DurableSnapshotCreateRequest:
+      type: object
+      additionalProperties: false
+      maxProperties: 0
+      description: Exact empty JSON object; snapshot behavior is fully determined by the authenticated owner and library scope.
+    DurableSnapshotHandoffRequest:
+      type: object
+      additionalProperties: false
+      maxProperties: 0
+      description: Exact empty JSON object. The server derives library, journal epoch, and resume sequence from the authenticated owner-scoped snapshot header; no caller-supplied boundary is accepted.
+    DurableSnapshotDescriptorResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/DurableSnapshotDescriptorData'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    DurableSnapshotDescriptorData:
+      type: object
+      additionalProperties: false
+      required: [snapshot_id, library_id, journal_boundary, entry_count, created_at, expires_at]
+      properties:
+        snapshot_id:
+          $ref: '#/components/schemas/OpaqueId'
+        library_id:
+          $ref: '#/components/schemas/OpaqueId'
+        journal_boundary:
+          $ref: '#/components/schemas/DurableSnapshotJournalBoundary'
+        entry_count:
+          $ref: '#/components/schemas/U64Decimal'
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+    DurableSnapshotJournalBoundary:
+      type: object
+      additionalProperties: false
+      required: [library_id, journal_epoch, resume_sequence]
+      properties:
+        library_id:
+          $ref: '#/components/schemas/OpaqueId'
+        journal_epoch:
+          $ref: '#/components/schemas/U64Decimal'
+        resume_sequence:
+          $ref: '#/components/schemas/U64Decimal'
+    DurableSnapshotPageResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/DurableSnapshotPageData'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    DurableSnapshotPageData:
+      type: object
+      additionalProperties: false
+      required: [snapshot_id, library_id, journal_boundary, entry_count, entries, has_more]
+      properties:
+        snapshot_id:
+          $ref: '#/components/schemas/OpaqueId'
+        library_id:
+          $ref: '#/components/schemas/OpaqueId'
+        journal_boundary:
+          $ref: '#/components/schemas/DurableSnapshotJournalBoundary'
+        entry_count:
+          $ref: '#/components/schemas/U64Decimal'
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/DurableSnapshotEntry'
+        has_more:
+          type: boolean
+        next_cursor:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Opaque hex-encoded snapshot-scoped cursor; absent on the terminal page.
+    DurableSnapshotHandoffResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/DurableSnapshotHandoffData'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    DurableSnapshotHandoffData:
+      type: object
+      additionalProperties: false
+      required: [snapshot_id, library_id, checkpoint]
+      properties:
+        snapshot_id:
+          $ref: '#/components/schemas/OpaqueId'
+        library_id:
+          $ref: '#/components/schemas/OpaqueId'
+        checkpoint:
+          $ref: '#/components/schemas/DurableSnapshotHandoffCheckpoint'
+    DurableSnapshotHandoffCheckpoint:
+      type: object
+      additionalProperties: false
+      required: [epoch, sequence]
+      properties:
+        epoch:
+          $ref: '#/components/schemas/U64Decimal'
+        sequence:
+          $ref: '#/components/schemas/U64Decimal'
+    DurableSnapshotEntry:
+      type: object
+      additionalProperties: false
+      required: [node_id, name, kind, state, revision]
+      properties:
+        node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        parent_node_id:
+          $ref: '#/components/schemas/OpaqueId'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        kind:
+          type: string
+          enum: [FILE, DIRECTORY]
+        state:
+          type: string
+          enum: [ACTIVE, TRASHED]
+        revision:
+          $ref: '#/components/schemas/U64Decimal'
+        current_version_id:
+          $ref: '#/components/schemas/OpaqueId'
+        current_content:
+          $ref: '#/components/schemas/DurableSnapshotContent'
+    DurableSnapshotContent:
+      type: object
+      additionalProperties: false
+      required: [byte_length, sha256]
+      properties:
+        byte_length:
+          $ref: '#/components/schemas/U64Decimal'
+        sha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Lowercase hex-encoded SHA-256 digest of the canonical object content.
     SyncAckRequest:
       type: object
       additionalProperties: false

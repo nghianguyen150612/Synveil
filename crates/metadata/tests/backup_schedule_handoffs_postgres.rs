@@ -104,8 +104,8 @@ async fn fixture(label: &str) -> Fixture {
         .await
         .expect("all forward migrations must apply");
     assert!(status.is_current(), "all migrations must be current");
-    assert_eq!(status.applied_versions().len(), 34);
-    assert_eq!(status.latest_applied_version(), Some(20260903000001));
+    assert_eq!(status.applied_versions().len(), 36);
+    assert_eq!(status.latest_applied_version(), Some(20260910000000));
 
     let observed_at = timestamp("2026-09-02T00:00:00.123456Z");
     let owner_user_id = UserId::new();
@@ -387,7 +387,7 @@ async fn postgres_schedule_handoff_schema_is_current_with_thirty_three_migration
             .fetch_one(&fixture.inspection)
             .await
             .expect("migration history count must succeed");
-    assert_eq!(successful, 34);
+    assert_eq!(successful, 36);
     let handoff_table: Option<String> = sqlx::query_scalar(
         "SELECT to_regclass('public.backup_schedule_occurrence_handoffs')::text",
     )

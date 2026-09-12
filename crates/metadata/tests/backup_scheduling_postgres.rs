@@ -196,9 +196,9 @@ async fn postgres_backup_scheduling_schema_is_current_and_has_thirty_three_succe
             .fetch_one(&inspection)
             .await
             .expect("migration history count must succeed");
-    assert_eq!(successful, 34);
-    assert_eq!(status.applied_versions().len(), 34);
-    assert_eq!(status.latest_applied_version(), Some(20260903000001));
+    assert_eq!(successful, 36);
+    assert_eq!(status.applied_versions().len(), 36);
+    assert_eq!(status.latest_applied_version(), Some(20260910000000));
     let version: String = sqlx::query_scalar("SHOW server_version")
         .fetch_one(&inspection)
         .await

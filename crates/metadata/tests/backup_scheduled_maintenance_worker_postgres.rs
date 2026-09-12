@@ -104,8 +104,8 @@ async fn new_db(label: &str) -> IsolatedDb {
         .await
         .expect("all forward migrations must apply");
     assert!(status.is_current(), "all migrations must be current");
-    assert_eq!(status.applied_versions().len(), 34);
-    assert_eq!(status.latest_applied_version(), Some(20260903000001));
+    assert_eq!(status.applied_versions().len(), 36);
+    assert_eq!(status.latest_applied_version(), Some(20260910000000));
     let inspection = PgPool::connect(&url)
         .await
         .expect("inspection connection must succeed");
@@ -2121,7 +2121,7 @@ async fn forward_migration_33_to_34_preserves_prompt65_data() {
         .collect();
     entries.sort();
     assert!(
-        entries.len() >= 34,
+        entries.len() >= 35,
         "all migrations must be present, got {}",
         entries.len()
     );
@@ -2129,7 +2129,7 @@ async fn forward_migration_33_to_34_preserves_prompt65_data() {
     std::fs::create_dir_all(&stage).expect("staging directory must be created");
     for name in entries
         .iter()
-        .filter(|name| !name.starts_with("20260903000001"))
+        .filter(|name| name.as_str() < "20260903000001_backup_scheduled_maintenance_claims.sql")
     {
         std::fs::copy(format!("../../migrations/{name}"), stage.join(name))
             .unwrap_or_else(|_| panic!("migration {name} must stage"));
@@ -2285,18 +2285,18 @@ async fn forward_migration_33_to_34_preserves_prompt65_data() {
         counts
     };
 
-    // Apply migration 34 through the production runner: the staged 33
-    // rows share checksums with the workspace set, so exactly one pending
-    // migration applies on the populated Prompt 65 data.
+    // Apply the current migrations through the production runner: the staged
+    // 33 rows share checksums with the workspace set, so migrations 34-36
+    // apply on the populated Prompt 65 data.
     let upgraded_status = MigrationRunner::new()
         .run(&pool_33)
         .await
-        .expect("migration 34 must apply on populated Prompt 65 data");
+        .expect("current migrations must apply on populated Prompt 65 data");
     assert!(upgraded_status.is_current());
-    assert_eq!(upgraded_status.applied_versions().len(), 34);
+    assert_eq!(upgraded_status.applied_versions().len(), 36);
     assert_eq!(
         upgraded_status.latest_applied_version(),
-        Some(20260903000001)
+        Some(20260910000000)
     );
 
     for (table, before) in [
@@ -2313,7 +2313,10 @@ async fn forward_migration_33_to_34_preserves_prompt65_data() {
             .fetch_one(&raw)
             .await
             .expect("recount must succeed");
-        assert_eq!(after_count, before, "migration 34 must preserve {table}");
+        assert_eq!(
+            after_count, before,
+            "current migrations must preserve {table}"
+        );
     }
     let run_state: String =
         sqlx::query_scalar("SELECT state FROM backup_maintenance_runs WHERE id = $1")

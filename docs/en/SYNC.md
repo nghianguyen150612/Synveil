@@ -454,6 +454,270 @@ client to upload every local file as new. Before rebaseline, clients preserve
 unsent local mutations in their durable outbound queue; after rebaseline they
 rebase/submit them using original base facts and conflict rules.
 
+### Prompt 81 internal snapshot foundation
+
+Prompt 81 adds a transport-neutral `LogicalSnapshotService` seam for building a
+complete logical library state without adding another HTTP route or changing the
+device-scoped bootstrap protocol. The returned `RebaselineSnapshot` contains:
+
+- the owner-authorized library ID and one canonical `LogicalSnapshot` state;
+- the current root plus all current `ACTIVE` and `TRASHED` logical Nodes, with
+  parent ID, kind, name, revision, and safe current-file content metadata;
+- a `JournalHighWatermark`/`JournalCursor` boundary from the same database view.
+
+The builder starts a PostgreSQL `REPEATABLE READ` transaction, takes the existing
+per-library namespace guard before the first data read, reads the journal head and
+the set-oriented Node projection, orders entries by immutable Node ID, and commits
+the state with its boundary. A concurrent cooperative mutation is therefore in
+the snapshot and at/before the boundary, or is absent from both and remains in
+the feed strictly after the boundary. Wall-clock time is descriptive only.
+
+The snapshot is logical: `PURGING`/purged Nodes and physical object keys,
+replica/storage locators, filesystem paths, staging handles, and file bytes are
+not part of it. Building or reading it does not create or advance a device
+checkpoint, complete rebaseline, apply state on a client, or select a conflict
+resolution.
+
+### Prompt 82 durable fixed-cut artifact and paging
+
+Prompt 82 persists the Prompt 81 cut as a library-scoped,
+owner-authorized `RebaselineSnapshotId` artifact. Creation stays in one
+`REPEATABLE READ` transaction under the same namespace guard: it reads and
+validates the complete Prompt 81 aggregate, writes the immutable header with
+its `JournalHighWatermark` boundary/count/injected expiry, materializes entries
+with one `INSERT ... SELECT`, then commits. If any step fails, rollback leaves
+no readable header, boundary, or entry rows.
+
+After commit, `get_rebaseline_snapshot` and
+`read_rebaseline_snapshot_page` use only the durable header and entry tables.
+They do not retain the creation transaction, acquire the namespace guard, or
+query live `nodes`; ordinary mutations can therefore continue while a large
+transfer is paged across connections or a process restart. Entries are ordered
+by immutable `NodeId` through `(snapshot_id, node_id)` keyset pagination:
+`node_id > after_node_id`, ascending, bounded limit. OFFSET is not a snapshot
+continuation mechanism.
+
+Every `RebaselineSnapshotPage` repeats its descriptor (artifact ID, Library,
+journal boundary, count, timestamps) and yields a snapshot-scoped
+`RebaselineSnapshotPageCursor` only after the last returned Node. That cursor
+is deliberately not a `JournalCursor`; the journal cursor continues incremental
+sync strictly after the captured boundary. The default page size is 256 and the
+maximum is 1000. Page memory is O(page size); creation can temporarily allocate
+the validated O(total-node-count) aggregate before its set-oriented copy.
+
+Artifacts logically expire at `observed_at >= expires_at` (24-hour Gen-1
+default) and then fail with `Expired`. Expired rows may remain physically until
+a later lifecycle/retention phase; this prompt adds no cleanup worker, explicit
+delete API, retry loop, global lock, HTTP/OpenAPI/SSE/WebSocket route, or client
+snapshot application. Snapshot ID guessing by another owner returns `NotFound`,
+and creation/read remains checkpoint-neutral.
+
+### Prompt 84 client atomic apply
+
+Client-sync accepts an already-created descriptor through a transport-neutral
+page source. It persists at most one candidate per Library in separate SQLite
+tables, checking immutable snapshot ID/Library/boundary/count, strict NodeId
+ordering, duplicate nodes, opaque cursor cycles, exact terminal count, and the
+logical root/parent/reachability invariants before activation. Bounded transfer
+uses O(page size) memory; final metadata/path reconstruction is O(nodes).
+
+One short SQLite transaction then replaces only the authoritative remote mirror
+(`local_nodes`) and writes `AppliedPendingHandoff`. It neither deletes nor
+rewrites outbound intents, their base revisions, upload staging rows, or local
+content bytes. Old incremental inbound processing is fenced until a later
+handoff phase completes; this phase makes no server ACK/checkpoint call, does
+not resolve conflicts, and adds no UI, retry loop, or cleanup daemon.
+
+### Prompt 83C creation-abuse boundary
+
+The durable snapshot service has no existing reusable authenticated rate limiter
+or durable quota suitable for this artifact. Gen-1 therefore enforces the narrow
+durable bound `MAX_ACTIVE_REBASELINE_SNAPSHOTS_PER_OWNER_LIBRARY = 8`: at most
+eight active, unexpired artifacts exist for one owner and one library. The
+admission query runs after the existing per-library namespace guard is acquired
+and before the O(total-node-count) materialization, in the same guarded
+`READ COMMITTED` transaction. The creation transaction deliberately uses
+`READ COMMITTED`: PostgreSQL can establish a `REPEATABLE READ` snapshot while
+the advisory-lock statement waits, which would let queued creators count stale
+committed artifacts. After the guard is acquired, all cooperative namespace
+mutations and creators are serialized, so the head, admission count, and
+materialized projection remain one guarded cut. It is a transport-neutral
+metadata rule, not handler-local SQL, an in-process semaphore, or a global lock.
+
+An artifact is active exactly when `observed_at < expires_at`; equality is
+expired and can re-admit a new artifact. Expired rows are not physically
+deleted by this phase and do not count against the bound. Reaching the bound
+returns the typed admission failure, which HTTP maps to the canonical `429
+Too Many Requests` / `rate_limited` response with `Retry-After: 1`. A rejected
+create commits no header, entry, checkpoint, acknowledgment, or journal
+change. There is no idempotency or retry system: a lost successful response may
+leave an artifact behind for a later duplicate POST, but the active durable
+bound remains enforced per owner/library.
+
+Direct PostgreSQL/HTTP evidence covers the below-limit concurrent path, the
+`N-1` boundary race, owner/library isolation, exact-expiry re-admission,
+rejected-create atomicity, authorized-owner expiry as HTTP `410`, foreign-owner
+expired concealment as `404`, and the existing `device_revoked` denial across
+descriptor, page, and create operations.
+
+### Prompt 85 durable rebaseline checkpoint handoff
+
+Prompt 85 completes the local `AppliedPendingHandoff` state left by Prompt 84.
+The one server operation is `DeviceSyncService::complete_rebaseline_handoff`;
+its HTTP surface is:
+
+```text
+POST /api/v1/rebaseline-snapshots/{snapshot_id}/handoff
+```
+
+The route accepts only an authenticated device bearer. The body is empty (the
+canonical client may send `{}`), and owner, Library, epoch, and sequence are
+never request fields. The bearer supplies the authenticated owner and device;
+the server reads the owner-scoped immutable handoff proof to derive Library
+and `C = (journal_epoch, snapshot_resume_sequence)`. A physically present
+expired payload is still valid for handoff while that proof remains; a missing
+or foreign proof is
+`404 not_found`. The handoff transaction never reads snapshot entries, changes
+the snapshot, changes journal retention, or uses the ordinary feed ACK path.
+
+The server locks the canonical device checkpoint and applies only the monotone
+transition required by the proof: a missing or older checkpoint advances to
+`C`, an exact `C` is idempotent, a same-epoch checkpoint already beyond `C`
+returns `409 checkpoint_conflict`, and a newer or incompatible epoch also
+returns the conflict. The library epoch and boundary are validated against
+the live library; invalid persisted proof state fails closed. Prompt 85 itself
+added no server migration; Prompt 86 later moved the authority from the large
+payload header to the small migration-36 proof. Idempotency remains proof and
+checkpoint equality.
+
+The client transport exposes only
+`complete_rebaseline_handoff(snapshot_id) -> confirmation`; it has no arbitrary
+checkpoint assignment or boundary argument. The HTTP adapter strictly decodes
+the snapshot ID, Library ID, and decimal `{epoch, sequence}` response. The
+engine accepts the response only when all values exactly equal its local
+pending marker. A mismatch, authentication/revocation error, conflict,
+not-found result, or transport/protocol failure leaves the marker intact.
+After a matching server confirmation, one short SQLite transaction verifies
+the marker, sets the existing `replicas.journal_epoch`,
+`applied_sequence`, and `acknowledged_sequence` to `C`, sets the lifecycle to
+incremental-ready/idle, and deletes the marker. It performs no network work;
+outbound intents, base observations, staged uploads, and local content are
+untouched. Inbound processing remains fenced until this transaction commits,
+so a server success by itself cannot un-fence the old cursor.
+
+The crash proof covers the seven meaningful boundaries: before the request,
+after server commit before the response, after response receipt, after server
+success before local finalization, SQLite rollback before commit, after local
+commit before process exit, and restart/retry. Every retry is safe: a lost
+response repeats the header-derived idempotent server operation, while a
+committed local finalization returns `AlreadyComplete` without recreating the
+candidate or snapshot. The request does not hold a SQLite transaction or local
+writer lock across the network, so an outbound intent inserted during the
+handoff survives byte-for-byte and is submitted only after the boundary.
+Concurrent same-snapshot callers converge; different devices keep independent
+checkpoints; other Libraries and owners remain isolated. Prompt 85 adds no
+retention/compaction, physical cleanup, conflict policy, retry daemon,
+polling loop, background scheduler, UI, or deployment work.
+
+### Prompt 86 journal retention and bounded physical cleanup
+
+Prompt 86 implements the first physical journal/payload retention foundation
+as transport-neutral one-shot `SyncRetentionService` calls. The existing
+`libraries.minimum_retained_sequence` is now precisely the highest sequence
+physically compacted through in the current epoch. `cursor < floor` returns the
+existing rebaseline-required/history-unavailable condition; `cursor == floor`
+continues safely with events strictly greater than the floor. An absent cursor
+is therefore stale after non-zero compaction even when the journal is empty.
+Ordinary compaction never changes epoch, head, or any device checkpoint.
+
+The Gen-1 incremental-history minimum is 30 days. One journal call loads and
+deletes at most 10,000 oldest rows (hard maximum 100,000) from one contiguous
+eligible prefix. Sequence is authoritative: if an early row is newer than the
+age cutoff, later rows remain even when their timestamps are older. Row deletion
+and floor advancement commit together. The lock order is namespace advisory
+guard, Library clock/floor row, proof observation, then journal rows. A feed
+holds the Library share lock for its short metadata transaction, so concurrent
+cleanup yields either the complete old feed or rebaseline under the new floor;
+append cannot be included in a precomputed deletion target.
+
+Migration 36 adds an immutable `rebaseline_snapshot_handoff_proofs` row and
+backfills every existing durable snapshot. New snapshot creation writes its
+header, entries, and proof atomically. The proof preserves snapshot ID, owner,
+Library, epoch/boundary, snapshot timestamps, and a deadline 30 days after
+payload expiry; it contains no Object/replica/storage/path/credential data and
+has no cascading reference to the payload header.
+
+Payload remains readable only while `observed_at < expires_at`. At equality it
+may be removed in batches of at most 32 artifacts, but only if its proof exists;
+a missing proof stops cleanup. Header and entries disappear atomically. Owner
+descriptor/page lookup remains canonical `SnapshotExpired` while the proof is
+retained, foreign lookup remains concealed as `NotFound`, and checkpoint
+handoff continues to install exactly the proved boundary after payload removal.
+Page header/entry reads share one short repeatable-read snapshot, so a cleanup
+race cannot return a torn successful page.
+
+Every retained current-epoch proof pins journal cleanup at its boundary:
+`compacted_through <= C`; the smallest compatible boundary wins. Device
+checkpoints do not provide this pin and therefore cannot retain history forever.
+At/after `proof_expires_at`, a proof whose payload is already absent may be
+removed in batches of at most 128 (hard maximum 4,096). Handoff then becomes
+`NotFound`, and the next journal call may advance. Prompt 87 owns client
+convergence from a stale cursor or missing proof. Prompt 86 adds no endpoint,
+daemon, timer, scheduler, retry/backoff, UI, conflict policy, or automatic
+client recovery.
+
+### Prompt 87 retained-cursor invalidation and automatic rebaseline convergence
+
+`RebaselineConvergenceCoordinator::run_convergence_once` is a callable,
+transport-neutral, bounded client state machine. It has no daemon, timer,
+poller, recursive call, retry/backoff, cleanup action, or conflict policy. One
+invocation inspects durable SQLite state in this fixed precedence:
+
+1. a real persisted snapshot candidate resumes its same finite page sequence;
+2. an `AppliedPendingHandoff` attempts the existing header-derived Prompt 85
+   handoff; then
+3. normal incremental sync performs at most one bounded operation.
+
+Only a server-authoritative `RebaselineRequired` result (retained history/no
+cursor after a nonzero floor, or incompatible epoch) starts snapshot recovery.
+For an existing pending handoff, only `NotFound` (missing/concealed proof for
+the authenticated local snapshot) and typed checkpoint conflict authorize a
+replacement snapshot. Authentication/revocation, permission denial, 429,
+server/internal, TLS/DNS/timeout/offline, malformed protocol data, local SQLite
+failure, and candidate corruption are not rebaseline triggers. They retain
+their typed failure and durable state.
+
+Before the one permitted non-idempotent create POST, the coordinator writes an
+inert, library-scoped v5 candidate-row claim. A successful server descriptor
+atomically promotes that claim to a normal fetching candidate. A create
+response loss or malformed response releases the inert claim before returning
+the typed failure, so the same invocation never posts again and a later one may
+try once. Same-library calls are serialized only by a library-scoped local
+guard plus that durable claim; different libraries are independent. No SQLite
+write transaction is held across HTTP.
+
+During missing-proof or checkpoint-conflict recovery, H1 remains installed and
+therefore inbound remains fenced while S2 pages stage. Candidate activation is
+one SQLite transaction: it swaps the authoritative remote base and upserts H1
+to H2, then removes the candidate. Readers can see only `base(S1)+H1` or
+`base(S2)+H2`, never a marker-free or mixed pair. The coordinator then delegates
+the normal Prompt 85 handoff/finalization for S2. It never sends an old local
+boundary to the server. A second missing-proof/checkpoint conflict after S2
+returns `RecoveryBlocked(DidNotConverge)`; it cannot create S3.
+
+Outbound intents, their IDs, payloads, preconditions/base revisions, source or
+upload references, and submission states are outside both activation paths and
+remain unchanged. This phase intentionally does not decide how a preserved
+intent conflicts with the new remote base; Prompt 88 owns conflict policy.
+
+The restart proof is durable: a persisted descriptor/candidate resumes before
+creation; a complete candidate activates; an activated marker retries its
+idempotent Prompt 85 handoff; and after local finalization incremental resume is
+strictly after the same server-proved boundary. In proof-loss recovery, a
+partially staged S2 coexists with H1 after restart; after replacement activation
+the next invocation sees H2. Newly created snapshot proofs continue to pin
+retention according to Prompt 86 throughout download, activation, and handoff.
+
 ## Push mutations
 
 The implemented Prompt 34 push subset is the strict logical route described
@@ -674,16 +938,16 @@ A device/library checkpoint records last acknowledged cursor sequence, last
 contact, client/protocol version, and health. It supports UI and retention
 warning but is not trusted proof that local bytes exist.
 
-Retention uses both age and storage bounds and publishes the minimum retained
-sequence. A bootstrap session temporarily pins its start boundary. An offline
-device cannot pin the journal forever by default; when it falls behind minimum,
-it becomes `REBASE_REQUIRED` and uses bootstrap while preserving its outbound
-mutation queue.
+Retention publishes the compacted-through sequence. An offline device does not
+pin the journal forever; when its checkpoint falls below the floor it receives
+the canonical rebaseline-required result while its outbound mutation queue is
+preserved. A retained durable-snapshot handoff proof does pin temporarily,
+because the client may already have atomically applied that snapshot.
 
-Before pruning, the retention job locks/checks epoch and head, honors active
-bootstrap pins, deletes only a bounded prefix, and advances
-`minimum_retained_sequence` atomically with progress. Cursors at the boundary
-have one tested inclusive/exclusive rule. Event pruning never deletes mutation
+Each explicit one-shot retention call locks/checks epoch and head, caps its
+target at the oldest compatible handoff proof, deletes only a bounded prefix,
+and advances `minimum_retained_sequence` atomically with progress. A cursor at
+the boundary is valid; a lower cursor is stale. Event pruning never deletes mutation
 receipts, `FileVersion` history, Trash records, audit facts, or backup manifests
 as a side effect.
 
@@ -841,12 +1105,10 @@ Options: original stem plus device/date/opaque suffix; dedicated conflict direct
 Recommendation: create a sibling/recovered visible node with a versioned portable name derived from preserved display stem, safe device label, server UTC date, and collision-proof opaque suffix; exact Unicode folding follows the accepted namespace policy
 Decision evidence: cross-platform round-trip fixtures, accessibility/usability review, path-length limits, and deterministic collision tests
 
-OPEN DECISION OD-SYNC-002: journal retention service level
+LOCKED DECISION OD-SYNC-002: Gen-1 journal retention service level
 Owner: Sync / Operations / Product
-Needed by: Phase 4 production operations gate
-Options: fixed age only; size cap only; age target with protected minimum size and forced rebaseline beyond it; device-ack pinning
-Recommendation: use a configurable age target plus capacity guard, bounded bootstrap pins, and explicit stale-device/rebaseline status; do not allow an abandoned device to pin history forever
-Decision evidence: event-volume benchmark, household/device offline expectations, disk-capacity test, and rebaseline duration measurement
+Decision: 30-day minimum age horizon, bounded contiguous prefix deletion, no device-checkpoint pin, and a temporary cap at the oldest compatible durable snapshot handoff proof. See ADR-030. A future capacity policy may supersede this minimum but cannot silently weaken the no-gap proof invariant.
+Decision evidence: Prompt 86 large-journal, stale-cursor, snapshot-proof, rollback, restart, and concurrency suites on PostgreSQL 17
 
 OPEN DECISION OD-SYNC-003: directory ancestry representation
 Owner: Database / Sync / Storage
@@ -1030,3 +1292,45 @@ finite. The adapter performs no automatic retry. The engine may retry the same
 durable acknowledgement/completion proof after interruption. An authentication,
 revocation or offline error preserves local files, applied/acknowledged
 sequences, and pending evidence; it never wipes or rebinds the replica.
+
+## Deterministic outbound conflicts (Prompt 88)
+
+A conflict means the canonical server precondition rejected a durable local
+intent, or an activated authoritative rebaseline snapshot proves that the same
+exact precondition must fail. The remote base stays canonical; the original
+intent, base revision, payload metadata, and any staged content source stay
+unchanged. Timeouts, authentication/authorization failures, rate limits,
+dependency failures, and malformed responses are not conflicts.
+
+SQLite schema V6 stores one client-local conflict record per outbound intent,
+including its kind, initial safe remote evidence, original local base, status,
+resolution audit fields, and optional replacement-intent link. It never stores
+content bytes, credentials, cookies, server object keys, or physical paths.
+Initial evidence is immutable even if later inbound changes advance the remote
+base. Listing is library-scoped and keyset-paged by `(detected_at, conflict_id)`
+with a default of 100 and hard maximum of 1,000.
+
+The current outbound queue has no durable causal-dependency graph. Therefore
+one unresolved conflict conservatively pauses outbound submission for that
+library, including otherwise independent later intents; other libraries remain
+independent. Inbound synchronization and ACK continue. For a content conflict,
+the inbound engine may expose newer canonical remote bytes only after verifying
+the local conflicting bytes already exist in the durable staging area with the
+recorded length and SHA-256.
+
+Resolution is explicit and local-only. `AcceptRemote` atomically resolves the
+record and cancels the old intent without calling or changing the server or
+synchronously deleting staged content. `RetryLocalAgainstCurrentBase` validates
+that the operation still applies and that required staged bytes exist, then
+atomically supersedes the immutable old intent and creates exactly one linked
+new intent using the current local canonical node/parent revisions. A repeated
+resolution returns the same result. The ordinary outbound engine submits that
+new intent later, so another server change may produce a new conflict.
+`KeepBoth`, generic merge, conflict-copy naming, force overwrite, background
+resolution, and automatic winner selection remain unsupported.
+
+Rebaseline, checkpoint handoff, and conflict are separate mechanisms. Snapshot
+activation can add a conflict only when an exact node or parent precondition is
+provably stale; it never resolves one or rewrites an intent. Conflict state does
+not trigger rebaseline and does not pin journal retention, snapshot payloads,
+handoff proofs, or device checkpoints.

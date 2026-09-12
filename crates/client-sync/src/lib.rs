@@ -10,6 +10,7 @@
 //! applies them through [`LocalReplica`], and records every safety boundary in
 //! a process-independent SQLite [`LocalStateStore`].
 
+mod conflict_policy;
 mod contracts;
 mod engine;
 mod error;
@@ -19,17 +20,26 @@ mod observation;
 mod outbound;
 mod path;
 mod profiles;
+mod rebaseline;
+#[cfg(test)]
+mod rebaseline_84c;
+mod rebaseline_convergence;
 mod replica;
 mod state;
 
 #[cfg(test)]
 mod test_support;
 
+pub use conflict_policy::{
+    ConflictCursor, ConflictPage, DEFAULT_CONFLICT_PAGE_LIMIT, MAX_CONFLICT_PAGE_LIMIT,
+    SyncConflictKind, SyncConflictRecord, SyncConflictResolution, SyncConflictStatus,
+};
 pub use contracts::{
     BootstrapCompletion, BootstrapPage, ContentByteStream, EngineStatus, InboundChange,
-    OpaqueEvidence, RemoteCheckpoint, RemoteContent, RemoteError, RemoteErrorKind, RemoteFeedPage,
-    RemoteMutationApplied, RemoteMutationConflict, RemoteMutationOutcome, ReplicaScope, SyncRemote,
-    UploadCompletion, UploadSessionStatus, UploadTarget, boxed_content_stream,
+    OpaqueEvidence, RebaselineHandoffConfirmation, RemoteCheckpoint, RemoteContent, RemoteError,
+    RemoteErrorKind, RemoteFeedPage, RemoteMutationApplied, RemoteMutationConflict,
+    RemoteMutationOutcome, ReplicaScope, SyncRemote, UploadCompletion, UploadSessionStatus,
+    UploadTarget, boxed_content_stream,
 };
 pub use engine::{
     EngineConfig, FailureInjector, FailurePoint, InboundSyncEngine, NoopFailureInjector,
@@ -51,6 +61,14 @@ pub use profiles::{
     CanonicalBaseUrl, DeviceEnrollmentRecord, LoadedDeviceCredential, ServerProfile,
     ServerProfileId,
 };
+pub use rebaseline::{
+    RebaselineApplier, RebaselineApplyOutcome, RebaselineBoundary, RebaselineHandoffOutcome,
+    RebaselineSnapshotDescriptor, RebaselineSnapshotPage, RebaselineSnapshotRemote,
+    RebaselineSnapshotSource,
+};
+pub use rebaseline_convergence::{
+    RebaselineConvergenceCoordinator, RebaselineConvergenceOutcome, RebaselineRecoveryBlockedReason,
+};
 pub use replica::{
     FilesystemLocalReplica, LocalFingerprint, LocalObjectKind, LocalReplica, RootBindingId,
 };
@@ -61,7 +79,7 @@ pub use state::{
 };
 
 /// Current durable local schema version.
-pub const LOCAL_SCHEMA_VERSION: i64 = 4;
+pub const LOCAL_SCHEMA_VERSION: i64 = 6;
 
 /// Feed and snapshot pages are deliberately processed one at a time.
 pub const MAX_PAGE_ITEMS: usize = 1_000;

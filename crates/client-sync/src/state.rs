@@ -1,8 +1,10 @@
 use std::{
+    collections::{BTreeMap, BTreeSet, HashMap},
     fmt,
     fs::{self, File, OpenOptions},
     path::{Path, PathBuf},
     str::FromStr,
+    sync::{Arc, Mutex as StdMutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -13,19 +15,22 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
 use synveil_core::{
-    ChangeKind, ClientMutationId, ClientMutationRequest, FileVersionId, LibraryId, LogicalName,
-    LogicalSnapshotNode, NodeId, NodeKind, NodeState, OutboundIntentId, Revision, Sequence,
-    Sha256Digest, SyncBootstrap, SyncBootstrapId, UploadSessionId,
+    ChangeKind, ClientMutationId, ClientMutationRequest, ConflictResolutionId, FileVersionId,
+    LibraryId, LogicalName, LogicalSnapshotNode, NodeId, NodeKind, NodeState, OutboundIntentId,
+    RebaselineSnapshotId, Revision, Sequence, Sha256Digest, SyncBootstrap, SyncBootstrapId,
+    SyncConflictId, UploadSessionId,
 };
 use synveil_platform::PlatformRuntime;
 use uuid::Uuid;
 
 use crate::{
-    ClientSyncError, EngineStatus, InboundChange, LocalFingerprint, ManagedRelativePath,
-    ObservationIssue, ObservationIssueKind, ObservationState, OpaqueEvidence, OutboundIntent,
-    OutboundIntentKind, OutboundIntentState, RemoteFeedPage, RemoteMutationApplied,
-    RemoteMutationConflict, ReplicaScope, RootBindingId, ServerProfileId, UploadCompletion,
-    local_collision_key,
+    ClientSyncError, ConflictCursor, ConflictPage, EngineStatus, InboundChange, LocalFingerprint,
+    MAX_CONFLICT_PAGE_LIMIT, ManagedRelativePath, ObservationIssue, ObservationIssueKind,
+    ObservationState, OpaqueEvidence, OutboundIntent, OutboundIntentKind, OutboundIntentState,
+    RebaselineSnapshotDescriptor, RebaselineSnapshotPage, RemoteFeedPage, RemoteMutationApplied,
+    RemoteMutationConflict, ReplicaScope, RootBindingId, ServerProfileId, SyncConflictKind,
+    SyncConflictRecord, SyncConflictResolution, SyncConflictStatus, UploadCompletion,
+    conflict_policy::ConflictEvidence, local_collision_key,
 };
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
@@ -790,6 +795,87 @@ pub struct BootstrapRecord {
     terminal_fetched: bool,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct RebaselineCandidateRecord {
+    pub snapshot_id: RebaselineSnapshotId,
+    pub journal_epoch: Sequence,
+    pub resume_sequence: Sequence,
+    pub expected_count: u64,
+    pub received_count: u64,
+    pub next_cursor: Option<OpaqueEvidence>,
+    pub terminal_fetched: bool,
+    pub state: RebaselineCandidateState,
+}
+
+/// `CreateClaim` occupies the existing candidate row only while a durable
+/// snapshot POST is in flight. It contains no usable descriptor or pages, so
+/// it can never be activated or mistaken for an authoritative remote base.
+/// The row gives one local process a library-scoped durable claim before the
+/// non-idempotent POST is sent; a response-loss path removes it before
+/// returning, while a process restart may safely replace it in a later bounded
+/// invocation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RebaselineCandidateState {
+    Fetching,
+    Complete,
+    CreateClaim,
+}
+
+/// Durable local proof that Prompt 84 activated a snapshot but has not yet
+/// finalized its server checkpoint handoff. The marker is the only source the
+/// client uses for the handoff boundary; it is never reconstructed from a
+/// caller-provided cursor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RebaselineHandoffRecord {
+    snapshot_id: RebaselineSnapshotId,
+    library_id: LibraryId,
+    journal_epoch: Sequence,
+    resume_sequence: Sequence,
+}
+
+impl RebaselineHandoffRecord {
+    #[must_use]
+    pub(crate) const fn new(
+        snapshot_id: RebaselineSnapshotId,
+        library_id: LibraryId,
+        journal_epoch: Sequence,
+        resume_sequence: Sequence,
+    ) -> Self {
+        Self {
+            snapshot_id,
+            library_id,
+            journal_epoch,
+            resume_sequence,
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn snapshot_id(self) -> RebaselineSnapshotId {
+        self.snapshot_id
+    }
+
+    #[must_use]
+    pub(crate) const fn library_id(self) -> LibraryId {
+        self.library_id
+    }
+
+    #[must_use]
+    pub(crate) const fn journal_epoch(self) -> Sequence {
+        self.journal_epoch
+    }
+
+    #[must_use]
+    pub(crate) const fn resume_sequence(self) -> Sequence {
+        self.resume_sequence
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RebaselineHandoffFinalizeOutcome {
+    Completed,
+    AlreadyComplete,
+}
+
 impl BootstrapRecord {
     #[must_use]
     pub const fn library_id(&self) -> LibraryId {
@@ -866,7 +952,8 @@ pub(crate) struct StoredChange {
 pub struct LocalStateStore {
     pub(crate) pool: SqlitePool,
     pub(crate) credential_lifecycle_lock: tokio::sync::Mutex<()>,
-    replica_writer_guard: tokio::sync::Mutex<()>,
+    replica_writer_guards: StdMutex<HashMap<LibraryId, Arc<tokio::sync::Mutex<()>>>>,
+    rebaseline_convergence_guards: StdMutex<HashMap<LibraryId, Arc<tokio::sync::Mutex<()>>>>,
     writer_lock: File,
     database_path: PathBuf,
 }
@@ -921,7 +1008,8 @@ impl LocalStateStore {
         Ok(Self {
             pool,
             credential_lifecycle_lock: tokio::sync::Mutex::new(()),
-            replica_writer_guard: tokio::sync::Mutex::new(()),
+            replica_writer_guards: StdMutex::new(HashMap::new()),
+            rebaseline_convergence_guards: StdMutex::new(HashMap::new()),
             writer_lock,
             database_path: database_path.to_path_buf(),
         })
@@ -944,11 +1032,46 @@ impl LocalStateStore {
         self.pool.close().await;
     }
 
-    /// Coordinates inbound filesystem application and outbound reinspection
-    /// inside this process. The adjacent `fs2` lock still prevents a second
-    /// process from opening the same local state database.
-    pub(crate) async fn lock_replica_writer(&self) -> tokio::sync::MutexGuard<'_, ()> {
-        self.replica_writer_guard.lock().await
+    /// Coordinates one library's filesystem-facing writers inside this
+    /// process. Locks are deliberately per library: an independent library
+    /// must never be stalled by another library's bounded sync operation. The
+    /// adjacent `fs2` lock still prevents a second process from opening the
+    /// same local state database.
+    pub(crate) async fn lock_replica_writer(
+        &self,
+        library_id: LibraryId,
+    ) -> tokio::sync::OwnedMutexGuard<()> {
+        self.library_guard(&self.replica_writer_guards, library_id)
+            .lock_owned()
+            .await
+    }
+
+    /// Serializes only concurrent convergence invocations for the same
+    /// library. It is not a process-global lock, is held across no SQLite
+    /// write transaction, and permits distinct libraries to recover in
+    /// parallel. The durable candidate claim remains the restart-safe proof.
+    pub(crate) async fn lock_rebaseline_convergence(
+        &self,
+        library_id: LibraryId,
+    ) -> tokio::sync::OwnedMutexGuard<()> {
+        self.library_guard(&self.rebaseline_convergence_guards, library_id)
+            .lock_owned()
+            .await
+    }
+
+    fn library_guard(
+        &self,
+        guards: &StdMutex<HashMap<LibraryId, Arc<tokio::sync::Mutex<()>>>>,
+        library_id: LibraryId,
+    ) -> Arc<tokio::sync::Mutex<()>> {
+        let mut guards = guards
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        Arc::clone(
+            guards
+                .entry(library_id)
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+        )
     }
 
     pub async fn schema_version(&self) -> Result<i64, ClientSyncError> {
@@ -1944,6 +2067,10 @@ impl LocalStateStore {
                      WHERE library_id = ? AND node_id IS NULL
                        AND observed_relative_path = ? AND intent_kind = ?
                        AND state IN ('PENDING','BLOCKED','NEEDS_REBASE_VALIDATION')
+                       AND NOT EXISTS (
+                           SELECT 1 FROM sync_conflicts c
+                           WHERE c.intent_id = outbound_intents.intent_id
+                             AND c.status = 'UNRESOLVED')
                      ORDER BY created_at_ms LIMIT 1",
                 )
                 .bind(intent.library_id().to_string())
@@ -1957,6 +2084,10 @@ impl LocalStateStore {
                     "SELECT * FROM outbound_intents
                      WHERE library_id = ? AND node_id = ? AND intent_kind = 'MODIFY_FILE_CONTENT'
                        AND state IN ('PENDING','BLOCKED','NEEDS_REBASE_VALIDATION')
+                       AND NOT EXISTS (
+                           SELECT 1 FROM sync_conflicts c
+                           WHERE c.intent_id = outbound_intents.intent_id
+                             AND c.status = 'UNRESOLVED')
                      ORDER BY created_at_ms LIMIT 1",
                 )
                 .bind(intent.library_id().to_string())
@@ -1976,6 +2107,10 @@ impl LocalStateStore {
                        AND intent_kind IN ('RENAME_NODE','MOVE_NODE')
                        AND observed_relative_path = ?
                        AND state IN ('PENDING','BLOCKED','NEEDS_REBASE_VALIDATION')
+                       AND NOT EXISTS (
+                           SELECT 1 FROM sync_conflicts c
+                           WHERE c.intent_id = outbound_intents.intent_id
+                             AND c.status = 'UNRESOLVED')
                      ORDER BY created_at_ms LIMIT 1",
                 )
                 .bind(intent.library_id().to_string())
@@ -1999,6 +2134,10 @@ impl LocalStateStore {
                     "SELECT * FROM outbound_intents
                      WHERE library_id = ? AND node_id = ? AND intent_kind = 'DELETE_OR_TRASH_NODE'
                        AND state IN ('PENDING','BLOCKED','NEEDS_REBASE_VALIDATION')
+                       AND NOT EXISTS (
+                           SELECT 1 FROM sync_conflicts c
+                           WHERE c.intent_id = outbound_intents.intent_id
+                             AND c.status = 'UNRESOLVED')
                      ORDER BY created_at_ms LIMIT 1",
                 )
                 .bind(intent.library_id().to_string())
@@ -2020,7 +2159,11 @@ impl LocalStateStore {
                         observed_length = ?, observed_sha256 = ?, base_epoch = ?,
                         base_applied_sequence = ?, base_revision = ?, base_current_version_id = ?,
                         base_parent_revision = ?, dedupe_version = 1, dedupe_sha256 = ?,
-                        updated_at_ms = ? WHERE intent_id = ?",
+                        updated_at_ms = ? WHERE intent_id = ?
+                        AND NOT EXISTS (
+                            SELECT 1 FROM sync_conflicts c
+                            WHERE c.intent_id = outbound_intents.intent_id
+                              AND c.status = 'UNRESOLVED')",
             )
             .bind(intent.node_id().map(|value| value.to_string()))
             .bind(intent.parent_node_id().map(|value| value.to_string()))
@@ -2133,6 +2276,10 @@ impl LocalStateStore {
              WHERE library_id = ? AND node_id IS NULL AND observed_relative_path = ?
                AND intent_kind = ?
                AND state IN ('PENDING','BLOCKED','NEEDS_REBASE_VALIDATION')
+               AND NOT EXISTS (
+                   SELECT 1 FROM sync_conflicts c
+                   WHERE c.intent_id = outbound_intents.intent_id
+                     AND c.status = 'UNRESOLVED')
              ORDER BY created_at_ms LIMIT 1",
         )
         .bind(replacement.library_id().to_string())
@@ -2158,7 +2305,11 @@ impl LocalStateStore {
             let exact = decode_outbound_intent(row)?;
             let changed = sqlx::query(
                 "UPDATE outbound_intents SET state = 'SUPERSEDED', updated_at_ms = ?
-                 WHERE intent_id = ? AND state IN ('PENDING','BLOCKED','NEEDS_REBASE_VALIDATION')",
+                 WHERE intent_id = ? AND state IN ('PENDING','BLOCKED','NEEDS_REBASE_VALIDATION')
+                   AND NOT EXISTS (
+                       SELECT 1 FROM sync_conflicts c
+                       WHERE c.intent_id = outbound_intents.intent_id
+                         AND c.status = 'UNRESOLVED')",
             )
             .bind(now_ms()?)
             .bind(existing.intent_id().to_string())
@@ -2178,7 +2329,11 @@ impl LocalStateStore {
                     base_applied_sequence = ?, base_revision = ?, base_current_version_id = ?,
                     base_parent_revision = ?, dedupe_version = 1, dedupe_sha256 = ?,
                     updated_at_ms = ?
-             WHERE intent_id = ? AND state IN ('PENDING','BLOCKED','NEEDS_REBASE_VALIDATION')",
+             WHERE intent_id = ? AND state IN ('PENDING','BLOCKED','NEEDS_REBASE_VALIDATION')
+               AND NOT EXISTS (
+                   SELECT 1 FROM sync_conflicts c
+                   WHERE c.intent_id = outbound_intents.intent_id
+                     AND c.status = 'UNRESOLVED')",
         )
         .bind(replacement.parent_node_id().map(|value| value.to_string()))
         .bind(replacement.kind().as_str())
@@ -2344,6 +2499,28 @@ impl LocalStateStore {
             .bind(intent_id.to_string())
             .fetch_optional(&self.pool)
             .await?;
+        row.map(decode_upload_record).transpose()
+    }
+
+    pub async fn durable_unresolved_content_conflict_source(
+        &self,
+        library_id: LibraryId,
+        node_id: NodeId,
+    ) -> Result<Option<OutboundUploadRecord>, ClientSyncError> {
+        let row = sqlx::query(
+            "SELECT u.*
+             FROM sync_conflicts c
+             JOIN outbound_upload_sessions u ON u.intent_id = c.intent_id
+             WHERE c.library_id = ? AND c.node_id = ?
+               AND c.status = 'UNRESOLVED'
+               AND c.kind = 'REMOTE_CONTENT_CHANGED'
+             ORDER BY c.detected_at_ms, c.conflict_id
+             LIMIT 1",
+        )
+        .bind(library_id.to_string())
+        .bind(node_id.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
         row.map(decode_upload_record).transpose()
     }
 
@@ -2541,9 +2718,25 @@ impl LocalStateStore {
         intent_id: OutboundIntentId,
         mutation_id: ClientMutationId,
         conflict: &RemoteMutationConflict,
-    ) -> Result<(), ClientSyncError> {
+    ) -> Result<SyncConflictRecord, ClientSyncError> {
+        let intent = self
+            .outbound_intent(intent_id)
+            .await?
+            .ok_or(ClientSyncError::InvalidState)?;
+        let evidence = ConflictEvidence {
+            conflict_id: conflict.conflict_id(),
+            kind: SyncConflictKind::from_server_reason(conflict.reason())?,
+            node_id: conflict.resource_id().or(intent.node_id()),
+            local_base_revision: conflict.expected_revision().or(intent.base_revision()),
+            remote_observed_revision: conflict.current_revision(),
+            remote_observed_state: conflict.current_state(),
+            remote_parent_node_id: conflict.current_parent_id(),
+            remote_epoch: conflict.server_epoch(),
+            remote_sequence: conflict.server_sequence(),
+        };
         let now = now_ms()?;
         let mut transaction = self.pool.begin().await?;
+        let record = record_conflict_tx(&mut transaction, &intent, evidence, now, true).await?;
         sqlx::query(
             "INSERT INTO outbound_submission_results (
                  intent_id, mutation_id, outcome, conflict_id, conflict_reason,
@@ -2558,22 +2751,274 @@ impl LocalStateStore {
         )
         .bind(intent_id.to_string())
         .bind(mutation_id.to_string())
-        .bind(conflict.conflict_id().to_string())
+        .bind(record.conflict_id().to_string())
         .bind(conflict.reason())
         .bind(if conflict.replayed() { 1_i64 } else { 0_i64 })
         .bind(now)
         .bind(now)
         .execute(&mut *transaction)
         .await?;
-        sqlx::query(
-            "UPDATE outbound_intents SET state = 'CONFLICT', updated_at_ms = ? WHERE intent_id = ?",
+        transaction.commit().await?;
+        Ok(record)
+    }
+
+    pub async fn record_upload_conflict(
+        &self,
+        intent_id: OutboundIntentId,
+        current_revision: Option<Revision>,
+    ) -> Result<SyncConflictRecord, ClientSyncError> {
+        let intent = self
+            .outbound_intent(intent_id)
+            .await?
+            .ok_or(ClientSyncError::InvalidState)?;
+        let upload = self.durable_upload_session(intent_id).await?;
+        let now = now_ms()?;
+        let mut transaction = self.pool.begin().await?;
+        let record = record_conflict_tx(
+            &mut transaction,
+            &intent,
+            ConflictEvidence {
+                conflict_id: SyncConflictId::new(),
+                kind: SyncConflictKind::RemoteContentChanged,
+                node_id: intent.node_id(),
+                local_base_revision: intent.base_revision(),
+                remote_observed_revision: current_revision,
+                remote_observed_state: None,
+                remote_parent_node_id: None,
+                remote_epoch: None,
+                remote_sequence: None,
+            },
+            now,
+            true,
         )
-        .bind(now)
+        .await?;
+        sqlx::query(
+            "INSERT INTO outbound_submission_results (
+                 intent_id, upload_session_id, outcome, conflict_id, conflict_reason,
+                 replayed, created_at_ms, updated_at_ms
+             ) VALUES (?, ?, 'CONFLICT', ?, 'REMOTE_CONTENT_CHANGED', 0, ?, ?)
+             ON CONFLICT(intent_id) DO UPDATE SET
+                 outcome = excluded.outcome,
+                 conflict_id = excluded.conflict_id,
+                 conflict_reason = excluded.conflict_reason,
+                 updated_at_ms = excluded.updated_at_ms",
+        )
         .bind(intent_id.to_string())
+        .bind(
+            upload
+                .and_then(|value| value.upload_session_id())
+                .map(|value| value.to_string()),
+        )
+        .bind(record.conflict_id().to_string())
+        .bind(now)
+        .bind(now)
         .execute(&mut *transaction)
         .await?;
         transaction.commit().await?;
-        Ok(())
+        Ok(record)
+    }
+
+    pub async fn first_unresolved_conflict(
+        &self,
+        library_id: LibraryId,
+    ) -> Result<Option<SyncConflictRecord>, ClientSyncError> {
+        let row = sqlx::query(
+            "SELECT * FROM sync_conflicts WHERE library_id = ? AND status = 'UNRESOLVED'
+             ORDER BY detected_at_ms, conflict_id LIMIT 1",
+        )
+        .bind(library_id.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(decode_sync_conflict).transpose()
+    }
+
+    pub async fn get_conflict(
+        &self,
+        conflict_id: SyncConflictId,
+    ) -> Result<Option<SyncConflictRecord>, ClientSyncError> {
+        let row = sqlx::query("SELECT * FROM sync_conflicts WHERE conflict_id = ?")
+            .bind(conflict_id.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
+        row.map(decode_sync_conflict).transpose()
+    }
+
+    pub async fn list_unresolved_conflicts(
+        &self,
+        library_id: LibraryId,
+        after: Option<ConflictCursor>,
+        limit: Option<u32>,
+    ) -> Result<ConflictPage, ClientSyncError> {
+        self.list_conflicts_inner(library_id, SyncConflictStatus::Unresolved, after, limit)
+            .await
+    }
+
+    pub async fn list_resolved_conflicts(
+        &self,
+        library_id: LibraryId,
+        after: Option<ConflictCursor>,
+        limit: Option<u32>,
+    ) -> Result<ConflictPage, ClientSyncError> {
+        self.list_conflicts_inner(library_id, SyncConflictStatus::Resolved, after, limit)
+            .await
+    }
+
+    async fn list_conflicts_inner(
+        &self,
+        library_id: LibraryId,
+        status: SyncConflictStatus,
+        after: Option<ConflictCursor>,
+        limit: Option<u32>,
+    ) -> Result<ConflictPage, ClientSyncError> {
+        let limit = limit.unwrap_or(crate::DEFAULT_CONFLICT_PAGE_LIMIT);
+        if limit == 0 || limit > MAX_CONFLICT_PAGE_LIMIT {
+            return Err(ClientSyncError::ResourceLimit);
+        }
+        let fetch_limit = i64::from(limit) + 1;
+        let rows = if let Some(after) = after {
+            sqlx::query(
+                "SELECT * FROM sync_conflicts
+                 WHERE library_id = ? AND status = ?
+                   AND (detected_at_ms > ? OR (detected_at_ms = ? AND conflict_id > ?))
+                 ORDER BY detected_at_ms, conflict_id LIMIT ?",
+            )
+            .bind(library_id.to_string())
+            .bind(status.as_str())
+            .bind(
+                i64::try_from(after.detected_at_ms())
+                    .map_err(|_| ClientSyncError::ResourceLimit)?,
+            )
+            .bind(
+                i64::try_from(after.detected_at_ms())
+                    .map_err(|_| ClientSyncError::ResourceLimit)?,
+            )
+            .bind(after.conflict_id().to_string())
+            .bind(fetch_limit)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query(
+                "SELECT * FROM sync_conflicts WHERE library_id = ? AND status = ?
+                 ORDER BY detected_at_ms, conflict_id LIMIT ?",
+            )
+            .bind(library_id.to_string())
+            .bind(status.as_str())
+            .bind(fetch_limit)
+            .fetch_all(&self.pool)
+            .await?
+        };
+        let mut items = rows
+            .into_iter()
+            .map(decode_sync_conflict)
+            .collect::<Result<Vec<_>, _>>()?;
+        let has_more = items.len() > limit as usize;
+        items.truncate(limit as usize);
+        let next_cursor = has_more.then(|| items.last().expect("non-zero page limit").cursor());
+        Ok(ConflictPage::new(items, next_cursor))
+    }
+
+    pub async fn resolve_conflict(
+        &self,
+        conflict_id: SyncConflictId,
+        resolution: SyncConflictResolution,
+    ) -> Result<SyncConflictRecord, ClientSyncError> {
+        let now = now_ms()?;
+        let mut transaction = self.pool.begin().await?;
+        let row = sqlx::query("SELECT * FROM sync_conflicts WHERE conflict_id = ?")
+            .bind(conflict_id.to_string())
+            .fetch_optional(&mut *transaction)
+            .await?
+            .ok_or(ClientSyncError::ConflictNotFound)?;
+        let existing = decode_sync_conflict(row)?;
+        if existing.status() == SyncConflictStatus::Resolved {
+            if existing.resolution() == Some(resolution) {
+                transaction.commit().await?;
+                return Ok(existing);
+            }
+            return Err(ClientSyncError::ConflictAlreadyResolved);
+        }
+        let intent_row = sqlx::query("SELECT * FROM outbound_intents WHERE intent_id = ?")
+            .bind(existing.intent_id().to_string())
+            .fetch_optional(&mut *transaction)
+            .await?
+            .ok_or(ClientSyncError::InvalidState)?;
+        let intent = decode_outbound_intent(intent_row)?;
+        if !matches!(
+            intent.state(),
+            OutboundIntentState::Pending
+                | OutboundIntentState::Ready
+                | OutboundIntentState::Preparing
+                | OutboundIntentState::Uploading
+                | OutboundIntentState::Submitting
+                | OutboundIntentState::Blocked
+                | OutboundIntentState::NeedsRebaseValidation
+                | OutboundIntentState::Conflict
+        ) {
+            return Err(ClientSyncError::InvalidState);
+        }
+
+        let replacement = match resolution {
+            SyncConflictResolution::AcceptRemote => None,
+            SyncConflictResolution::RetryLocalAgainstCurrentBase => {
+                if matches!(
+                    existing.kind(),
+                    SyncConflictKind::RemoteMissing | SyncConflictKind::NameCollision
+                ) {
+                    return Err(ClientSyncError::ResolutionNotApplicable);
+                }
+                Some(replacement_intent_tx(&mut transaction, &intent, now).await?)
+            }
+        };
+        let next_state = if replacement.is_some() {
+            OutboundIntentState::Superseded
+        } else {
+            OutboundIntentState::Cancelled
+        };
+        let changed = sqlx::query(
+            "UPDATE outbound_intents SET state = ?, updated_at_ms = ?
+             WHERE intent_id = ? AND state IN (
+                 'PENDING','READY','PREPARING','UPLOADING','SUBMITTING',
+                 'BLOCKED','NEEDS_REBASE_VALIDATION','CONFLICT'
+             )",
+        )
+        .bind(next_state.as_str())
+        .bind(now)
+        .bind(intent.intent_id().to_string())
+        .execute(&mut *transaction)
+        .await?
+        .rows_affected();
+        if changed != 1 {
+            return Err(ClientSyncError::InvalidState);
+        }
+        let resolution_id = ConflictResolutionId::new();
+        let changed = sqlx::query(
+            "UPDATE sync_conflicts
+             SET status = 'RESOLVED', resolution_id = ?, resolution = ?, resolved_at_ms = ?,
+                 replacement_intent_id = ?
+             WHERE conflict_id = ? AND status = 'UNRESOLVED'",
+        )
+        .bind(resolution_id.to_string())
+        .bind(resolution.as_str())
+        .bind(now)
+        .bind(
+            replacement
+                .as_ref()
+                .map(|value| value.intent_id().to_string()),
+        )
+        .bind(conflict_id.to_string())
+        .execute(&mut *transaction)
+        .await?
+        .rows_affected();
+        if changed != 1 {
+            return Err(ClientSyncError::ConflictAlreadyResolved);
+        }
+        let resolved_row = sqlx::query("SELECT * FROM sync_conflicts WHERE conflict_id = ?")
+            .bind(conflict_id.to_string())
+            .fetch_one(&mut *transaction)
+            .await?;
+        let resolved = decode_sync_conflict(resolved_row)?;
+        transaction.commit().await?;
+        Ok(resolved)
     }
 
     pub async fn has_pending_file_content_submission(
@@ -2715,7 +3160,11 @@ impl LocalStateStore {
         let changed = sqlx::query(
             "UPDATE outbound_intents SET state = 'CANCELLED', updated_at_ms = ?
              WHERE library_id = ? AND node_id = ? AND intent_kind = 'DELETE_OR_TRASH_NODE'
-               AND state IN ('PENDING','BLOCKED','NEEDS_REBASE_VALIDATION')",
+               AND state IN ('PENDING','BLOCKED','NEEDS_REBASE_VALIDATION')
+               AND NOT EXISTS (
+                   SELECT 1 FROM sync_conflicts c
+                   WHERE c.intent_id = outbound_intents.intent_id
+                     AND c.status = 'UNRESOLVED')",
         )
         .bind(now_ms()?)
         .bind(library_id.to_string())
@@ -2736,7 +3185,11 @@ impl LocalStateStore {
              WHERE library_id = ? AND node_id IS NULL
                AND intent_kind IN ('CREATE_DIRECTORY','CREATE_FILE')
                AND observed_relative_path = ?
-               AND state IN ('PENDING','BLOCKED','NEEDS_REBASE_VALIDATION')",
+               AND state IN ('PENDING','BLOCKED','NEEDS_REBASE_VALIDATION')
+               AND NOT EXISTS (
+                   SELECT 1 FROM sync_conflicts c
+                   WHERE c.intent_id = outbound_intents.intent_id
+                     AND c.status = 'UNRESOLVED')",
         )
         .bind(now_ms()?)
         .bind(library_id.to_string())
@@ -2762,6 +3215,11 @@ impl LocalStateStore {
                     sqlx::query_scalar(
                         "SELECT COUNT(*) FROM outbound_intents
                          WHERE library_id = ? AND state IN ('PENDING','READY','PREPARING','UPLOADING','SUBMITTING','BLOCKED','NEEDS_REBASE_VALIDATION')
+                           AND NOT EXISTS (
+                               SELECT 1 FROM sync_conflicts c
+                               WHERE c.intent_id = outbound_intents.intent_id
+                                 AND c.status = 'UNRESOLVED'
+                           )
                            AND (node_id = ? OR node_id IN (
                                SELECT node_id FROM local_nodes
                                WHERE library_id = ? AND relative_path LIKE ? ESCAPE '\\'
@@ -2780,7 +3238,12 @@ impl LocalStateStore {
                     sqlx::query_scalar(
                         "SELECT COUNT(*) FROM outbound_intents
                          WHERE library_id = ? AND node_id = ?
-                           AND state IN ('PENDING','READY','PREPARING','UPLOADING','SUBMITTING','BLOCKED','NEEDS_REBASE_VALIDATION')",
+                           AND state IN ('PENDING','READY','PREPARING','UPLOADING','SUBMITTING','BLOCKED','NEEDS_REBASE_VALIDATION')
+                           AND NOT EXISTS (
+                               SELECT 1 FROM sync_conflicts c
+                               WHERE c.intent_id = outbound_intents.intent_id
+                                 AND c.status = 'UNRESOLVED'
+                           )",
                     )
                     .bind(library_id.to_string())
                     .bind(node_id.to_string())
@@ -2791,7 +3254,12 @@ impl LocalStateStore {
             None => {
                 sqlx::query_scalar(
                     "SELECT COUNT(*) FROM outbound_intents
-                 WHERE library_id = ? AND state IN ('PENDING','READY','PREPARING','UPLOADING','SUBMITTING','BLOCKED','NEEDS_REBASE_VALIDATION')",
+                 WHERE library_id = ? AND state IN ('PENDING','READY','PREPARING','UPLOADING','SUBMITTING','BLOCKED','NEEDS_REBASE_VALIDATION')
+                   AND NOT EXISTS (
+                       SELECT 1 FROM sync_conflicts c
+                       WHERE c.intent_id = outbound_intents.intent_id
+                         AND c.status = 'UNRESOLVED'
+                   )",
                 )
                 .bind(library_id.to_string())
                 .fetch_one(&self.pool)
@@ -2809,6 +3277,11 @@ impl LocalStateStore {
                     sqlx::query(
                         "UPDATE outbound_intents SET state = 'NEEDS_REBASE_VALIDATION', updated_at_ms = ?
                          WHERE library_id = ? AND state IN ('PENDING','READY','PREPARING','UPLOADING','SUBMITTING','BLOCKED')
+                           AND NOT EXISTS (
+                               SELECT 1 FROM sync_conflicts c
+                               WHERE c.intent_id = outbound_intents.intent_id
+                                 AND c.status = 'UNRESOLVED'
+                           )
                            AND (node_id = ? OR node_id IN (
                                SELECT node_id FROM local_nodes
                                WHERE library_id = ? AND relative_path LIKE ? ESCAPE '\\'
@@ -2827,7 +3300,12 @@ impl LocalStateStore {
                 } else {
                     sqlx::query(
                         "UPDATE outbound_intents SET state = 'NEEDS_REBASE_VALIDATION', updated_at_ms = ?
-                         WHERE library_id = ? AND node_id = ? AND state IN ('PENDING','READY','PREPARING','UPLOADING','SUBMITTING','BLOCKED')",
+                         WHERE library_id = ? AND node_id = ? AND state IN ('PENDING','READY','PREPARING','UPLOADING','SUBMITTING','BLOCKED')
+                           AND NOT EXISTS (
+                               SELECT 1 FROM sync_conflicts c
+                               WHERE c.intent_id = outbound_intents.intent_id
+                                 AND c.status = 'UNRESOLVED'
+                           )",
                     )
                     .bind(now_ms()?)
                     .bind(library_id.to_string())
@@ -2839,7 +3317,12 @@ impl LocalStateStore {
             None => {
                 sqlx::query(
                     "UPDATE outbound_intents SET state = 'NEEDS_REBASE_VALIDATION', updated_at_ms = ?
-                     WHERE library_id = ? AND state IN ('PENDING','READY','PREPARING','UPLOADING','SUBMITTING','BLOCKED')",
+                     WHERE library_id = ? AND state IN ('PENDING','READY','PREPARING','UPLOADING','SUBMITTING','BLOCKED')
+                       AND NOT EXISTS (
+                           SELECT 1 FROM sync_conflicts c
+                           WHERE c.intent_id = outbound_intents.intent_id
+                             AND c.status = 'UNRESOLVED'
+                       )",
                 )
                 .bind(now_ms()?)
                 .bind(library_id.to_string())
@@ -3599,6 +4082,533 @@ impl LocalStateStore {
         transaction.commit().await?;
         Ok(())
     }
+    pub(crate) async fn rebaseline_is_applied(
+        &self,
+        library_id: LibraryId,
+        descriptor: RebaselineSnapshotDescriptor,
+    ) -> Result<bool, ClientSyncError> {
+        let row: Option<(String, i64, i64)> = sqlx::query_as("SELECT snapshot_id, journal_epoch, resume_sequence FROM rebaseline_applied_handoffs WHERE library_id = ?")
+            .bind(library_id.to_string()).fetch_optional(&self.pool).await?;
+        match row {
+            None => Ok(false),
+            Some((id, epoch, sequence))
+                if id == descriptor.snapshot_id().to_string()
+                    && epoch == sequence_i64(descriptor.boundary().journal_epoch())?
+                    && sequence == sequence_i64(descriptor.boundary().resume_sequence())? =>
+            {
+                Ok(true)
+            }
+            Some(_) => Err(ClientSyncError::RebaselinePendingHandoff),
+        }
+    }
+
+    pub(crate) async fn pending_rebaseline_handoff(
+        &self,
+        library_id: LibraryId,
+    ) -> Result<Option<RebaselineHandoffRecord>, ClientSyncError> {
+        let row: Option<(String, i64, i64)> = sqlx::query_as(
+            "SELECT snapshot_id, journal_epoch, resume_sequence
+             FROM rebaseline_applied_handoffs
+             WHERE library_id = ?",
+        )
+        .bind(library_id.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(|(snapshot_id, journal_epoch, resume_sequence)| {
+            Ok(RebaselineHandoffRecord {
+                snapshot_id: parse_id(&snapshot_id)?,
+                library_id,
+                journal_epoch: sequence_from_i64(journal_epoch)?,
+                resume_sequence: sequence_from_i64(resume_sequence)?,
+            })
+        })
+        .transpose()
+    }
+
+    pub(crate) async fn begin_rebaseline_candidate(
+        &self,
+        scope: ReplicaScope,
+        descriptor: RebaselineSnapshotDescriptor,
+    ) -> Result<(), ClientSyncError> {
+        let mut transaction = self.pool.begin().await?;
+        let existing = sqlx::query("SELECT snapshot_id, journal_epoch, resume_sequence, expected_count FROM rebaseline_candidates WHERE library_id = ?")
+            .bind(scope.library_id().to_string()).fetch_optional(&mut *transaction).await?;
+        if let Some(row) = existing {
+            let same = row.try_get::<String, _>("snapshot_id")?
+                == descriptor.snapshot_id().to_string()
+                && row.try_get::<i64, _>("journal_epoch")?
+                    == sequence_i64(descriptor.boundary().journal_epoch())?
+                && row.try_get::<i64, _>("resume_sequence")?
+                    == sequence_i64(descriptor.boundary().resume_sequence())?
+                && row.try_get::<i64, _>("expected_count")? == u64_i64(descriptor.entry_count())?;
+            transaction.commit().await?;
+            return if same {
+                Ok(())
+            } else {
+                Err(ClientSyncError::RebaselineInProgress)
+            };
+        }
+        let now = now_ms()?;
+        sqlx::query("INSERT INTO rebaseline_candidates (library_id, snapshot_id, journal_epoch, resume_sequence, expected_count, state, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, 'FETCHING', ?, ?)")
+            .bind(scope.library_id().to_string()).bind(descriptor.snapshot_id().to_string())
+            .bind(sequence_i64(descriptor.boundary().journal_epoch())?).bind(sequence_i64(descriptor.boundary().resume_sequence())?)
+            .bind(u64_i64(descriptor.entry_count())?).bind(now).bind(now).execute(&mut *transaction).await?;
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    /// Claim the one non-idempotent durable-snapshot creation allowed in a
+    /// convergence invocation. The claim reuses the v5 candidate row in its
+    /// inert `FAILED` state; it is promoted to a real `FETCHING` candidate
+    /// only after a validated server descriptor is received.
+    ///
+    /// A previous inert claim can only have survived a process interruption
+    /// before a descriptor was persisted. A later invocation may replace that
+    /// claim and issue one new POST, which is the documented response-loss
+    /// behavior. Real candidates are never removed here.
+    pub(crate) async fn claim_rebaseline_snapshot_creation(
+        &self,
+        scope: ReplicaScope,
+    ) -> Result<RebaselineSnapshotId, ClientSyncError> {
+        let mut transaction = self.pool.begin().await?;
+        let existing = sqlx::query("SELECT * FROM rebaseline_candidates WHERE library_id = ?")
+            .bind(scope.library_id().to_string())
+            .fetch_optional(&mut *transaction)
+            .await?
+            .map(decode_rebaseline_candidate)
+            .transpose()?;
+        if let Some(existing) = existing {
+            if existing.state != RebaselineCandidateState::CreateClaim {
+                return Err(ClientSyncError::RebaselineInProgress);
+            }
+            sqlx::query("DELETE FROM rebaseline_candidates WHERE library_id = ? AND snapshot_id = ? AND state = 'FAILED'")
+                .bind(scope.library_id().to_string())
+                .bind(existing.snapshot_id.to_string())
+                .execute(&mut *transaction)
+                .await?;
+        }
+        let claim_id = RebaselineSnapshotId::new();
+        let now = now_ms()?;
+        sqlx::query("INSERT INTO rebaseline_candidates (library_id, snapshot_id, journal_epoch, resume_sequence, expected_count, received_count, next_cursor, terminal_fetched, state, created_at_ms, updated_at_ms) VALUES (?, ?, 1, 0, 0, 0, NULL, 0, 'FAILED', ?, ?)")
+            .bind(scope.library_id().to_string())
+            .bind(claim_id.to_string())
+            .bind(now)
+            .bind(now)
+            .execute(&mut *transaction)
+            .await?;
+        transaction.commit().await?;
+        Ok(claim_id)
+    }
+
+    /// Bind a successful snapshot-create response to its existing durable
+    /// claim. No network operation occurs in this transaction.
+    pub(crate) async fn promote_rebaseline_snapshot_creation_claim(
+        &self,
+        scope: ReplicaScope,
+        claim_id: RebaselineSnapshotId,
+        descriptor: RebaselineSnapshotDescriptor,
+    ) -> Result<(), ClientSyncError> {
+        if descriptor.library_id() != scope.library_id()
+            || descriptor.boundary().journal_epoch().get() == 0
+        {
+            return Err(ClientSyncError::InvalidRemoteResponse);
+        }
+        let changed = sqlx::query(
+            "UPDATE rebaseline_candidates
+             SET snapshot_id = ?, journal_epoch = ?, resume_sequence = ?,
+                 expected_count = ?, received_count = 0, next_cursor = NULL,
+                 terminal_fetched = 0, state = 'FETCHING', updated_at_ms = ?
+             WHERE library_id = ? AND snapshot_id = ? AND state = 'FAILED'",
+        )
+        .bind(descriptor.snapshot_id().to_string())
+        .bind(sequence_i64(descriptor.boundary().journal_epoch())?)
+        .bind(sequence_i64(descriptor.boundary().resume_sequence())?)
+        .bind(u64_i64(descriptor.entry_count())?)
+        .bind(now_ms()?)
+        .bind(scope.library_id().to_string())
+        .bind(claim_id.to_string())
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        if changed != 1 {
+            return Err(ClientSyncError::RebaselineInProgress);
+        }
+        Ok(())
+    }
+
+    /// Discard only an inert creation claim after a create response is absent
+    /// or invalid. It cannot remove downloaded pages, a pending handoff, or
+    /// an active remote base.
+    pub(crate) async fn release_rebaseline_snapshot_creation_claim(
+        &self,
+        library_id: LibraryId,
+        claim_id: RebaselineSnapshotId,
+    ) -> Result<(), ClientSyncError> {
+        sqlx::query(
+            "DELETE FROM rebaseline_candidates
+             WHERE library_id = ? AND snapshot_id = ? AND state = 'FAILED'",
+        )
+        .bind(library_id.to_string())
+        .bind(claim_id.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub(crate) async fn rebaseline_candidate(
+        &self,
+        library_id: LibraryId,
+    ) -> Result<Option<RebaselineCandidateRecord>, ClientSyncError> {
+        let row = sqlx::query("SELECT * FROM rebaseline_candidates WHERE library_id = ?")
+            .bind(library_id.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
+        row.map(decode_rebaseline_candidate).transpose()
+    }
+
+    pub(crate) async fn persist_rebaseline_page(
+        &self,
+        scope: ReplicaScope,
+        expected: RebaselineSnapshotDescriptor,
+        page: &RebaselineSnapshotPage,
+    ) -> Result<(), ClientSyncError> {
+        if page.descriptor() != expected
+            || page.descriptor().library_id() != scope.library_id()
+            || (page.entries().is_empty() && page.next_cursor().is_some())
+            || page
+                .entries()
+                .windows(2)
+                .any(|pair| pair[0].node_id() >= pair[1].node_id())
+        {
+            return Err(ClientSyncError::InvalidRemoteResponse);
+        }
+        let mut transaction = self.pool.begin().await?;
+        let candidate = sqlx::query(
+            "SELECT * FROM rebaseline_candidates WHERE library_id = ? AND state = 'FETCHING'",
+        )
+        .bind(scope.library_id().to_string())
+        .fetch_optional(&mut *transaction)
+        .await?
+        .ok_or(ClientSyncError::CandidateCorrupt)
+        .and_then(decode_rebaseline_candidate)?;
+        if candidate.snapshot_id != expected.snapshot_id()
+            || candidate.journal_epoch != expected.boundary().journal_epoch()
+            || candidate.resume_sequence != expected.boundary().resume_sequence()
+            || candidate.expected_count != expected.entry_count()
+        {
+            return Err(ClientSyncError::CandidateCorrupt);
+        }
+        let last: Option<String> = sqlx::query_scalar("SELECT node_id FROM rebaseline_candidate_nodes WHERE library_id = ? AND snapshot_id = ? ORDER BY node_id DESC LIMIT 1")
+            .bind(scope.library_id().to_string()).bind(candidate.snapshot_id.to_string()).fetch_optional(&mut *transaction).await?;
+        if let Some(last) = last {
+            let last = parse_id::<NodeId>(&last).map_err(|_| ClientSyncError::CandidateCorrupt)?;
+            if page
+                .entries()
+                .first()
+                .is_some_and(|node| node.node_id() <= last)
+            {
+                return Err(ClientSyncError::InvalidRemoteResponse);
+            }
+        }
+        let received = candidate
+            .received_count
+            .checked_add(page.entries().len() as u64)
+            .ok_or(ClientSyncError::ResourceLimit)?;
+        if received > candidate.expected_count {
+            return Err(ClientSyncError::InvalidRemoteResponse);
+        }
+        for node in page.entries() {
+            insert_rebaseline_candidate_node(
+                &mut transaction,
+                scope.library_id(),
+                candidate.snapshot_id,
+                node,
+            )
+            .await?;
+        }
+        if let Some(cursor) = page.next_cursor() {
+            if candidate.next_cursor.as_ref() == Some(cursor) {
+                return Err(ClientSyncError::InvalidRemoteResponse);
+            }
+            let seen: Option<i64> = sqlx::query_scalar(
+                "SELECT 1 FROM rebaseline_candidate_cursors WHERE library_id = ? AND cursor = ?",
+            )
+            .bind(scope.library_id().to_string())
+            .bind(cursor.as_bytes())
+            .fetch_optional(&mut *transaction)
+            .await?;
+            if seen.is_some() {
+                return Err(ClientSyncError::InvalidRemoteResponse);
+            }
+            sqlx::query(
+                "INSERT INTO rebaseline_candidate_cursors (library_id, cursor) VALUES (?, ?)",
+            )
+            .bind(scope.library_id().to_string())
+            .bind(cursor.as_bytes())
+            .execute(&mut *transaction)
+            .await?;
+        } else if received != candidate.expected_count {
+            return Err(ClientSyncError::CandidateIncomplete);
+        }
+        if page.next_cursor().is_none() {
+            validate_terminal_rebaseline_candidate(
+                &mut transaction,
+                scope.library_id(),
+                candidate.snapshot_id,
+                received,
+            )
+            .await?;
+        }
+        sqlx::query("UPDATE rebaseline_candidates SET received_count = ?, next_cursor = ?, terminal_fetched = ?, state = ?, updated_at_ms = ? WHERE library_id = ?")
+            .bind(u64_i64(received)?).bind(page.next_cursor().map(OpaqueEvidence::as_bytes)).bind(page.next_cursor().is_none())
+            .bind(if page.next_cursor().is_none() { "COMPLETE" } else { "FETCHING" }).bind(now_ms()?).bind(scope.library_id().to_string()).execute(&mut *transaction).await?;
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    pub(crate) async fn activate_rebaseline_candidate(
+        &self,
+        scope: ReplicaScope,
+        descriptor: RebaselineSnapshotDescriptor,
+    ) -> Result<(), ClientSyncError> {
+        self.activate_rebaseline_candidate_inner(scope, descriptor, false)
+            .await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn activate_rebaseline_candidate_fail_before_commit(
+        &self,
+        scope: ReplicaScope,
+        descriptor: RebaselineSnapshotDescriptor,
+    ) -> Result<(), ClientSyncError> {
+        self.activate_rebaseline_candidate_inner(scope, descriptor, true)
+            .await
+    }
+
+    async fn activate_rebaseline_candidate_inner(
+        &self,
+        scope: ReplicaScope,
+        descriptor: RebaselineSnapshotDescriptor,
+        fail_before_commit: bool,
+    ) -> Result<(), ClientSyncError> {
+        let candidate = self
+            .rebaseline_candidate(scope.library_id())
+            .await?
+            .ok_or(ClientSyncError::CandidateIncomplete)?;
+        if !candidate.terminal_fetched
+            || candidate.state != RebaselineCandidateState::Complete
+            || candidate.snapshot_id != descriptor.snapshot_id()
+            || candidate.journal_epoch != descriptor.boundary().journal_epoch()
+            || candidate.resume_sequence != descriptor.boundary().resume_sequence()
+            || candidate.expected_count != descriptor.entry_count()
+            || candidate.received_count != descriptor.entry_count()
+        {
+            return Err(ClientSyncError::CandidateIncomplete);
+        }
+        let rows = sqlx::query("SELECT * FROM rebaseline_candidate_nodes WHERE library_id = ? AND snapshot_id = ? ORDER BY node_id")
+            .bind(scope.library_id().to_string()).bind(candidate.snapshot_id.to_string()).fetch_all(&self.pool).await?;
+        let desired: Vec<LogicalSnapshotNode> = rows
+            .into_iter()
+            .map(decode_snapshot_node)
+            .collect::<Result<_, _>>()?;
+        let rows = sqlx::query("SELECT * FROM local_nodes WHERE library_id = ?")
+            .bind(scope.library_id().to_string())
+            .fetch_all(&self.pool)
+            .await?;
+        let old: HashMap<NodeId, LocalNode> = rows
+            .into_iter()
+            .map(decode_local_node)
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(|node| (node.node_id(), node))
+            .collect();
+        let nodes = rebaseline_local_nodes(scope.library_id(), &desired, &old)?;
+        let mut transaction = self.pool.begin().await?;
+        validate_terminal_rebaseline_candidate(
+            &mut transaction,
+            scope.library_id(),
+            candidate.snapshot_id,
+            candidate.received_count,
+        )
+        .await?;
+        sqlx::query("DELETE FROM local_nodes WHERE library_id = ?")
+            .bind(scope.library_id().to_string())
+            .execute(&mut *transaction)
+            .await?;
+        for node in &nodes {
+            upsert_local_node_tx(&mut transaction, node).await?;
+        }
+        classify_rebaseline_conflicts_tx(
+            &mut transaction,
+            scope.library_id(),
+            descriptor.boundary().journal_epoch(),
+            descriptor.boundary().resume_sequence(),
+            now_ms()?,
+        )
+        .await?;
+        let root = nodes
+            .iter()
+            .find(|node| node.parent_node_id().is_none())
+            .ok_or(ClientSyncError::CandidateCorrupt)?;
+        sqlx::query("UPDATE replicas SET root_node_id = ?, updated_at_ms = ? WHERE library_id = ?")
+            .bind(root.node_id().to_string())
+            .bind(now_ms()?)
+            .bind(scope.library_id().to_string())
+            .execute(&mut *transaction)
+            .await?;
+        // The v5 schema permits one candidate and one pending handoff per
+        // library. In proof-loss/checkpoint-conflict recovery an old marker
+        // remains present while this candidate downloads. Upsert replaces it
+        // in the *same* activation transaction as the base swap, so readers
+        // can observe H1 or H2 but never an unfenced no-marker interval.
+        sqlx::query("INSERT INTO rebaseline_applied_handoffs (library_id, snapshot_id, journal_epoch, resume_sequence, applied_at_ms) VALUES (?, ?, ?, ?, ?) ON CONFLICT(library_id) DO UPDATE SET snapshot_id = excluded.snapshot_id, journal_epoch = excluded.journal_epoch, resume_sequence = excluded.resume_sequence, applied_at_ms = excluded.applied_at_ms")
+            .bind(scope.library_id().to_string()).bind(descriptor.snapshot_id().to_string()).bind(sequence_i64(descriptor.boundary().journal_epoch())?).bind(sequence_i64(descriptor.boundary().resume_sequence())?).bind(now_ms()?).execute(&mut *transaction).await?;
+        sqlx::query("DELETE FROM rebaseline_candidates WHERE library_id = ?")
+            .bind(scope.library_id().to_string())
+            .execute(&mut *transaction)
+            .await?;
+        if fail_before_commit {
+            return Err(ClientSyncError::InjectedFailure);
+        }
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    pub(crate) async fn abort_rebaseline_candidate(
+        &self,
+        library_id: LibraryId,
+    ) -> Result<(), ClientSyncError> {
+        sqlx::query("DELETE FROM rebaseline_candidates WHERE library_id = ?")
+            .bind(library_id.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub(crate) async fn rebaseline_handoff_pending(
+        &self,
+        library_id: LibraryId,
+    ) -> Result<bool, ClientSyncError> {
+        Ok(self.pending_rebaseline_handoff(library_id).await?.is_some())
+    }
+
+    pub(crate) async fn finalize_rebaseline_handoff(
+        &self,
+        scope: ReplicaScope,
+        expected: RebaselineHandoffRecord,
+    ) -> Result<RebaselineHandoffFinalizeOutcome, ClientSyncError> {
+        self.finalize_rebaseline_handoff_inner(scope, expected, false)
+            .await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn finalize_rebaseline_handoff_fail_before_commit(
+        &self,
+        scope: ReplicaScope,
+        expected: RebaselineHandoffRecord,
+    ) -> Result<RebaselineHandoffFinalizeOutcome, ClientSyncError> {
+        self.finalize_rebaseline_handoff_inner(scope, expected, true)
+            .await
+    }
+
+    async fn finalize_rebaseline_handoff_inner(
+        &self,
+        scope: ReplicaScope,
+        expected: RebaselineHandoffRecord,
+        fail_before_commit: bool,
+    ) -> Result<RebaselineHandoffFinalizeOutcome, ClientSyncError> {
+        if expected.library_id() != scope.library_id() {
+            return Err(ClientSyncError::WrongScope);
+        }
+        let mut transaction = self.pool.begin().await?;
+        let marker: Option<(String, i64, i64)> = sqlx::query_as(
+            "SELECT snapshot_id, journal_epoch, resume_sequence
+             FROM rebaseline_applied_handoffs
+             WHERE library_id = ?",
+        )
+        .bind(scope.library_id().to_string())
+        .fetch_optional(&mut *transaction)
+        .await?;
+
+        let Some((snapshot_id, journal_epoch, resume_sequence)) = marker else {
+            // A second concurrent caller is successful only when the first
+            // caller's transaction installed the exact same local cursor. It
+            // cannot infer success from a merely advanced or different cursor.
+            let replica: Option<(String, String, i64, i64, i64)> = sqlx::query_as(
+                "SELECT owner_user_id, device_id, journal_epoch,
+                        applied_sequence, acknowledged_sequence
+                 FROM replicas
+                 WHERE library_id = ?",
+            )
+            .bind(scope.library_id().to_string())
+            .fetch_optional(&mut *transaction)
+            .await?;
+            let already_complete =
+                replica.is_some_and(|(owner_user_id, device_id, epoch, applied, acknowledged)| {
+                    owner_user_id == scope.owner_user_id().to_string()
+                        && device_id == scope.device_id().to_string()
+                        && epoch == sequence_i64(expected.journal_epoch()).unwrap_or(-1)
+                        && applied == sequence_i64(expected.resume_sequence()).unwrap_or(-1)
+                        && acknowledged == sequence_i64(expected.resume_sequence()).unwrap_or(-1)
+                });
+            if already_complete {
+                transaction.commit().await?;
+                return Ok(RebaselineHandoffFinalizeOutcome::AlreadyComplete);
+            }
+            return Err(ClientSyncError::InvalidState);
+        };
+
+        let actual = RebaselineHandoffRecord {
+            snapshot_id: parse_id(&snapshot_id)?,
+            library_id: scope.library_id(),
+            journal_epoch: sequence_from_i64(journal_epoch)?,
+            resume_sequence: sequence_from_i64(resume_sequence)?,
+        };
+        if actual != expected {
+            return Err(ClientSyncError::RebaselinePendingHandoff);
+        }
+        let changed = sqlx::query(
+            "UPDATE replicas
+             SET journal_epoch = ?, applied_sequence = ?,
+                 acknowledged_sequence = ?, status = 'IDLE', updated_at_ms = ?
+             WHERE library_id = ?
+               AND owner_user_id = ?
+               AND device_id = ?",
+        )
+        .bind(sequence_i64(expected.journal_epoch())?)
+        .bind(sequence_i64(expected.resume_sequence())?)
+        .bind(sequence_i64(expected.resume_sequence())?)
+        .bind(now_ms()?)
+        .bind(scope.library_id().to_string())
+        .bind(scope.owner_user_id().to_string())
+        .bind(scope.device_id().to_string())
+        .execute(&mut *transaction)
+        .await?
+        .rows_affected();
+        if changed != 1 {
+            return Err(ClientSyncError::InvalidState);
+        }
+        let deleted = sqlx::query(
+            "DELETE FROM rebaseline_applied_handoffs
+             WHERE library_id = ? AND snapshot_id = ?
+               AND journal_epoch = ? AND resume_sequence = ?",
+        )
+        .bind(scope.library_id().to_string())
+        .bind(expected.snapshot_id().to_string())
+        .bind(sequence_i64(expected.journal_epoch())?)
+        .bind(sequence_i64(expected.resume_sequence())?)
+        .execute(&mut *transaction)
+        .await?
+        .rows_affected();
+        if deleted != 1 {
+            return Err(ClientSyncError::InvalidState);
+        }
+        if fail_before_commit {
+            return Err(ClientSyncError::InjectedFailure);
+        }
+        transaction.commit().await?;
+        Ok(RebaselineHandoffFinalizeOutcome::Completed)
+    }
 }
 
 async fn validate_terminal_manifest(
@@ -3660,6 +4670,138 @@ async fn validate_terminal_manifest(
         return Err(ClientSyncError::InvalidRemoteResponse);
     }
     Ok(())
+}
+
+async fn validate_terminal_rebaseline_candidate(
+    transaction: &mut Transaction<'_, Sqlite>,
+    library_id: LibraryId,
+    snapshot_id: RebaselineSnapshotId,
+    expected_count: u64,
+) -> Result<(), ClientSyncError> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM rebaseline_candidate_nodes WHERE library_id = ? AND snapshot_id = ?",
+    )
+    .bind(library_id.to_string())
+    .bind(snapshot_id.to_string())
+    .fetch_one(&mut **transaction)
+    .await?;
+    if count != u64_i64(expected_count)? {
+        return Err(ClientSyncError::CandidateIncomplete);
+    }
+    let root_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rebaseline_candidate_nodes WHERE library_id = ? AND snapshot_id = ? AND parent_node_id IS NULL")
+        .bind(library_id.to_string()).bind(snapshot_id.to_string()).fetch_one(&mut **transaction).await?;
+    if root_count != 1 {
+        return Err(ClientSyncError::InvalidRemoteResponse);
+    }
+    let invalid_parent: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM rebaseline_candidate_nodes child LEFT JOIN rebaseline_candidate_nodes parent ON parent.library_id = child.library_id AND parent.snapshot_id = child.snapshot_id AND parent.node_id = child.parent_node_id WHERE child.library_id = ? AND child.snapshot_id = ? AND child.parent_node_id IS NOT NULL AND (parent.node_id IS NULL OR parent.node_kind != 'DIRECTORY')",
+    ).bind(library_id.to_string()).bind(snapshot_id.to_string()).fetch_one(&mut **transaction).await?;
+    if invalid_parent != 0 {
+        return Err(ClientSyncError::InvalidRemoteResponse);
+    }
+    let reachable: i64 = sqlx::query_scalar(
+        "WITH RECURSIVE reachable(node_id) AS (SELECT node_id FROM rebaseline_candidate_nodes WHERE library_id = ? AND snapshot_id = ? AND parent_node_id IS NULL UNION SELECT child.node_id FROM rebaseline_candidate_nodes child JOIN reachable parent ON child.parent_node_id = parent.node_id WHERE child.library_id = ? AND child.snapshot_id = ?) SELECT COUNT(*) FROM reachable",
+    ).bind(library_id.to_string()).bind(snapshot_id.to_string()).bind(library_id.to_string()).bind(snapshot_id.to_string()).fetch_one(&mut **transaction).await?;
+    if reachable != count {
+        return Err(ClientSyncError::InvalidRemoteResponse);
+    }
+    Ok(())
+}
+
+async fn insert_rebaseline_candidate_node(
+    transaction: &mut Transaction<'_, Sqlite>,
+    library_id: LibraryId,
+    snapshot_id: RebaselineSnapshotId,
+    node: &LogicalSnapshotNode,
+) -> Result<(), ClientSyncError> {
+    let duplicate: Option<i64> = sqlx::query_scalar("SELECT 1 FROM rebaseline_candidate_nodes WHERE library_id = ? AND snapshot_id = ? AND node_id = ?")
+        .bind(library_id.to_string()).bind(snapshot_id.to_string()).bind(node.node_id().to_string()).fetch_optional(&mut **transaction).await?;
+    if duplicate.is_some() {
+        return Err(ClientSyncError::InvalidRemoteResponse);
+    }
+    sqlx::query("INSERT INTO rebaseline_candidate_nodes (library_id, snapshot_id, node_id, parent_node_id, logical_name, node_kind, node_state, revision, current_version_id, content_length, content_sha256) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(library_id.to_string()).bind(snapshot_id.to_string()).bind(node.node_id().to_string())
+        .bind(node.parent_node_id().map(|id| id.to_string())).bind(node.name().as_str()).bind(node_kind_as_str(node.kind())).bind(node_state_as_str(node.state()))
+        .bind(revision_i64(node.revision())?).bind(node.current_version_id().map(|id| id.to_string())).bind(optional_u64_i64(node.content_length())?).bind(node.content_sha256().map(|hash| hash.into_bytes().to_vec()))
+        .execute(&mut **transaction).await?;
+    Ok(())
+}
+
+fn rebaseline_local_nodes(
+    library_id: LibraryId,
+    desired: &[LogicalSnapshotNode],
+    old: &HashMap<NodeId, LocalNode>,
+) -> Result<Vec<LocalNode>, ClientSyncError> {
+    let by_id: BTreeMap<NodeId, &LogicalSnapshotNode> =
+        desired.iter().map(|node| (node.node_id(), node)).collect();
+    if by_id.len() != desired.len() {
+        return Err(ClientSyncError::CandidateCorrupt);
+    }
+    let mut paths = BTreeMap::new();
+    for node in desired {
+        resolve_rebaseline_path(node.node_id(), &by_id, &mut paths, &mut BTreeSet::new())?;
+    }
+    let mut collisions = BTreeSet::new();
+    desired
+        .iter()
+        .map(|node| {
+            let path = paths
+                .get(&node.node_id())
+                .cloned()
+                .ok_or(ClientSyncError::CandidateCorrupt)?;
+            let collision = local_collision_key(path.as_str());
+            if !collisions.insert(collision) {
+                return Err(ClientSyncError::InvalidRemoteResponse);
+            }
+            let previous = old.get(&node.node_id());
+            Ok(LocalNode::new(
+                library_id,
+                node.node_id(),
+                node.parent_node_id(),
+                path,
+                node.name().clone(),
+                node.kind(),
+                node.state(),
+                node.revision(),
+                node.current_version_id(),
+                node.content_length(),
+                node.content_sha256(),
+                previous.and_then(LocalNode::local_length),
+                previous.and_then(LocalNode::local_sha256),
+                previous.map_or(Sequence::new(0), LocalNode::bootstrap_generation),
+                previous.is_some_and(LocalNode::present),
+                previous
+                    .and_then(LocalNode::quarantine_relative_path)
+                    .cloned(),
+            ))
+        })
+        .collect()
+}
+
+fn resolve_rebaseline_path(
+    node_id: NodeId,
+    by_id: &BTreeMap<NodeId, &LogicalSnapshotNode>,
+    paths: &mut BTreeMap<NodeId, ManagedRelativePath>,
+    visiting: &mut BTreeSet<NodeId>,
+) -> Result<ManagedRelativePath, ClientSyncError> {
+    if let Some(path) = paths.get(&node_id) {
+        return Ok(path.clone());
+    }
+    if !visiting.insert(node_id) {
+        return Err(ClientSyncError::InvalidRemoteResponse);
+    }
+    let node = by_id
+        .get(&node_id)
+        .ok_or(ClientSyncError::InvalidRemoteResponse)?;
+    let path = match node.parent_node_id() {
+        None => ManagedRelativePath::root(),
+        Some(parent) => {
+            resolve_rebaseline_path(parent, by_id, paths, visiting)?.child(node.name().as_str())?
+        }
+    };
+    visiting.remove(&node_id);
+    paths.insert(node_id, path.clone());
+    Ok(path)
 }
 
 impl Drop for LocalStateStore {
@@ -4131,6 +5273,51 @@ fn decode_bootstrap(row: sqlx::sqlite::SqliteRow) -> Result<BootstrapRecord, Cli
     })
 }
 
+fn decode_rebaseline_candidate(
+    row: sqlx::sqlite::SqliteRow,
+) -> Result<RebaselineCandidateRecord, ClientSyncError> {
+    let state: String = row.try_get("state")?;
+    let state = match state.as_str() {
+        "FETCHING" => RebaselineCandidateState::Fetching,
+        "COMPLETE" => RebaselineCandidateState::Complete,
+        // v5 has no separate recovery-claim table. A FAILED candidate is
+        // reserved for the descriptor-less creation claim and is never a
+        // downloadable/activatable snapshot.
+        "FAILED" => RebaselineCandidateState::CreateClaim,
+        _ => return Err(ClientSyncError::CandidateCorrupt),
+    };
+    let candidate = RebaselineCandidateRecord {
+        snapshot_id: parse_id(row.try_get("snapshot_id")?)
+            .map_err(|_| ClientSyncError::CandidateCorrupt)?,
+        journal_epoch: sequence_from_i64(row.try_get("journal_epoch")?)
+            .map_err(|_| ClientSyncError::CandidateCorrupt)?,
+        resume_sequence: sequence_from_i64(row.try_get("resume_sequence")?)
+            .map_err(|_| ClientSyncError::CandidateCorrupt)?,
+        expected_count: optional_u64(row.try_get("expected_count")?)?
+            .ok_or(ClientSyncError::CandidateCorrupt)?,
+        received_count: optional_u64(row.try_get("received_count")?)?
+            .ok_or(ClientSyncError::CandidateCorrupt)?,
+        next_cursor: optional_evidence(row.try_get("next_cursor")?)
+            .map_err(|_| ClientSyncError::CandidateCorrupt)?,
+        terminal_fetched: row.try_get("terminal_fetched")?,
+        state,
+    };
+    // The descriptor-less create claim is the sole supported FAILED shape.
+    // Treat any other FAILED row as local durable-state corruption rather than
+    // discarding it and issuing an unrelated replacement snapshot.
+    if candidate.state == RebaselineCandidateState::CreateClaim
+        && (candidate.journal_epoch != Sequence::new(1)
+            || candidate.resume_sequence != Sequence::new(0)
+            || candidate.expected_count != 0
+            || candidate.received_count != 0
+            || candidate.next_cursor.is_some()
+            || candidate.terminal_fetched)
+    {
+        return Err(ClientSyncError::CandidateCorrupt);
+    }
+    Ok(candidate)
+}
+
 fn decode_snapshot_node(
     row: sqlx::sqlite::SqliteRow,
 ) -> Result<LogicalSnapshotNode, ClientSyncError> {
@@ -4533,6 +5720,396 @@ fn optional_hash(value: Option<Vec<u8>>) -> Result<Option<Sha256Digest>, ClientS
         .transpose()
 }
 
+async fn classify_rebaseline_conflicts_tx(
+    transaction: &mut Transaction<'_, Sqlite>,
+    library_id: LibraryId,
+    remote_epoch: Sequence,
+    remote_sequence: Sequence,
+    detected_at_ms: i64,
+) -> Result<(), ClientSyncError> {
+    let rows = sqlx::query(
+        "SELECT * FROM outbound_intents
+         WHERE library_id = ? AND state IN (
+             'PENDING','READY','PREPARING','UPLOADING','SUBMITTING',
+             'BLOCKED','NEEDS_REBASE_VALIDATION'
+         )
+         ORDER BY created_at_ms, intent_id LIMIT ?",
+    )
+    .bind(library_id.to_string())
+    .bind(i64::try_from(MAX_RECOVERY_ROWS + 1).map_err(|_| ClientSyncError::ResourceLimit)?)
+    .fetch_all(&mut **transaction)
+    .await?;
+    if rows.len() > MAX_RECOVERY_ROWS {
+        return Err(ClientSyncError::ResourceLimit);
+    }
+    for row in rows {
+        let intent = decode_outbound_intent(row)?;
+        let target = if let Some(node_id) = intent.node_id() {
+            sqlx::query("SELECT * FROM local_nodes WHERE library_id = ? AND node_id = ?")
+                .bind(library_id.to_string())
+                .bind(node_id.to_string())
+                .fetch_optional(&mut **transaction)
+                .await?
+                .map(decode_local_node)
+                .transpose()?
+        } else {
+            None
+        };
+        let parent = if let Some(parent_id) = intent.parent_node_id() {
+            sqlx::query("SELECT * FROM local_nodes WHERE library_id = ? AND node_id = ?")
+                .bind(library_id.to_string())
+                .bind(parent_id.to_string())
+                .fetch_optional(&mut **transaction)
+                .await?
+                .map(decode_local_node)
+                .transpose()?
+        } else {
+            None
+        };
+        let target_conflict = match (intent.node_id(), target.as_ref()) {
+            (Some(_), None) => Some((SyncConflictKind::RemoteMissing, None, None, None)),
+            (Some(_), Some(node)) if node.state() != NodeState::Active => Some((
+                SyncConflictKind::RemoteStateChanged,
+                Some(node.revision()),
+                Some(node.state()),
+                node.parent_node_id(),
+            )),
+            (Some(_), Some(node))
+                if intent
+                    .base_revision()
+                    .is_some_and(|base| base != node.revision()) =>
+            {
+                let kind = if intent.kind() == OutboundIntentKind::ModifyFileContent
+                    && intent.base_current_version_id() != node.current_version_id()
+                {
+                    SyncConflictKind::RemoteContentChanged
+                } else {
+                    SyncConflictKind::RemoteRevisionChanged
+                };
+                Some((
+                    kind,
+                    Some(node.revision()),
+                    Some(node.state()),
+                    node.parent_node_id(),
+                ))
+            }
+            _ => None,
+        };
+        let parent_conflict = match (intent.parent_node_id(), parent.as_ref()) {
+            (Some(_), None) => true,
+            (Some(_), Some(parent)) => {
+                parent.state() != NodeState::Active
+                    || parent.kind() != NodeKind::Directory
+                    || intent
+                        .base_parent_revision()
+                        .is_some_and(|base| base != parent.revision())
+            }
+            (None, _) => false,
+        };
+        let evidence = if let Some((kind, revision, state, remote_parent)) = target_conflict {
+            Some(ConflictEvidence {
+                conflict_id: SyncConflictId::new(),
+                kind,
+                node_id: intent.node_id(),
+                local_base_revision: intent.base_revision(),
+                remote_observed_revision: revision,
+                remote_observed_state: state,
+                remote_parent_node_id: remote_parent,
+                remote_epoch: Some(remote_epoch),
+                remote_sequence: Some(remote_sequence),
+            })
+        } else if parent_conflict {
+            Some(ConflictEvidence {
+                conflict_id: SyncConflictId::new(),
+                kind: SyncConflictKind::ParentChangedOrUnavailable,
+                node_id: intent.node_id().or(intent.parent_node_id()),
+                local_base_revision: intent.base_parent_revision(),
+                remote_observed_revision: parent.as_ref().map(LocalNode::revision),
+                remote_observed_state: parent.as_ref().map(LocalNode::state),
+                remote_parent_node_id: intent.parent_node_id(),
+                remote_epoch: Some(remote_epoch),
+                remote_sequence: Some(remote_sequence),
+            })
+        } else {
+            None
+        };
+        if let Some(evidence) = evidence {
+            record_conflict_tx(transaction, &intent, evidence, detected_at_ms, false).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn record_conflict_tx(
+    transaction: &mut Transaction<'_, Sqlite>,
+    intent: &OutboundIntent,
+    evidence: ConflictEvidence,
+    detected_at_ms: i64,
+    transition_intent: bool,
+) -> Result<SyncConflictRecord, ClientSyncError> {
+    sqlx::query(
+        "INSERT INTO sync_conflicts (
+             conflict_id, library_id, intent_id, node_id, kind,
+             local_base_revision, remote_observed_revision, remote_observed_state,
+             remote_parent_node_id, remote_epoch, remote_sequence, detected_at_ms, status
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNRESOLVED')
+         ON CONFLICT(intent_id) DO NOTHING",
+    )
+    .bind(evidence.conflict_id.to_string())
+    .bind(intent.library_id().to_string())
+    .bind(intent.intent_id().to_string())
+    .bind(evidence.node_id.map(|value| value.to_string()))
+    .bind(evidence.kind.as_str())
+    .bind(evidence.local_base_revision.map(revision_i64).transpose()?)
+    .bind(
+        evidence
+            .remote_observed_revision
+            .map(revision_i64)
+            .transpose()?,
+    )
+    .bind(evidence.remote_observed_state.map(node_state_as_str))
+    .bind(
+        evidence
+            .remote_parent_node_id
+            .map(|value| value.to_string()),
+    )
+    .bind(evidence.remote_epoch.map(sequence_i64).transpose()?)
+    .bind(evidence.remote_sequence.map(sequence_i64).transpose()?)
+    .bind(detected_at_ms)
+    .execute(&mut **transaction)
+    .await?;
+    let row = sqlx::query("SELECT * FROM sync_conflicts WHERE intent_id = ?")
+        .bind(intent.intent_id().to_string())
+        .fetch_one(&mut **transaction)
+        .await?;
+    let record = decode_sync_conflict(row)?;
+    if record.status() != SyncConflictStatus::Unresolved {
+        return Err(ClientSyncError::ConflictAlreadyResolved);
+    }
+    if transition_intent {
+        let changed = sqlx::query(
+            "UPDATE outbound_intents SET state = 'CONFLICT', updated_at_ms = ?
+             WHERE intent_id = ? AND state IN (
+                 'PENDING','READY','PREPARING','UPLOADING','SUBMITTING',
+                 'BLOCKED','NEEDS_REBASE_VALIDATION','CONFLICT'
+             )",
+        )
+        .bind(detected_at_ms)
+        .bind(intent.intent_id().to_string())
+        .execute(&mut **transaction)
+        .await?
+        .rows_affected();
+        if changed != 1 {
+            return Err(ClientSyncError::InvalidState);
+        }
+    }
+    Ok(record)
+}
+
+fn decode_sync_conflict(
+    row: sqlx::sqlite::SqliteRow,
+) -> Result<SyncConflictRecord, ClientSyncError> {
+    let optional_revision = |name| -> Result<Option<Revision>, ClientSyncError> {
+        row.try_get::<Option<i64>, _>(name)?
+            .map(|value| {
+                u64::try_from(value)
+                    .map(Revision::new)
+                    .map_err(|_| ClientSyncError::InvalidState)
+            })
+            .transpose()
+    };
+    let optional_sequence = |name| -> Result<Option<Sequence>, ClientSyncError> {
+        row.try_get::<Option<i64>, _>(name)?
+            .map(sequence_from_i64)
+            .transpose()
+    };
+    let optional_node = |name| -> Result<Option<NodeId>, ClientSyncError> {
+        optional_id(row.try_get::<Option<String>, _>(name)?)
+    };
+    let status: SyncConflictStatus = row
+        .try_get::<String, _>("status")?
+        .parse()
+        .map_err(|_| ClientSyncError::InvalidState)?;
+    let resolution = row
+        .try_get::<Option<String>, _>("resolution")?
+        .map(|value| value.parse())
+        .transpose()?;
+    let remote_observed_state = row
+        .try_get::<Option<String>, _>("remote_observed_state")?
+        .map(|value| parse_node_state(&value))
+        .transpose()?;
+    Ok(SyncConflictRecord {
+        conflict_id: parse_id(&row.try_get::<String, _>("conflict_id")?)?,
+        library_id: parse_id(&row.try_get::<String, _>("library_id")?)?,
+        intent_id: parse_id(&row.try_get::<String, _>("intent_id")?)?,
+        node_id: optional_node("node_id")?,
+        kind: row.try_get::<String, _>("kind")?.parse()?,
+        local_base_revision: optional_revision("local_base_revision")?,
+        remote_observed_revision: optional_revision("remote_observed_revision")?,
+        remote_observed_state,
+        remote_parent_node_id: optional_node("remote_parent_node_id")?,
+        remote_epoch: optional_sequence("remote_epoch")?,
+        remote_sequence: optional_sequence("remote_sequence")?,
+        detected_at_ms: u64_from_i64(row.try_get("detected_at_ms")?)?,
+        status,
+        resolution_id: optional_id(row.try_get("resolution_id")?)?,
+        resolution,
+        resolved_at_ms: row
+            .try_get::<Option<i64>, _>("resolved_at_ms")?
+            .map(u64_from_i64)
+            .transpose()?,
+        replacement_intent_id: optional_id(row.try_get("replacement_intent_id")?)?,
+    })
+}
+
+async fn replacement_intent_tx(
+    transaction: &mut Transaction<'_, Sqlite>,
+    original: &OutboundIntent,
+    now: i64,
+) -> Result<OutboundIntent, ClientSyncError> {
+    let (epoch, applied): (i64, i64) =
+        sqlx::query_as("SELECT journal_epoch, applied_sequence FROM replicas WHERE library_id = ?")
+            .bind(original.library_id().to_string())
+            .fetch_optional(&mut **transaction)
+            .await?
+            .ok_or(ClientSyncError::InvalidState)?;
+    let current_node = if let Some(node_id) = original.node_id() {
+        let row = sqlx::query("SELECT * FROM local_nodes WHERE library_id = ? AND node_id = ?")
+            .bind(original.library_id().to_string())
+            .bind(node_id.to_string())
+            .fetch_optional(&mut **transaction)
+            .await?
+            .ok_or(ClientSyncError::ResolutionNotApplicable)?;
+        let node = decode_local_node(row)?;
+        if node.state() != NodeState::Active {
+            return Err(ClientSyncError::ResolutionNotApplicable);
+        }
+        Some(node)
+    } else {
+        None
+    };
+    let current_parent = if let Some(parent_id) = original.parent_node_id() {
+        let row = sqlx::query("SELECT * FROM local_nodes WHERE library_id = ? AND node_id = ?")
+            .bind(original.library_id().to_string())
+            .bind(parent_id.to_string())
+            .fetch_optional(&mut **transaction)
+            .await?
+            .ok_or(ClientSyncError::ResolutionNotApplicable)?;
+        let parent = decode_local_node(row)?;
+        if parent.state() != NodeState::Active || parent.kind() != NodeKind::Directory {
+            return Err(ClientSyncError::ResolutionNotApplicable);
+        }
+        Some(parent)
+    } else {
+        None
+    };
+    if original.kind() == OutboundIntentKind::ModifyFileContent {
+        let source_exists: Option<i64> =
+            sqlx::query_scalar("SELECT 1 FROM outbound_upload_sessions WHERE intent_id = ?")
+                .bind(original.intent_id().to_string())
+                .fetch_optional(&mut **transaction)
+                .await?;
+        if source_exists.is_none() {
+            return Err(ClientSyncError::ResolutionNotApplicable);
+        }
+    }
+    let replacement = OutboundIntent::new(
+        original.library_id(),
+        original.node_id(),
+        original.parent_node_id(),
+        original.kind(),
+        original.observed_relative_path().clone(),
+        original.old_relative_path().cloned(),
+        original.observed_fingerprint(),
+        sequence_from_i64(epoch)?,
+        sequence_from_i64(applied)?,
+        current_node.as_ref().map(LocalNode::revision),
+        current_node
+            .as_ref()
+            .and_then(|node| node.current_version_id()),
+        current_parent.as_ref().map(LocalNode::revision),
+    )?;
+    insert_outbound_intent_tx(transaction, &replacement, now).await?;
+    if matches!(
+        original.kind(),
+        OutboundIntentKind::CreateFile | OutboundIntentKind::ModifyFileContent
+    ) {
+        let copied = sqlx::query(
+            "INSERT INTO outbound_upload_sessions (
+                 intent_id, upload_session_id, operation, staging_relative_path,
+                 expected_length, expected_sha256, acknowledged_offset, state,
+                 created_at_ms, updated_at_ms
+             )
+             SELECT ?, NULL, operation, staging_relative_path, expected_length,
+                    expected_sha256, 0, 'STAGED', ?, ?
+             FROM outbound_upload_sessions WHERE intent_id = ?",
+        )
+        .bind(replacement.intent_id().to_string())
+        .bind(now)
+        .bind(now)
+        .bind(original.intent_id().to_string())
+        .execute(&mut **transaction)
+        .await?
+        .rows_affected();
+        if copied != 1 {
+            return Err(ClientSyncError::ResolutionNotApplicable);
+        }
+    }
+    Ok(replacement)
+}
+
+async fn insert_outbound_intent_tx(
+    transaction: &mut Transaction<'_, Sqlite>,
+    intent: &OutboundIntent,
+    now: i64,
+) -> Result<(), ClientSyncError> {
+    sqlx::query(
+        "INSERT INTO outbound_intents (
+             intent_id, library_id, node_id, parent_node_id, intent_kind, state,
+             observed_relative_path, old_relative_path, observed_kind, observed_length,
+             observed_sha256, base_epoch, base_applied_sequence, base_revision,
+             base_current_version_id, base_parent_revision, dedupe_version, dedupe_sha256,
+             created_at_ms, updated_at_ms
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
+    )
+    .bind(intent.intent_id().to_string())
+    .bind(intent.library_id().to_string())
+    .bind(intent.node_id().map(|value| value.to_string()))
+    .bind(intent.parent_node_id().map(|value| value.to_string()))
+    .bind(intent.kind().as_str())
+    .bind(intent.state().as_str())
+    .bind(intent.observed_relative_path().as_str())
+    .bind(intent.old_relative_path().map(ManagedRelativePath::as_str))
+    .bind(intent.observed_fingerprint().map(fingerprint_kind_as_str))
+    .bind(optional_fingerprint_length(intent.observed_fingerprint())?)
+    .bind(
+        intent
+            .observed_fingerprint()
+            .and_then(LocalFingerprint::sha256)
+            .map(|value| value.into_bytes().to_vec()),
+    )
+    .bind(sequence_i64(intent.base_epoch())?)
+    .bind(sequence_i64(intent.base_applied_sequence())?)
+    .bind(intent.base_revision().map(revision_i64).transpose()?)
+    .bind(
+        intent
+            .base_current_version_id()
+            .map(|value| value.to_string()),
+    )
+    .bind(
+        intent
+            .base_parent_revision()
+            .map(revision_i64)
+            .transpose()?,
+    )
+    .bind(intent.dedupe_sha256().into_bytes().to_vec())
+    .bind(now)
+    .bind(now)
+    .execute(&mut **transaction)
+    .await?;
+    Ok(())
+}
+
 fn optional_evidence(value: Option<Vec<u8>>) -> Result<Option<OpaqueEvidence>, ClientSyncError> {
     value.map(OpaqueEvidence::new).transpose()
 }
@@ -4614,6 +6191,75 @@ mod tests {
         );
         reopened.close_pool().await;
         drop(reopened);
+        remove_dir_all_bounded(&directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn conflict_listing_is_keyset_bounded_for_two_thousand_rows() {
+        let (path, directory) = temporary_database("conflict-pages");
+        let store = LocalStateStore::open(&LocalStateConfig::new(&path))
+            .await
+            .unwrap();
+        let replica_scope = scope();
+        store
+            .bind_replica(replica_scope, RootBindingId::new())
+            .await
+            .unwrap();
+        let mut transaction = store.pool.begin().await.unwrap();
+        for index in 0..2_000_i64 {
+            let intent_id = uuid::Uuid::now_v7();
+            let conflict_id = uuid::Uuid::now_v7();
+            let mut dedupe = Vec::with_capacity(32);
+            dedupe.extend_from_slice(intent_id.as_bytes());
+            dedupe.extend_from_slice(intent_id.as_bytes());
+            sqlx::query(
+                "INSERT INTO outbound_intents (
+                     intent_id, library_id, intent_kind, state, observed_relative_path,
+                     base_epoch, base_applied_sequence, dedupe_version, dedupe_sha256,
+                     created_at_ms, updated_at_ms
+                 ) VALUES (?, ?, 'CREATE_DIRECTORY', 'CONFLICT', ?, 1, 1, 1, ?, ?, ?)",
+            )
+            .bind(intent_id.to_string())
+            .bind(replica_scope.library_id().to_string())
+            .bind(format!("conflict-{index}"))
+            .bind(dedupe)
+            .bind(index)
+            .bind(index)
+            .execute(&mut *transaction)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO sync_conflicts (
+                     conflict_id, library_id, intent_id, kind, detected_at_ms, status
+                 ) VALUES (?, ?, ?, 'REMOTE_STATE_CHANGED', ?, 'UNRESOLVED')",
+            )
+            .bind(conflict_id.to_string())
+            .bind(replica_scope.library_id().to_string())
+            .bind(intent_id.to_string())
+            .bind(index)
+            .execute(&mut *transaction)
+            .await
+            .unwrap();
+        }
+        transaction.commit().await.unwrap();
+
+        let mut cursor = None;
+        let mut seen = 0_usize;
+        loop {
+            let page = store
+                .list_unresolved_conflicts(replica_scope.library_id(), cursor, None)
+                .await
+                .unwrap();
+            assert!(page.items().len() <= crate::DEFAULT_CONFLICT_PAGE_LIMIT as usize);
+            seen += page.items().len();
+            cursor = page.next_cursor();
+            if cursor.is_none() {
+                break;
+            }
+        }
+        assert_eq!(seen, 2_000);
+        store.close_pool().await;
+        drop(store);
         remove_dir_all_bounded(&directory).unwrap();
     }
 

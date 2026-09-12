@@ -45,6 +45,12 @@ một tệp để trạng thái và hệ quả không bị lệch giữa hai b�
 | [024](ADR-024-linux-package-lifecycle-and-data-preserving-uninstall.md) | Linux package lifecycle and data-preserving uninstall / Vòng đời package Linux và uninstall bảo toàn dữ liệu | Accepted / Chấp thuận — LOCKED Gen-1 |
 | [025](ADR-025-linux-runtime-credential-delivery.md) | Linux runtime credential delivery via systemd LoadCredential / Phân phối credential runtime Linux qua systemd LoadCredential | Accepted / Chấp thuận — LOCKED Gen-1 |
 | [026](ADR-026-systemd-sandbox-hardening.md) | Systemd sandbox hardening for scheduled-maintenance service / Vỏ bọc systemd cho dịch vụ bảo trì lên lịch | Accepted / Chấp thuận — LOCKED Gen-1 |
+| [027](ADR-027-sync-rebaseline-snapshot-consistency.md) | Sync rebaseline snapshot consistency boundary / Boundary nhất quán snapshot rebaseline sync | Accepted / Chấp thuận — LOCKED |
+| [028](ADR-028-durable-rebaseline-snapshot-materialization.md) | Durable rebaseline snapshot materialization and paging / Materialize và phân trang snapshot rebaseline durable | Accepted / Chấp thuận — LOCKED |
+| [029](ADR-029-client-rebaseline-atomic-apply.md) | Client rebaseline atomic apply and outbound-intent preservation / Apply rebaseline client nguyên tử và bảo toàn outbound intent | Accepted / Chấp thuận — LOCKED |
+| [030](ADR-030-journal-retention-floor-and-durable-rebaseline-handoff-proofs.md) | Journal retention floor and durable rebaseline handoff proofs / Floor retention journal và proof handoff rebaseline bền vững | Accepted / Chấp thuận — LOCKED |
+| [031](ADR-031-automatic-retained-cursor-rebaseline-convergence.md) | Automatic retained-cursor rebaseline convergence / Hội tụ rebaseline tự động khi retained-cursor không còn hợp lệ | Accepted / Chấp thuận — LOCKED |
+| [032](ADR-032-deterministic-sync-conflict-preservation.md) | Deterministic sync conflict preservation and explicit resolution / Bảo toàn xung đột đồng bộ tất định và phân giải tường minh | Accepted / Chấp thuận — LOCKED |
 
 ## Process / Quy trình
 

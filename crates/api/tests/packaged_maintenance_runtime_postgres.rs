@@ -123,7 +123,7 @@ async fn new_db(label: &str) -> (String, DatabasePool, PgPool) {
         .await
         .expect("migrations must apply");
     assert!(status.is_current());
-    assert_eq!(status.applied_versions().len(), 34);
+    assert_eq!(status.applied_versions().len(), 36);
     let inspection = PgPool::connect(&url)
         .await
         .expect("inspection connection must succeed");

@@ -1,17 +1,18 @@
 use std::{collections::BTreeSet, sync::Arc};
 
 use synveil_core::{
-    ChangeKind, LogicalSnapshotNode, NodeId, NodeKind, NodeState, Sequence, SyncBootstrapState,
+    ChangeKind, LogicalSnapshotNode, NodeId, NodeKind, NodeState, RebaselineSnapshotId, Sequence,
+    SyncBootstrapState,
 };
 use uuid::Uuid;
 
-use crate::state::StoredChange;
+use crate::state::{RebaselineHandoffFinalizeOutcome, RebaselineHandoffRecord, StoredChange};
 use crate::{
     BootstrapRecord, ClientSyncError, EngineStatus, LocalFingerprint, LocalIssueKind, LocalNode,
     LocalObjectKind, LocalOperation, LocalOperationKind, LocalOperationState, LocalReplica,
-    LocalStateStore, ManagedRelativePath, RecoveryClassification, RemoteCheckpoint,
-    RemoteErrorKind, ReplicaScope, ServerProfileId, SyncRemote, local_collision_key,
-    validate_logical_name,
+    LocalStateStore, ManagedRelativePath, RebaselineHandoffOutcome, RecoveryClassification,
+    RemoteCheckpoint, RemoteError, RemoteErrorKind, ReplicaScope, ServerProfileId, SyncRemote,
+    local_collision_key, validate_logical_name,
 };
 
 const MAX_BOOTSTRAP_ITEMS: u64 = 1_000_000;
@@ -59,6 +60,11 @@ pub enum SyncOutcome {
     Progressed,
     MoreAvailable,
     BootstrapRequired,
+    /// The server has authoritatively rejected the retained cursor/epoch for
+    /// ordinary incremental processing. This outcome is surfaced only by the
+    /// convergence-facing operation; legacy `synchronize_once` retains its
+    /// established bootstrap behavior.
+    RebaselineRequired,
     Blocked,
     Offline,
 }
@@ -76,6 +82,7 @@ pub enum FailurePoint {
     AfterBootstrapPagePersisted,
     AfterBootstrapLocalComplete,
     AfterServerBootstrapCompleteBeforeLocalState,
+    AfterServerRebaselineHandoffBeforeLocalState,
 }
 
 pub trait FailureInjector: Send + Sync {
@@ -177,8 +184,30 @@ impl InboundSyncEngine {
     /// Advance at most one bounded remote page or one bounded local bootstrap
     /// batch. Calls are safe to repeat after process restart.
     pub async fn synchronize_once(&self) -> Result<SyncOutcome, ClientSyncError> {
-        let _guard = self.state.lock_replica_writer().await;
-        match self.synchronize_once_inner().await {
+        self.synchronize_once_with_rebaseline_policy(false).await
+    }
+
+    /// Run one bounded ordinary incremental operation while surfacing the
+    /// server's canonical retained-history/epoch invalidation instead of
+    /// beginning the legacy bootstrap flow. This operation makes no snapshot
+    /// creation request and never clears a local cursor; Prompt 87 owns the
+    /// subsequent durable-snapshot convergence decision.
+    pub async fn synchronize_incremental_once(&self) -> Result<SyncOutcome, ClientSyncError> {
+        self.synchronize_once_with_rebaseline_policy(true).await
+    }
+
+    async fn synchronize_once_with_rebaseline_policy(
+        &self,
+        surface_rebaseline_required: bool,
+    ) -> Result<SyncOutcome, ClientSyncError> {
+        let _guard = self
+            .state
+            .lock_replica_writer(self.scope.library_id())
+            .await;
+        match self
+            .synchronize_once_inner(surface_rebaseline_required)
+            .await
+        {
             Ok(outcome) => Ok(outcome),
             Err(ClientSyncError::Remote(error))
                 if matches!(
@@ -204,8 +233,89 @@ impl InboundSyncEngine {
         }
     }
 
-    async fn synchronize_once_inner(&self) -> Result<SyncOutcome, ClientSyncError> {
+    /// Complete the server checkpoint and local cursor handoff for the durable
+    /// snapshot activated by Prompt 84. The network request is deliberately
+    /// outside the local writer critical section so outbound intent creation
+    /// remains available while the server transaction is in flight. Only the
+    /// final local cursor/marker transition is serialized and transactional.
+    pub async fn complete_rebaseline_handoff(
+        &self,
+        snapshot_id: RebaselineSnapshotId,
+    ) -> Result<RebaselineHandoffOutcome, ClientSyncError> {
         self.validate_binding().await?;
+        let Some(pending) = self
+            .state
+            .pending_rebaseline_handoff(self.scope.library_id())
+            .await?
+        else {
+            return Ok(RebaselineHandoffOutcome::AlreadyComplete);
+        };
+        if pending.snapshot_id() != snapshot_id || pending.library_id() != self.scope.library_id() {
+            return Err(ClientSyncError::HandoffResponseMismatch);
+        }
+
+        let confirmation = self
+            .remote
+            .complete_rebaseline_handoff(self.scope, snapshot_id)
+            .await
+            .map_err(map_handoff_remote_error)?;
+        if confirmation.snapshot_id() != pending.snapshot_id()
+            || confirmation.library_id() != self.scope.library_id()
+        {
+            return Err(ClientSyncError::HandoffResponseMismatch);
+        }
+        let checkpoint = confirmation.checkpoint();
+        if checkpoint.scope() != self.scope
+            || checkpoint.epoch().get() > i64::MAX as u64
+            || checkpoint.acknowledged_sequence().get() > i64::MAX as u64
+        {
+            return Err(ClientSyncError::HandoffResponseMismatch);
+        }
+        if checkpoint.epoch() != pending.journal_epoch()
+            || checkpoint.acknowledged_sequence() != pending.resume_sequence()
+        {
+            return Err(ClientSyncError::HandoffResponseMismatch);
+        }
+        self.failures
+            .check(FailurePoint::AfterServerRebaselineHandoffBeforeLocalState)?;
+
+        let _guard = self
+            .state
+            .lock_replica_writer(self.scope.library_id())
+            .await;
+        let expected = RebaselineHandoffRecord::new(
+            pending.snapshot_id(),
+            pending.library_id(),
+            pending.journal_epoch(),
+            pending.resume_sequence(),
+        );
+        match self
+            .state
+            .finalize_rebaseline_handoff(self.scope, expected)
+            .await?
+        {
+            RebaselineHandoffFinalizeOutcome::Completed => Ok(RebaselineHandoffOutcome::Completed),
+            RebaselineHandoffFinalizeOutcome::AlreadyComplete => {
+                Ok(RebaselineHandoffOutcome::AlreadyComplete)
+            }
+        }
+    }
+
+    async fn synchronize_once_inner(
+        &self,
+        surface_rebaseline_required: bool,
+    ) -> Result<SyncOutcome, ClientSyncError> {
+        self.validate_binding().await?;
+        // Prompt 84 deliberately leaves checkpoint handoff to Prompt 85.  An
+        // old incremental cursor therefore must never be used over the newly
+        // activated remote base.
+        if self
+            .state
+            .rebaseline_handoff_pending(self.scope.library_id())
+            .await?
+        {
+            return Err(ClientSyncError::RebaselinePendingHandoff);
+        }
         if !self
             .state
             .unresolved_issues(self.scope.library_id())
@@ -227,6 +337,22 @@ impl InboundSyncEngine {
             .await?
             .ok_or(ClientSyncError::InvalidState)?;
         if replica.root_node_id().is_none() {
+            // A fresh replica ordinarily starts the legacy bootstrap flow.
+            // The convergence-facing entry point makes one narrow exception:
+            // ask the authoritative server whether that no-cursor state is
+            // still usable before creating any bootstrap state locally.  A
+            // retained-floor/epoch rejection is owned by Prompt 87, whereas a
+            // valid checkpoint deliberately retains the established bootstrap
+            // behavior.  No local cursor is reset or inferred here.
+            if surface_rebaseline_required {
+                match self.remote.get_checkpoint(self.scope).await {
+                    Ok(checkpoint) => validate_checkpoint(self.scope, checkpoint)?,
+                    Err(error) if error.kind() == RemoteErrorKind::RebaselineRequired => {
+                        return Ok(SyncOutcome::RebaselineRequired);
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
             self.begin_bootstrap().await?;
             return Ok(SyncOutcome::BootstrapRequired);
         }
@@ -251,6 +377,9 @@ impl InboundSyncEngine {
         let checkpoint = match self.remote.get_checkpoint(self.scope).await {
             Ok(checkpoint) => checkpoint,
             Err(error) if error.kind() == RemoteErrorKind::RebaselineRequired => {
+                if surface_rebaseline_required {
+                    return Ok(SyncOutcome::RebaselineRequired);
+                }
                 self.begin_bootstrap().await?;
                 return Ok(SyncOutcome::BootstrapRequired);
             }
@@ -258,6 +387,9 @@ impl InboundSyncEngine {
         };
         validate_checkpoint(self.scope, checkpoint)?;
         if checkpoint.epoch() != replica.journal_epoch() {
+            if surface_rebaseline_required {
+                return Ok(SyncOutcome::RebaselineRequired);
+            }
             self.begin_bootstrap().await?;
             return Ok(SyncOutcome::BootstrapRequired);
         }
@@ -274,6 +406,9 @@ impl InboundSyncEngine {
         {
             Ok(page) => page,
             Err(error) if error.kind() == RemoteErrorKind::RebaselineRequired => {
+                if surface_rebaseline_required {
+                    return Ok(SyncOutcome::RebaselineRequired);
+                }
                 self.begin_bootstrap().await?;
                 return Ok(SyncOutcome::BootstrapRequired);
             }
@@ -1562,6 +1697,18 @@ impl InboundSyncEngine {
                 .await);
         }
         if actual != Some(expected) {
+            if node.kind() == NodeKind::File
+                && let Some(staged) = self
+                    .state
+                    .durable_unresolved_content_conflict_source(node.library_id(), node.node_id())
+                    .await?
+            {
+                let durable =
+                    LocalFingerprint::file(staged.expected_length(), staged.expected_sha256());
+                if self.replica.inspect(staged.staging_relative_path())? == Some(durable) {
+                    return Ok(());
+                }
+            }
             return Err(self
                 .block(
                     LocalIssueKind::LocalDivergence,
@@ -1892,7 +2039,10 @@ impl InboundSyncEngine {
     /// remote work. Deterministic completions advance to `FILESYSTEM_APPLIED`;
     /// ambiguity becomes a durable blocker.
     pub async fn recover_startup(&self) -> Result<(), ClientSyncError> {
-        let _guard = self.state.lock_replica_writer().await;
+        let _guard = self
+            .state
+            .lock_replica_writer(self.scope.library_id())
+            .await;
         self.recover_startup_inner().await
     }
 
@@ -2115,6 +2265,30 @@ fn validate_checkpoint(
         return Err(ClientSyncError::InvalidRemoteResponse);
     }
     Ok(())
+}
+
+fn map_handoff_remote_error(error: RemoteError) -> ClientSyncError {
+    match error.kind() {
+        RemoteErrorKind::NotFound => ClientSyncError::HandoffSnapshotUnavailable,
+        RemoteErrorKind::CheckpointConflict => ClientSyncError::HandoffCheckpointConflict,
+        RemoteErrorKind::Offline
+        | RemoteErrorKind::Unavailable
+        | RemoteErrorKind::Rejected
+        | RemoteErrorKind::InvalidEvidence
+        | RemoteErrorKind::RateLimited
+        | RemoteErrorKind::Internal
+        | RemoteErrorKind::Protocol
+        | RemoteErrorKind::Tls
+        | RemoteErrorKind::Timeout
+        | RemoteErrorKind::BodyLimit
+        | RemoteErrorKind::Redirect
+        | RemoteErrorKind::RebaselineRequired
+        | RemoteErrorKind::Conflict
+        | RemoteErrorKind::Integrity => ClientSyncError::HandoffTransport,
+        RemoteErrorKind::AuthRequired
+        | RemoteErrorKind::DeviceRevoked
+        | RemoteErrorKind::Forbidden => ClientSyncError::Remote(error),
+    }
 }
 
 fn expected_fingerprint(node: &LocalNode) -> Option<LocalFingerprint> {

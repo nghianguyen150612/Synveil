@@ -450,6 +450,25 @@ Vì vậy không logical mutation đã commit nào vắng ở cả snapshot lẫ
 theo. Expiry, replacement generation, epoch rotation hay retention invalidation
 đều fail closed và buộc bootstrap mới.
 
+### Durable HTTP rebaseline snapshot artifact
+
+Durable snapshot transport riêng expose đúng ba operation:
+
+| Method và path | Trách nhiệm | Ranh giới |
+|---|---|---|
+| `POST /libraries/{library_id}/rebaseline-snapshots` | Tạo một logical artifact bất biến và trả descriptor cùng `Location`. | Owner authenticated; browser cần CSRF hoặc device bearer đã authenticate thật; body rỗng có bound nghiêm ngặt; tối đa 8 artifact active mỗi owner/Library; admission map thành `429 rate_limited`. |
+| `GET /rebaseline-snapshots/{snapshot_id}` | Đọc descriptor bất biến theo scope owner. | Owner khác bị conceal thành `404`; owner hợp lệ thấy artifact hết hạn là `410`. |
+| `GET /rebaseline-snapshots/{snapshot_id}/entries` | Đọc page keyset bất biến theo Node ID có bound. | Cùng rule owner/expiry; mặc định 256, tối đa 1000 entry; private/no-store. |
+
+Handler chỉ giữ authentication, parse, DTO và status mapping. Metadata service
+giữ fixed cut, materialize entry, expiry, owner scope và durable creation
+admission query. Admission chạy dưới transaction guard theo Library hiện có,
+đếm row với `expires_at > observed_at`, và khi reject thì không commit artifact
+hay sync progress nào. Phase này không có endpoint lifecycle thứ tư, client
+snapshot apply, cleanup background, idempotency layer hay global serialization.
+Row expired được giữ cho retention decision về sau; successful response bị mất
+thì duplicate bị bound nhưng không được biến thành idempotent.
+
 ## Error contract
 
 Mọi non-success JSON response dùng:

@@ -4,8 +4,9 @@ use async_trait::async_trait;
 use futures_core::Stream;
 use synveil_core::{
     ChangeEvent, ChangeEventId, ClientMutationId, ClientMutationRequest, DeviceId, FileVersionId,
-    LibraryId, LogicalSnapshotNode, NodeId, OutboundIntentId, Revision, Sequence, Sha256Digest,
-    SyncBootstrap, SyncBootstrapId, SyncConflictId, UploadSessionId, UploadSessionState, UserId,
+    LibraryId, LogicalSnapshotNode, NodeId, NodeState, OutboundIntentId, RebaselineSnapshotId,
+    Revision, Sequence, Sha256Digest, SyncBootstrap, SyncBootstrapId, SyncConflictId,
+    UploadSessionId, UploadSessionState, UserId,
 };
 
 use crate::{ClientSyncError, MAX_OPAQUE_EVIDENCE_BYTES, MAX_PAGE_ITEMS};
@@ -107,6 +108,47 @@ impl RemoteCheckpoint {
     #[must_use]
     pub const fn acknowledged_sequence(self) -> Sequence {
         self.acknowledged_sequence
+    }
+}
+
+/// Transport-neutral confirmation returned by the durable snapshot handoff.
+/// The HTTP adapter validates the response's snapshot/library identity before
+/// constructing this value; the engine then compares the checkpoint against
+/// its locally persisted `AppliedPendingHandoff` marker.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RebaselineHandoffConfirmation {
+    snapshot_id: RebaselineSnapshotId,
+    library_id: LibraryId,
+    checkpoint: RemoteCheckpoint,
+}
+
+impl RebaselineHandoffConfirmation {
+    #[must_use]
+    pub const fn new(
+        snapshot_id: RebaselineSnapshotId,
+        library_id: LibraryId,
+        checkpoint: RemoteCheckpoint,
+    ) -> Self {
+        Self {
+            snapshot_id,
+            library_id,
+            checkpoint,
+        }
+    }
+
+    #[must_use]
+    pub const fn snapshot_id(self) -> RebaselineSnapshotId {
+        self.snapshot_id
+    }
+
+    #[must_use]
+    pub const fn library_id(self) -> LibraryId {
+        self.library_id
+    }
+
+    #[must_use]
+    pub const fn checkpoint(self) -> RemoteCheckpoint {
+        self.checkpoint
     }
 }
 
@@ -386,6 +428,13 @@ pub struct RemoteMutationConflict {
     conflict_id: SyncConflictId,
     reason: String,
     replayed: bool,
+    resource_id: Option<NodeId>,
+    expected_revision: Option<Revision>,
+    current_revision: Option<Revision>,
+    current_state: Option<NodeState>,
+    current_parent_id: Option<NodeId>,
+    server_epoch: Option<Sequence>,
+    server_sequence: Option<Sequence>,
 }
 
 impl RemoteMutationConflict {
@@ -407,7 +456,38 @@ impl RemoteMutationConflict {
             conflict_id,
             reason,
             replayed,
+            resource_id: None,
+            expected_revision: None,
+            current_revision: None,
+            current_state: None,
+            current_parent_id: None,
+            server_epoch: None,
+            server_sequence: None,
         })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_evidence(
+        conflict_id: SyncConflictId,
+        reason: impl Into<String>,
+        replayed: bool,
+        resource_id: NodeId,
+        expected_revision: Option<Revision>,
+        current_revision: Option<Revision>,
+        current_state: Option<NodeState>,
+        current_parent_id: Option<NodeId>,
+        server_epoch: Sequence,
+        server_sequence: Sequence,
+    ) -> Result<Self, ClientSyncError> {
+        let mut conflict = Self::new(conflict_id, reason, replayed)?;
+        conflict.resource_id = Some(resource_id);
+        conflict.expected_revision = expected_revision;
+        conflict.current_revision = current_revision;
+        conflict.current_state = current_state;
+        conflict.current_parent_id = current_parent_id;
+        conflict.server_epoch = Some(server_epoch);
+        conflict.server_sequence = Some(server_sequence);
+        Ok(conflict)
     }
 
     #[must_use]
@@ -423,6 +503,41 @@ impl RemoteMutationConflict {
     #[must_use]
     pub const fn replayed(&self) -> bool {
         self.replayed
+    }
+
+    #[must_use]
+    pub const fn resource_id(&self) -> Option<NodeId> {
+        self.resource_id
+    }
+
+    #[must_use]
+    pub const fn expected_revision(&self) -> Option<Revision> {
+        self.expected_revision
+    }
+
+    #[must_use]
+    pub const fn current_revision(&self) -> Option<Revision> {
+        self.current_revision
+    }
+
+    #[must_use]
+    pub const fn current_state(&self) -> Option<NodeState> {
+        self.current_state
+    }
+
+    #[must_use]
+    pub const fn current_parent_id(&self) -> Option<NodeId> {
+        self.current_parent_id
+    }
+
+    #[must_use]
+    pub const fn server_epoch(&self) -> Option<Sequence> {
+        self.server_epoch
+    }
+
+    #[must_use]
+    pub const fn server_sequence(&self) -> Option<Sequence> {
+        self.server_sequence
     }
 }
 
@@ -455,6 +570,7 @@ pub struct UploadSessionStatus {
     expected_sha256: Option<Sha256Digest>,
     received_bytes: u64,
     completion: Option<UploadCompletion>,
+    version_conflict: bool,
 }
 
 impl UploadSessionStatus {
@@ -477,7 +593,14 @@ impl UploadSessionStatus {
             expected_sha256,
             received_bytes,
             completion,
+            version_conflict: false,
         }
+    }
+
+    #[must_use]
+    pub const fn with_version_conflict(mut self, version_conflict: bool) -> Self {
+        self.version_conflict = version_conflict;
+        self
     }
 
     #[must_use]
@@ -513,6 +636,11 @@ impl UploadSessionStatus {
     #[must_use]
     pub const fn completion(&self) -> Option<&UploadCompletion> {
         self.completion.as_ref()
+    }
+
+    #[must_use]
+    pub const fn is_version_conflict(&self) -> bool {
+        self.version_conflict
     }
 }
 
@@ -646,6 +774,7 @@ pub enum RemoteErrorKind {
     DeviceRevoked,
     Forbidden,
     CheckpointConflict,
+    Conflict,
     InvalidEvidence,
     RateLimited,
     Internal,
@@ -659,17 +788,34 @@ pub enum RemoteErrorKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RemoteError {
     kind: RemoteErrorKind,
+    current_revision: Option<Revision>,
 }
 
 impl RemoteError {
     #[must_use]
     pub const fn new(kind: RemoteErrorKind) -> Self {
-        Self { kind }
+        Self {
+            kind,
+            current_revision: None,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_current_revision(kind: RemoteErrorKind, current_revision: Revision) -> Self {
+        Self {
+            kind,
+            current_revision: Some(current_revision),
+        }
     }
 
     #[must_use]
     pub const fn kind(self) -> RemoteErrorKind {
         self.kind
+    }
+
+    #[must_use]
+    pub const fn current_revision(self) -> Option<Revision> {
+        self.current_revision
     }
 
     #[must_use]
@@ -685,6 +831,7 @@ impl RemoteError {
             RemoteErrorKind::DeviceRevoked => "REMOTE_DEVICE_REVOKED",
             RemoteErrorKind::Forbidden => "REMOTE_PERMISSION_DENIED",
             RemoteErrorKind::CheckpointConflict => "REMOTE_CHECKPOINT_CONFLICT",
+            RemoteErrorKind::Conflict => "REMOTE_STATE_CONFLICT",
             RemoteErrorKind::InvalidEvidence => "REMOTE_EVIDENCE_INVALID",
             RemoteErrorKind::RateLimited => "REMOTE_RATE_LIMITED",
             RemoteErrorKind::Internal => "REMOTE_INTERNAL_ERROR",
@@ -749,6 +896,17 @@ pub trait SyncRemote: Send + Sync {
         scope: ReplicaScope,
         evidence: &OpaqueEvidence,
     ) -> Result<RemoteCheckpoint, RemoteError>;
+
+    /// Complete the durable snapshot-to-checkpoint handoff. The boundary is
+    /// intentionally absent from this port: the server derives it from its
+    /// authenticated owner-scoped snapshot header.
+    async fn complete_rebaseline_handoff(
+        &self,
+        _scope: ReplicaScope,
+        _snapshot_id: RebaselineSnapshotId,
+    ) -> Result<RebaselineHandoffConfirmation, RemoteError> {
+        Err(RemoteError::new(RemoteErrorKind::Forbidden))
+    }
 
     async fn start_rebaseline(&self, scope: ReplicaScope) -> Result<SyncBootstrap, RemoteError>;
 

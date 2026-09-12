@@ -341,7 +341,7 @@ fn portable_core_has_no_systemd_sandbox_contamination() {
 }
 
 #[test]
-fn hardening_adds_no_migrations() {
+fn historical_hardening_scope_remains_unchanged_with_current_migration_count() {
     let dir = repo_root().join("migrations");
     let mut sql_count = 0;
     for entry in fs::read_dir(&dir).expect("read migrations") {
@@ -352,7 +352,7 @@ fn hardening_adds_no_migrations() {
         }
     }
     assert_eq!(
-        sql_count, 34,
-        "Prompt 78 adds 0 migrations; expected 34, got {sql_count}"
+        sql_count, 36,
+        "Prompt 86 adds one migration; the current workspace has 36, got {sql_count}"
     );
 }

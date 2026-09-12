@@ -170,6 +170,9 @@ domain_id!(BackupMaintenanceRunId);
 domain_id!(ShareId);
 domain_id!(ChangeEventId);
 domain_id!(SyncBootstrapId);
+// A library-scoped, durable rebaseline transfer artifact. This is deliberately
+// distinct from the device-owned SyncBootstrapId and the snapshot-page cursor.
+domain_id!(RebaselineSnapshotId);
 domain_id!(ClientMutationId);
 // A local control-plane ID. This is deliberately distinct from the server
 // ClientMutationId used only after an explicit future submission phase.
@@ -183,7 +186,8 @@ mod tests {
 
     use super::{
         ClientMutationId, ConflictResolutionId, DeviceCredentialId, DeviceEnrollmentGrantId,
-        IdParseError, NodeId, OutboundIntentId, SyncConflictId, UserId,
+        IdParseError, NodeId, OutboundIntentId, RebaselineSnapshotId, SyncBootstrapId,
+        SyncConflictId, UserId,
     };
     use uuid::Uuid;
 
@@ -255,6 +259,24 @@ mod tests {
         assert_eq!(
             ClientMutationId::try_from_uuid(Uuid::nil()),
             Err(IdParseError::NotUuidV7)
+        );
+    }
+
+    #[test]
+    fn durable_rebaseline_snapshot_id_round_trips_and_is_not_a_bootstrap_id() {
+        let snapshot_id = RebaselineSnapshotId::new();
+
+        assert_eq!(
+            RebaselineSnapshotId::from_str(&snapshot_id.to_string()),
+            Ok(snapshot_id)
+        );
+        assert_eq!(
+            RebaselineSnapshotId::try_from_uuid(Uuid::nil()),
+            Err(IdParseError::NotUuidV7)
+        );
+        assert_ne!(
+            TypeId::of::<RebaselineSnapshotId>(),
+            TypeId::of::<SyncBootstrapId>()
         );
     }
 

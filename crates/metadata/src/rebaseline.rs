@@ -1388,6 +1388,7 @@ fn map_metadata_error(error: MetadataError) -> RebaselineError {
         | MetadataError::Mapping(MappingError::InvalidName { .. })
         | MetadataError::Mapping(MappingError::InvalidLogin { .. })
         | MetadataError::Mapping(MappingError::RelationMismatch { .. })
+        | MetadataError::Mapping(MappingError::RevisionConflict { .. })
         | MetadataError::Mapping(MappingError::Domain(_)) => RebaselineError::InvalidPersistedData,
         MetadataError::CapacityUnavailable => RebaselineError::DependencyUnavailable,
     }

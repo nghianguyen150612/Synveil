@@ -1173,6 +1173,11 @@ fn map_metadata_error(error: MetadataError) -> UploadError {
         })) => UploadError::InvalidState {
             state: UploadSessionState::Failed,
         },
+        MetadataError::Mapping(MappingError::RevisionConflict { current_revision }) => {
+            UploadError::VersionConflict {
+                current_revision: Some(current_revision),
+            }
+        }
         MetadataError::Mapping(MappingError::Domain(_)) => UploadError::InvalidRequest,
         MetadataError::Mapping(MappingError::RelationMismatch { .. }) => UploadError::NotFound,
         MetadataError::Mapping(_) => UploadError::InvalidPersistedData,

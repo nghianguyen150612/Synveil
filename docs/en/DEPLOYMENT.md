@@ -1129,7 +1129,7 @@ creates it (`CREDENTIAL_DIRECTORY` in `MANIFEST`).
   `CapInh/Prm/Eff/Bnd/Amb` all zero, `NoNewPrivs=1`, unprivileged UID.
 - Regressions: Prompt 75 identity, Prompt 76 install lifecycle (33 tests,
   installed unit byte-identical), Prompt 77 credential (15 tests), all live
-  PG17 suites, Prompt 69 stress (`40P01=0`), 34/34 migrations from empty.
+  PG17 suites, Prompt 69 stress (`40P01=0`), 36/36 migrations from empty.
 - Static tests: `crates/metadata/tests/linux_sandbox_hardening_units.rs`.
 
 ### Threat model (service-compromise blast radius)

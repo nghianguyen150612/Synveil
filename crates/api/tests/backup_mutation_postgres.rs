@@ -402,7 +402,7 @@ async fn isolated_pool(label: &str) -> (Arc<DatabasePool>, PgPool) {
         .await
         .expect("all migrations must apply from empty");
     assert!(status.is_current());
-    assert_eq!(status.applied_versions().len(), 34);
+    assert_eq!(status.applied_versions().len(), 36);
     let audit_pool = PgPool::connect(&url)
         .await
         .expect("audit connection must succeed");

@@ -43,7 +43,7 @@ async fn fixture(label: &str) -> ExpiryFixture {
         .await
         .expect("full migration chain must apply");
     assert!(status.is_current(), "all migrations must be current");
-    assert_eq!(status.applied_versions().len(), 34);
+    assert_eq!(status.applied_versions().len(), 36);
     let inspection = PgPool::connect(&url)
         .await
         .expect("inspection connection must succeed");

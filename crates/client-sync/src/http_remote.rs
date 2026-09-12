@@ -4,7 +4,7 @@
 //! There is no caller-supplied URL, cookie jar, proxy, redirect follower, TLS
 //! override, or automatic retry. Error values contain only closed safe kinds.
 
-use std::{fmt, pin::Pin, time::Duration};
+use std::{fmt, pin::Pin, str::FromStr, time::Duration};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -19,19 +19,21 @@ use sha2::{Digest, Sha256};
 use synveil_core::{
     ChangeEvent, ChangeKind, ClientMutation, ClientMutationId, ClientMutationRequest,
     DeviceCredentialId, DeviceCredentialSecret, DeviceId, EnrollmentSecret, FileVersionId,
-    LogicalName, LogicalSnapshotNode, NodeId, NodeKind, NodeState, OutboundIntentId, Sequence,
-    Sha256Digest, SyncBootstrap, SyncBootstrapId, SyncBootstrapState, Timestamp, UploadSessionId,
-    UserId,
+    LogicalName, LogicalSnapshotNode, NodeId, NodeKind, NodeState, OutboundIntentId,
+    RebaselineSnapshotId, Sequence, Sha256Digest, SyncBootstrap, SyncBootstrapId,
+    SyncBootstrapState, Timestamp, UploadSessionId, UserId,
 };
 use url::Url;
 use zeroize::Zeroizing;
 
 use crate::{
     BootstrapCompletion, BootstrapPage, ContentByteStream, InboundChange, LoadedDeviceCredential,
-    MAX_CONTENT_CHUNK_BYTES, MAX_PAGE_ITEMS, OpaqueEvidence, RemoteCheckpoint, RemoteContent,
-    RemoteError, RemoteErrorKind, RemoteFeedPage, RemoteMutationApplied, RemoteMutationConflict,
-    RemoteMutationOutcome, ReplicaScope, ServerProfile, ServerProfileId, SyncRemote,
-    UploadCompletion, UploadSessionStatus, UploadTarget,
+    MAX_CONTENT_CHUNK_BYTES, MAX_PAGE_ITEMS, OpaqueEvidence, RebaselineHandoffConfirmation,
+    RebaselineSnapshotDescriptor, RebaselineSnapshotPage, RebaselineSnapshotRemote,
+    RebaselineSnapshotSource, RemoteCheckpoint, RemoteContent, RemoteError, RemoteErrorKind,
+    RemoteFeedPage, RemoteMutationApplied, RemoteMutationConflict, RemoteMutationOutcome,
+    ReplicaScope, ServerProfile, ServerProfileId, SyncRemote, UploadCompletion,
+    UploadSessionStatus, UploadTarget,
 };
 
 mod wire;
@@ -260,8 +262,27 @@ impl Transport {
         }
         // Never trust a remote retryable flag as permission to replay a
         // one-time request, and never surface server message/details strings.
-        let _ = (error.retryable, error.details);
-        map_api_error(status, &error.code)
+        let current_revision = match error
+            .details
+            .as_ref()
+            .and_then(|details| details.get("current_revision"))
+        {
+            None => None,
+            Some(serde_json::Value::String(value)) => match value.parse() {
+                Ok(value) => Some(value),
+                Err(_) => return protocol_error(),
+            },
+            Some(_) => return protocol_error(),
+        };
+        let _ = error.retryable;
+        let mapped = map_api_error(status, &error.code);
+        if mapped.kind() == RemoteErrorKind::Conflict {
+            current_revision
+                .map(|revision| RemoteError::with_current_revision(mapped.kind(), revision))
+                .unwrap_or(mapped)
+        } else {
+            mapped
+        }
     }
 }
 
@@ -543,6 +564,26 @@ impl SyncRemote for HttpSyncRemote {
         result.data()?.into_domain(scope)
     }
 
+    async fn complete_rebaseline_handoff(
+        &self,
+        scope: ReplicaScope,
+        snapshot_id: RebaselineSnapshotId,
+    ) -> Result<RebaselineHandoffConfirmation, RemoteError> {
+        self.validate_scope(scope)?;
+        let snapshot = snapshot_id.to_string();
+        let url =
+            self.transport
+                .url(&["api", "v1", "rebaseline-snapshots", &snapshot, "handoff"])?;
+        let result: wire::Envelope<wire::RebaselineHandoff> = self
+            .transport
+            .json(
+                self.request(Method::POST, url).json(&serde_json::json!({})),
+                StatusCode::OK,
+            )
+            .await?;
+        result.data()?.into_domain(scope, snapshot_id)
+    }
+
     async fn start_rebaseline(&self, scope: ReplicaScope) -> Result<SyncBootstrap, RemoteError> {
         let url = self.scoped_url(scope, &["rebaseline"])?;
         let result: wire::Envelope<wire::Bootstrap> = self
@@ -731,9 +772,47 @@ impl SyncRemote for HttpSyncRemote {
                 .get("replayed")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false);
+            let resource_id = details
+                .get("resource_id")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(protocol_error)
+                .and_then(wire::parse)?;
+            let expected_revision = optional_detail(&details, "expected_revision")?;
+            let current_revision = optional_detail(&details, "current_revision")?;
+            let current_state = match details.get("current_state") {
+                None => None,
+                Some(serde_json::Value::String(value)) => Some(match value.as_str() {
+                    "ACTIVE" => NodeState::Active,
+                    "TRASHED" => NodeState::Trashed,
+                    _ => return Err(protocol_error()),
+                }),
+                Some(_) => return Err(protocol_error()),
+            };
+            let current_parent_id = optional_detail(&details, "current_parent_id")?;
+            let server_epoch = details
+                .get("server_epoch")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(protocol_error)
+                .and_then(wire::parse)?;
+            let server_sequence = details
+                .get("server_sequence")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(protocol_error)
+                .and_then(wire::parse)?;
             return Ok(RemoteMutationOutcome::Conflict(
-                RemoteMutationConflict::new(conflict_id, reason.to_owned(), replayed)
-                    .map_err(|_| protocol_error())?,
+                RemoteMutationConflict::with_evidence(
+                    conflict_id,
+                    reason.to_owned(),
+                    replayed,
+                    resource_id,
+                    expected_revision,
+                    current_revision,
+                    current_state,
+                    current_parent_id,
+                    server_epoch,
+                    server_sequence,
+                )
+                .map_err(|_| protocol_error())?,
             ));
         }
         if response.status() != StatusCode::OK {
@@ -1297,6 +1376,83 @@ fn bounded_stream(
     }))
 }
 
+#[async_trait]
+impl RebaselineSnapshotSource for HttpSyncRemote {
+    async fn read_page(
+        &self,
+        scope: ReplicaScope,
+        snapshot_id: RebaselineSnapshotId,
+        cursor: Option<&OpaqueEvidence>,
+        limit: u32,
+    ) -> Result<RebaselineSnapshotPage, RemoteError> {
+        self.validate_scope(scope)?;
+        validate_limit(limit, MAX_PAGE_ITEMS as u32)?;
+        let id = snapshot_id.to_string();
+        let mut url = self
+            .transport
+            .url(&["api", "v1", "rebaseline-snapshots", &id, "entries"])?;
+        url.query_pairs_mut()
+            .append_pair("limit", &limit.to_string());
+        if let Some(cursor) = cursor {
+            url.query_pairs_mut()
+                .append_pair("cursor", evidence_text(cursor, CURSOR_BYTES)?);
+        }
+        let result: wire::Envelope<wire::DurableSnapshotPage> = self
+            .transport
+            .json(self.request(Method::GET, url), StatusCode::OK)
+            .await?;
+        let page = result.data()?;
+        let descriptor = page.descriptor()?;
+        if descriptor.snapshot_id() != snapshot_id
+            || descriptor.library_id() != scope.library_id()
+            || page.entries.len() > limit as usize
+            || page.has_more != page.next_cursor.is_some()
+            || (page.entries.is_empty() && page.next_cursor.is_some())
+        {
+            return Err(protocol_error());
+        }
+        let entries = page
+            .entries
+            .into_iter()
+            .map(wire::SnapshotNode::into_domain)
+            .collect::<Result<Vec<_>, _>>()?;
+        if entries
+            .windows(2)
+            .any(|pair| pair[0].node_id() >= pair[1].node_id())
+        {
+            return Err(protocol_error());
+        }
+        RebaselineSnapshotPage::new(
+            descriptor,
+            entries,
+            wire::evidence(page.next_cursor, CURSOR_BYTES)?,
+        )
+        .map_err(|_| protocol_error())
+    }
+}
+
+#[async_trait]
+impl RebaselineSnapshotRemote for HttpSyncRemote {
+    async fn create_snapshot(
+        &self,
+        scope: ReplicaScope,
+    ) -> Result<RebaselineSnapshotDescriptor, RemoteError> {
+        self.validate_scope(scope)?;
+        let library = scope.library_id().to_string();
+        let url =
+            self.transport
+                .url(&["api", "v1", "libraries", &library, "rebaseline-snapshots"])?;
+        let result: wire::Envelope<wire::DurableSnapshotDescriptor> = self
+            .transport
+            .json(
+                self.request(Method::POST, url).json(&serde_json::json!({})),
+                StatusCode::CREATED,
+            )
+            .await?;
+        result.data()?.into_domain(scope)
+    }
+}
+
 fn protocol_error() -> RemoteError {
     RemoteError::new(RemoteErrorKind::Protocol)
 }
@@ -1363,7 +1519,7 @@ fn map_api_error(status: StatusCode, code: &str) -> RemoteError {
         (400, "invalid_request" | "invalid_limit" | "invalid_upload_request")
         | (415, "unsupported_media_type" | "unsupported_upload_media_type") => Kind::Rejected,
         (409, "version_conflict" | "upload_conflict" | "upload_precondition_failed") => {
-            Kind::RebaselineRequired
+            Kind::Conflict
         }
         (409, "invalid_state" | "invalid_upload_offset") => Kind::Rejected,
         (410, "upload_expired") => Kind::Integrity,
@@ -1371,4 +1527,15 @@ fn map_api_error(status: StatusCode, code: &str) -> RemoteError {
         _ => Kind::Protocol,
     };
     RemoteError::new(kind)
+}
+
+fn optional_detail<T: FromStr>(
+    details: &serde_json::Map<String, serde_json::Value>,
+    name: &str,
+) -> Result<Option<T>, RemoteError> {
+    match details.get(name) {
+        None => Ok(None),
+        Some(serde_json::Value::String(value)) => wire::parse(value).map(Some),
+        Some(_) => Err(protocol_error()),
+    }
 }

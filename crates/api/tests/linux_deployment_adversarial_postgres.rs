@@ -164,7 +164,7 @@ async fn new_db(label: &str) -> IsolatedDb {
     let pool = DatabasePool::connect(&config).await.expect("pool connect");
     let status = MigrationRunner::new().run(&pool).await.expect("migrate");
     assert!(status.is_current());
-    assert_eq!(status.applied_versions().len(), 34);
+    assert_eq!(status.applied_versions().len(), 36);
     let inspection = PgPool::connect(&url).await.expect("inspection connect");
     IsolatedDb {
         url,

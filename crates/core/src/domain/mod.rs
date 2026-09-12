@@ -59,8 +59,8 @@ pub use mutations::{
 };
 pub use names::{LogicalName, LoginIdentifier, MAX_LOGICAL_NAME_BYTES};
 pub use rebaseline::{
-    LogicalSnapshotNode, LogicalSnapshotNodeError, SyncBootstrap, SyncBootstrapState,
-    SyncBootstrapStateParseError,
+    LogicalSnapshot, LogicalSnapshotError, LogicalSnapshotNode, LogicalSnapshotNodeError,
+    RebaselineSnapshotPageCursor, SyncBootstrap, SyncBootstrapState, SyncBootstrapStateParseError,
 };
 pub use scheduling::{
     BACKUP_SCHEDULE_FINGERPRINT_VERSION, BACKUP_SCHEDULE_LEGACY_FINGERPRINT_VERSION,

@@ -622,6 +622,86 @@ filesystem path, backend locator/version, credential, GC state hay byte content.
 Cleanup session retired chỉ cascade tới row manifest đã copy, không bao giờ tới
 Library, Node, FileVersion, Object hay journal canonical.
 
+### `LogicalSnapshot` và `RebaselineSnapshot`
+
+Prompt 81 cũng định nghĩa nền tảng snapshot transport-neutral, không gắn với
+device. `LogicalSnapshot` là namespace logical đầy đủ của một `library_id`,
+không phải bản sao riêng cho từng device. Snapshot include canonical root và
+order canonical theo immutable `NodeId`; quan hệ parent phải resolve qua các row
+directory tới đúng một root active. Node hiện tại ở state `ACTIVE` và `TRASHED`
+được biểu diễn; row nội bộ `PURGING` và Node đã purge vĩnh viễn không có mặt.
+Aggregate không chứa physical storage identity hay byte file.
+
+Metadata `RebaselineSnapshot` ghép state đó với `JournalHighWatermark`/
+`JournalCursor` đã có type. PostgreSQL builder lấy cả hai từ một view
+`REPEATABLE READ` trong khi giữ library namespace guard hiện có, nên mutation
+cooperative đã commit không thể rơi vào khoảng giữa state và continuation
+boundary. Build value không đổi bất kỳ `DeviceSyncCheckpoint` nào. Đây chỉ là
+nền tảng in-memory của Prompt 81.
+
+Prompt 82 làm cut đã validate đó durable nhưng không biến nó thành bootstrap
+thuộc Device. `RebaselineSnapshotId` là identity UUIDv7 riêng; header PostgreSQL
+lưu Library, journal boundary có type đầy đủ, entry count bất biến và instant
+create/expiry được inject, còn một row cho mỗi `LogicalSnapshotNode` chỉ lưu
+projection logical canonical. Header cùng mọi entry commit atomically, bất biến
+sau publication, không có Object/ObjectReplica ID physical, storage key,
+backend/filesystem locator, staging handle, secret hay byte file.
+
+`RebaselineSnapshotDescriptor` và `RebaselineSnapshotPage` là metadata value
+transport-neutral. Page dùng `RebaselineSnapshotPageCursor` riêng (artifact ID
+cộng `NodeId` immutable cuối), không phải `JournalCursor`; cursor sau vẫn là
+incremental continuation boundary. Page read theo owner, dùng keyset order bất
+biến và một view repeatable-read ngắn cho header/entry, không đọc lại namespace
+live hoặc lấy mutation guard của nó. Snapshot chỉ valid khi
+`observed_at < expires_at`; expiry từ chối payload read. Prompt 86 có thể xóa
+payload sau đó bằng call bounded explicit nhưng vẫn giữ handoff proof.
+
+### `RebaselineSnapshotHandoffProof` và floor retention journal
+
+Mục đích: giữ authority bất biến tối thiểu để hoàn tất handoff checkpoint sau
+khi payload transfer lớn đã vắng mặt, đồng thời bound storage journal và proof.
+
+Field proof chuẩn là `snapshot_id`, `owner_user_id`, `library_id`,
+`journal_epoch`, `snapshot_resume_sequence`, `snapshot_created_at`,
+`snapshot_expires_at` và `proof_expires_at`. Snapshot identity duy nhất. Mọi
+field bất biến, proof được tạo trong transaction payload, deadline đúng 30 ngày
+sau expiry payload. Proof không chứa entry count, projection Node,
+Object/ObjectReplica, storage key/path, credential hay identity device/
+checkpoint, và cố ý không cascade từ payload header.
+
+`minimum_retained_sequence` hiện có của Library là floor đã compact qua bền
+vững của epoch hiện tại. Floor đơn điệu trong epoch, không vượt `sync_head`, và
+đổi nguyên tử cùng việc xóa đúng prefix liên tục tới giá trị mới. Cursor thấp
+hơn floor là stale; equality là continuation exclusive-after hợp lệ. Proof cùng
+Library/epoch tạm cap floor tại boundary nhỏ nhất. Checkpoint device bình thường
+không pin và cleanup không mutate chúng.
+
+Cleanup payload expired chỉ đổi `rebaseline_snapshots` và entry cascade;
+cleanup proof chỉ đổi proof đủ điều kiện khi payload đã vắng; cleanup journal
+chỉ đổi journal row và floor Library. Tất cả là operation metadata explicit có
+bound. Entity contract này không thêm API retention public, background runtime,
+retry, conflict behavior hay recovery client Prompt 87.
+
+### Local lifecycle `RebaselineConvergenceCoordinator`
+
+Prompt 87 không thêm server entity hay local schema migration. Nó compose
+namespace `rebaseline_candidates` v5 hiện có và một marker
+`rebaseline_applied_handoffs` cho mỗi Library. Candidate thật và marker pending
+cũ chỉ có thể cùng tồn tại khi recovery proof-loss/checkpoint-conflict:
+candidate là remote base stage chưa authoritative, còn marker cũ vẫn là inbound
+fence authoritative. Candidate row `FAILED` inert chỉ được dành cho claim
+descriptor-less, scope theo Library quanh POST snapshot-create không idempotent
+duy nhất; nó không bao giờ page-readable hay activatable.
+
+Activation candidate complete là local transition duy nhất có thể đổi remote
+base và pending marker. Nó expose nguyên tử hoặc old base cùng H1, hoặc
+replacement base cùng H2; không bao giờ không marker hay pair lẫn. Chỉ Prompt
+85 cài boundary đã được server prove vào local cursor và xóa H2. Outbound
+intent cùng upload/submission row local không thuộc cả hai transition. Coordinator
+không có retry count durable: một invocation tạo nhiều nhất một artifact; handoff
+conflict canonical thứ hai là typed stop, caller sau quyết định có bắt đầu
+invocation khác hay không.
+
 ### Biểu diễn conflict
 
 Mỗi client mutation mang `client_mutation_id` bền vững, fingerprint canonical,
@@ -1273,3 +1353,20 @@ Needed by: Gate sharing Phase 3
 Options: terminate active response khi quan sát thấy revocation; authorize một lần cho mỗi bounded response; short-lived signed internal read lease có giới hạn byte/time
 Recommendation: authorize từng request và range request, giới hạn stream duration và ghi rõ byte đã giao không thể thu hồi; chỉ đánh giá termination nếu đáng tin cậy trên mọi adapter
 Decision evidence: threat review, streaming implementation test và user-expectation review
+
+## `SyncConflict` chỉ ở client
+
+`SyncConflict` là projection bền vững ở client, không phải entity server và
+không thuộc change journal. Nó định danh một `OutboundIntent` và ghi một trong
+các category đúng với bằng chứng: `REMOTE_REVISION_CHANGED`,
+`REMOTE_CONTENT_CHANGED`, `REMOTE_STATE_CHANGED`, `REMOTE_MISSING`,
+`NAME_COLLISION` hoặc `PARENT_CHANGED_OR_UNAVAILABLE`. Các trường node
+revision/state/parent và vị trí journal tùy chọn là bằng chứng an toàn tại lần
+phát hiện đầu; thiếu trường nghĩa là response chuẩn không chứng minh fact đó.
+
+Lifecycle là `UNRESOLVED → RESOLVED`. Resolution là `ACCEPT_REMOTE` không có
+replacement, hoặc `RETRY_LOCAL_AGAINST_CURRENT_BASE` có đúng một
+`OutboundIntent` mới được liên kết. Quan hệ intent duy nhất làm detection và
+resolution lặp lại sau mất response đều idempotent. Intent cũ và precondition
+của nó vẫn là bằng chứng lịch sử; record đã resolved không được tái sử dụng nếu
+replacement xung đột về sau.

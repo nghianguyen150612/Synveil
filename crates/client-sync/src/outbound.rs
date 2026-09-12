@@ -4,7 +4,7 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use synveil_core::{
     ClientMutation, ClientMutationId, ClientMutationKind, ClientMutationRequest, LogicalName,
-    OutboundIntentId, Sha256Digest, UploadSessionState,
+    OutboundIntentId, Sha256Digest, SyncConflictId, UploadSessionState,
 };
 
 use crate::{
@@ -18,7 +18,11 @@ use crate::{
 pub enum OutboundSubmissionOutcome {
     NoReadyIntent,
     Submitted(OutboundIntentId),
-    Conflict(OutboundIntentId),
+    Conflict {
+        intent_id: OutboundIntentId,
+        conflict_id: SyncConflictId,
+    },
+    BlockedByConflict(SyncConflictId),
     Blocked(OutboundIntentId),
     Offline,
     AuthRequired,
@@ -110,7 +114,10 @@ impl OutboundSubmissionEngine {
     pub async fn process_next_ready_intent(
         &self,
     ) -> Result<OutboundSubmissionOutcome, ClientSyncError> {
-        let _writer = self.state.lock_replica_writer().await;
+        let _writer = self
+            .state
+            .lock_replica_writer(self.scope.library_id())
+            .await;
         self.replica.validate_root()?;
         if !self
             .state
@@ -128,6 +135,15 @@ impl OutboundSubmissionEngine {
         self.state
             .reconcile_server_applied_intents(self.scope.library_id())
             .await?;
+        if let Some(conflict) = self
+            .state
+            .first_unresolved_conflict(self.scope.library_id())
+            .await?
+        {
+            return Ok(OutboundSubmissionOutcome::BlockedByConflict(
+                conflict.conflict_id(),
+            ));
+        }
         let Some(intent) = self
             .state
             .next_submittable_intent(self.scope.library_id())
@@ -238,10 +254,14 @@ impl OutboundSubmissionEngine {
                 Ok(OutboundSubmissionOutcome::Submitted(intent.intent_id()))
             }
             Ok(RemoteMutationOutcome::Conflict(conflict)) => {
-                self.state
+                let durable = self
+                    .state
                     .record_mutation_conflict(intent.intent_id(), record.mutation_id(), &conflict)
                     .await?;
-                Ok(OutboundSubmissionOutcome::Conflict(intent.intent_id()))
+                Ok(OutboundSubmissionOutcome::Conflict {
+                    intent_id: intent.intent_id(),
+                    conflict_id: durable.conflict_id(),
+                })
             }
             Err(error)
                 if matches!(
@@ -350,6 +370,16 @@ impl OutboundSubmissionEngine {
                 {
                     return Ok(OutboundSubmissionOutcome::AuthRequired);
                 }
+                Err(error) if error.kind() == RemoteErrorKind::Conflict => {
+                    let durable = self
+                        .state
+                        .record_upload_conflict(intent.intent_id(), error.current_revision())
+                        .await?;
+                    return Ok(OutboundSubmissionOutcome::Conflict {
+                        intent_id: intent.intent_id(),
+                        conflict_id: durable.conflict_id(),
+                    });
+                }
                 Err(error) => {
                     self.state.mark_intent_blocked(intent.intent_id()).await?;
                     return if error.kind() == RemoteErrorKind::Protocol {
@@ -387,6 +417,16 @@ impl OutboundSubmissionEngine {
             .remote
             .get_upload_session(self.scope, session_id)
             .await?;
+        if status.is_version_conflict() {
+            let durable = self
+                .state
+                .record_upload_conflict(intent.intent_id(), None)
+                .await?;
+            return Ok(OutboundSubmissionOutcome::Conflict {
+                intent_id: intent.intent_id(),
+                conflict_id: durable.conflict_id(),
+            });
+        }
         if is_failed_upload_status(&status) {
             self.state.mark_intent_blocked(intent.intent_id()).await?;
             return Ok(OutboundSubmissionOutcome::Blocked(intent.intent_id()));
@@ -455,6 +495,16 @@ impl OutboundSubmissionEngine {
                 #[cfg(test)]
                 self.check(OutboundFailurePoint::AfterUploadServerAppliedPersistedBeforeFeed)?;
                 Ok(OutboundSubmissionOutcome::Submitted(intent.intent_id()))
+            }
+            Err(error) if error.kind() == RemoteErrorKind::Conflict => {
+                let durable = self
+                    .state
+                    .record_upload_conflict(intent.intent_id(), error.current_revision())
+                    .await?;
+                Ok(OutboundSubmissionOutcome::Conflict {
+                    intent_id: intent.intent_id(),
+                    conflict_id: durable.conflict_id(),
+                })
             }
             Err(error)
                 if matches!(
@@ -1277,6 +1327,7 @@ mod tests {
         mutation_commits: usize,
         committed_mutations: BTreeMap<ClientMutationId, RemoteMutationApplied>,
         force_conflict: Option<RemoteMutationConflict>,
+        force_error: Option<RemoteErrorKind>,
         fail_mutation_once_after_commit: bool,
         upload_attempts: usize,
         upload_commits: usize,
@@ -1755,6 +1806,9 @@ mod tests {
         ) -> Result<RemoteMutationOutcome, RemoteError> {
             let mut state = self.inner.lock().unwrap();
             state.mutation_attempts += 1;
+            if let Some(kind) = state.force_error {
+                return Err(RemoteError::new(kind));
+            }
             if let Some(conflict) = state.force_conflict.clone() {
                 return Ok(RemoteMutationOutcome::Conflict(conflict));
             }
@@ -2214,7 +2268,7 @@ mod tests {
             state.force_conflict = Some(
                 RemoteMutationConflict::new(
                     synveil_core::SyncConflictId::new(),
-                    "STALE_REVISION".to_owned(),
+                    "REVISION_MISMATCH".to_owned(),
                     false,
                 )
                 .unwrap(),
@@ -2223,9 +2277,16 @@ mod tests {
         let engine = OutboundSubmissionEngine::new(scope, Arc::new(remote), replica, state.clone())
             .await
             .unwrap();
+        let conflict_id = match engine.process_next_ready_intent().await.unwrap() {
+            OutboundSubmissionOutcome::Conflict {
+                intent_id,
+                conflict_id,
+            } if intent_id == intent.intent_id() => conflict_id,
+            other => panic!("unexpected conflict outcome: {other:?}"),
+        };
         assert_eq!(
             engine.process_next_ready_intent().await.unwrap(),
-            OutboundSubmissionOutcome::Conflict(intent.intent_id())
+            OutboundSubmissionOutcome::BlockedByConflict(conflict_id)
         );
         assert_eq!(
             state
@@ -2262,6 +2323,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn non_conflict_transport_and_authorization_failures_never_create_conflicts() {
+        for (label, kind, expected) in [
+            (
+                "auth-not-conflict",
+                RemoteErrorKind::AuthRequired,
+                OutboundSubmissionOutcome::AuthRequired,
+            ),
+            (
+                "forbidden-not-conflict",
+                RemoteErrorKind::Forbidden,
+                OutboundSubmissionOutcome::AuthRequired,
+            ),
+            (
+                "rate-not-conflict",
+                RemoteErrorKind::RateLimited,
+                OutboundSubmissionOutcome::Offline,
+            ),
+            (
+                "server-not-conflict",
+                RemoteErrorKind::Internal,
+                OutboundSubmissionOutcome::Offline,
+            ),
+            (
+                "network-not-conflict",
+                RemoteErrorKind::Offline,
+                OutboundSubmissionOutcome::Offline,
+            ),
+        ] {
+            let (_temp, state, replica, remote, scope, root, file, version) = harness(label).await;
+            let intent = ready_rename_intent(&state, scope, root, file, version, &replica).await;
+            remote.mutate_state(|state| state.force_error = Some(kind));
+            let engine =
+                OutboundSubmissionEngine::new(scope, Arc::new(remote), replica, state.clone())
+                    .await
+                    .unwrap();
+            assert_eq!(engine.process_next_ready_intent().await.unwrap(), expected);
+            assert!(
+                state
+                    .list_unresolved_conflicts(scope.library_id(), None, None)
+                    .await
+                    .unwrap()
+                    .items()
+                    .is_empty()
+            );
+            assert_eq!(
+                state
+                    .outbound_intent(intent.intent_id())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .base_revision(),
+                intent.base_revision()
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn stale_move_conflict_stops_automatic_retry() {
         let (_temp, state, replica, remote, scope, root, file, version) =
             harness("conflict-move").await;
@@ -2270,7 +2388,7 @@ mod tests {
             state.force_conflict = Some(
                 RemoteMutationConflict::new(
                     synveil_core::SyncConflictId::new(),
-                    "STALE_PARENT_REVISION".to_owned(),
+                    "PARENT_CHANGED".to_owned(),
                     false,
                 )
                 .unwrap(),
@@ -2279,10 +2397,10 @@ mod tests {
         let engine = OutboundSubmissionEngine::new(scope, Arc::new(remote), replica, state.clone())
             .await
             .unwrap();
-        assert_eq!(
+        assert!(matches!(
             engine.process_next_ready_intent().await.unwrap(),
-            OutboundSubmissionOutcome::Conflict(intent.intent_id())
-        );
+            OutboundSubmissionOutcome::Conflict { intent_id, .. } if intent_id == intent.intent_id()
+        ));
         assert_eq!(
             state
                 .outbound_intent(intent.intent_id())
@@ -2304,7 +2422,7 @@ mod tests {
             state.force_conflict = Some(
                 RemoteMutationConflict::new(
                     synveil_core::SyncConflictId::new(),
-                    "STALE_REVISION".to_owned(),
+                    "REVISION_MISMATCH".to_owned(),
                     false,
                 )
                 .unwrap(),
@@ -2313,10 +2431,10 @@ mod tests {
         let engine = OutboundSubmissionEngine::new(scope, Arc::new(remote), replica, state.clone())
             .await
             .unwrap();
-        assert_eq!(
+        assert!(matches!(
             engine.process_next_ready_intent().await.unwrap(),
-            OutboundSubmissionOutcome::Conflict(intent.intent_id())
-        );
+            OutboundSubmissionOutcome::Conflict { intent_id, .. } if intent_id == intent.intent_id()
+        ));
         assert_eq!(
             state
                 .outbound_intent(intent.intent_id())

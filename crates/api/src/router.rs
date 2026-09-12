@@ -9,8 +9,8 @@ use tracing::{Span, info};
 use crate::{
     ApiError, ApiState, CLIENT_MUTATION_BODY_LIMIT_BYTES, CONFLICT_RESOLUTION_BODY_LIMIT_BYTES,
     FILE_METADATA_BODY_LIMIT_BYTES, UPLOAD_JSON_BODY_LIMIT_BYTES, auth, backups, conflicts,
-    device_auth, downloads, files, health, middleware, mutations, rebaseline, sync, uploads,
-    versions,
+    device_auth, downloads, files, health, middleware, mutations, rebaseline, rebaseline_snapshot,
+    sync, uploads, versions,
 };
 
 /// Stable product API prefix for versioned resources.
@@ -24,6 +24,7 @@ pub const BOOTSTRAP_BODY_LIMIT_BYTES: usize = auth::BOOTSTRAP_BODY_LIMIT_BYTES;
 pub const SYNC_ACK_BODY_LIMIT_BYTES: usize = sync::SYNC_ACK_BODY_LIMIT_BYTES;
 pub const REBASELINE_BODY_LIMIT_BYTES: usize = rebaseline::REBASELINE_BODY_LIMIT_BYTES;
 pub const BACKUP_MUTATION_BODY_LIMIT_BYTES: usize = 16 * 1024;
+pub const SNAPSHOT_CREATE_BODY_LIMIT: usize = rebaseline_snapshot::SNAPSHOT_CREATE_BODY_LIMIT_BYTES;
 
 /// Construct the Axum application router.
 pub fn router(state: ApiState) -> Router {
@@ -237,6 +238,33 @@ pub fn router(state: ApiState) -> Router {
             auth::require_inbound_authentication,
         ))
         .with_state(state.clone());
+    let protected_durable_snapshots = Router::new()
+        .route(
+            "/libraries/{library_id}/rebaseline-snapshots",
+            post(rebaseline_snapshot::create_snapshot),
+        )
+        .route(
+            "/rebaseline-snapshots/{snapshot_id}",
+            get(rebaseline_snapshot::get_descriptor),
+        )
+        .route(
+            "/rebaseline-snapshots/{snapshot_id}/entries",
+            get(rebaseline_snapshot::read_entries),
+        )
+        .route(
+            "/rebaseline-snapshots/{snapshot_id}/handoff",
+            post(rebaseline_snapshot::complete_handoff),
+        )
+        .layer(RequestBodyLimitLayer::new(SNAPSHOT_CREATE_BODY_LIMIT))
+        .layer(from_fn_with_state(
+            state.clone(),
+            auth::require_csrf_for_mutations,
+        ))
+        .layer(from_fn_with_state(
+            state.clone(),
+            auth::require_inbound_authentication,
+        ))
+        .with_state(state.clone());
     let protected_mutations = Router::new()
         .route(
             "/devices/{device_id}/libraries/{library_id}/mutations",
@@ -385,6 +413,7 @@ pub fn router(state: ApiState) -> Router {
         .merge(protected_version_restore)
         .merge(protected_sync)
         .merge(protected_rebaseline)
+        .merge(protected_durable_snapshots)
         .merge(protected_mutations)
         .merge(protected_conflict_reads)
         .merge(protected_conflict_resolution)

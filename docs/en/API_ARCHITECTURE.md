@@ -465,6 +465,26 @@ than the cut. Thus no committed logical mutation can be absent from both the
 snapshot and subsequent feed. Expiry, generation replacement, epoch rotation,
 or retention invalidation fails closed and requires a new bootstrap.
 
+### Durable HTTP rebaseline snapshot artifacts
+
+The separate durable snapshot transport exposes exactly three operations:
+
+| Method and path | Responsibility | Boundary |
+|---|---|---|
+| `POST /libraries/{library_id}/rebaseline-snapshots` | Create one immutable logical artifact and return its descriptor `Location`. | Authenticated owner; browser CSRF or an actually authenticated device bearer; strict empty-body bound; at most 8 active artifacts per owner/library; admission maps to `429 rate_limited`. |
+| `GET /rebaseline-snapshots/{snapshot_id}` | Read the owner-scoped immutable descriptor. | Foreign owner is concealed as `404`; an authorized owner sees an expired artifact as `410`. |
+| `GET /rebaseline-snapshots/{snapshot_id}/entries` | Read bounded immutable Node-ID keyset pages. | Same owner/expiry rules; default 256 and maximum 1000 entries; private/no-store. |
+
+The handler owns only authentication, parsing, DTOs, and status mapping. The
+metadata service owns the fixed cut, entry materialization, expiry, owner
+scope, and the durable creation-admission query. Admission runs under the
+existing per-library transaction guard, counts rows with `expires_at >
+observed_at`, and commits no artifact or sync progress when it rejects a
+caller. There is no fourth lifecycle endpoint, client-side snapshot apply,
+background cleanup, idempotency layer, or global serialization mechanism in
+this phase. Expired rows remain for a later retention decision, and a lost
+successful response is bounded but not made idempotent.
+
 ## Error contract
 
 Every non-success JSON response uses:

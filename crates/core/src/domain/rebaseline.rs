@@ -4,11 +4,15 @@
 //! cannot represent object-store identities, replica locators, filesystem
 //! paths, staging handles, credentials, or historical version manifests.
 
-use std::{fmt, str::FromStr};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+    str::FromStr,
+};
 
 use crate::{
-    DeviceId, FileVersionId, LibraryId, LogicalName, NodeId, NodeKind, NodeState, Revision,
-    Sequence, Sha256Digest, SyncBootstrapId, Timestamp, UserId,
+    DeviceId, FileVersionId, LibraryId, LogicalName, NodeId, NodeKind, NodeState,
+    RebaselineSnapshotId, Revision, Sequence, Sha256Digest, SyncBootstrapId, Timestamp, UserId,
 };
 
 /// Durable lifecycle for one bounded logical bootstrap session.
@@ -307,10 +311,201 @@ impl LogicalSnapshotNode {
     }
 }
 
+/// A typed keyset position inside one durable rebaseline snapshot artifact.
+///
+/// This is intentionally distinct from `JournalCursor`: it identifies the
+/// immutable `NodeId` immediately before the next snapshot page, while the
+/// journal cursor identifies the incremental-change continuation boundary.
+/// The artifact identity binds a continuation token to one snapshot and makes
+/// cross-artifact page mixing a typed validation error at the metadata seam.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct RebaselineSnapshotPageCursor {
+    snapshot_id: RebaselineSnapshotId,
+    after_node_id: NodeId,
+}
+
+impl RebaselineSnapshotPageCursor {
+    #[must_use]
+    pub const fn new(snapshot_id: RebaselineSnapshotId, after_node_id: NodeId) -> Self {
+        Self {
+            snapshot_id,
+            after_node_id,
+        }
+    }
+
+    #[must_use]
+    pub const fn snapshot_id(self) -> RebaselineSnapshotId {
+        self.snapshot_id
+    }
+
+    #[must_use]
+    pub const fn after_node_id(self) -> NodeId {
+        self.after_node_id
+    }
+}
+
+/// A complete, owner-independent logical view of one library namespace.
+///
+/// The journal boundary is intentionally not part of this core value: the
+/// metadata adapter pairs this library-scoped state with its canonical
+/// `JournalHighWatermark`. Keeping the state aggregate independent of the
+/// adapter prevents a device or transport identity from becoming part of the
+/// logical snapshot content.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LogicalSnapshot {
+    library_id: LibraryId,
+    entries: Vec<LogicalSnapshotNode>,
+}
+
+/// Structural validation failures for a complete logical snapshot.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LogicalSnapshotError {
+    Empty,
+    DuplicateNodeId,
+    MissingRoot,
+    MultipleRoots,
+    RootNotDirectory,
+    RootNotActive,
+    MissingParent,
+    ParentNotDirectory,
+    ParentCycle,
+}
+
+impl fmt::Display for LogicalSnapshotError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let message = match self {
+            Self::Empty => "logical snapshot has no root or entries",
+            Self::DuplicateNodeId => "logical snapshot contains a duplicate node identity",
+            Self::MissingRoot => "logical snapshot has no root entry",
+            Self::MultipleRoots => "logical snapshot contains multiple root entries",
+            Self::RootNotDirectory => "logical snapshot root is not a directory",
+            Self::RootNotActive => "logical snapshot root is not active",
+            Self::MissingParent => "logical snapshot contains a missing parent entry",
+            Self::ParentNotDirectory => "logical snapshot parent entry is not a directory",
+            Self::ParentCycle => "logical snapshot parent topology contains a cycle",
+        };
+        formatter.write_str(message)
+    }
+}
+
+impl std::error::Error for LogicalSnapshotError {}
+
+impl LogicalSnapshot {
+    /// Validate and canonicalize a complete logical namespace.
+    ///
+    /// Entries are ordered by immutable `NodeId`; mutable names, paths, and
+    /// timestamps never determine snapshot pagination or equality. A complete
+    /// snapshot contains exactly one active directory root, and every other
+    /// entry must resolve through directory parents to that root. Trashed
+    /// entries remain valid current logical state; purged/internal `PURGING`
+    /// entries cannot be constructed as `LogicalSnapshotNode` values.
+    pub fn new(
+        library_id: LibraryId,
+        mut entries: Vec<LogicalSnapshotNode>,
+    ) -> Result<Self, LogicalSnapshotError> {
+        if entries.is_empty() {
+            return Err(LogicalSnapshotError::Empty);
+        }
+
+        entries.sort_unstable_by_key(LogicalSnapshotNode::node_id);
+        let mut topology = BTreeMap::new();
+        for entry in &entries {
+            if topology
+                .insert(entry.node_id(), (entry.kind(), entry.parent_node_id()))
+                .is_some()
+            {
+                return Err(LogicalSnapshotError::DuplicateNodeId);
+            }
+        }
+
+        let mut roots = entries
+            .iter()
+            .filter(|entry| entry.parent_node_id().is_none());
+        let Some(root) = roots.next() else {
+            return Err(LogicalSnapshotError::MissingRoot);
+        };
+        if roots.next().is_some() {
+            return Err(LogicalSnapshotError::MultipleRoots);
+        }
+        if root.kind() != NodeKind::Directory {
+            return Err(LogicalSnapshotError::RootNotDirectory);
+        }
+        if root.state() != NodeState::Active {
+            return Err(LogicalSnapshotError::RootNotActive);
+        }
+
+        for entry in &entries {
+            let mut parent_id = entry.parent_node_id();
+            let mut seen = BTreeSet::new();
+            while let Some(current_id) = parent_id {
+                if !seen.insert(current_id) {
+                    return Err(LogicalSnapshotError::ParentCycle);
+                }
+                let Some((kind, next_parent_id)) = topology.get(&current_id) else {
+                    return Err(LogicalSnapshotError::MissingParent);
+                };
+                if *kind != NodeKind::Directory {
+                    return Err(LogicalSnapshotError::ParentNotDirectory);
+                }
+                parent_id = *next_parent_id;
+            }
+        }
+
+        Ok(Self {
+            library_id,
+            entries,
+        })
+    }
+
+    #[must_use]
+    pub const fn library_id(&self) -> LibraryId {
+        self.library_id
+    }
+
+    #[must_use]
+    pub fn entries(&self) -> &[LogicalSnapshotNode] {
+        &self.entries
+    }
+
+    #[must_use]
+    pub fn root(&self) -> &LogicalSnapshotNode {
+        self.entries
+            .iter()
+            .find(|entry| entry.parent_node_id().is_none())
+            .expect("LogicalSnapshot always contains exactly one root")
+    }
+
+    #[must_use]
+    pub fn root_node_id(&self) -> NodeId {
+        self.root().node_id()
+    }
+
+    #[must_use]
+    pub fn into_entries(self) -> Vec<LogicalSnapshotNode> {
+        self.entries
+    }
+
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{LogicalSnapshotNode, LogicalSnapshotNodeError, SyncBootstrapState};
-    use crate::{FileVersionId, LogicalName, NodeId, NodeKind, NodeState, Revision, Sha256Digest};
+    use super::{
+        LogicalSnapshot, LogicalSnapshotError, LogicalSnapshotNode, LogicalSnapshotNodeError,
+        RebaselineSnapshotPageCursor, SyncBootstrapState,
+    };
+    use crate::{
+        FileVersionId, LogicalName, NodeId, NodeKind, NodeState, RebaselineSnapshotId, Revision,
+        Sha256Digest,
+    };
     use std::str::FromStr;
 
     #[test]
@@ -379,5 +574,183 @@ mod tests {
         assert_eq!(node.current_version_id(), Some(version_id));
         assert_eq!(node.content_length(), Some(42));
         assert_eq!(node.content_sha256(), Some(digest));
+    }
+
+    #[test]
+    fn durable_page_cursor_is_scoped_to_one_snapshot_and_node_position() {
+        let snapshot_id = RebaselineSnapshotId::new();
+        let node_id = NodeId::new();
+        let cursor = RebaselineSnapshotPageCursor::new(snapshot_id, node_id);
+
+        assert_eq!(cursor.snapshot_id(), snapshot_id);
+        assert_eq!(cursor.after_node_id(), node_id);
+    }
+
+    fn snapshot_node(
+        node_id: NodeId,
+        parent_node_id: Option<NodeId>,
+        kind: NodeKind,
+        state: NodeState,
+        name: &str,
+    ) -> LogicalSnapshotNode {
+        LogicalSnapshotNode::new(
+            node_id,
+            parent_node_id,
+            LogicalName::new(name).unwrap(),
+            kind,
+            state,
+            Revision::new(0),
+            None,
+            None,
+            None,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn logical_snapshot_canonicalizes_node_id_order_and_keeps_trashed_state() {
+        let library_id = crate::LibraryId::new();
+        let root_id = NodeId::new();
+        let directory_id = NodeId::new();
+        let file_id = NodeId::new();
+        let root = snapshot_node(
+            root_id,
+            None,
+            NodeKind::Directory,
+            NodeState::Active,
+            "root",
+        );
+        let directory = snapshot_node(
+            directory_id,
+            Some(root_id),
+            NodeKind::Directory,
+            NodeState::Active,
+            "directory",
+        );
+        let file = snapshot_node(
+            file_id,
+            Some(directory_id),
+            NodeKind::File,
+            NodeState::Trashed,
+            "file",
+        );
+
+        let snapshot = LogicalSnapshot::new(library_id, vec![file.clone(), root, directory])
+            .expect("complete topology must be accepted");
+
+        assert_eq!(snapshot.library_id(), library_id);
+        assert_eq!(snapshot.len(), 3);
+        assert!(!snapshot.is_empty());
+        assert!(
+            snapshot
+                .entries()
+                .windows(2)
+                .all(|window| window[0].node_id() < window[1].node_id())
+        );
+        assert_eq!(
+            snapshot
+                .entries()
+                .iter()
+                .find(|entry| entry.node_id() == file_id)
+                .map(LogicalSnapshotNode::state),
+            Some(NodeState::Trashed)
+        );
+    }
+
+    #[test]
+    fn logical_snapshot_rejects_incomplete_or_cyclic_topology() {
+        let library_id = crate::LibraryId::new();
+        let root_id = NodeId::new();
+        let root = snapshot_node(
+            root_id,
+            None,
+            NodeKind::Directory,
+            NodeState::Active,
+            "root",
+        );
+
+        assert_eq!(
+            LogicalSnapshot::new(library_id, Vec::new()),
+            Err(LogicalSnapshotError::Empty)
+        );
+        assert_eq!(
+            LogicalSnapshot::new(
+                library_id,
+                vec![snapshot_node(
+                    NodeId::new(),
+                    Some(NodeId::new()),
+                    NodeKind::File,
+                    NodeState::Active,
+                    "orphan",
+                )],
+            ),
+            Err(LogicalSnapshotError::MissingRoot)
+        );
+
+        let duplicate = snapshot_node(
+            NodeId::new(),
+            Some(root_id),
+            NodeKind::File,
+            NodeState::Active,
+            "duplicate",
+        );
+        assert_eq!(
+            LogicalSnapshot::new(library_id, vec![root.clone(), duplicate.clone(), duplicate]),
+            Err(LogicalSnapshotError::DuplicateNodeId)
+        );
+
+        let second_root = snapshot_node(
+            NodeId::new(),
+            None,
+            NodeKind::Directory,
+            NodeState::Active,
+            "second-root",
+        );
+        assert_eq!(
+            LogicalSnapshot::new(library_id, vec![root.clone(), second_root]),
+            Err(LogicalSnapshotError::MultipleRoots)
+        );
+
+        let file_parent_id = NodeId::new();
+        let child_id = NodeId::new();
+        let file_parent = snapshot_node(
+            file_parent_id,
+            Some(root_id),
+            NodeKind::File,
+            NodeState::Active,
+            "file-parent",
+        );
+        let child_of_file = snapshot_node(
+            child_id,
+            Some(file_parent_id),
+            NodeKind::File,
+            NodeState::Active,
+            "child-of-file",
+        );
+        assert_eq!(
+            LogicalSnapshot::new(library_id, vec![root.clone(), file_parent, child_of_file]),
+            Err(LogicalSnapshotError::ParentNotDirectory)
+        );
+
+        let cycle_a_id = NodeId::new();
+        let cycle_b_id = NodeId::new();
+        let cycle_a = snapshot_node(
+            cycle_a_id,
+            Some(cycle_b_id),
+            NodeKind::Directory,
+            NodeState::Active,
+            "cycle-a",
+        );
+        let cycle_b = snapshot_node(
+            cycle_b_id,
+            Some(cycle_a_id),
+            NodeKind::Directory,
+            NodeState::Active,
+            "cycle-b",
+        );
+        assert_eq!(
+            LogicalSnapshot::new(library_id, vec![root, cycle_a, cycle_b]),
+            Err(LogicalSnapshotError::ParentCycle)
+        );
     }
 }

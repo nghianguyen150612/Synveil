@@ -639,6 +639,92 @@ credential, GC state, or byte content. Retired-session cleanup cascades only to
 these copied rows and never to canonical library, Node, FileVersion, Object, or
 journal data.
 
+### `LogicalSnapshot` and `RebaselineSnapshot`
+
+Prompt 81 also defines the transport-neutral, non-device snapshot foundation.
+`LogicalSnapshot` is the complete logical namespace for one `library_id`, not a
+per-device duplicate. It includes the canonical root and is canonically ordered
+by immutable `NodeId`; parent relationships must resolve through directory rows
+to that one active root. Current `ACTIVE` and `TRASHED` Nodes are represented;
+internal `PURGING` rows and permanently purged Nodes are not. The aggregate
+contains no physical storage identity or file bytes.
+
+The metadata `RebaselineSnapshot` pairs that state with the existing typed
+`JournalHighWatermark`/`JournalCursor`. The PostgreSQL builder derives both from
+one `REPEATABLE READ` view while holding the existing library namespace guard,
+so a committed cooperative mutation cannot fall between the state and its
+continuation boundary. Building the value does not alter any
+`DeviceSyncCheckpoint`.
+
+Prompt 82 makes that same validated cut durable without turning it into a
+device-owned bootstrap. `RebaselineSnapshotId` is a distinct UUIDv7 identity;
+the PostgreSQL header stores the library, full typed journal boundary, immutable
+entry count, and injected creation/expiry instants, while one row per
+`LogicalSnapshotNode` stores only the canonical logical projection. The header
+and all entries commit atomically, are immutable after publication, and contain
+no physical object/replica ID, storage key, backend/filesystem locator, staging
+handle, secret, or file bytes.
+
+`RebaselineSnapshotDescriptor` and `RebaselineSnapshotPage` are
+transport-neutral metadata values. Pages use a distinct
+`RebaselineSnapshotPageCursor` (artifact ID plus last immutable `NodeId`), not
+a `JournalCursor`; the latter remains the incremental continuation boundary.
+Page reads are owner-scoped, use immutable keyset order and one short
+repeatable-read header/entry view, and never reread the live namespace or take
+its mutation guard. A snapshot is valid only while `observed_at < expires_at`;
+expiry rejects payload reads. Prompt 86 may later remove that payload through
+an explicit bounded call while retaining its handoff proof.
+
+### `RebaselineSnapshotHandoffProof` and journal retention floor
+
+Purpose: preserve the minimum immutable authority needed to complete a
+snapshot checkpoint handoff after the large transfer payload is gone, while
+bounding both journal and proof storage.
+
+Canonical proof fields are `snapshot_id`, `owner_user_id`, `library_id`,
+`journal_epoch`, `snapshot_resume_sequence`, `snapshot_created_at`,
+`snapshot_expires_at`, and `proof_expires_at`. Snapshot identity is unique. All
+fields are immutable, the proof is created in the payload transaction, and its
+deadline is exactly 30 days after payload expiry. It contains no entry count,
+Node projection, Object/ObjectReplica identity, storage key/path, credential,
+or device/checkpoint identity. It intentionally does not cascade from the
+payload header.
+
+The existing Library `minimum_retained_sequence` is the current epoch's
+durable compacted-through floor. It is monotonic within that epoch, never above
+`sync_head`, and changes atomically with deletion of exactly the contiguous
+prefix through the new value. A cursor lower than the floor is stale; equality
+is a valid exclusive-after continuation. Proofs for the same Library and epoch
+temporarily cap the floor at their smallest boundary. Ordinary device
+checkpoints do not pin this value and cleanup does not mutate them.
+
+Expired payload cleanup changes only `rebaseline_snapshots` and its cascaded
+entries; proof cleanup changes only eligible proof rows whose payload is
+already absent; journal cleanup changes only journal rows and the Library floor.
+All are bounded explicit metadata operations. There is no public retention API,
+background runtime, retry, conflict behavior, or Prompt 87 client recovery in
+this entity contract.
+
+### `RebaselineConvergenceCoordinator` local lifecycle
+
+Prompt 87 adds no server entity or local schema migration. It composes the
+existing v5 `rebaseline_candidates` namespace and one
+`rebaseline_applied_handoffs` marker per Library. A real candidate and a prior
+pending marker may coexist only during proof-loss/checkpoint-conflict recovery:
+the candidate is an untrusted staged remote base, while the old marker remains
+the authoritative inbound fence. An inert `FAILED` candidate row is reserved
+only as a descriptor-less, library-scoped claim around the one non-idempotent
+snapshot-create POST; it is never page-readable or activatable.
+
+Activation of a complete candidate is the only local transition that can change
+the remote base and pending marker. It transactionally exposes either the old
+base plus H1 or the replacement base plus H2, never no marker and never a
+mixed pairing. Prompt 85 alone installs the server-proved boundary in the local
+cursor and deletes H2. Local outbound intents and upload/submission rows are
+not members of either transition. The coordinator has no durable retry count:
+one invocation may create one artifact; a second canonical handoff conflict is
+a typed stop, and a later caller decides whether to start another invocation.
+
 ### Conflict representation
 
 Every client mutation carries a durable `client_mutation_id`, a canonical
@@ -1305,3 +1391,20 @@ Needed by: Phase 3 sharing gate
 Options: terminate an active response when revocation is observed; authorize once per bounded response; short-lived signed internal read lease with byte/time cap
 Recommendation: authorize each request and range request, cap stream duration, and document that already delivered bytes cannot be recalled; evaluate termination only if reliable across adapters
 Decision evidence: threat review, streaming implementation test, and user-expectation review
+
+## Client-local `SyncConflict`
+
+`SyncConflict` is a durable client projection, not a server entity and not part
+of the change journal. It identifies one `OutboundIntent` and records one of the
+truthful categories `REMOTE_REVISION_CHANGED`, `REMOTE_CONTENT_CHANGED`,
+`REMOTE_STATE_CHANGED`, `REMOTE_MISSING`, `NAME_COLLISION`, or
+`PARENT_CHANGED_OR_UNAVAILABLE`. Optional node revision/state/parent and
+journal-position fields are safe evidence captured at first detection; absence
+means the canonical response did not establish that fact.
+
+The lifecycle is `UNRESOLVED → RESOLVED`. Resolution is either
+`ACCEPT_REMOTE`, with no replacement, or `RETRY_LOCAL_AGAINST_CURRENT_BASE`,
+with one new linked `OutboundIntent`. The unique intent relation makes both
+detection and lost-response resolution idempotent. The old intent and its
+precondition remain historical evidence; no resolved row is recycled when a
+replacement later conflicts.

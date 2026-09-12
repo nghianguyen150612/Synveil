@@ -1196,7 +1196,10 @@ impl OutboundObservationEngine {
     /// recovered by its owner, start observation, then begin the durable scan
     /// that closes the watcher startup gap.
     pub async fn start(&self) -> Result<ObservationState, ClientSyncError> {
-        let _writer = self.state.lock_replica_writer().await;
+        let _writer = self
+            .state
+            .lock_replica_writer(self.scope.library_id())
+            .await;
         self.validate_root_or_stop().await?;
         if !self
             .state
@@ -1287,7 +1290,10 @@ impl OutboundObservationEngine {
     /// Advance no more than one bounded reconciliation unit. Repeated calls
     /// converge after an overflow, a restart, or changes made while offline.
     pub async fn reconcile_once(&self) -> Result<ObservationState, ClientSyncError> {
-        let _writer = self.state.lock_replica_writer().await;
+        let _writer = self
+            .state
+            .lock_replica_writer(self.scope.library_id())
+            .await;
         self.validate_root_or_stop().await?;
         if !self
             .state
@@ -1460,7 +1466,10 @@ impl OutboundObservationEngine {
         if due.is_empty() {
             return Ok(0);
         }
-        let _writer = self.state.lock_replica_writer().await;
+        let _writer = self
+            .state
+            .lock_replica_writer(self.scope.library_id())
+            .await;
         self.validate_root_or_stop().await?;
         let ambiguous_paths = self.detect_unpaired_rename(&due).await?;
         let (renames, mut paths) = coalesce_hints(due);

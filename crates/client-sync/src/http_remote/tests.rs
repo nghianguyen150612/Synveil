@@ -28,6 +28,7 @@ const VERSION: &str = "019a1234-0000-7000-8000-000000000006";
 const BOOTSTRAP: &str = "019a1234-0000-7000-8000-000000000007";
 const EVENT: &str = "019a1234-0000-7000-8000-000000000008";
 const CREDENTIAL: &str = "019a1234-0000-7000-8000-000000000009";
+const SNAPSHOT: &str = "019a1234-0000-7000-8000-00000000000a";
 const CREATED: &str = "2026-08-28T00:00:00Z";
 
 fn scope() -> ReplicaScope {
@@ -177,6 +178,29 @@ fn snapshot_page() -> Value {
     envelope(json!({"bootstrap":bootstrap(false),"nodes":[{
         "node_id":ROOT,"name":"root","kind":"DIRECTORY","state":"ACTIVE","revision":"0"
     }],"has_more":false,"completion_token":"isolated-test-completion"}))
+}
+
+fn handoff(snapshot_id: &str, epoch: u64, sequence: u64) -> Value {
+    envelope(json!({
+        "snapshot_id": snapshot_id,
+        "library_id": LIBRARY,
+        "checkpoint": {"epoch": epoch.to_string(), "sequence": sequence.to_string()}
+    }))
+}
+
+fn durable_snapshot_descriptor(snapshot_id: &str, epoch: u64, sequence: u64) -> Value {
+    envelope(json!({
+        "snapshot_id": snapshot_id,
+        "library_id": LIBRARY,
+        "journal_boundary": {
+            "library_id": LIBRARY,
+            "journal_epoch": epoch.to_string(),
+            "resume_sequence": sequence.to_string()
+        },
+        "entry_count": "1",
+        "created_at": CREATED,
+        "expires_at": "2026-08-28T00:15:00Z"
+    }))
 }
 
 fn scoped(tail: &str) -> String {
@@ -505,6 +529,91 @@ async fn every_sync_operation_matches_real_dto_method_path_headers_and_evidence(
         Some(server.profile.profile_id())
     );
     assert!(!format!("{remote:?}").contains(credential().expose_secret()));
+    server.assert_finished();
+}
+
+#[tokio::test]
+async fn durable_rebaseline_handoff_uses_snapshot_path_and_strict_confirmation() {
+    let snapshot_id: synveil_core::RebaselineSnapshotId = SNAPSHOT.parse().unwrap();
+    let server = Script::new(vec![
+        Step::json(
+            "POST",
+            format!("/api/v1/rebaseline-snapshots/{SNAPSHOT}/handoff"),
+            handoff(SNAPSHOT, 3, 27),
+        )
+        .request(json!({})),
+    ])
+    .await;
+    let confirmation = server
+        .remote()
+        .complete_rebaseline_handoff(scope(), snapshot_id)
+        .await
+        .unwrap();
+    assert_eq!(confirmation.snapshot_id(), snapshot_id);
+    assert_eq!(confirmation.library_id(), scope().library_id());
+    assert_eq!(confirmation.checkpoint().scope(), scope());
+    assert_eq!(confirmation.checkpoint().epoch(), Sequence::new(3));
+    assert_eq!(
+        confirmation.checkpoint().acknowledged_sequence(),
+        Sequence::new(27)
+    );
+    server.assert_finished();
+}
+
+#[tokio::test]
+async fn durable_rebaseline_snapshot_create_uses_scoped_existing_route_and_server_boundary() {
+    let server = Script::new(vec![
+        Step::json(
+            "POST",
+            format!("/api/v1/libraries/{LIBRARY}/rebaseline-snapshots"),
+            durable_snapshot_descriptor(SNAPSHOT, 3, 27),
+        )
+        .created()
+        .request(json!({})),
+    ])
+    .await;
+    let descriptor = server.remote().create_snapshot(scope()).await.unwrap();
+    assert_eq!(descriptor.snapshot_id().to_string(), SNAPSHOT);
+    assert_eq!(descriptor.library_id(), scope().library_id());
+    assert_eq!(descriptor.boundary().journal_epoch(), Sequence::new(3));
+    assert_eq!(descriptor.boundary().resume_sequence(), Sequence::new(27));
+    assert_eq!(descriptor.entry_count(), 1);
+    server.assert_finished();
+}
+
+#[tokio::test]
+async fn durable_rebaseline_handoff_rejects_unknown_or_numeric_confirmation_fields() {
+    let snapshot_id: synveil_core::RebaselineSnapshotId = SNAPSHOT.parse().unwrap();
+    let mut unknown = handoff(SNAPSHOT, 3, 27);
+    unknown["data"]["future_authority"] = json!(true);
+    let mut numeric = handoff(SNAPSHOT, 3, 27);
+    numeric["data"]["checkpoint"]["sequence"] = json!(27);
+    let server = Script::new(vec![
+        Step::json(
+            "POST",
+            format!("/api/v1/rebaseline-snapshots/{SNAPSHOT}/handoff"),
+            unknown,
+        )
+        .request(json!({})),
+        Step::json(
+            "POST",
+            format!("/api/v1/rebaseline-snapshots/{SNAPSHOT}/handoff"),
+            numeric,
+        )
+        .request(json!({})),
+    ])
+    .await;
+    for _ in 0..2 {
+        assert_eq!(
+            server
+                .remote()
+                .complete_rebaseline_handoff(scope(), snapshot_id)
+                .await
+                .unwrap_err()
+                .kind(),
+            RemoteErrorKind::Protocol
+        );
+    }
     server.assert_finished();
 }
 

@@ -101,8 +101,8 @@ async fn new_db(label: &str) -> IsolatedDb {
         .await
         .expect("all forward migrations must apply");
     assert!(status.is_current(), "all migrations must be current");
-    assert_eq!(status.applied_versions().len(), 34);
-    assert_eq!(status.latest_applied_version(), Some(20260903000001));
+    assert_eq!(status.applied_versions().len(), 36);
+    assert_eq!(status.latest_applied_version(), Some(20260910000000));
     let inspection = PgPool::connect(&url)
         .await
         .expect("inspection connection must succeed");
