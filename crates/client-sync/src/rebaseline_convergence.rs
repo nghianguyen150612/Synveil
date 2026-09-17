@@ -81,6 +81,9 @@ impl RebaselineConvergenceCoordinator {
         if !(1..=crate::MAX_PAGE_ITEMS as u32).contains(&page_limit) {
             return Err(ClientSyncError::ResourceLimit);
         }
+        if !Arc::ptr_eq(inbound.state(), &state) {
+            return Err(ClientSyncError::InvalidState);
+        }
         Ok(Self {
             scope: inbound.scope(),
             inbound,
@@ -93,6 +96,10 @@ impl RebaselineConvergenceCoordinator {
     #[must_use]
     pub const fn scope(&self) -> ReplicaScope {
         self.scope
+    }
+
+    pub(crate) fn state(&self) -> &Arc<LocalStateStore> {
+        &self.state
     }
 
     /// Execute one finite recovery state-machine traversal.

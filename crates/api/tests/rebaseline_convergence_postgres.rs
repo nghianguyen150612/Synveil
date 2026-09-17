@@ -1,18 +1,18 @@
-//! Prompt 87 live convergence evidence.
-//!
-//! Each ignored test provisions a child database from the caller-supplied
-//! PostgreSQL instance, starts the real Axum router, and drives the real
-//! `HttpSyncRemote` through a loopback proxy.  The proxy is deliberately only
-//! an observation/fault-injection boundary for this test target: it counts
-//! bounded HTTP calls and can pause or return a canonical error response at a
-//! named point without adding a production route, retry, or policy.
-//!
-//! Run with:
-//!
-//! ```text
-//! SYNVEIL_TEST_DATABASE_URL=postgresql://... cargo test -p synveil-api \
-//!   --test rebaseline_convergence_postgres --locked -- --ignored
-//! ```
+// Prompt 87 live convergence evidence.
+//
+// Each ignored test provisions a child database from the caller-supplied
+// PostgreSQL instance, starts the real Axum router, and drives the real
+// `HttpSyncRemote` through a loopback proxy.  The proxy is deliberately only
+// an observation/fault-injection boundary for this test target: it counts
+// bounded HTTP calls and can pause or return a canonical error response at a
+// named point without adding a production route, retry, or policy.
+//
+// Run with:
+//
+// ```text
+// SYNVEIL_TEST_DATABASE_URL=postgresql://... cargo test -p synveil-api \
+//   --test rebaseline_convergence_postgres --locked -- --ignored
+// ```
 
 use std::{
     collections::BTreeMap,
@@ -44,9 +44,10 @@ use synveil_auth::{
 use synveil_client_sync::{
     CanonicalBaseUrl, ClientSyncError, EngineConfig, FilesystemLocalReplica, HttpClientConfig,
     HttpEnrollmentClient, HttpSyncRemote, InboundSyncEngine, LocalFingerprint, LocalNode,
-    LocalStateConfig, LocalStateStore, ManagedRelativePath, OutboundIntent, OutboundIntentKind,
-    RebaselineApplier, RebaselineConvergenceCoordinator, RebaselineConvergenceOutcome,
-    RebaselineSnapshotRemote, RemoteErrorKind, ReplicaScope, ServerProfile, SyncOutcome,
+    LocalReplica, LocalStateConfig, LocalStateStore, ManagedRelativePath, OutboundIntent,
+    OutboundIntentKind, RebaselineApplier, RebaselineConvergenceCoordinator,
+    RebaselineConvergenceOutcome, RebaselineSnapshotRemote, RemoteErrorKind, ReplicaScope,
+    ServerProfile, SyncOutcome,
 };
 use synveil_core::{
     DedupDomainId, Device, DeviceId, DeviceStatus, Library, LibraryId, LogicalName,
@@ -108,9 +109,11 @@ struct ProxyState {
     feed_requests: Arc<AtomicUsize>,
     checkpoint_requests: Arc<AtomicUsize>,
     handoff_requests: Arc<AtomicUsize>,
+    mutation_requests: Arc<AtomicUsize>,
     hold_next_page: Arc<AtomicBool>,
     page_started: Arc<tokio::sync::Notify>,
     release_page: Arc<tokio::sync::Notify>,
+    fail_feed_call: Arc<AtomicUsize>,
     fail_page_call: Arc<AtomicUsize>,
     fail_handoff_call: Arc<AtomicUsize>,
 }
@@ -125,9 +128,11 @@ impl ProxyState {
             feed_requests: Arc::new(AtomicUsize::new(0)),
             checkpoint_requests: Arc::new(AtomicUsize::new(0)),
             handoff_requests: Arc::new(AtomicUsize::new(0)),
+            mutation_requests: Arc::new(AtomicUsize::new(0)),
             hold_next_page: Arc::new(AtomicBool::new(false)),
             page_started: Arc::new(tokio::sync::Notify::new()),
             release_page: Arc::new(tokio::sync::Notify::new()),
+            fail_feed_call: Arc::new(AtomicUsize::new(0)),
             fail_page_call: Arc::new(AtomicUsize::new(0)),
             fail_handoff_call: Arc::new(AtomicUsize::new(0)),
         }
@@ -139,6 +144,8 @@ impl ProxyState {
         self.feed_requests.store(0, Ordering::SeqCst);
         self.checkpoint_requests.store(0, Ordering::SeqCst);
         self.handoff_requests.store(0, Ordering::SeqCst);
+        self.mutation_requests.store(0, Ordering::SeqCst);
+        self.fail_feed_call.store(0, Ordering::SeqCst);
         self.fail_page_call.store(0, Ordering::SeqCst);
         self.fail_handoff_call.store(0, Ordering::SeqCst);
     }
@@ -153,6 +160,10 @@ impl ProxyState {
 
     fn handoffs(&self) -> usize {
         self.handoff_requests.load(Ordering::SeqCst)
+    }
+
+    fn mutation_requests(&self) -> usize {
+        self.mutation_requests.load(Ordering::SeqCst)
     }
 }
 
@@ -193,6 +204,7 @@ async fn proxy_request(State(state): State<ProxyState>, request: Request<Body>) 
     let is_handoff = method == Method::POST
         && path.starts_with("/api/v1/rebaseline-snapshots/")
         && path.ends_with("/handoff");
+    let is_mutation = method == Method::POST && path.ends_with("/mutations");
     let is_feed =
         method == Method::GET && path.starts_with("/api/v1/devices/") && path.ends_with("/changes");
     let is_checkpoint = method == Method::GET
@@ -214,7 +226,10 @@ async fn proxy_request(State(state): State<ProxyState>, request: Request<Body>) 
         }
     }
     if is_feed {
-        state.feed_requests.fetch_add(1, Ordering::SeqCst);
+        let call = state.feed_requests.fetch_add(1, Ordering::SeqCst) + 1;
+        if state.fail_feed_call.load(Ordering::SeqCst) == call {
+            return controlled_error(StatusCode::SERVICE_UNAVAILABLE, "dependency_unavailable");
+        }
     }
     if is_checkpoint {
         state.checkpoint_requests.fetch_add(1, Ordering::SeqCst);
@@ -225,6 +240,9 @@ async fn proxy_request(State(state): State<ProxyState>, request: Request<Body>) 
             return controlled_error(StatusCode::NOT_FOUND, "not_found");
         }
     }
+    if is_mutation {
+        state.mutation_requests.fetch_add(1, Ordering::SeqCst);
+    }
 
     let body = match body.collect().await {
         Ok(body) => body.to_bytes(),
@@ -232,7 +250,7 @@ async fn proxy_request(State(state): State<ProxyState>, request: Request<Body>) 
     };
     let mut upstream = state
         .client
-        .request(method, format!("{}{}{}", state.target, path, query));
+        .request(method.clone(), format!("{}{}{}", state.target, path, query));
     for (name, value) in &parts.headers {
         if name != header::HOST {
             upstream = upstream.header(name, value);
@@ -541,6 +559,7 @@ impl LiveFixture {
             seed: seed.clone(),
             engine,
             state: self.local.clone(),
+            replica,
         }
     }
 
@@ -730,9 +749,90 @@ struct ClientLibrary {
     seed: LibrarySeed,
     engine: Arc<InboundSyncEngine>,
     state: Arc<LocalStateStore>,
+    #[allow(dead_code)]
+    replica: Arc<FilesystemLocalReplica>,
 }
 
 impl ClientLibrary {
+    #[allow(dead_code)]
+    async fn seed_ready_state(&self, nodes: &[&Node]) {
+        self.seed_ready_state_at(nodes, Sequence::new(0)).await;
+    }
+
+    #[allow(dead_code)]
+    async fn seed_ready_state_at(&self, nodes: &[&Node], cursor: Sequence) {
+        let root = LocalNode::new(
+            self.seed.library_id,
+            self.seed.root.id(),
+            None,
+            ManagedRelativePath::root(),
+            self.seed.root.name().clone(),
+            synveil_core::NodeKind::Directory,
+            synveil_core::NodeState::Active,
+            self.seed.root.revision(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Sequence::new(0),
+            true,
+            None,
+        );
+        self.state
+            .upsert_local_node(&root)
+            .await
+            .expect("ready root must persist");
+        for node in nodes {
+            let relative = ManagedRelativePath::new(node.name().as_str())
+                .expect("ready node path must be valid");
+            if node.kind() == synveil_core::NodeKind::Directory {
+                fs::create_dir(self.replica.root_path().join(relative.as_path()))
+                    .expect("ready directory must be visible");
+            }
+            let local = LocalNode::new(
+                self.seed.library_id,
+                node.id(),
+                Some(self.seed.root.id()),
+                relative,
+                node.name().clone(),
+                node.kind(),
+                node.state(),
+                node.revision(),
+                node.current_version_id(),
+                None,
+                None,
+                None,
+                None,
+                Sequence::new(0),
+                true,
+                None,
+            );
+            self.state
+                .upsert_local_node(&local)
+                .await
+                .expect("ready node must persist");
+        }
+        let sqlite = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&format!("sqlite:{}", self.state.database_path().display()))
+            .await
+            .expect("ready replica update connection must open");
+        sqlx::query(
+            "UPDATE replicas SET root_node_id = ?, journal_epoch = 1,
+             applied_sequence = ?, acknowledged_sequence = ?, status = 'IDLE'
+             WHERE library_id = ?",
+        )
+        .bind(self.seed.root.id().to_string())
+        .bind(i64::try_from(cursor.get()).expect("ready cursor must fit SQLite"))
+        .bind(i64::try_from(cursor.get()).expect("ready cursor must fit SQLite"))
+        .bind(self.seed.library_id.to_string())
+        .execute(&sqlite)
+        .await
+        .expect("ready replica cursor must persist");
+        sqlite.close().await;
+    }
+
     async fn seed_stale_state(&self, stale_node: Option<&Node>) {
         let root = LocalNode::new(
             self.seed.library_id,
@@ -1462,6 +1562,7 @@ async fn live_pg17_prompt87_rate_limit_and_revoked_device_are_non_triggers() {
         ClientSyncError::Remote(remote) if remote.kind() == RemoteErrorKind::DeviceRevoked
     ));
     assert_eq!(revoked_fixture.proxy.snapshot_posts(), 0);
+    assert_eq!(revoked_fixture.proxy.mutation_requests(), 0);
     assert_eq!(revoked_fixture.sqlite_counts(&revoked_seed).await, (0, 0));
     assert_eq!(
         revoked_fixture

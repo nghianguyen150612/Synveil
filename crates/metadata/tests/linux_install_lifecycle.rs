@@ -1,3 +1,5 @@
+#![cfg(target_os = "linux")]
+
 //! Prompt 76 — Linux Installation, Upgrade & Data-Preserving Uninstall Foundation.
 //!
 //! Package-neutral lifecycle tests that prove deterministic mechanics for:
@@ -113,7 +115,13 @@ fn run_install(root: &Path, binary: &Path, extra_env: &[(&str, &str)]) -> std::p
     let mut cmd = Command::new("bash");
     cmd.arg(install_script())
         .arg(format!("--root={}", root.display()))
-        .arg(format!("--binary={}", binary.display()));
+        .arg(format!("--binary={}", binary.display()))
+        // The lifecycle tests use one disposable executable as the byte
+        // source for all three package-owned binaries.  Native package tests
+        // exercise distinct release artifacts; these tests only need a valid
+        // staged payload for install/upgrade/uninstall mechanics.
+        .arg(format!("--client-binary={}", binary.display()))
+        .arg(format!("--desktop-binary={}", binary.display()));
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
@@ -175,7 +183,14 @@ fn fresh_staged_install_produces_expected_tree() {
 
     // Required PACKAGE artifacts must exist at exact paths
     let expected_files = [
+        ("/usr/bin/synveil-client", 0o755),
+        ("/usr/bin/synveil-desktop", 0o755),
         ("/usr/bin/synveil-scheduled-maintenance-once", 0o755),
+        ("/usr/lib/systemd/user/synveil-client.service", 0o644),
+        ("/usr/share/applications/synveil.desktop", 0o644),
+        ("/usr/share/icons/hicolor/scalable/apps/synveil.svg", 0o644),
+        ("/usr/share/doc/synveil/LICENSE", 0o644),
+        ("/usr/share/doc/synveil/NOTICE", 0o644),
         (
             "/usr/lib/systemd/system/synveil-scheduled-maintenance.service",
             0o644,
@@ -302,9 +317,16 @@ fn package_artifact_manifest_is_authoritative_and_collision_free() {
             "destination collision in manifest (two entries for same dest): {dest}"
         );
     }
-    // Must contain exactly the expected PACKAGE set (6 entries)
+    // Must contain exactly the expected PACKAGE set.
     let expected_package = [
+        "/usr/bin/synveil-client",
+        "/usr/bin/synveil-desktop",
         "/usr/bin/synveil-scheduled-maintenance-once",
+        "/usr/lib/systemd/user/synveil-client.service",
+        "/usr/share/applications/synveil.desktop",
+        "/usr/share/icons/hicolor/scalable/apps/synveil.svg",
+        "/usr/share/doc/synveil/LICENSE",
+        "/usr/share/doc/synveil/NOTICE",
         "/usr/lib/systemd/system/synveil-scheduled-maintenance.service",
         "/usr/lib/systemd/system/synveil-scheduled-maintenance.timer",
         "/usr/lib/sysusers.d/synveil.conf",
@@ -777,7 +799,14 @@ fn ordinary_uninstall_removes_package_preserves_config_state_external() {
 
     // Required removed: PACKAGE artifacts
     for dest in [
+        "/usr/bin/synveil-client",
+        "/usr/bin/synveil-desktop",
         "/usr/bin/synveil-scheduled-maintenance-once",
+        "/usr/lib/systemd/user/synveil-client.service",
+        "/usr/share/applications/synveil.desktop",
+        "/usr/share/icons/hicolor/scalable/apps/synveil.svg",
+        "/usr/share/doc/synveil/LICENSE",
+        "/usr/share/doc/synveil/NOTICE",
         "/usr/lib/systemd/system/synveil-scheduled-maintenance.service",
         "/usr/lib/systemd/system/synveil-scheduled-maintenance.timer",
         "/usr/lib/sysusers.d/synveil.conf",
@@ -815,9 +844,13 @@ fn ordinary_uninstall_removes_package_preserves_config_state_external() {
     // Parent dirs preserved
     for parent in [
         "/usr/bin",
+        "/usr/lib/systemd/user",
         "/usr/lib/systemd/system",
         "/usr/lib/sysusers.d",
         "/usr/lib/tmpfiles.d",
+        "/usr/share/applications",
+        "/usr/share/icons/hicolor/scalable/apps",
+        "/usr/share/doc/synveil",
         "/etc",
         "/var/lib",
     ] {
@@ -1188,9 +1221,31 @@ fn wrong_root_path_safety_is_rejected() {
 fn permission_contract_matches_prompt75() {
     let manifest = parse_manifest();
     let expectations: HashMap<&str, (&str, u32, &str, &str)> = [
+        ("/usr/bin/synveil-client", ("0755", 0o755, "root", "root")),
+        ("/usr/bin/synveil-desktop", ("0755", 0o755, "root", "root")),
         (
             "/usr/bin/synveil-scheduled-maintenance-once",
             ("0755", 0o755, "root", "root"),
+        ),
+        (
+            "/usr/lib/systemd/user/synveil-client.service",
+            ("0644", 0o644, "root", "root"),
+        ),
+        (
+            "/usr/share/applications/synveil.desktop",
+            ("0644", 0o644, "root", "root"),
+        ),
+        (
+            "/usr/share/icons/hicolor/scalable/apps/synveil.svg",
+            ("0644", 0o644, "root", "root"),
+        ),
+        (
+            "/usr/share/doc/synveil/LICENSE",
+            ("0644", 0o644, "root", "root"),
+        ),
+        (
+            "/usr/share/doc/synveil/NOTICE",
+            ("0644", 0o644, "root", "root"),
         ),
         (
             "/usr/lib/systemd/system/synveil-scheduled-maintenance.service",

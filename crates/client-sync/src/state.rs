@@ -97,6 +97,35 @@ impl OutboundMutationRecord {
     }
 }
 
+/// Result of the idempotent outbound-intent persistence boundary.
+///
+/// `changed` is true only when the call inserted a new durable intent or
+/// updated an existing active intent. Exact semantic duplicates are returned
+/// with `changed == false`, so an event producer can avoid an unnecessary
+/// runtime wake without treating a successful no-op as a failure.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OutboundIntentUpsertResult {
+    intent: OutboundIntent,
+    changed: bool,
+}
+
+impl OutboundIntentUpsertResult {
+    #[must_use]
+    pub const fn intent(&self) -> &OutboundIntent {
+        &self.intent
+    }
+
+    #[must_use]
+    pub const fn changed(&self) -> bool {
+        self.changed
+    }
+
+    #[must_use]
+    pub fn into_intent(self) -> OutboundIntent {
+        self.intent
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutboundUploadRecord {
     intent_id: OutboundIntentId,
@@ -1118,6 +1147,25 @@ impl LocalStateStore {
             .await
     }
 
+    /// Prepare a profile-bound local replica before credentials are
+    /// available. This is an application-composition seam only: it persists
+    /// the existing replica/library registry row, never secret material, and
+    /// never grants network authority. The authenticated Prompt 91 engines
+    /// still require a live enrollment when they are constructed for a
+    /// cycle.
+    pub(crate) async fn prepare_replica_for_profile(
+        &self,
+        scope: ReplicaScope,
+        binding_id: RootBindingId,
+        profile_id: ServerProfileId,
+    ) -> Result<ReplicaRecord, ClientSyncError> {
+        if self.server_profile(profile_id).await?.is_none() {
+            return Err(ClientSyncError::InvalidServerProfile);
+        }
+        self.bind_replica_inner(scope, binding_id, Some(profile_id))
+            .await
+    }
+
     async fn bind_replica_inner(
         &self,
         scope: ReplicaScope,
@@ -2040,6 +2088,26 @@ impl LocalStateStore {
         Ok(())
     }
 
+    /// Clear root-validation blockers only after the owning lifecycle has
+    /// revalidated the exact managed-root binding. Other observation issues
+    /// remain explicit and require their existing issue-specific resolution
+    /// path.
+    pub(crate) async fn resolve_recovered_root_observation_issues(
+        &self,
+        library_id: LibraryId,
+    ) -> Result<(), ClientSyncError> {
+        sqlx::query(
+            "UPDATE observation_issues SET resolved_at_ms = ?
+             WHERE library_id = ? AND issue_kind = 'ROOT_INVALID'
+               AND resolved_at_ms IS NULL",
+        )
+        .bind(now_ms()?)
+        .bind(library_id.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     /// Insert an intent idempotently. Exact semantic duplicates return the
     /// original durable row. The small set of proven local coalescing rules
     /// updates only a still-active row and never crosses identity boundaries.
@@ -2047,6 +2115,21 @@ impl LocalStateStore {
         &self,
         intent: &OutboundIntent,
     ) -> Result<OutboundIntent, ClientSyncError> {
+        self.upsert_outbound_intent_with_result(intent)
+            .await
+            .map(OutboundIntentUpsertResult::into_intent)
+    }
+
+    /// Insert or update an intent and report whether durable actionable work
+    /// changed. This is the producer-facing variant of
+    /// [`Self::upsert_outbound_intent`]. The returned future completes only
+    /// after the SQLite statement that changed the intent has committed, so a
+    /// caller may safely release its writer guard and signal the runtime
+    /// afterward.
+    pub async fn upsert_outbound_intent_with_result(
+        &self,
+        intent: &OutboundIntent,
+    ) -> Result<OutboundIntentUpsertResult, ClientSyncError> {
         let exact = sqlx::query(
             "SELECT * FROM outbound_intents
              WHERE library_id = ? AND dedupe_version = 1 AND dedupe_sha256 = ?
@@ -2057,7 +2140,10 @@ impl LocalStateStore {
         .fetch_optional(&self.pool)
         .await?;
         if let Some(row) = exact {
-            return decode_outbound_intent(row);
+            return Ok(OutboundIntentUpsertResult {
+                intent: decode_outbound_intent(row)?,
+                changed: false,
+            });
         }
 
         let coalesced = match intent.kind() {
@@ -2201,10 +2287,13 @@ impl LocalStateStore {
             if changed != 1 {
                 return Err(ClientSyncError::InvalidState);
             }
-            return self
-                .outbound_intent(existing.intent_id())
-                .await?
-                .ok_or(ClientSyncError::InvalidState);
+            return Ok(OutboundIntentUpsertResult {
+                intent: self
+                    .outbound_intent(existing.intent_id())
+                    .await?
+                    .ok_or(ClientSyncError::InvalidState)?,
+                changed: true,
+            });
         }
 
         let now = now_ms()?;
@@ -2252,7 +2341,10 @@ impl LocalStateStore {
         .bind(now)
         .execute(&self.pool)
         .await?;
-        Ok(intent.clone())
+        Ok(OutboundIntentUpsertResult {
+            intent: intent.clone(),
+            changed: true,
+        })
     }
 
     /// Preserve a pre-submission create intent's ID when a paired native

@@ -1,3 +1,5 @@
+#![cfg(target_os = "linux")]
+
 //! Prompt 79 — Linux deployment adversarial verification, live PostgreSQL 17.
 //!
 //! Covers:

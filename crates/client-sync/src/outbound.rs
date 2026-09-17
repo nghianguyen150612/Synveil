@@ -90,6 +90,15 @@ impl OutboundSubmissionEngine {
         })
     }
 
+    #[must_use]
+    pub const fn scope(&self) -> ReplicaScope {
+        self.scope
+    }
+
+    pub(crate) fn state(&self) -> &Arc<LocalStateStore> {
+        &self.state
+    }
+
     #[cfg(test)]
     pub(crate) async fn with_failure_injector(
         scope: ReplicaScope,

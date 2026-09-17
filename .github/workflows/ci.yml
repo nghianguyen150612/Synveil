@@ -28,7 +28,12 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libdbus-1-dev
+          sudo apt-get install -y \
+            pkg-config \
+            libdbus-1-dev \
+            qt6-base-dev \
+            qt6-declarative-dev \
+            qt6-tools-dev-tools
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -49,6 +54,143 @@ jobs:
 
       - name: Check dependency policy
         run: cargo deny check
+
+  desktop-linux-ui:
+    name: Native desktop UI (Linux Qt 6)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install native Qt and secret-service build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libdbus-1-dev \
+            qt6-base-dev \
+            qt6-declarative-dev \
+            qt6-tools-dev-tools
+
+      - name: Build and test the native desktop shell
+        run: ./scripts/test-desktop-ui.sh
+
+      - name: Test the bounded desktop launch manager
+        run: cargo test -p synveil-client --lib --locked
+
+      - name: Test the Linux user launch policy
+        run: cargo test -p synveil-metadata --test linux_desktop_launch_units --locked
+
+      - name: Test the Windows ZIP packaging contract
+        run: cargo test -p synveil-metadata --test windows_desktop_packaging_units --locked
+
+  desktop-windows-native:
+    name: Native desktop UI (Windows Qt 6)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Select the MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install native Qt 6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.8.3
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Verify Qt 6.4 minimum
+        shell: pwsh
+        run: |
+          $qtVersion = (& qmake -query QT_VERSION).Trim()
+          if ([version]$qtVersion -lt [version]"6.4.0") {
+            throw "Qt 6.4 or newer is required; found $qtVersion"
+          }
+          Write-Host "Qt $qtVersion"
+
+      - name: Test the native desktop shell
+        run: cargo test -p synveil-desktop --locked
+
+      - name: Test the Windows launch and Task Scheduler policy
+        run: cargo test -p synveil-client --lib --locked
+
+      - name: Build the native desktop shell
+        run: cargo build -p synveil-desktop --locked
+
+      - name: Build the release native desktop shell
+        run: cargo build -p synveil-desktop --release --locked
+
+      - name: Build the release background client
+        run: cargo build -p synveil-client --release --locked
+
+      - name: Build and audit the reproducible Windows runtime ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./deploy/packages/build-windows.sh \
+            --desktop-binary=target/release/synveil-desktop.exe \
+            --client-binary=target/release/synveil-client.exe \
+            --output-dir=target/windows-packages
+
+      - name: Verify generated QML module and PE output
+        shell: pwsh
+        run: |
+          $qmlMetadata = Get-ChildItem -Path "target\debug\build" -Recurse -Filter "qmldir" |
+            Where-Object { $_.FullName -match "qt-build-utils[\\/]qml_modules[\\/]com[\\/]synveil[\\/]desktop" } |
+            Select-Object -First 1
+          if ($null -eq $qmlMetadata) {
+            throw "CXX-Qt did not generate the production QML module metadata"
+          }
+          $binary = Join-Path (Get-Location) "target\release\synveil-desktop.exe"
+          if (!(Test-Path -LiteralPath $binary)) {
+            throw "The release desktop PE executable was not produced"
+          }
+          $bytes = [System.IO.File]::ReadAllBytes($binary)
+          if ($bytes.Length -lt 0x40 -or $bytes[0] -ne 0x4d -or $bytes[1] -ne 0x5a) {
+            throw "Desktop output is not a PE/MZ executable"
+          }
+          $peOffset = [System.BitConverter]::ToInt32($bytes, 0x3c)
+          if ($peOffset -lt 0 -or $peOffset + 6 -gt $bytes.Length -or
+              $bytes[$peOffset] -ne 0x50 -or $bytes[$peOffset + 1] -ne 0x45) {
+            throw "Desktop output has no PE signature"
+          }
+          $machine = [System.BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          if ($machine -ne 0x8664) {
+            throw ("Expected AMD64 PE output, found machine 0x{0:x4}" -f $machine)
+          }
+          Write-Host "QML module metadata: $($qmlMetadata.FullName)"
+          Write-Host "PE executable: $binary"
+          Write-Host "PE machine: AMD64 (0x8664)"
+
+      - name: Load the QML shell offscreen
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $smokeRoot = Join-Path $env:RUNNER_TEMP "synveil-desktop-smoke"
+          New-Item -ItemType Directory -Force -Path $smokeRoot, "$smokeRoot\config", "$smokeRoot\data", "$smokeRoot\cache", "$smokeRoot\runtime" | Out-Null
+          $env:SYNVEIL_CONFIG_DIR = "$smokeRoot\config"
+          $env:SYNVEIL_DATA_DIR = "$smokeRoot\data"
+          $env:SYNVEIL_CACHE_DIR = "$smokeRoot\cache"
+          $env:SYNVEIL_RUNTIME_DIR = "$smokeRoot\runtime"
+          $env:SYNVEIL_CLIENT_CONFIG = "$smokeRoot\config\client.conf"
+          Push-Location $smokeRoot
+          & (Resolve-Path "$env:GITHUB_WORKSPACE\target\release\synveil-desktop.exe") --qml-smoke-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Pop-Location
+
+      - name: Upload unsigned Windows runtime ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: synveil-windows-runtime
+          path: target/windows-packages/*.zip
+          if-no-files-found: error
 
   cross-platform-check:
     name: Check (${{ matrix.os }})
@@ -71,8 +213,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config libdbus-1-dev
 
-      - name: Check workspace
-        run: cargo check --workspace --all-targets --locked
+      - name: Check workspace without the platform-specific Qt binary
+        run: cargo check --workspace --all-targets --exclude synveil-desktop --locked
+
+      - name: Check explicit Windows target
+        if: runner.os == 'Windows'
+        run: |
+          rustup target add x86_64-pc-windows-gnu
+          cargo check --workspace --all-targets --exclude synveil-desktop --locked --target x86_64-pc-windows-gnu
 
   cross-platform-test:
     name: Test (${{ matrix.os }})
@@ -95,8 +243,29 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config libdbus-1-dev
 
-      - name: Test workspace
-        run: cargo test --workspace --locked
+      - name: Test workspace without the platform-specific Qt binary
+        run: cargo test --workspace --exclude synveil-desktop --locked
+
+      - name: Test desktop sync host/controller
+        run: cargo test -p synveil-client-sync --lib host::tests --locked
+
+      - name: Test production desktop process
+        run: cargo test -p synveil-client --lib --locked
+
+      - name: Test Windows packaging contract
+        run: cargo test -p synveil-metadata --test windows_desktop_packaging_units --locked
+
+      - name: Test Linux user launch policy
+        if: runner.os == 'Linux'
+        run: cargo test -p synveil-metadata --test linux_desktop_launch_units --locked
+
+      - name: Test disposable Linux desktop control IPC
+        if: runner.os == 'Linux'
+        run: cargo test -p synveil-client --test desktop_control_ipc --locked
+
+      - name: Test disposable Linux desktop controller IPC
+        if: runner.os == 'Linux'
+        run: cargo test -p synveil-client --test desktop_controller --locked
 
   web-quality:
     name: Web quality

@@ -1,3 +1,5 @@
+#![cfg(target_os = "linux")]
+
 //! Prompt 79 — package-level hardened execution against PostgreSQL 17.
 //!
 //! Proves the NATIVE PACKAGED binary (extracted from the built `.deb`,

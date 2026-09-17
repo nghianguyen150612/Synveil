@@ -1992,3 +1992,558 @@ CI chạy cùng target dưới dạng subset bounded hard-fail với `set -euo p
 không `continue-on-error` hay `|| true`. Yêu cầu PostgreSQL 17, server
 migration vẫn 36, client schema vẫn 6, không migration/route/OpenAPI/daemon/
 scheduler/polling/retry/global-lock mới.
+
+### Cycle hai chiều bounded Prompt 91
+
+Module focused `sync_cycle` chạy `BidirectionalSyncCycleRunner` production cùng
+engine Prompt 87 và Prompt 88 hiện có. SC1–SC22 bao phủ idle, inbound-only,
+outbound-only, progress kết hợp, overlap cùng node, conflict hiện có và conflict
+mới, recovery retained-floor/proof-loss, precedence candidate/handoff,
+authentication, transport failure, snapshot-create 429, concurrency cùng
+Library, Library độc lập, response loss và bound một page/một submission.
+Crash matrix còn bao phủ caller dừng sau inbound, conflict đã persist và local
+transition `SERVER_APPLIED` sau khi server commit.
+
+Chạy focused gate deterministic:
+
+```text
+cargo test -p synveil-client-sync --lib sync_cycle --locked -- --nocapture
+cargo clippy -p synveil-client-sync --all-targets --locked -- -D warnings
+```
+
+Target ignored `sync_cycle_postgres` chạy runner qua Axum router thật, device
+authentication, `HttpSyncRemote`, filesystem replica, SQLite state và loopback
+counting proxy. Tám case Prompt 91 kiểm tra progress hai chiều healthy, inbound
+conflict fence, retention recovery, proof-loss recovery, conflict hiện có vẫn
+cho inbound, revoked-device fail-closed, một submission cho caller cùng Library
+và progress độc lập giữa hai Library. Target dùng lại fixture Prompt 87, nên
+một lần chạy đầy đủ báo cả hai nhóm nhưng mỗi case vẫn bounded và serial.
+
+Chỉ chạy với PostgreSQL 17 disposable mới:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5432/fresh_p91 \
+  cargo test -p synveil-api --test sync_cycle_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture
+```
+
+Workflow PostgreSQL 17 chạy target này như hard-fail step với
+`set -euo pipefail`, rồi chạy focused client-sync gate. Prompt 91 không thêm
+server migration, route, operation OpenAPI, frontend persistence, deployment
+unit, cycle table, scheduler, daemon, retry loop, polling loop hay global lock;
+server vẫn migration 36 và client vẫn schema 6.
+
+### Runtime đồng bộ chạy dài Prompt 92
+
+Unit suite runtime dùng Tokio paused virtual clock và các
+`SyncCycleExecutor` controlled. Suite kiểm tra lifecycle single-supervisor,
+start/shutdown idempotent, register/unregister, initial schedule startup,
+manual/local wake, coalescing wake storm, giữ wake trong cycle, tối đa một
+cycle active mỗi Library, global concurrency, fairness round-robin, idle poll,
+backoff transient tất định và cap, delay rate-limit, auth suspension/resume,
+follow-up sau progress, outbound chỉ bị conflict block, delay
+recovery-blocked, fault isolation và graceful drain cycle đang chạy. Production
+executor type-erased chỉ ở boundary scheduler nhưng vẫn gọi Prompt 91.
+
+Chạy deterministic gate:
+
+```text
+cargo test -p synveil-client-sync --lib runtime::tests --locked -- --nocapture
+cargo clippy -p synveil-client-sync --all-targets --all-features --locked -- -D warnings
+```
+
+Target PostgreSQL bị ignore `sync_runtime_postgres` bọc runtime lên fixture
+thật hiện có: PostgreSQL 17, Axum route, device authentication,
+`HttpSyncRemote`, filesystem replica, SQLite state và runner Prompt 91
+production. Acceptance case bao phủ startup qua registration explicit, inbound
+và outbound progress thật, local wake cho cycle thứ hai, graceful shutdown và
+restart từ durable state cũ. Target chỉ chạy khi
+`SYNVEIL_TEST_DATABASE_URL` trỏ đến PostgreSQL 17 disposable mới:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5432/fresh_p92 \
+  cargo test -p synveil-api --test sync_runtime_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture live_pg17_runtime_
+```
+
+Workflow PostgreSQL tạo child database cô lập bằng `set -euo pipefail`, chạy
+live runtime target như hard-fail rồi chạy focused runtime unit suite. Live
+target là một bounded integration case, không phải bằng chứng mọi permutation
+fault/network/auth đã chạy trên PostgreSQL; các scheduling permutation đó do
+unit deterministic kiểm tra. Chỉ được phát readiness khi live target và toàn
+bộ gate regression Prompt 81–91 cùng repository pass. Server phải giữ 36
+migration và client schema 6.
+
+### Tích hợp signal runtime theo thứ tự durable-change trước Prompt 93
+
+Focused signal suite Prompt 93 kiểm tra thêm producer boundary bên cạnh
+regression scheduler Prompt 92. Suite chứng minh outbound intent visible trước
+khi wake callback có thể quan sát, writer theo Library đã release trước khi
+notify, notifier stopped/drop không xóa intent, exact no-op và observation bị
+suppression không wake, còn observation batch/rescan bounded chỉ phát một wake.
+Suite cũng bao phủ credential usable commit trước `CredentialChanged`,
+credential persistence fail và removal không wake, status stopped/unknown typed,
+clone runtime cùng identity, manual scheduling, network/auth safety,
+follow-up coalesce khi cycle active và global bound nhiều Library.
+
+Lệnh focused chính:
+
+```text
+cargo test -p synveil-client-sync --lib signals::tests --locked -- --nocapture
+cargo test -p synveil-client-sync --lib durable_observation_batch_wakes_once_and_noop_does_not_wake --locked
+cargo test -p synveil-client-sync --lib rescan_durable_work_emits_one_wake_after_bounded_reconciliation --locked
+cargo clippy -p synveil-client-sync --all-targets --all-features --locked -- -D warnings
+```
+
+Live target `sync_runtime_signals_postgres` reuse fixture Prompt 87 thật và
+thêm PostgreSQL 17, Axum, device authentication, `HttpSyncRemote`, SQLite,
+cycle Prompt 91 production và runtime Prompt 92 để kiểm tra đủ mười case
+LIVE-SIG: durable local intent wake, wake unavailable được periodic polling
+khôi phục, observation submission và burst coalescing, credential resume,
+network recovery, manual `sync_now`, follow-up coalescing khi cycle đang chạy,
+restart recovery sau lost wake và isolation giữa nhiều Library. Target bị ignore
+nếu `SYNVEIL_TEST_DATABASE_URL` chưa chỉ đến PostgreSQL 17 disposable mới:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5432/fresh_p93 \
+  cargo test -p synveil-api --test sync_runtime_signals_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture live_pg17_signal_
+```
+
+Workflow PostgreSQL chạy target này như hard-fail step Prompt 93, sau đó chạy
+focused producer và observation tests. Target không claim có OS network
+monitor, service manager, UI, server push channel hay persistent wake queue.
+Live signal acceptance vẫn unverified khi chưa cấu hình disposable PostgreSQL
+17 bắt buộc; evidence focused SQLite/virtual-clock không thay cho live gate.
+
+Prompt 93 thêm zero server migration, zero client migration, zero route, zero
+OpenAPI operation và zero persistent runtime table. Invariant là durable state
+trước, writer release kế tiếp, wake best-effort sau đó; startup và periodic
+polling vẫn là recovery correctness.
+
+### Gate host desktop và lifecycle tiến trình Prompt 94
+
+Focused module `host` trong `synveil-client-sync` kiểm tra composition root cấp
+application mà không cần desktop executable hay server live. Module chứng minh
+construction không có worker, identity của một runtime duy nhất giữa host,
+handle, notifier, credential controller và observer, registration trước
+observer start, duplicate registration/start, routing wake manual/network/
+credential, status stopped typed, forwarding lifecycle adapter, HTTP startup
+không enrollment, restart từ durable state, join/shutdown lặp lại an toàn và
+stress 1.000 vòng start/shutdown/drop. Matrix focused cũng từ chối registration
+khác owner/Device bằng `WrongScope` typed. Suite Prompt 91–93 hiện có vẫn sở
+hữu correctness cycle, ordering durable signal, recovery candidate/handoff/
+conflict và fairness scheduler.
+
+Chạy gate composition local:
+
+```text
+cargo test -p synveil-client-sync --lib host --locked -- --nocapture
+cargo check -p synveil-api --test desktop_sync_host_postgres --locked
+cargo clippy -p synveil-client-sync --all-targets --all-features --locked -- -D warnings
+```
+
+Target ignored riêng `desktop_sync_host_postgres` chọn mười case
+`live_pg17_host1` đến `live_pg17_host10`. Target dùng lại fixture hiện có và
+exercise PostgreSQL 17, Axum router, device authentication, `HttpSyncRemote`,
+SQLite, runner Prompt 91, runtime Prompt 92 và producer/controller Prompt 93
+thật qua một `DesktopSyncHost`. Các case bao phủ startup có inbound + outbound,
+missing credential `AuthBlocked` rồi replacement trên cùng host, observation
+filesystem, manual sync, network recovery, graceful shutdown khi cycle active,
+durable intent sau shutdown, process restart, ba Library chung một runtime và
+100 lifecycle live lặp lại.
+
+Chỉ chạy với PostgreSQL 17 disposable mới:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5432/fresh_p94 \
+  cargo test -p synveil-api --test desktop_sync_host_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture live_pg17_host
+```
+
+Khi biến database chưa set, target live được ignore có chủ ý; kết quả là
+unverified, không phải pass. Host không thêm server/client migration, route,
+OpenAPI operation, frontend code, service unit, autostart hook hay UI. Linux và
+Windows dùng chung host code cùng adapter semantics; chạy native Windows vẫn
+là compile/CI concern nếu local không có Windows runner.
+
+Lifecycle matrix của host cũng ghi nhận boundary crash/restart: crash trước
+start không có cycle, wake mất vẫn để durable work cho startup polling, còn
+recovery candidate/handoff/conflict/idempotency thuộc lower layer hiện có.
+Status/event của host không là durability oracle và không chứa secret, cookie,
+token, content hay raw local path.
+
+### Gate process desktop production và root lifecycle Prompt 95
+
+Package production là `synveil-client`. Unit suite của nó kiểm tra parser/
+redaction manifest không bí mật, network interval bounded, lifecycle và
+periodic network adapter, shutdown một process/một host, error category ổn
+định và writer lock SQLite liền kề hiện có. Host test client-sync thêm
+bootstrap khi root missing, fence root loss trước queued hint, reappearance
+cùng binding, watcher restart một lần, rescan bounded và isolation sibling
+healthy. Bốn target adversarial/deployment chỉ dành cho Linux vẫn có
+`#![cfg(target_os = "linux")]` tường minh:
+
+```text
+crates/metadata/tests/linux_deployment_adversarial_units.rs
+crates/metadata/tests/linux_install_lifecycle.rs
+crates/metadata/tests/linux_native_packaging_units.rs
+crates/api/tests/linux_deployment_adversarial_postgres.rs
+```
+
+Lệnh focused local:
+
+```text
+cargo fmt --all -- --check
+cargo check --workspace --all-targets --locked
+cargo test -p synveil-client --lib --locked
+cargo test -p synveil-client-sync --lib host::tests --locked -- --nocapture
+cargo test -p synveil-client-sync --lib runtime::tests --locked -- --nocapture
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo deny check
+```
+
+Target live ignored riêng
+`crates/api/tests/desktop_process_postgres.rs` tạo child PostgreSQL mới,
+Axum route thật, device authentication, test secret store bind profile,
+`DesktopClientProcess` production, một `DesktopSyncHost`, filesystem replica,
+SQLite V6 và HTTP sync transport thật. Target assert bootstrap process,
+profile/root binding, schema V6, từ chối single-writer, feed activity thật,
+runtime identity ổn định và graceful shutdown idempotent:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5432/fresh_p95 \
+  cargo test -p synveil-api --test desktop_process_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture live_pg17_process
+```
+
+PostgreSQL workflow tạo child database cô lập và chạy target này như
+hard-fail step Prompt 95, sau đó chạy process/host/runtime focused tests.
+Target mặc định ignore và không được xem là pass khi
+`SYNVEIL_TEST_DATABASE_URL` unset. Evidence integration PostgreSQL phải có
+disposable PostgreSQL 17 thật; SQLite/unit không thay thế gate này.
+
+Cross-platform check phải compile workspace trên Windows native và, trong
+environment có target/linker, chạy target check explicit:
+
+```text
+cargo check --workspace --all-targets --locked --target x86_64-pc-windows-gnu
+```
+
+Trên Linux, binary smoke test chỉ được dùng
+`SYNVEIL_CONFIG_DIR`/`SYNVEIL_DATA_DIR` temporary mới và `client.conf`
+disposable; không trỏ vào profile, credential store hay Library của user.
+Systemd/service, installer/package và migration guard vẫn là gate riêng.
+Không có marker `SYNVEIL_DESKTOP_PROCESS_BOOTSTRAP_READY` hợp lệ cho
+đến khi repository gate local, live PostgreSQL process target và
+cross-platform deployment check đều pass thật.
+
+## Gate IPC control cục bộ Prompt 96
+
+Target Linux disposable tập trung:
+
+```text
+cargo test -p synveil-client --test desktop_control_ipc --locked
+```
+
+Target bind runtime root temporary ngắn và kiểm tra Unix socket type, owner,
+control directory `0700`, socket `0600`, handshake v1, Ping/process status,
+library listing bounded, request ID, unknown-command/version error,
+malformed/oversized/truncated frame, reconnect, event subscription, thứ tự
+Shutdown acknowledgement và remove endpoint sạch. Unit test còn kiểm tra active
+endpoint collision, stale socket recovery an toàn và từ chối symlink/
+regular-file/directory.
+
+Target live Prompt 95 hiện kết nối production process bằng control client thật,
+kiểm tra endpoint dùng được trước `Running`, serialize library status an toàn,
+gửi `SyncNow` chỉ scheduling và kiểm tra socket bị remove sau graceful
+shutdown. Chỉ chạy với PostgreSQL 17 disposable mới:
+
+```text
+cargo test -p synveil-api --test desktop_process_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture live_pg17_process
+```
+
+Windows native matrix và explicit `x86_64-pc-windows-gnu` phải compile nhánh
+named-pipe security-descriptor thật. Evidence local Linux không tuyên bố native
+Windows execution. Readiness marker đầy đủ là
+`SYNVEIL_DESKTOP_CONTROL_IPC_READY`, chỉ hợp lệ sau khi tất cả gate Rust,
+dependency-policy, web, OpenAPI, deployment, Windows và live regression pass
+thật. PostgreSQL target bị ignore vì `SYNVEIL_TEST_DATABASE_URL` chưa set là
+unverified, không phải pass.
+
+## Gate core desktop controller Prompt 97
+
+Focused unit suite của controller nằm trong package `synveil-client`, kiểm tra
+construction không side effect, reconnect backoff deterministic có cap,
+serialization/redaction latest-state, generation fence, validation timing và
+fold 10.000 signal thành một pending refresh bit:
+
+```text
+cargo test -p synveil-client --lib controller::tests --locked -- --nocapture
+cargo clippy -p synveil-client --all-targets --all-features --locked -- -D warnings
+```
+
+Target acceptance Linux disposable exercise Prompt 96 server và Unix-domain
+socket thật. Target kiểm tra handshake v1 cho command/status/event connection,
+một snapshot `Fresh` coherent, process state an toàn, map command unknown
+Library, command disconnected bounded, giữ snapshot stale sau server loss,
+automatic reconnect có generation mới và controller stop độc lập với process:
+
+```text
+cargo test -p synveil-client --test desktop_controller --locked -- --nocapture
+```
+
+Implementation có một manager task, một event-reader task cho mỗi generation
+active, mỗi lần chỉ một refresh status, command channel tám item và `watch`
+latest-state không có history nội bộ. Target PostgreSQL của process Prompt 95
+hiện cũng embed một acceptance slice Prompt 97 cho process endpoint thật:
+handshake, library projection an toàn, `SyncNow` chỉ qua IPC, redaction và
+controller stop độc lập với process. Đây vẫn là target hard-fail và không được
+coi là pass khi `SYNVEIL_TEST_DATABASE_URL` unset. Focused Linux target không
+claim full chain PostgreSQL sync Prompt 91–96. Test Linux không claim native
+Windows execution; named-pipe controller path vẫn phải qua gate compile
+native/cross-target Windows bắt buộc.
+
+Controller thêm zero server migration, zero client migration, zero HTTP route,
+zero OpenAPI operation, zero web change và zero artifact GUI/tray,
+autostart/service/installer. Readiness marker đầy đủ là
+`SYNVEIL_DESKTOP_CONTROLLER_CORE_READY`, chỉ hợp lệ sau khi toàn bộ gate
+repository, regression Prompt 81–96, live, Windows, dependency, web, OpenAPI
+và deployment pass thật. Focused pass riêng không đủ cho claim đó.
+
+## Gate shell desktop native Prompt 98
+
+Gate UI Linux dedicated là script repository
+[`scripts/test-desktop-ui.sh`](../../scripts/test-desktop-ui.sh). Script format,
+test, lint và build riêng Qt target, sau đó tìm QML module metadata do Qt 6
+generate, chạy `qmllint` Qt 6 trên hình dạng embedded module và load toàn bộ
+application tree bằng smoke test offscreen:
+
+```text
+./scripts/test-desktop-ui.sh
+```
+
+Focused Rust suite kiểm tra projection Prompt 97 sang QML an toàn và semantics
+UI1–UI40: disconnected/connecting/reconnecting/fresh, protocol/security
+failure, category root/auth/conflict/runtime, stable Library identity, update
+selection atomically, redaction, Sync Now chỉ qua controller, action từng
+Library đủ điều kiện, feedback chỉ scheduling, rapid click bounded, state tray/model dùng chung, close-to-tray,
+fallback không có tray, controller/process independence và Qt thread-affinity.
+Stress case có 10.000 latest-state update, library churn và model 1.000
+Library. Suite không được báo “everything synced” từ scheduling acknowledgement.
+
+Linux CI cài development package Qt 6.4 hoặc mới hơn và chạy cùng hard-fail
+script. Job Windows native pin Qt 6.8.3 MSVC thật trên `windows-latest` và
+hard-fail:
+
+```text
+cargo test -p synveil-desktop --locked
+cargo build -p synveil-desktop --locked
+cargo build -p synveil-desktop --release --locked
+```
+
+Script smoke-load cả binary debug và release để kiểm tra embedded QML resource
+path không phụ thuộc source tree ở cả hai build mode.
+
+Workspace check/test cross-platform thông thường exclude Qt binary
+platform-specific; Windows native job sở hữu Qt build thật. Việc tách này
+không làm yếu named-pipe controller check trên Windows. Máy Linux không được
+claim runtime/tray native Windows; evidence đó chỉ ghi nhận khi Windows job
+authoritative chạy.
+
+PostgreSQL chỉ cần cho acceptance live Sync Now/process-controller, không cần
+cho QML model hoặc shell offscreen. Production-process target hiện có exercise
+controller-to-process Sync Now path thật và chỉ chạy với PostgreSQL 17
+disposable mới:
+
+```text
+cargo test -p synveil-api --test desktop_process_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture live_pg17_process
+```
+
+Prompt 98C bổ sung việc quan sát end-to-end `LIVE-UI5` còn thiếu vào target
+QML Linux ignore `crates/api/tests/desktop_qml_postgres.rs`. Target chạy
+`synveil-client` production thật và Qt shell thật ở hai process riêng, detach
+rồi restore một managed root, và bắt buộc chuỗi
+`Available -> Unavailable -> Recovering -> Available`. Marker `Recovering` chỉ
+được QML phát sau khi quan sát `selected_root_label` canonical an toàn từ
+bridge (`Checking folder changes`), với status `Fresh` và cùng controller
+generation; sau đó test mới release
+`DesktopRootRecoveryGate` hiện có. File handshake bên ngoài của gate chỉ được
+compile trong client acceptance bật feature tường minh, không thêm production
+delay, retry hay UI state.
+
+Chỉ chạy target sau khi build client test-support và Qt shell, với PostgreSQL
+17 mới và native Secret Service đã unlock:
+
+```text
+cargo build -p synveil-client --features test-support --locked
+cargo build -p synveil-desktop --locked
+SYNVEIL_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5432/fresh_p98c \
+  QT_QPA_PLATFORM=offscreen \
+  cargo test -p synveil-api --test desktop_qml_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture live_pg17_qml_production_shell_acceptance
+```
+
+Target này báo riêng các state `Available`, `Unavailable` và
+`Checking folder changes` mà QML nhìn thấy, tách khỏi acceptance controller/
+process. Target còn kiểm tra một lần vào recovery gate, zero delete/trash
+intent tổng hợp qua root/process regression hiện có, không duplicate runtime
+hay controller generation và state cuối `Available`. Nếu QML target bị ignore
+vì thiếu PostgreSQL, Secret Service, Qt hoặc client acceptance bật feature thì
+đó là unverified, không phải pass.
+
+Khi `SYNVEIL_TEST_DATABASE_URL` unset, PostgreSQL target bị ignore là
+unverified. Không được in marker đầy đủ
+`SYNVEIL_NATIVE_DESKTOP_SHELL_READY` nếu focused UI, toàn bộ gate
+Rust/dependency/web/OpenAPI/deployment, evidence Qt native Linux/Windows,
+regression live controller/Sync Now, ADR-040 và tài liệu EN/VI synchronized
+chưa thật sự pass. Riêng focused local gate không đủ cho claim đó.
+
+### Đóng gate build Qt Windows thật Prompt 98D
+
+Blocker cuối của Prompt 98 được đóng vào 2026-09-16 bằng Path B, cross-build từ
+Linux. Đây là bằng chứng Qt target cho Windows thật, không phải build Qt Linux:
+
+- SDK Qt lấy từ official Qt online repository qua `aqtinstall` 3.3.0. Gói đã
+  chọn là Qt 6.8.3 `win64_llvm_mingw` (Windows x86_64 GNU/UCRT), cài ngoài
+  repository tại `/tmp/synveil-p98d-qt/6.8.3/llvm-mingw_64`. Base URL của gói
+  official là
+  `https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_683/qt6_683/qt.qt6.683.win64_llvm_mingw/`;
+  file được tải qua Qt mirror đã cấu hình. `Qt6Core.dll`, `Qt6Gui.dll`,
+  `Qt6Widgets.dll`, `Qt6Qml.dll` và `Qt6QuickControls2.dll` đều được inspect
+  là PE32+ Windows x86-64. Export của QtCore target có
+  `qResourceFeatureZlib`, không phải shared library Linux.
+- Compiler target tương thích ABI là official LLVM-MinGW release
+  `llvm-mingw-20260602-ucrt-ubuntu-22.04-x86_64`, cài ngoài repository tại
+  `/tmp/synveil-p98d-llvm/llvm-mingw-20260602-ucrt-ubuntu-22.04-x86_64`.
+  Compiler là `x86_64-w64-mingw32-clang++`, Clang 22.1.7, target
+  `x86_64-w64-windows-gnu`; SHA-256 archive là
+  `9d191203f9768ead60662d3ae53cdf28e0a28b1e6d44b7f329b9202cb2add337`.
+- Rust official cô lập là Rust 1.98.1 / Cargo 1.98.1, đã cài target
+  `x86_64-pc-windows-gnu` dưới `RUSTUP_HOME=/tmp/synveil-p98d-rustup`.
+  CMake 4.4.3 và Ninja 1.13.2 sẵn có. CXX-Qt/cxx-qt-build là 0.10.0. Build
+  dùng qmake adapter bên ngoài, adapter báo spec Windows `win32-clang-g++`,
+  Windows Qt prefix ở trên, cùng các generator `moc`, `rcc`, `qmlcachegen` Qt
+  6.8.3 chạy trên Linux host. `CXX_QT_AUTORCC_OPTIONS=--no-zstd` chỉ là cài
+  đặt cross-build bên ngoài, khớp feature của Qt target; resource generated
+  dùng feature zlib mà target export. Linker/runtime compatibility wrapper
+  cũng ở ngoài repository; không thêm workaround vào production source.
+
+Các stage bắt buộc đã chạy riêng và đều pass:
+
+| Stage | Bằng chứng |
+| --- | --- |
+| Lower stack Windows | `cargo check -p synveil-client-sync --all-targets --locked --target x86_64-pc-windows-gnu`, sau đó cùng command cho `synveil-platform` và `synveil-client`: tất cả pass. |
+| CXX-Qt generation | Đã generate `cxxqtgen/src/bridge.cxx.cpp`, `bridge.cxxqt.cpp`, QML type registration, initializer, QML cache và RCC source trong Cargo target tree bên ngoài. |
+| C++ generated | Bridge generated, source moc/QML-generated và `src/native/tray.cpp` thật compile bằng Clang target; `cd12d4f3968eceae-tray.o` được tạo ở cả hai profile. |
+| Qt link | Debug/release link import library của Qt Core, Gui, Qml, QuickControls2 và Widgets target. `Qt6QuickControls2.dll` import `Qt6Quick.dll`; `Qt6Qml.dll` import `Qt6Network.dll`, nên Quick và Network dependency cần thiết vẫn ở trong Windows graph. |
+| QML resources | Debug/release đều generate và link RCC của QML module. Output có `Main.qml` và `com/synveil/desktop`; executable có `qrc:/qt/qml/com/synveil/desktop/qml/Main.qml`, không phụ thuộc source-tree path khi runtime. Cả hai RCC output dùng `qResourceFeatureZlib` và không có call `qResourceFeatureZstd`. |
+| Debug PE | PASS: `/mnt/Projects/synveil-p98d-target/x86_64-pc-windows-gnu/debug/synveil-desktop.exe`, `file` báo PE32+ x86-64; `llvm-readobj` báo `IMAGE_FILE_MACHINE_AMD64`. |
+| Release PE | PASS: `/mnt/Projects/synveil-p98d-target/x86_64-pc-windows-gnu/release/synveil-desktop.exe`, `file` báo PE32+ x86-64; `llvm-readobj` báo `IMAGE_FILE_MACHINE_AMD64`. |
+
+PE import audit thấy `Qt6Core.dll`, `Qt6Gui.dll`, `Qt6Widgets.dll`,
+`Qt6Qml.dll`, `Qt6QuickControls2.dll`, `libc++.dll`, `libunwind.dll` và
+Windows system/API-set DLL. Không executable hay captured link log nào có
+`/usr/lib/libQt6*`, Linux Qt `.so` hoặc Linux host Qt prefix. Strings của
+executable vẫn có symbol production thật `QSystemTrayIcon`, `QMenu` và
+`QAction`. Windows dependency graph có `\\.\pipe\synveil-` và implementation
+named-pipe của Tokio trên Windows, chứng minh đây không phải build chỉ có UDS
+transport của Prompt 96.
+
+Không cần sửa source Rust, C++, CXX-Qt hay QML của Synveil. Windows native
+offscreen startup và native Windows tray interaction là **NOT RUN** vì Linux
+host này không có Windows runner và không có Wine. Compile/link tray thật và
+compile/link named-pipe vẫn PASS; không claim native runtime hay tray
+interaction.
+
+Bằng chứng Linux được chấp nhận của Prompt 98C vẫn còn hiệu lực vì không có
+shared production source thay đổi: dedicated Linux desktop suite, Qt QML lint,
+debug/release build và offscreen smoke, full Rust/dependency/web/OpenAPI/
+deployment gate, PostgreSQL migration 36/36, client schema 6 và ADR-040
+(`Accepted — LOCKED`) vẫn như đã ghi. Prompt 98D không thêm server migration,
+client migration, route, OpenAPI operation, web, autostart, service, Windows
+Service hay installer. Repository có zero SDK/compiler/build artifact Qt
+Windows; toàn bộ toolchain tạm và PE file nằm ngoài repository.
+
+
+## Gate launch desktop production Prompt 99
+
+Prompt 99 validate orchestration launch như process-management boundary trên
+controller Prompt 97 hiện có. Topology bắt buộc là
+`synveil-desktop -> BackgroundClientManager -> DesktopController/Prompt 96 ->
+synveil-client`; Qt process không sở hữu `DesktopSyncHost`, `SyncRuntime`,
+SQLite, credential, root hay writer lock Prompt 95. Launch manager là layer duy
+nhất được request start packaged client, và public result là category typed hữu
+hạn thay vì OS diagnostic.
+
+Focused suite trong `crates/client/src/launch.rs` cover LAUNCH1–12: construction
+không side effect, reuse client đang chạy, absence chỉ một start request,
+coalescing đồng thời, boundedness 1,000 request, security/protocol fail-closed,
+launch failure typed, không stop do GUI, sibling canonical resolution, reject
+PATH spoof và profile identity không thành shell argument. Suite cũng cover
+autostart reversible và Windows task-definition policy deterministic.
+`max_active_attempts` của manager phải luôn một và test không được start
+Synveil client thật.
+
+Platform policy gate cover AUTO1–12 và CRASH1–6:
+
+- Linux unit là user unit tại `/usr/lib/systemd/user`, dùng đúng invocation
+  `/usr/bin/synveil-client` được source hỗ trợ, `Type=simple`,
+  `Restart=on-failure`, `RestartSec`/`StartLimit*` bounded và
+  `RestartPreventExitStatus=78` derive từ source. Không có dependency
+  network-online và không có system-unit path.
+- Enable, disable, start, stop, status Linux dùng argv cố định
+  `systemctl --user`. Package hook và GUI startup không tự enable. Test user
+  manager disposable link unit tạm, verify load/start/active/stop/disable rồi
+  cleanup link.
+- Windows task definition chứng minh current-user `InteractiveToken`,
+  `LeastPrivilege`, logon trigger, đúng sibling `synveil-client.exe`, restart
+  finite, `IgnoreNew`, profile identity sanitized và không password/credential/
+  SYSTEM/admin. Native registration là gate trên Windows runner, không phải
+  claim của Linux.
+- Crash policy bounded theo supervisor. Endpoint security, protocol mismatch,
+  control malformed, writer conflict và terminal state không request launch
+  replacement. GUI absent không disable user supervisor đã cấu hình.
+
+Package gate cover PKG1–12. Linux build DEB thật và RPM hiện có từ cùng payload
+stage `deploy/install/MANIFEST`, rồi audit archive content, path, mode, executable
+byte parity, unit/metadata parity, secret absence và development-path absence.
+DEB phải có client, desktop, user unit, desktop entry/icon, license/notice và
+maintenance file hiện có; không được có
+`/usr/lib/systemd/system/synveil-client.service`. Windows packager tạo ZIP
+reproducible có hai EXE, `qt.conf`, Qt DLL/QML/plugin closure target,
+`platforms/qwindows.dll`, C++ runtime khi cần và license/notice. PE import
+closure reject non-system DLL thiếu, Linux library, SDK/development file và
+repository/build path.
+
+Các check repository-owned là:
+
+```text
+cargo test -p synveil-client --lib --locked -- --nocapture
+cargo test -p synveil-metadata --test linux_desktop_launch_units --locked -- --nocapture
+cargo test -p synveil-metadata --test windows_desktop_packaging_units --locked -- --nocapture
+cargo test -p synveil-metadata --test linux_install_lifecycle --locked -- --nocapture
+cargo test -p synveil-metadata --test linux_deployment_adversarial_units --locked -- --nocapture
+cargo test -p synveil-metadata --test linux_native_packaging_units --locked -- --nocapture
+deploy/packages/build.sh --format=all
+deploy/packages/build-windows.sh --desktop-binary=... --client-binary=... --qt-prefix=...
+systemd-analyze verify <disposable-user-unit>
+```
+
+`LIVE-LAUNCH1`–`LIVE-LAUNCH10` vẫn là acceptance test cần environment thật:
+GUI start client, reuse client đang chạy, GUI quit độc lập, reopen, crash/
+reconnect có GUI mở và đóng, start race, security/protocol fail-closed và
+chạy từ package layout ngoài source tree. Chỉ báo pass khi có evidence profile/
+state disposable thật. Native Windows Task Scheduler registration, startup ZIP
+portable và native tray interaction là **NOT RUN** trên Linux host không có
+Windows/Wine; không được suy ra từ cross-build hoặc static XML test.
+
+Prompt 99 thêm zero migration, route, OpenAPI operation, web change hay sync
+correctness record. PostgreSQL không phải dependency của launch/package
+boundary. PostgreSQL test bị skip vì `SYNVEIL_TEST_DATABASE_URL` unset vẫn là
+unverified, không được đếm ngầm là pass. Marker đầy đủ Prompt 99 là
+`SYNVEIL_PRODUCTION_DESKTOP_LAUNCH_READY`, chỉ hợp lệ sau khi toàn bộ gate
+repository, regression lịch sử, Windows, deployment, package và live bắt buộc
+đều pass thật.

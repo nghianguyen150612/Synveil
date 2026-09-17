@@ -14,6 +14,7 @@ mod conflict_policy;
 mod contracts;
 mod engine;
 mod error;
+mod host;
 mod http_remote;
 mod names;
 mod observation;
@@ -25,7 +26,10 @@ mod rebaseline;
 mod rebaseline_84c;
 mod rebaseline_convergence;
 mod replica;
+mod runtime;
+mod signals;
 mod state;
+mod sync_cycle;
 
 #[cfg(test)]
 mod test_support;
@@ -46,14 +50,26 @@ pub use engine::{
     SyncOutcome,
 };
 pub use error::{ClientSyncError, RecoveryClassification};
+#[cfg(feature = "test-support")]
+pub use host::DesktopRootRecoveryGate;
+pub use host::{
+    DEFAULT_DESKTOP_SYNC_OBSERVATION_POLL_INTERVAL, DEFAULT_DESKTOP_SYNC_ROOT_PROBE_INTERVAL,
+    DESKTOP_SYNC_HOST_READINESS, DesktopLifecycleAdapter, DesktopLifecycleEvent,
+    DesktopNetworkAdapter, DesktopRootAvailability, DesktopSyncHost, DesktopSyncHostConfig,
+    DesktopSyncHostConfigError, DesktopSyncHostError, DesktopSyncHostHandle,
+    DesktopSyncHostLifecycle, DesktopSyncLibraryConfig, DesktopSyncLibraryRegistration,
+    DesktopSyncLibrarySource, DesktopSyncRemote, LinuxLifecycleAdapter, LinuxNetworkAdapter,
+    RootAvailability, WindowsLifecycleAdapter, WindowsNetworkAdapter,
+};
 pub use http_remote::{
     ConnectionHealth, EnrollmentCredentials, HttpClientConfig, HttpEnrollmentClient, HttpSyncRemote,
 };
 pub use names::{NamePortability, local_collision_key, validate_logical_name};
 pub use observation::{
     LocalChangeWatcher, ManualChangeSource, ManualChangeWatcher, NotifyLocalChangeWatcher,
-    ObservationConfig, ObservationIssue, ObservationIssueKind, ObservationState, OutboundIntent,
-    OutboundIntentKind, OutboundIntentState, OutboundObservationEngine, WatchHint, WatchHintKind,
+    ObservationConfig, ObservationIssue, ObservationIssueKind, ObservationPollResult,
+    ObservationReconciliationResult, ObservationState, OutboundIntent, OutboundIntentKind,
+    OutboundIntentState, OutboundObservationEngine, WatchHint, WatchHintKind,
 };
 pub use outbound::{OutboundSubmissionEngine, OutboundSubmissionOutcome};
 pub use path::ManagedRelativePath;
@@ -72,10 +88,29 @@ pub use rebaseline_convergence::{
 pub use replica::{
     FilesystemLocalReplica, LocalFingerprint, LocalObjectKind, LocalReplica, RootBindingId,
 };
+pub use runtime::{
+    DEFAULT_SYNC_RUNTIME_MAX_CONCURRENT_LIBRARIES, DEFAULT_SYNC_RUNTIME_POLL_INTERVAL,
+    DEFAULT_SYNC_RUNTIME_RATE_LIMIT_FALLBACK, DEFAULT_SYNC_RUNTIME_TRANSIENT_BACKOFF_INITIAL,
+    DEFAULT_SYNC_RUNTIME_TRANSIENT_BACKOFF_MAX, MAX_SYNC_RUNTIME_CONCURRENT_LIBRARIES,
+    MAX_SYNC_RUNTIME_DELAY, MAX_SYNC_RUNTIME_LIBRARIES, MIN_SYNC_RUNTIME_POLL_INTERVAL,
+    SYNC_RUNTIME_EVENT_CAPACITY, SyncCycleExecutor, SyncRuntime, SyncRuntimeConfig,
+    SyncRuntimeConfigError, SyncRuntimeError, SyncRuntimeEvent, SyncRuntimeHandle,
+    SyncRuntimeIdentity, SyncRuntimeLibraryPhase, SyncRuntimeLibraryStatus, SyncRuntimeOutcome,
+    SyncRuntimeRegistration, SyncRuntimeUnregistration, SyncRuntimeWakeReason,
+    SyncRuntimeWakeResult, SyncWakeNotifier,
+};
+pub use signals::{
+    CredentialLifecycleController, CredentialLifecycleResult, DurableChangeNotification,
+    DurableChangeResult, DurableOutboundIntentResult, OutboundIntentProducer,
+};
 pub use state::{
     BootstrapRecord, LocalApplyIssue, LocalIssueKind, LocalNode, LocalOperation,
-    LocalOperationKind, LocalOperationState, LocalStateConfig, LocalStateStore, PendingAck,
-    ReplicaRecord,
+    LocalOperationKind, LocalOperationState, LocalStateConfig, LocalStateStore,
+    OutboundIntentUpsertResult, PendingAck, ReplicaRecord,
+};
+pub use sync_cycle::{
+    BidirectionalSyncCycleRunner, InboundCycleOutcome, OutboundCycleOutcome, OutboundSkipReason,
+    SyncCycleCoordinator, SyncCycleResult,
 };
 
 /// Current durable local schema version.

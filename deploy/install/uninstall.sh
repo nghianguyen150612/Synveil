@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# uninstall.sh — package-neutral uninstall / purge for Synveil scheduled-maintenance
+# uninstall.sh — package-neutral uninstall / purge for Synveil desktop,
+# background client, and scheduled-maintenance payloads.
 # Prompt 76: ordinary uninstall removes PACKAGE artifacts only; purge is explicit.
 # SPDX-License-Identifier: MIT
 set -euo pipefail
@@ -16,11 +17,17 @@ Removes Synveil PACKAGE-owned artifacts under the staged root.
 
 Default (no --purge):
   Removes only PACKAGE files:
+    /usr/bin/synveil-client
+    /usr/bin/synveil-desktop
     /usr/bin/synveil-scheduled-maintenance-once
+    /usr/lib/systemd/user/synveil-client.service
     /usr/lib/systemd/system/synveil-scheduled-maintenance.service
     /usr/lib/systemd/system/synveil-scheduled-maintenance.timer
     /usr/lib/sysusers.d/synveil.conf
     /usr/lib/tmpfiles.d/synveil.conf
+    /usr/share/applications/synveil.desktop
+    /usr/share/icons/hicolor/scalable/apps/synveil.svg
+    /usr/share/doc/synveil/LICENSE and NOTICE
     /usr/share/synveil/synveil-scheduled-maintenance.env.example
   Preserves:
     /etc/synveil  (and any admin env file, non-secret)
@@ -170,7 +177,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     line="${line%"${line##*[![:space:]]}"}"
     [[ -z "$line" ]] && continue
     [[ "$line" == \#* ]] && continue
-    read -r source dest mode owner group class <<< "$line"
+    read -r _source dest _mode _owner _group class <<< "$line"
     if [[ "$class" == "PACKAGE" ]]; then
         safe_unlink_package "$dest" || { synveil_err "failed to remove $dest"; exit 1; }
     fi
@@ -248,7 +255,7 @@ fi
 # ---------------------------------------------------------------------------
 # Phase 3: parent directory safety check (never remove shared parents)
 # ---------------------------------------------------------------------------
-for parent in "/usr/bin" "/usr/lib/systemd/system" "/usr/lib/sysusers.d" "/usr/lib/tmpfiles.d" "/usr/share/synveil" "/etc" "/var/lib"; do
+for parent in "/usr/bin" "/usr/lib/systemd/user" "/usr/lib/systemd/system" "/usr/lib/sysusers.d" "/usr/lib/tmpfiles.d" "/usr/share/applications" "/usr/share/icons/hicolor/scalable/apps" "/usr/share/doc/synveil" "/usr/share/synveil" "/etc" "/var/lib"; do
     parent_full="${STAGED_ROOT%/}${parent}"
     if [[ ! -e "$parent_full" && ! -L "$parent_full" ]]; then
         # If parent was never created because we used install -D, it's okay it doesn't exist after uninstall,
@@ -265,7 +272,7 @@ done
 # ---------------------------------------------------------------------------
 cat >&2 <<EOF
 [synveil-install] uninstall complete (purge=$PURGE) for $STAGED_ROOT
-  Removed: PACKAGE artifacts (binary, units, sysusers, tmpfiles, template)
+  Removed: PACKAGE artifacts (desktop/client/maintenance binaries, units, integration metadata, notices)
   Preserved by default: /etc/synveil, /var/lib/synveil, external pools, PostgreSQL, parent dirs, account
   Purge requires explicit --purge flag (still preserves external pools)
 EOF

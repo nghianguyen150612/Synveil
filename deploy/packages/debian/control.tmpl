@@ -6,17 +6,19 @@ Installed-Size: @SYNVEIL_INSTALLED_SIZE@
 Depends: @SYNVEIL_DEPENDS@
 Section: admin
 Priority: optional
-Description: Synveil scheduled backup maintenance runtime (Linux Gen-1)
- Synveil Gen-1 one-shot scheduled-maintenance runtime with systemd
- timer/service lifecycle, systemd-sysusers/tmpfiles identity, and
- LoadCredential database-credential delivery.
+Description: Synveil desktop and background synchronization runtime (Linux)
+ Synveil desktop shell and separately supervised background synchronization
+ client, plus the existing one-shot scheduled-maintenance runtime.
  .
- This package contains the release binary, systemd units, sysusers/tmpfiles
- fragments, and a non-secret configuration template. It does NOT contain
- database credentials; the administrator provisions
- /etc/synveil/credentials/database-url (root:root 0600) separately.
- Timer is NOT auto-enabled and service is NOT auto-started on install;
- enable explicitly after configuring credentials.
+ The desktop and client executables remain separate. The client user service
+ is installed below /usr/lib/systemd/user and is never silently enabled by
+ package installation. Enable it explicitly with systemctl --user after
+ reviewing the local profile configuration.
+ .
+ The package does NOT contain database credentials; the administrator
+ provisions /etc/synveil/credentials/database-url (root:root 0600) separately.
+ The scheduled-maintenance timer is also NOT auto-enabled and its service is
+ NOT auto-started on install.
  .
  Package signing and APT repository publishing are deferred to release
  engineering (unsigned CI artifact at this stage).

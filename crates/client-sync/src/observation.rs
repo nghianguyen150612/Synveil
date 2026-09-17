@@ -29,8 +29,9 @@ use synveil_core::{
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::{
-    ClientSyncError, LocalFingerprint, LocalNode, LocalObjectKind, LocalReplica, LocalStateStore,
-    ManagedRelativePath, ReplicaScope,
+    ClientSyncError, DurableChangeNotification, LocalFingerprint, LocalNode, LocalObjectKind,
+    LocalReplica, LocalStateStore, ManagedRelativePath, ReplicaScope, SyncRuntimeWakeReason,
+    SyncWakeNotifier,
 };
 
 /// Version of the canonical outbound intent semantic-dedupe serialization.
@@ -691,6 +692,47 @@ impl ObservationState {
     }
 }
 
+/// Result of one bounded observer poll together with the optional post-commit
+/// runtime wake. The wake is a scheduling hint; `inspected_hints` and the
+/// durable result are independent of whether the runtime is still alive.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ObservationPollResult {
+    inspected_hints: usize,
+    notification: DurableChangeNotification,
+}
+
+impl ObservationPollResult {
+    #[must_use]
+    pub const fn inspected_hints(self) -> usize {
+        self.inspected_hints
+    }
+
+    #[must_use]
+    pub const fn notification(self) -> DurableChangeNotification {
+        self.notification
+    }
+}
+
+/// Result of one bounded reconciliation unit together with its optional
+/// post-commit runtime wake.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ObservationReconciliationResult {
+    state: ObservationState,
+    notification: DurableChangeNotification,
+}
+
+impl ObservationReconciliationResult {
+    #[must_use]
+    pub const fn state(&self) -> &ObservationState {
+        &self.state
+    }
+
+    #[must_use]
+    pub const fn notification(&self) -> DurableChangeNotification {
+        self.notification
+    }
+}
+
 /// Low-level watcher hint classes. They intentionally have no server semantic
 /// interpretation and are always followed by local filesystem reinspection.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -975,7 +1017,9 @@ impl LocalChangeWatcher for NotifyLocalChangeWatcher {
 fn notify_event_to_hint(root: &Path, event: Event) -> Result<Option<WatchHint>, ClientSyncError> {
     let mut paths = Vec::with_capacity(event.paths.len());
     for native_path in event.paths {
-        let relative = native_to_managed_relative(root, &native_path)?;
+        let Some(relative) = native_to_managed_relative(root, &native_path)? else {
+            continue;
+        };
         if is_control_path(&relative) {
             continue;
         }
@@ -991,6 +1035,13 @@ fn notify_event_to_hint(root: &Path, event: Event) -> Result<Option<WatchHint>, 
         EventKind::Modify(ModifyKind::Name(RenameMode::Both)) if paths.len() == 2 => {
             WatchHintKind::Rename
         }
+        // inotify can coalesce a completed move into one destination path.
+        // Reinspect that path instead of manufacturing a durable overflow
+        // blocker; a two-path event remains the only form interpreted as a
+        // rename.
+        EventKind::Modify(ModifyKind::Name(RenameMode::Both)) if paths.len() == 1 => {
+            WatchHintKind::Modify
+        }
         EventKind::Modify(ModifyKind::Name(RenameMode::From)) => WatchHintKind::Remove,
         EventKind::Modify(ModifyKind::Name(RenameMode::To)) => WatchHintKind::Create,
         EventKind::Modify(ModifyKind::Name(_)) if paths.len() == 1 => WatchHintKind::Modify,
@@ -1004,7 +1055,7 @@ fn notify_event_to_hint(root: &Path, event: Event) -> Result<Option<WatchHint>, 
 fn native_to_managed_relative(
     root: &Path,
     native_path: &Path,
-) -> Result<ManagedRelativePath, ClientSyncError> {
+) -> Result<Option<ManagedRelativePath>, ClientSyncError> {
     let relative = native_path
         .strip_prefix(root)
         .map_err(|_| ClientSyncError::InvalidRelativePath)?;
@@ -1016,7 +1067,7 @@ fn native_to_managed_relative(
         return Err(ClientSyncError::InvalidRelativePath);
     }
     if relative.as_os_str().is_empty() {
-        return Ok(ManagedRelativePath::root());
+        return Ok(Some(ManagedRelativePath::root()));
     }
     let mut components = Vec::new();
     for component in relative.components() {
@@ -1029,7 +1080,14 @@ fn native_to_managed_relative(
                 .ok_or(ClientSyncError::InvalidRelativePath)?,
         );
     }
-    ManagedRelativePath::new(components.join("/"))
+    // The control tree is deliberately not representable as an arbitrary
+    // managed path. Native watchers still report its directory and file
+    // events, so filter it only after the root-relative components have been
+    // fully validated and before applying the managed-path policy.
+    if components.first() == Some(&".synveil") {
+        return Ok(None);
+    }
+    ManagedRelativePath::new(components.join("/")).map(Some)
 }
 
 pub(crate) fn is_control_path(path: &ManagedRelativePath) -> bool {
@@ -1112,6 +1170,8 @@ pub struct OutboundObservationEngine {
     watcher: AsyncMutex<Box<dyn LocalChangeWatcher>>,
     config: ObservationConfig,
     buffered_hints: AsyncMutex<VecDeque<BufferedHint>>,
+    wake_notifier: Option<Arc<dyn SyncWakeNotifier>>,
+    durable_change_pending: AtomicBool,
     started: AtomicBool,
 }
 
@@ -1139,7 +1199,39 @@ impl OutboundObservationEngine {
         watcher: Box<dyn LocalChangeWatcher>,
         config: ObservationConfig,
     ) -> Result<Self, ClientSyncError> {
-        replica.validate_root()?;
+        Self::new_with_optional_wake_notifier(scope, replica, state, watcher, config, None).await
+    }
+
+    /// Construct an observer with the shared runtime's post-commit wake
+    /// boundary. The notifier is optional so existing embedders can retain
+    /// startup/periodic-only operation while migrating to Prompt 93.
+    pub async fn new_with_wake_notifier(
+        scope: ReplicaScope,
+        replica: Arc<dyn LocalReplica>,
+        state: Arc<LocalStateStore>,
+        watcher: Box<dyn LocalChangeWatcher>,
+        config: ObservationConfig,
+        wake_notifier: Arc<dyn SyncWakeNotifier>,
+    ) -> Result<Self, ClientSyncError> {
+        Self::new_with_optional_wake_notifier(
+            scope,
+            replica,
+            state,
+            watcher,
+            config,
+            Some(wake_notifier),
+        )
+        .await
+    }
+
+    async fn new_with_optional_wake_notifier(
+        scope: ReplicaScope,
+        replica: Arc<dyn LocalReplica>,
+        state: Arc<LocalStateStore>,
+        watcher: Box<dyn LocalChangeWatcher>,
+        config: ObservationConfig,
+        wake_notifier: Option<Arc<dyn SyncWakeNotifier>>,
+    ) -> Result<Self, ClientSyncError> {
         if replica.scope() != scope {
             return Err(ClientSyncError::WrongScope);
         }
@@ -1160,6 +1252,8 @@ impl OutboundObservationEngine {
             watcher: AsyncMutex::new(watcher),
             config,
             buffered_hints: AsyncMutex::new(VecDeque::new()),
+            wake_notifier,
+            durable_change_pending: AtomicBool::new(false),
             started: AtomicBool::new(false),
         })
     }
@@ -1172,12 +1266,33 @@ impl OutboundObservationEngine {
         state: Arc<LocalStateStore>,
         config: ObservationConfig,
     ) -> Result<Self, ClientSyncError> {
-        Self::new(
+        Self::new_with_optional_wake_notifier(
             scope,
             replica,
             state,
             Box::new(NotifyLocalChangeWatcher::new(config.raw_queue_capacity())),
             config,
+            None,
+        )
+        .await
+    }
+
+    /// Construct the native bounded watcher and connect its durable
+    /// reconciliation result to a runtime wake notifier.
+    pub async fn new_native_with_wake_notifier(
+        scope: ReplicaScope,
+        replica: Arc<dyn LocalReplica>,
+        state: Arc<LocalStateStore>,
+        config: ObservationConfig,
+        wake_notifier: Arc<dyn SyncWakeNotifier>,
+    ) -> Result<Self, ClientSyncError> {
+        Self::new_with_optional_wake_notifier(
+            scope,
+            replica,
+            state,
+            Box::new(NotifyLocalChangeWatcher::new(config.raw_queue_capacity())),
+            config,
+            Some(wake_notifier),
         )
         .await
     }
@@ -1185,6 +1300,15 @@ impl OutboundObservationEngine {
     #[must_use]
     pub const fn scope(&self) -> ReplicaScope {
         self.scope
+    }
+
+    /// Identity of the runtime targeted by this observer's post-commit
+    /// notifier, when one was attached by the application composition root.
+    #[must_use]
+    pub fn runtime_identity(&self) -> Option<crate::SyncRuntimeIdentity> {
+        self.wake_notifier
+            .as_ref()
+            .and_then(|notifier| notifier.runtime_identity())
     }
 
     #[must_use]
@@ -1196,6 +1320,16 @@ impl OutboundObservationEngine {
     /// recovered by its owner, start observation, then begin the durable scan
     /// that closes the watcher startup gap.
     pub async fn start(&self) -> Result<ObservationState, ClientSyncError> {
+        self.start_with_notification()
+            .await
+            .map(|result| result.state)
+    }
+
+    /// Start observation and expose the durable-change/wake result from the
+    /// first bounded reconciliation unit.
+    pub async fn start_with_notification(
+        &self,
+    ) -> Result<ObservationReconciliationResult, ClientSyncError> {
         let _writer = self
             .state
             .lock_replica_writer(self.scope.library_id())
@@ -1233,16 +1367,43 @@ impl OutboundObservationEngine {
             .require_reconciliation(self.scope.library_id())
             .await?;
         drop(_writer);
-        self.reconcile_once().await
+        self.reconcile_once_with_notification().await
     }
 
     /// Poll the bounded raw queue, coalesce due hints, then advance one
     /// reconciliation batch if watcher completeness was lost. Return the count
     /// of hints that were actually re-inspected, not raw OS events received.
     pub async fn poll_once(&self) -> Result<usize, ClientSyncError> {
+        self.poll_once_with_notification()
+            .await
+            .map(|result| result.inspected_hints)
+    }
+
+    /// Poll once and return both the bounded inspection count and the
+    /// post-commit runtime wake status. A stopped runtime is reported in the
+    /// notification while the durable observer operation remains successful.
+    pub async fn poll_once_with_notification(
+        &self,
+    ) -> Result<ObservationPollResult, ClientSyncError> {
+        let result = self.poll_once_inner().await;
+        let notification = match &result {
+            Err(_) => self.notify_pending_durable_change(),
+            Ok((_, state)) => self.notify_if_reconciliation_complete(state),
+        };
+        result.map(|(inspected_hints, _)| ObservationPollResult {
+            inspected_hints,
+            notification,
+        })
+    }
+
+    async fn poll_once_inner(&self) -> Result<(usize, ObservationState), ClientSyncError> {
         if !self.started.load(Ordering::Acquire) {
             return Err(ClientSyncError::InvalidState);
         }
+        // Fence the watcher before draining any hint. A root can disappear
+        // between the previous probe and this poll; no hint from that window
+        // may be interpreted as a user deletion or other durable mutation.
+        self.validate_root_or_stop().await?;
         let hints = {
             let mut watcher = self.watcher.lock().await;
             watcher.poll(self.config.max_hints_per_poll())?
@@ -1276,20 +1437,61 @@ impl OutboundObservationEngine {
             .await?
             .is_some_and(|state| state.rescan_required() || state.scan_active())
         {
-            let _ = self.reconcile_once().await?;
+            let _ = self.reconcile_once_inner().await?;
         }
-        Ok(inspected)
+        let state = self
+            .state
+            .observation_state(self.scope.library_id())
+            .await?
+            .ok_or(ClientSyncError::InvalidState)?;
+        Ok((inspected, state))
     }
 
     /// Deterministically flush all currently buffered hints. This is useful in
     /// tests and graceful shutdown; correctness still comes from the scan.
     pub async fn flush(&self) -> Result<usize, ClientSyncError> {
-        self.flush_due_hints(true).await
+        self.flush_with_notification()
+            .await
+            .map(|result| result.inspected_hints)
+    }
+
+    /// Flush all currently buffered hints and return the durable-change/wake
+    /// result. The notifier is called only after the observer writer guard has
+    /// been released.
+    pub async fn flush_with_notification(&self) -> Result<ObservationPollResult, ClientSyncError> {
+        let result = self.flush_due_hints(true).await;
+        let notification = self.notify_pending_durable_change();
+        result.map(|inspected_hints| ObservationPollResult {
+            inspected_hints,
+            notification,
+        })
     }
 
     /// Advance no more than one bounded reconciliation unit. Repeated calls
     /// converge after an overflow, a restart, or changes made while offline.
     pub async fn reconcile_once(&self) -> Result<ObservationState, ClientSyncError> {
+        self.reconcile_once_with_notification()
+            .await
+            .map(|result| result.state)
+    }
+
+    /// Advance one bounded reconciliation unit and expose the optional
+    /// post-commit wake result.
+    pub async fn reconcile_once_with_notification(
+        &self,
+    ) -> Result<ObservationReconciliationResult, ClientSyncError> {
+        let result = self.reconcile_once_inner().await;
+        let notification = match &result {
+            Err(_) => self.notify_pending_durable_change(),
+            Ok(state) => self.notify_if_reconciliation_complete(state),
+        };
+        result.map(|state| ObservationReconciliationResult {
+            state,
+            notification,
+        })
+    }
+
+    async fn reconcile_once_inner(&self) -> Result<ObservationState, ClientSyncError> {
         let _writer = self
             .state
             .lock_replica_writer(self.scope.library_id())
@@ -1395,7 +1597,11 @@ impl OutboundObservationEngine {
     /// event not drained before shutdown is recovered by next startup scan.
     pub async fn shutdown(&self) -> Result<(), ClientSyncError> {
         if self.started.load(Ordering::Acquire) {
-            if self.flush_due_hints(true).await.is_err() {
+            let flush_result = self.flush_due_hints(true).await;
+            // Even if a later reconciliation step fails, an earlier intent
+            // commit must still receive its best-effort wake before return.
+            let _ = self.notify_pending_durable_change();
+            if flush_result.is_err() {
                 self.state
                     .require_reconciliation(self.scope.library_id())
                     .await?;
@@ -1427,6 +1633,38 @@ impl OutboundObservationEngine {
         self.state
             .count_pending_intents(self.scope.library_id())
             .await
+    }
+
+    fn note_durable_change(&self) {
+        self.durable_change_pending.store(true, Ordering::Release);
+    }
+
+    fn notify_pending_durable_change(&self) -> DurableChangeNotification {
+        if !self.durable_change_pending.swap(false, Ordering::AcqRel) {
+            return DurableChangeNotification::no_change();
+        }
+        let wake_result = self.wake_notifier.as_ref().map(|notifier| {
+            notifier.wake_library(self.scope.library_id(), SyncRuntimeWakeReason::LocalChange)
+        });
+        DurableChangeNotification::committed(wake_result)
+    }
+
+    fn notify_if_reconciliation_complete(
+        &self,
+        state: &ObservationState,
+    ) -> DurableChangeNotification {
+        if state.scan_active() || state.rescan_required() {
+            return self.pending_durable_change_notification();
+        }
+        self.notify_pending_durable_change()
+    }
+
+    fn pending_durable_change_notification(&self) -> DurableChangeNotification {
+        if self.durable_change_pending.load(Ordering::Acquire) {
+            DurableChangeNotification::committed(None)
+        } else {
+            DurableChangeNotification::no_change()
+        }
     }
 
     async fn record_watcher_overflow(&self) -> Result<(), ClientSyncError> {
@@ -1488,6 +1726,9 @@ impl OutboundObservationEngine {
 
     async fn validate_root_or_stop(&self) -> Result<(), ClientSyncError> {
         if self.replica.validate_root().is_ok() {
+            self.state
+                .resolve_recovered_root_observation_issues(self.scope.library_id())
+                .await?;
             return Ok(());
         }
         self.state
@@ -1501,9 +1742,7 @@ impl OutboundObservationEngine {
         self.started.store(false, Ordering::Release);
         let mut watcher = self.watcher.lock().await;
         let _ = watcher.stop();
-        Err(ClientSyncError::ObservationIssue(
-            ObservationIssueKind::RootInvalid,
-        ))
+        Err(ClientSyncError::RootUnavailable)
     }
 
     async fn detect_unpaired_rename(
@@ -1654,7 +1893,13 @@ impl OutboundObservationEngine {
                 Some(destination_fingerprint),
             )
             .await?;
-        let _ = self.state.upsert_outbound_intent(&intent).await?;
+        let persisted = self
+            .state
+            .upsert_outbound_intent_with_result(&intent)
+            .await?;
+        if persisted.changed() {
+            self.note_durable_change();
+        }
         self.state
             .persist_observed_node(
                 &source_node.node,
@@ -1729,7 +1974,13 @@ impl OutboundObservationEngine {
                         None,
                     )
                     .await?;
-                let _ = self.state.upsert_outbound_intent(&intent).await?;
+                let persisted = self
+                    .state
+                    .upsert_outbound_intent_with_result(&intent)
+                    .await?;
+                if persisted.changed() {
+                    self.note_durable_change();
+                }
                 self.state
                     .persist_observed_node(&known.node, path, false, None)
                     .await
@@ -1815,7 +2066,13 @@ impl OutboundObservationEngine {
                 Some(fingerprint),
             )
             .await?;
-        let _ = self.state.upsert_outbound_intent(&intent).await?;
+        let persisted = self
+            .state
+            .upsert_outbound_intent_with_result(&intent)
+            .await?;
+        if persisted.changed() {
+            self.note_durable_change();
+        }
         self.state
             .persist_observed_node(&known.node, path, true, Some(fingerprint))
             .await
@@ -1848,7 +2105,13 @@ impl OutboundObservationEngine {
         let intent = self
             .new_intent(None, parent, kind, path.clone(), None, Some(fingerprint))
             .await?;
-        let _ = self.state.upsert_outbound_intent(&intent).await?;
+        let persisted = self
+            .state
+            .upsert_outbound_intent_with_result(&intent)
+            .await?;
+        if persisted.changed() {
+            self.note_durable_change();
+        }
         Ok(())
     }
 
@@ -1929,11 +2192,11 @@ impl OutboundObservationEngine {
                 Some(destination_fingerprint),
             )
             .await?;
-        Ok(self
-            .state
-            .move_pending_create(source, &replacement)
-            .await?
-            .is_some())
+        let moved = self.state.move_pending_create(source, &replacement).await?;
+        if moved.is_some() {
+            self.note_durable_change();
+        }
+        Ok(moved.is_some())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1946,6 +2209,12 @@ impl OutboundObservationEngine {
         old_path: Option<ManagedRelativePath>,
         fingerprint: Option<LocalFingerprint>,
     ) -> Result<OutboundIntent, ClientSyncError> {
+        // This is the last root fence before a classified filesystem fact is
+        // turned into durable outbound work. If the root disappeared after
+        // inspection, do not let an absent path become a delete intent.
+        if self.replica.validate_root().is_err() {
+            self.validate_root_or_stop().await?;
+        }
         let replica = self
             .state
             .replica(self.scope.library_id())
@@ -2012,6 +2281,9 @@ impl OutboundObservationEngine {
         match self.replica.inspect(path) {
             Ok(value) => Ok(value),
             Err(ClientSyncError::ContentUnstable) => {
+                if self.replica.validate_root().is_err() {
+                    self.validate_root_or_stop().await?;
+                }
                 self.state
                     .persist_observation_issue(
                         self.scope.library_id(),
@@ -2026,6 +2298,12 @@ impl OutboundObservationEngine {
                 Err(ClientSyncError::ObservationIssue(
                     ObservationIssueKind::HashUnstable,
                 ))
+            }
+            Err(ClientSyncError::InvalidRoot)
+            | Err(ClientSyncError::RootUnavailable)
+            | Err(ClientSyncError::WrongRootBinding) => {
+                self.validate_root_or_stop().await?;
+                Err(ClientSyncError::RootUnavailable)
             }
             Err(ClientSyncError::RootRedirected) | Err(ClientSyncError::InvalidState) => {
                 if self.replica.validate_root().is_err() {
@@ -2047,6 +2325,10 @@ impl OutboundObservationEngine {
                 ))
             }
             Err(ClientSyncError::LocalIo) => {
+                if self.replica.validate_root().is_err() {
+                    self.validate_root_or_stop().await?;
+                    return Err(ClientSyncError::RootUnavailable);
+                }
                 self.state
                     .persist_observation_issue(
                         self.scope.library_id(),
@@ -2274,7 +2556,13 @@ fn coalesce_hints(
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, io::Write, path::PathBuf, sync::Arc, time::Duration};
+    use std::{
+        fs,
+        io::Write,
+        path::PathBuf,
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
 
     #[cfg(target_os = "linux")]
     use std::time::Instant;
@@ -2287,12 +2575,36 @@ mod tests {
     use super::{
         LocalChangeWatcher, ManualChangeSource, ManualChangeWatcher, ObservationConfig,
         ObservationIssueKind, OutboundIntent, OutboundIntentKind, OutboundObservationEngine,
-        WatchHint, WatchHintKind, coalesce_hints,
+        WatchHint, WatchHintKind, coalesce_hints, native_to_managed_relative,
     };
     use crate::{
         FilesystemLocalReplica, LocalFingerprint, LocalNode, LocalReplica, LocalStateConfig,
-        LocalStateStore, ManagedRelativePath, ReplicaScope, test_support::remove_dir_all_bounded,
+        LocalStateStore, ManagedRelativePath, ReplicaScope, SyncRuntimeWakeReason,
+        SyncRuntimeWakeResult, SyncWakeNotifier, test_support::remove_dir_all_bounded,
     };
+
+    #[test]
+    fn native_watcher_filters_validated_control_tree_before_path_policy() {
+        let root = PathBuf::from("/tmp/synveil-observation-root");
+        assert!(
+            native_to_managed_relative(&root, &root.join(".synveil"))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            native_to_managed_relative(&root, &root.join(".synveil/staging/internal.part"),)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            native_to_managed_relative(&root, &root.join("visible/file.txt"))
+                .unwrap()
+                .unwrap()
+                .as_str(),
+            "visible/file.txt"
+        );
+        assert!(native_to_managed_relative(&root, &root.join("../outside"),).is_err());
+    }
 
     #[cfg(target_os = "linux")]
     use crate::NotifyLocalChangeWatcher;
@@ -2306,6 +2618,33 @@ mod tests {
         state: Arc<LocalStateStore>,
         engine: OutboundObservationEngine,
         source: Option<ManualChangeSource>,
+    }
+
+    struct RecordingNotifier {
+        calls: Mutex<Vec<(LibraryId, SyncRuntimeWakeReason)>>,
+    }
+
+    impl RecordingNotifier {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                calls: Mutex::new(Vec::new()),
+            })
+        }
+
+        fn calls(&self) -> Vec<(LibraryId, SyncRuntimeWakeReason)> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl SyncWakeNotifier for RecordingNotifier {
+        fn wake_library(
+            &self,
+            library_id: LibraryId,
+            reason: SyncRuntimeWakeReason,
+        ) -> SyncRuntimeWakeResult {
+            self.calls.lock().unwrap().push((library_id, reason));
+            SyncRuntimeWakeResult::Queued
+        }
     }
 
     impl Harness {
@@ -2322,6 +2661,34 @@ mod tests {
         async fn new(
             watcher: Box<dyn LocalChangeWatcher>,
             source: Option<ManualChangeSource>,
+        ) -> Self {
+            Self::new_with_notifier(watcher, source, None).await
+        }
+
+        async fn new_with_notifier(
+            watcher: Box<dyn LocalChangeWatcher>,
+            source: Option<ManualChangeSource>,
+            notifier: Option<Arc<dyn SyncWakeNotifier>>,
+        ) -> Self {
+            let debounce = if source.is_some() {
+                Duration::ZERO
+            } else {
+                Duration::from_millis(200)
+            };
+            Self::new_with_notifier_and_config(
+                watcher,
+                source,
+                notifier,
+                ObservationConfig::new(8, 8, 2, debounce).unwrap(),
+            )
+            .await
+        }
+
+        async fn new_with_notifier_and_config(
+            watcher: Box<dyn LocalChangeWatcher>,
+            source: Option<ManualChangeSource>,
+            notifier: Option<Arc<dyn SyncWakeNotifier>>,
+            config: ObservationConfig,
         ) -> Self {
             let directory = std::env::temp_dir().join(format!(
                 "synveil-outbound-observation-{}",
@@ -2354,20 +2721,27 @@ mod tests {
                 ))
                 .await
                 .unwrap();
-            let debounce = if source.is_some() {
-                Duration::ZERO
-            } else {
-                Duration::from_millis(200)
+            let engine = match notifier {
+                Some(notifier) => OutboundObservationEngine::new_with_wake_notifier(
+                    scope,
+                    replica.clone(),
+                    state.clone(),
+                    watcher,
+                    config,
+                    notifier,
+                )
+                .await
+                .unwrap(),
+                None => OutboundObservationEngine::new(
+                    scope,
+                    replica.clone(),
+                    state.clone(),
+                    watcher,
+                    config,
+                )
+                .await
+                .unwrap(),
             };
-            let engine = OutboundObservationEngine::new(
-                scope,
-                replica.clone(),
-                state.clone(),
-                watcher,
-                ObservationConfig::new(8, 8, 2, debounce).unwrap(),
-            )
-            .await
-            .unwrap();
             Self {
                 directory,
                 root,
@@ -2619,6 +2993,194 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn durable_observation_batch_wakes_once_and_noop_does_not_wake() {
+        let (watcher, source) = ManualChangeWatcher::with_capacity(8);
+        let notifier = RecordingNotifier::new();
+        let harness = Harness::new_with_notifier(
+            Box::new(watcher),
+            Some(source.clone()),
+            Some(notifier.clone() as Arc<dyn SyncWakeNotifier>),
+        )
+        .await;
+        harness.start().await;
+        assert!(notifier.calls().is_empty());
+
+        fs::create_dir(harness.root.join("first")).unwrap();
+        fs::create_dir(harness.root.join("second")).unwrap();
+        source
+            .push(
+                WatchHint::new(
+                    WatchHintKind::Create,
+                    vec![ManagedRelativePath::new("first").unwrap()],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        source
+            .push(
+                WatchHint::new(
+                    WatchHintKind::Create,
+                    vec![ManagedRelativePath::new("second").unwrap()],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let result = harness.engine.poll_once_with_notification().await.unwrap();
+        assert_eq!(result.inspected_hints(), 2);
+        assert_eq!(
+            result.notification().durable_result(),
+            crate::DurableChangeResult::Committed
+        );
+        assert_eq!(
+            result.notification().wake_result(),
+            Some(SyncRuntimeWakeResult::Queued)
+        );
+        assert_eq!(notifier.calls().len(), 1);
+        assert_eq!(
+            notifier.calls()[0],
+            (
+                harness.scope.library_id(),
+                SyncRuntimeWakeReason::LocalChange
+            )
+        );
+        assert_eq!(harness.engine.count_pending_intents().await.unwrap(), 2);
+
+        let noop = harness.engine.poll_once_with_notification().await.unwrap();
+        assert_eq!(
+            noop.notification().durable_result(),
+            crate::DurableChangeResult::NoChange
+        );
+        assert_eq!(notifier.calls().len(), 1);
+        harness.close().await;
+    }
+
+    #[tokio::test]
+    async fn thousand_observation_events_emit_one_wake_and_preserve_intents() {
+        let (watcher, source) = ManualChangeWatcher::with_capacity(1_024);
+        let notifier = RecordingNotifier::new();
+        let harness = Harness::new_with_notifier_and_config(
+            Box::new(watcher),
+            Some(source.clone()),
+            Some(notifier.clone() as Arc<dyn SyncWakeNotifier>),
+            ObservationConfig::new(1_024, 1_024, 128, Duration::ZERO).unwrap(),
+        )
+        .await;
+        harness.start().await;
+
+        for index in 0..1_000 {
+            let name = format!("burst-{index}");
+            fs::create_dir(harness.root.join(&name)).unwrap();
+            source
+                .push(
+                    WatchHint::new(
+                        WatchHintKind::Create,
+                        vec![ManagedRelativePath::new(&name).unwrap()],
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+
+        let result = harness.engine.poll_once_with_notification().await.unwrap();
+        assert_eq!(result.inspected_hints(), 1_000);
+        assert_eq!(
+            result.notification().durable_result(),
+            crate::DurableChangeResult::Committed
+        );
+        assert_eq!(
+            result.notification().wake_result(),
+            Some(SyncRuntimeWakeResult::Queued)
+        );
+        assert_eq!(notifier.calls().len(), 1);
+        assert_eq!(harness.engine.count_pending_intents().await.unwrap(), 1_000);
+        harness.close().await;
+    }
+
+    #[tokio::test]
+    async fn validated_root_recovery_resolves_only_root_observation_issues() {
+        let harness = Harness::manual().await;
+        harness
+            .state
+            .persist_observation_issue(
+                harness.scope.library_id(),
+                None,
+                None,
+                ObservationIssueKind::RootInvalid,
+            )
+            .await
+            .unwrap();
+        harness
+            .state
+            .persist_observation_issue(
+                harness.scope.library_id(),
+                None,
+                None,
+                ObservationIssueKind::WatcherOverflow,
+            )
+            .await
+            .unwrap();
+
+        harness.engine.start().await.unwrap();
+
+        let issues = harness
+            .state
+            .observation_issues(harness.scope.library_id())
+            .await
+            .unwrap();
+        assert!(
+            !issues
+                .iter()
+                .any(|issue| issue.kind() == ObservationIssueKind::RootInvalid)
+        );
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.kind() == ObservationIssueKind::WatcherOverflow)
+        );
+        harness.close().await;
+    }
+
+    #[tokio::test]
+    async fn rescan_durable_work_emits_one_wake_after_bounded_reconciliation() {
+        let (watcher, source) = ManualChangeWatcher::with_capacity(8);
+        let notifier = RecordingNotifier::new();
+        let harness = Harness::new_with_notifier(
+            Box::new(watcher),
+            Some(source.clone()),
+            Some(notifier.clone() as Arc<dyn SyncWakeNotifier>),
+        )
+        .await;
+        harness.start().await;
+
+        fs::create_dir(harness.root.join("rescan-directory")).unwrap();
+        fs::write(
+            harness.root.join("rescan-directory/rescan-file.txt"),
+            b"rescan",
+        )
+        .unwrap();
+        source.overflow().unwrap();
+
+        let first = harness.engine.poll_once_with_notification().await.unwrap();
+        assert_eq!(
+            first.notification().durable_result(),
+            crate::DurableChangeResult::Committed
+        );
+        assert_eq!(first.notification().wake_result(), None);
+        harness.settle().await;
+
+        assert_eq!(harness.engine.count_pending_intents().await.unwrap(), 2);
+        assert_eq!(notifier.calls().len(), 1);
+        assert_eq!(
+            notifier.calls()[0],
+            (
+                harness.scope.library_id(),
+                SyncRuntimeWakeReason::LocalChange
+            )
+        );
+        harness.close().await;
+    }
+
+    #[tokio::test]
     async fn pending_create_rename_preserves_its_local_intent_id() {
         let harness = Harness::manual().await;
         harness.start().await;
@@ -2862,7 +3424,14 @@ mod tests {
 
     #[tokio::test]
     async fn inbound_directory_and_absent_suppressions_create_no_outbound_intents() {
-        let harness = Harness::manual().await;
+        let (watcher, source) = ManualChangeWatcher::with_capacity(8);
+        let notifier = RecordingNotifier::new();
+        let harness = Harness::new_with_notifier(
+            Box::new(watcher),
+            Some(source),
+            Some(notifier.clone() as Arc<dyn SyncWakeNotifier>),
+        )
+        .await;
         let dir_id = harness.seed_directory("from-server", harness.root_id).await;
         let file_id = harness
             .seed_file("deleted-by-server.txt", harness.root_id, b"delete")
@@ -2894,10 +3463,12 @@ mod tests {
             .observe(WatchHintKind::Remove, &["deleted-by-server.txt"])
             .await;
         assert_eq!(harness.engine.count_pending_intents().await.unwrap(), 0);
+        assert!(notifier.calls().is_empty());
 
         fs::write(harness.root.join("user.txt"), b"user").unwrap();
         harness.observe(WatchHintKind::Create, &["user.txt"]).await;
         assert_eq!(harness.engine.count_pending_intents().await.unwrap(), 1);
+        assert_eq!(notifier.calls().len(), 1);
         harness.close().await;
     }
 

@@ -1759,3 +1759,95 @@ Linux Compose.
   được đặc tả đầy đủ.
 - **Decision evidence:** clean destination restore, transfer gián đoạn,
   device re-registration, thay đổi hostname/remote-access và rollback test.
+
+## Launch desktop production và user supervision (Prompt 99)
+
+Prompt 99 làm desktop Qt hiện có usable mà không cần user tự start background
+process, đồng thời giữ boundary lifecycle hai process:
+
+```text
+synveil-desktop (Qt/QML/tray)
+    -> BackgroundClientManager + DesktopController
+       -> local IPC Prompt 96
+          -> synveil-client (DesktopSyncHost/SyncRuntime/writer lock)
+```
+
+Bridge gọi typed `BackgroundClientManager` sau controller startup. Manager
+inspect endpoint/supervisor một lần bounded và chỉ request một start cho endpoint
+absent, client stopped hoặc user supervisor inactive. Gate theo profile coalesce
+request đồng thời và cooldown bounded ngăn spawn storm do reconnect. Endpoint
+security, protocol-incompatible, control malformed, writer conflict và
+terminal state được fail-closed, không launch replacement. Writer lock Prompt
+95 vẫn là ownership boundary cuối cùng theo profile.
+
+Manager không sở hữu sync correctness, library/root observation, credential,
+checkpoint, SQLite, `DesktopSyncHost`, `SyncRuntime` hay raw frame Prompt 96.
+QML chỉ thấy category an toàn và launch label generic. GUI close chỉ stop công
+việc controller sở hữu; không gửi Prompt 96 `Shutdown` và không stop client.
+User supervisor đã cấu hình có thể recover client khi GUI đóng; controller có
+thể reconnect tới generation fresh khi GUI mở.
+
+### Linux user service
+
+Production client unit được package tại
+`/usr/lib/systemd/user/synveil-client.service`, không phải system unit path.
+Unit dùng process contract do source định nghĩa:
+
+```ini
+[Service]
+Type=simple
+ExecStart=/usr/bin/synveil-client
+Restart=on-failure
+RestartSec=30s
+RestartPreventExitStatus=78
+```
+
+`StartLimitIntervalSec=5min` và `StartLimitBurst=5` giới hạn crash lặp. Exit
+78 là configuration-error permanent hiện source định nghĩa; exit 70 là
+bootstrap/runtime failure generic. Unit không có dependency
+`network-online.target` vì Prompt 92 sở hữu network recovery.
+
+Autostart explicit và reversible:
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable synveil-client.service
+systemctl --user start synveil-client.service
+systemctl --user status synveil-client.service
+systemctl --user disable synveil-client.service
+systemctl --user stop synveil-client.service
+```
+
+Installer package-neutral, hook DEB/RPM và GUI không tự enable/start unit.
+Disable explicit không bị GUI launch sau đó bật lại. Test dùng unit temporary
+link và cleanup user manager sau lifecycle check.
+
+### Windows user task
+
+Windows adapter dùng Task Scheduler theo current user với logon trigger,
+`InteractiveToken`, `LeastPrivilege`, sibling canonical đúng
+`synveil-client.exe`, `IgnoreNew` và restart interval/count finite. Nó gọi
+`System32\\schtasks.exe` cố định bằng argv tường minh. Không có Windows Service,
+`SYSTEM`, elevation, password lưu, registry `Run` hay shell interpolation.
+Task identity chỉ chứa profile identifier đã sanitize, không chứa token,
+credential, root path hoặc server URL.
+
+### Nội dung package và validation
+
+`deploy/install/MANIFEST` là authority cho DEB và RPM. Linux package có
+`synveil-client`, `synveil-desktop`, user unit, desktop entry/icon thông thường,
+maintenance file hiện có và `LICENSE`/`NOTICE`. Desktop entry không phải login
+autostart hook. Artifact DEB/RPM thật được audit về path, mode, byte parity,
+secret absence và không có source, `/tmp`, build hay development path.
+
+Windows path tạo ZIP unsigned reproducible, không phải installer. ZIP có hai
+EXE, `qt.conf`, Qt DLL/QML module/plugin target,
+`platforms/qwindows.dll`, C++ runtime cần thiết và notice. Windows native dùng
+`windeployqt`; Linux cross package cần Windows Qt prefix thật và allowlist
+closure explicit. PE import audit reject dependency non-system thiếu và Linux/
+development leakage. Native Windows task registration, package startup và tray
+interaction là runtime gate; Linux static/cross-build không được claim thay.
+
+Xem [`docs/en/DESKTOP_LAUNCH.md`](../en/DESKTOP_LAUNCH.md),
+[`docs/vi/DESKTOP_LAUNCH.md`](DESKTOP_LAUNCH.md) và
+[`ADR-041`](../adr/ADR-041-production-desktop-launch-orchestration.md).

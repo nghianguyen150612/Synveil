@@ -2136,3 +2136,585 @@ and no `continue-on-error` or `|| true` masking. PostgreSQL 17 is required
 (`20260910000000_sync_retention_handoff_proofs.sql`), client schema remains 6
 (`0006_sync_conflicts.sql`), with zero new migrations, routes, OpenAPI
 operations, daemons, schedulers, polling loops, retry loops, or global locks.
+
+### Prompt 91 bounded bidirectional cycle
+
+The focused `sync_cycle` module exercises the production
+`BidirectionalSyncCycleRunner` with the existing Prompt 87 and Prompt 88
+engines. SC1–SC22 cover idle, inbound-only, outbound-only, combined progress,
+same-node overlap fencing, existing and newly-created conflicts, retained-floor
+and proof-loss recovery, candidate/handoff precedence, authentication,
+transport failure, snapshot-create 429, same-library concurrency, independent
+libraries, response loss, and the one-page/one-submission bound. The crash
+matrix additionally covers a caller ending after inbound, a persisted
+conflict, and the `SERVER_APPLIED` local transition after the server commit.
+
+Run the deterministic focused gate:
+
+```text
+cargo test -p synveil-client-sync --lib sync_cycle --locked -- --nocapture
+cargo clippy -p synveil-client-sync --all-targets --locked -- -D warnings
+```
+
+The ignored `sync_cycle_postgres` target drives the same runner through the
+real Axum router, device authentication, `HttpSyncRemote`, filesystem replica,
+SQLite state, and a loopback counting proxy. Its eight Prompt 91 cases verify
+healthy bidirectional progress, inbound conflict fencing, retention recovery,
+proof-loss recovery, existing conflict continuation, revoked-device fail-closed
+behavior, same-library single submission, and independent-library progress.
+The target includes the reused Prompt 87 fixture cases, so a full invocation
+reports both groups while keeping each case bounded and serial.
+
+Run it only against a fresh disposable PostgreSQL 17 database:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5432/fresh_p91 \
+  cargo test -p synveil-api --test sync_cycle_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture
+```
+
+The PostgreSQL 17 workflow runs this target as a hard-fail step with
+`set -euo pipefail` and then the focused client-sync gate. Prompt 91 adds no
+server migration, route, OpenAPI operation, frontend persistence, deployment
+unit, cycle table, scheduler, daemon, retry loop, polling loop, or global lock;
+the server remains at migration 36 and the client remains at schema 6.
+
+### Prompt 92 long-running sync runtime
+
+The runtime unit suite uses Tokio's paused virtual clock and controlled
+`SyncCycleExecutor` implementations. It verifies the single-supervisor
+lifecycle, idempotent start/shutdown, registration/unregistration, initial
+startup scheduling, manual and local wakes, wake-storm coalescing, wake
+retention during a cycle, one active cycle per Library, global concurrency,
+round-robin fairness, idle polling, deterministic transient backoff and cap,
+rate-limit delay, authentication suspension/resume, progress follow-up,
+conflict-only outbound blocking, recovery-blocked delay, fault isolation, and
+graceful draining of an active cycle. The production executor implementation
+is type-erased only at the scheduler boundary and still calls Prompt 91.
+
+Run the deterministic gate:
+
+```text
+cargo test -p synveil-client-sync --lib runtime::tests --locked -- --nocapture
+cargo clippy -p synveil-client-sync --all-targets --all-features --locked -- -D warnings
+```
+
+The ignored PostgreSQL target `sync_runtime_postgres` layers the runtime over
+the existing real fixture: PostgreSQL 17, Axum routes, device authentication,
+`HttpSyncRemote`, filesystem replica, SQLite state, and the production Prompt
+91 runner. Its acceptance case covers startup discovery through explicit
+registration, real inbound plus outbound progress, a local wake for a second
+cycle, graceful shutdown, and restart from the existing durable state. It is
+intentionally ignored unless `SYNVEIL_TEST_DATABASE_URL` points to a fresh
+disposable PostgreSQL 17 database:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5432/fresh_p92 \
+  cargo test -p synveil-api --test sync_runtime_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture live_pg17_runtime_
+```
+
+The PostgreSQL workflow creates an isolated child database with
+`set -euo pipefail`, runs the live runtime target as a hard-fail step, and then
+runs the focused runtime unit suite. The live target is a bounded integration
+case, not evidence that every runtime fault/network/auth permutation has run
+against PostgreSQL; those scheduling permutations remain deterministic unit
+coverage. No readiness marker is valid until this live target and all existing
+Prompt 81–91 regression and repository gates pass. Server migrations must stay
+at 36 and client schema at 6.
+
+### Prompt 93 durable-change-first runtime signal integration
+
+The Prompt 93 focused signal suite covers the producer boundary in addition to
+the Prompt 92 scheduler regression. It proves that an outbound intent is
+visible before the wake callback can observe it, the per-Library writer is
+released before notification, a stopped/dropped notifier does not remove the
+intent, exact no-op and suppressed observations do not wake, and a bounded
+observation batch/rescan emits one wake. It also covers usable credential
+commit-before-`CredentialChanged`, failed credential persistence and
+removal-without-wake, typed stopped/unknown statuses, runtime clone identity,
+manual scheduling, network/auth safety, active-cycle follow-up coalescing, and
+the global multi-Library bound.
+
+The principal focused commands are:
+
+```text
+cargo test -p synveil-client-sync --lib signals::tests --locked -- --nocapture
+cargo test -p synveil-client-sync --lib durable_observation_batch_wakes_once_and_noop_does_not_wake --locked
+cargo test -p synveil-client-sync --lib rescan_durable_work_emits_one_wake_after_bounded_reconciliation --locked
+cargo clippy -p synveil-client-sync --all-targets --all-features --locked -- -D warnings
+```
+
+The live target `sync_runtime_signals_postgres` reuses the real Prompt 87
+fixture and adds PostgreSQL 17, Axum, device authentication, `HttpSyncRemote`,
+SQLite, the production Prompt 91 cycle, and Prompt 92 runtime coverage for all
+ten LIVE-SIG cases: durable local intent wake, unavailable wake recovery by
+periodic polling, observation submission and burst coalescing, credential
+resume, network recovery, manual `sync_now`, active-cycle follow-up
+coalescing, restart recovery after a lost wake, and multi-Library isolation.
+It is ignored unless `SYNVEIL_TEST_DATABASE_URL` identifies a fresh disposable
+PostgreSQL 17 database:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5432/fresh_p93 \
+  cargo test -p synveil-api --test sync_runtime_signals_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture live_pg17_signal_
+```
+
+The PostgreSQL workflow runs that target as a hard-fail Prompt 93 step, then
+runs the focused producer and observation tests. The target does not claim
+that an OS network monitor, service manager, UI, server push channel, or
+persistent wake queue exists. Live signal acceptance remains unverified when
+the required disposable PostgreSQL 17 database is not configured; focused
+SQLite/virtual-clock evidence cannot substitute for that live gate.
+
+Prompt 93 adds zero server migrations, zero client migrations, zero routes,
+zero OpenAPI operations, and zero persistent runtime tables. The invariant is
+durable state first, released writer second, best-effort wake third; startup
+and periodic polling remain the correctness recovery path.
+
+### Prompt 94 desktop host and process lifecycle gate
+
+The focused `host` module in `synveil-client-sync` covers the application
+composition root without requiring a desktop executable or a live server. It
+verifies construction without workers, one-runtime identity across the host,
+handle, notifier, credential controller, and observer, registration before
+observer start, duplicate registration/start behavior, manual/network/
+credential wake routing, typed stopped results, platform lifecycle adapter
+forwarding, HTTP startup without an enrollment, durable-state restart, safe
+join/repeated shutdown, and a 1,000 start/shutdown/drop stress loop. The
+focused matrix also rejects mixed owner/Device registration with typed
+`WrongScope`. The
+existing Prompt 91–93 suites remain the owners of cycle correctness, durable
+signal ordering, candidate/handoff/conflict recovery, and scheduler fairness.
+
+Run the local composition gate:
+
+```text
+cargo test -p synveil-client-sync --lib host --locked -- --nocapture
+cargo check -p synveil-api --test desktop_sync_host_postgres --locked
+cargo clippy -p synveil-client-sync --all-targets --all-features --locked -- -D warnings
+```
+
+The dedicated ignored target `desktop_sync_host_postgres` selects ten
+`live_pg17_host1` through `live_pg17_host10` cases. It reuses the existing
+fixture and exercises the real PostgreSQL 17 database, Axum router, device
+authentication, `HttpSyncRemote`, SQLite state, Prompt 91 runner, Prompt 92
+runtime, and Prompt 93 producer/controller boundaries through one
+`DesktopSyncHost`. The cases cover startup with inbound plus outbound work,
+missing-credential `AuthBlocked` followed by same-host credential replacement,
+filesystem observation, manual sync, network recovery, graceful active-cycle
+shutdown, post-shutdown durable intent recovery, process restart, three-library
+single-runtime operation, and 100 repeated live lifecycles.
+
+Run it only with a fresh disposable PostgreSQL 17 database:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5432/fresh_p94 \
+  cargo test -p synveil-api --test desktop_sync_host_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture live_pg17_host
+```
+
+When the database variable is unset, the live target is intentionally ignored;
+the result is unverified rather than a pass. The host target adds no server or
+client migration, route, OpenAPI operation, frontend code, service unit,
+autostart hook, or UI. Linux and Windows use the same shared host code and
+adapter semantics; native Windows execution remains a compile/CI concern when
+no Windows runner is available locally.
+
+The host lifecycle test matrix also records the required crash/restart
+boundary: a crash before start has no cycle, a missed wake leaves durable work
+for startup polling, and candidate/handoff/conflict/idempotency recovery stays
+owned by the existing lower layers. A host status/event is never used as a
+durability oracle and carries no secret, cookie, token, content, or raw local
+path.
+
+### Prompt 95 production desktop process and root lifecycle gate
+
+The production package is `synveil-client`. Its unit coverage checks the
+non-secret manifest parser/redaction, bounded network interval, lifecycle and
+periodic network adapters, one-process/one-host shutdown, stable error
+categories, and the existing adjacent SQLite writer-lock behavior. The
+client-sync host tests add missing-root bootstrap, root-loss fencing before a
+queued hint, same-binding reappearance, one watcher restart, bounded rescan,
+and healthy-sibling isolation. The four Linux-only adversarial/deployment
+targets remain explicitly gated with `#![cfg(target_os = "linux")]`:
+
+```text
+crates/metadata/tests/linux_deployment_adversarial_units.rs
+crates/metadata/tests/linux_install_lifecycle.rs
+crates/metadata/tests/linux_native_packaging_units.rs
+crates/api/tests/linux_deployment_adversarial_postgres.rs
+```
+
+Focused local commands are:
+
+```text
+cargo fmt --all -- --check
+cargo check --workspace --all-targets --locked
+cargo test -p synveil-client --lib --locked
+cargo test -p synveil-client-sync --lib host::tests --locked -- --nocapture
+cargo test -p synveil-client-sync --lib runtime::tests --locked -- --nocapture
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo deny check
+```
+
+The dedicated ignored live target
+`crates/api/tests/desktop_process_postgres.rs` provisions a fresh child
+PostgreSQL database, real Axum routes, device authentication, the profile-bound
+test secret store, the production `DesktopClientProcess`, one real
+`DesktopSyncHost`, filesystem replica, SQLite V6 state, and the real HTTP sync
+transport. It asserts process bootstrap, profile/root binding, schema V6,
+single-writer rejection, real feed activity, stable runtime identity, and
+idempotent graceful shutdown:
+
+```text
+SYNVEIL_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5432/fresh_p95 \
+  cargo test -p synveil-api --test desktop_process_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture live_pg17_process
+```
+
+The PostgreSQL workflow creates an isolated child database and runs this target
+as a hard-fail Prompt 95 step, followed by the focused process/host/runtime
+tests. The target is ignored by default and must not be treated as passed when
+`SYNVEIL_TEST_DATABASE_URL` is unset. PostgreSQL integration evidence requires
+an actual disposable PostgreSQL 17 service; SQLite/unit results cannot replace
+that gate.
+
+The cross-platform check must compile the workspace on native Windows and, in
+an environment with the target/linker installed, run the explicit target
+check:
+
+```text
+cargo check --workspace --all-targets --locked --target x86_64-pc-windows-gnu
+```
+
+On Linux, a native binary smoke test may use only a newly created temporary
+`SYNVEIL_CONFIG_DIR`/`SYNVEIL_DATA_DIR` and a disposable `client.conf`; it must
+not point at a user's profile, credential store, or library. Service/systemd,
+installer/package, and migration guards remain separate validation gates. No
+`SYNVEIL_DESKTOP_PROCESS_BOOTSTRAP_READY` marker is valid until the local
+repository gates, the live PostgreSQL process target, and the cross-platform
+deployment checks have all genuinely passed.
+
+## Prompt 96 local control IPC gate
+
+The focused disposable Linux target is:
+
+```text
+cargo test -p synveil-client --test desktop_control_ipc --locked
+```
+
+It binds a short temporary runtime root and verifies the real Unix socket type,
+owner, `0700` control directory, `0600` socket, v1 handshake, Ping/process
+status, bounded library listing, request-ID preservation, unknown-command and
+version errors, malformed/oversized/truncated frame survival, reconnect,
+event subscription, Shutdown acknowledgement ordering, and clean endpoint
+removal. Client unit tests additionally cover active endpoint collision, safe
+stale-socket recovery, and refusal of symlink/regular-file/directory entries.
+
+The Prompt 95 live target now connects to the production process through the
+real control client, checks that the endpoint is usable before `Running`,
+serializes safe library status, submits scheduling-only `SyncNow`, and checks
+socket removal after graceful shutdown. Run it only with a fresh disposable
+PostgreSQL 17 database:
+
+```text
+cargo test -p synveil-api --test desktop_process_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture live_pg17_process
+```
+
+The Windows native matrix and explicit `x86_64-pc-windows-gnu` check must
+compile the real named-pipe security-descriptor branch. Linux-local evidence
+does not claim native Windows execution. The complete readiness marker is
+`SYNVEIL_DESKTOP_CONTROL_IPC_READY`, and it is valid only after the full Rust,
+dependency-policy, web, OpenAPI, deployment, Windows, and required live
+regression gates genuinely pass. PostgreSQL targets ignored because
+`SYNVEIL_TEST_DATABASE_URL` is unset are unverified, not passed.
+
+## Prompt 97 desktop controller core gate
+
+The focused controller unit suite is part of `synveil-client` and validates
+side-effect-free construction, deterministic capped reconnect backoff,
+latest-state serialization/redaction, generation fencing, timing validation,
+and folding a 10,000-signal burst into one pending refresh bit:
+
+```text
+cargo test -p synveil-client --lib controller::tests --locked -- --nocapture
+cargo clippy -p synveil-client --all-targets --all-features --locked -- -D warnings
+```
+
+The disposable Linux acceptance target exercises the real Prompt 96 server and
+Unix-domain socket. It verifies the v1 handshakes required by the command,
+status, and event connections, one coherent `Fresh` snapshot, safe process
+state, unknown-library command mapping, bounded disconnected commands, stale
+retention after server loss, automatic reconnect with a new generation, and
+controller-stop/process independence:
+
+```text
+cargo test -p synveil-client --test desktop_controller --locked -- --nocapture
+```
+
+The controller implementation has one manager task, one event-reader task per
+active generation, one status refresh transaction at a time, an eight-item
+command channel, and a latest-state `watch` with no internal history. The
+production-process Prompt 95 PostgreSQL target now also embeds a Prompt 97
+controller acceptance slice for the real process endpoint: handshake, safe
+library projection, IPC-only `SyncNow`, redaction, and controller-stop/process
+independence. It remains a hard-fail target and must not be treated as passed
+when `SYNVEIL_TEST_DATABASE_URL` is unset. The focused Linux target still does
+not claim the full Prompt 91–96 PostgreSQL sync chain. Native Windows execution
+is not claimed by Linux validation; the named-pipe controller path remains
+covered by the required Windows native/cross-target compilation gates.
+
+The controller adds zero server migrations, zero client migrations, zero HTTP
+routes, zero OpenAPI operations, zero web changes, and zero GUI/tray,
+autostart, service, or installer artifacts. The complete readiness marker is
+`SYNVEIL_DESKTOP_CONTROLLER_CORE_READY`; it is valid only after the full
+repository, historical Prompt 81–96, live, Windows, dependency, web, OpenAPI,
+and deployment gates pass. A focused pass alone is not that claim.
+
+## Prompt 98 native desktop shell gate
+
+The dedicated Linux UI gate is the repository-owned script
+[`scripts/test-desktop-ui.sh`](../../scripts/test-desktop-ui.sh). It formats,
+tests, lints, and builds only the Qt target, then locates the generated Qt 6
+QML module metadata, runs Qt 6 `qmllint` against the embedded module shape, and
+loads the complete application tree in an offscreen smoke test:
+
+```text
+./scripts/test-desktop-ui.sh
+```
+
+The focused Rust suite covers the safe Prompt 97-to-QML projection and UI1–UI40
+semantics: disconnected/connecting/reconnecting/fresh states, protocol and
+security failures, root/auth/conflict/runtime categories, stable library
+identity, atomic selection updates, redaction, controller-only Sync Now,
+scheduling-only feedback, bounded per-library actions and rapid clicks, shared tray/model state,
+close-to-tray policy, no-tray fallback, controller/process independence, and
+Qt thread-affinity boundaries. Stress cases cover 10,000 latest-state updates,
+library churn, and a 1,000-library model. The suite must not report “everything
+synced” from a scheduling acknowledgement.
+
+Linux CI installs a Qt 6.4-or-newer development package and runs the same
+hard-fail script. The native Windows job pins a real Qt 6.8.3 MSVC toolchain
+on `windows-latest` and hard-fails:
+
+```text
+cargo test -p synveil-desktop --locked
+cargo build -p synveil-desktop --locked
+cargo build -p synveil-desktop --release --locked
+```
+
+The script smoke-loads both debug and release binaries so the embedded QML
+resource path is checked outside the source tree in both build modes.
+
+The ordinary cross-platform workspace checks and tests explicitly exclude the
+platform-specific Qt binary; the native Windows job owns its real Qt build.
+This separation does not weaken the Windows named-pipe controller check. A
+Linux workstation cannot claim native Windows runtime/tray execution; that
+evidence is recorded only when the authoritative Windows job runs.
+
+PostgreSQL is required only for live Sync Now/process-controller acceptance,
+not for the QML model or offscreen shell. The existing production process
+target exercises the real controller-to-process Sync Now path and is run only
+with a fresh disposable PostgreSQL 17 database:
+
+```text
+cargo test -p synveil-api --test desktop_process_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture live_pg17_process
+```
+
+Prompt 98C adds the missing end-to-end `LIVE-UI5` observation to the ignored
+Linux QML target `crates/api/tests/desktop_qml_postgres.rs`. It starts the real
+`synveil-client` process and the real Qt shell as separate processes, detaches
+and restores one managed root, and requires the sequence
+`Available -> Unavailable -> Recovering -> Available`. The `Recovering` marker
+is emitted by QML only after it observes the bridge's canonical safe
+`selected_root_label` (`Checking folder changes`), with `Fresh` status and the
+same controller generation;
+the test then releases the existing `DesktopRootRecoveryGate`. The gate's
+external file handshake is compiled only into an explicitly feature-enabled
+acceptance client and adds no production delay, retry, or UI state.
+
+Run the target only after building that test-support client and the Qt shell,
+with a fresh PostgreSQL 17 database and an unlocked native Secret Service:
+
+```text
+cargo build -p synveil-client --features test-support --locked
+cargo build -p synveil-desktop --locked
+SYNVEIL_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5432/fresh_p98c \
+  QT_QPA_PLATFORM=offscreen \
+  cargo test -p synveil-api --test desktop_qml_postgres --locked -- \
+  --ignored --test-threads=1 --nocapture live_pg17_qml_production_shell_acceptance
+```
+
+This target reports the QML-visible `Available`, `Unavailable`, and
+`Checking folder changes` states separately from the controller/process
+acceptance. It also checks one recovery-gate entry, zero synthesized
+delete/trash intents through the existing process/root regression, no duplicate
+runtime or controller generation, and a final `Available` state. A QML target
+that is ignored because PostgreSQL, Secret Service, Qt, or the feature-enabled
+acceptance client is unavailable is unverified, not passed.
+
+When `SYNVEIL_TEST_DATABASE_URL` is unset, ignored PostgreSQL targets are
+unverified. The full marker `SYNVEIL_NATIVE_DESKTOP_SHELL_READY` must not be
+printed unless the focused UI, complete Rust/dependency/web/OpenAPI/deployment
+gates, native Linux and Windows Qt evidence, required live controller/Sync Now
+regressions, ADR-040, and synchronized English/Vietnamese documentation all
+genuinely pass. This local focused gate alone is not that claim.
+
+### Prompt 98D genuine Windows Qt build closure
+
+The remaining Prompt 98 blocker was closed on 2026-09-16 with Path B, a Linux
+cross-build. This is genuine Windows-target Qt evidence, not a Linux Qt build:
+
+- The Qt SDK came from the official Qt online repository through `aqtinstall`
+  3.3.0. The selected package was Qt 6.8.3 `win64_llvm_mingw` (x86_64 Windows
+  GNU/UCRT), installed at
+  `/tmp/synveil-p98d-qt/6.8.3/llvm-mingw_64`. The repository package base was
+  `https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_683/qt6_683/qt.qt6.683.win64_llvm_mingw/`;
+  downloads were served by the configured Qt mirror. `Qt6Core.dll`,
+  `Qt6Gui.dll`, `Qt6Widgets.dll`, `Qt6Qml.dll`, and
+  `Qt6QuickControls2.dll` all inspect as PE32+ x86-64 Windows DLLs. The
+  package's QtCore export set contains `qResourceFeatureZlib` and not a Linux
+  shared-library export.
+- The ABI-compatible target compiler was the official LLVM-MinGW release
+  `llvm-mingw-20260602-ucrt-ubuntu-22.04-x86_64`, installed outside the
+  repository at `/tmp/synveil-p98d-llvm/llvm-mingw-20260602-ucrt-ubuntu-22.04-x86_64`.
+  Its compiler is
+  `x86_64-w64-mingw32-clang++`, Clang 22.1.7, target
+  `x86_64-w64-windows-gnu`; the release archive SHA-256 was
+  `9d191203f9768ead60662d3ae53cdf28e0a28b1e6d44b7f329b9202cb2add337`.
+- The isolated official Rust toolchain was Rust 1.98.1 / Cargo 1.98.1 with
+  `x86_64-pc-windows-gnu` installed under `RUSTUP_HOME=/tmp/synveil-p98d-rustup`.
+  CMake 4.4.3 and Ninja 1.13.2 were available. CXX-Qt/cxx-qt-build was
+  0.10.0. The build used an external qmake adapter that reported the Windows
+  spec `win32-clang-g++`, the Windows Qt prefix above, and the Linux Qt 6.8.3
+  host `moc`, `rcc`, and `qmlcachegen` generators. `CXX_QT_AUTORCC_OPTIONS=--no-zstd`
+  was an external cross-build setting matching the target Qt feature set; the
+  generated resource uses the target-exported zlib feature. The external
+  linker/runtime compatibility wrapper was also outside the repository; no
+  production source workaround was added.
+
+The required stages were run separately and all passed:
+
+| Stage | Evidence |
+| --- | --- |
+| Windows lower stack | `cargo check -p synveil-client-sync --all-targets --locked --target x86_64-pc-windows-gnu`, then the same command for `synveil-platform` and `synveil-client`: all passed. |
+| CXX-Qt generation | Generated `cxxqtgen/src/bridge.cxx.cpp`, `bridge.cxxqt.cpp`, QML type registration, initializer, QML cache, and RCC sources under the external Cargo target tree. |
+| Generated C++ | The generated bridge, moc/QML-generated sources, and the real `src/native/tray.cpp` compiled with the target Clang; `cd12d4f3968eceae-tray.o` was produced in both profiles. |
+| Qt link | Debug and release linked the target Qt Core, Gui, Qml, QuickControls2, and Widgets import libraries. `Qt6QuickControls2.dll` imports `Qt6Quick.dll`; `Qt6Qml.dll` imports `Qt6Network.dll`, so the required Quick and Network runtime dependencies remain in the Windows dependency graph. |
+| QML resources | Debug and release generated and linked the QML module RCC output. It contains `Main.qml` and `com/synveil/desktop`; the executable contains `qrc:/qt/qml/com/synveil/desktop/qml/Main.qml`, not a runtime source-tree path. Both RCC outputs use `qResourceFeatureZlib` and have no `qResourceFeatureZstd` call. |
+| Debug PE | PASS: `/mnt/Projects/synveil-p98d-target/x86_64-pc-windows-gnu/debug/synveil-desktop.exe`, `file` reports PE32+ x86-64; `llvm-readobj` reports `IMAGE_FILE_MACHINE_AMD64`. |
+| Release PE | PASS: `/mnt/Projects/synveil-p98d-target/x86_64-pc-windows-gnu/release/synveil-desktop.exe`, `file` reports PE32+ x86-64; `llvm-readobj` reports `IMAGE_FILE_MACHINE_AMD64`. |
+
+The PE import audit found `Qt6Core.dll`, `Qt6Gui.dll`, `Qt6Widgets.dll`,
+`Qt6Qml.dll`, `Qt6QuickControls2.dll`, `libc++.dll`, `libunwind.dll`, and
+Windows system/API-set DLLs. Neither executable nor either captured link log
+contains `/usr/lib/libQt6*`, a Linux Qt `.so`, or the Linux host Qt prefix.
+The executable strings also retain the real production
+`QSystemTrayIcon`, `QMenu`, and `QAction` symbols. The Windows dependency graph
+contains `\\.\pipe\synveil-` and Tokio's Windows named-pipe implementation,
+which confirms the Prompt 96 Windows transport branch rather than a UDS-only
+build.
+
+No Synveil Rust, C++, CXX-Qt, or QML source fix was required. The native Windows
+offscreen startup and native Windows tray interaction were **NOT RUN** because
+this Linux host had neither a Windows runner nor Wine. Production tray
+compile/link and the named-pipe compile/link evidence remain PASS; no native
+runtime or tray interaction is claimed.
+
+The accepted Prompt 98C Linux evidence remains valid because no shared
+production source changed: the dedicated Linux desktop test suite, Qt QML lint,
+debug/release builds and offscreen smokes, full Rust/dependency/web/OpenAPI/
+deployment gates, PostgreSQL migration 36/36, client schema 6, and ADR-040
+(`Accepted — LOCKED`) remain as previously recorded. Prompt 98D adds no server
+migration, client migration, route, OpenAPI operation, web, autostart, service,
+Windows Service, or installer scope. The repository contains zero Windows Qt
+SDK/compiler/build artifacts; all temporary toolchains and PE files are outside
+the repository.
+
+## Prompt 99 production desktop launch gate
+
+Prompt 99 validates launch orchestration as a process-management boundary over
+the existing Prompt 97 controller. The required topology is
+`synveil-desktop -> BackgroundClientManager -> DesktopController/Prompt 96 ->
+synveil-client`; the Qt process never owns `DesktopSyncHost`, `SyncRuntime`,
+SQLite, credentials, roots, or the Prompt 95 writer lock. The launch manager is
+the only layer allowed to request a packaged client start, and its public
+results are finite typed categories rather than OS diagnostics.
+
+The focused launch suite in `crates/client/src/launch.rs` covers LAUNCH1–12:
+side-effect-free construction, reuse of an already-running client, exactly one
+start request for absence, simultaneous coalescing, 1,000-request boundedness,
+security/protocol fail-closed behavior, typed launch failure, no GUI-owned stop,
+canonical sibling resolution, PATH-spoof rejection, and profile identity not
+becoming a shell argument. The same suite covers reversible autostart state and
+deterministic Windows task-definition policy. A manager's `max_active_attempts`
+must stay at one and no test is allowed to start a real Synveil client.
+
+The platform policy gates cover AUTO1–12 and CRASH1–6:
+
+- Linux unit source is a user unit at `/usr/lib/systemd/user`, has the exact
+  source-supported `/usr/bin/synveil-client` invocation, `Type=simple`,
+  `Restart=on-failure`, bounded `RestartSec`/`StartLimit*`, and source-derived
+  `RestartPreventExitStatus=78`. It has no network-online dependency and no
+  system-unit installation path.
+- Linux enable, disable, start, stop, and status use fixed `systemctl --user`
+  argument vectors. Package hooks and GUI startup do not silently enable the
+  unit. Disposable user-manager tests link a temporary unit, verify load/start/
+  active/stop/disable, and clean the link afterward.
+- Windows task definitions prove current-user `InteractiveToken`,
+  `LeastPrivilege`, logon trigger, exact sibling `synveil-client.exe`, finite
+  restart count/interval, `IgnoreNew`, sanitized profile identity, and no
+  password/credential/SYSTEM/admin requirement. Native registration is a
+  Windows-runner gate, not a Linux claim.
+- Crash policy is bounded by the selected supervisor. Endpoint security,
+  protocol mismatch, malformed control, writer conflict, and terminal states
+  do not request replacement launches. GUI absence does not disable a
+  configured user supervisor.
+
+The package gates cover PKG1–12. Linux builds an actual DEB and the existing
+RPM from the same `deploy/install/MANIFEST` staged payload and audits archive
+contents, paths, modes, executable byte parity, unit/metadata parity, secret
+absence, and development-path absence. The DEB must contain the client,
+desktop, user unit, desktop entry/icon, license/notices, and the existing
+maintenance files; it must not contain
+`/usr/lib/systemd/system/synveil-client.service`. The Windows packager is a
+reproducible ZIP path with both EXEs, `qt.conf`, the target Qt DLL/QML/plugin
+closure, `platforms/qwindows.dll`, C++ runtime files where needed, and
+license/notices. PE import closure rejects missing non-system DLLs, Linux
+libraries, SDK/development files, and repository/build paths.
+
+The repository-owned checks are:
+
+```text
+cargo test -p synveil-client --lib --locked -- --nocapture
+cargo test -p synveil-metadata --test linux_desktop_launch_units --locked -- --nocapture
+cargo test -p synveil-metadata --test windows_desktop_packaging_units --locked -- --nocapture
+cargo test -p synveil-metadata --test linux_install_lifecycle --locked -- --nocapture
+cargo test -p synveil-metadata --test linux_deployment_adversarial_units --locked -- --nocapture
+cargo test -p synveil-metadata --test linux_native_packaging_units --locked -- --nocapture
+deploy/packages/build.sh --format=all
+deploy/packages/build-windows.sh --desktop-binary=... --client-binary=... --qt-prefix=...
+systemd-analyze verify <disposable-user-unit>
+```
+
+`LIVE-LAUNCH1`–`LIVE-LAUNCH10` remain environment acceptance tests: GUI-started
+client, already-running reuse, GUI quit independence, reopen, supervised
+crash/reconnect with GUI open and closed, start race, security/protocol
+fail-closed behavior, and execution from a package layout outside the source
+tree. They may only be reported after real disposable profile/state evidence.
+Native Windows Task Scheduler registration, portable ZIP startup, and native
+tray interaction are **NOT RUN** on a Linux host without Windows/Wine and must
+not be inferred from a cross-build or static XML test.
+
+Prompt 99 adds zero migrations, routes, OpenAPI operations, web changes, or
+sync-correctness records. PostgreSQL is not required for the launch/package
+boundary. PostgreSQL tests skipped because `SYNVEIL_TEST_DATABASE_URL` is
+unset remain unverified; they are not silently counted as passed. The complete
+Prompt 99 marker is
+`SYNVEIL_PRODUCTION_DESKTOP_LAUNCH_READY`, and it is valid only after the full
+repository, historical regression, Windows, deployment, package, and required
+live gates genuinely pass.

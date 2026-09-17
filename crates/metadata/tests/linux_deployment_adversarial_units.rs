@@ -1,3 +1,5 @@
+#![cfg(target_os = "linux")]
+
 //! Prompt 79 — Linux deployment adversarial verification (staged, no PG, no root).
 //!
 //! Proves the Prompt 76 package lifecycle fails safely under hostile,
@@ -67,7 +69,12 @@ fn run_install(root: &Path, binary: &Path, extra_env: &[(&str, &str)]) -> std::p
     let mut cmd = Command::new("bash");
     cmd.arg(install_script())
         .arg(format!("--root={}", root.display()))
-        .arg(format!("--binary={}", binary.display()));
+        .arg(format!("--binary={}", binary.display()))
+        // Adversarial lifecycle cases use one disposable executable as the
+        // source for every executable payload.  Distinct production binary
+        // parity is covered by the native package artifact suite.
+        .arg(format!("--client-binary={}", binary.display()))
+        .arg(format!("--desktop-binary={}", binary.display()));
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
@@ -912,7 +919,10 @@ fn adversarial_installed_package_artifacts_match_sources() {
         }
         let full = root.join(dest.trim_start_matches('/'));
         assert!(full.exists(), "PACKAGE artifact missing: {dest}");
-        let expected: Vec<u8> = if source == "BINARY" {
+        let expected: Vec<u8> = if matches!(
+            source.as_str(),
+            "BINARY" | "BINARY_CLIENT" | "BINARY_DESKTOP"
+        ) {
             fs::read(&bin).unwrap()
         } else {
             fs::read(repo_root().join(source))
@@ -941,9 +951,13 @@ fn adversarial_manifest_negative_cases_rejected() {
     // K2: every destination must be under an allowed prefix.
     let allowed = [
         "/usr/bin/",
+        "/usr/lib/systemd/user/",
         "/usr/lib/systemd/system/",
         "/usr/lib/sysusers.d/",
         "/usr/lib/tmpfiles.d/",
+        "/usr/share/applications/",
+        "/usr/share/icons/",
+        "/usr/share/doc/synveil/",
         "/usr/share/synveil/",
         "/etc/synveil",
         "/var/lib/synveil",

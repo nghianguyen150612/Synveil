@@ -20,3 +20,6 @@ coverage/
 .idea/
 .vscode/
 /.claude/settings.local.json
+
+# CXX-Qt generates this IDE-only file with the local build directory.
+/crates/desktop/.qmlls.ini

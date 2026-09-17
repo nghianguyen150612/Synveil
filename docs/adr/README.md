@@ -51,6 +51,15 @@ một tệp để trạng thái và hệ quả không bị lệch giữa hai b�
 | [030](ADR-030-journal-retention-floor-and-durable-rebaseline-handoff-proofs.md) | Journal retention floor and durable rebaseline handoff proofs / Floor retention journal và proof handoff rebaseline bền vững | Accepted / Chấp thuận — LOCKED |
 | [031](ADR-031-automatic-retained-cursor-rebaseline-convergence.md) | Automatic retained-cursor rebaseline convergence / Hội tụ rebaseline tự động khi retained-cursor không còn hợp lệ | Accepted / Chấp thuận — LOCKED |
 | [032](ADR-032-deterministic-sync-conflict-preservation.md) | Deterministic sync conflict preservation and explicit resolution / Bảo toàn xung đột đồng bộ tất định và phân giải tường minh | Accepted / Chấp thuận — LOCKED |
+| [033](ADR-033-bounded-bidirectional-sync-cycle.md) | Bounded bidirectional synchronization cycle / Chu kỳ đồng bộ hai chiều bounded | Accepted / Chấp thuận — LOCKED |
+| [034](ADR-034-long-running-sync-runtime.md) | Long-running synchronization runtime lifecycle and scheduling / Lifecycle và scheduling runtime đồng bộ chạy dài | Accepted / Chấp thuận — LOCKED |
+| [035](ADR-035-durable-change-first-runtime-signal-integration.md) | Durable-change-first runtime signal integration / Tích hợp signal runtime theo thứ tự durable-change trước | Accepted / Chấp thuận — LOCKED |
+| [036](ADR-036-desktop-sync-host-and-process-lifecycle.md) | Desktop synchronization host and process lifecycle composition / Host đồng bộ desktop và composition lifecycle tiến trình | Accepted / Chấp thuận — LOCKED |
+| [037](ADR-037-desktop-process-bootstrap-platform-lifecycle-root-availability.md) | Production desktop process bootstrap, platform lifecycle, and root availability / Bootstrap process desktop production, lifecycle platform và availability của root | Accepted / Chấp thuận — LOCKED |
+| [038](ADR-038-secure-local-desktop-control-ipc.md) | Secure local desktop process-control IPC / IPC điều khiển tiến trình desktop cục bộ an toàn | Accepted / Chấp thuận — LOCKED |
+| [039](ADR-039-ipc-backed-desktop-controller-core.md) | IPC-backed desktop controller core / Core controller desktop dựa trên IPC | Accepted / Chấp thuận — LOCKED |
+| [040](ADR-040-native-qt-desktop-shell.md) | Native Qt 6/QML desktop shell and system tray / Shell desktop native Qt 6/QML và system tray | Accepted / Chấp thuận — LOCKED Prompt 98 |
+| [041](ADR-041-production-desktop-launch-orchestration.md) | Production desktop launch orchestration and user-level background supervision / Điều phối khởi chạy desktop production và giám sát background theo user | Accepted — LOCKED |
 
 ## Process / Quy trình
 

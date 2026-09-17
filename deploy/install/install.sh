@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# install.sh — package-neutral Linux installation lifecycle for Synveil scheduled-maintenance
-# Prompt 76: fresh install, idempotent reinstall, in-place upgrade, staged-root safety.
+# install.sh — package-neutral Linux installation lifecycle for Synveil desktop
+# and scheduled-maintenance payloads. Prompt 76 lifecycle guarantees remain
+# unchanged; Prompt 99 adds the separate desktop/client/user-unit payload.
 # Distribution packages (.deb/.rpm/etc.) MUST call this layer with DESTDIR/--root.
 # SPDX-License-Identifier: MIT
 set -euo pipefail
@@ -11,7 +12,8 @@ source "${SCRIPT_DIR}/common.sh"
 
 usage() {
     cat >&2 <<'EOF'
-Usage: install.sh --root=<staged-root> [--binary=<path-to-synveil-scheduled-maintenance-once>]
+Usage: install.sh --root=<staged-root> [--binary=<maintenance>] \
+                  [--client-binary=<synveil-client>] [--desktop-binary=<synveil-desktop>]
                   [--destdir=<staged-root>] [--help]
 
 Package-neutral Synveil installation. Installs PACKAGE-owned artifacts and
@@ -25,11 +27,21 @@ Options:
   --binary=PATH      Path to built synveil-scheduled-maintenance-once binary.
                      Defaults to $REPO_ROOT/target/debug/synveil-scheduled-maintenance-once
                      or $SYNVEIL_INSTALL_BINARY if set.
+  --client-binary=PATH
+                     Path to the packaged synveil-client executable. Defaults
+                     to target/debug or target/release, or
+                     $SYNVEIL_INSTALL_CLIENT_BINARY.
+  --desktop-binary=PATH
+                     Path to the packaged synveil-desktop executable. Defaults
+                     to target/debug or target/release, or
+                     $SYNVEIL_INSTALL_DESKTOP_BINARY.
   --help             Show this help.
 
 Environment:
   DESTDIR            Alternative staged root (like make DESTDIR=).
   SYNVEIL_INSTALL_BINARY  Path to binary artifact if --binary not given.
+  SYNVEIL_INSTALL_CLIENT_BINARY  Path to synveil-client if not specified.
+  SYNVEIL_INSTALL_DESKTOP_BINARY  Path to synveil-desktop if not specified.
   SYNVEIL_INSTALL_FAIL_AFTER=N  Test-only: fail after N PACKAGE artifacts (simulates mid-upgrade failure).
   SYNVEIL_ALLOW_HOST_ROOT=1    Allow --root=/ (host root) for real packaging.
 
@@ -59,6 +71,8 @@ EOF
 # ---------------------------------------------------------------------------
 STAGED_ROOT="${DESTDIR:-}"
 BINARY_SRC="${SYNVEIL_INSTALL_BINARY:-}"
+CLIENT_BINARY_SRC="${SYNVEIL_INSTALL_CLIENT_BINARY:-}"
+DESKTOP_BINARY_SRC="${SYNVEIL_INSTALL_DESKTOP_BINARY:-}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -72,6 +86,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --binary=*)
             BINARY_SRC="${1#--binary=}"
+            shift
+            ;;
+        --client-binary=*)
+            CLIENT_BINARY_SRC="${1#--client-binary=}"
+            shift
+            ;;
+        --desktop-binary=*)
+            DESKTOP_BINARY_SRC="${1#--desktop-binary=}"
             shift
             ;;
         --help|-h)
@@ -127,6 +149,44 @@ if [[ ! -f "$BINARY_SRC" ]]; then
     exit 1
 fi
 
+resolve_desktop_binary() {
+    local requested="$1"
+    local name="$2"
+    if [[ -n "$requested" ]]; then
+        printf '%s' "$requested"
+        return 0
+    fi
+    for candidate in \
+        "${REPO_ROOT}/target/debug/${name}" \
+        "${REPO_ROOT}/target/release/${name}"; do
+        if [[ -f "$candidate" ]]; then
+            printf '%s' "$candidate"
+            return 0
+        fi
+    done
+    synveil_err "${name} artifact not found; pass --${name#synveil-}-binary=PATH"
+    return 1
+}
+
+CLIENT_BINARY_SRC="$(resolve_desktop_binary "$CLIENT_BINARY_SRC" synveil-client)"
+DESKTOP_BINARY_SRC="$(resolve_desktop_binary "$DESKTOP_BINARY_SRC" synveil-desktop)"
+
+for binary_source in "$CLIENT_BINARY_SRC" "$DESKTOP_BINARY_SRC"; do
+    if [[ ! -f "$binary_source" ]]; then
+        synveil_err "binary source does not exist: $binary_source"
+        exit 1
+    fi
+    if [[ "$binary_source" == *".."* ]]; then
+        IFS='/' read -ra __parts <<< "$binary_source"
+        for __p in "${__parts[@]}"; do
+            if [[ "$__p" == ".." ]]; then
+                synveil_err "binary path must not contain '..': $binary_source"
+                exit 1
+            fi
+        done
+    fi
+done
+
 # Validate no path escape for the binary itself
 if [[ "$BINARY_SRC" == *".."* ]]; then
     # Check for ".." component in binary src
@@ -172,6 +232,10 @@ install_one() {
             local src_path
             if [[ "$source" == "BINARY" ]]; then
                 src_path="$BINARY_SRC"
+            elif [[ "$source" == "BINARY_CLIENT" ]]; then
+                src_path="$CLIENT_BINARY_SRC"
+            elif [[ "$source" == "BINARY_DESKTOP" ]]; then
+                src_path="$DESKTOP_BINARY_SRC"
             elif [[ "$source" == "-" ]]; then
                 synveil_err "PACKAGE entry must have source file, got '-' for $dest"
                 return 1
@@ -245,6 +309,8 @@ cat >&2 <<EOF
   systemd-sysusers --root=$STAGED_ROOT (or systemd-sysusers)
   systemd-tmpfiles --create --root=$STAGED_ROOT (or --prefix=/var/lib/synveil)
   systemctl daemon-reload
+  systemctl --user daemon-reload
+  systemctl --user enable synveil-client.service  # explicit user autostart, never automatic here
   systemctl enable synveil-scheduled-maintenance.timer  # explicit enablement, not automatic in package-neutral layer
 EOF
 

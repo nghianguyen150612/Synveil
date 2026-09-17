@@ -1,0 +1,19 @@
+[Unit]
+Description=Synveil background synchronization client
+Documentation=https://synveil.example.invalid/docs/desktop-launch
+StartLimitIntervalSec=5min
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/synveil-client
+Restart=on-failure
+RestartSec=30s
+# 78 is the source-defined permanent non-secret configuration failure from
+# crates/client/src/lib.rs. Runtime/bootstrap failures use 70 and remain
+# restartable under the bounded StartLimit policy.
+RestartPreventExitStatus=78
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

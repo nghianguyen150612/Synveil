@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Synveil
+Comment=Synveil desktop synchronization
+Exec=/usr/bin/synveil-desktop
+Icon=synveil
+Terminal=false
+Categories=Utility;Security;FileTransfer;
+StartupNotify=true

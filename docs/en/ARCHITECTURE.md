@@ -21,7 +21,7 @@ scale.
 flowchart TB
     subgraph Untrusted["Untrusted and semi-trusted clients"]
         Web["React web"]
-        Desktop["Desktop inbound core and HTTP adapter\nGUI and outbound sync remain future"]
+        Desktop["Desktop host, bounded cycle, and HTTP adapter\nGUI and OS entrypoint integration remain future"]
         Mobile["Future Apple/mobile clients"]
     end
 
@@ -558,9 +558,12 @@ The public phase vocabulary is `Uninitialized`, `Bootstrapping`, `Ready`,
 `Offline`, `Diverged`, `Paused`, and `NeedsRebaseline`. Prompt 36 implements the
 inbound core behind this boundary. Prompt 37 adds the remote connection and
 credential boundary below. Prompt 38 adds local filesystem observation and a
-durable outbound-intent queue only; automatic mutation submission,
-GUI/background lifecycle, automatic conflict resolution, native packaging, and
-release-lab platform claims remain outside this component.
+durable outbound-intent queue. Prompt 91 adds a transport-neutral bounded
+one-shot cycle that may submit one durable outbound unit after safe inbound
+convergence. Prompt 94 adds the application-level `DesktopSyncHost`
+composition root and platform-neutral lifecycle/network input seams; GUI,
+actual desktop entrypoint wiring, automatic conflict resolution, native
+packaging, and release-lab platform claims remain outside this component.
 
 ## Prompt 37 remote identity and Prompt 38 local observation boundary
 
@@ -568,9 +571,11 @@ The desktop inbound core is **VALIDATED**. Durable server profiles, device
 enrollment groundwork, device bearer authentication, secure desktop credential
 persistence, and the production HTTP `SyncRemote` are **VALIDATED**. Filesystem
 observation, self-generated change suppression, durable outbound intent capture,
-rename/move attribution with conservative fallback, and watcher overflow/rescan
-handling are **IMPLEMENTED**. Automatic outbound mutation submission, automatic
-conflict resolution, and desktop GUI/pairing UX are **NOT IMPLEMENTED**.
+rename/move attribution with conservative fallback, watcher overflow/rescan
+handling, the Prompt 91 bounded outbound cycle, the Prompt 92 process-local
+runtime, and the Prompt 94 host composition root are **IMPLEMENTED**. Automatic
+conflict resolution, desktop GUI/pairing UX, actual OS entrypoint integration,
+and service/autostart policy are **NOT IMPLEMENTED**.
 
 `OutboundObservationEngine` observes exactly one managed root and owns no remote
 transport. `LocalChangeWatcher` emits raw `CREATE_HINT`, `MODIFY_HINT`,
@@ -661,3 +666,440 @@ validation includes workspace cross-target compilation and MinGW linking of
 client-sync/platform test executables. Those executables have not run on a
 native Windows host: Credential Manager, TLS, and filesystem runtime evidence
 remains a Prompt 40 checkpoint.
+
+## Prompt 91 bounded bidirectional cycle
+
+`BidirectionalSyncCycleRunner` is the client-side composition seam consumed by
+the Prompt 92 runtime and other callers. It is transport-neutral and scoped to one
+`ReplicaScope`/Library. Its one-shot operation inspects local state, advances
+the existing `RebaselineConvergenceCoordinator` once, then performs a fresh
+eligibility check before invoking the existing `OutboundSubmissionEngine` at
+most once. The inbound result is authoritative for whether the outbound base
+is safe; candidate, handoff, bootstrap, pending page/ack, local issue, and
+missing-root state all conservatively suppress outbound work.
+
+The runner has no scheduler, timer, daemon, process-global lock, cycle table,
+or new transport. Prompt 87 remains the owner of bounded inbound/rebaseline
+recovery, and Prompt 88 remains the owner of durable intent selection,
+idempotency, upload/mutation submission, reconciliation, and conflict fencing.
+The two existing per-Library guards provide same-Library exclusion while
+different Libraries remain independently progressable. Restart behavior is
+therefore derived from existing SQLite records and server idempotency facts,
+not from ephemeral runner state. Prompt 92 owns recurrence separately through
+the narrow runtime scheduler boundary described below.
+
+## Prompt 92 long-running sync runtime
+
+`SyncRuntime` is the process-local lifecycle and scheduling boundary layered on
+top of Prompt 91. It registers one already-constructed
+`BidirectionalSyncCycleRunner` (or its narrow `SyncCycleExecutor` port) per
+Library and invokes only `run_once`. The caller remains responsible for
+constructing the authenticated `SyncRemote`, local replica, and runner; the
+runtime does not infer adapters or credentials from a SQLite row.
+
+The runtime owns a single supervisor, explicit `start`/`stop`/`join` control,
+per-Library lifecycle state, coalesced wake metadata, periodic safety polling,
+bounded transient scheduling, and bounded observability events. Startup makes
+one initial cycle runnable for each registered Library. `LocalChange`,
+`Manual`, `NetworkAvailable`, and `CredentialChanged` wakes can make an idle
+Library runnable promptly, while a wake during a cycle is retained as one
+follow-up opportunity. `AuthBlocked` suppresses ordinary periodic requests
+until a manual or credential wake; rate-limited work honors its validated
+fallback delay.
+
+There is at most one Prompt 91 call per Library. A global active-set limit
+(default four, validated hard maximum 1,024) bounds concurrent Libraries, and
+round-robin tail requeue gives another Library a turn after each bounded
+productive cycle. Idle work uses the default 30-second safety poll. Transient
+and recovery-blocked outcomes use deterministic exponential backoff capped at
+60 seconds; fatal local failures and panics fault only their Library. An
+unresolved conflict fences outbound through Prompt 88 but does not stop
+inbound polling.
+
+Runtime state is intentionally ephemeral: there is no runtime migration,
+schedule table, cycle journal, retry counter, or agent record. Graceful
+shutdown stops new starts, lets active Prompt 91 futures finish, drains their
+completions, and then makes `join` return. Restart reconstructs the runtime
+from explicit registrations and resumes work from Prompt 87/88 durable state.
+The component adds no service manager integration, filesystem watcher wiring,
+server push, broker, route, frontend persistence, or OS-specific lifecycle.
+
+## Prompt 93 durable-change-first runtime signals
+
+Prompt 93 connects the real local producers to that one process-local runtime
+through a narrow `SyncWakeNotifier` boundary. The dependency direction is
+producer -> notifier/runtime handle; `LocalStateStore` remains unaware of the
+concrete scheduler. The canonical ordering is:
+
+```text
+local event or controller input
+  -> durable SQLite intent/observation or credential commit
+  -> release the per-Library writer/transaction boundary
+  -> best-effort runtime wake
+  -> Prompt 92 schedules a bounded Prompt 91 cycle
+```
+
+`OutboundObservationEngine` attaches the notifier after construction. A
+reconciliation batch records all changed durable intents in one in-memory
+notification bit and sends at most one `LocalChange` wake for the Library. A
+multi-batch overflow/rescan retains that bit until reconciliation completes;
+the existing watcher, suppression, rename attribution, and rescan semantics
+remain authoritative. Exact semantic duplicates, self-generated suppression,
+ignored `.synveil/` paths, and no-op inspections do not wake.
+
+Other durable intent callers use `OutboundIntentProducer`, which returns a
+`DurableChangeNotification` containing separate durable and wake results. The
+intent write is complete before the writer guard is released and the notifier
+is called. A `RuntimeStopped` or `UnknownLibrary` result is observable but does
+not undo the intent; startup and the periodic runtime poll remain the recovery
+path for a lost signal. Content upload callers must commit any required local
+source metadata before using the same post-commit signal boundary.
+
+The credential lifecycle adapter calls the existing secure-store/enrollment
+workflow first. Only a successfully verified usable enrollment or replacement
+emits `CredentialChanged` for its deduplicated affected Libraries. Failed
+validation/persistence and credential removal/logout emit no usable-credential
+wake. A future platform network adapter may call `network_available()` as a
+hint; it does not bypass authentication, conflict fencing, or Prompt 91
+preconditions. A controller calling `sync_now(library_id)` receives scheduling
+status only; it never calls Prompt 91 directly or promises full convergence.
+
+Wake statuses are bounded (`Queued`, `Coalesced`,
+`AlreadyRunningFollowupRecorded`, `RuntimeStopped`, and `UnknownLibrary`). All
+runtime/control/notifier clones point at the same `Arc` supervisor. A wake
+racing registration or arriving after unregistration can be unavailable while
+durable local work remains intact for re-registration/startup. No persistent
+wake queue, scheduler migration, service manager, OS network monitor, new
+watcher, route, frontend state, or server push channel is introduced.
+
+## Prompt 94 desktop synchronization host and process lifecycle composition
+
+`DesktopSyncHost` is the application composition root for the accepted
+Prompt 91–93 stack. It is deliberately not a fourth synchronization state
+machine. The host owns one process/account-scoped `SyncRuntime`, the explicit
+library-to-runner registrations, observer lifetimes, the host control handle,
+and (when opened through `open` or `from_platform`) the local-state pool
+lifetime. `LocalStateStore`, `LocalReplica`, `HttpSyncRemote`, the Prompt 91
+engines, Prompt 92 scheduling, and Prompt 93 durable-before-wake ordering keep
+their existing ownership and correctness contracts.
+
+The first registered Library establishes the host's owner/Device context.
+Every later Library must match it; a mixed-account or mixed-Device registration
+is rejected with typed `WrongScope` rather than sharing a credential boundary.
+Gen-1 therefore supports one account/Device context per host, not silent
+multi-account composition.
+
+The composition graph is:
+
+```text
+desktop/client process
+  -> DesktopSyncHost
+     -> one SyncRuntime + SyncRuntimeHandle + SyncWakeNotifier
+     -> one registered library entry per durable local replica
+        -> LocalReplica + optional OutboundObservationEngine
+        -> Prompt 91 BidirectionalSyncCycleRunner
+           -> InboundSyncEngine + RebaselineConvergenceCoordinator
+           -> OutboundSubmissionEngine
+     -> OutboundIntentProducer / CredentialLifecycleController
+     -> DesktopLifecycleAdapter / DesktopNetworkAdapter
+```
+
+Construction is side-effect bounded: it validates the existing managed root
+and SQLite/profile bindings, composes the lower-level graph, and registers
+libraries, but starts no runtime supervisor or watcher. Production HTTP
+libraries may be constructed without a usable credential. The host loads that
+credential through the existing profile-bound `SecretStore` when a cycle needs
+it; an absent enrollment or secret becomes the existing `AuthBlocked` outcome.
+Because the current HTTP remote captures an immutable credential, a verified
+credential replacement rebuilds only that library's authenticated Prompt 91
+graph on the next cycle. No bearer bytes enter host status, scheduler state, or
+controller handles.
+
+Startup is deterministic: validate/open local state, resolve the existing
+profile and secure-provider boundary, compose each runner, register all
+libraries, start the single runtime, and only then start the configured
+observers. This ordering closes the observer-startup registration race. A
+durable local intent still remains correct if a wake is unavailable; Prompt 92
+startup and safety polling recover it. Duplicate library registration is
+idempotent. Dynamic registration while the host is running registers the
+library with the same runtime before enabling its observer; unregistration
+removes only the ephemeral runtime entry and does not delete sync data.
+
+`DesktopSyncHostHandle` exposes only lifecycle, bounded status/events,
+`sync_now`, `network_available`, credential-change scheduling, and the narrow
+producer/controller adapters. `DesktopLifecycleAdapter` and
+`DesktopNetworkAdapter` are identical Linux/Windows semantics: they deliver a
+shutdown callback or a positive connectivity hint. There is no OS monitor,
+platform retry/conflict logic, direct engine call, checkpoint write, service
+manager, autostart, tray, or UI implementation here. A real process entrypoint
+can adopt these seams in a later platform phase.
+
+Shutdown marks the host as stopping, cancels observer poll tasks, flushes and
+marks observer reconciliation, requests Prompt 92 shutdown, lets active
+bounded Prompt 91 calls finish, joins runtime tasks, and closes host-owned
+SQLite state. Repeated `shutdown`/`join` calls are safe. A stopped host is
+terminal; process restart creates a new host over the same durable state and
+re-registers the explicit libraries. `Drop` only requests best-effort
+cancellation and is not a substitute for explicit graceful shutdown before
+process exit. The locked decision is recorded in
+[`ADR-036`](../adr/ADR-036-desktop-sync-host-and-process-lifecycle.md).
+
+## Production desktop process bootstrap and root availability (Prompt 95)
+
+The production foreground boundary is the `synveil-client` package. Its binary
+entrypoint is intentionally thin and creates the only Tokio runtime in the
+process:
+
+```text
+synveil-client/main
+  -> current PlatformRuntime
+  -> bounded non-secret client.conf
+  -> DesktopClientProcess
+     -> one DesktopSyncHost
+        -> one SyncRuntime
+        -> one explicit library registration per configured replica
+```
+
+The manifest supplies only a canonical profile ID and explicit library/root
+references. The existing local SQLite profile and replica rows, the physical
+managed-root marker, and the platform `SecretStore` remain the authority for
+the server origin, owner/device scope, root binding, enrollment metadata, and
+credential. Bootstrap never creates a configured root or replacement marker.
+There is no process lock or second state store: the existing adjacent
+`state.sqlite3.writer.lock` rejects a second opener of the same local state.
+
+Linux `SIGINT`/`SIGTERM` and Windows Ctrl-C are translated into the same
+`ShutdownRequested` event. The process stops its lifecycle and network adapters
+and then delegates to the host's one graceful shutdown path. Native network
+integration is a best-effort positive hint only. Linux interface inspection and
+the Windows route hint are bounded and non-secret; an initialization/runtime
+failure falls back to one bounded periodic hint source. Neither adapter calls
+an engine, writes sync state, or bypasses authentication, conflict, recovery,
+or root gates. Service managers, autostart, installers, tray, GUI, and daemon
+behavior are not part of this boundary.
+
+Root availability is per-library process state, not a durable domain fact:
+
+```text
+configured root
+  -> Available       (canonical marker and binding validate)
+  -> Unavailable     (missing/lost root; observer and cycle fenced)
+  -> Recovering      (same binding revalidated; watcher/rescan in progress)
+  -> Available       (one watcher restart + bounded canonical rescan complete)
+```
+
+Missing roots use a deferred replica that remembers the existing binding ID but
+does not create directories, markers, or deletion intents. `RootGatedCycle`
+and the observer's pre-drain/pre-intent validation prevent absence from being
+interpreted as user deletion. A reappeared root must have the same canonical
+path, profile, owner/device/library scope, and managed-root binding. Only then
+does the host restart that library's watcher once, reconcile bounded changes
+made while it was unavailable, and send one `RootAvailable` scheduling wake.
+The lifecycle task and status are isolated per library, so one unavailable
+removable volume cannot stop healthy siblings.
+
+Root availability, host/process status, OS signal state, and network hints are
+ephemeral application concerns. They add no PostgreSQL row, SQLite column,
+migration, journal event, route, OpenAPI operation, frontend state, or server
+push channel. Server migration 36 and client schema V6 remain unchanged.
+
+## Secure local desktop control IPC (Prompt 96)
+
+The production process now has one control server around the existing
+`DesktopSyncHostHandle`:
+
+```text
+future UI / tray / diagnostics
+        -> DesktopControlClient
+        -> local v1 framed IPC
+        -> one synveil-client control server
+        -> one DesktopSyncHostHandle
+        -> one SyncRuntime
+```
+
+Linux uses the canonical platform runtime directory and an opaque,
+profile-scoped Unix socket. The generated `synveil` control directory is
+owner-only `0700`; the socket is owner-only `0600`; Unix peer credentials must
+report the current UID. Windows uses the real profile-scoped named-pipe branch
+with remote clients rejected and an owner-only protected security descriptor.
+There is no localhost-TCP, HTTP, WebSocket, SSE, public daemon, or insecure
+fallback. Secure listener failure is a typed fatal bootstrap error.
+
+Protocol v1 uses a ClientHello/ServerHello handshake, a four-byte big-endian
+length prefix, a 64 KiB maximum payload, non-zero request IDs, sequential
+per-connection dispatch, and a maximum of 32 active connection tasks. The
+server translates existing runtime, root, lifecycle, and process signals into
+bounded best-effort events; it does not create a second observer or durable
+event journal. Slow, disconnected, and malformed clients are isolated, and
+shutdown terminates only bounded IPC tasks before Prompt 95 host shutdown
+continues.
+
+`Ping`, process/library status, `SyncNow`, graceful `Shutdown`, and event
+subscription are the complete Gen-1 surface. Status contains only safe
+categories and stable IDs. It never contains raw roots, URLs, content,
+credentials, cookies, authorization headers, or SQLite/sync-engine data.
+`SyncNow` routes through the existing Prompt 93/92 scheduling API and reports
+acceptance/coalescing only. `ShutdownAccepted` is written before the outer
+process lifecycle is woken; the handler never calls `process::exit` or aborts
+the synchronization runtime. The locked control decision is recorded in
+[`ADR-038`](../adr/ADR-038-secure-local-desktop-control-ipc.md).
+
+## IPC-backed desktop controller core (Prompt 97)
+
+Prompt 97 adds the reusable native controller model/client, not a GUI. The
+boundary is intentionally one-way:
+
+```text
+future Qt/QML/native UI or tray
+             -> DesktopController
+                -> DesktopControlClient
+                   -> Prompt 96 local IPC
+                      -> running synveil-client
+                         -> existing DesktopSyncHost / SyncRuntime
+```
+
+`DesktopController::new` is side-effect free. `start()` creates one manager
+relationship for one profile endpoint, performs a Prompt 96 version-1
+handshake on each connection, obtains a complete process/library status set,
+and establishes the bounded event subscription. It publishes a `Connected` /
+`Fresh` state only after the initial process status, library list, and required
+per-library statuses form one coherent local snapshot. The controller resolves
+profile endpoints through the Prompt 96/platform resolver on every reconnect;
+it does not derive socket or pipe names itself.
+
+The controller's public state is a latest-state watch, not an event journal. A
+snapshot contains connection state, safe process status, redacted library
+categories, monotonic presentation revision, freshness, the local connection
+generation, and safe error categories. It contains no root path, URL, file
+content, credential, cookie, authorization header, SQLite handle, or sync
+engine object. `Fresh`, `Stale`, and `Unavailable` are presentation semantics;
+the server/process remains authoritative for synchronization correctness.
+
+Prompt 96 events are invalidation hints. One atomic pending bit and one event
+reader task fold bursts into refresh work. Only one status refresh is in
+flight; events received while it runs create at most one follow-up. Disconnect
+retains the last safe library list with `Stale` freshness and follows the
+bounded 250 ms, 500 ms, 1 s, 2 s, 4 s, 5 s reconnect schedule. Every attempt
+has a new generation, and old-generation replies/events are ignored. Endpoint
+absence is a normal reconnect condition; endpoint-security failures,
+protocol mismatch, and malformed responses are explicit stable states.
+
+`SyncNow` and `RequestShutdown` use one eight-item bounded command admission
+channel and route only through Prompt 96. `Accepted`/`Coalesced` means
+scheduling, not completion. A disconnected command is not queued indefinitely;
+a lost response is `OutcomeUnknown`, and no command is replayed after
+reconnect. `DesktopController::stop()` joins controller/event tasks and closes
+only controller IPC connections. It never invokes `Shutdown` implicitly, so a
+UI/controller exit cannot stop `synveil-client` or alter sync correctness.
+Qt/QML, tray, autostart, service, installer, HTTP route, OpenAPI, and database
+work remain outside this phase. The locked decision is recorded in
+[`ADR-039`](../adr/ADR-039-ipc-backed-desktop-controller-core.md).
+
+## Native Qt 6/QML desktop shell and system tray (Prompt 98)
+
+Prompt 98 adds the first user-visible desktop application as a separate
+`synveil-desktop` process. `synveil-client` remains the synchronization
+process. The native shell uses one shared Qt 6/QML and Qt Quick codebase for
+Linux and Windows, with CXX-Qt as the Rust bridge and embedded QML resources.
+Qt 6.4 is the minimum supported baseline; Windows CI pins Qt 6.8.3 and Linux
+CI must provision a Qt 6.4-or-newer package:
+
+```text
+Qt application / QML / system tray
+              -> DesktopUiBridge
+                 -> one DesktopController
+                    -> Prompt 96 local control IPC
+                       -> running synveil-client
+                          -> existing DesktopSyncHost / SyncRuntime
+```
+
+The bridge owns Qt application lifecycle, QML loading, one controller-owned
+async runtime, tray policy, and safe presentation mapping. It does not own
+`SyncRuntime`, `DesktopSyncHost`, SQLite state, filesystem observers, raw
+Prompt 96 transport, PostgreSQL, credentials, or server metadata. QML cannot
+open a Unix socket or Windows named pipe and cannot serialize IPC frames. The
+controller's reconnect, freshness, and generation rules remain authoritative.
+
+The shell renders only bounded state: process/connection status, stable library
+IDs and labels, root availability, authentication, conflict and runtime
+categories, safe scheduling feedback, and bounded counts. Root paths, server
+URLs, content, credentials, cookies, authorization headers, secret-store
+material, and raw transport errors are absent. A retained library list is
+marked `Stale` while reconnecting; a fresh snapshot is applied atomically; a
+removed selection is cleared. Each eligible row and the selected detail view
+can request `Sync Now` through the controller-only scheduling path; the shell
+never displays synchronization completion from an accepted or coalesced
+response.
+
+The native tray uses the same bridge/model as the main window and exposes the
+bounded Gen-1 actions `Open Synveil`, `Sync Now`, and `Quit Synveil Desktop`.
+Tray Quit and window close stop/join only UI-owned controller work; they never
+send Prompt 96 `Shutdown` and never stop `synveil-client`. With tray support,
+window close hides the shell; without it, the shell exits cleanly. The shell
+does not spawn or autostart `synveil-client`; that policy is deferred to Prompt
+99 or later. Login, settings, file browsing, uploads, sharing, and other
+product surfaces remain outside this phase.
+
+Controller I/O and reconnect work stay off the Qt GUI thread. QML-visible
+updates cross the supported Qt boundary and use latest-state coalescing rather
+than an unbounded callback queue. Linux CI provisions Qt 6 and runs the
+offscreen shell gates; Windows CI compiles the native MSVC Qt branch. macOS,
+service-manager behavior, packaging, server routes, OpenAPI, migrations, and
+web behavior are unchanged. The locked decision is recorded in
+[`ADR-040`](../adr/ADR-040-native-qt-desktop-shell.md).
+
+## Production desktop launch orchestration (Prompt 99)
+
+Prompt 99 adds process-management composition below the Qt bridge and above the
+existing Prompt 97 controller. The production topology is:
+
+```text
+synveil-desktop
+  Qt/QML + tray + DesktopUiBridge
+        -> BackgroundClientManager
+           -> DesktopController / Prompt 96 local IPC
+              -> synveil-client
+                 -> DesktopSyncHost / SyncRuntime / Prompt 95 writer lock
+```
+
+`BackgroundClientManager` is public through `synveil-client` so the desktop
+crate depends on a narrow typed API rather than platform process-manager
+details. It owns availability inspection, one bounded start request,
+user-autostart status/enable/disable/run/stop, canonical sibling resolution,
+and a profile-scoped in-flight/cooldown gate. It does not own sync correctness,
+library state, credentials, checkpoints, root observation, sync retries,
+`LocalStateStore`, `SyncRuntime`, `DesktopSyncHost`, or raw IPC.
+
+After the controller starts, the manager inspects the endpoint and user
+supervisor. Endpoint absence, a stopped client, and an inactive supervisor are
+launchable. Endpoint-security, protocol-incompatible, malformed, writer
+conflict, and terminal controller states are not launchable. Concurrent calls
+share one gate and return `AlreadyStarting`; successful/failed attempts are
+bounded so reconnect cannot become one spawn per retry. The controller keeps
+ownership of reconnect, generation fencing, coherent fresh snapshots, and
+safe QML presentation. QML has no process path or spawn primitive.
+
+Linux uses a user unit at `/usr/lib/systemd/user/synveil-client.service`, never
+the system unit directory. The unit runs the actual `/usr/bin/synveil-client`
+entrypoint, has bounded `Restart=on-failure`/`RestartSec`/`StartLimit*`, and
+prevents restart on source-defined permanent configuration exit 78. User
+autostart is explicit and reversible through `systemctl --user`; packaging and
+GUI startup never silently enable it. Windows uses a current-user,
+least-privilege Task Scheduler definition with exact canonical sibling
+`synveil-client.exe`, logon trigger, finite restart policy, and `IgnoreNew`.
+Neither platform adds a root/Admin background service.
+
+Launch management deliberately preserves GUI/client independence. GUI close
+stops only controller-owned work and never sends Prompt 96 `Shutdown` or stops
+the client. A user supervisor can recover the client with the GUI closed; when
+the GUI is open, the controller independently reconnects to a new generation.
+Prompt 95's writer lock remains the final same-profile duplicate protection.
+
+Prompt 99 extends the package-neutral Linux manifest with the client, desktop,
+user unit, desktop entry/icon, and license/notices while retaining the existing
+maintenance payload. The Windows packaging path produces a portable ZIP with
+the two executables and an audited target Qt/QML/platform/C++ runtime closure;
+an installer wizard and package signing remain deferred. No server route,
+OpenAPI operation, web feature, schema migration, or synchronization domain
+entity is introduced. See [`ADR-041`](../adr/ADR-041-production-desktop-launch-orchestration.md)
+and [`DESKTOP_LAUNCH.md`](DESKTOP_LAUNCH.md).

@@ -9,22 +9,29 @@ set -euo pipefail
 PACKAGES_PAYLOAD_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGES_PAYLOAD_REPO_ROOT="$(cd "${PACKAGES_PAYLOAD_COMMON_DIR}/../../.." && pwd)"
 
-# Stage the authoritative package payload into $1 (absolute staged root) using $2 as binary.
+# Stage the authoritative package payload into $1 (absolute staged root) using
+# $2 as the maintenance binary, $3 as synveil-client, and $4 as synveil-desktop.
 # Delegates to deploy/install/install.sh so MANIFEST remains the single source of truth.
 synveil_stage_payload() {
     local staged_root="$1"
     local binary_src="$2"
-    if [[ -z "$staged_root" || -z "$binary_src" ]]; then
-        printf '[synveil-packages] ERROR: synveil_stage_payload requires <staged-root> <binary>\n' >&2
+    local client_binary_src="$3"
+    local desktop_binary_src="$4"
+    if [[ -z "$staged_root" || -z "$binary_src" || -z "$client_binary_src" || -z "$desktop_binary_src" ]]; then
+        printf '[synveil-packages] ERROR: synveil_stage_payload requires <staged-root> <maintenance> <client> <desktop>\n' >&2
         return 1
     fi
-    if [[ ! -x "$binary_src" && ! -f "$binary_src" ]]; then
-        printf '[synveil-packages] ERROR: binary source missing: %s\n' "$binary_src" >&2
-        return 1
-    fi
+    for source in "$binary_src" "$client_binary_src" "$desktop_binary_src"; do
+        if [[ ! -x "$source" && ! -f "$source" ]]; then
+            printf '[synveil-packages] ERROR: binary source missing: %s\n' "$source" >&2
+            return 1
+        fi
+    done
     "${PACKAGES_PAYLOAD_REPO_ROOT}/deploy/install/install.sh" \
         "--root=${staged_root}" \
-        "--binary=${binary_src}"
+        "--binary=${binary_src}" \
+        "--client-binary=${client_binary_src}" \
+        "--desktop-binary=${desktop_binary_src}"
 }
 
 # Print the normalized expected payload manifest: "<dest> <mode> <class>" for every
@@ -32,13 +39,13 @@ synveil_stage_payload() {
 # Used by build.sh and Rust parity tests to prove DEB == RPM == MANIFEST.
 synveil_expected_package_files() {
     local manifest="${PACKAGES_PAYLOAD_REPO_ROOT}/deploy/install/MANIFEST"
-    local line source dest mode owner group class
+    local line source dest mode _owner _group class
     while IFS= read -r line || [[ -n "$line" ]]; do
         line="${line#"${line%%[![:space:]]*}"}"
         line="${line%"${line##*[![:space:]]}"}"
         [[ -z "$line" ]] && continue
         [[ "$line" == \#* ]] && continue
-        read -r source dest mode owner group class <<< "$line"
+        read -r source dest mode _owner _group class <<< "$line"
         if [[ "$class" == "PACKAGE" ]]; then
             printf '%s %s %s\n' "$dest" "$mode" "$class"
         fi

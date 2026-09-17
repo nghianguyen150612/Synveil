@@ -702,6 +702,32 @@ không có retry count durable: một invocation tạo nhiều nhất một arti
 conflict canonical thứ hai là typed stop, caller sau quyết định có bắt đầu
 invocation khác hay không.
 
+### Lifecycle local `BidirectionalSyncCycleRunner` (Prompt 91)
+
+Prompt 91 thêm một boundary composition trung lập transport, không thêm domain
+entity hay cycle record durable. `BidirectionalSyncCycleRunner` giữ các
+`RebaselineConvergenceCoordinator`, `OutboundSubmissionEngine` đã tạo sẵn và
+`LocalStateStore` dùng chung. `run_once(observed_at)` thực hiện một lần inspect
+cục bộ, một lần gọi convergence, rồi inspect eligibility cục bộ mới trước khi
+gọi tối đa một lần outbound submission. `observed_at` chỉ là metadata caller;
+không phải cursor, lease, retry marker hay record scheduling.
+
+Outbound chỉ đủ điều kiện với `IncrementalReady`, incremental progress hữu hạn
+an toàn hoặc `RebaselineConverged`, và lần inspect cuối không có candidate,
+handoff pending, bootstrap, feed page/ack pending, local issue hay root thiếu.
+Conflict row hiện có không chặn inbound; engine Prompt 88 trả outcome fence
+durable mà không phát mutation. Inbound auth không an toàn, transport,
+rate-limit, recovery-blocked hoặc overlap-blocked đều bỏ qua outbound bảo thủ.
+Result không có credential, cookie, token, path raw, content byte hay conflict
+payload raw.
+
+Một invocation ordinary giới hạn một feed page và một unit
+intent/submission outbound. Prompt 87 vẫn sở hữu recovery hữu hạn và bound tạo
+tối đa một snapshot; Prompt 88 vẫn sở hữu idempotency mutation/upload,
+reconciliation và conflict. Cycle không thêm loop, retry, scheduler, daemon,
+global lock, migration, route hay client schema. Tính đúng sau restart dựa vào
+page, candidate, handoff, intent, upload, idempotency và conflict record đã có.
+
 ### Biểu diễn conflict
 
 Mỗi client mutation mang `client_mutation_id` bền vững, fingerprint canonical,
@@ -1370,3 +1396,262 @@ replacement, hoặc `RETRY_LOCAL_AGAINST_CURRENT_BASE` có đúng một
 resolution lặp lại sau mất response đều idempotent. Intent cũ và precondition
 của nó vẫn là bằng chứng lịch sử; record đã resolved không được tái sử dụng nếu
 replacement xung đột về sau.
+
+## `SyncRuntime` chỉ trong process (Prompt 92)
+
+`SyncRuntime` là application component, không phải domain entity. State của nó
+ephemeral và không được biểu diễn bằng row PostgreSQL, client migration,
+change-journal event hay synchronization record. Caller đăng ký explicit một
+runner Prompt 91 đã dựng cho mỗi Library; registration là binding giữa Library
+ID với adapter transport/local-replica authenticated của process đó.
+
+Component expose lifecycle (`start`, `stop`, `join`), register/unregister
+explicit, surface `wake_library` typed, status an toàn và event bounded
+non-blocking. Status chỉ có Library ID, phase lifecycle, duration next-due
+tương đối, outcome cuối, cờ pending-wake và số transient failure. Không có
+credential, cookie, token, path, filename, content hay remote evidence.
+
+Scheduler không sở hữu sync truth. Mỗi unit được schedule delegate đúng một
+call `BidirectionalSyncCycleRunner::run_once`; Prompt 87 là owner của
+inbound/rebaseline recovery, Prompt 88 là owner của outbound intent durable,
+idempotency, upload, reconciliation và conflict fence. Outcome runtime chỉ
+chọn cơ hội process-local kế tiếp:
+
+| Runtime outcome | Ý nghĩa scheduling ephemeral |
+|---|---|
+| `Idle` | safety poll; nếu có wake coalesced thì follow-up ngắn, công bằng |
+| `Progress` | follow-up ngắn tất định để tiếp tục work có thể còn |
+| `Offline` hoặc `ServerTransient` | exponential backoff, reset sau cycle an toàn |
+| `RateLimited` | delay fallback bounded; không loop 429 ngay |
+| `AuthBlocked` | dừng polling thường kỳ đến manual/credential wake |
+| `ConflictBlocked` | inbound vẫn runnable, outbound theo policy Prompt 88 |
+| `RecoveryBlocked` | cơ hội retry bounded, không tạo recovery branch mới |
+| `FatalLocal` hoặc `Panicked` | chỉ fault Library này; cần manual retry explicit |
+
+Mỗi Library chỉ giữ một pending wake reason nên wake storm không tạo queue hay
+task không bounded. Supervisor chỉ cho một cycle active mỗi Library và số
+Library active global có giới hạn. Round-robin cùng requeue mỗi unit giúp
+Library có queue lớn không bỏ đói Library khác. Shutdown không xóa hay repair
+sync state durable; process restart chỉ register lại runner đã dựng và để
+record cấp dưới khôi phục work.
+
+## Signal runtime theo thứ tự durable-change trước (Prompt 93)
+
+Prompt 93 thêm các integration value, không thêm domain entity hay durable
+scheduler state. `DurableChangeResult` phân biệt `NoChange` với `Committed`,
+còn `DurableChangeNotification` giữ durable result tách khỏi
+`SyncRuntimeWakeResult`. Vì vậy intent hoặc credential đã commit vẫn báo thành
+công dù wake best-effort trả `RuntimeStopped` hoặc `UnknownLibrary`.
+
+Invariant của mọi producer là:
+
+```text
+durable local state / credential commit
+  -> release boundary writer và transaction
+  -> gọi wake notifier chỉ với LibraryId + reason closed
+```
+
+`OutboundIntentUpsertResult.changed` chỉ true khi insert hoặc update active
+intent coalesced; exact semantic duplicate là `NoChange`. Observation engine
+gom intent thay đổi trong một poll/reconciliation bounded và emit tối đa một
+wake `LocalChange` mỗi Library. Rescan nhiều batch giữ pending bit đến khi scan
+hoàn tất. Operation self-generated bị suppression, control path ignore và
+reinspection no-op không tạo notification.
+
+Credential lifecycle vẫn thuộc profile/SecretStore. Integration adapter chỉ
+emit `CredentialChanged` sau secure-store verification và transaction metadata
+enrollment hiện có thành công, đồng thời deduplicate Library affected explicit.
+Credential persistence fail và removal/logout không emit usable-credential wake.
+`network_available()` và `sync_now()` chỉ là scheduling hint process-local;
+không mutate trực tiếp checkpoint, snapshot, handoff, journal row hay conflict,
+và không bypass safety gate Prompt 91/88.
+
+Notifier message không có secret, cookie, token, path, filename, content,
+checkpoint hay conflict evidence. Runtime state vẫn ephemeral và local schema
+vẫn V6. Startup và periodic polling là fallback correctness khi wake mất;
+registration/unregistration explicit không xóa local work durable. Runtime/control
+clone cùng dùng một supervisor, không tạo scheduler thứ hai.
+
+## Composition root cấp application: `DesktopSyncHost` (Prompt 94)
+
+`DesktopSyncHost` là application component ephemeral, không phải domain entity.
+Nó không có row PostgreSQL, SQLite migration, lifecycle record, checkpoint,
+feed cursor, candidate, handoff, conflict hay journal projection. State local
+trong process của nó chỉ gồm phase host (`Constructed`, `Starting`, `Running`,
+`Stopping`, `Stopped`, `Faulted`), reference explicit tới registration
+Library/replica durable, một `SyncRuntime`, observer task handle và ownership
+tùy chọn của pool SQLite đã mở. Host Stopped là terminal; process restart tạo
+host mới trên durable state cũ.
+
+Library đầu tiên được register cố định context owner/Device của host. Library
+sau đó nếu khác owner hoặc Device sẽ bị từ chối bằng `WrongScope`; host không
+đưa vào việc chia sẻ credential giữa nhiều account.
+
+Invariant một-runtime của host là invariant composition, không phải domain
+invariant mới: mọi runner Library đã register dùng chung một `SyncRuntime`, còn
+runtime, control handle, `SyncWakeNotifier`, outbound-intent producer,
+credential controller và observation engine expose cùng identity process-local.
+Runtime status/event chỉ có category Library/scheduling bounded cùng timing
+relative; secret, cookie, token, path, content và remote evidence không phải
+domain value của component này.
+
+Library discovery vẫn explicit và dùng binding durable
+`LocalStateStore`/`LocalReplica` hiện có. Registration xảy ra trước observer
+start. HTTP profile có thể prepare replica bound theo profile trước khi có
+credential; credential byte vẫn ở sau `SecretStore` hiện có, immutable HTTP
+transport chỉ rebuild cho Library affected sau credential replacement đã verify.
+`network_available` và `sync_now` là scheduling hint, không phải domain
+mutation. Platform lifecycle/network adapter chỉ deliver hint, không sở hữu
+sync policy.
+
+Host delegate mọi durable synchronization behavior cho Prompt 87/88/91 và
+scheduling/signal behavior cho Prompt 92/93. Graceful shutdown cancel
+observation delivery, cho active bounded cycle hoàn tất, join runtime rồi đóng
+chỉ resource host sở hữu. Unregister Library chỉ bỏ registration runtime
+ephemeral, không xóa durable sync state. Boundary composition này được khóa
+trong [`ADR-036`](../adr/ADR-036-desktop-sync-host-and-process-lifecycle.md).
+
+## Process production và root availability (Prompt 95)
+
+`DesktopClientProcess` và `DesktopSyncHost` là application component, không
+phải domain entity. Status `Starting`, `Running`, `Stopping`, `Stopped`,
+`Faulted` chỉ local trong process và không persist. Tương tự, root state
+`Available`, `Unavailable`, `Recovering` của mỗi Library mô tả environment
+hiện tại và có chủ ý không xuất hiện trong PostgreSQL, SQLite client,
+change journal hay sync domain model.
+
+Manifest process không bí mật nhận diện một profile và root explicit cho
+Library. Profile/replica durable vẫn mang scope owner/device/library,
+profile binding, root binding ID, cursor, intent, conflict và recovery state.
+Secure provider vẫn mang bearer credential. Path có thể chỉnh trong
+manifest không phải authority để đổi binding; root phải được mở lại
+theo marker và durable binding hiện có.
+
+Root lifecycle là environmental gate bao quanh domain operation hiện có:
+
+| State ephemeral | Hệ quả domain |
+|---|---|
+| `Available` | Observer reconciliation và sync cycle bounded được phép chạy. |
+| `Unavailable` | Library là `RootBlocked`; không tạo delete/trash intent từ absence. |
+| `Recovering` | Chạy watcher restart và một canonical rescan bounded trước khi thả work mới. |
+
+Process nhận Linux `SIGINT`/`SIGTERM` và Windows Ctrl-C qua một lifecycle
+event chung. Network change là positive hint, không phải domain fact: nó
+có thể release scheduler backoff nhưng không authenticate, mutate
+checkpoint, resolve conflict hay làm root hợp lệ. Writer lock SQLite hiện
+có vẫn là boundary cross-process của một state database, vì vậy không
+cần process-identity entity hay PID record thứ hai.
+
+Prompt 95 không thêm domain migration và không đổi server migration 36 hay
+client schema V6. Setup secret, distributed rate limiting, redesign
+device-credential, upload/share, backup, MFA/OAuth/OIDC, UI/tray và
+service-manager semantics vẫn nằm ngoài model này.
+
+## IPC điều khiển desktop là application state, không phải domain state (Prompt 96)
+
+Control plane cục bộ là application boundary ephemeral quanh cùng process
+production. `DesktopControlHandle` giữ một host handle hiện có, một status cell
+của process lifecycle, một event broadcaster bounded và shutdown coordination.
+Nó không đại diện cho user, device, credential profile, library root, sync
+journal, checkpoint, snapshot, handoff, conflict payload hoặc database
+transaction. Process status và root availability vẫn local trong process, không
+persist.
+
+Wire model chỉ có library ID ổn định, timing relative, category
+runtime/root/auth/conflict, scheduling result và invalidation event. Status là
+projection read-only của host/runtime hiện có. Không được lộ root path, server
+URL, file content, credential/credential ID, cookie, authorization header hoặc
+secret-store material. Không được tự bịa `Ready`, `Missing`, `Revoked` khi
+runtime chưa có proof; projection dùng `Unknown` cho tới khi có canonical
+observation an toàn.
+
+Có zero IPC migration và zero bảng IPC durable. Reconnect sau khi client hoặc
+process restart thực hiện handshake và status fetch mới, không repair/replay
+IPC state. SQLite writer lock hiện có và durable records Prompt 91–95 vẫn là
+boundary ownership/correctness duy nhất.
+
+## Presentation state của desktop controller không phải domain state (Prompt 97)
+
+`DesktopController` là application component ephemeral nằm trên local IPC
+client Prompt 96. `DesktopControllerSnapshot` chỉ chứa presentation
+latest-state của process/Library: connection lifecycle, process state an toàn,
+Library ID ổn định, category runtime/root/auth/conflict, timing scheduling
+relative, revision monotonic, freshness và connection generation local.
+Snapshot controller không phải `Library`, checkpoint, feed cursor, journal
+event, conflict record, handoff, credential, root binding hay synchronization
+result.
+
+Snapshot đầu tiên được publish atomically từ một bộ status transaction. Khi
+disconnect, data đầy đủ cuối cùng có thể tiếp tục hiển thị nhưng phải đánh dấu
+`Stale`; không được xem stale là current. Reconnect tạo generation local mới và
+fetch lại process/Library status canonical. Response hoặc event từ generation
+cũ không thể thay presentation mới. Event chỉ là invalidation hint nên event
+bị mất hoặc coalesce không tạo consequence durable.
+
+Controller không lưu durable state và không có authority mutate domain state.
+`SyncNow` là scheduling request; result accepted/coalesced không phải proof
+cycle đã hoàn tất. `RequestShutdown` là process-lifecycle command explicit;
+controller stop/drop không phải command đó. Không field nào của controller có
+thể biểu diễn password, token, cookie, authorization header, credential
+material, server URL, raw root path, file content, SQLite state hoặc handle
+internal Prompt 91–95. Domain model vì thế không đổi: server migration 36 và
+client schema V6 vẫn là baseline duy nhất. Xem
+[`ADR-039`](../adr/ADR-039-ipc-backed-desktop-controller-core.md).
+
+## Projection của shell desktop native không phải domain state (Prompt 98)
+
+`synveil-desktop` là application process ephemeral. Qt/QML bridge và tray chỉ
+consume `DesktopController` Prompt 97; chúng không thêm entity `DesktopShell`,
+`Tray`, `Window`, `Selection` hay `UI session` vào domain. State do UI sở hữu
+chỉ là latest presentation snapshot trong memory, stable Library ID đang chọn,
+scheduling feedback bounded và lifecycle controller. Không state nào được
+persist vào PostgreSQL, client SQLite, change journal, checkpoint, conflict
+hoặc sync record.
+
+QML projection chỉ có category/label an toàn cho connection, process,
+freshness, runtime, root, authentication, conflict và scheduling, cùng stable
+Library ID và count bounded. Không có raw root path, server URL, file content,
+credential, cookie, authorization header, secret-store value, SQLite handle,
+transport frame hay sync object nội bộ. Projection được derive từ một
+controller snapshot coherent: snapshot stale phải hiện stale khi reconnect,
+snapshot fresh thay presentation atomically, và selection chỉ giữ khi stable ID
+vẫn còn trong list.
+
+`Sync Now` không phải domain command được UI tự implement. Đây là call bounded
+qua `DesktopController::sync_now`; `Accepted`, `Coalesced` và
+`AlreadyRunningFollowupRecorded` là scheduling outcome, không phải completion
+proof. Shell không thể mutate root, credential, checkpoint, conflict hay sync
+correctness state. Đóng shell chỉ stop/join controller work, không issue Prompt
+96 `Shutdown`, nên synchronization domain độc lập với UI lifecycle.
+
+Không có domain migration Prompt 98 và không có durable record mới. Server
+migration 36 và client schema V6 vẫn là schema baseline duy nhất. Xem
+[`ADR-040`](../adr/ADR-040-native-qt-desktop-shell.md).
+
+## Supervision launch là process metadata, không phải domain state (Prompt 99)
+
+`BackgroundClientManager`, availability/supervisor/autostart state, in-flight
+gate và launch result bounded của nó là application component ephemeral. Chúng
+không phải entity `Library`, `RootBinding`, `Change`, `Checkpoint`, `Conflict`,
+`Handoff`, `SyncCycle`, credential hay user-domain. Manager không mở SQLite
+synchronization, không inspect root, không load secret và không ghi sync record
+durable.
+
+Platform metadata duy nhất Prompt 99 có thể đổi là registration của user
+supervisor: enablement `systemd --user` trên Linux hoặc Task Scheduler theo
+current user trên Windows. Record này chỉ mô tả process có nên được launch;
+không mô tả synchronization có đúng, root có tồn tại, checkpoint đã commit hay
+intent đã handoff. Enable/disable explicit reversible và không có transaction
+relationship với PostgreSQL hay SQLite client.
+
+Client vẫn sở hữu process bootstrap, profile configuration, `DesktopSyncHost`,
+`SyncRuntime`, writer lock, root availability, credential, durable intent,
+checkpoint, conflict và sync correctness. Launch fail, supervisor outage, crash,
+protocol mismatch hoặc endpoint bị security deny chỉ được translate thành
+application state bounded. Chúng không thể bịa domain absence, delete intent,
+recovery completion, authentication result hay fresh sync state. GUI close chỉ
+đổi lifecycle UI/controller và không issue shutdown command explicit Prompt 96.
+
+Vì vậy Prompt 99 thêm zero server migration, zero client schema migration và
+zero domain table. Schema baseline vẫn là server migration 36 và client schema
+V6. Xem [`ADR-041`](../adr/ADR-041-production-desktop-launch-orchestration.md).

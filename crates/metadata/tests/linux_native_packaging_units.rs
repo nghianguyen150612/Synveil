@@ -1,3 +1,5 @@
+#![cfg(target_os = "linux")]
+
 //! Prompt 79 — Native Linux distribution packaging (DEB + RPM) units.
 //!
 //! Static packaging tests that lock the Gen-1 native-packaging contract
@@ -380,11 +382,18 @@ fn manifest_package_set_matches_expected_gen1_payload() {
     let package: Vec<_> = entries.iter().filter(|e| e.5 == "PACKAGE").collect();
     let dests: BTreeSet<&str> = package.iter().map(|e| e.1.as_str()).collect();
     for expected in [
+        "/usr/bin/synveil-client",
+        "/usr/bin/synveil-desktop",
         "/usr/bin/synveil-scheduled-maintenance-once",
+        "/usr/lib/systemd/user/synveil-client.service",
         "/usr/lib/systemd/system/synveil-scheduled-maintenance.service",
         "/usr/lib/systemd/system/synveil-scheduled-maintenance.timer",
         "/usr/lib/sysusers.d/synveil.conf",
         "/usr/lib/tmpfiles.d/synveil.conf",
+        "/usr/share/applications/synveil.desktop",
+        "/usr/share/icons/hicolor/scalable/apps/synveil.svg",
+        "/usr/share/doc/synveil/LICENSE",
+        "/usr/share/doc/synveil/NOTICE",
         "/usr/share/synveil/synveil-scheduled-maintenance.env.example",
     ] {
         assert!(
@@ -394,20 +403,31 @@ fn manifest_package_set_matches_expected_gen1_payload() {
     }
     assert_eq!(
         package.len(),
-        6,
-        "Gen-1 PACKAGE set must be exactly 6 entries"
+        13,
+        "desktop PACKAGE set must be exactly 13 entries"
     );
     // Modes per Prompt 75 contract.
     let modes: BTreeMap<&str, &str> = package
         .iter()
         .map(|e| (e.1.as_str(), e.2.as_str()))
         .collect();
-    assert_eq!(modes["/usr/bin/synveil-scheduled-maintenance-once"], "0755");
     for p in [
+        "/usr/bin/synveil-client",
+        "/usr/bin/synveil-desktop",
+        "/usr/bin/synveil-scheduled-maintenance-once",
+    ] {
+        assert_eq!(modes[p], "0755", "mode for {p}");
+    }
+    for p in [
+        "/usr/lib/systemd/user/synveil-client.service",
         "/usr/lib/systemd/system/synveil-scheduled-maintenance.service",
         "/usr/lib/systemd/system/synveil-scheduled-maintenance.timer",
         "/usr/lib/sysusers.d/synveil.conf",
         "/usr/lib/tmpfiles.d/synveil.conf",
+        "/usr/share/applications/synveil.desktop",
+        "/usr/share/icons/hicolor/scalable/apps/synveil.svg",
+        "/usr/share/doc/synveil/LICENSE",
+        "/usr/share/doc/synveil/NOTICE",
         "/usr/share/synveil/synveil-scheduled-maintenance.env.example",
     ] {
         assert_eq!(modes[p], "0644", "mode for {p}");
@@ -551,26 +571,36 @@ fn packaged_binary_matches_release_sha() {
     let Some((deb, rpm)) = require_artifacts() else {
         return;
     };
-    let src = repo_root().join("target/release/synveil-scheduled-maintenance-once");
-    assert!(
-        src.is_file(),
-        "release binary must exist (build.sh builds it)"
-    );
-    let src_sha = sha256_file(&src);
     let dd = tempdir("deb-bin");
     let rd = tempdir("rpm-bin");
     extract_deb(&deb, &dd);
     extract_rpm(&rpm, &rd);
-    assert_eq!(
-        sha256_file(&dd.join("usr/bin/synveil-scheduled-maintenance-once")),
-        src_sha,
-        "DEB binary must be byte-identical to release binary"
-    );
-    assert_eq!(
-        sha256_file(&rd.join("usr/bin/synveil-scheduled-maintenance-once")),
-        src_sha,
-        "RPM binary must be byte-identical to release binary"
-    );
+    for (name, rel) in [
+        (
+            "synveil-scheduled-maintenance-once",
+            "usr/bin/synveil-scheduled-maintenance-once",
+        ),
+        ("synveil-client", "usr/bin/synveil-client"),
+        ("synveil-desktop", "usr/bin/synveil-desktop"),
+    ] {
+        let src = repo_root().join(format!("target/release/{name}"));
+        assert!(
+            src.is_file(),
+            "release binary must exist: {}",
+            src.display()
+        );
+        let src_sha = sha256_file(&src);
+        assert_eq!(
+            sha256_file(&dd.join(rel)),
+            src_sha,
+            "DEB {rel} must be byte-identical to release binary"
+        );
+        assert_eq!(
+            sha256_file(&rd.join(rel)),
+            src_sha,
+            "RPM {rel} must be byte-identical to release binary"
+        );
+    }
     let _ = fs::remove_dir_all(&dd);
     let _ = fs::remove_dir_all(&rd);
 }
@@ -589,6 +619,20 @@ fn packaged_units_match_authoritative_sources() {
             "deploy/systemd/synveil-scheduled-maintenance.service",
             "usr/lib/systemd/system/synveil-scheduled-maintenance.service",
         ),
+        (
+            "deploy/systemd-user/synveil-client.service",
+            "usr/lib/systemd/user/synveil-client.service",
+        ),
+        (
+            "deploy/applications/synveil.desktop",
+            "usr/share/applications/synveil.desktop",
+        ),
+        (
+            "deploy/icons/hicolor/scalable/apps/synveil.svg",
+            "usr/share/icons/hicolor/scalable/apps/synveil.svg",
+        ),
+        ("LICENSE", "usr/share/doc/synveil/LICENSE"),
+        ("deploy/NOTICE", "usr/share/doc/synveil/NOTICE"),
         (
             "deploy/systemd/synveil-scheduled-maintenance.timer",
             "usr/lib/systemd/system/synveil-scheduled-maintenance.timer",
@@ -632,11 +676,18 @@ fn deb_rpm_normalized_payload_parity() {
     extract_deb(&deb, &dd);
     extract_rpm(&rpm, &rd);
     let rels = [
+        "usr/bin/synveil-client",
+        "usr/bin/synveil-desktop",
         "usr/bin/synveil-scheduled-maintenance-once",
+        "usr/lib/systemd/user/synveil-client.service",
         "usr/lib/systemd/system/synveil-scheduled-maintenance.service",
         "usr/lib/systemd/system/synveil-scheduled-maintenance.timer",
         "usr/lib/sysusers.d/synveil.conf",
         "usr/lib/tmpfiles.d/synveil.conf",
+        "usr/share/applications/synveil.desktop",
+        "usr/share/icons/hicolor/scalable/apps/synveil.svg",
+        "usr/share/doc/synveil/LICENSE",
+        "usr/share/doc/synveil/NOTICE",
         "usr/share/synveil/synveil-scheduled-maintenance.env.example",
     ];
     for rel in rels {
@@ -671,6 +722,63 @@ fn deb_rpm_normalized_payload_parity() {
     let _ = fs::remove_dir_all(&rd);
 }
 
+#[test]
+fn native_archives_have_no_source_or_build_paths() {
+    let Some((deb, rpm)) = require_artifacts() else {
+        return;
+    };
+
+    let members = Command::new("ar")
+        .args(["t", deb.to_string_lossy().as_ref()])
+        .output()
+        .expect("list DEB ar members");
+    assert!(
+        members.status.success(),
+        "ar member listing failed: {}",
+        String::from_utf8_lossy(&members.stderr)
+    );
+    let member_text = String::from_utf8(members.stdout).expect("DEB ar member list is UTF-8");
+    let members: Vec<&str> = member_text.lines().collect();
+    assert_eq!(
+        members,
+        ["debian-binary", "control.tar.gz", "data.tar.gz"],
+        "DEB must retain the real deterministic three-member layout"
+    );
+
+    let deb_paths = Command::new("bash")
+        .arg("-c")
+        .arg(format!(
+            "set -euo pipefail; ar p {} data.tar.gz | tar -tzf -",
+            shell_quote(&deb.to_string_lossy())
+        ))
+        .output()
+        .expect("list DEB data paths");
+    assert!(
+        deb_paths.status.success(),
+        "DEB data path listing failed: {}",
+        String::from_utf8_lossy(&deb_paths.stderr)
+    );
+    let rpm_paths = Command::new("rpm")
+        .args(["-qpl", rpm.to_string_lossy().as_ref()])
+        .output()
+        .expect("list RPM payload paths");
+    assert!(
+        rpm_paths.status.success(),
+        "RPM payload path listing failed: {}",
+        String::from_utf8_lossy(&rpm_paths.stderr)
+    );
+
+    for (format, output) in [("DEB", deb_paths.stdout), ("RPM", rpm_paths.stdout)] {
+        let paths = String::from_utf8(output).expect("package path list is UTF-8");
+        for forbidden in ["/mnt/Projects/", "/tmp/", "target/", "target\\", "build/"] {
+            assert!(
+                !paths.contains(forbidden),
+                "{format} payload must not contain development path {forbidden}: {paths}"
+            );
+        }
+    }
+}
+
 fn collect_files(root: &Path, cur: &Path, out: &mut BTreeSet<String>) {
     let entries = fs::read_dir(cur).expect("readdir");
     for e in entries.filter_map(|x| x.ok()) {
@@ -702,12 +810,20 @@ fn payload_file_modes_follow_contract() {
             .mode()
             & 0o777
     };
+    for rel in ["usr/bin/synveil-client", "usr/bin/synveil-desktop"] {
+        assert_eq!(mode(rel), 0o755, "mode for {rel}");
+    }
     assert_eq!(mode("usr/bin/synveil-scheduled-maintenance-once"), 0o755);
     for rel in [
+        "usr/lib/systemd/user/synveil-client.service",
         "usr/lib/systemd/system/synveil-scheduled-maintenance.service",
         "usr/lib/systemd/system/synveil-scheduled-maintenance.timer",
         "usr/lib/sysusers.d/synveil.conf",
         "usr/lib/tmpfiles.d/synveil.conf",
+        "usr/share/applications/synveil.desktop",
+        "usr/share/icons/hicolor/scalable/apps/synveil.svg",
+        "usr/share/doc/synveil/LICENSE",
+        "usr/share/doc/synveil/NOTICE",
         "usr/share/synveil/synveil-scheduled-maintenance.env.example",
     ] {
         assert_eq!(mode(rel), 0o644, "mode for {rel}");
@@ -743,10 +859,15 @@ fn no_secret_payload_in_either_package() {
         );
         // Text payload scan: allow only the documented template placeholder line.
         for rel in [
+            "usr/lib/systemd/user/synveil-client.service",
             "usr/lib/systemd/system/synveil-scheduled-maintenance.service",
             "usr/lib/systemd/system/synveil-scheduled-maintenance.timer",
             "usr/lib/sysusers.d/synveil.conf",
             "usr/lib/tmpfiles.d/synveil.conf",
+            "usr/share/applications/synveil.desktop",
+            "usr/share/icons/hicolor/scalable/apps/synveil.svg",
+            "usr/share/doc/synveil/LICENSE",
+            "usr/share/doc/synveil/NOTICE",
             "usr/share/synveil/synveil-scheduled-maintenance.env.example",
         ] {
             let content = read(&root.join(rel));

@@ -117,10 +117,13 @@ See `docs/en/BACKUP.md` § “External lifecycle and systemd cadence (Prompt 72)
 and `docs/en/DEPLOYMENT.md` § “Linux service identity and filesystem ownership
 (Prompt 75)” for cadence rationale, overlap/failure/boot semantics,
 DynamicUser evaluation, UID/GID policy, per-service-account trade-offs, and
-the privilege boundary (package=root, runtime=synveil). No GUI control, no
-Windows service, no launchd, no heartbeat/daemon/leader-election/retry is
-claimed. Future Synveil API/worker/GC services may share the same `synveil`
-account (see docs; per-service accounts deferred).
+the privilege boundary (package=root, runtime=synveil). The scheduled
+maintenance feature itself has no GUI control, Windows service, launchd,
+heartbeat, daemon, leader-election, or retry claim. Prompt 99's separate
+desktop/client process boundary is documented below; it uses a user-level
+systemd unit or Windows user task, not this root-owned maintenance service.
+Future Synveil API/worker/GC services may share the same `synveil` account (see
+docs; per-service accounts deferred).
 
 ## `install/` — Prompt 76 package-neutral lifecycle (Linux)
 
@@ -208,3 +211,57 @@ Operational notes discovered by the gate and encoded in the unit/ADR:
 - Static tests covering the sandbox live in
   `crates/metadata/tests/linux_sandbox_hardening_units.rs`; install-lifecycle
   tests prove the installed unit is byte-identical to this source.
+
+## Desktop launch and user supervision (Prompt 99)
+
+Prompt 99 adds a production two-process desktop boundary:
+
+```text
+synveil-desktop (Qt/QML/tray)
+    → BackgroundClientManager + DesktopController
+       → Prompt 96 local IPC
+          → synveil-client (DesktopSyncHost/SyncRuntime)
+```
+
+The launch manager is exposed through `crates/client` and owns only bounded
+availability/start/autostart operations, canonical packaged-sibling resolution,
+and supervisor state. It does not access sync SQLite, roots, credentials,
+checkpoints, or correctness state. QML receives only a safe generic launch
+label. Its shared per-profile gate coalesces simultaneous starts and refuses
+launches for endpoint-security, protocol-incompatible, malformed, writer-
+conflict, and terminal states. Prompt 95's writer lock remains authoritative.
+
+Linux desktop/client payload additions are:
+
+| Source | Package destination | Policy |
+|---|---|---|
+| `synveil-client` | `/usr/bin/synveil-client` | root-owned executable |
+| `synveil-desktop` | `/usr/bin/synveil-desktop` | root-owned executable |
+| `deploy/systemd-user/synveil-client.service` | `/usr/lib/systemd/user/synveil-client.service` | user-level supervisor |
+| `deploy/applications/synveil.desktop` | `/usr/share/applications/synveil.desktop` | ordinary desktop entry, no login autostart |
+| `deploy/icons/hicolor/scalable/apps/synveil.svg` | `/usr/share/icons/hicolor/scalable/apps/synveil.svg` | application icon |
+| `LICENSE`, `deploy/NOTICE` | `/usr/share/doc/synveil/` | package notices |
+
+The user unit runs the real `/usr/bin/synveil-client` with `Type=simple`,
+`Restart=on-failure`, `RestartSec=30s`, bounded `StartLimit*`, and
+`RestartPreventExitStatus=78`. It has no `network-online.target` dependency.
+The package-neutral installer and package hooks do not enable or start it.
+Persistent login autostart is an explicit `systemctl --user enable` operation;
+an explicit disable is not undone by opening the GUI. The unit is never copied
+to `/usr/lib/systemd/system/synveil-client.service`.
+
+Windows packaging is a reproducible unsigned ZIP, not an installer. The ZIP
+contains `synveil-desktop.exe`, `synveil-client.exe`, `qt.conf`, the genuine
+target Qt runtime/QML/plugin closure, `platforms/qwindows.dll`, required C++
+runtime DLLs, `LICENSE`, and `NOTICE`. Native Windows uses `windeployqt`; Linux
+cross packaging requires a real Windows Qt prefix and an explicit runtime
+allowlist. PE import closure auditing rejects missing non-system DLLs, Linux
+libraries, SDK/development files, and developer paths. Windows autostart uses a
+current-user, least-privilege Task Scheduler definition with a logon trigger,
+`IgnoreNew`, finite restart policy, and no password/SYSTEM/admin requirement.
+
+The package-neutral manifest remains the source of truth for DEB and RPM; no
+second destination list is introduced. Full implementation and operator
+semantics are in [`docs/en/DESKTOP_LAUNCH.md`](../docs/en/DESKTOP_LAUNCH.md),
+[`docs/vi/DESKTOP_LAUNCH.md`](../docs/vi/DESKTOP_LAUNCH.md), and
+[`docs/adr/ADR-041-production-desktop-launch-orchestration.md`](../docs/adr/ADR-041-production-desktop-launch-orchestration.md).

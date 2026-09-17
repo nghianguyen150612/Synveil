@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Synveil">
+  <title>Synveil</title>
+  <rect width="128" height="128" rx="28" fill="#172033"/>
+  <path d="M28 40c0-6.627 5.373-12 12-12h48c6.627 0 12 5.373 12 12v48c0 6.627-5.373 12-12 12H40c-6.627 0-12-5.373-12-12V40Z" fill="#2f7d5b"/>
+  <path d="M43 43h42v11H54v8h24c6.075 0 11 4.925 11 11v1c0 6.075-4.925 11-11 11H43V74h31v-1H50c-6.075 0-11-4.925-11-11v-8c0-6.075 4.925-11 11-11Z" fill="#fff"/>
+</svg>

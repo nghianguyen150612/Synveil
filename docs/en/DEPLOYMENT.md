@@ -1907,3 +1907,100 @@ Compose test alone.
   fully specified.
 - **Decision evidence:** clean destination restore, interrupted transfer,
   device re-registration, hostname/remote-access change, and rollback tests.
+
+## Production desktop launch and user supervision (Prompt 99)
+
+Prompt 99 makes the existing Qt desktop usable without manually starting the
+background process while preserving the two-process lifecycle boundary:
+
+```text
+synveil-desktop (Qt/QML/tray)
+    -> BackgroundClientManager + DesktopController
+       -> Prompt 96 local IPC
+          -> synveil-client (DesktopSyncHost/SyncRuntime/writer lock)
+```
+
+The bridge calls the typed `BackgroundClientManager` after controller startup.
+The manager performs one bounded endpoint/supervisor inspection and may request
+one client start for endpoint absence, a stopped client, or an inactive user
+supervisor. A profile-scoped gate coalesces concurrent requests and a bounded
+cooldown prevents reconnect-driven spawn storms. Endpoint-security,
+protocol-incompatible, malformed-control, writer-conflict, and terminal states
+are fail-closed and never cause replacement launch attempts. Prompt 95's writer
+lock remains the final same-profile ownership boundary.
+
+The manager never owns sync correctness, library/root observation, credentials,
+checkpoints, SQLite, `DesktopSyncHost`, `SyncRuntime`, or raw Prompt 96 frames.
+QML sees only safe categories and a generic launch label. GUI close stops only
+controller-owned work; it does not send Prompt 96 `Shutdown` or stop the
+client. A configured user supervisor can therefore recover the client while
+the GUI is closed, and the controller can reconnect to a fresh generation when
+the GUI is open.
+
+### Linux user service
+
+The production client unit is packaged at
+`/usr/lib/systemd/user/synveil-client.service`, not the system unit path. It
+uses the existing source-defined process contract:
+
+```ini
+[Service]
+Type=simple
+ExecStart=/usr/bin/synveil-client
+Restart=on-failure
+RestartSec=30s
+RestartPreventExitStatus=78
+```
+
+`StartLimitIntervalSec=5min` and `StartLimitBurst=5` bound repeated crashes.
+Exit 78 is the current permanent configuration-error classification; exit 70
+is the generic bootstrap/runtime failure. The unit has no
+`network-online.target` dependency because Prompt 92 owns network recovery.
+
+Autostart is explicit and reversible:
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable synveil-client.service
+systemctl --user start synveil-client.service
+systemctl --user status synveil-client.service
+systemctl --user disable synveil-client.service
+systemctl --user stop synveil-client.service
+```
+
+The package-neutral installer, DEB/RPM hooks, and GUI do not silently enable
+or start the unit. An explicit disable is not undone by a later GUI launch.
+Disposable tests use linked temporary units and clean the user manager after
+the lifecycle check.
+
+### Windows user task
+
+The Windows adapter uses a current-user Task Scheduler definition with a logon
+trigger, `InteractiveToken`, `LeastPrivilege`, exact canonical sibling
+`synveil-client.exe`, `IgnoreNew`, and finite restart interval/count. It calls
+fixed `System32\\schtasks.exe` with explicit argv. It does not use a Windows
+Service, `SYSTEM`, elevation, stored passwords, registry `Run`, or shell
+interpolation. Task identity contains only a sanitized profile identifier and
+no token, credential, root path, or server URL.
+
+### Package contents and validation
+
+The package-neutral `deploy/install/MANIFEST` is authoritative for DEB and RPM.
+The Linux package contains `synveil-client`, `synveil-desktop`, the user unit,
+ordinary desktop entry/icon, existing maintenance files, and `LICENSE`/`NOTICE`.
+The desktop entry is not a login-autostart hook. Actual DEB/RPM artifacts are
+audited for exact payload paths, modes, byte parity, no secrets, and no source,
+`/tmp`, build, or development paths.
+
+The Windows path creates an unsigned reproducible ZIP rather than an installer.
+It contains both EXEs, `qt.conf`, target Qt DLLs/QML modules/plugins,
+`platforms/qwindows.dll`, required C++ runtime files, and notices. Native
+Windows uses `windeployqt`; Linux cross packaging requires a genuine Windows Qt
+prefix and an explicit closure allowlist. PE import auditing rejects missing
+non-system dependencies and Linux/development leakage. Native Windows task
+registration, package startup, and tray interaction are runtime gates and are
+not claimed by Linux static or cross-build evidence.
+
+See [`docs/en/DESKTOP_LAUNCH.md`](DESKTOP_LAUNCH.md),
+[`docs/vi/DESKTOP_LAUNCH.md`](../vi/DESKTOP_LAUNCH.md), and
+[`ADR-041`](adr/ADR-041-production-desktop-launch-orchestration.md).

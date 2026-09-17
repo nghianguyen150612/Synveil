@@ -221,6 +221,7 @@ pub struct FilesystemLocalReplica {
     scope: ReplicaScope,
     binding_id: RootBindingId,
     server_profile_id: Option<ServerProfileId>,
+    deferred_until_available: bool,
 }
 
 impl FilesystemLocalReplica {
@@ -299,6 +300,7 @@ impl FilesystemLocalReplica {
             scope,
             binding_id,
             server_profile_id,
+            deferred_until_available: false,
         })
     }
 
@@ -335,9 +337,31 @@ impl FilesystemLocalReplica {
             scope,
             binding_id,
             server_profile_id,
+            deferred_until_available: false,
         };
         replica.validate_root()?;
         Ok(replica)
+    }
+
+    /// Reopen a previously bound profile root when the configured path is
+    /// temporarily unavailable. This constructor never creates the path or
+    /// its control directory. The durable binding ID is supplied by the
+    /// existing local replica row and is checked against the V2 marker when
+    /// the root reappears.
+    pub fn open_deferred_for_profile(
+        root: impl AsRef<Path>,
+        scope: ReplicaScope,
+        profile_id: ServerProfileId,
+        binding_id: RootBindingId,
+    ) -> Result<Self, ClientSyncError> {
+        let root = canonical_deferred_root(root.as_ref())?;
+        Ok(Self {
+            root,
+            scope,
+            binding_id,
+            server_profile_id: Some(profile_id),
+            deferred_until_available: true,
+        })
     }
 
     fn resolve(&self, relative: &ManagedRelativePath) -> Result<PathBuf, ClientSyncError> {
@@ -394,8 +418,20 @@ impl LocalReplica for FilesystemLocalReplica {
     }
 
     fn validate_root(&self) -> Result<(), ClientSyncError> {
-        reject_redirect(&self.root)?;
-        let current = fs::canonicalize(&self.root).map_err(|_| ClientSyncError::InvalidRoot)?;
+        reject_redirect(&self.root).map_err(|error| {
+            if self.deferred_until_available && error_is_unavailable(&error) {
+                ClientSyncError::RootUnavailable
+            } else {
+                error
+            }
+        })?;
+        let current = fs::canonicalize(&self.root).map_err(|_| {
+            if self.deferred_until_available {
+                ClientSyncError::RootUnavailable
+            } else {
+                ClientSyncError::InvalidRoot
+            }
+        })?;
         if current != self.root {
             return Err(ClientSyncError::RootRedirected);
         }
@@ -850,6 +886,65 @@ impl LocalReplica for FilesystemLocalReplica {
             Err(error) => Err(error.into()),
         }
     }
+}
+
+fn error_is_unavailable(error: &ClientSyncError) -> bool {
+    matches!(
+        error,
+        ClientSyncError::InvalidRoot | ClientSyncError::RootUnavailable
+    )
+}
+
+fn canonical_deferred_root(root: &Path) -> Result<PathBuf, ClientSyncError> {
+    if !root.is_absolute()
+        || root.parent().is_none()
+        || root
+            .components()
+            .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
+    {
+        return Err(ClientSyncError::InvalidRoot);
+    }
+    let mut existing = root.to_path_buf();
+    let mut missing_components = Vec::new();
+    loop {
+        match fs::symlink_metadata(&existing) {
+            Ok(_) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let component = existing
+                    .file_name()
+                    .ok_or(ClientSyncError::RootUnavailable)?
+                    .to_os_string();
+                missing_components.push(component);
+                existing.pop();
+                if existing.as_os_str().is_empty() {
+                    return Err(ClientSyncError::RootUnavailable);
+                }
+            }
+            Err(_) => return Err(ClientSyncError::RootUnavailable),
+        }
+    }
+    let mut candidate =
+        fs::canonicalize(&existing).map_err(|_| ClientSyncError::RootUnavailable)?;
+    for component in missing_components.iter().rev() {
+        candidate.push(component);
+    }
+    let is_home = ["HOME", "USERPROFILE"].iter().any(|variable| {
+        std::env::var_os(variable)
+            .map(PathBuf::from)
+            .and_then(|path| fs::canonicalize(path).ok())
+            .as_ref()
+            == Some(&candidate)
+    });
+    if is_home
+        || std::env::current_dir()
+            .ok()
+            .and_then(|path| fs::canonicalize(path).ok())
+            .as_ref()
+            == Some(&candidate)
+    {
+        return Err(ClientSyncError::InvalidRoot);
+    }
+    Ok(candidate)
 }
 
 impl FilesystemLocalReplica {

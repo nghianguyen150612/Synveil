@@ -725,6 +725,34 @@ not members of either transition. The coordinator has no durable retry count:
 one invocation may create one artifact; a second canonical handoff conflict is
 a typed stop, and a later caller decides whether to start another invocation.
 
+### `BidirectionalSyncCycleRunner` local lifecycle (Prompt 91)
+
+Prompt 91 adds a transport-neutral composition boundary, not a new domain
+entity or durable cycle record. `BidirectionalSyncCycleRunner` holds the
+already-constructed `RebaselineConvergenceCoordinator`,
+`OutboundSubmissionEngine`, and their shared `LocalStateStore`. Its
+`run_once(observed_at)` performs one local inspection, one convergence call,
+then a fresh local eligibility inspection before at most one outbound
+submission call. `observed_at` is caller metadata only; it is not a cursor,
+lease, retry marker, or scheduling record.
+
+Outbound eligibility requires `IncrementalReady`, safe bounded incremental
+progress, or `RebaselineConverged`, plus no candidate, pending handoff,
+bootstrap, pending feed page/ack, local issue, or missing root in the final
+inspection. Existing conflict rows do not stop inbound; the Prompt 88 engine
+returns its durable conflict-fence outcome without issuing a mutation. Unsafe
+authentication, transport, rate-limit, recovery-blocked, or overlap-blocked
+inbound outcomes skip outbound conservatively. No credential, cookie, token,
+raw path, content bytes, or raw conflict payload is present in the result.
+
+One ordinary invocation is limited to one feed page and one outbound
+intent/submission unit. Prompt 87 retains ownership of its finite recovery and
+at-most-one snapshot-create bound; Prompt 88 retains mutation/upload
+idempotency, reconciliation, and conflict ownership. The cycle introduces no
+loop, retry, scheduler, daemon, global lock, migration, route, or client
+schema. Restart correctness comes from the existing page, candidate, handoff,
+intent, upload, idempotency, and conflict records.
+
 ### Conflict representation
 
 Every client mutation carries a durable `client_mutation_id`, a canonical
@@ -1408,3 +1436,276 @@ with one new linked `OutboundIntent`. The unique intent relation makes both
 detection and lost-response resolution idempotent. The old intent and its
 precondition remain historical evidence; no resolved row is recycled when a
 replacement later conflicts.
+
+## Process-local `SyncRuntime` (Prompt 92)
+
+`SyncRuntime` is an application component, not a domain entity. Its state is
+ephemeral and must not be represented as a PostgreSQL row, client migration,
+change-journal event, or synchronization record. A caller explicitly registers
+one constructed Prompt 91 runner per Library; registration is the binding
+between the Library ID and the authenticated transport/local-replica adapter
+for this process.
+
+The component exposes lifecycle operations (`start`, `stop`, `join`), explicit
+registration/unregistration, a typed `wake_library` surface, safe Library
+status snapshots, and bounded non-blocking events. A status contains only the
+Library ID, lifecycle phase, relative next-due delay, last outcome category,
+pending-wake bit, and transient-failure count. It contains no credential,
+cookie, token, path, filename, content, or remote evidence.
+
+The scheduler never owns synchronization truth. Each scheduled unit delegates
+to exactly one `BidirectionalSyncCycleRunner::run_once` call; Prompt 87 owns
+inbound/rebaseline recovery, and Prompt 88 owns durable outbound intents,
+idempotency, uploads, reconciliation, and conflict fencing. Runtime outcome
+categories only select the next process-local opportunity:
+
+| Runtime outcome | Ephemeral scheduling meaning |
+|---|---|
+| `Idle` | safety poll, with a short fair follow-up when a coalesced wake was retained |
+| `Progress` | deterministic short follow-up so probable remaining work can continue |
+| `Offline` or `ServerTransient` | exponential backoff, reset by a safe successful cycle |
+| `RateLimited` | bounded fallback delay; no immediate 429 loop |
+| `AuthBlocked` | suspend ordinary polling until manual or credential wake |
+| `ConflictBlocked` | keep inbound eligible and defer outbound to Prompt 88 policy |
+| `RecoveryBlocked` | bounded retry opportunity without creating a recovery branch |
+| `FatalLocal` or `Panicked` | fault this Library only; require an explicit manual retry |
+
+One pending wake reason is retained per Library, so wake storms cannot create
+an unbounded queue or task population. The supervisor permits only one active
+cycle per Library and a bounded number of active Libraries globally. Round
+robin selection and one-unit productive requeue prevent a Library with a large
+queue from starving its peers. Shutdown does not delete or repair any durable
+sync state; process restart simply re-registers constructed runners and lets
+the lower-level records recover the work.
+
+## Durable-change-first runtime signals (Prompt 93)
+
+Prompt 93 adds integration values, not domain entities or durable scheduler
+state. `DurableChangeResult` distinguishes `NoChange` from `Committed`, and
+`DurableChangeNotification` keeps that durable result separate from the optional
+`SyncRuntimeWakeResult`. Therefore a committed intent or credential can be
+reported as successful even when its best-effort wake is `RuntimeStopped` or
+`UnknownLibrary`.
+
+The invariant for every producer is:
+
+```text
+durable local state / credential commit
+  -> writer and transaction boundary released
+  -> wake notifier called with LibraryId + closed reason only
+```
+
+`OutboundIntentUpsertResult.changed` is true only for an inserted or active
+coalesced intent update; exact semantic duplicates are `NoChange`. The
+observation engine aggregates changed intents in a bounded poll/reconciliation
+operation and emits at most one `LocalChange` wake per Library. A multi-batch
+rescan retains the pending bit until its scan completes. Suppressed
+self-generated operations, ignored control paths, and no-op reinspection do not
+create a notification.
+
+Credential lifecycle remains a profile/SecretStore concern. The integration
+adapter emits `CredentialChanged` only after the existing secure-store
+verification and enrollment metadata transaction succeed, deduplicating the
+explicitly affected Libraries. Failed credential persistence and removal/logout
+do not emit a usable-credential wake. `network_available()` and `sync_now()` are
+process-local scheduling hints; they do not directly mutate checkpoints,
+snapshots, handoffs, journal rows, or conflict records and do not bypass Prompt
+91/88 safety gates.
+
+The notifier message contains no secret, cookie, token, path, filename, content,
+checkpoint, or conflict evidence. Runtime state remains ephemeral and the
+existing local schema remains V6. Startup and periodic polling are the
+correctness fallback for a lost wake, and explicit registration/unregistration
+does not delete durable local work. Runtime/control clones share the same
+supervisor rather than creating another scheduler.
+
+## Application composition root: `DesktopSyncHost` (Prompt 94)
+
+`DesktopSyncHost` is an ephemeral application component, not a domain entity.
+It has no PostgreSQL row, SQLite migration, lifecycle record, checkpoint, feed
+cursor, candidate, handoff, conflict, or journal projection. Its process-local
+state is the host phase (`Constructed`, `Starting`, `Running`, `Stopping`,
+`Stopped`, or `Faulted`), explicit references to the durable library/replica
+registrations, one `SyncRuntime`, observer task handles, and optional ownership
+of the opened SQLite pool. A stopped host is terminal; a later process restart
+constructs a new host over the same durable state.
+
+The first registered Library fixes the host's owner/Device context. A later
+Library with a different owner or Device is rejected as `WrongScope`; the host
+does not introduce multi-account credential sharing.
+
+The host's one-runtime invariant is a composition invariant rather than a new
+domain invariant: all registered Library runners share one `SyncRuntime`, and
+the runtime, control handle, `SyncWakeNotifier`, outbound-intent producer,
+credential controller, and observation engines expose the same process-local
+identity. Runtime statuses/events contain only bounded Library/scheduling
+categories and relative timing; secrets, cookies, tokens, paths, content, and
+remote evidence are not domain values in this component.
+
+Library discovery remains explicit and uses the existing durable
+`LocalStateStore`/`LocalReplica` binding. Registration precedes observer start.
+HTTP profile construction may prepare an existing profile-bound replica before
+credentials are available; credential bytes remain behind the existing
+`SecretStore`, and immutable HTTP transports are rebuilt only for the affected
+Library after a verified credential replacement. `network_available` and
+`sync_now` are scheduling hints, not domain mutations. Platform lifecycle and
+network adapters deliver those hints but do not own synchronization policy.
+
+The host delegates all durable synchronization behavior to Prompt 87/88/91
+and scheduling/signal behavior to Prompt 92/93. Graceful shutdown cancels
+observation delivery, lets active bounded cycles complete, joins the runtime,
+and closes only resources owned by the host. Unregistering a Library removes
+the ephemeral runtime registration and never deletes its durable sync state.
+This composition decision is locked in
+[`ADR-036`](../adr/ADR-036-desktop-sync-host-and-process-lifecycle.md).
+
+## Production process and root availability (Prompt 95)
+
+`DesktopClientProcess` and `DesktopSyncHost` are application components, not
+domain entities. Their `Starting`, `Running`, `Stopping`, `Stopped`, and
+`Faulted` statuses are process-local and are never persisted. Likewise, a
+library's `Available`, `Unavailable`, or `Recovering` root state describes the
+current environment and is deliberately absent from PostgreSQL, client SQLite,
+the change journal, and the synchronization domain model.
+
+The non-secret process manifest identifies one profile and explicit library
+roots. Durable profile/replica records still carry the owner/device/library
+scope, profile binding, root binding ID, cursors, intents, conflicts, and
+recovery state. The secure provider still carries bearer credential material.
+An editable path in the manifest is not authority to change any of those
+bindings; a root must be reopened against its existing marker and durable
+binding.
+
+The root lifecycle is therefore an environmental gate around existing domain
+operations:
+
+| Ephemeral state | Domain consequence |
+|---|---|
+| `Available` | Observer reconciliation and bounded sync cycles may proceed. |
+| `Unavailable` | The library is `RootBlocked`; no absence-derived delete/trash intent is created. |
+| `Recovering` | Observer restart and one bounded canonical rescan run before new work is released. |
+
+The process receives Linux `SIGINT`/`SIGTERM` and Windows Ctrl-C through one
+shared lifecycle event. Network changes are positive hints, not domain facts:
+they may release scheduler backoff but cannot authenticate, mutate a
+checkpoint, resolve a conflict, or make a root valid. The existing SQLite
+writer lock remains the cross-process ownership boundary for one state
+database, so no second process-identity entity or PID record is needed.
+
+Prompt 95 adds no domain migration and does not change server migration 36 or
+client schema V6. Setup secrets, distributed rate limiting, device-credential
+redesign, uploads/sharing, backup, MFA/OAuth/OIDC, UI/tray, and service-manager
+semantics remain outside this model.
+
+## Desktop control IPC is application state, not domain state (Prompt 96)
+
+The local control plane is an ephemeral application boundary around the same
+production process. `DesktopControlHandle` retains one existing host handle,
+one process-lifecycle status cell, a bounded event broadcaster, and shutdown
+coordination. It does not represent a user, device, profile credential,
+library root, sync journal, checkpoint, snapshot, handoff, conflict payload, or
+database transaction. Process status and root availability remain process-local
+and are not persisted.
+
+The wire model intentionally contains only stable library IDs, relative timing,
+runtime/root/auth/conflict categories, scheduling results, and invalidation
+events. A status response is a read-only projection of the existing host and
+runtime. It must not reveal the configured root path, server URL, file content,
+credential or credential ID, cookie, authorization header, or secret-store
+material. `Ready`, `Missing`, and `Revoked` are not fabricated when the existing
+runtime has no proof; the control projection uses `Unknown` until a safe
+canonical observation exists.
+
+There are zero IPC migrations and zero durable IPC tables. Reconnect after a
+client or process restart performs a new handshake and status fetch; it never
+repairs or replays IPC state. The existing SQLite writer lock and Prompt 91–95
+durable records remain the only ownership and correctness boundaries.
+
+## Desktop controller presentation state is not domain state (Prompt 97)
+
+`DesktopController` is an ephemeral application component layered above the
+Prompt 96 local IPC client. Its `DesktopControllerSnapshot` contains only a
+latest process/library presentation: connection lifecycle, safe process state,
+stable library IDs, runtime/root/auth/conflict categories, relative scheduling
+data, a monotonic revision, freshness, and a local connection generation. The
+controller snapshot is not a `Library`, checkpoint, feed cursor, journal event,
+conflict record, handoff, credential, root binding, or synchronization result.
+
+The initial snapshot is published atomically from one status transaction set.
+On a disconnect, the last complete data may remain visible but is explicitly
+`Stale`; no stale value is presented as current. Reconnect creates a new local
+generation and refetches canonical process/library status. A response or event
+from an older generation cannot replace the newer presentation. Events are
+only invalidation hints, so a lost or coalesced event has no durable consequence.
+
+The controller stores no durable state and has no authority to mutate domain
+state. `SyncNow` is a scheduling request whose accepted/coalesced result is not
+proof of a completed cycle. `RequestShutdown` is an explicit process-lifecycle
+command; controller stop/drop is not that command. No controller field can
+represent a password, token, cookie, authorization header, credential
+material, server URL, raw root path, file content, SQLite state, or Prompt
+91–95 internal handle. The domain model therefore remains unchanged: server
+migration 36 and client schema V6 are still the only schema baselines. See
+[`ADR-039`](../adr/ADR-039-ipc-backed-desktop-controller-core.md).
+
+## Native desktop shell projection is not domain state (Prompt 98)
+
+`synveil-desktop` is an ephemeral application process. Its Qt/QML bridge and
+tray are consumers of the Prompt 97 `DesktopController`; they do not introduce
+a `DesktopShell`, `Tray`, `Window`, `Selection`, or UI-session entity into the
+domain. The only UI-owned state is an in-memory latest presentation snapshot,
+the selected stable library ID, bounded scheduling feedback, and controller
+lifecycle state. None is persisted in PostgreSQL, client SQLite, the change
+journal, checkpoints, conflicts, or sync records.
+
+The QML projection contains safe categories and labels for connection,
+process, freshness, runtime, root, authentication, conflict, and scheduling
+state, together with stable library IDs and bounded counts. It contains no raw
+root path, server URL, file content, credential, cookie, authorization header,
+secret-store value, SQLite handle, transport frame, or internal sync object.
+The projection is derived from one coherent controller snapshot: a stale
+snapshot is visibly stale during reconnect, a fresh snapshot replaces the
+presentation atomically, and selection is retained only when its stable ID is
+still present.
+
+`Sync Now` is not a domain command implemented by the UI. It is a bounded call
+through `DesktopController::sync_now`; `Accepted`, `Coalesced`, and
+`AlreadyRunningFollowupRecorded` are scheduling outcomes, not completion
+proof. The shell cannot mutate roots, credentials, checkpoints, conflicts, or
+sync correctness state. Closing the shell calls controller stop/join only and
+does not issue Prompt 96 `Shutdown`, so domain synchronization remains
+independent of the UI lifecycle.
+
+There are no Prompt 98 domain migrations and no new durable records. The
+existing server migration 36 and client schema V6 remain the only schema
+baselines. See [`ADR-040`](../adr/ADR-040-native-qt-desktop-shell.md).
+
+## Launch supervision is process metadata, not domain state (Prompt 99)
+
+`BackgroundClientManager`, its availability/supervisor/autostart states, its
+in-flight gate, and its bounded launch result are ephemeral application
+components. They are not `Library`, `RootBinding`, `Change`, `Checkpoint`,
+`Conflict`, `Handoff`, `SyncCycle`, credential, or user-domain entities. The
+manager does not open synchronization SQLite, inspect a root, load a secret, or
+write a durable sync record.
+
+The only platform-side metadata Prompt 99 may change is the operating system's
+user supervisor registration: a Linux `systemd --user` enablement or a Windows
+current-user Task Scheduler registration. These records describe whether a
+process should be launched; they do not describe whether synchronization is
+correct, a root exists, a checkpoint is committed, or an intent is handed off.
+Explicit enable/disable is reversible and has no transactional relationship to
+PostgreSQL or client SQLite.
+
+The client remains the owner of process bootstrap, profile configuration,
+`DesktopSyncHost`, `SyncRuntime`, writer lock, root availability, credentials,
+durable intents, checkpoints, conflicts, and sync correctness. A failed launch,
+supervisor outage, crash, protocol mismatch, or security-denied endpoint is
+translated to a bounded application state. It cannot fabricate a domain
+absence, delete intent, recovery completion, authentication result, or fresh
+sync state. GUI close changes only UI/controller lifecycle and cannot issue
+the explicit Prompt 96 shutdown command.
+
+Prompt 99 therefore adds zero server migrations, zero client schema migrations,
+and zero domain tables. The schema baseline remains server migration 36 and
+client schema V6. See [`ADR-041`](../adr/ADR-041-production-desktop-launch-orchestration.md).

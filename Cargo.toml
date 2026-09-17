@@ -8,6 +8,8 @@ members = [
     "crates/storage",
     "crates/api",
     "crates/client-sync",
+    "crates/client",
+    "crates/desktop",
 ]
 resolver = "3"
 
@@ -35,6 +37,14 @@ synveil-metadata = { path = "crates/metadata" }
 synveil-object-store = { path = "crates/object-store" }
 synveil-storage = { path = "crates/storage" }
 synveil-client-sync = { path = "crates/client-sync" }
+synveil-client = { path = "crates/client" }
+# CXX-Qt expands the bridge into a direct `cxx::bridge` invocation, so every
+# crate that owns a CXX-Qt bridge must declare the compatible CXX runtime too.
+# The 0.10 CXX-Qt generation path currently emits the 202 ABI namespace.
+cxx = "=1.0.202"
+cxx-gen = "=0.7.202"
+cxx-qt = "0.10"
+cxx-qt-lib = { version = "0.10", features = ["qt_gui", "qt_qml", "qt_quickcontrols"] }
 time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing"] }
 uuid = { version = "1", default-features = false, features = ["std", "rng", "v7"] }
 async-trait = "0.1"
@@ -48,7 +58,7 @@ sha2 = "0.10"
 subtle = "2"
 sqlx = { version = "0.8", default-features = false, features = ["macros", "postgres", "sqlite", "runtime-tokio", "migrate", "time", "uuid"] }
 argon2 = "0.5"
-tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time", "test-util"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["limit", "trace"] }
 tracing = "0.1"
@@ -70,3 +80,12 @@ rcgen = { version = "0.13", default-features = false, features = ["crypto", "rin
 # state before creating any durable outbound intent.
 # macos_kqueue selected for macOS to avoid fsevent_sys dependency in CI.
 notify = { version = "8.2.0", default-features = false, features = ["macos_kqueue"] }
+nix = { version = "0.29", default-features = false, features = ["fs", "user"] }
+windows-sys = { version = "0.61.2", default-features = false, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+    "Win32_System_WindowsProgramming",
+] }

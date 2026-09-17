@@ -52,8 +52,11 @@ jobs:
 
       - name: Install Linux build dependencies
         run: |
+          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y pkg-config libdbus-1-dev postgresql-client
+          sudo apt-get install -y \
+            pkg-config libdbus-1-dev postgresql-client \
+            qt6-base-dev qt6-declarative-dev qt6-tools-dev-tools
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -66,6 +69,7 @@ jobs:
 
       - name: Verify migration files unchanged (CI guard)
         run: |
+          set -euo pipefail
           count=$(ls migrations/*.sql | wc -l)
           latest=$(ls migrations/*.sql | sort | tail -n 1)
           echo "migrations count=$count latest=$latest"
@@ -74,6 +78,7 @@ jobs:
 
       - name: Wait for PostgreSQL readiness (bounded health check)
         run: |
+          set -euo pipefail
           echo "Waiting for PostgreSQL 17 to become ready..."
           for i in $(seq 1 30); do
             if pg_isready -h 127.0.0.1 -p 5432 -U postgres; then
@@ -89,6 +94,7 @@ jobs:
 
       - name: Verify PostgreSQL major version is 17
         run: |
+          set -euo pipefail
           ver=$(psql "postgresql://postgres:postgres@127.0.0.1:5432/postgres" -t -A -c "SHOW server_version;" | tr -d ' ')
           echo "server_version=$ver"
           if ! echo "$ver" | grep -q "^17\."; then
@@ -100,6 +106,7 @@ jobs:
       # Migration-from-empty gate — must be verified before any live suite.
       - name: Migration gate — fresh DB applies 36 migrations
         run: |
+          set -euo pipefail
           cargo test --locked --test pg17_migration_gate_postgres -- --ignored --test-threads=1 --nocapture
 
       - name: "Prompt 86 — retention, handoff proofs, bounded cleanup and races"
@@ -171,9 +178,78 @@ jobs:
           # Full local gate runs all 8 adversarial targets serially; see docs/en/TESTING.md.
           cargo test -p synveil-api --test sync_adversarial_postgres --locked -- --ignored --test-threads=1 --nocapture
 
+      - name: "Prompt 91 — bounded bidirectional sync cycle"
+        run: |
+          set -euo pipefail
+          DB="p91_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          # The target is intentionally ignored by default and is selected by
+          # name so the eight Prompt 91 live cases are the hard-fail CI gate.
+          # No retry or continue-on-error is permitted for correctness.
+          cargo test -p synveil-api --test sync_cycle_postgres --locked -- --ignored --test-threads=1 --nocapture live_pg17_prompt91_
+          cargo test -p synveil-client-sync --lib --locked sync_cycle
+
+      - name: "Prompt 92 — long-running sync runtime"
+        run: |
+          set -euo pipefail
+          DB="p92_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          # The live target uses accelerated decisions only in deterministic
+          # unit tests; this acceptance case keeps real PostgreSQL, Axum,
+          # device auth, HttpSyncRemote, SQLite, and Prompt 91 central.
+          cargo test -p synveil-api --test sync_runtime_postgres --locked -- --ignored --test-threads=1 --nocapture live_pg17_runtime_
+          cargo test -p synveil-client-sync --lib --locked runtime::tests
+
+      - name: "Prompt 93 — durable-change-first runtime signals"
+        run: |
+          set -euo pipefail
+          DB="p93signals_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          # Canonical durable producers, observation, periodic recovery, and
+          # controller Sync Now are hard-fail live acceptance cases. The
+          # notifier remains a scheduling hint; the target asserts durable
+          # state separately from wake status.
+          cargo test -p synveil-api --test sync_runtime_signals_postgres --locked -- --ignored --test-threads=1 --nocapture live_pg17_signal_
+          cargo test -p synveil-client-sync --lib --locked signals::tests
+          cargo test -p synveil-client-sync --lib --locked durable_observation_batch_wakes_once_and_noop_does_not_wake
+          cargo test -p synveil-client-sync --lib --locked rescan_durable_work_emits_one_wake_after_bounded_reconciliation
+
+      - name: "Prompt 94 — desktop sync host and process lifecycle"
+        run: |
+          set -euo pipefail
+          DB="p94host_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          # The host target keeps OS adapters policy-free while exercising the
+          # real PostgreSQL -> Axum -> device-auth -> HttpSyncRemote -> SQLite
+          # path for each live process-lifecycle case. Failures are not retried
+          # or masked.
+          cargo test -p synveil-api --test desktop_sync_host_postgres --locked -- --ignored --test-threads=1 --nocapture live_pg17_host
+          cargo test -p synveil-client-sync --lib --locked host::tests
+
+      - name: "Prompt 95/97 — production desktop process, root, and controller lifecycle"
+        run: |
+          set -euo pipefail
+          DB="p95process_$(date +%s)_$$_${RANDOM}"
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
+          export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
+          # The target exercises the production process bootstrap and the
+          # embedded Prompt 97 controller over the real PostgreSQL -> Axum
+          # -> device-auth -> HTTP -> SQLite path.
+          # It is an ignored target by design and is a hard-fail acceptance
+          # gate here; no retry or continue-on-error is permitted.
+          cargo test -p synveil-api --test desktop_process_postgres --locked -- --ignored --test-threads=1 --nocapture live_pg17_process
+          cargo test -p synveil-client --lib --locked
+          cargo test -p synveil-client-sync --lib --locked host::tests
+          cargo test -p synveil-client-sync --lib --locked runtime::tests
+
       # Systemd unit syntax validation (lightweight, no host install)
       - name: Validate systemd units
         run: |
+          set -euo pipefail
           echo "Validating timer (must parse cleanly)..."
           systemd-analyze verify deploy/systemd/synveil-scheduled-maintenance.timer
           echo "Validating service syntax (patched ExecStart for isolated check)..."
@@ -376,6 +452,18 @@ jobs:
         run: |
           set -euo pipefail
           echo SYNVEIL_SYNC_CONFLICT_POLICY_FOUNDATION_READY
+
+      - name: Emit Prompt 92 readiness gate
+        if: success()
+        run: |
+          set -euo pipefail
+          echo SYNVEIL_SYNC_RUNTIME_AGENT_READY
+
+      - name: Emit Prompt 93 readiness gate
+        if: success()
+        run: |
+          set -euo pipefail
+          echo SYNVEIL_SYNC_RUNTIME_SIGNAL_INTEGRATION_READY
 
       - name: Post-failure diagnostics (disk, DB list)
         if: failure()

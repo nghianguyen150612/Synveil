@@ -1,12 +1,15 @@
 # Synveil package-neutral Linux installation manifest (Prompt 76)
-# Authoritative mapping for Gen-1 scheduled-maintenance deployment.
+# Authoritative mapping for the Linux desktop and scheduled-maintenance
+# deployment. Distribution packaging MUST consume this file; it must not grow
+# an independent list of desktop/client destinations.
 # Distribution packaging (.deb/.rpm/etc.) MUST call the package-neutral layer
 # that reads this single manifest; do NOT duplicate destination logic.
 #
 # Format: source_path  destination_path  mode  owner  group  class
-# - source_path: repository-relative path for PACKAGE files, "BINARY" for the
-#   compiled synveil-scheduled-maintenance-once artifact, or "-" for
-#   directories/state that have no source file.
+# - source_path: repository-relative path for PACKAGE files, BINARY for the
+#   compiled scheduled-maintenance artifact, BINARY_CLIENT/BINARY_DESKTOP for
+#   the two production executables, or "-" for directories/state with no
+#   source file.
 # - destination_path: absolute installed path (prepend DESTDIR/--root at install time).
 # - mode: octal file/directory mode.
 # - owner/group: intended ownership per Prompt 75 contract.
@@ -19,11 +22,30 @@
 #   RUNTIME_MANAGED    - ephemeral RuntimeDirectory= lifecycle; not created by package install payload.
 #   TEMPLATE           - alias for PACKAGE but documents that file is an example/template under /usr/share; never overwrites /etc.
 #
-# Contract preserves Prompt 75 ownership/modes and ADR-023.
-# See deploy/README.md, docs/en/DEPLOYMENT.md, and ADR-024 for interpretation.
+# Contract preserves Prompt 75 ownership/modes and ADR-023/024. The desktop
+# executable is a GUI/tray process; the client is the separately supervised
+# sync process. The user unit is intentionally not a system/root unit.
+# See deploy/README.md, docs/en/DEPLOYMENT.md, and ADR-041.
 
-# PACKAGE-owned executables and units (root:root, non-writable by synveil runtime)
+# PACKAGE-owned production executables (root:root, non-writable by runtime).
+# Keep the long-standing maintenance binary first so failure-injection and
+# upgrade diagnostics retain their established first-artifact semantics.
 BINARY  /usr/bin/synveil-scheduled-maintenance-once  0755  root  root  PACKAGE
+BINARY_CLIENT  /usr/bin/synveil-client  0755  root  root  PACKAGE
+BINARY_DESKTOP  /usr/bin/synveil-desktop  0755  root  root  PACKAGE
+
+# User-level supervision: never install synveil-client.service under
+# /usr/lib/systemd/system/ (that would create a root/system service).
+deploy/systemd-user/synveil-client.service  /usr/lib/systemd/user/synveil-client.service  0644  root  root  PACKAGE
+
+# Desktop integration metadata. This entry does not enable login autostart.
+deploy/applications/synveil.desktop  /usr/share/applications/synveil.desktop  0644  root  root  PACKAGE
+deploy/icons/hicolor/scalable/apps/synveil.svg  /usr/share/icons/hicolor/scalable/apps/synveil.svg  0644  root  root  PACKAGE
+LICENSE  /usr/share/doc/synveil/LICENSE  0644  root  root  PACKAGE
+deploy/NOTICE  /usr/share/doc/synveil/NOTICE  0644  root  root  PACKAGE
+
+# Existing scheduled-maintenance system units remain system-level because they
+# are a distinct administrator-enabled maintenance feature.
 deploy/systemd/synveil-scheduled-maintenance.service  /usr/lib/systemd/system/synveil-scheduled-maintenance.service  0644  root  root  PACKAGE
 deploy/systemd/synveil-scheduled-maintenance.timer  /usr/lib/systemd/system/synveil-scheduled-maintenance.timer  0644  root  root  PACKAGE
 deploy/sysusers.d/synveil.conf  /usr/lib/sysusers.d/synveil.conf  0644  root  root  PACKAGE

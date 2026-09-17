@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# build.sh — deterministic native package entry point for Synveil Gen-1 (Prompt 79).
-# Builds real .deb (dpkg-deb or ar fallback) and real .rpm (rpmbuild) from the
-# release binary + package-neutral MANIFEST payload. No repo mutation.
+# build.sh — deterministic native package entry point for Synveil Linux.
+# Builds real .deb/.rpm artifacts from the three production executables and the
+# package-neutral MANIFEST payload. No repo mutation.
 # SPDX-License-Identifier: MIT
 set -euo pipefail
 
@@ -19,7 +19,8 @@ DEFAULT_OUTPUT_DIR="${REPO_ROOT}/target/packages"
 
 usage() {
     cat >&2 <<'EOF'
-Usage: build.sh [--format=deb|rpm|all] [--output-dir=DIR] [--binary=PATH] [--help]
+Usage: build.sh [--format=deb|rpm|all] [--output-dir=DIR] \
+                [--binary=PATH] [--client-binary=PATH] [--desktop-binary=PATH]
 
 Builds native Synveil Gen-1 distribution packages from the canonical release
 binary and the package-neutral MANIFEST payload.
@@ -28,17 +29,20 @@ Options:
   --format=deb|rpm|all   Package format to build (default: all).
   --output-dir=DIR       Output directory for .deb/.rpm (default: target/packages).
                          Must be absolute or repo-relative; never '/'; '..' rejected.
-  --binary=PATH          Use an existing release binary instead of building.
-                         Must be the real artifact from
-                         crates/api/src/bin/synveil-scheduled-maintenance-once.rs
-                         (test fixtures / stubs are rejected by hash policy in tests).
+  --binary=PATH          Use an existing scheduled-maintenance binary.
+  --client-binary=PATH   Use an existing release synveil-client binary.
+  --desktop-binary=PATH  Use an existing release synveil-desktop binary.
+                         If omitted, each production artifact is built from
+                         the current workspace. All three are required for a
+                         complete package; test fixtures are not accepted by
+                         the package artifact audit.
   --help                 Show this help.
 
 Behavior:
   - Derives version from workspace Cargo.toml (no hardcoded version).
   - Maps host architecture deterministically (x86_64 only claimed in Prompt 79).
-  - Builds release binary via: cargo build --release --locked --bin synveil-scheduled-maintenance-once
-    unless --binary is given.
+  - Builds the scheduled-maintenance, synveil-client, and synveil-desktop
+    release binaries unless explicit overrides are given.
   - Stages payload via deploy/install/install.sh (MANIFEST is authoritative).
   - DEB built with dpkg-deb when available, otherwise with ar+tar (real .deb format).
   - RPM built with rpmbuild (required for --format=rpm/all).
@@ -53,6 +57,8 @@ EOF
 FORMAT="all"
 OUTPUT_DIR="$DEFAULT_OUTPUT_DIR"
 BINARY_OVERRIDE=""
+CLIENT_BINARY_OVERRIDE=""
+DESKTOP_BINARY_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -66,6 +72,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --binary=*)
             BINARY_OVERRIDE="${1#--binary=}"
+            shift
+            ;;
+        --client-binary=*)
+            CLIENT_BINARY_OVERRIDE="${1#--client-binary=}"
+            shift
+            ;;
+        --desktop-binary=*)
+            DESKTOP_BINARY_OVERRIDE="${1#--desktop-binary=}"
             shift
             ;;
         --help|-h)
@@ -145,22 +159,63 @@ if [[ -z "$BINARY_SRC" ]]; then
     )
     BINARY_SRC="${REPO_ROOT}/target/release/synveil-scheduled-maintenance-once"
 fi
-if [[ ! -f "$BINARY_SRC" ]]; then
-    printf '[synveil-packages] ERROR: binary not found: %s\n' "$BINARY_SRC" >&2
-    exit 1
+
+CLIENT_BINARY_SRC="$CLIENT_BINARY_OVERRIDE"
+if [[ -z "$CLIENT_BINARY_SRC" ]]; then
+    log "building release client: cargo build --release --locked -p synveil-client"
+    (
+        cd "$REPO_ROOT"
+        cargo build --release --locked -p synveil-client
+    )
+    CLIENT_BINARY_SRC="${REPO_ROOT}/target/release/synveil-client"
 fi
-BIN_SIZE="$(wc -c < "$BINARY_SRC" | tr -d ' ')"
-BIN_SHA="$(sha256sum "$BINARY_SRC" | awk '{print $1}')"
-log "binary: $BINARY_SRC (${BIN_SIZE} bytes, sha256 ${BIN_SHA})"
+
+DESKTOP_BINARY_SRC="$DESKTOP_BINARY_OVERRIDE"
+if [[ -z "$DESKTOP_BINARY_SRC" ]]; then
+    log "building release desktop: cargo build --release --locked -p synveil-desktop"
+    (
+        cd "$REPO_ROOT"
+        cargo build --release --locked -p synveil-desktop
+    )
+    DESKTOP_BINARY_SRC="${REPO_ROOT}/target/release/synveil-desktop"
+fi
+
+for binary_source in "$BINARY_SRC" "$CLIENT_BINARY_SRC" "$DESKTOP_BINARY_SRC"; do
+    if [[ ! -f "$binary_source" ]]; then
+        printf '[synveil-packages] ERROR: binary not found: %s\n' "$binary_source" >&2
+        exit 1
+    fi
+    if [[ "$binary_source" == *".."* ]]; then
+        IFS='/' read -ra __parts <<< "$binary_source"
+        for __p in "${__parts[@]}"; do
+            if [[ "$__p" == ".." ]]; then
+                printf '[synveil-packages] ERROR: binary path must not contain ..: %s\n' "$binary_source" >&2
+                exit 1
+            fi
+        done
+    fi
+    BIN_SIZE="$(wc -c < "$binary_source" | tr -d ' ')"
+    BIN_SHA="$(sha256sum "$binary_source" | awk '{print $1}')"
+    log "binary: $binary_source (${BIN_SIZE} bytes, sha256 ${BIN_SHA})"
+done
 
 # Dynamic-link audit (evidence for dependency declarations; informational here,
 # authoritative audit is recorded by the caller).
 if command -v file >/dev/null 2>&1; then
-    log "file: $(file -b "$BINARY_SRC" | head -n 1)"
+    for binary_source in "$BINARY_SRC" "$CLIENT_BINARY_SRC" "$DESKTOP_BINARY_SRC"; do
+        log "file $(basename "$binary_source"): $(file -b "$binary_source" | head -n 1)"
+    done
 fi
 if command -v ldd >/dev/null 2>&1; then
-    log "ldd:"
-    ldd "$BINARY_SRC" 2>&1 | while IFS= read -r line; do log "  $line"; done || true
+    for binary_source in "$BINARY_SRC" "$CLIENT_BINARY_SRC" "$DESKTOP_BINARY_SRC"; do
+        log "ldd $(basename "$binary_source"):"
+        ldd_output="$(ldd "$binary_source" 2>&1)" || {
+            printf '[synveil-packages] ERROR: ldd audit failed for %s:\n%s\n' \
+                "$binary_source" "$ldd_output" >&2
+            exit 1
+        }
+        while IFS= read -r line; do log "  $line"; done <<< "$ldd_output"
+    done
 fi
 
 # ---------------------------------------------------------------------------
@@ -169,7 +224,7 @@ fi
 STAGE_ROOT="$(mktemp -d /tmp/synveil-pkg-stage.XXXXXX)"
 trap 'rm -rf "$STAGE_ROOT"' EXIT
 log "staging payload via install.sh into $STAGE_ROOT"
-synveil_stage_payload "$STAGE_ROOT" "$BINARY_SRC"
+synveil_stage_payload "$STAGE_ROOT" "$BINARY_SRC" "$CLIENT_BINARY_SRC" "$DESKTOP_BINARY_SRC"
 synveil_assert_no_secret_payload "$STAGE_ROOT"
 
 # Byte-parity guards: packaged inputs must equal authoritative sources.
@@ -178,7 +233,12 @@ for pair in \
     "deploy/systemd/synveil-scheduled-maintenance.timer:usr/lib/systemd/system/synveil-scheduled-maintenance.timer" \
     "deploy/sysusers.d/synveil.conf:usr/lib/sysusers.d/synveil.conf" \
     "deploy/tmpfiles.d/synveil.conf:usr/lib/tmpfiles.d/synveil.conf" \
-    "deploy/config/synveil-scheduled-maintenance.env.example:usr/share/synveil/synveil-scheduled-maintenance.env.example"; do
+    "deploy/config/synveil-scheduled-maintenance.env.example:usr/share/synveil/synveil-scheduled-maintenance.env.example" \
+    "deploy/systemd-user/synveil-client.service:usr/lib/systemd/user/synveil-client.service" \
+    "deploy/applications/synveil.desktop:usr/share/applications/synveil.desktop" \
+    "deploy/icons/hicolor/scalable/apps/synveil.svg:usr/share/icons/hicolor/scalable/apps/synveil.svg" \
+    "LICENSE:usr/share/doc/synveil/LICENSE" \
+    "deploy/NOTICE:usr/share/doc/synveil/NOTICE"; do
     src_rel="${pair%%:*}"
     staged_rel="${pair##*:}"
     if ! cmp -s "${REPO_ROOT}/${src_rel}" "${STAGE_ROOT}/${staged_rel}"; then
@@ -190,25 +250,46 @@ if ! cmp -s "$BINARY_SRC" "${STAGE_ROOT}/usr/bin/synveil-scheduled-maintenance-o
     printf '[synveil-packages] ERROR: staged binary drift (must be byte-identical to release binary)\n' >&2
     exit 1
 fi
+if ! cmp -s "$CLIENT_BINARY_SRC" "${STAGE_ROOT}/usr/bin/synveil-client"; then
+    printf '[synveil-packages] ERROR: staged synveil-client drift (must be byte-identical to release binary)\n' >&2
+    exit 1
+fi
+if ! cmp -s "$DESKTOP_BINARY_SRC" "${STAGE_ROOT}/usr/bin/synveil-desktop"; then
+    printf '[synveil-packages] ERROR: staged synveil-desktop drift (must be byte-identical to release binary)\n' >&2
+    exit 1
+fi
 log "payload parity with MANIFEST sources: OK"
 
 # Normalize ownership/modes inside staging for archive creation.
 # install.sh already chmods; enforce root:root intent for PACKAGE files when running as root,
 # and normalize tar archives to root:root numerically at archive time (works rootless).
-chmod 0755 "${STAGE_ROOT}/usr/bin/synveil-scheduled-maintenance-once"
+chmod 0755 "${STAGE_ROOT}/usr/bin/synveil-client" \
+    "${STAGE_ROOT}/usr/bin/synveil-desktop" \
+    "${STAGE_ROOT}/usr/bin/synveil-scheduled-maintenance-once"
 chmod 0644 "${STAGE_ROOT}/usr/lib/systemd/system/synveil-scheduled-maintenance.service" \
     "${STAGE_ROOT}/usr/lib/systemd/system/synveil-scheduled-maintenance.timer" \
     "${STAGE_ROOT}/usr/lib/sysusers.d/synveil.conf" \
     "${STAGE_ROOT}/usr/lib/tmpfiles.d/synveil.conf" \
+    "${STAGE_ROOT}/usr/lib/systemd/user/synveil-client.service" \
+    "${STAGE_ROOT}/usr/share/applications/synveil.desktop" \
+    "${STAGE_ROOT}/usr/share/icons/hicolor/scalable/apps/synveil.svg" \
+    "${STAGE_ROOT}/usr/share/doc/synveil/LICENSE" \
+    "${STAGE_ROOT}/usr/share/doc/synveil/NOTICE" \
     "${STAGE_ROOT}/usr/share/synveil/synveil-scheduled-maintenance.env.example"
 chmod 0750 "${STAGE_ROOT}/etc/synveil"
 chmod 0700 "${STAGE_ROOT}/etc/synveil/credentials"
 if [[ "$(id -u)" -eq 0 ]]; then
-    chown root:root "${STAGE_ROOT}/usr/bin/synveil-scheduled-maintenance-once" \
-        "${STAGE_ROOT}/usr/lib/systemd/system/synveil-scheduled-maintenance.service" \
+    chown root:root "${STAGE_ROOT}/usr/bin/synveil-client" \
+        "${STAGE_ROOT}/usr/bin/synveil-desktop" \
+        "${STAGE_ROOT}/usr/bin/synveil-scheduled-maintenance-once" \
         "${STAGE_ROOT}/usr/lib/systemd/system/synveil-scheduled-maintenance.timer" \
         "${STAGE_ROOT}/usr/lib/sysusers.d/synveil.conf" \
         "${STAGE_ROOT}/usr/lib/tmpfiles.d/synveil.conf" \
+        "${STAGE_ROOT}/usr/lib/systemd/user/synveil-client.service" \
+        "${STAGE_ROOT}/usr/share/applications/synveil.desktop" \
+        "${STAGE_ROOT}/usr/share/icons/hicolor/scalable/apps/synveil.svg" \
+        "${STAGE_ROOT}/usr/share/doc/synveil/LICENSE" \
+        "${STAGE_ROOT}/usr/share/doc/synveil/NOTICE" \
         "${STAGE_ROOT}/usr/share/synveil/synveil-scheduled-maintenance.env.example"
     chown root:synveil "${STAGE_ROOT}/etc/synveil" 2>/dev/null || chown root:root "${STAGE_ROOT}/etc/synveil"
     chown root:root "${STAGE_ROOT}/etc/synveil/credentials"
@@ -217,11 +298,12 @@ fi
 # Installed-Size for DEB control (KiB, du -sk of payload).
 INSTALLED_SIZE="$(du -sk "$STAGE_ROOT" | awk '{print $1}')"
 # Minimal native dependencies from the dynamic-link audit documented with the
-# Prompt 79 packaging contract in docs/en/DEPLOYMENT.md:
-# Rust release binary is dynamically linked against glibc only (libc.so.6,
-# libm.so.6, libgcc_s.so.1, ld-linux-x86-64.so.2); systemd provides
-# sysusers/tmpfiles/manager integration. No PostgreSQL server/CLI, Docker, Nginx, Redis.
-DEB_DEPENDS="systemd, libc6 (>= 2.34), libgcc-s1"
+# packaging contract in docs/en/DEPLOYMENT.md. The maintenance and client
+# binaries require the glibc/libgcc/libstdc++ runtime; the Qt desktop binary
+# additionally requires the distro Qt 6 Core/Gui/Widgets/QML/Quick/Network
+# runtime. systemd provides sysusers/tmpfiles/manager integration. No
+# PostgreSQL server/CLI, Docker, Nginx, or Redis is packaged or required.
+DEB_DEPENDS="systemd, libc6 (>= 2.34), libgcc-s1, libstdc++6, libqt6core6, libqt6gui6, libqt6widgets6, libqt6qml6, libqt6quick6, libqt6quickcontrols2-6, libqt6network6"
 
 # tar flags for determinism: sorted names, root ownership, normalized mtime when SOURCE_DATE_EPOCH set.
 tar_owner_flags=(--owner=0 --group=0 --numeric-owner --sort=name)
@@ -297,7 +379,7 @@ build_deb() {
     size="$(wc -c < "$deb_path" | tr -d ' ')"
     sha="$(sha256sum "$deb_path" | awk '{print $1}')"
     log "DEB built: $deb_path (${size} bytes, sha256 ${sha})"
-    printf '%s' "$deb_path"
+    printf '%s\n' "$deb_path"
 }
 
 build_rpm() {
@@ -345,7 +427,7 @@ build_rpm() {
     size="$(wc -c < "$dest" | tr -d ' ')"
     sha="$(sha256sum "$dest" | awk '{print $1}')"
     log "RPM built: $dest (${size} bytes, sha256 ${sha})"
-    printf '%s' "$dest"
+    printf '%s\n' "$dest"
 }
 
 case "$FORMAT" in

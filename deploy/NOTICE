@@ -1,0 +1,10 @@
+Synveil desktop runtime packaging notice
+
+This package contains the Synveil desktop shell, the separately supervised
+Synveil background client, Linux desktop integration metadata, and the
+user-level systemd service definition. The package does not contain user
+credentials, database credentials, or administrator configuration.
+
+Qt and CXX-Qt runtime licensing/notices are supplied by the distribution's
+corresponding Qt runtime packages. This manifest does not package proprietary
+Qt modules.

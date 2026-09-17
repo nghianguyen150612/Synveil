@@ -32,7 +32,10 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y dpkg-dev rpm fakeroot systemd shellcheck
+          sudo apt-get install -y \
+            dpkg-dev rpm fakeroot systemd shellcheck \
+            pkg-config libdbus-1-dev \
+            qt6-base-dev qt6-declarative-dev qt6-tools-dev-tools
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -57,7 +60,9 @@ jobs:
           bash -n deploy/install/install.sh
           bash -n deploy/install/uninstall.sh
           bash -n deploy/install/common.sh
-          shellcheck -S warning deploy/packages/build.sh deploy/packages/debian/postinst deploy/packages/debian/prerm deploy/packages/debian/postrm
+          shellcheck -S warning \
+            deploy/packages/build.sh deploy/packages/build-windows.sh \
+            deploy/packages/debian/postinst deploy/packages/debian/prerm deploy/packages/debian/postrm
 
       - name: Build release binary + DEB + RPM
         run: |
@@ -72,6 +77,21 @@ jobs:
           echo "DEB=$DEB"
           dpkg-deb --info "$DEB"
           dpkg-deb --contents "$DEB"
+          for path in \
+            ./usr/bin/synveil-client \
+            ./usr/bin/synveil-desktop \
+            ./usr/bin/synveil-scheduled-maintenance-once \
+            ./usr/lib/systemd/user/synveil-client.service \
+            ./usr/share/applications/synveil.desktop \
+            ./usr/share/icons/hicolor/scalable/apps/synveil.svg \
+            ./usr/share/doc/synveil/LICENSE \
+            ./usr/share/doc/synveil/NOTICE; do
+            dpkg-deb --contents "$DEB" | grep -F " $path"
+          done
+          if dpkg-deb --contents "$DEB" | grep -F '/usr/lib/systemd/system/synveil-client.service'; then
+            echo 'user service was incorrectly packaged as a system service' >&2
+            exit 1
+          fi
 
       - name: RPM inspection (query info + list + requires)
         run: |
@@ -85,7 +105,9 @@ jobs:
       - name: Static packaging units (version/arch/metadata/parity/safety)
         run: |
           set -euo pipefail
-          cargo test -p synveil-metadata --test linux_native_packaging_units -- --nocapture
+          cargo test -p synveil-metadata --test linux_native_packaging_units --locked -- --nocapture
+          cargo test -p synveil-metadata --test linux_desktop_launch_units --locked -- --nocapture
+          cargo test -p synveil-metadata --test windows_desktop_packaging_units --locked -- --nocapture
 
       - name: Prompt 75/76/78 focused regressions (identity/install/sandbox/lifecycle)
         run: |
@@ -107,6 +129,9 @@ jobs:
           cp deploy/systemd/synveil-scheduled-maintenance.service /tmp/synveil-pkg-verify.service
           sed -i 's|ExecStart=/usr/bin/synveil-scheduled-maintenance-once|ExecStart=/usr/bin/true|' /tmp/synveil-pkg-verify.service
           systemd-analyze verify /tmp/synveil-pkg-verify.service
+          sed 's|ExecStart=/usr/bin/synveil-client|ExecStart=/usr/bin/true|' \
+            deploy/systemd-user/synveil-client.service > /tmp/synveil-pkg-verify-user.service
+          systemd-analyze verify /tmp/synveil-pkg-verify-user.service
 
       - name: Upload unsigned package artifacts
         uses: actions/upload-artifact@v4

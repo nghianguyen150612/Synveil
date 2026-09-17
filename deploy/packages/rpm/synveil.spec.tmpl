@@ -1,10 +1,10 @@
 Name:           synveil
 Version:        @SYNVEIL_VERSION@
 Release:        @SYNVEIL_RELEASE@%{?dist}
-Summary:        Synveil scheduled backup maintenance runtime (Linux Gen-1)
+Summary:        Synveil desktop and background synchronization runtime (Linux)
 License:        MIT
 BuildArch:      @SYNVEIL_ARCH@
-Requires:       systemd, glibc, libgcc
+Requires:       systemd, glibc, libgcc, libstdc++, qt6-qtbase, qt6-qtdeclarative
 # Preserve byte-identical release binary (Prompt 79 binary integrity): disable
 # automatic stripping so the packaged binary SHA256 equals the cargo release
 # binary SHA256. The release profile already applies its own optimizations;
@@ -16,16 +16,15 @@ Requires:       systemd, glibc, libgcc
 # to PostgreSQL over TCP/Unix socket and needs no local server package.
 
 %description
-Synveil Gen-1 one-shot scheduled-maintenance runtime with systemd
-timer/service lifecycle, systemd-sysusers/tmpfiles identity, and
-LoadCredential database-credential delivery.
+Synveil desktop shell and separately supervised background synchronization
+client, plus the one-shot scheduled-maintenance runtime with systemd
+sysusers/tmpfiles identity and LoadCredential database-credential delivery.
 
-This package contains the release binary, systemd units, sysusers/tmpfiles
-fragments, and a non-secret configuration template. It does NOT contain
-database credentials; the administrator provisions
-/etc/synveil/credentials/database-url (root:root 0600) separately.
-The timer is NOT auto-enabled and the service is NOT auto-started on
-install; enable explicitly after configuring credentials.
+The client user service is installed below /usr/lib/systemd/user and is never
+silently enabled by package installation. The system scheduled-maintenance
+timer is also NOT auto-enabled and its service is NOT auto-started on install.
+The package does NOT contain database credentials; the administrator
+provisions /etc/synveil/credentials/database-url (root:root 0600) separately.
 
 Package signing and YUM/DNF repository publishing are deferred to release
 engineering (unsigned CI artifact at this stage).
@@ -45,11 +44,18 @@ mkdir -p "%{buildroot}"
 cp -a "$staged"/. "%{buildroot}"/
 
 %files
+%attr(0755,root,root) /usr/bin/synveil-client
+%attr(0755,root,root) /usr/bin/synveil-desktop
 %attr(0755,root,root) /usr/bin/synveil-scheduled-maintenance-once
+%attr(0644,root,root) /usr/lib/systemd/user/synveil-client.service
 %attr(0644,root,root) /usr/lib/systemd/system/synveil-scheduled-maintenance.service
 %attr(0644,root,root) /usr/lib/systemd/system/synveil-scheduled-maintenance.timer
 %attr(0644,root,root) /usr/lib/sysusers.d/synveil.conf
 %attr(0644,root,root) /usr/lib/tmpfiles.d/synveil.conf
+%attr(0644,root,root) /usr/share/applications/synveil.desktop
+%attr(0644,root,root) /usr/share/icons/hicolor/scalable/apps/synveil.svg
+%attr(0644,root,root) /usr/share/doc/synveil/LICENSE
+%attr(0644,root,root) /usr/share/doc/synveil/NOTICE
 %attr(0644,root,root) /usr/share/synveil/synveil-scheduled-maintenance.env.example
 # Config/state skeleton directories (owned by package for creation, contents preserved):
 %dir %attr(0750,root,synveil) /etc/synveil
@@ -131,4 +137,4 @@ exit 0
 
 %changelog
 * Sun Sep 06 2026 Synveil Project <synveil-dev@example.invalid> - @SYNVEIL_VERSION@-@SYNVEIL_RELEASE@
-- Gen-1 native RPM packaging (Prompt 79). Data-preserving lifecycle. Signing deferred.
+- Native desktop/client RPM packaging (Prompt 99) plus data-preserving maintenance lifecycle. Signing deferred.

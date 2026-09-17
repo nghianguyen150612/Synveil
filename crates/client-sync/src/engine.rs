@@ -176,6 +176,10 @@ impl InboundSyncEngine {
         self.scope
     }
 
+    pub(crate) fn state(&self) -> &Arc<LocalStateStore> {
+        &self.state
+    }
+
     #[must_use]
     pub const fn config(&self) -> EngineConfig {
         self.config
@@ -782,16 +786,28 @@ impl InboundSyncEngine {
             .await?;
         self.check_collision(desired.node_id(), &target, fact)
             .await?;
-        if let Some(sequence) = fact.server_sequence()
+        let self_originated = if let Some(sequence) = fact.server_sequence()
             && let Some(result) = self
                 .state
                 .outbound_result_for_sequence(self.scope.library_id(), sequence)
                 .await?
-            && result.matches_desired(desired)
-            && let Some(existing) = existing.as_ref().filter(|node| node.present())
-            && existing.kind() == desired.kind()
-            && self.self_originated_filesystem_matches(existing, desired, &target)?
         {
+            result.matches_desired(desired)
+                && match existing.as_ref() {
+                    Some(existing) if existing.present() && existing.kind() == desired.kind() => {
+                        self.self_originated_filesystem_matches(existing, desired, &target)?
+                    }
+                    // A locally observed create has no local-node mapping until
+                    // this feed event assigns the server's Node ID. The durable
+                    // mutation result and the exact filesystem fingerprint are
+                    // the attribution proof for that first mapping.
+                    None => self.self_originated_create_matches(desired, &target)?,
+                    _ => false,
+                }
+        } else {
+            false
+        };
+        if self_originated {
             return Ok(AppliedNode {
                 node: self.local_node_from_desired(
                     desired,
@@ -799,7 +815,7 @@ impl InboundSyncEngine {
                     fact,
                     true,
                     None,
-                    Some(existing),
+                    existing.as_ref(),
                 ),
                 operation_id: None,
             });
@@ -1967,6 +1983,21 @@ impl InboundSyncEngine {
             Err(ClientSyncError::InvalidState | ClientSyncError::InvalidRelativePath) => Ok(false),
             Err(error) => Err(error),
         }
+    }
+
+    fn self_originated_create_matches(
+        &self,
+        desired: &LogicalSnapshotNode,
+        target: &ManagedRelativePath,
+    ) -> Result<bool, ClientSyncError> {
+        let target_fingerprint = match self.replica.inspect(target) {
+            Ok(value) => value,
+            Err(ClientSyncError::InvalidState | ClientSyncError::InvalidRelativePath) => {
+                return Ok(false);
+            }
+            Err(error) => return Err(error),
+        };
+        Ok(target_fingerprint == desired_node_fingerprint(desired)?)
     }
 
     fn local_node_from_desired(
