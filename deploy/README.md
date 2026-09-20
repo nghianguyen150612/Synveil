@@ -265,3 +265,84 @@ second destination list is introduced. Full implementation and operator
 semantics are in [`docs/en/DESKTOP_LAUNCH.md`](../docs/en/DESKTOP_LAUNCH.md),
 [`docs/vi/DESKTOP_LAUNCH.md`](../docs/vi/DESKTOP_LAUNCH.md), and
 [`docs/adr/ADR-041-production-desktop-launch-orchestration.md`](../docs/adr/ADR-041-production-desktop-launch-orchestration.md).
+
+## Production package and release contract (Prompt 108)
+
+Prompt 108 turns the package-neutral payload into release artifacts without
+changing the runtime/data/auth scope. The builders are:
+
+```text
+./deploy/packages/build.sh --format=all --output-dir=target/packages
+./deploy/packages/build-windows.sh --output-dir=target/windows-packages
+```
+
+`build.sh` derives the version from `[workspace.package] version` in
+`Cargo.toml`, stages all three production executables through `MANIFEST`,
+audits every Linux executable with `ldd`, rejects unresolved `not found`
+dependencies, and emits real DEB/RPM archives. The DEB declares the direct
+DBus/systemd libraries as well as the Qt 6 runtime; RPM declares the
+corresponding systemd/DBus/Qt families. No PostgreSQL server, Docker, Nginx,
+Redis, credential, or database is bundled. `dpkg-deb` is preferred, with a
+rootless ar/tar fallback for environments that do not have it.
+
+Both Linux and Windows builders normalize archive timestamps and ownership and
+use the source revision timestamp when `SOURCE_DATE_EPOCH` is not explicitly
+provided. Rebuilding identical source and binary inputs is therefore a
+byte-reproducibility gate, not a best-effort timestamp convention. The
+Windows builder requires real Windows PE binaries and a genuine Qt closure:
+native Windows uses `windeployqt`; Linux cross packaging accepts an explicit
+Windows Qt prefix and a bounded QML/runtime allowlist. PE import closure
+auditing rejects missing non-system DLLs, Linux libraries, SDK files, and
+developer paths.
+
+The Windows output is a portable, unsigned ZIP rather than an installer. It
+contains the sibling EXEs, `qt.conf`, Qt DLL/QML/plugin runtime,
+`platforms/qwindows.dll`, C++ runtime DLLs when present, notices, and a
+validated `SYNVEIL-MANIFEST.txt` with file SHA-256/size records. It contains no
+Windows service and performs no machine-wide or admin autostart registration;
+the existing client manager owns any explicit current-user Task Scheduler
+registration.
+
+Linux FHS package layout is `/usr/bin` for the three executables,
+`/usr/lib/systemd/system` for scheduled maintenance, `/usr/lib/systemd/user`
+for the client supervisor, `/usr/share/applications` plus the hicolor icon for
+desktop integration, and `/usr/share/doc/synveil` for notices. Runtime user
+data remains outside package files: Linux desktop profiles use the XDG config
+and data roots (`~/.config/synveil` and `~/.local/share/synveil` by default),
+while Windows uses `%APPDATA%\Synveil` and `%LOCALAPPDATA%\Synveil`.
+OS-backed Secret Service/Credential Manager storage remains the secret boundary.
+
+Installation and upgrade are non-starting. Hooks may create identities,
+tmpfiles directories, and reload a manager, but do not silently enable timers,
+run maintenance, enable the user service, or register a Windows task. The
+administrator provisions `/etc/synveil/credentials/database-url` as
+`root:root 0600`; `LoadCredential` supplies it per activation. PACKAGE files
+are path-checked and atomically replaced; config, profile/auth state, Secret
+Store entries, local sync DBs, and external storage survive upgrades. The
+current schema is unchanged: 36 server migrations, 7 client-sync migrations,
+and `LOCAL_SCHEMA_VERSION = 7`.
+
+Ordinary uninstall removes only known PACKAGE artifacts. It preserves
+`/etc/synveil`, credentials, `/var/lib/synveil`, user profiles, external pools,
+and PostgreSQL, and never follows a package-path symlink or removes shared
+parents. Native DEB purge/RPM erase are also data-preserving. An explicit
+administrative cleanup is available only through:
+
+```text
+./deploy/install/uninstall.sh --root=/tmp/synveil-root --purge
+```
+
+That allowlisted purge removes application config/state under the staged root
+but still never removes external data, mounted volumes, home data, or
+PostgreSQL; account removal is not automatic. First run, a missing client, or
+an unavailable profile produces generic UI recovery messages and preserves
+state; raw tokens, credentials, stack traces, and arbitrary paths are not
+shown.
+
+The release-facing commands, PACKAGE-UNIT-1..10 mapping, supported-platform
+matrix, known limitations, and the exact Linux/Windows live gates are in
+[`docs/en/RELEASE_PACKAGING.md`](../docs/en/RELEASE_PACKAGING.md) and its
+Vietnamese counterpart. Native Windows and real package installation are
+environment-gated on a suitable runner; a Linux cross-build is not native
+Windows evidence. Signing, repository publication, full guided installer,
+auto-update, and macOS/iOS/Android packaging remain out of scope.

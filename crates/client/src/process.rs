@@ -14,7 +14,7 @@ use synveil_platform::PlatformRuntime;
 use tracing::{error, info, warn};
 
 use crate::{
-    DesktopClientConfig, DesktopClientConfigError, NativeNetworkHintSource,
+    DesktopClientConfig, DesktopClientConfigError, DesktopSyncPauseStore, NativeNetworkHintSource,
     NativeProcessLifecycleSource, NetworkHintSource, PeriodicNetworkHintSource,
     ProcessLifecycleSource,
 };
@@ -145,6 +145,8 @@ impl DesktopClientProcess {
         config: DesktopClientConfig,
     ) -> Result<Self, DesktopProcessError> {
         let state_config = synveil_client_sync::LocalStateConfig::from_platform(platform.as_ref())?;
+        let sync_pause_store = DesktopSyncPauseStore::for_platform(platform.as_ref())?;
+        let sync_paused = config.sync_paused();
         let state = Arc::new(
             synveil_client_sync::LocalStateStore::open(&state_config)
                 .await
@@ -168,6 +170,11 @@ impl DesktopClientProcess {
             Ok(host) => host,
             Err(error) => return Err(error.into()),
         };
+        let _ = host.handle().set_user_paused(sync_paused);
+        if let Err(error) = host.handle().bind_profile_id(config.profile_id()) {
+            let _ = host.shutdown().await;
+            return Err(DesktopProcessError::State(error));
+        }
 
         #[cfg(feature = "test-support")]
         install_external_test_recovery_gate(&host);
@@ -192,8 +199,13 @@ impl DesktopClientProcess {
                 }
             };
 
-        let control =
-            crate::DesktopControlHandle::new(host.handle(), DesktopProcessStatus::Starting);
+        let control = crate::DesktopControlHandle::new_with_library_setup_and_sync_store(
+            host.handle(),
+            DesktopProcessStatus::Starting,
+            Arc::clone(&platform),
+            config.profile_id(),
+            sync_pause_store,
+        );
         let endpoint = match crate::DesktopControlEndpoint::for_profile(
             platform.as_ref(),
             config.profile_id(),
@@ -456,6 +468,14 @@ fn error_code(error: &DesktopClientConfigError) -> &'static str {
         DesktopClientConfigError::InvalidNetworkHintInterval => {
             "DESKTOP_CONFIG_NETWORK_INTERVAL_INVALID"
         }
+        DesktopClientConfigError::ProfileMismatch => "DESKTOP_CONFIG_PROFILE_MISMATCH",
+        DesktopClientConfigError::ConfigurationWriteFailed => "DESKTOP_CONFIG_WRITE_FAILED",
+        DesktopClientConfigError::LibraryBindingConflict => {
+            "DESKTOP_CONFIG_LIBRARY_BINDING_CONFLICT"
+        }
+        DesktopClientConfigError::SyncStateUnreadable => "DESKTOP_SYNC_STATE_UNREADABLE",
+        DesktopClientConfigError::SyncStateMalformed => "DESKTOP_SYNC_STATE_MALFORMED",
+        DesktopClientConfigError::SyncStateWriteFailed => "DESKTOP_SYNC_STATE_WRITE_FAILED",
         DesktopClientConfigError::Client(error) => error.code(),
     }
 }

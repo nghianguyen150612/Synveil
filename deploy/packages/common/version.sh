@@ -102,3 +102,30 @@ synveil_rpm_version() {
 synveil_rpm_release() {
     printf '%s' "${SYNVEIL_RPM_RELEASE:-1}"
 }
+
+# Return the archive timestamp used by package builders. An explicit
+# SOURCE_DATE_EPOCH remains authoritative; otherwise use the checked-out
+# source revision timestamp so identical source produces identical archive
+# metadata without requiring a caller-specific environment variable.
+synveil_source_date_epoch() {
+    local supplied="${SOURCE_DATE_EPOCH:-}"
+    if [[ -n "$supplied" ]]; then
+        if [[ ! "$supplied" =~ ^[0-9]+$ ]]; then
+            printf '[synveil-packages] ERROR: SOURCE_DATE_EPOCH must be a non-negative integer, got %q\n' "$supplied" >&2
+            return 1
+        fi
+        printf '%s' "$supplied"
+        return 0
+    fi
+
+    local revision_epoch=""
+    if command -v git >/dev/null 2>&1 && [[ -d "${PACKAGES_REPO_ROOT}/.git" || -f "${PACKAGES_REPO_ROOT}/.git" ]]; then
+        revision_epoch="$(git -C "$PACKAGES_REPO_ROOT" log -1 --format=%ct HEAD 2>/dev/null || true)"
+    fi
+    if [[ "$revision_epoch" =~ ^[0-9]+$ ]]; then
+        printf '%s' "$revision_epoch"
+    else
+        # Source archives without Git metadata still get a stable timestamp.
+        printf '0'
+    fi
+}

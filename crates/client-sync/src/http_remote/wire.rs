@@ -15,9 +15,9 @@ use zeroize::Zeroize;
 
 use super::{EnrollmentCredentials, protocol_error};
 use crate::{
-    OpaqueEvidence, RebaselineBoundary, RebaselineHandoffConfirmation,
-    RebaselineSnapshotDescriptor, RemoteCheckpoint, RemoteError, RemoteErrorKind, ReplicaScope,
-    UploadCompletion, UploadSessionStatus, UploadTarget,
+    MAX_PAGE_ITEMS, OpaqueEvidence, RebaselineBoundary, RebaselineHandoffConfirmation,
+    RebaselineSnapshotDescriptor, RemoteCheckpoint, RemoteError, RemoteErrorKind, RemoteLibrary,
+    ReplicaScope, UploadCompletion, UploadSessionStatus, UploadTarget,
 };
 
 pub(super) fn parse<T: FromStr>(value: &str) -> Result<T, RemoteError> {
@@ -87,6 +87,116 @@ impl<T> Envelope<T> {
     pub(super) fn data(self) -> Result<T, RemoteError> {
         request_id(&self.meta.request_id)?;
         Ok(self.data)
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct LibraryCollection {
+    data: Vec<LibraryResource>,
+    page: Page,
+    meta: Meta,
+}
+
+impl LibraryCollection {
+    pub(super) fn into_domain(
+        self,
+    ) -> Result<(Vec<RemoteLibrary>, Option<String>, bool), RemoteError> {
+        request_id(&self.meta.request_id)?;
+        if self.data.len() > MAX_PAGE_ITEMS {
+            return Err(protocol_error());
+        }
+        let libraries = self
+            .data
+            .into_iter()
+            .map(LibraryResource::into_domain)
+            .collect::<Result<Vec<_>, _>>()?;
+        if self
+            .page
+            .next_cursor
+            .as_ref()
+            .is_some_and(|cursor| cursor.is_empty() || cursor.len() > 512)
+        {
+            return Err(protocol_error());
+        }
+        Ok((libraries, self.page.next_cursor, self.page.has_more))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct NodeCollection {
+    data: Vec<Node>,
+    page: Page,
+    meta: Meta,
+}
+
+impl NodeCollection {
+    pub(super) fn ensure_empty(self) -> Result<(), RemoteError> {
+        request_id(&self.meta.request_id)?;
+        if self.data.len() > MAX_PAGE_ITEMS
+            || self
+                .page
+                .next_cursor
+                .as_ref()
+                .is_some_and(|cursor| cursor.is_empty() || cursor.len() > 512)
+        {
+            return Err(protocol_error());
+        }
+        if self.page.has_more || !self.data.is_empty() {
+            return Err(RemoteError::new(RemoteErrorKind::Conflict));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Page {
+    #[serde(default)]
+    next_cursor: Option<String>,
+    has_more: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct LibraryResource {
+    id: String,
+    #[serde(rename = "type")]
+    resource_type: String,
+    revision: String,
+    attributes: LibraryAttributes,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LibraryAttributes {
+    name: String,
+    root_node_id: String,
+    status: String,
+    created_at: String,
+    updated_at: String,
+}
+
+impl LibraryResource {
+    pub(super) fn into_domain(self) -> Result<RemoteLibrary, RemoteError> {
+        let root_node_id = parse::<NodeId>(&self.attributes.root_node_id)?;
+        if self.resource_type != "library"
+            || parse::<Revision>(&self.revision).is_err()
+            || parse::<Timestamp>(&self.attributes.created_at).is_err()
+            || parse::<Timestamp>(&self.attributes.updated_at).is_err()
+            || !matches!(
+                self.attributes.status.as_str(),
+                "ACTIVE" | "READ_ONLY" | "QUARANTINED"
+            )
+        {
+            return Err(protocol_error());
+        }
+        Ok(RemoteLibrary::new(
+            parse::<LibraryId>(&self.id)?,
+            LogicalName::new(self.attributes.name).map_err(|_| protocol_error())?,
+            root_node_id,
+        ))
     }
 }
 

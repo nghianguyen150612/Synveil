@@ -31,9 +31,9 @@ use crate::{
     MAX_CONTENT_CHUNK_BYTES, MAX_PAGE_ITEMS, OpaqueEvidence, RebaselineHandoffConfirmation,
     RebaselineSnapshotDescriptor, RebaselineSnapshotPage, RebaselineSnapshotRemote,
     RebaselineSnapshotSource, RemoteCheckpoint, RemoteContent, RemoteError, RemoteErrorKind,
-    RemoteFeedPage, RemoteMutationApplied, RemoteMutationConflict, RemoteMutationOutcome,
-    ReplicaScope, ServerProfile, ServerProfileId, SyncRemote, UploadCompletion,
-    UploadSessionStatus, UploadTarget,
+    RemoteFeedPage, RemoteLibrary, RemoteMutationApplied, RemoteMutationConflict,
+    RemoteMutationOutcome, ReplicaScope, ServerProfile, ServerProfileId, SyncRemote,
+    UploadCompletion, UploadSessionStatus, UploadTarget,
 };
 
 mod wire;
@@ -49,6 +49,8 @@ const ACK_TOKEN_BYTES: usize = 256;
 const CURSOR_BYTES: usize = 320;
 const COMPLETION_TOKEN_BYTES: usize = 336;
 const USER_AGENT: &str = concat!("SynveilDesktop/", env!("CARGO_PKG_VERSION"));
+const MAX_LIBRARY_LIST_PAGES: usize = 64;
+const MAX_LIBRARY_LIST_ITEMS: usize = 4_096;
 
 /// Finite budgets, not security-policy escape hatches. Every value is checked
 /// during construction; no public configuration can disable certificate
@@ -350,6 +352,100 @@ impl HttpSyncRemote {
         let mut path = vec!["api", "v1", "devices", &device, "libraries", &library];
         path.extend_from_slice(tail);
         self.transport.url(&path)
+    }
+
+    /// Create the server-side empty logical library. The UUID is chosen by the
+    /// caller so a response-loss retry can be reconciled without blind replay.
+    pub async fn create_library(
+        &self,
+        scope: ReplicaScope,
+        library_id: synveil_core::LibraryId,
+        name: &LogicalName,
+    ) -> Result<RemoteLibrary, RemoteError> {
+        self.validate_scope(scope)?;
+        let url = self.transport.url(&["api", "v1", "libraries"])?;
+        let result: wire::Envelope<wire::LibraryResource> = self
+            .transport
+            .json(
+                self.request(Method::POST, url).json(&serde_json::json!({
+                    "id": library_id.to_string(),
+                    "name": name.as_str(),
+                })),
+                StatusCode::CREATED,
+            )
+            .await?;
+        let library = result.data()?.into_domain()?;
+        if library.id() != library_id || library.name().as_str() != name.as_str() {
+            return Err(protocol_error());
+        }
+        Ok(library)
+    }
+
+    /// Read the authoritative owner-scoped library set. Pagination is followed
+    /// only within a finite budget; the result is used for response-loss
+    /// reconciliation, never as permission to invent a local binding.
+    pub async fn list_libraries(
+        &self,
+        scope: ReplicaScope,
+    ) -> Result<Vec<RemoteLibrary>, RemoteError> {
+        self.validate_scope(scope)?;
+        let mut cursor = None;
+        let mut libraries = Vec::new();
+        for _ in 0..MAX_LIBRARY_LIST_PAGES {
+            let mut url = self.transport.url(&["api", "v1", "libraries"])?;
+            {
+                let mut query = url.query_pairs_mut();
+                query.append_pair("limit", "100");
+                if let Some(cursor) = cursor.as_deref() {
+                    query.append_pair("cursor", cursor);
+                }
+            }
+            let result: wire::LibraryCollection = self
+                .transport
+                .json(self.request(Method::GET, url), StatusCode::OK)
+                .await?;
+            let (page, next_cursor, has_more) = result.into_domain()?;
+            libraries.extend(page);
+            if libraries.len() > MAX_LIBRARY_LIST_ITEMS {
+                return Err(RemoteError::new(RemoteErrorKind::BodyLimit));
+            }
+            if !has_more {
+                return Ok(libraries);
+            }
+            let Some(next_cursor) = next_cursor else {
+                return Err(protocol_error());
+            };
+            cursor = Some(next_cursor);
+        }
+        Err(RemoteError::new(RemoteErrorKind::BodyLimit))
+    }
+
+    /// Reconcile an uncertain library-create response only as a new empty
+    /// library. A UUID/name match alone is insufficient: an existing child
+    /// would be an unexpected remote state, so the setup flow must stop before
+    /// binding local observations to it.
+    pub async fn verify_new_library_empty(
+        &self,
+        scope: ReplicaScope,
+        library: &RemoteLibrary,
+    ) -> Result<(), RemoteError> {
+        self.validate_scope(scope)?;
+        if library.id() != scope.library_id() {
+            return Err(RemoteError::new(RemoteErrorKind::Conflict));
+        }
+        let library_id = scope.library_id().to_string();
+        let root_node_id = library.root_node_id().to_string();
+        let mut url = self
+            .transport
+            .url(&["api", "v1", "libraries", &library_id, "nodes"])?;
+        url.query_pairs_mut()
+            .append_pair("parent_id", &root_node_id)
+            .append_pair("limit", "1");
+        let result: wire::NodeCollection = self
+            .transport
+            .json(self.request(Method::GET, url), StatusCode::OK)
+            .await?;
+        result.ensure_empty()
     }
 
     async fn node(&self, scope: ReplicaScope, node_id: NodeId) -> Result<wire::Node, RemoteError> {
@@ -1057,6 +1153,23 @@ impl HttpEnrollmentClient {
         Ok(Self {
             transport: Transport::new(profile, config)?,
         })
+    }
+
+    /// Verify the anonymous production readiness contract before a profile is
+    /// persisted. This uses the same canonical transport as enrollment and
+    /// sync: redirects, proxies, cookies, compression, and arbitrary paths
+    /// are not enabled at this boundary.
+    pub async fn probe_ready(&self) -> Result<(), RemoteError> {
+        let url = self.transport.url(&["health", "ready"])?;
+        let ready: wire::Ready = self
+            .transport
+            .json(self.transport.request(Method::GET, url), StatusCode::OK)
+            .await?;
+        if ready.status == "ready" {
+            Ok(())
+        } else {
+            Err(protocol_error())
+        }
     }
 
     pub async fn exchange(

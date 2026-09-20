@@ -11,10 +11,15 @@ use synveil_core::{
     SyncConflictId,
 };
 
-use crate::ClientSyncError;
+use crate::{
+    ClientSyncError, LocalNode, LocalObjectKind, ManagedRelativePath, OutboundIntent,
+    OutboundIntentKind,
+};
 
 pub const DEFAULT_CONFLICT_PAGE_LIMIT: u32 = 100;
 pub const MAX_CONFLICT_PAGE_LIMIT: u32 = 1_000;
+pub const DEFAULT_ATTENTION_PAGE_LIMIT: u32 = 32;
+pub const MAX_ATTENTION_PAGE_LIMIT: u32 = 128;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum SyncConflictKind {
@@ -119,6 +124,19 @@ impl FromStr for SyncConflictResolution {
             "ACCEPT_REMOTE" => Ok(Self::AcceptRemote),
             "RETRY_LOCAL_AGAINST_CURRENT_BASE" => Ok(Self::RetryLocalAgainstCurrentBase),
             _ => Err(ClientSyncError::InvalidState),
+        }
+    }
+}
+
+impl SyncConflictResolution {
+    #[must_use]
+    pub const fn is_supported_for(self, kind: SyncConflictKind) -> bool {
+        match self {
+            Self::AcceptRemote => true,
+            Self::RetryLocalAgainstCurrentBase => !matches!(
+                kind,
+                SyncConflictKind::RemoteMissing | SyncConflictKind::NameCollision
+            ),
         }
     }
 }
@@ -264,6 +282,259 @@ impl ConflictPage {
     #[must_use]
     pub const fn next_cursor(&self) -> Option<ConflictCursor> {
         self.next_cursor
+    }
+}
+
+/// Safe, bounded conflict metadata assembled from the durable conflict record
+/// and the existing outbound/local projections. It deliberately contains no
+/// file bytes, absolute root, staging path, digest, credential, or server
+/// response body.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SyncConflictItem {
+    record: SyncConflictRecord,
+    relative_path: Option<ManagedRelativePath>,
+    previous_relative_path: Option<ManagedRelativePath>,
+    intent_kind: Option<OutboundIntentKind>,
+    item_kind: Option<LocalObjectKind>,
+    local_length: Option<u64>,
+    remote_length: Option<u64>,
+}
+
+impl SyncConflictItem {
+    pub(crate) fn from_sources(
+        record: SyncConflictRecord,
+        intent: Option<&OutboundIntent>,
+        local_node: Option<&LocalNode>,
+    ) -> Self {
+        let relative_path = intent
+            .and_then(|value| safe_display_path(value.observed_relative_path()))
+            .or_else(|| local_node.and_then(|value| safe_display_path(value.relative_path())));
+        let previous_relative_path = intent
+            .and_then(|value| value.old_relative_path())
+            .and_then(safe_display_path);
+        let fingerprint = intent.and_then(OutboundIntent::observed_fingerprint);
+        let intent_kind = intent.map(OutboundIntent::kind);
+        let item_kind = fingerprint.map(|value| value.kind()).or_else(|| {
+            local_node.map(|value| match value.kind() {
+                synveil_core::NodeKind::File => LocalObjectKind::File,
+                synveil_core::NodeKind::Directory => LocalObjectKind::Directory,
+            })
+        });
+        Self {
+            record,
+            relative_path,
+            previous_relative_path,
+            intent_kind,
+            item_kind,
+            local_length: fingerprint.and_then(|value| value.length()),
+            remote_length: local_node.and_then(LocalNode::content_length),
+        }
+    }
+
+    #[must_use]
+    pub const fn record(&self) -> &SyncConflictRecord {
+        &self.record
+    }
+
+    #[must_use]
+    pub const fn conflict_id(&self) -> SyncConflictId {
+        self.record.conflict_id()
+    }
+
+    #[must_use]
+    pub const fn library_id(&self) -> LibraryId {
+        self.record.library_id()
+    }
+
+    #[must_use]
+    pub const fn intent_id(&self) -> OutboundIntentId {
+        self.record.intent_id()
+    }
+
+    #[must_use]
+    pub const fn node_id(&self) -> Option<NodeId> {
+        self.record.node_id()
+    }
+
+    #[must_use]
+    pub const fn kind(&self) -> SyncConflictKind {
+        self.record.kind()
+    }
+
+    #[must_use]
+    pub const fn local_base_revision(&self) -> Option<Revision> {
+        self.record.local_base_revision()
+    }
+
+    #[must_use]
+    pub const fn remote_observed_revision(&self) -> Option<Revision> {
+        self.record.remote_observed_revision()
+    }
+
+    #[must_use]
+    pub const fn remote_observed_state(&self) -> Option<NodeState> {
+        self.record.remote_observed_state()
+    }
+
+    #[must_use]
+    pub const fn detected_at_ms(&self) -> u64 {
+        self.record.detected_at_ms()
+    }
+
+    #[must_use]
+    pub const fn relative_path(&self) -> Option<&ManagedRelativePath> {
+        self.relative_path.as_ref()
+    }
+
+    #[must_use]
+    pub const fn previous_relative_path(&self) -> Option<&ManagedRelativePath> {
+        self.previous_relative_path.as_ref()
+    }
+
+    #[must_use]
+    pub const fn intent_kind(&self) -> Option<OutboundIntentKind> {
+        self.intent_kind
+    }
+
+    #[must_use]
+    pub const fn item_kind(&self) -> Option<LocalObjectKind> {
+        self.item_kind
+    }
+
+    #[must_use]
+    pub const fn local_length(&self) -> Option<u64> {
+        self.local_length
+    }
+
+    #[must_use]
+    pub const fn remote_length(&self) -> Option<u64> {
+        self.remote_length
+    }
+
+    #[must_use]
+    pub fn supports_resolution(&self, resolution: SyncConflictResolution) -> bool {
+        resolution.is_supported_for(self.kind())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SyncAttentionLibrarySummary {
+    library_id: LibraryId,
+    conflict_count: u64,
+    other_count: u64,
+}
+
+impl SyncAttentionLibrarySummary {
+    pub(crate) const fn new(library_id: LibraryId, conflict_count: u64, other_count: u64) -> Self {
+        Self {
+            library_id,
+            conflict_count,
+            other_count,
+        }
+    }
+
+    #[must_use]
+    pub const fn library_id(&self) -> LibraryId {
+        self.library_id
+    }
+
+    #[must_use]
+    pub const fn conflict_count(&self) -> u64 {
+        self.conflict_count
+    }
+
+    #[must_use]
+    pub const fn other_count(&self) -> u64 {
+        self.other_count
+    }
+
+    #[must_use]
+    pub const fn total_count(&self) -> u64 {
+        self.conflict_count.saturating_add(self.other_count)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SyncAttentionSummary {
+    total_count: u64,
+    conflict_count: u64,
+    other_count: u64,
+}
+
+impl SyncAttentionSummary {
+    pub(crate) const fn new(conflict_count: u64, other_count: u64) -> Self {
+        Self {
+            total_count: conflict_count.saturating_add(other_count),
+            conflict_count,
+            other_count,
+        }
+    }
+
+    #[must_use]
+    pub const fn total_count(self) -> u64 {
+        self.total_count
+    }
+
+    #[must_use]
+    pub const fn conflict_count(self) -> u64 {
+        self.conflict_count
+    }
+
+    #[must_use]
+    pub const fn other_count(self) -> u64 {
+        self.other_count
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SyncAttentionSnapshot {
+    summary: SyncAttentionSummary,
+    libraries: Vec<SyncAttentionLibrarySummary>,
+    conflict_items: Vec<SyncConflictItem>,
+    truncated: bool,
+}
+
+impl SyncAttentionSnapshot {
+    pub(crate) fn new(
+        summary: SyncAttentionSummary,
+        libraries: Vec<SyncAttentionLibrarySummary>,
+        conflict_items: Vec<SyncConflictItem>,
+        truncated: bool,
+    ) -> Self {
+        Self {
+            summary,
+            libraries,
+            conflict_items,
+            truncated,
+        }
+    }
+
+    #[must_use]
+    pub const fn summary(&self) -> SyncAttentionSummary {
+        self.summary
+    }
+
+    #[must_use]
+    pub fn libraries(&self) -> &[SyncAttentionLibrarySummary] {
+        &self.libraries
+    }
+
+    #[must_use]
+    pub fn conflict_items(&self) -> &[SyncConflictItem] {
+        &self.conflict_items
+    }
+
+    #[must_use]
+    pub const fn truncated(&self) -> bool {
+        self.truncated
+    }
+}
+
+fn safe_display_path(path: &ManagedRelativePath) -> Option<ManagedRelativePath> {
+    if path.is_root() || path.as_str() == ".synveil" || path.as_str().starts_with(".synveil/") {
+        None
+    } else {
+        Some(path.clone())
     }
 }
 
@@ -472,6 +743,132 @@ mod tests {
         reopened.close_pool().await;
         drop(reopened);
         fs::remove_dir_all(harness.directory).unwrap();
+    }
+
+    #[test]
+    fn supported_resolution_matrix_is_explicit_and_narrow() {
+        for kind in [
+            SyncConflictKind::RemoteRevisionChanged,
+            SyncConflictKind::RemoteContentChanged,
+            SyncConflictKind::RemoteStateChanged,
+            SyncConflictKind::RemoteMissing,
+            SyncConflictKind::NameCollision,
+            SyncConflictKind::ParentChangedOrUnavailable,
+        ] {
+            assert!(SyncConflictResolution::AcceptRemote.is_supported_for(kind));
+            assert_eq!(
+                SyncConflictResolution::RetryLocalAgainstCurrentBase.is_supported_for(kind),
+                !matches!(
+                    kind,
+                    SyncConflictKind::RemoteMissing | SyncConflictKind::NameCollision
+                )
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn attention_snapshot_is_bounded_safe_and_generation_fenced() {
+        let harness = Harness::new("attention").await;
+        let intent = harness.rename_intent();
+        harness.store.upsert_outbound_intent(&intent).await.unwrap();
+        let conflict = harness
+            .store
+            .record_mutation_conflict(
+                intent.intent_id(),
+                ClientMutationId::new(),
+                &harness.remote_conflict(SyncConflictId::new()),
+            )
+            .await
+            .unwrap();
+        let second_intent = harness.rename_intent();
+        harness
+            .store
+            .upsert_outbound_intent(&second_intent)
+            .await
+            .unwrap();
+        harness
+            .store
+            .record_mutation_conflict(
+                second_intent.intent_id(),
+                ClientMutationId::new(),
+                &harness.remote_conflict(SyncConflictId::new()),
+            )
+            .await
+            .unwrap();
+
+        let snapshot = harness
+            .store
+            .attention_snapshot(&[harness.scope.library_id()], Some(1))
+            .await
+            .unwrap();
+        assert_eq!(snapshot.summary().total_count(), 2);
+        assert_eq!(snapshot.summary().conflict_count(), 2);
+        assert_eq!(snapshot.summary().other_count(), 0);
+        assert_eq!(snapshot.libraries().len(), 1);
+        assert_eq!(snapshot.conflict_items().len(), 1);
+        assert!(snapshot.truncated());
+        let item = &snapshot.conflict_items()[0];
+        assert_eq!(item.conflict_id(), conflict.conflict_id());
+        assert_eq!(item.relative_path().unwrap().as_str(), "local.txt");
+        assert!(item.supports_resolution(SyncConflictResolution::AcceptRemote));
+        assert!(item.supports_resolution(SyncConflictResolution::RetryLocalAgainstCurrentBase));
+
+        assert!(matches!(
+            harness
+                .store
+                .resolve_conflict_if_current(
+                    harness.scope.library_id(),
+                    conflict.conflict_id(),
+                    conflict.intent_id(),
+                    conflict.detected_at_ms().saturating_add(1),
+                    SyncConflictResolution::AcceptRemote,
+                )
+                .await,
+            Err(crate::ClientSyncError::ConflictStale)
+        ));
+        assert_eq!(
+            harness
+                .store
+                .get_conflict(conflict.conflict_id())
+                .await
+                .unwrap()
+                .unwrap()
+                .status(),
+            SyncConflictStatus::Unresolved
+        );
+
+        harness
+            .store
+            .resolve_conflict_if_current(
+                harness.scope.library_id(),
+                conflict.conflict_id(),
+                conflict.intent_id(),
+                conflict.detected_at_ms(),
+                SyncConflictResolution::AcceptRemote,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            harness
+                .store
+                .resolve_conflict_if_current(
+                    harness.scope.library_id(),
+                    conflict.conflict_id(),
+                    conflict.intent_id(),
+                    conflict.detected_at_ms(),
+                    SyncConflictResolution::AcceptRemote,
+                )
+                .await,
+            Err(crate::ClientSyncError::ConflictAlreadyResolved)
+        ));
+        let resolved_snapshot = harness
+            .store
+            .attention_snapshot(&[harness.scope.library_id()], Some(1))
+            .await
+            .unwrap();
+        assert_eq!(resolved_snapshot.summary().total_count(), 1);
+        assert_eq!(resolved_snapshot.conflict_items().len(), 1);
+        harness.close().await;
     }
 
     #[tokio::test]
@@ -1242,7 +1639,7 @@ mod tests {
         let store = LocalStateStore::open(&LocalStateConfig::new(&database))
             .await
             .unwrap();
-        assert_eq!(store.schema_version().await.unwrap(), 6);
+        assert_eq!(store.schema_version().await.unwrap(), 7);
         let verify = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect(&format!("sqlite:{}?mode=rw", database.display()))
@@ -1258,7 +1655,7 @@ mod tests {
                 .fetch_one(&verify)
                 .await
                 .unwrap();
-            assert_eq!(count, 1, "{table} must survive v5 -> v6");
+            assert_eq!(count, 1, "{table} must survive v5 -> v7");
         }
         let conflicts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sync_conflicts")
             .fetch_one(&verify)

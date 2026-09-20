@@ -49,6 +49,15 @@ impl FileMetadataBackend for UnavailableFileMetadataBackend {
         Err(unavailable_error())
     }
 
+    async fn create_library(
+        &self,
+        _user_id: UserId,
+        _library_id: LibraryId,
+        _name: LogicalName,
+    ) -> Result<Library, FileMetadataError> {
+        Err(unavailable_error())
+    }
+
     async fn list_children(
         &self,
         _user_id: UserId,
@@ -159,6 +168,13 @@ pub(crate) struct CreateDirectoryRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct CreateLibraryRequest {
+    id: String,
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct UpdateNodeRequest {
     name: Option<String>,
     parent_id: Option<String>,
@@ -232,17 +248,40 @@ pub(crate) struct LibraryAttributes {
 
 pub(crate) async fn list_libraries(
     State(state): State<ApiState>,
-    Extension(auth): Extension<AuthContext>,
+    Extension(auth): Extension<AuthenticatedPrincipal>,
     Extension(context): Extension<RequestContext>,
     Query(query): Query<PageQuery>,
 ) -> Result<Json<CollectionResponse<LibraryResource>>, ApiError> {
     let limit = query.limit();
     let page = state
         .file_metadata_backend()
-        .list_libraries(auth.principal().user_id(), query.cursor, limit)
+        .list_libraries(auth.owner_user_id(), query.cursor, limit)
         .await
         .map_err(|error| map_file_error(error, None, state.etag_key()))?;
     Ok(Json(library_page_response(page, &context)))
+}
+
+pub(crate) async fn create_library(
+    State(state): State<ApiState>,
+    Extension(auth): Extension<AuthenticatedPrincipal>,
+    Extension(context): Extension<RequestContext>,
+    Json(payload): Json<CreateLibraryRequest>,
+) -> Result<Response, ApiError> {
+    let library_id = parse_id::<LibraryId>(&payload.id)?;
+    let name = LogicalName::new(payload.name).map_err(|_| ApiError::InvalidRequest)?;
+    let library = state
+        .file_metadata_backend()
+        .create_library(auth.owner_user_id(), library_id, name)
+        .await
+        .map_err(|error| map_file_error(error, None, state.etag_key()))?;
+    Ok((
+        StatusCode::CREATED,
+        Json(ResourceResponse {
+            data: library_resource(&library),
+            meta: response_meta(&context),
+        }),
+    )
+        .into_response())
 }
 
 pub(crate) async fn list_children(

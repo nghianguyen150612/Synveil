@@ -355,6 +355,76 @@ impl<'pool> DomainRepository<'pool> {
         transaction.commit().await.map_err(MetadataError::from)
     }
 
+    /// Create an owner-scoped library and root using a caller-supplied UUID.
+    /// `ON CONFLICT DO NOTHING` makes a retried request return the existing
+    /// durable row; the application layer then verifies owner and name before
+    /// exposing it to the caller.
+    pub(crate) async fn create_library_owned(
+        &self,
+        owner_user_id: UserId,
+        library_id: LibraryId,
+        name: LogicalName,
+        observed_at: Timestamp,
+    ) -> Result<Library, MetadataError> {
+        let root = Node::new_root(
+            NodeId::new(),
+            library_id,
+            LogicalName::new("root")?,
+            observed_at,
+        );
+        let library = Library::new(
+            library_id,
+            owner_user_id,
+            name,
+            &root,
+            DedupDomainId::new(),
+            observed_at,
+        )?;
+        library.validate_root(&root)?;
+        let library_row = LibraryRow::from_domain(&library)?;
+        let root_row = NodeRow::from_domain(&root)?;
+        let mut transaction = self
+            .pool
+            .sqlx_pool()
+            .begin()
+            .await
+            .map_err(MetadataError::from)?;
+
+        let result = sqlx::query(
+            "INSERT INTO libraries
+                (id, owner_user_id, name, root_node_id, dedup_domain_id, status,
+                 created_at, updated_at, revision)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::NUMERIC)
+             ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(library_row.id)
+        .bind(library_row.owner_user_id)
+        .bind(&library_row.name)
+        .bind(library_row.root_node_id)
+        .bind(library_row.dedup_domain_id)
+        .bind(&library_row.status)
+        .bind(library_row.created_at)
+        .bind(library_row.updated_at)
+        .bind(&library_row.revision)
+        .execute(&mut *transaction)
+        .await
+        .map_err(MetadataError::from)?;
+
+        if result.rows_affected() == 0 {
+            transaction.commit().await.map_err(MetadataError::from)?;
+            return self
+                .find_library(library_id)
+                .await?
+                .ok_or(MetadataError::Mapping(MappingError::RelationMismatch {
+                    relation: "libraries.id",
+                }));
+        }
+
+        Self::insert_node_row_in_transaction(&mut transaction, &root_row).await?;
+        transaction.commit().await.map_err(MetadataError::from)?;
+        Ok(library)
+    }
+
     pub async fn find_library(
         &self,
         id: synveil_core::LibraryId,

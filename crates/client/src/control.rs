@@ -19,10 +19,15 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use synveil_client_sync::{
-    DesktopSyncHostHandle, RootAvailability, SyncRuntimeEvent, SyncRuntimeLibraryPhase,
-    SyncRuntimeLibraryStatus, SyncRuntimeOutcome, SyncRuntimeWakeResult,
+    DesktopAuthError, DesktopLibrarySetupError, DesktopProfileConfiguration,
+    DesktopProfileConfigurationOutcome, DesktopSyncHostHandle, RootAvailability,
+    SyncAttentionSnapshot, SyncConflictItem, SyncConflictResolution, SyncRuntimeControlState,
+    SyncRuntimeEvent, SyncRuntimeLibraryPhase, SyncRuntimeLibraryStatus, SyncRuntimeOutcome,
+    SyncRuntimeWakeResult,
 };
-use synveil_core::LibraryId;
+use synveil_core::{
+    DEVICE_SECRET_ENCODED_BYTES, EnrollmentSecret, LibraryId, OutboundIntentId, SyncConflictId,
+};
 use synveil_platform::{Platform, PlatformRuntime};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -30,8 +35,9 @@ use tokio::{
     task::{JoinHandle, JoinSet},
     time,
 };
+use zeroize::Zeroizing;
 
-use crate::DesktopProcessStatus;
+use crate::{DesktopProcessStatus, DesktopSyncPauseStore};
 
 #[cfg(unix)]
 use std::path::Component;
@@ -82,8 +88,12 @@ pub enum ControlCapability {
     ProcessStatus,
     LibraryStatus,
     SyncNow,
+    SyncControl,
     Shutdown,
     Events,
+    ProfileConfiguration,
+    LibrarySetup,
+    Attention,
 }
 
 /// Protocol-level error categories. They contain no OS paths, credentials,
@@ -140,18 +150,203 @@ pub enum ControlCommand {
     Ping,
     GetProcessStatus,
     ListLibraries,
+    GetAttentionSnapshot,
+    ResolveConflict {
+        library_id: String,
+        conflict_id: String,
+        intent_id: String,
+        detected_at_ms: u64,
+        action: ControlConflictAction,
+    },
     GetLibraryStatus {
         library_id: String,
     },
     SyncNow {
         library_id: String,
     },
+    GetSyncControlState,
+    PauseSync,
+    ResumeSync,
+    SetupLibrary {
+        name: String,
+        root_path: String,
+    },
     Shutdown,
     SubscribeEvents,
+    Authenticate {
+        enrollment_token: ControlAuthInput,
+    },
+    SignOut,
+    /// Get the current profile configuration.
+    GetProfileConfiguration,
+    /// Validate a candidate server URL and display label without persisting.
+    ValidateProfileConfiguration {
+        base_url: String,
+        display_label: String,
+    },
+    /// Create or update a profile configuration.
+    CreateOrConfigureProfile {
+        profile_id: String,
+        base_url: String,
+        display_label: String,
+    },
+    /// Update the connection configuration for an existing profile.
+    UpdateProfileConfiguration {
+        profile_id: String,
+        base_url: String,
+        display_label: String,
+    },
     /// Unknown tagged commands deserialize here so the server can return a
     /// typed error without treating a future command as a process failure.
     #[serde(other)]
     Unsupported,
+}
+
+/// Bounded safe server identity presented to the bridge.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ControlProfileServerInfo {
+    pub profile_id: String,
+    pub base_url: String,
+    pub display_label: String,
+    pub created_at_ms: i64,
+}
+
+/// Bounded result of a profile configuration operation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlProfileConfigurationOutcome {
+    Validated,
+    Created,
+    Updated,
+    NotFound,
+    AlreadyConfigured,
+    InvalidConfiguration,
+    InvalidServerAddress,
+    NetworkUnavailable,
+    ConnectionRefused,
+    Timeout,
+    TlsFailure,
+    IncompatibleServer,
+    ServerFailure,
+    PersistenceFailure,
+    Busy,
+    OutcomeUnknown,
+}
+
+/// Category-only result for the authenticated zero-library onboarding
+/// operation. The selected local path is never echoed in this value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlLibrarySetupOutcome {
+    Configured,
+    AlreadyConfigured,
+    InvalidName,
+    InvalidRoot,
+    AuthenticationRequired,
+    NetworkUnavailable,
+    ServerUnavailable,
+    Timeout,
+    TlsFailure,
+    ServerIdentityConflict,
+    PersistenceFailure,
+    Busy,
+    OutcomeUnknown,
+    Unavailable,
+    ProtocolError,
+}
+
+/// Current profile configuration state presented through the control plane.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ControlProfileConfiguration {
+    pub configured: bool,
+    pub authenticated: bool,
+    pub server_info: Option<ControlProfileServerInfo>,
+}
+
+/// Bounded wire representation of a transient enrollment secret. It exists
+/// only long enough to cross the local control connection and redacts its
+/// value from `Debug`; the controller creates it from the validated domain
+/// secret and the server immediately parses it into the same domain type.
+#[derive(Clone, Eq, PartialEq)]
+pub struct ControlAuthInput(Zeroizing<String>);
+
+impl ControlAuthInput {
+    pub(crate) fn from_secret(secret: &EnrollmentSecret) -> Self {
+        Self(Zeroizing::new(secret.expose_secret().to_owned()))
+    }
+
+    fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl fmt::Debug for ControlAuthInput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("ControlAuthInput([REDACTED])")
+    }
+}
+
+impl Serialize for ControlAuthInput {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ControlAuthInput {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        if value.len() > DEVICE_SECRET_ENCODED_BYTES {
+            return Err(serde::de::Error::custom(
+                "auth input exceeds bounded length",
+            ));
+        }
+        Ok(Self(Zeroizing::new(value)))
+    }
+}
+
+/// Category-only result for a local desktop authentication operation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlAuthOutcome {
+    Authenticated,
+    SignedOut,
+    InvalidCredentials,
+    NetworkUnavailable,
+    ServerUnavailable,
+    RateLimited,
+    SecureStoreUnavailable,
+    Busy,
+    ProtocolError,
+    OutcomeUnknown,
+}
+
+/// Global user-controlled sync state. It is distinct from per-library auth,
+/// root, and network categories.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlSyncControlState {
+    Running,
+    PausedByUser,
+}
+
+/// Category-only result for a durable pause/resume mutation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlSyncControlResult {
+    Paused,
+    Resumed,
+    AlreadyPaused,
+    AlreadyRunning,
+    PersistenceFailure,
+    Busy,
 }
 
 /// A safe, category-only process snapshot.
@@ -207,6 +402,80 @@ pub enum ControlConflictState {
     Unknown,
 }
 
+/// The only two interactive actions supported by the canonical client-local
+/// conflict policy. This is an enum, not a free-form QML command string.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlConflictAction {
+    AcceptRemote,
+    RetryLocalAgainstCurrentBase,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlAttentionItemKind {
+    File,
+    Directory,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlConflictResolutionOutcome {
+    Resolved,
+    AlreadyResolved,
+    Stale,
+    NotFound,
+    UnsupportedAction,
+    PersistenceFailure,
+    Busy,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ControlAttentionSummary {
+    pub total_count: u64,
+    pub conflict_count: u64,
+    pub other_count: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ControlAttentionLibrarySummary {
+    pub library_id: String,
+    pub conflict_count: u64,
+    pub other_count: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ControlAttentionItem {
+    pub attention_id: String,
+    pub library_id: String,
+    pub conflict_id: String,
+    pub intent_id: String,
+    pub node_id: Option<String>,
+    pub category: String,
+    pub relative_path: Option<String>,
+    pub previous_relative_path: Option<String>,
+    pub item_kind: Option<ControlAttentionItemKind>,
+    pub local_length: Option<u64>,
+    pub remote_length: Option<u64>,
+    pub local_base_revision: Option<u64>,
+    pub remote_observed_revision: Option<u64>,
+    pub remote_observed_state: Option<String>,
+    pub detected_at_ms: u64,
+    pub supported_actions: Vec<ControlConflictAction>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ControlAttentionSnapshot {
+    pub summary: ControlAttentionSummary,
+    pub libraries: Vec<ControlAttentionLibrarySummary>,
+    pub items: Vec<ControlAttentionItem>,
+    pub truncated: bool,
+}
+
 /// Safe synchronization outcome category.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -257,6 +526,7 @@ pub enum ControlSyncScheduleResult {
     Queued,
     Coalesced,
     AlreadyRunningFollowupRecorded,
+    Paused,
 }
 
 /// Safe event payload. Events are invalidation/best-effort notifications; the
@@ -278,6 +548,13 @@ pub enum ControlEvent {
         library_id: String,
         outcome: ControlSyncOutcome,
     },
+    /// Durable attention changed. The payload is intentionally empty; the
+    /// next bounded snapshot is authoritative after reconnect or event lag.
+    AttentionStateChanged,
+    ProfileConfigurationChanged,
+    SyncControlStateChanged {
+        state: ControlSyncControlState,
+    },
     ControlServerStopping,
     Lagged {
         dropped_count: u64,
@@ -296,15 +573,58 @@ pub struct ControlResponse {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 pub enum ControlResponseBody {
-    Pong { status: DesktopProcessStatus },
-    ProcessStatus { status: ControlProcessStatus },
-    Libraries { status: ControlLibraryList },
-    LibraryStatus { status: ControlLibraryStatus },
-    SyncNow { result: ControlSyncScheduleResult },
+    Pong {
+        status: DesktopProcessStatus,
+    },
+    ProcessStatus {
+        status: ControlProcessStatus,
+    },
+    Libraries {
+        status: ControlLibraryList,
+    },
+    AttentionSnapshot {
+        snapshot: ControlAttentionSnapshot,
+    },
+    ConflictResolution {
+        result: ControlConflictResolutionOutcome,
+    },
+    LibraryStatus {
+        status: ControlLibraryStatus,
+    },
+    SyncNow {
+        result: ControlSyncScheduleResult,
+    },
+    SyncControlState {
+        state: ControlSyncControlState,
+    },
+    SyncControl {
+        result: ControlSyncControlResult,
+    },
+    Authenticate {
+        result: ControlAuthOutcome,
+    },
+    SignOut {
+        result: ControlAuthOutcome,
+    },
     ShutdownAccepted,
-    Subscribed { event_capacity: u32 },
-    Event { event: ControlEvent },
-    Error { code: ControlErrorCode },
+    Subscribed {
+        event_capacity: u32,
+    },
+    Event {
+        event: ControlEvent,
+    },
+    Error {
+        code: ControlErrorCode,
+    },
+    ProfileConfiguration {
+        configuration: ControlProfileConfiguration,
+    },
+    ProfileConfigurationResult {
+        outcome: ControlProfileConfigurationOutcome,
+    },
+    LibrarySetup {
+        outcome: ControlLibrarySetupOutcome,
+    },
 }
 
 impl ControlResponse {
@@ -638,11 +958,23 @@ pub struct DesktopControlHandle {
 
 struct DesktopControlShared {
     host: DesktopSyncHostHandle,
+    library_setup: Option<LibrarySetupContext>,
+    sync_pause_store: Option<Arc<DesktopSyncPauseStore>>,
     process_status: AtomicU8,
     control_ready: AtomicBool,
     shutdown_requested: AtomicBool,
     shutdown_notify: Notify,
     events: broadcast::Sender<ControlEvent>,
+    auth_in_flight: AtomicBool,
+    profile_configuration_in_flight: AtomicBool,
+    library_setup_in_flight: AtomicBool,
+    sync_control_in_flight: AtomicBool,
+    attention_in_flight: AtomicBool,
+}
+
+struct LibrarySetupContext {
+    platform: Arc<dyn PlatformRuntime>,
+    profile_id: synveil_client_sync::ServerProfileId,
 }
 
 impl fmt::Debug for DesktopControlHandle {
@@ -657,15 +989,66 @@ impl fmt::Debug for DesktopControlHandle {
 
 impl DesktopControlHandle {
     pub fn new(host: DesktopSyncHostHandle, initial: DesktopProcessStatus) -> Self {
+        Self::new_inner(host, initial, None, None)
+    }
+
+    pub fn new_with_library_setup(
+        host: DesktopSyncHostHandle,
+        initial: DesktopProcessStatus,
+        platform: Arc<dyn PlatformRuntime>,
+        profile_id: synveil_client_sync::ServerProfileId,
+    ) -> Self {
+        Self::new_inner(
+            host,
+            initial,
+            Some(LibrarySetupContext {
+                platform,
+                profile_id,
+            }),
+            None,
+        )
+    }
+
+    pub fn new_with_library_setup_and_sync_store(
+        host: DesktopSyncHostHandle,
+        initial: DesktopProcessStatus,
+        platform: Arc<dyn PlatformRuntime>,
+        profile_id: synveil_client_sync::ServerProfileId,
+        sync_pause_store: DesktopSyncPauseStore,
+    ) -> Self {
+        Self::new_inner(
+            host,
+            initial,
+            Some(LibrarySetupContext {
+                platform,
+                profile_id,
+            }),
+            Some(Arc::new(sync_pause_store)),
+        )
+    }
+
+    fn new_inner(
+        host: DesktopSyncHostHandle,
+        initial: DesktopProcessStatus,
+        library_setup: Option<LibrarySetupContext>,
+        sync_pause_store: Option<Arc<DesktopSyncPauseStore>>,
+    ) -> Self {
         let (events, _) = broadcast::channel(DESKTOP_CONTROL_EVENT_CAPACITY);
         Self {
             inner: Arc::new(DesktopControlShared {
                 host,
+                library_setup,
+                sync_pause_store,
                 process_status: AtomicU8::new(process_status_code(initial)),
                 control_ready: AtomicBool::new(false),
                 shutdown_requested: AtomicBool::new(false),
                 shutdown_notify: Notify::new(),
                 events,
+                auth_in_flight: AtomicBool::new(false),
+                profile_configuration_in_flight: AtomicBool::new(false),
+                library_setup_in_flight: AtomicBool::new(false),
+                sync_control_in_flight: AtomicBool::new(false),
+                attention_in_flight: AtomicBool::new(false),
             }),
         }
     }
@@ -722,9 +1105,270 @@ impl DesktopControlHandle {
         }
     }
 
+    async fn attention_snapshot(&self) -> Result<ControlAttentionSnapshot, ControlErrorCode> {
+        self.inner
+            .host
+            .attention_snapshot()
+            .await
+            .map(map_attention_snapshot)
+            .map_err(|_| ControlErrorCode::Internal)
+    }
+
+    async fn resolve_conflict(
+        &self,
+        library_id: LibraryId,
+        conflict_id: SyncConflictId,
+        intent_id: OutboundIntentId,
+        detected_at_ms: u64,
+        action: ControlConflictAction,
+    ) -> ControlConflictResolutionOutcome {
+        let Some(_guard) = AttentionOperationGuard::try_acquire(&self.inner.attention_in_flight)
+        else {
+            return ControlConflictResolutionOutcome::Busy;
+        };
+        let resolution = match action {
+            ControlConflictAction::AcceptRemote => SyncConflictResolution::AcceptRemote,
+            ControlConflictAction::RetryLocalAgainstCurrentBase => {
+                SyncConflictResolution::RetryLocalAgainstCurrentBase
+            }
+        };
+        match self
+            .inner
+            .host
+            .resolve_conflict(
+                library_id,
+                conflict_id,
+                intent_id,
+                detected_at_ms,
+                resolution,
+            )
+            .await
+        {
+            Ok(_) => {
+                self.emit(ControlEvent::AttentionStateChanged);
+                ControlConflictResolutionOutcome::Resolved
+            }
+            Err(synveil_client_sync::ClientSyncError::ConflictAlreadyResolved) => {
+                ControlConflictResolutionOutcome::AlreadyResolved
+            }
+            Err(synveil_client_sync::ClientSyncError::ConflictStale) => {
+                ControlConflictResolutionOutcome::Stale
+            }
+            Err(synveil_client_sync::ClientSyncError::ConflictNotFound) => {
+                ControlConflictResolutionOutcome::NotFound
+            }
+            Err(synveil_client_sync::ClientSyncError::ResolutionNotApplicable) => {
+                ControlConflictResolutionOutcome::UnsupportedAction
+            }
+            Err(_) => ControlConflictResolutionOutcome::PersistenceFailure,
+        }
+    }
+
     #[must_use]
     pub fn sync_now(&self, library_id: LibraryId) -> SyncRuntimeWakeResult {
         self.inner.host.sync_now(library_id)
+    }
+
+    #[must_use]
+    pub fn sync_control_state(&self) -> ControlSyncControlState {
+        control_sync_control_state(self.inner.host.sync_control_state())
+    }
+
+    async fn set_sync_paused(&self, paused: bool) -> ControlSyncControlResult {
+        let Some(_guard) =
+            SyncControlOperationGuard::try_acquire(&self.inner.sync_control_in_flight)
+        else {
+            return ControlSyncControlResult::Busy;
+        };
+
+        let current = self.sync_control_state();
+        if paused && current == ControlSyncControlState::PausedByUser {
+            return ControlSyncControlResult::AlreadyPaused;
+        }
+        if !paused && current == ControlSyncControlState::Running {
+            return ControlSyncControlResult::AlreadyRunning;
+        }
+
+        let Some(store) = self.inner.sync_pause_store.clone() else {
+            return ControlSyncControlResult::PersistenceFailure;
+        };
+
+        let persisted = tokio::task::spawn_blocking(move || store.persist(paused)).await;
+        if !matches!(persisted, Ok(Ok(()))) {
+            return ControlSyncControlResult::PersistenceFailure;
+        }
+
+        let state = self.inner.host.set_user_paused(paused);
+        let state = control_sync_control_state(state);
+        match (paused, state) {
+            (true, ControlSyncControlState::PausedByUser) => ControlSyncControlResult::Paused,
+            (false, ControlSyncControlState::Running) => ControlSyncControlResult::Resumed,
+            (true, ControlSyncControlState::Running) => ControlSyncControlResult::AlreadyRunning,
+            (false, ControlSyncControlState::PausedByUser) => {
+                ControlSyncControlResult::AlreadyPaused
+            }
+        }
+    }
+
+    async fn authenticate(&self, input: ControlAuthInput) -> ControlAuthOutcome {
+        let Some(_guard) = AuthOperationGuard::try_acquire(&self.inner.auth_in_flight) else {
+            return ControlAuthOutcome::Busy;
+        };
+        let Ok(secret) = EnrollmentSecret::parse(input.as_str()) else {
+            return ControlAuthOutcome::InvalidCredentials;
+        };
+        match self.inner.host.authenticate(&secret).await {
+            Ok(()) => ControlAuthOutcome::Authenticated,
+            Err(error) => map_auth_outcome(error),
+        }
+    }
+
+    async fn sign_out(&self) -> ControlAuthOutcome {
+        let Some(_guard) = AuthOperationGuard::try_acquire(&self.inner.auth_in_flight) else {
+            return ControlAuthOutcome::Busy;
+        };
+        match self.inner.host.sign_out().await {
+            Ok(()) => ControlAuthOutcome::SignedOut,
+            Err(error) => map_auth_outcome(error),
+        }
+    }
+
+    async fn profile_configuration(&self) -> Result<ControlProfileConfiguration, ControlErrorCode> {
+        let configuration = self
+            .inner
+            .host
+            .profile_configuration()
+            .await
+            .map_err(|_| ControlErrorCode::Internal)?;
+        Ok(map_profile_configuration(configuration))
+    }
+
+    async fn validate_profile_configuration(
+        &self,
+        base_url: String,
+        display_label: String,
+    ) -> ControlProfileConfigurationOutcome {
+        let Some(_guard) =
+            ProfileConfigurationGuard::try_acquire(&self.inner.profile_configuration_in_flight)
+        else {
+            return ControlProfileConfigurationOutcome::Busy;
+        };
+        map_profile_outcome(
+            self.inner
+                .host
+                .validate_profile_configuration(base_url, display_label)
+                .await,
+        )
+    }
+
+    async fn configure_profile(
+        &self,
+        profile_id: String,
+        base_url: String,
+        display_label: String,
+    ) -> ControlProfileConfigurationOutcome {
+        let Some(_guard) =
+            ProfileConfigurationGuard::try_acquire(&self.inner.profile_configuration_in_flight)
+        else {
+            return ControlProfileConfigurationOutcome::Busy;
+        };
+        let Ok(profile_id) = profile_id.parse() else {
+            return ControlProfileConfigurationOutcome::InvalidConfiguration;
+        };
+        let outcome = self
+            .inner
+            .host
+            .configure_profile(profile_id, base_url, display_label)
+            .await;
+        let wire_outcome = map_profile_outcome(outcome);
+        if matches!(
+            wire_outcome,
+            ControlProfileConfigurationOutcome::Created
+                | ControlProfileConfigurationOutcome::Updated
+                | ControlProfileConfigurationOutcome::AlreadyConfigured
+        ) {
+            self.emit(ControlEvent::ProfileConfigurationChanged);
+        }
+        wire_outcome
+    }
+
+    async fn setup_library(&self, name: String, root_path: String) -> ControlLibrarySetupOutcome {
+        let Some(_guard) = LibrarySetupGuard::try_acquire(&self.inner.library_setup_in_flight)
+        else {
+            return ControlLibrarySetupOutcome::Busy;
+        };
+        let Some(context) = &self.inner.library_setup else {
+            return ControlLibrarySetupOutcome::Unavailable;
+        };
+        if name.trim().is_empty()
+            || name.len() > synveil_core::MAX_LOGICAL_NAME_BYTES
+            || name.chars().any(char::is_control)
+        {
+            return ControlLibrarySetupOutcome::InvalidName;
+        }
+        if root_path.is_empty()
+            || root_path.len() > 16 * 1024
+            || root_path.chars().any(char::is_control)
+        {
+            return ControlLibrarySetupOutcome::InvalidRoot;
+        }
+        let root = PathBuf::from(root_path);
+        let canonical_root = match synveil_client_sync::validate_onboarding_root(&root) {
+            Ok(root) => root,
+            Err(_) => return ControlLibrarySetupOutcome::InvalidRoot,
+        };
+        let pending_id = match crate::DesktopClientConfig::pending_library_for_root(
+            context.platform.as_ref(),
+            context.profile_id,
+            &canonical_root,
+        ) {
+            Ok(id) => id,
+            Err(error) => return map_library_setup_config_error(error),
+        };
+        if pending_id.is_none() {
+            match crate::DesktopClientConfig::root_overlaps_existing(
+                context.platform.as_ref(),
+                context.profile_id,
+                &canonical_root,
+            ) {
+                Ok(true) => return ControlLibrarySetupOutcome::AlreadyConfigured,
+                Ok(false) => {}
+                Err(error) => return map_library_setup_config_error(error),
+            }
+        }
+        let library_id = pending_id.unwrap_or_else(LibraryId::new);
+        if let Err(error) = crate::DesktopClientConfig::append_pending_library_binding(
+            context.platform.as_ref(),
+            context.profile_id,
+            library_id,
+            &canonical_root,
+        ) {
+            return map_library_setup_config_error(error);
+        }
+        let setup = match self
+            .inner
+            .host
+            .prepare_library(library_id, name, canonical_root)
+            .await
+        {
+            Ok(setup) => setup,
+            Err(error) => return map_library_setup_error(error),
+        };
+        if let Err(error) = crate::DesktopClientConfig::append_library_binding(
+            context.platform.as_ref(),
+            context.profile_id,
+            setup.library_id(),
+            setup.root(),
+        ) {
+            return map_library_setup_config_error(error);
+        }
+        match self.inner.host.register_prepared_library(setup).await {
+            Ok(_) => {
+                self.emit(ControlEvent::ProfileConfigurationChanged);
+                ControlLibrarySetupOutcome::Configured
+            }
+            Err(error) => map_library_setup_error(error),
+        }
     }
 
     /// Request the outer process lifecycle to perform graceful shutdown. This
@@ -805,6 +1449,341 @@ impl DesktopControlHandle {
     }
 }
 
+struct AuthOperationGuard<'a> {
+    in_flight: &'a AtomicBool,
+}
+
+impl<'a> AuthOperationGuard<'a> {
+    fn try_acquire(in_flight: &'a AtomicBool) -> Option<Self> {
+        if in_flight
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            Some(Self { in_flight })
+        } else {
+            None
+        }
+    }
+}
+
+impl Drop for AuthOperationGuard<'_> {
+    fn drop(&mut self) {
+        self.in_flight.store(false, Ordering::Release);
+    }
+}
+
+struct ProfileConfigurationGuard<'a> {
+    in_flight: &'a AtomicBool,
+}
+
+impl<'a> ProfileConfigurationGuard<'a> {
+    fn try_acquire(in_flight: &'a AtomicBool) -> Option<Self> {
+        if in_flight
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            Some(Self { in_flight })
+        } else {
+            None
+        }
+    }
+}
+
+impl Drop for ProfileConfigurationGuard<'_> {
+    fn drop(&mut self) {
+        self.in_flight.store(false, Ordering::Release);
+    }
+}
+
+struct LibrarySetupGuard<'a> {
+    in_flight: &'a AtomicBool,
+}
+
+impl<'a> LibrarySetupGuard<'a> {
+    fn try_acquire(in_flight: &'a AtomicBool) -> Option<Self> {
+        if in_flight
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            Some(Self { in_flight })
+        } else {
+            None
+        }
+    }
+}
+
+impl Drop for LibrarySetupGuard<'_> {
+    fn drop(&mut self) {
+        self.in_flight.store(false, Ordering::Release);
+    }
+}
+
+struct SyncControlOperationGuard<'a> {
+    in_flight: &'a AtomicBool,
+}
+
+struct AttentionOperationGuard<'a> {
+    in_flight: &'a AtomicBool,
+}
+
+impl<'a> AttentionOperationGuard<'a> {
+    fn try_acquire(in_flight: &'a AtomicBool) -> Option<Self> {
+        if in_flight
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            Some(Self { in_flight })
+        } else {
+            None
+        }
+    }
+}
+
+impl Drop for AttentionOperationGuard<'_> {
+    fn drop(&mut self) {
+        self.in_flight.store(false, Ordering::Release);
+    }
+}
+
+impl<'a> SyncControlOperationGuard<'a> {
+    fn try_acquire(in_flight: &'a AtomicBool) -> Option<Self> {
+        if in_flight
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            Some(Self { in_flight })
+        } else {
+            None
+        }
+    }
+}
+
+impl Drop for SyncControlOperationGuard<'_> {
+    fn drop(&mut self) {
+        self.in_flight.store(false, Ordering::Release);
+    }
+}
+
+fn map_profile_configuration(
+    configuration: DesktopProfileConfiguration,
+) -> ControlProfileConfiguration {
+    let server_info = configuration
+        .profile
+        .map(|profile| ControlProfileServerInfo {
+            profile_id: profile.profile_id().to_string(),
+            base_url: profile.base_url().as_str().to_owned(),
+            display_label: profile.display_label().to_owned(),
+            created_at_ms: profile.created_at_ms(),
+        });
+    ControlProfileConfiguration {
+        configured: server_info.is_some(),
+        authenticated: configuration.authenticated,
+        server_info,
+    }
+}
+
+const CONTROL_MAX_ATTENTION_PATH_BYTES: usize = 512;
+
+fn bounded_attention_path(
+    path: Option<&synveil_client_sync::ManagedRelativePath>,
+) -> Option<String> {
+    let value = path?.as_str();
+    if value.len() <= CONTROL_MAX_ATTENTION_PATH_BYTES {
+        return Some(value.to_owned());
+    }
+    let mut end = CONTROL_MAX_ATTENTION_PATH_BYTES - '…'.len_utf8();
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut bounded = value[..end].to_owned();
+    bounded.push('…');
+    Some(bounded)
+}
+
+fn map_attention_item(item: &SyncConflictItem) -> ControlAttentionItem {
+    let mut supported_actions = vec![ControlConflictAction::AcceptRemote];
+    if item.supports_resolution(SyncConflictResolution::RetryLocalAgainstCurrentBase) {
+        supported_actions.push(ControlConflictAction::RetryLocalAgainstCurrentBase);
+    }
+    ControlAttentionItem {
+        attention_id: item.conflict_id().to_string(),
+        library_id: item.library_id().to_string(),
+        conflict_id: item.conflict_id().to_string(),
+        intent_id: item.intent_id().to_string(),
+        node_id: item.node_id().map(|value| value.to_string()),
+        category: item.kind().as_str().to_owned(),
+        relative_path: bounded_attention_path(item.relative_path()),
+        previous_relative_path: bounded_attention_path(item.previous_relative_path()),
+        item_kind: item.item_kind().map(|kind| match kind {
+            synveil_client_sync::LocalObjectKind::File => ControlAttentionItemKind::File,
+            synveil_client_sync::LocalObjectKind::Directory => ControlAttentionItemKind::Directory,
+        }),
+        local_length: item.local_length(),
+        remote_length: item.remote_length(),
+        local_base_revision: item.local_base_revision().map(|value| value.get()),
+        remote_observed_revision: item.remote_observed_revision().map(|value| value.get()),
+        remote_observed_state: item
+            .remote_observed_state()
+            .map(|value| value.as_str().to_owned()),
+        detected_at_ms: item.detected_at_ms(),
+        supported_actions,
+    }
+}
+
+fn map_attention_snapshot(snapshot: SyncAttentionSnapshot) -> ControlAttentionSnapshot {
+    let summary = snapshot.summary();
+    ControlAttentionSnapshot {
+        summary: ControlAttentionSummary {
+            total_count: summary.total_count(),
+            conflict_count: summary.conflict_count(),
+            other_count: summary.other_count(),
+        },
+        libraries: snapshot
+            .libraries()
+            .iter()
+            .map(|library| ControlAttentionLibrarySummary {
+                library_id: library.library_id().to_string(),
+                conflict_count: library.conflict_count(),
+                other_count: library.other_count(),
+            })
+            .collect(),
+        items: snapshot
+            .conflict_items()
+            .iter()
+            .map(map_attention_item)
+            .collect(),
+        truncated: snapshot.truncated(),
+    }
+}
+
+fn map_profile_outcome(
+    outcome: DesktopProfileConfigurationOutcome,
+) -> ControlProfileConfigurationOutcome {
+    match outcome {
+        DesktopProfileConfigurationOutcome::Validated => {
+            ControlProfileConfigurationOutcome::Validated
+        }
+        DesktopProfileConfigurationOutcome::Created => ControlProfileConfigurationOutcome::Created,
+        DesktopProfileConfigurationOutcome::Updated => ControlProfileConfigurationOutcome::Updated,
+        DesktopProfileConfigurationOutcome::AlreadyConfigured => {
+            ControlProfileConfigurationOutcome::AlreadyConfigured
+        }
+        DesktopProfileConfigurationOutcome::InvalidConfiguration => {
+            ControlProfileConfigurationOutcome::InvalidConfiguration
+        }
+        DesktopProfileConfigurationOutcome::InvalidServerAddress => {
+            ControlProfileConfigurationOutcome::InvalidServerAddress
+        }
+        DesktopProfileConfigurationOutcome::NetworkUnavailable => {
+            ControlProfileConfigurationOutcome::NetworkUnavailable
+        }
+        DesktopProfileConfigurationOutcome::Timeout => ControlProfileConfigurationOutcome::Timeout,
+        DesktopProfileConfigurationOutcome::TlsFailure => {
+            ControlProfileConfigurationOutcome::TlsFailure
+        }
+        DesktopProfileConfigurationOutcome::IncompatibleServer => {
+            ControlProfileConfigurationOutcome::IncompatibleServer
+        }
+        DesktopProfileConfigurationOutcome::ServerFailure => {
+            ControlProfileConfigurationOutcome::ServerFailure
+        }
+        DesktopProfileConfigurationOutcome::PersistenceFailure => {
+            ControlProfileConfigurationOutcome::PersistenceFailure
+        }
+    }
+}
+
+fn map_library_setup_config_error(
+    error: crate::DesktopClientConfigError,
+) -> ControlLibrarySetupOutcome {
+    match error {
+        crate::DesktopClientConfigError::Client(
+            synveil_client_sync::ClientSyncError::InvalidRoot
+            | synveil_client_sync::ClientSyncError::RootUnavailable
+            | synveil_client_sync::ClientSyncError::RootRedirected,
+        )
+        | crate::DesktopClientConfigError::InvalidRootPath => {
+            ControlLibrarySetupOutcome::InvalidRoot
+        }
+        _ => ControlLibrarySetupOutcome::PersistenceFailure,
+    }
+}
+
+fn map_library_setup_error(error: DesktopLibrarySetupError) -> ControlLibrarySetupOutcome {
+    match error {
+        DesktopLibrarySetupError::HostUnavailable
+        | DesktopLibrarySetupError::ProfileUnavailable => ControlLibrarySetupOutcome::Unavailable,
+        DesktopLibrarySetupError::AuthenticationRequired => {
+            ControlLibrarySetupOutcome::AuthenticationRequired
+        }
+        DesktopLibrarySetupError::InvalidName => ControlLibrarySetupOutcome::InvalidName,
+        DesktopLibrarySetupError::InvalidRoot => ControlLibrarySetupOutcome::InvalidRoot,
+        DesktopLibrarySetupError::AlreadyRegistered => {
+            ControlLibrarySetupOutcome::AlreadyConfigured
+        }
+        DesktopLibrarySetupError::ServerIdentityConflict => {
+            ControlLibrarySetupOutcome::ServerIdentityConflict
+        }
+        DesktopLibrarySetupError::ResponseUnknown => ControlLibrarySetupOutcome::OutcomeUnknown,
+        DesktopLibrarySetupError::Remote(error) => map_library_setup_remote_error(error),
+        DesktopLibrarySetupError::Client(error) => match error {
+            synveil_client_sync::ClientSyncError::AuthenticationRequired => {
+                ControlLibrarySetupOutcome::AuthenticationRequired
+            }
+            synveil_client_sync::ClientSyncError::InvalidRoot
+            | synveil_client_sync::ClientSyncError::RootUnavailable
+            | synveil_client_sync::ClientSyncError::RootRedirected => {
+                ControlLibrarySetupOutcome::InvalidRoot
+            }
+            synveil_client_sync::ClientSyncError::Remote(error) => {
+                map_library_setup_remote_error(error)
+            }
+            _ => ControlLibrarySetupOutcome::PersistenceFailure,
+        },
+    }
+}
+
+fn map_library_setup_remote_error(
+    error: synveil_client_sync::RemoteError,
+) -> ControlLibrarySetupOutcome {
+    use synveil_client_sync::RemoteErrorKind;
+    match error.kind() {
+        RemoteErrorKind::Offline => ControlLibrarySetupOutcome::NetworkUnavailable,
+        RemoteErrorKind::Timeout => ControlLibrarySetupOutcome::Timeout,
+        RemoteErrorKind::Tls => ControlLibrarySetupOutcome::TlsFailure,
+        RemoteErrorKind::Unavailable | RemoteErrorKind::Internal | RemoteErrorKind::RateLimited => {
+            ControlLibrarySetupOutcome::ServerUnavailable
+        }
+        RemoteErrorKind::AuthRequired
+        | RemoteErrorKind::Forbidden
+        | RemoteErrorKind::DeviceRevoked => ControlLibrarySetupOutcome::AuthenticationRequired,
+        RemoteErrorKind::Protocol
+        | RemoteErrorKind::Rejected
+        | RemoteErrorKind::NotFound
+        | RemoteErrorKind::Integrity
+        | RemoteErrorKind::Conflict
+        | RemoteErrorKind::CheckpointConflict
+        | RemoteErrorKind::InvalidEvidence
+        | RemoteErrorKind::RebaselineRequired
+        | RemoteErrorKind::BodyLimit
+        | RemoteErrorKind::Redirect => ControlLibrarySetupOutcome::ProtocolError,
+    }
+}
+
+fn map_auth_outcome(error: DesktopAuthError) -> ControlAuthOutcome {
+    match error {
+        DesktopAuthError::InvalidCredentials => ControlAuthOutcome::InvalidCredentials,
+        DesktopAuthError::NetworkUnavailable => ControlAuthOutcome::NetworkUnavailable,
+        DesktopAuthError::RateLimited => ControlAuthOutcome::RateLimited,
+        DesktopAuthError::SecureStoreUnavailable => ControlAuthOutcome::SecureStoreUnavailable,
+        DesktopAuthError::HostUnavailable
+        | DesktopAuthError::ProfileUnavailable
+        | DesktopAuthError::ProfileMismatch
+        | DesktopAuthError::ServerUnavailable => ControlAuthOutcome::ServerUnavailable,
+        DesktopAuthError::Protocol => ControlAuthOutcome::ProtocolError,
+    }
+}
+
 fn process_status_code(status: DesktopProcessStatus) -> u8 {
     match status {
         DesktopProcessStatus::Starting => 0,
@@ -843,6 +1822,13 @@ fn control_root_state(state: RootAvailability) -> ControlRootState {
         RootAvailability::Available => ControlRootState::Available,
         RootAvailability::Unavailable => ControlRootState::Unavailable,
         RootAvailability::Recovering => ControlRootState::Recovering,
+    }
+}
+
+fn control_sync_control_state(state: SyncRuntimeControlState) -> ControlSyncControlState {
+    match state {
+        SyncRuntimeControlState::Running => ControlSyncControlState::Running,
+        SyncRuntimeControlState::PausedByUser => ControlSyncControlState::PausedByUser,
     }
 }
 
@@ -1268,8 +2254,12 @@ async fn serve_connection_inner(
                 ControlCapability::ProcessStatus,
                 ControlCapability::LibraryStatus,
                 ControlCapability::SyncNow,
+                ControlCapability::SyncControl,
                 ControlCapability::Shutdown,
                 ControlCapability::Events,
+                ControlCapability::ProfileConfiguration,
+                ControlCapability::LibrarySetup,
+                ControlCapability::Attention,
             ],
             error: None,
         },
@@ -1308,7 +2298,7 @@ async fn serve_connection_inner(
             return Ok(());
         }
 
-        let response = dispatch_request(control, request);
+        let response = dispatch_request(control, request).await;
         let should_close = matches!(&response.body, ControlResponseBody::ShutdownAccepted);
         let write_result = write_control_frame(io, &response).await;
         if should_close {
@@ -1359,7 +2349,10 @@ where
         .map_err(DesktopControlClientError::Frame)
 }
 
-fn dispatch_request(control: &DesktopControlHandle, request: ControlRequest) -> ControlResponse {
+async fn dispatch_request(
+    control: &DesktopControlHandle,
+    request: ControlRequest,
+) -> ControlResponse {
     let request_id = request.request_id;
     let body = match request.command {
         ControlCommand::Ping => ControlResponseBody::Pong {
@@ -1371,6 +2364,32 @@ fn dispatch_request(control: &DesktopControlHandle, request: ControlRequest) -> 
         ControlCommand::ListLibraries => ControlResponseBody::Libraries {
             status: control.library_list(),
         },
+        ControlCommand::GetAttentionSnapshot => match control.attention_snapshot().await {
+            Ok(snapshot) => ControlResponseBody::AttentionSnapshot { snapshot },
+            Err(error) => return ControlResponse::error(request_id, error),
+        },
+        ControlCommand::ResolveConflict {
+            library_id,
+            conflict_id,
+            intent_id,
+            detected_at_ms,
+            action,
+        } => {
+            let Ok(library_id) = library_id.parse::<LibraryId>() else {
+                return ControlResponse::error(request_id, ControlErrorCode::RequestInvalid);
+            };
+            let Ok(conflict_id) = conflict_id.parse::<SyncConflictId>() else {
+                return ControlResponse::error(request_id, ControlErrorCode::RequestInvalid);
+            };
+            let Ok(intent_id) = intent_id.parse::<OutboundIntentId>() else {
+                return ControlResponse::error(request_id, ControlErrorCode::RequestInvalid);
+            };
+            ControlResponseBody::ConflictResolution {
+                result: control
+                    .resolve_conflict(library_id, conflict_id, intent_id, detected_at_ms, action)
+                    .await,
+            }
+        }
         ControlCommand::GetLibraryStatus { library_id } => {
             let Ok(library_id) = library_id.parse::<LibraryId>() else {
                 return ControlResponse::error(request_id, ControlErrorCode::RequestInvalid);
@@ -1398,6 +2417,9 @@ fn dispatch_request(control: &DesktopControlHandle, request: ControlRequest) -> 
                         result: ControlSyncScheduleResult::AlreadyRunningFollowupRecorded,
                     }
                 }
+                SyncRuntimeWakeResult::PausedByUser => ControlResponseBody::SyncNow {
+                    result: ControlSyncScheduleResult::Paused,
+                },
                 SyncRuntimeWakeResult::RuntimeStopped => {
                     return ControlResponse::error(request_id, ControlErrorCode::RuntimeStopped);
                 }
@@ -1406,6 +2428,24 @@ fn dispatch_request(control: &DesktopControlHandle, request: ControlRequest) -> 
                 }
             }
         }
+        ControlCommand::GetSyncControlState => ControlResponseBody::SyncControlState {
+            state: control.sync_control_state(),
+        },
+        ControlCommand::PauseSync => ControlResponseBody::SyncControl {
+            result: control.set_sync_paused(true).await,
+        },
+        ControlCommand::ResumeSync => ControlResponseBody::SyncControl {
+            result: control.set_sync_paused(false).await,
+        },
+        ControlCommand::SetupLibrary { name, root_path } => ControlResponseBody::LibrarySetup {
+            outcome: control.setup_library(name, root_path).await,
+        },
+        ControlCommand::Authenticate { enrollment_token } => ControlResponseBody::Authenticate {
+            result: control.authenticate(enrollment_token).await,
+        },
+        ControlCommand::SignOut => ControlResponseBody::SignOut {
+            result: control.sign_out().await,
+        },
         ControlCommand::Shutdown => {
             if control.request_shutdown() {
                 ControlResponseBody::ShutdownAccepted
@@ -1420,6 +2460,39 @@ fn dispatch_request(control: &DesktopControlHandle, request: ControlRequest) -> 
         }
         ControlCommand::Unsupported => {
             return ControlResponse::error(request_id, ControlErrorCode::UnknownCommand);
+        }
+        ControlCommand::GetProfileConfiguration => match control.profile_configuration().await {
+            Ok(configuration) => ControlResponseBody::ProfileConfiguration { configuration },
+            Err(error) => return ControlResponse::error(request_id, error),
+        },
+        ControlCommand::ValidateProfileConfiguration {
+            base_url,
+            display_label,
+        } => {
+            let outcome = control
+                .validate_profile_configuration(base_url, display_label)
+                .await;
+            ControlResponseBody::ProfileConfigurationResult { outcome }
+        }
+        ControlCommand::CreateOrConfigureProfile {
+            profile_id,
+            base_url,
+            display_label,
+        } => {
+            let outcome = control
+                .configure_profile(profile_id, base_url, display_label)
+                .await;
+            ControlResponseBody::ProfileConfigurationResult { outcome }
+        }
+        ControlCommand::UpdateProfileConfiguration {
+            profile_id,
+            base_url,
+            display_label,
+        } => {
+            let outcome = control
+                .configure_profile(profile_id, base_url, display_label)
+                .await;
+            ControlResponseBody::ProfileConfigurationResult { outcome }
         }
     };
     ControlResponse { request_id, body }
@@ -1446,6 +2519,11 @@ fn translate_runtime_event(control: &DesktopControlHandle, event: SyncRuntimeEve
                 state: control.process_status(),
             });
         }
+        SyncRuntimeEvent::SyncControlStateChanged { state } => {
+            control.emit(ControlEvent::SyncControlStateChanged {
+                state: control_sync_control_state(state),
+            });
+        }
         SyncRuntimeEvent::CycleStarted { library_id }
         | SyncRuntimeEvent::BackoffScheduled { library_id, .. }
         | SyncRuntimeEvent::AuthBlocked { library_id }
@@ -1465,6 +2543,7 @@ fn translate_runtime_event(control: &DesktopControlHandle, event: SyncRuntimeEve
             control.emit(ControlEvent::LibraryStatusChanged {
                 library_id: library_id.to_string(),
             });
+            control.emit(ControlEvent::AttentionStateChanged);
         }
     }
 }
@@ -1576,6 +2655,38 @@ impl DesktopControlClient {
         }
     }
 
+    pub async fn attention_snapshot(
+        &mut self,
+    ) -> Result<ControlAttentionSnapshot, DesktopControlClientError> {
+        match self.exchange(ControlCommand::GetAttentionSnapshot).await? {
+            ControlResponseBody::AttentionSnapshot { snapshot } => Ok(snapshot),
+            _ => Err(DesktopControlClientError::UnexpectedResponse),
+        }
+    }
+
+    pub async fn resolve_conflict(
+        &mut self,
+        library_id: LibraryId,
+        conflict_id: SyncConflictId,
+        intent_id: OutboundIntentId,
+        detected_at_ms: u64,
+        action: ControlConflictAction,
+    ) -> Result<ControlConflictResolutionOutcome, DesktopControlClientError> {
+        match self
+            .exchange(ControlCommand::ResolveConflict {
+                library_id: library_id.to_string(),
+                conflict_id: conflict_id.to_string(),
+                intent_id: intent_id.to_string(),
+                detected_at_ms,
+                action,
+            })
+            .await?
+        {
+            ControlResponseBody::ConflictResolution { result } => Ok(result),
+            _ => Err(DesktopControlClientError::UnexpectedResponse),
+        }
+    }
+
     pub async fn library_status(
         &mut self,
         library_id: LibraryId,
@@ -1608,9 +2719,125 @@ impl DesktopControlClient {
         }
     }
 
+    pub async fn sync_control_state(
+        &mut self,
+    ) -> Result<ControlSyncControlState, DesktopControlClientError> {
+        match self.exchange(ControlCommand::GetSyncControlState).await? {
+            ControlResponseBody::SyncControlState { state } => Ok(state),
+            _ => Err(DesktopControlClientError::UnexpectedResponse),
+        }
+    }
+
+    pub async fn pause_sync(
+        &mut self,
+    ) -> Result<ControlSyncControlResult, DesktopControlClientError> {
+        match self.exchange(ControlCommand::PauseSync).await? {
+            ControlResponseBody::SyncControl { result } => Ok(result),
+            _ => Err(DesktopControlClientError::UnexpectedResponse),
+        }
+    }
+
+    pub async fn resume_sync(
+        &mut self,
+    ) -> Result<ControlSyncControlResult, DesktopControlClientError> {
+        match self.exchange(ControlCommand::ResumeSync).await? {
+            ControlResponseBody::SyncControl { result } => Ok(result),
+            _ => Err(DesktopControlClientError::UnexpectedResponse),
+        }
+    }
+
+    pub async fn setup_library(
+        &mut self,
+        name: String,
+        root_path: String,
+    ) -> Result<ControlLibrarySetupOutcome, DesktopControlClientError> {
+        match self
+            .exchange(ControlCommand::SetupLibrary { name, root_path })
+            .await?
+        {
+            ControlResponseBody::LibrarySetup { outcome } => Ok(outcome),
+            _ => Err(DesktopControlClientError::UnexpectedResponse),
+        }
+    }
+
+    /// Exchange one bounded enrollment secret through the process-owned host.
+    /// The secret is copied into a zeroizing wire wrapper only for this
+    /// request and is never retained by the client after the exchange.
+    pub async fn authenticate(
+        &mut self,
+        enrollment_secret: &EnrollmentSecret,
+    ) -> Result<ControlAuthOutcome, DesktopControlClientError> {
+        match self
+            .exchange(ControlCommand::Authenticate {
+                enrollment_token: ControlAuthInput::from_secret(enrollment_secret),
+            })
+            .await?
+        {
+            ControlResponseBody::Authenticate { result } => Ok(result),
+            _ => Err(DesktopControlClientError::UnexpectedResponse),
+        }
+    }
+
+    /// Explicitly forget the profile-bound local credential through the
+    /// process-owned lifecycle. It is not coupled to connection/process quit.
+    pub async fn sign_out(&mut self) -> Result<ControlAuthOutcome, DesktopControlClientError> {
+        match self.exchange(ControlCommand::SignOut).await? {
+            ControlResponseBody::SignOut { result } => Ok(result),
+            _ => Err(DesktopControlClientError::UnexpectedResponse),
+        }
+    }
+
     pub async fn shutdown(&mut self) -> Result<(), DesktopControlClientError> {
         match self.exchange(ControlCommand::Shutdown).await? {
             ControlResponseBody::ShutdownAccepted => Ok(()),
+            _ => Err(DesktopControlClientError::UnexpectedResponse),
+        }
+    }
+
+    pub async fn configure_profile(
+        &mut self,
+        profile_id: String,
+        base_url: String,
+        display_label: String,
+    ) -> Result<ControlProfileConfigurationOutcome, DesktopControlClientError> {
+        match self
+            .exchange(ControlCommand::CreateOrConfigureProfile {
+                profile_id,
+                base_url,
+                display_label,
+            })
+            .await?
+        {
+            ControlResponseBody::ProfileConfigurationResult { outcome } => Ok(outcome),
+            _ => Err(DesktopControlClientError::UnexpectedResponse),
+        }
+    }
+
+    pub async fn validate_profile_configuration(
+        &mut self,
+        base_url: String,
+        display_label: String,
+    ) -> Result<ControlProfileConfigurationOutcome, DesktopControlClientError> {
+        match self
+            .exchange(ControlCommand::ValidateProfileConfiguration {
+                base_url,
+                display_label,
+            })
+            .await?
+        {
+            ControlResponseBody::ProfileConfigurationResult { outcome } => Ok(outcome),
+            _ => Err(DesktopControlClientError::UnexpectedResponse),
+        }
+    }
+
+    pub async fn get_profile_configuration(
+        &mut self,
+    ) -> Result<ControlProfileConfiguration, DesktopControlClientError> {
+        match self
+            .exchange(ControlCommand::GetProfileConfiguration)
+            .await?
+        {
+            ControlResponseBody::ProfileConfiguration { configuration } => Ok(configuration),
             _ => Err(DesktopControlClientError::UnexpectedResponse),
         }
     }
@@ -2308,6 +3535,115 @@ mod tests {
         ] {
             assert!(!serialized.to_ascii_lowercase().contains(forbidden));
         }
+    }
+
+    #[test]
+    fn authentication_wire_input_is_bounded_and_debug_redacted() {
+        let secret = EnrollmentSecret::from_bytes([0x5a; 32]);
+        let input = ControlAuthInput::from_secret(&secret);
+        let request = ControlRequest {
+            request_id: 9,
+            command: ControlCommand::Authenticate {
+                enrollment_token: input.clone(),
+            },
+        };
+        let debug = format!("{request:?}");
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains(secret.expose_secret()));
+
+        let encoded = serde_json::to_string(&request).expect("auth request serializes");
+        assert!(encoded.contains(secret.expose_secret()));
+        let decoded: ControlRequest = serde_json::from_str(&encoded).expect("auth request decodes");
+        assert_eq!(decoded, request);
+
+        let oversized = format!(
+            r#"{{"request_id":1,"command":{{"kind":"authenticate","enrollment_token":"{}"}}}}"#,
+            "x".repeat(DEVICE_SECRET_ENCODED_BYTES + 1)
+        );
+        assert!(serde_json::from_str::<ControlRequest>(&oversized).is_err());
+    }
+
+    #[test]
+    fn authentication_operation_admission_stays_held_until_guard_drops() {
+        let in_flight = AtomicBool::new(false);
+        let guard = AuthOperationGuard::try_acquire(&in_flight).expect("first admission");
+        assert!(in_flight.load(Ordering::Acquire));
+        assert!(AuthOperationGuard::try_acquire(&in_flight).is_none());
+        assert!(in_flight.load(Ordering::Acquire));
+        drop(guard);
+        assert!(!in_flight.load(Ordering::Acquire));
+        assert!(AuthOperationGuard::try_acquire(&in_flight).is_some());
+    }
+
+    #[test]
+    fn attention_operation_admission_stays_held_until_guard_drops() {
+        let in_flight = AtomicBool::new(false);
+        let guard = AttentionOperationGuard::try_acquire(&in_flight).expect("first admission");
+        assert!(in_flight.load(Ordering::Acquire));
+        assert!(AttentionOperationGuard::try_acquire(&in_flight).is_none());
+        drop(guard);
+        assert!(!in_flight.load(Ordering::Acquire));
+        assert!(AttentionOperationGuard::try_acquire(&in_flight).is_some());
+    }
+
+    #[test]
+    fn attention_path_projection_is_utf8_safe_and_bounded() {
+        let path = synveil_client_sync::ManagedRelativePath::new(format!(
+            "folder/{}file.txt",
+            "x/".repeat(CONTROL_MAX_ATTENTION_PATH_BYTES)
+        ))
+        .expect("fixture path");
+        let projected = bounded_attention_path(Some(&path)).expect("bounded path");
+        assert!(projected.len() <= CONTROL_MAX_ATTENTION_PATH_BYTES);
+        assert!(projected.ends_with('…'));
+        assert!(projected.is_char_boundary(projected.len()));
+    }
+
+    #[tokio::test]
+    async fn invalid_auth_input_is_rejected_before_host_access() {
+        let root = std::env::temp_dir().join(format!("sv96-auth-invalid-{}", uuid::Uuid::now_v7()));
+        fs::create_dir_all(&root).expect("fixture root");
+        let state = Arc::new(
+            LocalStateStore::open(&LocalStateConfig::new(root.join("state.sqlite3")))
+                .await
+                .expect("fixture state"),
+        );
+        let host = DesktopSyncHost::new(
+            state.clone(),
+            Arc::new(UnsupportedSecureSecretStore::new()),
+            DesktopSyncHostConfig::default(),
+            Vec::<synveil_client_sync::DesktopSyncLibraryConfig>::new(),
+        )
+        .await
+        .expect("empty host");
+        host.start().await.expect("host start");
+        let control = DesktopControlHandle::new(host.handle(), DesktopProcessStatus::Running);
+        let response = dispatch_request(
+            &control,
+            ControlRequest {
+                request_id: 1,
+                command: ControlCommand::Authenticate {
+                    enrollment_token: ControlAuthInput(Zeroizing::new("not-a-token".to_owned())),
+                },
+            },
+        )
+        .await;
+        assert_eq!(
+            response.body,
+            ControlResponseBody::Authenticate {
+                result: ControlAuthOutcome::InvalidCredentials,
+            }
+        );
+        assert!(
+            state
+                .profile_enrollment(test_profile())
+                .await
+                .expect("state read")
+                .is_none()
+        );
+        host.shutdown().await.expect("host stop");
+        state.close_pool().await;
+        fs::remove_dir_all(&root).expect("fixture cleanup");
     }
 
     #[cfg(unix)]

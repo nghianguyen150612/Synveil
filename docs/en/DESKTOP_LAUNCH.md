@@ -224,3 +224,86 @@ PostgreSQL integration tests remain unverified when
 Prompt 99 changes no server migration, client schema, HTTP route, OpenAPI
 operation, or web feature. The next phase is Prompt 100 checkpointing and
 release-gate ownership, not a second launch implementation.
+
+## Authentication is independent of launch and quit (Prompt 101)
+
+Prompt 101 does not change process launch ownership. The background
+`synveil-client` remains the owner of HTTP enrollment, profile-bound
+`LocalStateStore`/`SecretStore` access, runtime wakeups, and credential reload.
+The Qt shell only exposes a masked, transient enrollment field and routes the
+request through `DesktopController` and the existing Prompt 96 local IPC.
+
+GUI close, tray Quit, background-client restart, and process termination are
+not Sign Out. They do not delete the durable credential or send a credential
+change wake. Explicit Sign Out is a controller command that reaches the
+background host, writes the existing forgotten marker, completes secure-store
+cleanup, and only then wakes affected libraries. A cleanup failure returns a
+safe typed result and suppresses the wake.
+
+After a background-client restart, durable profile metadata and the secure
+credential are reloaded by the client. After a GUI restart, the controller
+reconstructs safe auth status and the Sign Out affordance only; no enrollment
+token or bearer value is sent to QML. If IPC response is lost, the controller
+reports `OutcomeUnknown` and does not replay enrollment or Sign Out on
+reconnect. The 69-byte bound, one-auth-operation gate, generic results, and
+profile isolation apply equally to supervised and direct client launch.
+
+Prompt 101 adds no supervisor registration, package payload, server route,
+OpenAPI operation, schema migration, installer behavior, or platform-specific
+credential store. Live enrollment, restart recovery, and native Windows
+execution remain explicit validation gates. See
+[`ADR-042`](../adr/ADR-042-secure-desktop-authentication-and-credential-lifecycle.md).
+
+## Profile onboarding is client-owned (Prompt 102)
+
+On a first launch, the desktop creates only its non-secret process profile
+identity and starts the existing client/control process with zero libraries.
+The native shell then collects a server origin and display label, while the
+client performs canonical parsing, anonymous readiness verification, and
+durable profile creation. A successful profile configuration transitions the
+controller from configuration-required to the Prompt 101 unauthenticated
+state; authentication remains a separate enrollment operation.
+
+The Edit connection path probes the replacement before durable apply. Changing
+the origin keeps the opaque profile ID but fences the old enrollment and
+SecretStore value before the runtime is woken. GUI close, tray Quit, and GUI
+restart remain independent of client lifecycle. Restart recovery reads the
+canonical manifest, SQLite profile state, and secure store rather than a QML
+cache. Migration `0007_profile_reconfiguration.sql` changes only client-side
+profile-ID trigger semantics; no server migration is required. See
+[`ADR-043`](../adr/ADR-043-desktop-profile-onboarding-and-connection-configuration.md).
+
+## Essential desktop settings (Prompt 105)
+
+The desktop settings panel exposes the existing launch manager's user-login
+startup registration. Linux uses the fixed `systemd --user` unit and Windows
+uses the current-user Task Scheduler definition. The panel reads an
+authoritative `Enabled`, `Disabled`, or generic `Unavailable` category and
+routes changes through typed manager methods. It does not create a second
+service, pass shell text, or place profile paths, URLs, credentials, or tokens
+in supervisor metadata.
+
+Disabling login startup affects future login only; it does not stop a running
+client. Enabling it does not spawn a duplicate. The bridge coalesces rapid
+toggle changes behind one in-flight bounded operation and refreshes the
+authoritative registration state after an error or uncertain result.
+
+Close-to-tray is a separate desktop-local `QSettings` preference. When it is
+enabled and Qt reports a real system tray, window close hides the shell;
+otherwise the existing controller-only shell exit path is used. Neither path
+sends client `Shutdown`, terminates `synveil-client`, changes global sync
+pause, or touches credentials. The setting is never stored in SQLite, the
+client manifest, `SecretStore`, the server, or IPC snapshots. See
+[`ADR-046`](../adr/ADR-046-essential-desktop-settings-and-user-sync-controls.md).
+
+## Interactive recovery launch (Prompt 107)
+
+When the controller reports the existing background client as unavailable, the
+desktop recovery card may call `BackgroundClientManager::ensure_running`. This
+is the same bounded manager used by startup settings: canonical packaged
+sibling resolution, no PATH lookup or shell interpolation, one in-flight
+attempt, and cooldown/coalescing remain in force. The recovery action does not
+enable login startup, pass a profile path or credential as an argument, or
+spawn a second client. The controller reconnects and refetches authoritative
+status after the launch request. See
+[`ADR-048`](../adr/ADR-048-production-desktop-recovery-and-resilience-ux.md).

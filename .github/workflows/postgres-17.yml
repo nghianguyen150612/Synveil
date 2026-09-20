@@ -230,18 +230,18 @@ jobs:
           cargo test -p synveil-api --test desktop_sync_host_postgres --locked -- --ignored --test-threads=1 --nocapture live_pg17_host
           cargo test -p synveil-client-sync --lib --locked host::tests
 
-      - name: "Prompt 95/97 — production desktop process, root, and controller lifecycle"
+      - name: "Prompt 95/97/101 — production desktop process, auth, root, and controller lifecycle"
         run: |
           set -euo pipefail
           DB="p95process_$(date +%s)_$$_${RANDOM}"
           psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "CREATE DATABASE \"$DB\""
           export SYNVEIL_TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$DB"
-          # The target exercises the production process bootstrap and the
-          # embedded Prompt 97 controller over the real PostgreSQL -> Axum
-          # -> device-auth -> HTTP -> SQLite path.
+          # The target exercises the production process bootstrap, Prompt 97
+          # controller, and Prompt 101 authentication lifecycle over the real
+          # PostgreSQL -> Axum -> device-auth -> HTTP -> SQLite path.
           # It is an ignored target by design and is a hard-fail acceptance
           # gate here; no retry or continue-on-error is permitted.
-          cargo test -p synveil-api --test desktop_process_postgres --locked -- --ignored --test-threads=1 --nocapture live_pg17_process
+          cargo test -p synveil-api --test desktop_process_postgres --locked -- --ignored --test-threads=1 --nocapture live_pg17_process_authentication_and_graceful_shutdown
           cargo test -p synveil-client --lib --locked
           cargo test -p synveil-client-sync --lib --locked host::tests
           cargo test -p synveil-client-sync --lib --locked runtime::tests

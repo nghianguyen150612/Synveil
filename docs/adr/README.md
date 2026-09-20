@@ -60,6 +60,13 @@ một tệp để trạng thái và hệ quả không bị lệch giữa hai b�
 | [039](ADR-039-ipc-backed-desktop-controller-core.md) | IPC-backed desktop controller core / Core controller desktop dựa trên IPC | Accepted / Chấp thuận — LOCKED |
 | [040](ADR-040-native-qt-desktop-shell.md) | Native Qt 6/QML desktop shell and system tray / Shell desktop native Qt 6/QML và system tray | Accepted / Chấp thuận — LOCKED Prompt 98 |
 | [041](ADR-041-production-desktop-launch-orchestration.md) | Production desktop launch orchestration and user-level background supervision / Điều phối khởi chạy desktop production và giám sát background theo user | Accepted — LOCKED |
+| [042](ADR-042-secure-desktop-authentication-and-credential-lifecycle.md) | Secure desktop authentication and credential lifecycle / Xác thực desktop an toàn và lifecycle credential | Accepted — LOCKED |
+| [043](ADR-043-desktop-profile-onboarding-and-connection-configuration.md) | Desktop profile onboarding and connection configuration / Onboarding profile desktop và cấu hình kết nối | Accepted — LOCKED Prompt 102 |
+| [044](ADR-044-desktop-library-onboarding-and-local-root-binding.md) | Desktop library onboarding and local root binding / Onboarding library desktop và bind root cục bộ | Accepted — LOCKED Prompt 103 |
+| [045](ADR-045-existing-root-bootstrap-and-initial-upload-admission.md) | Safe existing-root bootstrap and initial upload admission / Bootstrap root local đã có dữ liệu an toàn và admission upload ban đầu | Accepted — LOCKED Prompt 104 |
+| [046](ADR-046-essential-desktop-settings-and-user-sync-controls.md) | Essential desktop settings and user sync controls / Setting desktop thiết yếu và điều khiển sync của user | Accepted — LOCKED Prompt 105 |
+| [047](ADR-047-production-desktop-attention-and-conflict-resolution.md) | Production desktop attention and conflict resolution / Attention desktop production và phân giải conflict | Accepted — LOCKED Prompt 106 |
+| [048](ADR-048-production-desktop-recovery-and-resilience-ux.md) | Production desktop recovery and resilience UX / UX recovery và resilience desktop production | Accepted — LOCKED Prompt 107 |
 
 ## Process / Quy trình
 

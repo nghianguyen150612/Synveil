@@ -2,6 +2,7 @@
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QMetaObject>
+#include <QtCore/QSettings>
 
 namespace {
 
@@ -118,4 +119,16 @@ void native_tray_set_sync_enabled(NativeTray& tray, bool enabled) {
 
 void native_tray_set_tooltip(NativeTray& tray, const QString& tooltip) {
     tray.setTooltip(tooltip);
+}
+
+bool native_desktop_settings_load_close_to_tray() {
+    QSettings settings;
+    return settings.value(QStringLiteral("closeToTray"), true).toBool();
+}
+
+bool native_desktop_settings_save_close_to_tray(bool enabled) {
+    QSettings settings;
+    settings.setValue(QStringLiteral("closeToTray"), enabled);
+    settings.sync();
+    return settings.status() == QSettings::NoError;
 }

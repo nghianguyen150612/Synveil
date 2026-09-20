@@ -54,3 +54,6 @@ std::unique_ptr<NativeTray> native_tray_new(const QObject& bridge);
 bool native_tray_is_available(const NativeTray& tray);
 void native_tray_set_sync_enabled(NativeTray& tray, bool enabled);
 void native_tray_set_tooltip(NativeTray& tray, const QString& tooltip);
+
+bool native_desktop_settings_load_close_to_tray();
+bool native_desktop_settings_save_close_to_tray(bool enabled);

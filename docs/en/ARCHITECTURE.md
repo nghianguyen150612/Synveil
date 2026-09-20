@@ -541,7 +541,8 @@ deliberately split into three explicit ports:
   acknowledged checkpoints, operation receipts, bootstrap progress, node/path
   projections, and durable local apply issues.
 - `LocalReplica` is the only filesystem mutation surface. It binds an explicit
-  empty root to owner/device/library identity, validates each relative path and
+  user-selected root (including an ordinary existing tree when onboarding a
+  newly created remote library) to owner/device/library identity, validates each relative path and
   actual ancestor immediately before mutation, stages verified content, and
   exposes only typed directory/file/trash/restore/purge operations.
 
@@ -1103,3 +1104,165 @@ an installer wizard and package signing remain deferred. No server route,
 OpenAPI operation, web feature, schema migration, or synchronization domain
 entity is introduced. See [`ADR-041`](../adr/ADR-041-production-desktop-launch-orchestration.md)
 and [`DESKTOP_LAUNCH.md`](DESKTOP_LAUNCH.md).
+
+## Secure desktop authentication and credential lifecycle (Prompt 101)
+
+Prompt 101 adds the smallest authentication boundary compatible with the
+existing enrollment contract. The production topology is:
+
+```text
+QML transient masked field
+        -> DesktopUiBridge
+           -> DesktopController
+              -> Prompt 96 version-1 local IPC
+                 -> synveil-client DesktopControlHandle
+                    -> DesktopSyncHostHandle
+                       -> HttpEnrollmentClient
+                          -> existing device-enrollment exchange
+                             -> LocalStateStore + SecretStore
+                                -> CredentialChanged wake
+                                   -> SyncRuntime
+```
+
+The operation is a one-time device-enrollment grant exchange, not OAuth,
+password login, API-key import, session-cookie login, or a new auth scheme.
+`synveil-desktop` owns only transient collection and safe presentation. It has
+no HTTP, SQLite, SecretStore, bearer-token, raw response, or credential-ID
+surface. `synveil-client` remains the sole owner of the exchange, profile and
+device checks, durable credential promotion, and runtime wake.
+
+The QML field is password-masked, bounded to the existing 69-byte encoded
+secret limit, and cleared immediately after dispatch. The bridge does not
+parse, persist, log, snapshot, clipboard, or tray-display the value. The
+controller parses invalid input before IPC and admits only one auth operation
+per controller at a time through a bounded command path. Invalid input cannot
+create a task or write the SecretStore. The local command extension is
+`Authenticate { enrollment_token }` plus `SignOut`; the existing protocol-v1
+handshake/capability list remains compatible, and an older peer yields a safe
+protocol outcome for the unknown command.
+
+Successful authentication is ordered as exchange, receipt/profile/device
+validation, existing durable metadata and SecretStore write/readback/cleanup,
+then `CredentialChanged` wake, then runtime reload/status publication, then a
+category-only result. A failed durable operation never publishes the success
+result or its post-persistence wake. Sign Out uses the existing durable
+forgotten marker and SecretStore cleanup before sending the same runtime
+credential-change wake; it is independent of GUI close, tray quit, process
+restart, and client shutdown.
+
+An admitted command whose IPC response is lost is `OutcomeUnknown`. The
+controller refreshes authoritative status and never replays a one-time
+enrollment exchange or Sign Out after reconnect. A background-process restart
+reloads durable profile state; a GUI restart reconstructs only safe status and
+affordances. Profile/device/scope validation prevents one profile's credential
+from being promoted or waking another profile's libraries. No new server route,
+OpenAPI operation, schema migration, database table, or synchronization domain
+entity is introduced. The locked decision is in
+[`ADR-042`](../adr/ADR-042-secure-desktop-authentication-and-credential-lifecycle.md).
+
+## Desktop profile onboarding and connection configuration (Prompt 102)
+
+Prompt 102 keeps server/profile onboarding on the same ownership path:
+
+```text
+Qt/QML -> DesktopUiBridge -> DesktopController -> Prompt 96 local IPC
+        -> synveil-client -> DesktopSyncHost -> canonical profile store
+        -> existing rustls HTTP client -> GET /health/ready
+```
+
+The first-run manifest creates only the process-owned opaque UUIDv7 profile
+identity. A profile row and library rows are not inferred or fabricated; zero
+configured libraries is valid. `synveil-client` owns `ServerProfileId`, strict
+`CanonicalBaseUrl` parsing, readiness probing, SQLite persistence, and all
+credential lifecycle changes. QML receives only bounded URL/label metadata and
+typed generic outcomes.
+
+Production onboarding accepts strict HTTPS origin roots only. Hostnames,
+IPv4/IPv6 literals, custom valid ports, and one canonical trailing slash are
+handled by the existing parser; userinfo, query/fragment, subpaths, malformed
+ports, whitespace, unsupported schemes, and redirects fail closed. The
+explicit numeric-loopback HTTP constructor remains test-only. The readiness
+probe uses the existing anonymous `GET /health/ready` DTO and the existing
+rustls, timeout, redirect, proxy, body, and no-retry policy.
+
+Apply probes before the canonical durable write. A new profile is created,
+the same configuration is idempotent, and an origin edit preserves the opaque
+profile ID. Origin changes fence the prior enrollment and clean its
+profile-bound SecretStore value before committing the new origin; the runtime
+wake follows durable success. `0007_profile_reconfiguration.sql` narrows the
+old URL/identity trigger to profile-ID immutability so this Rust transaction
+can perform correction. No server migration is added; the client baseline is
+now V7. Validation/apply admission, latest-value snapshots, generation-fenced
+reconnect, and `OutcomeUnknown` refresh semantics prevent duplicate or stale
+configuration mutation. See [`ADR-043`](../adr/ADR-043-desktop-profile-onboarding-and-connection-configuration.md).
+
+## Desktop library onboarding boundary (Prompt 104)
+
+The authenticated zero-library state is intentional. First-library setup stays
+on the established ownership path:
+
+```text
+Qt/QML folder picker
+  -> DesktopUiBridge -> DesktopController -> Prompt 96 IPC
+  -> synveil-client -> authenticated library API + LocalStateStore
+  -> DesktopSyncHost -> SyncRuntime
+```
+
+The client generates the UUIDv7 library identity, validates and canonicalizes
+the local root, reconciles an ambiguous server create with the authoritative
+library list, and persists the profiled managed-root/replica binding before
+runtime registration or watcher activation. The local path is never sent to
+the server or exposed through the safe UI model. Prompt 104 admits ordinary
+existing files and directories only when this flow creates the new remote
+library; the authoritative remote root is seeded into durable local state
+before the bounded observer starts. Unknown entries become normal durable
+create intents and are handled by the existing directory-first namespace and
+staged-upload pipeline. An existing remote-library attach/import flow remains
+unsupported. Root loss remains a fenced/deferred state, never an empty-tree
+deletion signal. See [`ADR-044`](../adr/ADR-044-desktop-library-onboarding-and-local-root-binding.md)
+and [`ADR-045`](../adr/ADR-045-existing-root-bootstrap-and-initial-upload-admission.md).
+
+## Essential desktop settings and user sync controls (Prompt 105)
+
+Prompt 105 extends the existing composition without moving synchronization
+ownership into Qt:
+
+```text
+synveil-desktop -> QML settings -> DesktopUiBridge -> DesktopController
+                                      -> Prompt 96 IPC
+                                      -> synveil-client -> DesktopSyncHost
+                                                            -> SyncRuntime
+```
+
+Global Pause/Resume is owned by `synveil-client` and persisted as a bounded
+non-secret `paused`/`running` file beside the process manifest. The client
+writes it atomically before changing the one runtime's `PausedByUser` bit.
+Every periodic, inbound/network, local-change, credential, and manual wake
+continues through the existing scheduler admission gate, which blocks remote
+work while paused and lets an in-flight bounded operation finish. Resume
+re-enables existing eligibility and does not broad-rescan or create a second
+runtime. Auth, profile, library setup, and local status/control remain
+available.
+
+Login startup is still owned by `BackgroundClientManager` and the existing
+Linux user-unit/Windows per-user Task Scheduler adapters. Close-to-tray is
+owned by the desktop shell's `QSettings` value and only affects window close
+behavior when a real tray exists. Neither setting owns credentials, SQLite
+sync state, server state, or process shutdown. Controller snapshots contain
+only safe category/label/freshness values, and unknown mutation outcomes are
+refreshed rather than replayed. No server route, OpenAPI operation, or schema
+migration is added; server count is 36 and client schema V7 has 7 migrations.
+The locked decision is [`ADR-046`](../adr/ADR-046-essential-desktop-settings-and-user-sync-controls.md).
+
+## Production recovery composition (Prompt 107)
+
+Recovery remains a projection at the desktop boundary, not a new domain
+entity. `DesktopController` derives a bounded typed summary from its coherent
+process/profile/library snapshot; the Qt bridge maps it to fixed safe labels
+and actions. `BackgroundClientManager`, the existing profile/auth/setup paths,
+`DesktopSyncHost`, and `SyncRuntime` remain the owners of all meaningful
+operations. Freshness and connection generation prevent a stale GUI row from
+being treated as current. A missing root is fenced rather than interpreted as
+an empty library, and a lost mutation response is refreshed rather than
+replayed. Prompt 105 pause and Prompt 106 attention remain orthogonal surfaces.
+The locked decision is [`ADR-048`](../adr/ADR-048-production-desktop-recovery-and-resilience-ux.md).

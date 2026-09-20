@@ -2606,8 +2606,8 @@ The required stages were run separately and all passed:
 | Generated C++ | The generated bridge, moc/QML-generated sources, and the real `src/native/tray.cpp` compiled with the target Clang; `cd12d4f3968eceae-tray.o` was produced in both profiles. |
 | Qt link | Debug and release linked the target Qt Core, Gui, Qml, QuickControls2, and Widgets import libraries. `Qt6QuickControls2.dll` imports `Qt6Quick.dll`; `Qt6Qml.dll` imports `Qt6Network.dll`, so the required Quick and Network runtime dependencies remain in the Windows dependency graph. |
 | QML resources | Debug and release generated and linked the QML module RCC output. It contains `Main.qml` and `com/synveil/desktop`; the executable contains `qrc:/qt/qml/com/synveil/desktop/qml/Main.qml`, not a runtime source-tree path. Both RCC outputs use `qResourceFeatureZlib` and have no `qResourceFeatureZstd` call. |
-| Debug PE | PASS: `/mnt/Projects/synveil-p98d-target/x86_64-pc-windows-gnu/debug/synveil-desktop.exe`, `file` reports PE32+ x86-64; `llvm-readobj` reports `IMAGE_FILE_MACHINE_AMD64`. |
-| Release PE | PASS: `/mnt/Projects/synveil-p98d-target/x86_64-pc-windows-gnu/release/synveil-desktop.exe`, `file` reports PE32+ x86-64; `llvm-readobj` reports `IMAGE_FILE_MACHINE_AMD64`. |
+| Debug PE | PASS: external Cargo target `x86_64-pc-windows-gnu/debug/synveil-desktop.exe`; `file` reports PE32+ x86-64 and `llvm-readobj` reports `IMAGE_FILE_MACHINE_AMD64`. |
+| Release PE | PASS: external Cargo target `x86_64-pc-windows-gnu/release/synveil-desktop.exe`; `file` reports PE32+ x86-64 and `llvm-readobj` reports `IMAGE_FILE_MACHINE_AMD64`. |
 
 The PE import audit found `Qt6Core.dll`, `Qt6Gui.dll`, `Qt6Widgets.dll`,
 `Qt6Qml.dll`, `Qt6QuickControls2.dll`, `libc++.dll`, `libunwind.dll`, and
@@ -2718,3 +2718,201 @@ Prompt 99 marker is
 `SYNVEIL_PRODUCTION_DESKTOP_LAUNCH_READY`, and it is valid only after the full
 repository, historical regression, Windows, deployment, package, and required
 live gates genuinely pass.
+
+## Gate: secure desktop authentication and credential lifecycle (Prompt 101)
+
+The focused repository checks for this boundary are:
+
+```text
+cargo test -p synveil-client --lib --locked -- --nocapture
+cargo test -p synveil-client-sync --lib --locked -- --nocapture
+cargo test -p synveil-desktop --locked -- --nocapture
+scripts/test-desktop-ui.sh
+```
+
+They cover the bounded/redacted control input, invalid-input no-write path,
+typed outcome mapping, one-auth-operation admission, generation-safe command
+handling, durable-first credential wake ordering, secure-store failure
+behavior, explicit forget wake ordering, safe presentation copy, masked QML
+input, and the existing IPC/desktop regression suite. The full repository
+gate and historical regression suites remain required before release.
+
+The PostgreSQL 17 workflow additionally runs the ignored production-process
+target `live_pg17_process_authentication_and_graceful_shutdown` against a fresh
+disposable database. That target proves the wrong-token no-write result, a
+real replacement-grant exchange through the local control command, an
+authenticated sync request, and explicit sign-out cleanup. It does not replace
+the separate native-QML and native-Windows live gates.
+
+Prompt 101 acceptance also requires evidence for: a valid disposable
+enrollment exchange and durable readback; invalid input with zero SecretStore
+writes; network/server/rate-limit/secure-store typed failures; explicit Sign
+Out cleanup before runtime wake; GUI and background-process restart recovery;
+lost-response `OutcomeUnknown` with no replay; profile isolation; bounded
+1,000-click behavior; and the supported Linux and native Windows paths. Static
+wire tests do not prove a live server exchange, and a Linux or cross-build does
+not prove native Windows execution. These live/restart/native gates must be
+reported as not run or unverified when their environment is absent.
+
+`SYNVEIL_TEST_DATABASE_URL` unset means PostgreSQL integration coverage is
+unverified, not passed. No Prompt 101 readiness marker is emitted until the
+repository, regression, live auth, restart, cross-platform, and security gates
+are genuinely demonstrated. Prompt 101 adds zero server/client schema
+migrations, routes, OpenAPI operations, web behavior, or new sync domain
+records. The locked decision is [`ADR-042`](../adr/ADR-042-secure-desktop-authentication-and-credential-lifecycle.md).
+
+## Gate: desktop profile onboarding and connection configuration (Prompt 102)
+
+Focused checks cover canonical URL rejection/normalization, strict anonymous
+readiness DTO handling, bounded typed profile outcomes, zero-library startup,
+client migration 6 -> 7, idempotent profile creation, origin-change
+credential fencing, profile isolation, configuration admission, event-driven
+snapshot refresh, and safe presentation metadata. The relevant local commands
+are:
+
+```text
+cargo test -p synveil-client-sync --lib --locked
+cargo test -p synveil-client --lib --locked
+cargo test -p synveil-desktop --locked
+cargo fmt --all -- --check
+git diff --check
+```
+
+The live acceptance matrix remains evidence-driven: first-run configuration,
+invalid/unreachable targets, real disposable-server verification, durable
+restart recovery, Prompt 101 handoff, edit recovery, server-identity change,
+and lost-response refresh must be run with disposable process/state resources
+before being called passed. PostgreSQL setup, native interactive QML, and
+native Windows remain unverified when their required environment is absent.
+Prompt 102 does not earn the separate Prompt 101 readiness marker. See
+[`ADR-043`](../adr/ADR-043-desktop-profile-onboarding-and-connection-configuration.md).
+
+## Gate: safe existing-root bootstrap and local-root onboarding (Prompt 104)
+
+Focused checks cover safe logical names, absolute/canonical root validation,
+existing-tree first bind for a newly created remote library, file/read-only/
+redirect/reserved-control-tree rejection, component-aware duplicate and
+overlap checks, pending/active manifest redaction, strict library create/list
+DTOs, device-bearer authorization, and zero-library presentation state. The
+authoritative remote root NodeId must be durably seeded before runtime or
+watcher admission. Existing files become bounded ordinary create intents;
+directory parents are submitted before nested child upload work. Control
+admission remains bounded, and a lost create response must refresh the
+authoritative library list rather than replaying the mutation. Root
+disappearance must remain a fenced/deferred state with no mass deletion
+interpretation.
+
+The local command set includes:
+
+```text
+cargo test -p synveil-client-sync --lib --locked
+cargo test -p synveil-client --lib --locked
+cargo test -p synveil-api --lib --locked
+cargo test -p synveil-desktop --locked
+cargo fmt --all -- --check
+git diff --check
+```
+
+The real acceptance matrix still requires disposable PostgreSQL/server and
+authenticated process evidence for existing-tree remote creation, durable
+reopen, root seeding, initial upload through the normal runtime, response-loss
+reconciliation, GUI restart, root disappearance and reappearance, and the
+Prompt 101/102 handoff. Native interactive QML and Windows gates remain
+environment-dependent. Existing remote-library attach/import remains out of
+scope and must be reported not applicable with repository evidence. See
+[`ADR-044`](../adr/ADR-044-desktop-library-onboarding-and-local-root-binding.md)
+and [`ADR-045`](../adr/ADR-045-existing-root-bootstrap-and-initial-upload-admission.md).
+
+## Gate: production desktop attention and conflict resolution (Prompt 106)
+
+Prompt 106 is validated locally through the canonical client-sync conflict
+store, the Prompt 96 control boundary, the generation-fenced desktop
+controller, and the Qt/QML shell. The focused commands are:
+
+```text
+cargo test -p synveil-client-sync --lib --locked
+cargo test -p synveil-client --lib --locked
+cargo test -p synveil-desktop --locked
+scripts/test-desktop-ui.sh
+cargo fmt --all -- --check
+git diff --check
+```
+
+The local evidence covers the six canonical conflict kinds, the explicit
+AcceptRemote/RetryLocalAgainstCurrentBase action matrix, bounded safe-path
+attention snapshots, per-library counts, durable-before-wake ordering,
+generation-fenced stale and duplicate actions, paused-by-user preservation,
+restart durability, one-operation admission, lost-response no-replay, and
+safe QML presentation without content bytes or filesystem-opening actions.
+The desktop script additionally runs the native Rust tests, `clippy` with
+`-D warnings`, debug/release builds, QML lint, and debug/release offscreen
+smoke checks.
+
+The live acceptance matrix remains separate. A fresh disposable PostgreSQL
+database is required for server-backed conflict/authentication and
+process/restart coverage; `SYNVEIL_TEST_DATABASE_URL` unset means those
+targets are unverified, not passed. Native Secret Service, authenticated
+online/offline behavior, root disappearance/reappearance, GUI/background
+restart, and real desktop process lifecycle evidence must be reported as
+not run or unverified when their required environment is absent. The
+Prompt106 readiness marker is valid only after the full repository, live
+server, native credential, process, restart, and supported-platform gates
+genuinely pass. See
+[`ADR-047`](../adr/ADR-047-production-desktop-attention-and-conflict-resolution.md).
+
+## Gate: production desktop recovery and resilience UX (Prompt 107)
+
+Prompt 107 adds a derived recovery projection and a focused native shell
+surface. The projection must remain subordinate to the existing canonical
+client/runtime, profile, authentication, setup, launch, pause, and attention
+owners. The readiness marker is not valid from unit evidence alone.
+
+The focused local cases are:
+
+| Case | Required assertion |
+|---|---|
+| `RECOVERY-UNIT-1` | canonical snapshot derives a bounded typed recovery summary |
+| `RECOVERY-UNIT-2` | waiting/backoff is distinct from action-required state |
+| `RECOVERY-UNIT-3` | unavailable root is visible and never an empty-tree/deletion state |
+| `RECOVERY-UNIT-4` | same-root recovery keeps library identity and runtime state |
+| `RECOVERY-UNIT-5` | marker/identity mismatch remains fail-closed |
+| `RECOVERY-UNIT-6` | pending setup resumes through the same durable identity |
+| `RECOVERY-UNIT-7` | uncertain outcome refreshes and never blindly replays |
+| `RECOVERY-UNIT-8` | background launch admission remains bounded |
+| `RECOVERY-UNIT-9` | connection generation fences stale recovery presentation |
+| `RECOVERY-UNIT-10` | user pause remains active through a recovery check |
+| `RECOVERY-UNIT-11` | recovery does not resolve or duplicate conflicts |
+| `RECOVERY-UNIT-12` | QML projection is redacted and bounded |
+
+The implementation reuses the existing controller/IPC commands rather than
+adding `GetRecoveryState`, `RetryRecovery`, or a repair endpoint. The desktop
+integration path must cover client unavailable/start coalescing, root
+disappearance and exact-root restoration, pending setup/bootstrap recovery,
+auth handoff, temporary SecretStore failure without credential deletion,
+uncertain result refresh, GUI/controller reconstruction, client reconstruction,
+pause composition, and simultaneous Prompt 106 attention.
+
+The standard affected commands are:
+
+```text
+cargo fmt --all -- --check
+cargo test -p synveil-client --lib --locked
+cargo test -p synveil-client --test desktop_control_ipc --locked
+cargo test -p synveil-desktop --locked
+scripts/test-desktop-ui.sh
+git diff --check
+```
+
+The full repository gates remain `cargo check --workspace --locked`,
+`cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`,
+`cargo test --workspace --locked`, and `cargo deny check`. Native interactive
+QML, real client/process restart, PostgreSQL-backed bootstrap/authentication,
+Secret Service, systemd-user, and Windows runtime results must be reported
+separately. A Linux build or offscreen smoke test is not interactive acceptance;
+an unset `SYNVEIL_TEST_DATABASE_URL` is not PostgreSQL evidence. Server and
+client schema counts remain 36 and 7, respectively, and this prompt adds no
+migration or server API.
+
+See [`ADR-048`](../adr/ADR-048-production-desktop-recovery-and-resilience-ux.md)
+for ownership, safe actions, root semantics, restart behavior, and the
+no-destructive-repair boundary.

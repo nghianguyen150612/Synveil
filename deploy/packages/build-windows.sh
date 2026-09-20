@@ -173,6 +173,9 @@ for binary in "$DESKTOP_BINARY" "$CLIENT_BINARY"; do
 done
 
 PACKAGE_VERSION="$(synveil_cargo_version)"
+SOURCE_DATE_EPOCH="$(synveil_source_date_epoch)"
+export SOURCE_DATE_EPOCH
+log "archive timestamp: $SOURCE_DATE_EPOCH"
 STAGE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/synveil-windows-stage.XXXXXX")"
 trap 'rm -rf -- "$STAGE_ROOT"' EXIT
 
@@ -353,6 +356,18 @@ find_stage_dll() {
     find "$STAGE_ROOT" -type f -iname "$requested" -print -quit
 }
 
+sha256_file() {
+    local file="$1"
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$file" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$file" | awk '{print $1}'
+    else
+        printf '[synveil-windows-package] ERROR: SHA-256 tool is required for the package manifest\n' >&2
+        return 1
+    fi
+}
+
 # Audit every shipped PE's imports. Windows system/API-set DLLs are supplied by
 # Windows; every other imported DLL must be in this ZIP. This catches Linux
 # shared-library leakage and incomplete Qt/C++ runtime closure.
@@ -381,6 +396,89 @@ for text_file in "${STAGE_ROOT}/LICENSE" "${STAGE_ROOT}/NOTICE" "${STAGE_ROOT}/q
     fi
 done
 
+MANIFEST_NAME="SYNVEIL-MANIFEST.txt"
+write_package_manifest() {
+    local manifest_path="${STAGE_ROOT}/${MANIFEST_NAME}"
+    local relative digest size
+    {
+        printf 'Synveil Windows portable package manifest\n'
+        printf 'format=1\n'
+        printf 'version=%s\n' "$PACKAGE_VERSION"
+        printf 'platform=windows-x86_64\n'
+        printf 'files=sha256 size path\n'
+        while IFS= read -r relative; do
+            relative="${relative#./}"
+            [[ "$relative" == "$MANIFEST_NAME" ]] && continue
+            digest="$(sha256_file "${STAGE_ROOT}/${relative}")"
+            size="$(wc -c < "${STAGE_ROOT}/${relative}" | tr -d '[:space:]')"
+            printf '%s %s %s\n' "$digest" "$size" "$relative"
+        done < <(LC_ALL=C find "$STAGE_ROOT" -type f -printf '%P\n' | LC_ALL=C sort)
+    } > "$manifest_path"
+}
+
+validate_package_manifest() {
+    local manifest_path="${STAGE_ROOT}/${MANIFEST_NAME}"
+    local in_files=0
+    local entries=0
+    local line digest size relative extra actual_hash actual_size
+    declare -A seen=()
+    grep -Fxq 'Synveil Windows portable package manifest' "$manifest_path"
+    grep -Fxq 'format=1' "$manifest_path"
+    grep -Fxq "version=${PACKAGE_VERSION}" "$manifest_path"
+    grep -Fxq 'platform=windows-x86_64' "$manifest_path"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" == 'files=sha256 size path' ]]; then
+            in_files=1
+            continue
+        fi
+        [[ "$in_files" -eq 1 ]] || continue
+        read -r digest size relative extra <<< "$line"
+        if [[ -n "$extra" || ! "$digest" =~ ^[0-9a-fA-F]{64}$ || ! "$size" =~ ^[0-9]+$ || -z "$relative" ]]; then
+            printf '[synveil-windows-package] ERROR: malformed package manifest entry: %s\n' "$line" >&2
+            return 1
+        fi
+        case "$relative" in
+            /*|../*|*/../*|*/..)
+                printf '[synveil-windows-package] ERROR: unsafe package manifest path: %s\n' "$relative" >&2
+                return 1
+                ;;
+        esac
+        if [[ -n "${seen[$relative]:-}" ]]; then
+            printf '[synveil-windows-package] ERROR: duplicate package manifest path: %s\n' "$relative" >&2
+            return 1
+        fi
+        seen["$relative"]=1
+        if [[ ! -f "${STAGE_ROOT}/${relative}" ]]; then
+            printf '[synveil-windows-package] ERROR: manifest references missing file: %s\n' "$relative" >&2
+            return 1
+        fi
+        actual_hash="$(sha256_file "${STAGE_ROOT}/${relative}")"
+        actual_size="$(wc -c < "${STAGE_ROOT}/${relative}" | tr -d '[:space:]')"
+        if [[ "$actual_hash" != "${digest,,}" || "$actual_size" != "$size" ]]; then
+            printf '[synveil-windows-package] ERROR: package manifest checksum/size mismatch: %s\n' "$relative" >&2
+            return 1
+        fi
+        entries=$((entries + 1))
+    done < "$manifest_path"
+    [[ "$entries" -gt 0 ]] || {
+        printf '[synveil-windows-package] ERROR: package manifest has no file entries\n' >&2
+        return 1
+    }
+    for required in synveil-desktop.exe synveil-client.exe qt.conf platforms/qwindows.dll LICENSE NOTICE; do
+        [[ -n "${seen[$required]:-}" ]] || {
+            printf '[synveil-windows-package] ERROR: package manifest omits required file: %s\n' "$required" >&2
+            return 1
+        }
+    done
+}
+
+write_package_manifest
+validate_package_manifest
+if grep -nE '/(mnt|tmp|home)/|[A-Za-z]:[\\/]Users[\\/].*\\.cargo|/usr/(include|lib)' "${STAGE_ROOT}/${MANIFEST_NAME}" >/dev/null 2>&1; then
+    printf '[synveil-windows-package] ERROR: development path in package manifest\n' >&2
+    exit 1
+fi
+
 if ! command -v zip >/dev/null 2>&1; then
     printf '[synveil-windows-package] ERROR: zip is required for reproducible ZIP output\n' >&2
     exit 1
@@ -388,9 +486,7 @@ fi
 
 ZIP_PATH="${OUTPUT_DIR}/synveil-${PACKAGE_VERSION}-windows-x86_64.zip"
 rm -f "$ZIP_PATH"
-if [[ -n "${SOURCE_DATE_EPOCH:-}" ]]; then
-    find "$STAGE_ROOT" -type f -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
-fi
+find "$STAGE_ROOT" -exec touch -d "@${SOURCE_DATE_EPOCH}" {} +
 (
     cd "$STAGE_ROOT"
     LC_ALL=C find . -type f -print | sort | zip -X -q "$ZIP_PATH" -@
@@ -405,6 +501,7 @@ if command -v unzip >/dev/null 2>&1; then
     grep -Fxq 'platforms/qwindows.dll' <<< "$archive_files"
     grep -Fxq 'LICENSE' <<< "$archive_files"
     grep -Fxq 'NOTICE' <<< "$archive_files"
+    grep -Fxq "$MANIFEST_NAME" <<< "$archive_files"
     if grep -Eq '(^|/)(include|lib|Headers|cmake)(/|$)|\.(a|lib|prl|so)$' <<< "$archive_files"; then
         printf '[synveil-windows-package] ERROR: archive contains SDK/development path\n' >&2
         exit 1
@@ -412,4 +509,4 @@ if command -v unzip >/dev/null 2>&1; then
 fi
 
 log "ZIP built: $ZIP_PATH"
-sha256sum "$ZIP_PATH" 2>/dev/null || shasum -a 256 "$ZIP_PATH"
+sha256_file "$ZIP_PATH"

@@ -422,8 +422,8 @@ impl ProcessFixture {
         .await
         .expect("live SQLite schema version must be readable");
         assert_eq!(
-            schema, 6,
-            "live fixture must retain client schema version 6"
+            schema, 7,
+            "live fixture must retain client schema version 7"
         );
         sqlite.close().await;
     }

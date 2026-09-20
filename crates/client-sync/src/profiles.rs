@@ -1,9 +1,12 @@
 //! Non-secret desktop connection profiles and the secure credential lifecycle.
 //!
-//! A profile's origin and enrolled owner/device are immutable. Replacement is
-//! explicit, and forgetting is local: it never pretends to revoke a server-side
-//! credential while offline. SQLite holds only identities, timestamps and
-//! cleanup intents; every bearer byte crosses the existing SecretStore port.
+//! A profile's opaque identity and enrolled owner/device scope are immutable.
+//! The non-secret origin/label can be explicitly corrected through the
+//! canonical reconfiguration path; a changed origin fences local credentials
+//! before the new configuration is committed. Forgetting is local: it never
+//! pretends to revoke a server-side credential while offline. SQLite holds only
+//! identities, timestamps and cleanup intents; every bearer byte crosses the
+//! existing SecretStore port.
 
 use std::{cell::Cell, fmt, str::FromStr};
 
@@ -188,14 +191,47 @@ impl ServerProfile {
         base_url: CanonicalBaseUrl,
         display_label: impl Into<String>,
     ) -> Result<Self, ClientSyncError> {
+        Self::new_with_id(ServerProfileId::new(), base_url, display_label)
+    }
+
+    /// Construct a profile for the process-owned opaque identity. The desktop
+    /// manifest owns this non-secret UUID before first-run server onboarding;
+    /// callers cannot select a different identity after it is persisted.
+    pub fn new_with_id(
+        profile_id: ServerProfileId,
+        base_url: CanonicalBaseUrl,
+        display_label: impl Into<String>,
+    ) -> Result<Self, ClientSyncError> {
         let display_label = display_label.into();
         validate_label(&display_label)?;
         Ok(Self {
-            profile_id: ServerProfileId::new(),
+            profile_id,
             base_url,
             display_label,
             created_at_ms: now_ms()?,
             last_connected_at_ms: None,
+        })
+    }
+
+    /// Build the same durable profile identity with corrected non-secret
+    /// configuration. A changed origin clears the local connection timestamp;
+    /// the state store performs credential fencing before it applies this value.
+    pub fn reconfigured(
+        &self,
+        base_url: CanonicalBaseUrl,
+        display_label: impl Into<String>,
+    ) -> Result<Self, ClientSyncError> {
+        let display_label = display_label.into();
+        validate_label(&display_label)?;
+        let origin_unchanged = self.base_url == base_url;
+        Ok(Self {
+            profile_id: self.profile_id,
+            base_url,
+            display_label,
+            created_at_ms: self.created_at_ms,
+            last_connected_at_ms: origin_unchanged
+                .then_some(self.last_connected_at_ms)
+                .flatten(),
         })
     }
 
@@ -223,6 +259,14 @@ impl ServerProfile {
     pub const fn last_connected_at_ms(&self) -> Option<i64> {
         self.last_connected_at_ms
     }
+}
+
+/// Result of the canonical non-secret profile configuration transaction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ServerProfileConfigurationChange {
+    Created,
+    Updated,
+    AlreadyConfigured,
 }
 
 /// Durable enrollment metadata; even after forget the owner/device binding is
@@ -446,8 +490,9 @@ fn decode_credential_envelope(
 }
 
 impl LocalStateStore {
-    /// Inserts immutable non-secret connection configuration. Re-saving the
-    /// exact same profile is idempotent; changing an existing ID is forbidden.
+    /// Inserts non-secret connection configuration. Re-saving the exact same
+    /// profile is idempotent; changing an existing ID is forbidden. Explicit
+    /// URL/label edits use [`Self::configure_server_profile`].
     pub async fn save_server_profile(
         &self,
         profile: &ServerProfile,
@@ -480,6 +525,84 @@ impl LocalStateStore {
             return Err(ClientSyncError::WrongServerProfile);
         }
         Ok(())
+    }
+
+    /// Create or explicitly reconfigure one process-owned profile. The
+    /// profile ID remains immutable. When the origin changes, the old active
+    /// enrollment is durably fenced first and its SecretStore cleanup is
+    /// completed while the old profile origin is still available for envelope
+    /// validation; only then is the new URL committed.
+    pub async fn configure_server_profile(
+        &self,
+        profile: &ServerProfile,
+        secret_store: &dyn SecretStore,
+    ) -> Result<ServerProfileConfigurationChange, ClientSyncError> {
+        let _guard = self.credential_lifecycle_lock.lock().await;
+        let Some(existing) = self.server_profile(profile.profile_id()).await? else {
+            self.save_server_profile(profile).await?;
+            return Ok(ServerProfileConfigurationChange::Created);
+        };
+        if existing.base_url == profile.base_url && existing.display_label == profile.display_label
+        {
+            return Ok(ServerProfileConfigurationChange::AlreadyConfigured);
+        }
+
+        if existing.base_url != profile.base_url {
+            if let Some(previous) = self.profile_enrollment(profile.profile_id()).await? {
+                let now = now_ms()?.max(previous.completed_at_ms);
+                let mut transaction = self.pool.begin().await?;
+                sqlx::query(
+                    "UPDATE profile_device_enrollments
+                     SET forgotten_at_ms = COALESCE(forgotten_at_ms, ?)
+                     WHERE profile_id = ?",
+                )
+                .bind(now)
+                .bind(profile.profile_id().to_string())
+                .execute(&mut *transaction)
+                .await?;
+                sqlx::query(
+                    "INSERT OR IGNORE INTO profile_secret_cleanup
+                     (profile_id, credential_id, requested_at_ms) VALUES (?, ?, ?)",
+                )
+                .bind(profile.profile_id().to_string())
+                .bind(previous.credential_id.to_string())
+                .bind(now)
+                .execute(&mut *transaction)
+                .await?;
+                transaction.commit().await?;
+            }
+            // This also resumes any earlier interrupted cleanup. It validates
+            // the envelope against `existing`, before the origin changes.
+            self.cleanup_profile_secrets_inner(profile.profile_id(), secret_store)
+                .await?;
+        }
+
+        let changed = sqlx::query(
+            "UPDATE server_profiles
+             SET canonical_base_url = ?, transport_policy = ?, display_label = ?,
+                 last_connected_at_ms = ?
+             WHERE profile_id = ?",
+        )
+        .bind(profile.base_url.as_str())
+        .bind(if profile.base_url.loopback_test_http {
+            "LOOPBACK_TEST_HTTP"
+        } else {
+            "HTTPS"
+        })
+        .bind(&profile.display_label)
+        .bind(if existing.base_url == profile.base_url {
+            existing.last_connected_at_ms
+        } else {
+            profile.last_connected_at_ms
+        })
+        .bind(profile.profile_id.to_string())
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        if changed != 1 {
+            return Err(ClientSyncError::InvalidServerProfile);
+        }
+        Ok(ServerProfileConfigurationChange::Updated)
     }
 
     pub async fn server_profile(

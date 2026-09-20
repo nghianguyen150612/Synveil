@@ -1209,11 +1209,13 @@ storage key, server filesystem path hay file content.
 
 Filesystem mutation chỉ chạy khi đủ mọi điều kiện:
 
-- managed root absolute do user chọn rõ, rỗng lúc initialize hoặc đã mang đúng
-  marker Synveil;
+- managed root absolute do user chọn rõ, đã qua root-safety checks; ordinary
+  entry có sẵn được admit khi flow tạo remote library mới, còn root đã managed
+  phải mang đúng marker Synveil;
 - owner, device, library và binding UUIDv7 ngẫu nhiên trong marker khớp SQLite;
-- chặn filesystem root, HOME/USERPROFILE, process root hiện tại, adopt folder
-  populated tùy ý và binding root/database khác nhau;
+- chặn filesystem root, HOME/USERPROFILE, process root hiện tại, control tree
+  `.synveil` không tương thích và binding root/database khác nhau; ordinary
+  content không bị reject chỉ vì root onboarding mới không rỗng;
 - relative path chỉ gồm logical segment portable nguyên vẹn hoặc control path
   Synveil đóng;
 - root, marker và mọi target component đang tồn tại vượt kiểm tra symlink/
@@ -1293,3 +1295,14 @@ vậy machine secret bị copy vào ID đúng cú pháp không đi vào log.
 file, applied/acknowledged progress, pending evidence và local issue. Phase này
 không thêm watcher, outbound mutation generator, automatic conflict resolver,
 GUI/QR UX, installer, certificate pinning/TOFU, relay hay custom TLS stack.
+
+## Boundary an toàn của recovery presentation (Prompt 107)
+
+Recovery projection chỉ có stable ID, category/action code cố định, label
+generic, boolean và connection generation. Nó loại absolute root, endpoint
+path, SQLite row, SecretStore identifier, token, cookie, HTTP body và raw OS
+error. `SecureStoreUnavailable` khác với credential sai và được hiển thị là
+secure storage tạm thời không khả dụng; recovery không xóa hoặc ghi đè secret
+chỉ vì đọc secret thất bại. Launch recovery vẫn nằm trong manager bounded hiện
+có và `OutcomeUnknown` luôn refresh thay vì replay. Xem
+[`ADR-048`](../adr/ADR-048-production-desktop-recovery-and-resilience-ux.md).

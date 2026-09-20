@@ -10,6 +10,7 @@
 use std::{
     collections::BTreeMap,
     fmt,
+    path::PathBuf,
     sync::{
         Arc, Mutex as StdMutex,
         atomic::{AtomicBool, AtomicU8, Ordering},
@@ -21,7 +22,9 @@ use std::{
 use std::sync::atomic::AtomicUsize;
 
 use async_trait::async_trait;
-use synveil_core::{DeviceCredentialId, DeviceId, LibraryId, Timestamp, UserId};
+use synveil_core::{
+    DeviceCredentialId, DeviceId, EnrollmentSecret, LibraryId, LogicalName, Timestamp, UserId,
+};
 use synveil_platform::{
     PlatformRuntime, SecretName, SecretStore, SecretStoreError, SecretStoreState, SecretValue,
 };
@@ -31,14 +34,17 @@ use tokio::{
 };
 
 use crate::{
-    BidirectionalSyncCycleRunner, ClientSyncError, CredentialLifecycleController, EngineConfig,
-    HttpClientConfig, HttpSyncRemote, InboundCycleOutcome, InboundSyncEngine, LocalChangeWatcher,
-    LocalReplica, LocalStateConfig, LocalStateStore, ObservationConfig, OutboundCycleOutcome,
-    OutboundIntentProducer, OutboundObservationEngine, OutboundSkipReason,
-    RebaselineConvergenceCoordinator, RebaselineSnapshotRemote, ReplicaScope, SyncCycleExecutor,
-    SyncCycleResult, SyncRemote, SyncRuntime, SyncRuntimeConfig, SyncRuntimeError,
-    SyncRuntimeEvent, SyncRuntimeHandle, SyncRuntimeIdentity, SyncRuntimeLibraryStatus,
-    SyncRuntimeRegistration, SyncRuntimeUnregistration, SyncRuntimeWakeResult, SyncWakeNotifier,
+    BidirectionalSyncCycleRunner, CanonicalBaseUrl, ClientSyncError, CredentialLifecycleController,
+    EngineConfig, FilesystemLocalReplica, HttpClientConfig, HttpEnrollmentClient, HttpSyncRemote,
+    InboundCycleOutcome, InboundSyncEngine, LocalChangeWatcher, LocalReplica, LocalStateConfig,
+    LocalStateStore, ObservationConfig, OutboundCycleOutcome, OutboundIntentProducer,
+    OutboundObservationEngine, OutboundSkipReason, RebaselineConvergenceCoordinator,
+    RebaselineSnapshotRemote, RemoteError, RemoteErrorKind, ReplicaScope, ServerProfile,
+    ServerProfileConfigurationChange, SyncAttentionSnapshot, SyncConflictRecord,
+    SyncConflictResolution, SyncCycleExecutor, SyncCycleResult, SyncRemote, SyncRuntime,
+    SyncRuntimeConfig, SyncRuntimeControlState, SyncRuntimeError, SyncRuntimeEvent,
+    SyncRuntimeHandle, SyncRuntimeIdentity, SyncRuntimeLibraryStatus, SyncRuntimeRegistration,
+    SyncRuntimeUnregistration, SyncRuntimeWakeResult, SyncWakeNotifier, validate_onboarding_root,
 };
 
 /// Default interval at which a host drains each native/manual observer queue.
@@ -642,6 +648,337 @@ impl From<DesktopSyncHostConfigError> for DesktopSyncHostError {
     }
 }
 
+/// Safe categories for the one-shot production library onboarding boundary.
+/// No variant carries a selected path, logical name, credential, or server
+/// diagnostic. `ResponseUnknown` is intentionally distinct from a retryable
+/// transport error: callers must reconcile by refreshing authoritative state.
+#[derive(Debug)]
+pub enum DesktopLibrarySetupError {
+    HostUnavailable,
+    ProfileUnavailable,
+    AuthenticationRequired,
+    InvalidName,
+    InvalidRoot,
+    AlreadyRegistered,
+    ServerIdentityConflict,
+    ResponseUnknown,
+    Remote(RemoteError),
+    Client(ClientSyncError),
+}
+
+impl DesktopLibrarySetupError {
+    #[must_use]
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::HostUnavailable => "LIBRARY_SETUP_HOST_UNAVAILABLE",
+            Self::ProfileUnavailable => "LIBRARY_SETUP_PROFILE_UNAVAILABLE",
+            Self::AuthenticationRequired => "LIBRARY_SETUP_AUTH_REQUIRED",
+            Self::InvalidName => "LIBRARY_SETUP_NAME_INVALID",
+            Self::InvalidRoot => "LIBRARY_SETUP_ROOT_INVALID",
+            Self::AlreadyRegistered => "LIBRARY_SETUP_ALREADY_REGISTERED",
+            Self::ServerIdentityConflict => "LIBRARY_SETUP_SERVER_IDENTITY_CONFLICT",
+            Self::ResponseUnknown => "LIBRARY_SETUP_OUTCOME_UNKNOWN",
+            Self::Remote(error) => error.code(),
+            Self::Client(error) => error.code(),
+        }
+    }
+}
+
+impl fmt::Display for DesktopLibrarySetupError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.code())
+    }
+}
+
+impl std::error::Error for DesktopLibrarySetupError {}
+
+/// A server-bound, profile-bound and locally durable library that has not yet
+/// been admitted to the running host. The root is retained only across this
+/// in-process handoff and is redacted from diagnostics.
+pub struct DesktopSyncLibrarySetup {
+    library_id: LibraryId,
+    root: PathBuf,
+    config: Option<DesktopSyncLibraryConfig>,
+}
+
+impl fmt::Debug for DesktopSyncLibrarySetup {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DesktopSyncLibrarySetup")
+            .field("library_id", &self.library_id)
+            .field("root", &"[REDACTED]")
+            .field("prepared", &self.config.is_some())
+            .finish()
+    }
+}
+
+impl DesktopSyncLibrarySetup {
+    #[must_use]
+    pub const fn library_id(&self) -> LibraryId {
+        self.library_id
+    }
+
+    #[must_use]
+    pub fn root(&self) -> &std::path::Path {
+        &self.root
+    }
+
+    fn take_config(&mut self) -> Result<DesktopSyncLibraryConfig, DesktopLibrarySetupError> {
+        self.config
+            .take()
+            .ok_or(DesktopLibrarySetupError::AlreadyRegistered)
+    }
+}
+
+/// Safe result categories for the desktop authentication command. The
+/// canonical server exchange and profile-bound SecretStore promotion happen
+/// below this host boundary; no variant contains a remote diagnostic or secret
+/// material.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DesktopAuthError {
+    HostUnavailable,
+    ProfileUnavailable,
+    ProfileMismatch,
+    InvalidCredentials,
+    NetworkUnavailable,
+    ServerUnavailable,
+    RateLimited,
+    SecureStoreUnavailable,
+    Protocol,
+}
+
+impl DesktopAuthError {
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::HostUnavailable => "DESKTOP_AUTH_HOST_UNAVAILABLE",
+            Self::ProfileUnavailable => "DESKTOP_AUTH_PROFILE_UNAVAILABLE",
+            Self::ProfileMismatch => "DESKTOP_AUTH_PROFILE_MISMATCH",
+            Self::InvalidCredentials => "DESKTOP_AUTH_INVALID_CREDENTIALS",
+            Self::NetworkUnavailable => "DESKTOP_AUTH_NETWORK_UNAVAILABLE",
+            Self::ServerUnavailable => "DESKTOP_AUTH_SERVER_UNAVAILABLE",
+            Self::RateLimited => "DESKTOP_AUTH_RATE_LIMITED",
+            Self::SecureStoreUnavailable => "DESKTOP_AUTH_SECURE_STORE_UNAVAILABLE",
+            Self::Protocol => "DESKTOP_AUTH_PROTOCOL_ERROR",
+        }
+    }
+}
+
+impl fmt::Display for DesktopAuthError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.code())
+    }
+}
+
+impl std::error::Error for DesktopAuthError {}
+
+/// Safe profile state returned to the local control plane. The profile itself
+/// contains only the canonical origin, label, and timestamps; authentication
+/// is represented as a boolean derived from the durable enrollment tombstone.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DesktopProfileConfiguration {
+    pub profile: Option<ServerProfile>,
+    pub authenticated: bool,
+}
+
+/// Category-only result for validation and persistence of a server profile.
+/// No URL parser detail, TLS diagnostic, response body, or local path crosses
+/// the host boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DesktopProfileConfigurationOutcome {
+    Validated,
+    Created,
+    Updated,
+    AlreadyConfigured,
+    InvalidConfiguration,
+    InvalidServerAddress,
+    NetworkUnavailable,
+    Timeout,
+    TlsFailure,
+    IncompatibleServer,
+    ServerFailure,
+    PersistenceFailure,
+}
+
+fn setup_response_may_be_unknown(error: RemoteError) -> bool {
+    matches!(
+        error.kind(),
+        RemoteErrorKind::Offline
+            | RemoteErrorKind::Unavailable
+            | RemoteErrorKind::Internal
+            | RemoteErrorKind::Protocol
+            | RemoteErrorKind::Timeout
+            | RemoteErrorKind::BodyLimit
+            | RemoteErrorKind::Redirect
+            | RemoteErrorKind::Conflict
+    )
+}
+
+fn map_setup_host_error(error: DesktopSyncHostError) -> DesktopLibrarySetupError {
+    match error {
+        DesktopSyncHostError::Client(error) => DesktopLibrarySetupError::Client(error),
+        DesktopSyncHostError::AlreadyStarted
+        | DesktopSyncHostError::LibraryNotRegistered
+        | DesktopSyncHostError::InvalidState
+        | DesktopSyncHostError::NotRunning
+        | DesktopSyncHostError::NotStopped
+        | DesktopSyncHostError::Stopping
+        | DesktopSyncHostError::Stopped
+        | DesktopSyncHostError::StartCancelled
+        | DesktopSyncHostError::Faulted
+        | DesktopSyncHostError::Configuration(_)
+        | DesktopSyncHostError::Runtime(_)
+        | DesktopSyncHostError::ObserverTaskPanicked => DesktopLibrarySetupError::HostUnavailable,
+    }
+}
+
+fn map_profile_remote_error(error: RemoteError) -> DesktopProfileConfigurationOutcome {
+    match error.kind() {
+        RemoteErrorKind::Offline => DesktopProfileConfigurationOutcome::NetworkUnavailable,
+        RemoteErrorKind::Timeout => DesktopProfileConfigurationOutcome::Timeout,
+        RemoteErrorKind::Tls => DesktopProfileConfigurationOutcome::TlsFailure,
+        RemoteErrorKind::Protocol
+        | RemoteErrorKind::Rejected
+        | RemoteErrorKind::NotFound
+        | RemoteErrorKind::Redirect
+        | RemoteErrorKind::BodyLimit
+        | RemoteErrorKind::InvalidEvidence
+        | RemoteErrorKind::Integrity
+        | RemoteErrorKind::CheckpointConflict
+        | RemoteErrorKind::Conflict
+        | RemoteErrorKind::AuthRequired
+        | RemoteErrorKind::Forbidden
+        | RemoteErrorKind::DeviceRevoked
+        | RemoteErrorKind::RebaselineRequired => {
+            DesktopProfileConfigurationOutcome::IncompatibleServer
+        }
+        RemoteErrorKind::Unavailable | RemoteErrorKind::Internal | RemoteErrorKind::RateLimited => {
+            DesktopProfileConfigurationOutcome::ServerFailure
+        }
+    }
+}
+
+fn map_profile_client_error(error: ClientSyncError) -> DesktopProfileConfigurationOutcome {
+    match error {
+        ClientSyncError::InvalidServerUrl => {
+            DesktopProfileConfigurationOutcome::InvalidServerAddress
+        }
+        ClientSyncError::InvalidServerProfile
+        | ClientSyncError::WrongServerProfile
+        | ClientSyncError::WrongScope => DesktopProfileConfigurationOutcome::InvalidConfiguration,
+        ClientSyncError::Remote(error) => map_profile_remote_error(error),
+        ClientSyncError::Database
+        | ClientSyncError::LocalIo
+        | ClientSyncError::SecureStoreUnavailable
+        | ClientSyncError::ConcurrentWriter
+        | ClientSyncError::InvalidState
+        | ClientSyncError::ResourceLimit
+        | ClientSyncError::AuthenticationRequired
+        | ClientSyncError::CredentialReplacementRequired
+        | ClientSyncError::InvalidRelativePath
+        | ClientSyncError::InvalidRoot
+        | ClientSyncError::RootUnavailable
+        | ClientSyncError::WrongRootBinding
+        | ClientSyncError::RootRedirected
+        | ClientSyncError::InvalidRemoteResponse
+        | ClientSyncError::RebaselineInProgress
+        | ClientSyncError::RebaselinePendingHandoff
+        | ClientSyncError::HandoffSnapshotUnavailable
+        | ClientSyncError::HandoffCheckpointConflict
+        | ClientSyncError::HandoffResponseMismatch
+        | ClientSyncError::HandoffTransport
+        | ClientSyncError::CandidateCorrupt
+        | ClientSyncError::CandidateIncomplete
+        | ClientSyncError::WrongEpoch
+        | ClientSyncError::SequenceGap
+        | ClientSyncError::SequenceRegression
+        | ClientSyncError::UnsupportedSchemaVersion
+        | ClientSyncError::ContentIntegrityMismatch
+        | ClientSyncError::ContentUnstable
+        | ClientSyncError::ConflictNotFound
+        | ClientSyncError::ConflictStale
+        | ClientSyncError::ConflictAlreadyResolved
+        | ClientSyncError::ResolutionNotApplicable
+        | ClientSyncError::InjectedFailure
+        | ClientSyncError::LocalIssue(_)
+        | ClientSyncError::ObservationIssue(_) => {
+            DesktopProfileConfigurationOutcome::PersistenceFailure
+        }
+    }
+}
+
+fn map_auth_remote_error(error: RemoteError) -> DesktopAuthError {
+    match error.kind() {
+        RemoteErrorKind::AuthRequired
+        | RemoteErrorKind::DeviceRevoked
+        | RemoteErrorKind::Forbidden => DesktopAuthError::InvalidCredentials,
+        RemoteErrorKind::Offline | RemoteErrorKind::Timeout | RemoteErrorKind::Tls => {
+            DesktopAuthError::NetworkUnavailable
+        }
+        RemoteErrorKind::Unavailable | RemoteErrorKind::Internal => {
+            DesktopAuthError::ServerUnavailable
+        }
+        RemoteErrorKind::RateLimited => DesktopAuthError::RateLimited,
+        RemoteErrorKind::NotFound => DesktopAuthError::ServerUnavailable,
+        RemoteErrorKind::Protocol
+        | RemoteErrorKind::Rejected
+        | RemoteErrorKind::BodyLimit
+        | RemoteErrorKind::Redirect
+        | RemoteErrorKind::RebaselineRequired
+        | RemoteErrorKind::Integrity
+        | RemoteErrorKind::CheckpointConflict
+        | RemoteErrorKind::Conflict
+        | RemoteErrorKind::InvalidEvidence => DesktopAuthError::Protocol,
+    }
+}
+
+fn map_auth_client_error(error: ClientSyncError) -> DesktopAuthError {
+    match error {
+        ClientSyncError::SecureStoreUnavailable => DesktopAuthError::SecureStoreUnavailable,
+        ClientSyncError::InvalidServerUrl | ClientSyncError::InvalidServerProfile => {
+            DesktopAuthError::ProfileUnavailable
+        }
+        ClientSyncError::WrongServerProfile | ClientSyncError::WrongScope => {
+            DesktopAuthError::ProfileMismatch
+        }
+        ClientSyncError::Remote(error) => map_auth_remote_error(error),
+        ClientSyncError::AuthenticationRequired
+        | ClientSyncError::CredentialReplacementRequired => DesktopAuthError::InvalidCredentials,
+        ClientSyncError::Database
+        | ClientSyncError::LocalIo
+        | ClientSyncError::InvalidState
+        | ClientSyncError::InvalidRelativePath
+        | ClientSyncError::InvalidRoot
+        | ClientSyncError::RootUnavailable
+        | ClientSyncError::WrongRootBinding
+        | ClientSyncError::RootRedirected
+        | ClientSyncError::ConcurrentWriter
+        | ClientSyncError::InvalidRemoteResponse
+        | ClientSyncError::RebaselineInProgress
+        | ClientSyncError::RebaselinePendingHandoff
+        | ClientSyncError::HandoffSnapshotUnavailable
+        | ClientSyncError::HandoffCheckpointConflict
+        | ClientSyncError::HandoffResponseMismatch
+        | ClientSyncError::HandoffTransport
+        | ClientSyncError::CandidateCorrupt
+        | ClientSyncError::CandidateIncomplete
+        | ClientSyncError::WrongEpoch
+        | ClientSyncError::SequenceGap
+        | ClientSyncError::SequenceRegression
+        | ClientSyncError::UnsupportedSchemaVersion
+        | ClientSyncError::ResourceLimit
+        | ClientSyncError::ContentIntegrityMismatch
+        | ClientSyncError::ContentUnstable
+        | ClientSyncError::ConflictNotFound
+        | ClientSyncError::ConflictStale
+        | ClientSyncError::ConflictAlreadyResolved
+        | ClientSyncError::ResolutionNotApplicable
+        | ClientSyncError::InjectedFailure
+        | ClientSyncError::LocalIssue(_)
+        | ClientSyncError::ObservationIssue(_) => DesktopAuthError::ServerUnavailable,
+    }
+}
+
 /// A lifecycle event supplied by a process/platform adapter. There is no OS
 /// monitor in this crate: Linux and Windows adapters deliver the same narrow
 /// event to the host when their embedding process receives its shutdown hook.
@@ -675,6 +1012,7 @@ impl ObserverCancellation {
 
 struct HostLibrary {
     scope: ReplicaScope,
+    profile_id: Option<crate::ServerProfileId>,
     replica: Arc<dyn LocalReplica>,
     cycle: Arc<dyn SyncCycleExecutor>,
     observer: Option<Arc<OutboundObservationEngine>>,
@@ -685,6 +1023,7 @@ struct HostLibrary {
 impl HostLibrary {
     fn new(
         scope: ReplicaScope,
+        profile_id: Option<crate::ServerProfileId>,
         replica: Arc<dyn LocalReplica>,
         cycle: Arc<dyn SyncCycleExecutor>,
         observer: Option<Arc<OutboundObservationEngine>>,
@@ -696,6 +1035,7 @@ impl HostLibrary {
         };
         Self {
             scope,
+            profile_id,
             replica,
             cycle,
             observer,
@@ -743,6 +1083,7 @@ struct HostInner {
     cancellation: Arc<ObserverCancellation>,
     libraries: AsyncMutex<BTreeMap<LibraryId, Arc<HostLibrary>>>,
     process_scope: StdMutex<Option<HostProcessScope>>,
+    authentication_profile_id: StdMutex<Option<crate::ServerProfileId>>,
     observer_tasks: AsyncMutex<BTreeMap<LibraryId, JoinHandle<()>>>,
     runtime_handle: StdMutex<Option<SyncRuntimeHandle>>,
     #[cfg(feature = "test-support")]
@@ -774,6 +1115,7 @@ impl HostInner {
             cancellation: Arc::new(ObserverCancellation::new()),
             libraries: AsyncMutex::new(BTreeMap::new()),
             process_scope: StdMutex::new(None),
+            authentication_profile_id: StdMutex::new(None),
             observer_tasks: AsyncMutex::new(BTreeMap::new()),
             runtime_handle: StdMutex::new(None),
             #[cfg(feature = "test-support")]
@@ -822,6 +1164,42 @@ impl HostInner {
         }
     }
 
+    fn authentication_profile_id(&self) -> Option<crate::ServerProfileId> {
+        *self
+            .authentication_profile_id
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn authentication_profile_matches(&self, profile_id: crate::ServerProfileId) -> bool {
+        self.authentication_profile_id()
+            .is_none_or(|current| current == profile_id)
+    }
+
+    fn claim_authentication_profile(&self, profile_id: crate::ServerProfileId) {
+        let mut current = self
+            .authentication_profile_id
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if current.is_none() {
+            *current = Some(profile_id);
+        }
+    }
+
+    async fn authentication_library_ids(
+        &self,
+        profile_id: crate::ServerProfileId,
+    ) -> Vec<LibraryId> {
+        self.libraries
+            .lock()
+            .await
+            .iter()
+            .filter_map(|(library_id, library)| {
+                (library.profile_id == Some(profile_id)).then_some(*library_id)
+            })
+            .collect()
+    }
+
     async fn build_library(
         self: &Arc<Self>,
         config: DesktopSyncLibraryConfig,
@@ -837,6 +1215,11 @@ impl HostInner {
         if replica.scope() != scope {
             return Err(ClientSyncError::WrongScope.into());
         }
+
+        let authentication_profile_id = match &source {
+            DesktopSyncLibrarySource::Http { profile } => Some(profile.profile_id()),
+            DesktopSyncLibrarySource::Executor(_) | DesktopSyncLibrarySource::Remote(_) => None,
+        };
 
         let cycle: Arc<dyn SyncCycleExecutor> = match source {
             DesktopSyncLibrarySource::Executor(executor) => {
@@ -894,7 +1277,13 @@ impl HostInner {
             None => None,
         };
 
-        Ok(Arc::new(HostLibrary::new(scope, replica, cycle, observer)))
+        Ok(Arc::new(HostLibrary::new(
+            scope,
+            authentication_profile_id,
+            replica,
+            cycle,
+            observer,
+        )))
     }
 
     async fn register_library(
@@ -924,6 +1313,15 @@ impl HostInner {
         let scope = config.scope();
         if !self.process_scope_matches(scope) {
             return Err(ClientSyncError::WrongScope.into());
+        }
+        let authentication_profile_id = match &config.source {
+            DesktopSyncLibrarySource::Http { profile } => Some(profile.profile_id()),
+            DesktopSyncLibrarySource::Executor(_) | DesktopSyncLibrarySource::Remote(_) => None,
+        };
+        if let Some(profile_id) = authentication_profile_id
+            && !self.authentication_profile_matches(profile_id)
+        {
+            return Err(ClientSyncError::WrongServerProfile.into());
         }
         if let Some(existing_scope) = self
             .libraries
@@ -959,6 +1357,9 @@ impl HostInner {
         }
 
         self.claim_process_scope(scope);
+        if let Some(profile_id) = authentication_profile_id {
+            self.claim_authentication_profile(profile_id);
+        }
         self.libraries.lock().await.insert(library_id, library);
         Ok(DesktopSyncLibraryRegistration::Registered)
     }
@@ -1481,6 +1882,18 @@ impl DesktopSyncHost {
     }
 
     #[must_use]
+    pub fn sync_control_state(&self) -> SyncRuntimeControlState {
+        self.inner.runtime.sync_control_state()
+    }
+
+    /// Apply the process-local user pause signal. Durable persistence is owned
+    /// by the client process and must happen before this method is called.
+    #[must_use]
+    pub fn set_user_paused(&self, paused: bool) -> SyncRuntimeControlState {
+        self.inner.runtime.set_user_paused(paused)
+    }
+
+    #[must_use]
     pub fn credential_changed(&self, library_id: LibraryId) -> SyncRuntimeWakeResult {
         self.handle().credential_changed(library_id)
     }
@@ -1741,6 +2154,47 @@ impl DesktopSyncHostHandle {
             .unwrap_or_default()
     }
 
+    /// Read the profile-scoped durable attention model. The state store owns
+    /// the coherent bounded query; the host supplies the registered-library
+    /// fence so an old profile/library cannot leak into the desktop surface.
+    pub async fn attention_snapshot(&self) -> Result<SyncAttentionSnapshot, ClientSyncError> {
+        self.inner
+            .state
+            .attention_snapshot(&self.registered_libraries(), None)
+            .await
+    }
+
+    /// Commit a canonical conflict decision and only then offer the runtime a
+    /// scheduling wake. A user pause is preserved because the runtime rejects
+    /// ordinary wakes while paused; the durable decision is still accepted.
+    pub async fn resolve_conflict(
+        &self,
+        library_id: LibraryId,
+        conflict_id: synveil_core::SyncConflictId,
+        intent_id: synveil_core::OutboundIntentId,
+        detected_at_ms: u64,
+        resolution: SyncConflictResolution,
+    ) -> Result<SyncConflictRecord, ClientSyncError> {
+        if !self.registered_libraries().contains(&library_id) {
+            return Err(ClientSyncError::ConflictNotFound);
+        }
+        let resolved = self
+            .inner
+            .state
+            .resolve_conflict_if_current(
+                library_id,
+                conflict_id,
+                intent_id,
+                detected_at_ms,
+                resolution,
+            )
+            .await?;
+        if self.sync_control_state() != SyncRuntimeControlState::PausedByUser {
+            let _ = self.sync_now(library_id);
+        }
+        Ok(resolved)
+    }
+
     /// Manual control is a scheduling hint and never invokes Prompt 91
     /// directly. A host that is not running returns the runtime's typed
     /// stopped result rather than executing lower-level work.
@@ -1750,6 +2204,18 @@ impl DesktopSyncHostHandle {
             return SyncRuntimeWakeResult::RuntimeStopped;
         }
         self.inner.runtime.sync_now_status(library_id)
+    }
+
+    #[must_use]
+    pub fn sync_control_state(&self) -> SyncRuntimeControlState {
+        self.inner.runtime.sync_control_state()
+    }
+
+    /// Apply the process-local user pause signal. Durable persistence is owned
+    /// by the client process and must happen before this method is called.
+    #[must_use]
+    pub fn set_user_paused(&self, paused: bool) -> SyncRuntimeControlState {
+        self.inner.runtime.set_user_paused(paused)
     }
 
     /// Deliver a network-available hint to every currently registered
@@ -1784,6 +2250,349 @@ impl DesktopSyncHostHandle {
                 .collect();
         }
         self.inner.runtime.credentials_changed()
+    }
+
+    /// Bind the process-owned profile identity before the host starts. A
+    /// library registration may establish the same identity first; a mismatch
+    /// is always rejected rather than moving the local IPC endpoint.
+    pub fn bind_profile_id(
+        &self,
+        profile_id: crate::ServerProfileId,
+    ) -> Result<(), ClientSyncError> {
+        if !self.inner.authentication_profile_matches(profile_id) {
+            return Err(ClientSyncError::WrongServerProfile);
+        }
+        self.inner.claim_authentication_profile(profile_id);
+        Ok(())
+    }
+
+    /// Return the current non-secret profile and safe authenticated state.
+    pub async fn profile_configuration(
+        &self,
+    ) -> Result<DesktopProfileConfiguration, ClientSyncError> {
+        let Some(profile_id) = self.inner.authentication_profile_id() else {
+            return Ok(DesktopProfileConfiguration {
+                profile: None,
+                authenticated: false,
+            });
+        };
+        let profile = self.inner.state.server_profile(profile_id).await?;
+        let authenticated = self
+            .inner
+            .state
+            .profile_enrollment(profile_id)
+            .await?
+            .is_some_and(|enrollment| enrollment.forgotten_at_ms().is_none());
+        Ok(DesktopProfileConfiguration {
+            profile,
+            authenticated,
+        })
+    }
+
+    /// Prepare one authenticated library binding without registering it in the
+    /// runtime. Server creation is idempotent by UUID; ambiguous transport
+    /// outcomes are reconciled with the authoritative library list and never
+    /// blindly replayed. The returned config is safe to admit only after the
+    /// caller has durably persisted its non-secret process manifest entry.
+    pub async fn prepare_library(
+        &self,
+        library_id: LibraryId,
+        name: String,
+        root: PathBuf,
+    ) -> Result<DesktopSyncLibrarySetup, DesktopLibrarySetupError> {
+        if self.lifecycle() != DesktopSyncHostLifecycle::Running {
+            return Err(DesktopLibrarySetupError::HostUnavailable);
+        }
+        let profile_id = self
+            .inner
+            .authentication_profile_id()
+            .ok_or(DesktopLibrarySetupError::ProfileUnavailable)?;
+        if self.inner.libraries.lock().await.contains_key(&library_id) {
+            return Err(DesktopLibrarySetupError::AlreadyRegistered);
+        }
+        if name.trim().is_empty()
+            || name.len() > synveil_core::MAX_LOGICAL_NAME_BYTES
+            || name.chars().any(char::is_control)
+        {
+            return Err(DesktopLibrarySetupError::InvalidName);
+        }
+        let logical_name =
+            LogicalName::new(name).map_err(|_| DesktopLibrarySetupError::InvalidName)?;
+        let canonical_root =
+            validate_onboarding_root(&root).map_err(|_| DesktopLibrarySetupError::InvalidRoot)?;
+        let profile = self
+            .inner
+            .state
+            .server_profile(profile_id)
+            .await
+            .map_err(DesktopLibrarySetupError::Client)?
+            .ok_or(DesktopLibrarySetupError::ProfileUnavailable)?;
+        let loaded = self
+            .inner
+            .state
+            .load_device_credential(profile_id, self.inner.secret_store.as_ref())
+            .await
+            .map_err(DesktopLibrarySetupError::Client)?
+            .ok_or(DesktopLibrarySetupError::AuthenticationRequired)?;
+        let scope = ReplicaScope::new(loaded.owner_user_id(), loaded.device_id(), library_id);
+        if !self.inner.process_scope_matches(scope) {
+            return Err(DesktopLibrarySetupError::Client(
+                ClientSyncError::WrongScope,
+            ));
+        }
+        FilesystemLocalReplica::validate_existing_marker_for_profile(
+            &canonical_root,
+            scope,
+            profile_id,
+        )
+        .map_err(|error| match error {
+            ClientSyncError::InvalidRoot
+            | ClientSyncError::RootRedirected
+            | ClientSyncError::RootUnavailable
+            | ClientSyncError::WrongRootBinding
+            | ClientSyncError::WrongServerProfile => DesktopLibrarySetupError::InvalidRoot,
+            error => DesktopLibrarySetupError::Client(error),
+        })?;
+        let remote = HttpSyncRemote::new(
+            profile.clone(),
+            loaded.device_id(),
+            loaded,
+            self.inner.config.http(),
+        )
+        .map_err(DesktopLibrarySetupError::Remote)?;
+
+        let authoritative = match remote
+            .create_library(scope, library_id, &logical_name)
+            .await
+        {
+            Ok(library) => library,
+            Err(error) if setup_response_may_be_unknown(error) => {
+                let libraries = remote
+                    .list_libraries(scope)
+                    .await
+                    .map_err(|_| DesktopLibrarySetupError::ResponseUnknown)?;
+                match libraries
+                    .into_iter()
+                    .find(|library| library.id() == library_id)
+                {
+                    Some(library) if library.name().as_str() == logical_name.as_str() => {
+                        remote
+                            .verify_new_library_empty(scope, &library)
+                            .await
+                            .map_err(|error| {
+                                if error.kind() == RemoteErrorKind::Conflict {
+                                    DesktopLibrarySetupError::ServerIdentityConflict
+                                } else {
+                                    DesktopLibrarySetupError::ResponseUnknown
+                                }
+                            })?;
+                        library
+                    }
+                    Some(_) => return Err(DesktopLibrarySetupError::ServerIdentityConflict),
+                    None => return Err(DesktopLibrarySetupError::ResponseUnknown),
+                }
+            }
+            Err(error) => return Err(DesktopLibrarySetupError::Remote(error)),
+        };
+        if authoritative.id() != library_id
+            || authoritative.name().as_str() != logical_name.as_str()
+        {
+            return Err(DesktopLibrarySetupError::ServerIdentityConflict);
+        }
+
+        let replica =
+            FilesystemLocalReplica::initialize_for_profile(&canonical_root, scope, profile_id)
+                .map_err(|error| match error {
+                    ClientSyncError::InvalidRoot
+                    | ClientSyncError::RootRedirected
+                    | ClientSyncError::RootUnavailable => DesktopLibrarySetupError::InvalidRoot,
+                    error => DesktopLibrarySetupError::Client(error),
+                })?;
+        let binding_id = replica.binding_id();
+        self.inner
+            .state
+            .bind_replica_to_profile(scope, binding_id, profile_id)
+            .await
+            .map_err(DesktopLibrarySetupError::Client)?;
+        self.inner
+            .state
+            .prepare_new_library_root(scope, binding_id, profile_id, authoritative.root_node_id())
+            .await
+            .map_err(DesktopLibrarySetupError::Client)?;
+        let config =
+            DesktopSyncLibraryConfig::http(scope, profile, Arc::new(replica)).with_native_watcher();
+        Ok(DesktopSyncLibrarySetup {
+            library_id,
+            root: canonical_root,
+            config: Some(config),
+        })
+    }
+
+    /// Admit a previously prepared binding to the single running host. The
+    /// host creates the runtime registration and watcher only at this point.
+    pub async fn register_prepared_library(
+        &self,
+        mut setup: DesktopSyncLibrarySetup,
+    ) -> Result<DesktopSyncLibraryRegistration, DesktopLibrarySetupError> {
+        let config = setup.take_config()?;
+        self.inner
+            .register_library(config)
+            .await
+            .map_err(map_setup_host_error)
+    }
+
+    async fn profile_candidate(
+        &self,
+        profile_id: crate::ServerProfileId,
+        base_url: String,
+        display_label: String,
+    ) -> Result<ServerProfile, DesktopProfileConfigurationOutcome> {
+        if self.inner.authentication_profile_id() != Some(profile_id) {
+            return Err(DesktopProfileConfigurationOutcome::InvalidConfiguration);
+        }
+        let base_url = CanonicalBaseUrl::parse(&base_url)
+            .map_err(|_| DesktopProfileConfigurationOutcome::InvalidServerAddress)?;
+        let profile = ServerProfile::new_with_id(profile_id, base_url, display_label)
+            .map_err(|_| DesktopProfileConfigurationOutcome::InvalidConfiguration)?;
+        let enrollment_client =
+            HttpEnrollmentClient::new(profile.clone(), self.inner.config.http())
+                .map_err(map_profile_remote_error)?;
+        enrollment_client
+            .probe_ready()
+            .await
+            .map_err(map_profile_remote_error)?;
+        Ok(profile)
+    }
+
+    /// Probe a candidate origin without changing durable local state.
+    pub async fn validate_profile_configuration(
+        &self,
+        base_url: String,
+        display_label: String,
+    ) -> DesktopProfileConfigurationOutcome {
+        let Some(profile_id) = self.inner.authentication_profile_id() else {
+            return DesktopProfileConfigurationOutcome::InvalidConfiguration;
+        };
+        self.profile_candidate(profile_id, base_url, display_label)
+            .await
+            .map(|_| DesktopProfileConfigurationOutcome::Validated)
+            .unwrap_or_else(|outcome| outcome)
+    }
+
+    /// Probe then persist a candidate through the canonical profile/credential
+    /// lifecycle. Runtime libraries are only woken after a successful durable
+    /// update, and an origin edit fences the previous credential before the
+    /// update so a bearer cannot cross server identities.
+    pub async fn configure_profile(
+        &self,
+        profile_id: crate::ServerProfileId,
+        base_url: String,
+        display_label: String,
+    ) -> DesktopProfileConfigurationOutcome {
+        if self.lifecycle() != DesktopSyncHostLifecycle::Running {
+            return DesktopProfileConfigurationOutcome::ServerFailure;
+        }
+        let profile = match self
+            .profile_candidate(profile_id, base_url, display_label)
+            .await
+        {
+            Ok(profile) => profile,
+            Err(outcome) => return outcome,
+        };
+        let change = match self
+            .inner
+            .state
+            .configure_server_profile(&profile, self.inner.secret_store.as_ref())
+            .await
+        {
+            Ok(change) => change,
+            Err(error) => return map_profile_client_error(error),
+        };
+        if matches!(change, ServerProfileConfigurationChange::Updated) {
+            let _ = self.credentials_changed();
+        }
+        match change {
+            ServerProfileConfigurationChange::Created => {
+                DesktopProfileConfigurationOutcome::Created
+            }
+            ServerProfileConfigurationChange::Updated => {
+                DesktopProfileConfigurationOutcome::Updated
+            }
+            ServerProfileConfigurationChange::AlreadyConfigured => {
+                DesktopProfileConfigurationOutcome::AlreadyConfigured
+            }
+        }
+    }
+
+    /// Exchange one already-bounded enrollment secret with the configured
+    /// server, then promote the returned device credential through the
+    /// existing profile-bound lifecycle. The host owns the HTTP exchange and
+    /// SecretStore interaction; callers receive only a success/failure
+    /// category.
+    pub async fn authenticate(
+        &self,
+        enrollment_secret: &EnrollmentSecret,
+    ) -> Result<(), DesktopAuthError> {
+        if self.lifecycle() != DesktopSyncHostLifecycle::Running {
+            return Err(DesktopAuthError::HostUnavailable);
+        }
+        let profile_id = self
+            .inner
+            .authentication_profile_id()
+            .ok_or(DesktopAuthError::ProfileUnavailable)?;
+        let profile = self
+            .inner
+            .state
+            .server_profile(profile_id)
+            .await
+            .map_err(map_auth_client_error)?
+            .ok_or(DesktopAuthError::ProfileUnavailable)?;
+        let enrollment_client = HttpEnrollmentClient::new(profile, self.inner.config.http())
+            .map_err(map_auth_remote_error)?;
+        let enrollment = enrollment_client
+            .exchange(enrollment_secret)
+            .await
+            .map_err(map_auth_remote_error)?;
+        let affected_libraries = self.inner.authentication_library_ids(profile_id).await;
+        let lifecycle = self.credential_controller();
+        if self
+            .inner
+            .state
+            .profile_enrollment(profile_id)
+            .await
+            .map_err(map_auth_client_error)?
+            .is_some()
+        {
+            lifecycle
+                .replace_enrollment(&enrollment, &affected_libraries)
+                .await
+                .map_err(map_auth_client_error)?;
+        } else {
+            lifecycle
+                .store_enrollment(&enrollment, &affected_libraries)
+                .await
+                .map_err(map_auth_client_error)?;
+        }
+        Ok(())
+    }
+
+    /// Explicitly remove the configured profile's local credential and wake
+    /// its HTTP libraries only after the durable forget/SecretStore cleanup
+    /// succeeds. This is intentionally independent from GUI/process quit.
+    pub async fn sign_out(&self) -> Result<(), DesktopAuthError> {
+        if self.lifecycle() != DesktopSyncHostLifecycle::Running {
+            return Err(DesktopAuthError::HostUnavailable);
+        }
+        let profile_id = self
+            .inner
+            .authentication_profile_id()
+            .ok_or(DesktopAuthError::ProfileUnavailable)?;
+        let affected_libraries = self.inner.authentication_library_ids(profile_id).await;
+        self.credential_controller()
+            .forget_device_credential(profile_id, &affected_libraries)
+            .await
+            .map(|_| ())
+            .map_err(map_auth_client_error)
     }
 
     /// Process adapters use this narrow operation for shutdown callbacks.

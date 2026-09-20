@@ -17,7 +17,7 @@ mod live_fixture {
 
         use synveil_auth::{DeviceAuthenticationService, DeviceEnrollmentTarget};
         use synveil_client::{
-            ControlEvent, ControlRootState, ControlSyncScheduleResult,
+            ControlAuthOutcome, ControlEvent, ControlRootState, ControlSyncScheduleResult,
             DEFAULT_DESKTOP_CLIENT_CONFIG_FILE, DesktopClientConfig, DesktopClientProcess,
             DesktopControlClient, DesktopControlServer, DesktopController,
             DesktopControllerCommandResult, DesktopControllerConfig,
@@ -29,7 +29,7 @@ mod live_fixture {
             FilesystemLocalReplica, LocalNode, LocalReplica, LocalStateConfig, LocalStateStore,
             ManagedRelativePath, OutboundIntentKind, ReplicaScope,
         };
-        use synveil_core::{NodeKind, NodeState, Sequence};
+        use synveil_core::{EnrollmentSecret, NodeKind, NodeState, Sequence};
         use synveil_platform::{
             ComponentHealth, FixedPathResolver, HealthComponent, HealthInfo, HealthState, HostInfo,
             PathResolver, Platform, PlatformPaths, PlatformRuntime, ReadOnlyStorageDiscovery,
@@ -316,7 +316,7 @@ mod live_fixture {
 
         #[tokio::test]
         #[ignore = "set SYNVEIL_TEST_DATABASE_URL to a fresh disposable PostgreSQL 17 database"]
-        async fn live_pg17_process_bootstrap_and_graceful_shutdown() {
+        async fn live_pg17_process_authentication_and_graceful_shutdown() {
             let fixture = super::LiveFixture::new("process").await;
             let seed = fixture.create_library("process").await;
             DeviceSyncService::new(fixture.pool.as_ref().clone())
@@ -343,6 +343,13 @@ mod live_fixture {
                     .exchange(&grant.token)
                     .await
                     .expect("process enrollment exchange must succeed");
+            let replacement_grant = DeviceAuthenticationService::new(fixture.pool.as_ref())
+                .create_grant(
+                    fixture.owner_id,
+                    DeviceEnrollmentTarget::Existing(fixture.device_id),
+                )
+                .await
+                .expect("process replacement enrollment grant must issue");
 
             let process_dir = fixture.client_dir.join("process-bootstrap");
             fs::create_dir(&process_dir).expect("process fixture directory must be created");
@@ -439,7 +446,7 @@ mod live_fixture {
             .expect("process config must persist");
 
             let platform: Arc<dyn PlatformRuntime> =
-                Arc::new(TestPlatformRuntime::new(&process_dir, secrets));
+                Arc::new(TestPlatformRuntime::new(&process_dir, Arc::clone(&secrets)));
             let host_config = DesktopSyncHostConfig::default()
                 .with_root_probe_interval(Duration::from_millis(10))
                 .with_observation_poll_interval(Duration::from_millis(10));
@@ -468,6 +475,77 @@ mod live_fixture {
                 .expect("production control status");
             assert_eq!(control_status.state, DesktopProcessStatus::Running);
             assert!(control_status.control_ready);
+
+            // LIVE-AUTH2: a syntactically valid but unissued enrollment
+            // secret is rejected by the canonical server exchange without
+            // changing the already durable credential.
+            let credential_before_auth = process
+                .host()
+                .state()
+                .profile_enrollment(fixture.profile_id)
+                .await
+                .expect("pre-auth enrollment read")
+                .expect("pre-auth enrollment must exist");
+            let wrong_secret = EnrollmentSecret::from_bytes([0x6a; 32]);
+            assert_eq!(
+                control
+                    .authenticate(&wrong_secret)
+                    .await
+                    .expect("wrong enrollment secret result"),
+                ControlAuthOutcome::InvalidCredentials
+            );
+            assert_eq!(
+                process
+                    .host()
+                    .state()
+                    .profile_enrollment(fixture.profile_id)
+                    .await
+                    .expect("post-failure enrollment read")
+                    .expect("post-failure enrollment must remain")
+                    .credential_id(),
+                credential_before_auth.credential_id(),
+                "invalid authentication must not replace the durable credential"
+            );
+
+            // LIVE-AUTH3/4: the real local command reaches the canonical
+            // enrollment exchange, profile-bound SecretStore lifecycle, and
+            // the existing runtime wake. The following SyncNow assertion
+            // proves the replacement credential is usable by HTTP sync.
+            assert_eq!(
+                control
+                    .authenticate(&replacement_grant.token)
+                    .await
+                    .expect("replacement enrollment result"),
+                ControlAuthOutcome::Authenticated
+            );
+            let credential_after_auth = process
+                .host()
+                .state()
+                .profile_enrollment(fixture.profile_id)
+                .await
+                .expect("post-auth enrollment read")
+                .expect("post-auth enrollment must exist");
+            assert_ne!(
+                credential_after_auth.credential_id(),
+                credential_before_auth.credential_id(),
+                "successful authentication must persist the replacement credential"
+            );
+            assert_eq!(
+                credential_after_auth.owner_user_id(),
+                fixture.owner_id,
+                "replacement must retain the fixture owner binding"
+            );
+            assert_eq!(
+                credential_after_auth.device_id(),
+                fixture.device_id,
+                "replacement must retain the fixture device binding"
+            );
+            assert!(matches!(
+                control.sync_now(seed.library_id).await,
+                Ok(ControlSyncScheduleResult::Queued
+                    | ControlSyncScheduleResult::Coalesced
+                    | ControlSyncScheduleResult::AlreadyRunningFollowupRecorded)
+            ));
 
             // LIVE-IPC10: multiple local clients use the same process-owned
             // endpoint without creating a second host or runtime.
@@ -525,7 +603,7 @@ mod live_fixture {
                 process.root_status(seed.library_id),
                 Some(synveil_client_sync::RootAvailability::Available)
             );
-            assert_eq!(process.host().state().schema_version().await.unwrap(), 6);
+            assert_eq!(process.host().state().schema_version().await.unwrap(), 7);
             let runtime_identity = process.host().runtime_identity();
             assert_eq!(
                 process.host().runtime_identity(),
@@ -1029,6 +1107,17 @@ mod live_fixture {
                 DesktopProcessStatus::Running
             );
 
+            // LIVE-AUTH7: explicit Sign Out uses the same process-owned
+            // lifecycle, removes the secure-store value, and leaves process
+            // shutdown as a separate operation.
+            assert_eq!(
+                restart_control
+                    .sign_out()
+                    .await
+                    .expect("production sign-out result"),
+                ControlAuthOutcome::SignedOut
+            );
+
             let replacement_snapshot =
                 wait_for_controller_generation(&controller, &mut controller_state, 2).await;
             assert_eq!(
@@ -1091,6 +1180,27 @@ mod live_fixture {
                 .await
                 .expect("restarted process shutdown must be idempotent");
             drop(restarted);
+            let post_sign_out_state = LocalStateStore::open(&LocalStateConfig::new(&state_path))
+                .await
+                .expect("post-sign-out state inspection must open");
+            let forgotten = post_sign_out_state
+                .profile_enrollment(fixture.profile_id)
+                .await
+                .expect("post-sign-out enrollment read")
+                .expect("forgotten enrollment marker must remain");
+            assert!(
+                forgotten.forgotten_at_ms().is_some(),
+                "sign-out must retain a durable forgotten marker"
+            );
+            assert!(
+                post_sign_out_state
+                    .load_device_credential(fixture.profile_id, secrets.as_ref())
+                    .await
+                    .expect("post-sign-out credential read")
+                    .is_none(),
+                "sign-out must remove the reusable SecretStore credential"
+            );
+            post_sign_out_state.close_pool().await;
             fixture.cleanup().await;
         }
     }

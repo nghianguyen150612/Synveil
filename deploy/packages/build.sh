@@ -49,7 +49,8 @@ Behavior:
   - Outputs to a gitignored location (target/packages by default); never stages packages in git.
 
 Environment:
-  SOURCE_DATE_EPOCH      If set, normalizes archive mtimes/ordering for reproducibility.
+  SOURCE_DATE_EPOCH      Optional non-negative archive timestamp. If omitted,
+                         the checked-out source revision timestamp is used.
   SYNVEIL_RPM_RELEASE    RPM Release tag override (default 1; test-only fixture use).
 EOF
 }
@@ -144,8 +145,11 @@ RPM_RELEASE="$(synveil_rpm_release)"
 MACHINE="$(uname -m)"
 DEB_ARCH="$(synveil_deb_arch "$MACHINE")"
 RPM_ARCH="$(synveil_rpm_arch "$MACHINE")"
+SOURCE_DATE_EPOCH="$(synveil_source_date_epoch)"
+export SOURCE_DATE_EPOCH
 log "cargo version: $CARGO_VERSION"
 log "deb version: $DEB_VERSION ($DEB_ARCH) | rpm version: $RPM_VERSION-$RPM_RELEASE ($RPM_ARCH)"
+log "archive timestamp: $SOURCE_DATE_EPOCH"
 
 # ---------------------------------------------------------------------------
 # Release binary (real artifact only)
@@ -214,6 +218,11 @@ if command -v ldd >/dev/null 2>&1; then
                 "$binary_source" "$ldd_output" >&2
             exit 1
         }
+        if grep -Eq '(^|[[:space:]])not found([[:space:]]|$)' <<< "$ldd_output"; then
+            printf '[synveil-packages] ERROR: unresolved dynamic dependency for %s:\n%s\n' \
+                "$binary_source" "$ldd_output" >&2
+            exit 1
+        fi
         while IFS= read -r line; do log "  $line"; done <<< "$ldd_output"
     done
 fi
@@ -278,6 +287,12 @@ chmod 0644 "${STAGE_ROOT}/usr/lib/systemd/system/synveil-scheduled-maintenance.s
     "${STAGE_ROOT}/usr/share/synveil/synveil-scheduled-maintenance.env.example"
 chmod 0750 "${STAGE_ROOT}/etc/synveil"
 chmod 0700 "${STAGE_ROOT}/etc/synveil/credentials"
+
+# Normalize every staged path, including directories. This is deliberately
+# done before both dpkg-deb and the rootless ar+tar fallback so the output does
+# not inherit the wall clock time of a build host.
+find "$STAGE_ROOT" -exec touch -d "@${SOURCE_DATE_EPOCH}" {} +
+
 if [[ "$(id -u)" -eq 0 ]]; then
     chown root:root "${STAGE_ROOT}/usr/bin/synveil-client" \
         "${STAGE_ROOT}/usr/bin/synveil-desktop" \
@@ -301,15 +316,14 @@ INSTALLED_SIZE="$(du -sk "$STAGE_ROOT" | awk '{print $1}')"
 # packaging contract in docs/en/DEPLOYMENT.md. The maintenance and client
 # binaries require the glibc/libgcc/libstdc++ runtime; the Qt desktop binary
 # additionally requires the distro Qt 6 Core/Gui/Widgets/QML/Quick/Network
-# runtime. systemd provides sysusers/tmpfiles/manager integration. No
+# runtime, plus the direct DBus/systemd libraries reported by ldd. systemd
+# provides sysusers/tmpfiles/manager integration. No
 # PostgreSQL server/CLI, Docker, Nginx, or Redis is packaged or required.
-DEB_DEPENDS="systemd, libc6 (>= 2.34), libgcc-s1, libstdc++6, libqt6core6, libqt6gui6, libqt6widgets6, libqt6qml6, libqt6quick6, libqt6quickcontrols2-6, libqt6network6"
+DEB_DEPENDS="systemd, libc6 (>= 2.34), libgcc-s1, libstdc++6, libdbus-1-3, libsystemd0, libqt6core6, libqt6gui6, libqt6widgets6, libqt6qml6, libqt6quick6, libqt6quickcontrols2-6, libqt6network6"
 
-# tar flags for determinism: sorted names, root ownership, normalized mtime when SOURCE_DATE_EPOCH set.
+# tar flags for determinism: sorted names, root ownership, and normalized mtime.
 tar_owner_flags=(--owner=0 --group=0 --numeric-owner --sort=name)
-if [[ -n "${SOURCE_DATE_EPOCH:-}" ]]; then
-    tar_owner_flags+=(--mtime="@${SOURCE_DATE_EPOCH}")
-fi
+tar_owner_flags+=(--mtime="@${SOURCE_DATE_EPOCH}")
 
 build_deb() {
     local deb_name="${PACKAGE_NAME}_${DEB_VERSION}_${DEB_ARCH}.deb"
@@ -346,6 +360,7 @@ build_deb() {
         rm -rf "$deb_stage"
         return 1
     fi
+    find "$deb_stage" -exec touch -d "@${SOURCE_DATE_EPOCH}" {} +
     if command -v dpkg-deb >/dev/null 2>&1; then
         log "building with dpkg-deb --build"
         fakeroot dpkg-deb --build "$deb_stage" "$deb_path" 2>/dev/null \
@@ -409,6 +424,10 @@ build_rpm() {
     # shellcheck disable=SC2016
     SYNVEIL_STAGED_PAYLOAD="$STAGE_ROOT" rpmbuild -bb \
         --define "_topdir ${top}" \
+        --define "_source_date_epoch ${SOURCE_DATE_EPOCH}" \
+        --define "_build_timestamp ${SOURCE_DATE_EPOCH}" \
+        --define "_buildhost synveil-build" \
+        --define "use_source_date_epoch_as_buildtime 1" \
         --define "SYNVEIL_STAGED_PAYLOAD ${STAGE_ROOT}" \
         --target "${RPM_ARCH}" \
         "${top}/SPECS/synveil.spec"

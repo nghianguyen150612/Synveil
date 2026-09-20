@@ -35,13 +35,15 @@ mod sync_cycle;
 mod test_support;
 
 pub use conflict_policy::{
-    ConflictCursor, ConflictPage, DEFAULT_CONFLICT_PAGE_LIMIT, MAX_CONFLICT_PAGE_LIMIT,
-    SyncConflictKind, SyncConflictRecord, SyncConflictResolution, SyncConflictStatus,
+    ConflictCursor, ConflictPage, DEFAULT_ATTENTION_PAGE_LIMIT, DEFAULT_CONFLICT_PAGE_LIMIT,
+    MAX_ATTENTION_PAGE_LIMIT, MAX_CONFLICT_PAGE_LIMIT, SyncAttentionLibrarySummary,
+    SyncAttentionSnapshot, SyncAttentionSummary, SyncConflictItem, SyncConflictKind,
+    SyncConflictRecord, SyncConflictResolution, SyncConflictStatus,
 };
 pub use contracts::{
     BootstrapCompletion, BootstrapPage, ContentByteStream, EngineStatus, InboundChange,
     OpaqueEvidence, RebaselineHandoffConfirmation, RemoteCheckpoint, RemoteContent, RemoteError,
-    RemoteErrorKind, RemoteFeedPage, RemoteMutationApplied, RemoteMutationConflict,
+    RemoteErrorKind, RemoteFeedPage, RemoteLibrary, RemoteMutationApplied, RemoteMutationConflict,
     RemoteMutationOutcome, ReplicaScope, SyncRemote, UploadCompletion, UploadSessionStatus,
     UploadTarget, boxed_content_stream,
 };
@@ -54,12 +56,14 @@ pub use error::{ClientSyncError, RecoveryClassification};
 pub use host::DesktopRootRecoveryGate;
 pub use host::{
     DEFAULT_DESKTOP_SYNC_OBSERVATION_POLL_INTERVAL, DEFAULT_DESKTOP_SYNC_ROOT_PROBE_INTERVAL,
-    DESKTOP_SYNC_HOST_READINESS, DesktopLifecycleAdapter, DesktopLifecycleEvent,
-    DesktopNetworkAdapter, DesktopRootAvailability, DesktopSyncHost, DesktopSyncHostConfig,
-    DesktopSyncHostConfigError, DesktopSyncHostError, DesktopSyncHostHandle,
-    DesktopSyncHostLifecycle, DesktopSyncLibraryConfig, DesktopSyncLibraryRegistration,
-    DesktopSyncLibrarySource, DesktopSyncRemote, LinuxLifecycleAdapter, LinuxNetworkAdapter,
-    RootAvailability, WindowsLifecycleAdapter, WindowsNetworkAdapter,
+    DESKTOP_SYNC_HOST_READINESS, DesktopAuthError, DesktopLibrarySetupError,
+    DesktopLifecycleAdapter, DesktopLifecycleEvent, DesktopNetworkAdapter,
+    DesktopProfileConfiguration, DesktopProfileConfigurationOutcome, DesktopRootAvailability,
+    DesktopSyncHost, DesktopSyncHostConfig, DesktopSyncHostConfigError, DesktopSyncHostError,
+    DesktopSyncHostHandle, DesktopSyncHostLifecycle, DesktopSyncLibraryConfig,
+    DesktopSyncLibraryRegistration, DesktopSyncLibrarySetup, DesktopSyncLibrarySource,
+    DesktopSyncRemote, LinuxLifecycleAdapter, LinuxNetworkAdapter, RootAvailability,
+    WindowsLifecycleAdapter, WindowsNetworkAdapter,
 };
 pub use http_remote::{
     ConnectionHealth, EnrollmentCredentials, HttpClientConfig, HttpEnrollmentClient, HttpSyncRemote,
@@ -75,7 +79,7 @@ pub use outbound::{OutboundSubmissionEngine, OutboundSubmissionOutcome};
 pub use path::ManagedRelativePath;
 pub use profiles::{
     CanonicalBaseUrl, DeviceEnrollmentRecord, LoadedDeviceCredential, ServerProfile,
-    ServerProfileId,
+    ServerProfileConfigurationChange, ServerProfileId,
 };
 pub use rebaseline::{
     RebaselineApplier, RebaselineApplyOutcome, RebaselineBoundary, RebaselineHandoffOutcome,
@@ -87,6 +91,7 @@ pub use rebaseline_convergence::{
 };
 pub use replica::{
     FilesystemLocalReplica, LocalFingerprint, LocalObjectKind, LocalReplica, RootBindingId,
+    canonical_root_for_comparison, roots_overlap, validate_onboarding_root,
 };
 pub use runtime::{
     DEFAULT_SYNC_RUNTIME_MAX_CONCURRENT_LIBRARIES, DEFAULT_SYNC_RUNTIME_POLL_INTERVAL,
@@ -94,14 +99,15 @@ pub use runtime::{
     DEFAULT_SYNC_RUNTIME_TRANSIENT_BACKOFF_MAX, MAX_SYNC_RUNTIME_CONCURRENT_LIBRARIES,
     MAX_SYNC_RUNTIME_DELAY, MAX_SYNC_RUNTIME_LIBRARIES, MIN_SYNC_RUNTIME_POLL_INTERVAL,
     SYNC_RUNTIME_EVENT_CAPACITY, SyncCycleExecutor, SyncRuntime, SyncRuntimeConfig,
-    SyncRuntimeConfigError, SyncRuntimeError, SyncRuntimeEvent, SyncRuntimeHandle,
-    SyncRuntimeIdentity, SyncRuntimeLibraryPhase, SyncRuntimeLibraryStatus, SyncRuntimeOutcome,
-    SyncRuntimeRegistration, SyncRuntimeUnregistration, SyncRuntimeWakeReason,
+    SyncRuntimeConfigError, SyncRuntimeControlState, SyncRuntimeError, SyncRuntimeEvent,
+    SyncRuntimeHandle, SyncRuntimeIdentity, SyncRuntimeLibraryPhase, SyncRuntimeLibraryStatus,
+    SyncRuntimeOutcome, SyncRuntimeRegistration, SyncRuntimeUnregistration, SyncRuntimeWakeReason,
     SyncRuntimeWakeResult, SyncWakeNotifier,
 };
 pub use signals::{
-    CredentialLifecycleController, CredentialLifecycleResult, DurableChangeNotification,
-    DurableChangeResult, DurableOutboundIntentResult, OutboundIntentProducer,
+    CredentialForgetResult, CredentialLifecycleController, CredentialLifecycleResult,
+    DurableChangeNotification, DurableChangeResult, DurableOutboundIntentResult,
+    OutboundIntentProducer,
 };
 pub use state::{
     BootstrapRecord, LocalApplyIssue, LocalIssueKind, LocalNode, LocalOperation,
@@ -114,7 +120,7 @@ pub use sync_cycle::{
 };
 
 /// Current durable local schema version.
-pub const LOCAL_SCHEMA_VERSION: i64 = 6;
+pub const LOCAL_SCHEMA_VERSION: i64 = 7;
 
 /// Feed and snapshot pages are deliberately processed one at a time.
 pub const MAX_PAGE_ITEMS: usize = 1_000;

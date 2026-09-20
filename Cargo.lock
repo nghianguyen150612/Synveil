@@ -2816,6 +2816,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "windows-sys 0.61.2",
+ "zeroize",
 ]
 
 [[package]]
@@ -2871,7 +2872,9 @@ dependencies = [
  "cxx-qt-lib",
  "synveil-client",
  "tokio",
+ "url",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

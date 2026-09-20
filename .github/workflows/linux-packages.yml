@@ -92,6 +92,8 @@ jobs:
             echo 'user service was incorrectly packaged as a system service' >&2
             exit 1
           fi
+          dpkg-deb --field "$DEB" Depends | grep -F 'libdbus-1-3'
+          dpkg-deb --field "$DEB" Depends | grep -F 'libsystemd0'
 
       - name: RPM inspection (query info + list + requires)
         run: |
@@ -102,10 +104,27 @@ jobs:
           rpm -qpl -v "$RPM"
           rpm -qp --requires "$RPM"
 
+      - name: Reproducible DEB and RPM rebuilds
+        run: |
+          set -euo pipefail
+          ./deploy/packages/build.sh --format=all \
+            --output-dir=target/packages-reproducible \
+            --binary=target/release/synveil-scheduled-maintenance-once \
+            --client-binary=target/release/synveil-client \
+            --desktop-binary=target/release/synveil-desktop
+          DEB="$(ls target/packages/*.deb | head -n 1)"
+          DEB_REPRO="$(ls target/packages-reproducible/*.deb | head -n 1)"
+          RPM="$(ls target/packages/*.rpm | grep -v '.src.' | head -n 1)"
+          RPM_REPRO="$(ls target/packages-reproducible/*.rpm | grep -v '.src.' | head -n 1)"
+          cmp "$DEB" "$DEB_REPRO"
+          cmp "$RPM" "$RPM_REPRO"
+          sha256sum "$DEB" "$DEB_REPRO" "$RPM" "$RPM_REPRO"
+
       - name: Static packaging units (version/arch/metadata/parity/safety)
         run: |
           set -euo pipefail
           cargo test -p synveil-metadata --test linux_native_packaging_units --locked -- --nocapture
+          cargo test -p synveil-metadata --test production_packaging_units --locked -- --nocapture
           cargo test -p synveil-metadata --test linux_desktop_launch_units --locked -- --nocapture
           cargo test -p synveil-metadata --test windows_desktop_packaging_units --locked -- --nocapture
 

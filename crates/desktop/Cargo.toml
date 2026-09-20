@@ -20,6 +20,8 @@ cxx-qt.workspace = true
 cxx-qt-lib.workspace = true
 synveil-client.workspace = true
 tokio.workspace = true
+url.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 uuid.workspace = true

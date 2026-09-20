@@ -7,7 +7,7 @@ edits on 2026-08-28. The worktree, including uncommitted Prompts 31–37, is the
 continuation authority. No reset, clean, restore, rebase, commit, or push was
 performed. Existing code is retained unless a specific defect is demonstrated.
 
-- Workspace: `/mnt/Projects/Synveil`; branch: `main`.
+- Workspace: repository-local checkout; branch: `main`.
 - `HEAD` and local `origin/main`: `1d6f4226c8d2dc0144f0669d5f3c14ec2c4f44df`.
 - Initial tracked diff: 55 files, 17,028 insertions, 557 deletions; additional
   untracked implementation files were inspected separately.

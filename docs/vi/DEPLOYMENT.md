@@ -511,8 +511,13 @@ scheduled-maintenance. Nó định nghĩa cơ chế xác định cho cài mới,
 idempotent, nâng cấp tại chỗ, khôi phục khi nâng cấp lỗi, uninstall, uninstall
 giữ dữ liệu, purge tường minh, ownership `root` vs `synveil:synveil`,
 tích hợp `systemd`/`sysusers`/`tmpfiles`, và kiểm thử staged-root an toàn mà
-không đụng host. Chưa tạo package phân phối `.deb`/`.rpm`/PKGBUILD/OCI/Synveil
-OS image — packaging tương lai sẽ gọi layer này.
+không đụng host. Prompt 108 hiện gọi layer này từ builder DEB/RPM production
+trên Linux; manifest vẫn là nguồn payload duy nhất và script
+package-neutral vẫn dùng được để dựng DESTDIR/image.
+
+Contract đầy đủ của Prompt 108 về release, installer, upgrade, uninstall,
+Windows ZIP, dependency closure, reproducibility và live validation bị gate
+theo môi trường nằm trong [`RELEASE_PACKAGING.md`](RELEASE_PACKAGING.md).
 
 ### Manifest chuẩn
 

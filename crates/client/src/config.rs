@@ -9,20 +9,143 @@
 use std::{
     collections::BTreeMap,
     env, fmt, fs,
+    fs::OpenOptions,
+    io::{Read, Write},
     path::{Component, Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use synveil_client_sync::{
     ClientSyncError, DesktopSyncHostConfig, DesktopSyncLibraryConfig, FilesystemLocalReplica,
-    LocalStateStore, ServerProfileId,
+    LocalStateStore, ServerProfileId, canonical_root_for_comparison, roots_overlap,
 };
 use synveil_core::LibraryId;
 use synveil_platform::PlatformRuntime;
 
 const MAX_CONFIG_BYTES: usize = 64 * 1024;
+const MAX_SYNC_STATE_BYTES: usize = 32;
 
 /// Default non-secret process manifest name below the platform config root.
 pub const DEFAULT_DESKTOP_CLIENT_CONFIG_FILE: &str = "client.conf";
+
+/// Default non-secret process-owned sync-control state file. It is separate
+/// from the SQLite sync schema and from credentials; the file contains only
+/// the words `running` or `paused`.
+pub const DEFAULT_DESKTOP_CLIENT_SYNC_STATE_FILE: &str = "sync-state.conf";
+
+/// Durable process-owned storage for the global user sync pause state.
+///
+/// This is intentionally a tiny non-secret file beside the existing client
+/// manifest. It is scoped to the one profile-bound `synveil-client` process,
+/// so it does not become canonical sync data or a per-library preference.
+#[derive(Clone)]
+pub struct DesktopSyncPauseStore {
+    path: PathBuf,
+}
+
+impl fmt::Debug for DesktopSyncPauseStore {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DesktopSyncPauseStore")
+            .field("path", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl DesktopSyncPauseStore {
+    pub fn for_platform(platform: &dyn PlatformRuntime) -> Result<Self, DesktopClientConfigError> {
+        let manifest = config_path(platform)?;
+        Self::from_manifest_path(manifest)
+    }
+
+    pub fn from_manifest_path(
+        manifest: impl Into<PathBuf>,
+    ) -> Result<Self, DesktopClientConfigError> {
+        let manifest = manifest.into();
+        if !manifest.is_absolute() {
+            return Err(DesktopClientConfigError::ConfigPathNotAbsolute);
+        }
+        let parent = manifest
+            .parent()
+            .ok_or(DesktopClientConfigError::PlatformPaths)?;
+        Ok(Self {
+            path: parent.join(DEFAULT_DESKTOP_CLIENT_SYNC_STATE_FILE),
+        })
+    }
+
+    #[must_use]
+    pub fn from_path(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+
+    pub fn is_paused(&self) -> Result<bool, DesktopClientConfigError> {
+        let file = match fs::File::open(&self.path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(_) => return Err(DesktopClientConfigError::SyncStateUnreadable),
+        };
+        let mut bytes = Vec::new();
+        file.take((MAX_SYNC_STATE_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+            .map_err(|_| DesktopClientConfigError::SyncStateUnreadable)?;
+        if bytes.len() > MAX_SYNC_STATE_BYTES {
+            return Err(DesktopClientConfigError::SyncStateMalformed);
+        }
+        match bytes.as_slice() {
+            b"paused" | b"paused\n" => Ok(true),
+            b"running" | b"running\n" => Ok(false),
+            _ => Err(DesktopClientConfigError::SyncStateMalformed),
+        }
+    }
+
+    pub fn persist(&self, paused: bool) -> Result<(), DesktopClientConfigError> {
+        let parent = self
+            .path
+            .parent()
+            .ok_or(DesktopClientConfigError::ConfigurationWriteFailed)?;
+        fs::create_dir_all(parent).map_err(|_| DesktopClientConfigError::SyncStateWriteFailed)?;
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        let temporary = parent.join(format!(
+            ".{}.tmp-{}-{nonce}",
+            DEFAULT_DESKTOP_CLIENT_SYNC_STATE_FILE,
+            std::process::id()
+        ));
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|_| DesktopClientConfigError::SyncStateWriteFailed)?;
+        let value: &[u8] = if paused { b"paused\n" } else { b"running\n" };
+        if file
+            .write_all(value)
+            .and_then(|()| file.sync_all())
+            .is_err()
+        {
+            let _ = fs::remove_file(&temporary);
+            return Err(DesktopClientConfigError::SyncStateWriteFailed);
+        }
+        drop(file);
+
+        #[cfg(windows)]
+        if self.path.exists() {
+            fs::remove_file(&self.path)
+                .map_err(|_| DesktopClientConfigError::SyncStateWriteFailed)?;
+        }
+        if fs::rename(&temporary, &self.path).is_err() {
+            let _ = fs::remove_file(&temporary);
+            return Err(DesktopClientConfigError::SyncStateWriteFailed);
+        }
+
+        #[cfg(unix)]
+        if let Ok(directory) = fs::File::open(parent) {
+            let _ = directory.sync_all();
+        }
+        Ok(())
+    }
+}
 
 /// A configured library/root pair. The root is never logged by the process
 /// status surface; it is used only to reopen the existing durable binding.
@@ -70,6 +193,8 @@ impl DesktopClientLibrary {
 pub struct DesktopClientConfig {
     profile_id: ServerProfileId,
     libraries: Vec<DesktopClientLibrary>,
+    pending_libraries: Vec<DesktopClientLibrary>,
+    sync_paused: bool,
     host: DesktopSyncHostConfig,
     network_hint_interval: std::time::Duration,
 }
@@ -80,6 +205,8 @@ impl fmt::Debug for DesktopClientConfig {
             .debug_struct("DesktopClientConfig")
             .field("profile_id", &self.profile_id)
             .field("libraries", &self.libraries)
+            .field("pending_libraries", &self.pending_libraries)
+            .field("sync_paused", &self.sync_paused)
             .field("host", &self.host)
             .field("network_hint_interval", &self.network_hint_interval)
             .finish()
@@ -97,6 +224,8 @@ impl DesktopClientConfig {
         Ok(Self {
             profile_id,
             libraries,
+            pending_libraries: Vec::new(),
+            sync_paused: false,
             host: DesktopSyncHostConfig::default(),
             network_hint_interval: crate::DEFAULT_DESKTOP_NETWORK_HINT_INTERVAL,
         })
@@ -106,8 +235,10 @@ impl DesktopClientConfig {
     /// `SYNVEIL_CLIENT_CONFIG` is an absolute-path, non-secret development/test
     /// override; it never carries a credential.
     pub fn from_platform(platform: &dyn PlatformRuntime) -> Result<Self, DesktopClientConfigError> {
-        let path = config_path(platform)?;
-        Self::from_path(path)
+        let path = ensure_profile_manifest(platform)?;
+        let mut config = Self::from_path(&path)?;
+        config.sync_paused = DesktopSyncPauseStore::from_manifest_path(path)?.is_paused()?;
+        Ok(config)
     }
 
     /// Load only the non-secret profile identity for a controller-only
@@ -116,7 +247,7 @@ impl DesktopClientConfig {
     pub fn configured_profile_id() -> Result<ServerProfileId, DesktopClientConfigError> {
         let platform: std::sync::Arc<dyn PlatformRuntime> =
             std::sync::Arc::from(synveil_platform::current());
-        Self::profile_id_from_platform(platform.as_ref())
+        ensure_profile_id_from_platform(platform.as_ref())
     }
 
     /// Read only the profile identity from the canonical process manifest.
@@ -125,7 +256,7 @@ impl DesktopClientConfig {
     pub fn profile_id_from_platform(
         platform: &dyn PlatformRuntime,
     ) -> Result<ServerProfileId, DesktopClientConfigError> {
-        let bytes = fs::read(config_path(platform)?).map_err(|error| {
+        let bytes = fs::read(ensure_profile_manifest(platform)?).map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
                 DesktopClientConfigError::MissingConfiguration
             } else {
@@ -168,7 +299,7 @@ impl DesktopClientConfig {
                     ServerProfileId::parse_str(value)
                         .map_err(|_| DesktopClientConfigError::InvalidProfileId)?,
                 );
-            } else if !key.starts_with("library.") {
+            } else if !key.starts_with("library.") && !key.starts_with("pending.") {
                 return Err(DesktopClientConfigError::UnknownKey);
             }
         }
@@ -179,6 +310,7 @@ impl DesktopClientConfig {
     ///
     /// `profile_id=<canonical profile UUIDv7>`
     /// `library.<canonical library UUIDv7>=<absolute root path>`
+    /// `pending.<canonical library UUIDv7>=<absolute root path>`
     pub fn from_path(path: impl AsRef<Path>) -> Result<Self, DesktopClientConfigError> {
         let bytes = fs::read(path).map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
@@ -203,6 +335,7 @@ impl DesktopClientConfig {
         }
         let mut profile_id = None;
         let mut libraries = BTreeMap::new();
+        let mut pending_libraries = BTreeMap::new();
         for (line_number, raw_line) in text.lines().enumerate() {
             let line = raw_line.trim();
             if line.is_empty() || line.starts_with('#') {
@@ -226,7 +359,11 @@ impl DesktopClientConfig {
                 );
                 continue;
             }
-            let Some(library_id_text) = key.strip_prefix("library.") else {
+            let (target, library_id_text) = if let Some(value) = key.strip_prefix("library.") {
+                (&mut libraries, value)
+            } else if let Some(value) = key.strip_prefix("pending.") {
+                (&mut pending_libraries, value)
+            } else {
                 return Err(DesktopClientConfigError::UnknownKey);
             };
             let library_id = library_id_text
@@ -234,7 +371,7 @@ impl DesktopClientConfig {
                 .map_err(|_| DesktopClientConfigError::InvalidLibraryId)?;
             let root = PathBuf::from(value);
             validate_root_manifest(&root)?;
-            if libraries.insert(library_id, root).is_some() {
+            if target.insert(library_id, root).is_some() {
                 return Err(DesktopClientConfigError::DuplicateLibrary);
             }
         }
@@ -243,10 +380,17 @@ impl DesktopClientConfig {
             .into_iter()
             .map(|(library_id, root)| DesktopClientLibrary { library_id, root })
             .collect::<Vec<_>>();
+        let pending_libraries = pending_libraries
+            .into_iter()
+            .map(|(library_id, root)| DesktopClientLibrary { library_id, root })
+            .collect::<Vec<_>>();
         validate_libraries(&libraries)?;
+        validate_libraries(&pending_libraries)?;
         Ok(Self {
             profile_id,
             libraries,
+            pending_libraries,
+            sync_paused: false,
             host: DesktopSyncHostConfig::default(),
             network_hint_interval: crate::DEFAULT_DESKTOP_NETWORK_HINT_INTERVAL,
         })
@@ -260,6 +404,87 @@ impl DesktopClientConfig {
     #[must_use]
     pub fn libraries(&self) -> &[DesktopClientLibrary] {
         &self.libraries
+    }
+
+    #[must_use]
+    pub fn pending_libraries(&self) -> &[DesktopClientLibrary] {
+        &self.pending_libraries
+    }
+
+    #[must_use]
+    pub const fn sync_paused(&self) -> bool {
+        self.sync_paused
+    }
+
+    pub fn sync_pause_store(
+        platform: &dyn PlatformRuntime,
+    ) -> Result<DesktopSyncPauseStore, DesktopClientConfigError> {
+        DesktopSyncPauseStore::for_platform(platform)
+    }
+
+    /// Persist a pending root choice before making a network or filesystem
+    /// side effect. The append is fsynced and the manifest remains bounded.
+    pub fn append_pending_library_binding(
+        platform: &dyn PlatformRuntime,
+        profile_id: ServerProfileId,
+        library_id: LibraryId,
+        root: &Path,
+    ) -> Result<(), DesktopClientConfigError> {
+        append_library_binding(platform, profile_id, library_id, root, "pending")
+    }
+
+    /// Promote a pending root choice to an active process binding after the
+    /// server and local SQLite/root marker have both committed.
+    pub fn append_library_binding(
+        platform: &dyn PlatformRuntime,
+        profile_id: ServerProfileId,
+        library_id: LibraryId,
+        root: &Path,
+    ) -> Result<(), DesktopClientConfigError> {
+        append_library_binding(platform, profile_id, library_id, root, "library")
+    }
+
+    /// Find the pending UUID for an equivalent root without following raw
+    /// string prefixes. This is the restart/retry identity for an interrupted
+    /// onboarding operation.
+    pub fn pending_library_for_root(
+        platform: &dyn PlatformRuntime,
+        profile_id: ServerProfileId,
+        root: &Path,
+    ) -> Result<Option<LibraryId>, DesktopClientConfigError> {
+        let config = Self::from_platform(platform)?;
+        if config.profile_id != profile_id {
+            return Err(DesktopClientConfigError::ProfileMismatch);
+        }
+        let canonical = canonical_root_for_comparison(root)?;
+        for pending in &config.pending_libraries {
+            if canonical_root_for_comparison(pending.root())? == canonical {
+                return Ok(Some(pending.library_id()));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Check all active and pending bindings for a component-aware overlap.
+    pub fn root_overlaps_existing(
+        platform: &dyn PlatformRuntime,
+        profile_id: ServerProfileId,
+        root: &Path,
+    ) -> Result<bool, DesktopClientConfigError> {
+        let config = Self::from_platform(platform)?;
+        if config.profile_id != profile_id {
+            return Err(DesktopClientConfigError::ProfileMismatch);
+        }
+        for configured in config
+            .libraries
+            .iter()
+            .chain(config.pending_libraries.iter())
+        {
+            if roots_overlap(configured.root(), root)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     #[must_use]
@@ -295,6 +520,9 @@ impl DesktopClientConfig {
         &self,
         state: &LocalStateStore,
     ) -> Result<Vec<DesktopSyncLibraryConfig>, DesktopClientConfigError> {
+        if self.libraries.is_empty() {
+            return Ok(Vec::new());
+        }
         let profile = state
             .server_profile(self.profile_id)
             .await?
@@ -377,6 +605,12 @@ pub enum DesktopClientConfigError {
     MixedProcessScope,
     InvalidNetworkHintInterval,
     Client(ClientSyncError),
+    SyncStateUnreadable,
+    SyncStateMalformed,
+    SyncStateWriteFailed,
+    ProfileMismatch,
+    ConfigurationWriteFailed,
+    LibraryBindingConflict,
 }
 
 impl fmt::Display for DesktopClientConfigError {
@@ -408,6 +642,14 @@ impl fmt::Display for DesktopClientConfigError {
                 formatter.write_str("DESKTOP_CONFIG_NETWORK_INTERVAL_INVALID")
             }
             Self::Client(error) => formatter.write_str(error.code()),
+            Self::SyncStateUnreadable => formatter.write_str("DESKTOP_SYNC_STATE_UNREADABLE"),
+            Self::SyncStateMalformed => formatter.write_str("DESKTOP_SYNC_STATE_MALFORMED"),
+            Self::SyncStateWriteFailed => formatter.write_str("DESKTOP_SYNC_STATE_WRITE_FAILED"),
+            Self::ProfileMismatch => formatter.write_str("DESKTOP_CONFIG_PROFILE_MISMATCH"),
+            Self::ConfigurationWriteFailed => formatter.write_str("DESKTOP_CONFIG_WRITE_FAILED"),
+            Self::LibraryBindingConflict => {
+                formatter.write_str("DESKTOP_CONFIG_LIBRARY_BINDING_CONFLICT")
+            }
         }
     }
 }
@@ -421,7 +663,7 @@ impl From<ClientSyncError> for DesktopClientConfigError {
 }
 
 fn validate_libraries(libraries: &[DesktopClientLibrary]) -> Result<(), DesktopClientConfigError> {
-    if libraries.is_empty() || libraries.len() > 4_096 {
+    if libraries.len() > 4_096 {
         return Err(DesktopClientConfigError::LibraryNotConfigured);
     }
     let mut ids = std::collections::BTreeSet::new();
@@ -431,6 +673,70 @@ fn validate_libraries(libraries: &[DesktopClientLibrary]) -> Result<(), DesktopC
         }
     }
     Ok(())
+}
+
+fn append_library_binding(
+    platform: &dyn PlatformRuntime,
+    profile_id: ServerProfileId,
+    library_id: LibraryId,
+    root: &Path,
+    kind: &str,
+) -> Result<(), DesktopClientConfigError> {
+    if kind != "pending" && kind != "library" {
+        return Err(DesktopClientConfigError::ConfigurationWriteFailed);
+    }
+    validate_root_manifest(root)?;
+    let path = ensure_profile_manifest(platform)?;
+    let bytes = fs::read(&path).map_err(|_| DesktopClientConfigError::ConfigurationUnreadable)?;
+    if bytes.len() > MAX_CONFIG_BYTES {
+        return Err(DesktopClientConfigError::ConfigurationTooLarge);
+    }
+    let text = std::str::from_utf8(&bytes)
+        .map_err(|_| DesktopClientConfigError::ConfigurationMalformed)?;
+    let config = DesktopClientConfig::parse(text)?;
+    if config.profile_id != profile_id {
+        return Err(DesktopClientConfigError::ProfileMismatch);
+    }
+    let active = config
+        .libraries
+        .iter()
+        .find(|library| library.library_id() == library_id);
+    let pending = config
+        .pending_libraries
+        .iter()
+        .find(|library| library.library_id() == library_id);
+    let equivalent_root = |configured: &DesktopClientLibrary| {
+        canonical_root_for_comparison(configured.root())
+            .ok()
+            .zip(canonical_root_for_comparison(root).ok())
+            .is_some_and(|(configured, requested)| configured == requested)
+    };
+    if active.is_some_and(|library| !equivalent_root(library))
+        || pending.is_some_and(|library| !equivalent_root(library))
+    {
+        return Err(DesktopClientConfigError::LibraryBindingConflict);
+    }
+    if (kind == "library" && active.is_some()) || (kind == "pending" && pending.is_some()) {
+        return Ok(());
+    }
+    let root = root
+        .to_str()
+        .ok_or(DesktopClientConfigError::InvalidRootPath)?;
+    let line = format!("{kind}.{library_id}={root}\n");
+    if bytes.len().saturating_add(line.len()).saturating_add(1) > MAX_CONFIG_BYTES {
+        return Err(DesktopClientConfigError::ConfigurationTooLarge);
+    }
+    let mut file = OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .map_err(|_| DesktopClientConfigError::ConfigurationWriteFailed)?;
+    if !bytes.ends_with(b"\n") {
+        file.write_all(b"\n")
+            .map_err(|_| DesktopClientConfigError::ConfigurationWriteFailed)?;
+    }
+    file.write_all(line.as_bytes())
+        .and_then(|()| file.sync_all())
+        .map_err(|_| DesktopClientConfigError::ConfigurationWriteFailed)
 }
 
 fn config_path(platform: &dyn PlatformRuntime) -> Result<PathBuf, DesktopClientConfigError> {
@@ -457,8 +763,92 @@ fn config_path(platform: &dyn PlatformRuntime) -> Result<PathBuf, DesktopClientC
         )
 }
 
+/// Return the canonical manifest path, creating only the process-owned
+/// non-secret profile identity on first run. The create-new file operation is
+/// the single-writer race boundary; another concurrent starter simply reads
+/// the identity it won.
+fn ensure_profile_manifest(
+    platform: &dyn PlatformRuntime,
+) -> Result<PathBuf, DesktopClientConfigError> {
+    let path = config_path(platform)?;
+    match fs::read(&path) {
+        Ok(bytes) => {
+            if bytes.len() > MAX_CONFIG_BYTES {
+                return Err(DesktopClientConfigError::ConfigurationTooLarge);
+            }
+            let text = std::str::from_utf8(&bytes)
+                .map_err(|_| DesktopClientConfigError::ConfigurationMalformed)?;
+            DesktopClientConfig::parse_profile_id(text)?;
+            return Ok(path);
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err(DesktopClientConfigError::ConfigurationUnreadable),
+    }
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|_| DesktopClientConfigError::ConfigurationUnreadable)?;
+    }
+    let profile_id = ServerProfileId::new();
+    let contents = format!("# non-secret desktop profile identity\nprofile_id={profile_id}\n");
+    let temp_path = path.with_extension(format!("client.conf.{profile_id}.tmp"));
+    let create_result = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp_path);
+    match create_result {
+        Ok(mut file) => {
+            file.write_all(contents.as_bytes())
+                .and_then(|()| file.sync_all())
+                .map_err(|_| DesktopClientConfigError::ConfigurationUnreadable)?;
+            drop(file);
+            match fs::hard_link(&temp_path, &path) {
+                Ok(()) => {
+                    let _ = fs::remove_file(&temp_path);
+                    Ok(path)
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let _ = fs::remove_file(&temp_path);
+                    Ok(path)
+                }
+                Err(_) => {
+                    let _ = fs::remove_file(&temp_path);
+                    Err(DesktopClientConfigError::ConfigurationUnreadable)
+                }
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(path),
+        Err(_) => Err(DesktopClientConfigError::ConfigurationUnreadable),
+    }
+}
+
+fn ensure_profile_id_from_platform(
+    platform: &dyn PlatformRuntime,
+) -> Result<ServerProfileId, DesktopClientConfigError> {
+    let path = ensure_profile_manifest(platform)?;
+    let bytes = fs::read(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            DesktopClientConfigError::MissingConfiguration
+        } else {
+            DesktopClientConfigError::ConfigurationUnreadable
+        }
+    })?;
+    if bytes.len() > MAX_CONFIG_BYTES {
+        return Err(DesktopClientConfigError::ConfigurationTooLarge);
+    }
+    let text = std::str::from_utf8(&bytes)
+        .map_err(|_| DesktopClientConfigError::ConfigurationMalformed)?;
+    DesktopClientConfig::parse_profile_id(text)
+}
+
 fn validate_root_manifest(root: &Path) -> Result<(), DesktopClientConfigError> {
-    if !root.is_absolute()
+    if root.as_os_str().to_string_lossy().len() > 16 * 1024
+        || root
+            .as_os_str()
+            .to_string_lossy()
+            .chars()
+            .any(char::is_control)
+        || !root.is_absolute()
         || root
             .components()
             .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
@@ -475,7 +865,7 @@ fn root_is_temporarily_unavailable(root: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, time::Duration};
+    use std::{fs, path::PathBuf, time::Duration};
 
     use synveil_client_sync::ServerProfileId;
     use synveil_core::LibraryId;
@@ -533,6 +923,48 @@ mod tests {
     }
 
     #[test]
+    fn profile_only_manifest_is_a_valid_zero_library_process_configuration() {
+        let profile_id = ServerProfileId::new();
+        let config = DesktopClientConfig::parse(&format!(
+            "# first-run non-secret manifest\nprofile_id={profile_id}\n"
+        ))
+        .expect("profile-only configuration");
+        assert_eq!(config.profile_id(), profile_id);
+        assert!(config.libraries().is_empty());
+        assert!(config.pending_libraries().is_empty());
+    }
+
+    #[test]
+    fn pending_library_bindings_are_non_secret_and_bounded() {
+        let profile_id = ServerProfileId::new();
+        let library_id = LibraryId::new();
+        let config = DesktopClientConfig::parse(&format!(
+            "profile_id={profile_id}\npending.{library_id}=/tmp/synveil-pending-root\n"
+        ))
+        .expect("pending manifest");
+        assert!(config.libraries().is_empty());
+        assert_eq!(config.pending_libraries().len(), 1);
+        assert_eq!(config.pending_libraries()[0].library_id(), library_id);
+        assert!(!format!("{config:?}").contains("synveil-pending-root"));
+    }
+
+    #[test]
+    fn manifest_rejects_control_bearing_root_values() {
+        let profile_id = ServerProfileId::new();
+        let library_id = LibraryId::new();
+        assert!(matches!(
+            DesktopClientConfig::parse(&format!(
+                "profile_id={profile_id}\nlibrary.{library_id}=/tmp/bad\nroot"
+            )),
+            Err(DesktopClientConfigError::MalformedLine(_))
+        ));
+        assert!(matches!(
+            DesktopClientLibrary::new(library_id, "/tmp/bad\nroot"),
+            Err(DesktopClientConfigError::InvalidRootPath)
+        ));
+    }
+
+    #[test]
     fn network_hint_interval_is_bounded() {
         let profile_id = ServerProfileId::new();
         let library = DesktopClientLibrary::new(LibraryId::new(), "/tmp/synveil-root")
@@ -542,5 +974,48 @@ mod tests {
             config.with_network_hint_interval(Duration::ZERO),
             Err(DesktopClientConfigError::InvalidNetworkHintInterval)
         ));
+    }
+
+    #[test]
+    fn sync_pause_store_persists_only_the_bounded_state_and_reopens() {
+        let directory = std::env::temp_dir().join(format!(
+            "synveil-sync-state-test-{}-{}",
+            std::process::id(),
+            ServerProfileId::new()
+        ));
+        fs::create_dir_all(&directory).expect("test state directory");
+        let store = DesktopSyncPauseStore::from_path(directory.join("sync-state.conf"));
+        assert!(
+            !store
+                .is_paused()
+                .expect("missing state defaults to running")
+        );
+        store.persist(true).expect("pause state persists");
+        assert!(store.is_paused().expect("paused state reads"));
+        store.persist(false).expect("resume state persists");
+        assert!(!store.is_paused().expect("running state reads"));
+        assert_eq!(
+            fs::read_to_string(directory.join("sync-state.conf")).expect("state file"),
+            "running\n"
+        );
+        fs::remove_dir_all(directory).expect("test state cleanup");
+    }
+
+    #[test]
+    fn sync_pause_store_rejects_unknown_state_without_changing_runtime_contract() {
+        let directory = std::env::temp_dir().join(format!(
+            "synveil-sync-state-malformed-{}-{}",
+            std::process::id(),
+            ServerProfileId::new()
+        ));
+        fs::create_dir_all(&directory).expect("test state directory");
+        let path = directory.join("sync-state.conf");
+        fs::write(&path, "maybe\n").expect("malformed state");
+        let store = DesktopSyncPauseStore::from_path(path);
+        assert!(matches!(
+            store.is_paused(),
+            Err(DesktopClientConfigError::SyncStateMalformed)
+        ));
+        fs::remove_dir_all(directory).expect("test state cleanup");
     }
 }

@@ -529,9 +529,14 @@ scheduled-maintenance deployment. It defines deterministic mechanics for fresh
 install, idempotent reinstall, in-place upgrade, failed-upgrade recovery,
 uninstall, uninstall-with-preservation, explicit purge, `root` vs
 `synveil:synveil` ownership, `systemd`/`sysusers`/`tmpfiles` integration, and
-safe staged-root testing without host mutation. No distribution-specific
-`.deb`/`.rpm`/PKGBUILD/OCI/Synveil OS image is created yet — future packaging
-calls this layer.
+safe staged-root testing without host mutation. Prompt 108 now calls this
+layer from the production Linux DEB/RPM builders; the manifest remains the
+single payload authority and the package-neutral scripts remain usable for
+DESTDIR/image assembly.
+
+Prompt 108's complete release, installer, upgrade, uninstall, Windows ZIP,
+dependency-closure, reproducibility, and environment-gated live-validation
+contract is documented in [`RELEASE_PACKAGING.md`](RELEASE_PACKAGING.md).
 
 ### Authoritative manifest
 

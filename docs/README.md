@@ -161,6 +161,8 @@ outbound intent durable chỉ nằm trong SQLite chờ phase submit explicit sau
 - [Architecture Decision Records / Biên bản quyết định kiến trúc](adr/README.md)
 - [Repository audit / Kiểm kê repository](en/REPOSITORY_AUDIT.md)
 - [Prompt 37 continuation audit / Kiểm tra tiếp tục Prompt 37](PROMPT37_CONTINUATION_AUDIT.md)
+- [Production release packaging / Đóng gói release production](en/RELEASE_PACKAGING.md)
+- [Production release packaging Vietnamese / Đóng gói release production tiếng Việt](vi/RELEASE_PACKAGING.md)
 
 ## Reading order / Thứ tự đọc
 
@@ -171,6 +173,7 @@ outbound intent durable chỉ nằm trong SQLite chờ phase submit explicit sau
 4. `STORAGE.md`, `UPLOADS.md`, `SYNC.md`, `BACKUP.md` — data-safety protocols.
 5. `SECURITY.md`, `DEPLOYMENT.md`, `TESTING.md` — trust and production gates.
 6. `ROADMAP.md`, `TEAM_PLAN.md`, `CONTRIBUTING_ARCHITECTURE.md` — execution.
+7. `RELEASE_PACKAGING.md` — production package, install, upgrade, and uninstall gates.
 
 ---
 
@@ -181,6 +184,7 @@ outbound intent durable chỉ nằm trong SQLite chờ phase submit explicit sau
 4. `STORAGE.md`, `UPLOADS.md`, `SYNC.md`, `BACKUP.md` — giao thức an toàn dữ liệu.
 5. `SECURITY.md`, `DEPLOYMENT.md`, `TESTING.md` — trust và gate production.
 6. `ROADMAP.md`, `TEAM_PLAN.md`, `CONTRIBUTING_ARCHITECTURE.md` — thực thi.
+7. `RELEASE_PACKAGING.md` — gate package, install, upgrade và uninstall production.
 
 When documents disagree, follow the authority order in
 `CONTRIBUTING_ARCHITECTURE.md`. Accepted ADRs are bilingual in one file. English

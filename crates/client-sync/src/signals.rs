@@ -164,8 +164,8 @@ impl OutboundIntentProducer {
 /// Credential persistence remains owned by the existing profile-bound
 /// `LocalStateStore`/`SecretStore` contract. The adapter only adds the
 /// post-success scheduling hint for the explicitly supplied libraries; it
-/// never carries secret material in the wake message. Forget/logout delegates
-/// without waking a library merely to manufacture an authentication failure.
+/// never carries secret material in the wake message. Forget/logout wakes only
+/// after the durable tombstone and secure-store cleanup have both succeeded.
 pub struct CredentialLifecycleController {
     state: Arc<LocalStateStore>,
     secret_store: Arc<dyn SecretStore>,
@@ -231,16 +231,22 @@ impl CredentialLifecycleController {
         })
     }
 
-    /// Forgetting/removing credentials intentionally has no wake side effect.
-    /// The next normal lifecycle attempt observes the absent credential, while
-    /// durable local work remains available for a later successful enrollment.
+    /// Forget/remove the profile-bound credential and then send
+    /// `CredentialChanged` to each affected library. The state layer writes a
+    /// durable forgotten marker before deleting the secure-store value, so a
+    /// failed deletion returns before an unauthenticated wake is published.
     pub async fn forget_device_credential(
         &self,
         profile_id: ServerProfileId,
-    ) -> Result<(), ClientSyncError> {
+        affected_libraries: &[LibraryId],
+    ) -> Result<CredentialForgetResult, ClientSyncError> {
+        Self::validate_library_list(affected_libraries)?;
         self.state
             .forget_device_credential(profile_id, self.secret_store.as_ref())
-            .await
+            .await?;
+        Ok(CredentialForgetResult {
+            wake_results: self.wake_libraries(affected_libraries)?,
+        })
     }
 
     fn wake_libraries(
@@ -283,6 +289,21 @@ impl CredentialLifecycleResult {
         self.record
     }
 
+    #[must_use]
+    pub fn wake_results(&self) -> &[(LibraryId, SyncRuntimeWakeResult)] {
+        &self.wake_results
+    }
+}
+
+/// Result of a successful local credential removal plus its scheduling
+/// statuses. The type intentionally carries no credential or SecretStore
+/// value.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CredentialForgetResult {
+    wake_results: Vec<(LibraryId, SyncRuntimeWakeResult)>,
+}
+
+impl CredentialForgetResult {
     #[must_use]
     pub fn wake_results(&self) -> &[(LibraryId, SyncRuntimeWakeResult)] {
         &self.wake_results
@@ -709,10 +730,14 @@ mod tests {
         assert!(failed_notifier.calls().is_empty());
 
         controller
-            .forget_device_credential(profile_id)
+            .forget_device_credential(profile_id, &[scope.library_id()])
             .await
             .expect("credential removal");
-        assert_eq!(notifier.calls().len(), 1);
+        assert_eq!(notifier.calls().len(), 2);
+        assert_eq!(
+            notifier.calls()[1],
+            (scope.library_id(), SyncRuntimeWakeReason::CredentialChanged)
+        );
         close_fixture(directory, state).await;
     }
 }

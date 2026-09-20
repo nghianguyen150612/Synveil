@@ -7,6 +7,8 @@ set -euo pipefail
 # Resolve repository root from this script's location.
 # common.sh lives at deploy/install/common.sh → repo root is ../..
 COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Consumed by install.sh/uninstall.sh after this file is sourced.
+# shellcheck disable=SC2034
 REPO_ROOT="$(cd "${COMMON_DIR}/../.." && pwd)"
 MANIFEST_FILE="${COMMON_DIR}/MANIFEST"
 

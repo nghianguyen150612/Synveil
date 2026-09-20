@@ -2440,8 +2440,8 @@ Các stage bắt buộc đã chạy riêng và đều pass:
 | C++ generated | Bridge generated, source moc/QML-generated và `src/native/tray.cpp` thật compile bằng Clang target; `cd12d4f3968eceae-tray.o` được tạo ở cả hai profile. |
 | Qt link | Debug/release link import library của Qt Core, Gui, Qml, QuickControls2 và Widgets target. `Qt6QuickControls2.dll` import `Qt6Quick.dll`; `Qt6Qml.dll` import `Qt6Network.dll`, nên Quick và Network dependency cần thiết vẫn ở trong Windows graph. |
 | QML resources | Debug/release đều generate và link RCC của QML module. Output có `Main.qml` và `com/synveil/desktop`; executable có `qrc:/qt/qml/com/synveil/desktop/qml/Main.qml`, không phụ thuộc source-tree path khi runtime. Cả hai RCC output dùng `qResourceFeatureZlib` và không có call `qResourceFeatureZstd`. |
-| Debug PE | PASS: `/mnt/Projects/synveil-p98d-target/x86_64-pc-windows-gnu/debug/synveil-desktop.exe`, `file` báo PE32+ x86-64; `llvm-readobj` báo `IMAGE_FILE_MACHINE_AMD64`. |
-| Release PE | PASS: `/mnt/Projects/synveil-p98d-target/x86_64-pc-windows-gnu/release/synveil-desktop.exe`, `file` báo PE32+ x86-64; `llvm-readobj` báo `IMAGE_FILE_MACHINE_AMD64`. |
+| Debug PE | PASS: external Cargo target `x86_64-pc-windows-gnu/debug/synveil-desktop.exe`; `file` báo PE32+ x86-64 và `llvm-readobj` báo `IMAGE_FILE_MACHINE_AMD64`. |
+| Release PE | PASS: external Cargo target `x86_64-pc-windows-gnu/release/synveil-desktop.exe`; `file` báo PE32+ x86-64 và `llvm-readobj` báo `IMAGE_FILE_MACHINE_AMD64`. |
 
 PE import audit thấy `Qt6Core.dll`, `Qt6Gui.dll`, `Qt6Widgets.dll`,
 `Qt6Qml.dll`, `Qt6QuickControls2.dll`, `libc++.dll`, `libunwind.dll` và
@@ -2547,3 +2547,192 @@ unverified, không được đếm ngầm là pass. Marker đầy đủ Prompt 9
 `SYNVEIL_PRODUCTION_DESKTOP_LAUNCH_READY`, chỉ hợp lệ sau khi toàn bộ gate
 repository, regression lịch sử, Windows, deployment, package và live bắt buộc
 đều pass thật.
+
+## Gate: authentication desktop an toàn và lifecycle credential (Prompt 101)
+
+Focused repository check cho boundary này là:
+
+```text
+cargo test -p synveil-client --lib --locked -- --nocapture
+cargo test -p synveil-client-sync --lib --locked -- --nocapture
+cargo test -p synveil-desktop --locked -- --nocapture
+scripts/test-desktop-ui.sh
+```
+
+Các check bao phủ control input bounded/redacted, path input invalid không ghi,
+typed outcome mapping, admission một auth operation, command generation-safe,
+thứ tự durable-first credential wake, secure-store failure, thứ tự explicit
+forget wake, presentation copy an toàn, QML input masked và regression IPC/
+desktop hiện có. Full repository gate và historical regression vẫn bắt buộc
+trước release.
+
+Workflow PostgreSQL 17 còn chạy target production-process ignored
+`live_pg17_process_authentication_and_graceful_shutdown` trên database
+disposable mới. Target này chứng minh wrong-token không ghi, replacement-grant
+exchange thật qua local control command, request sync đã authenticated và
+cleanup Sign Out tường minh. Nó không thay thế live gate native-QML và
+native-Windows riêng.
+
+Prompt 101 acceptance còn cần evidence cho: enrollment exchange disposable
+thật và durable readback; input invalid với zero SecretStore write; typed
+failure network/server/rate-limit/secure-store; Sign Out cleanup trước runtime
+wake; recovery sau GUI và background-process restart; mất response trả
+`OutcomeUnknown` không replay; profile isolation; bounded behavior 1.000 click;
+và path Linux được hỗ trợ cùng native Windows. Static wire test không chứng
+minh live server exchange, Linux/cross-build không chứng minh native Windows
+execution. Khi thiếu environment, các live/restart/native gate phải ghi rõ
+not run hoặc unverified.
+
+`SYNVEIL_TEST_DATABASE_URL` unset nghĩa là PostgreSQL integration coverage
+unverified, không phải pass. Không emit readiness marker Prompt 101 cho đến
+khi repository, regression, live auth, restart, cross-platform và security gate
+được chứng minh thật. Prompt 101 thêm zero server/client schema migration,
+route, OpenAPI operation, web behavior hay sync domain record mới. Quyết định
+khóa nằm trong
+[`ADR-042`](../adr/ADR-042-secure-desktop-authentication-and-credential-lifecycle.md).
+
+## Gate: onboarding profile desktop và cấu hình kết nối (Prompt 102)
+
+Focused check bao phủ reject/normalize URL canonical, strict anonymous readiness
+DTO, typed profile outcome bounded, startup zero library, migration client 6 ->
+7, profile creation idempotent, credential fencing khi đổi origin, profile
+isolation, configuration admission, snapshot refresh theo event và presentation
+metadata an toàn. Command local liên quan:
+
+```text
+cargo test -p synveil-client-sync --lib --locked
+cargo test -p synveil-client --lib --locked
+cargo test -p synveil-desktop --locked
+cargo fmt --all -- --check
+git diff --check
+```
+
+Live acceptance vẫn phải dựa trên evidence: first-run config, target invalid/
+unreachable, disposable server thật, durable restart, handoff Prompt 101, edit
+recovery, server-identity change và lost-response refresh phải chạy với process/
+state disposable trước khi gọi là pass. PostgreSQL setup, native interactive
+QML và native Windows là unverified khi thiếu environment. Prompt 102 không tự
+kiếm readiness marker Prompt 101. Xem
+[`ADR-043`](../adr/ADR-043-desktop-profile-onboarding-and-connection-configuration.md).
+
+## Gate: bootstrap root local đã có dữ liệu và onboarding production (Prompt 104)
+
+Focused check bao phủ logical name an toàn, root absolute/canonical, first-bind
+existing tree cho remote library mới, reject file/read-only/redirect/control
+tree conflict, duplicate và overlap theo path components, redaction manifest
+pending/active, strict library create/list DTO, authorization device bearer và
+presentation zero library. `root_node_id` authoritative phải được seed durable
+trước register runtime/watcher. Existing file trở thành create intent bounded;
+directory parent được submit trước child upload. Admission control vẫn bounded;
+create response mất phải refresh library list authoritative, không replay
+mutation. Root biến mất phải là state fenced/deferred, không được hiểu là mass
+deletion.
+
+Command local liên quan:
+
+```text
+cargo test -p synveil-client-sync --lib --locked
+cargo test -p synveil-client --lib --locked
+cargo test -p synveil-api --lib --locked
+cargo test -p synveil-desktop --locked
+cargo fmt --all -- --check
+git diff --check
+```
+
+Live matrix vẫn cần evidence process/server disposable và PostgreSQL cho create
+remote từ existing tree, durable reopen/root seed, initial upload bằng runtime,
+response-loss reconciliation, GUI restart, root disappear/reappear và handoff
+Prompt 101/102. Native QML interactive và Windows phụ thuộc environment.
+Remote library attach/import vẫn ngoài scope và phải ghi not applicable kèm
+repository evidence. Xem
+[`ADR-044`](../adr/ADR-044-desktop-library-onboarding-and-local-root-binding.md)
+và [`ADR-045`](../adr/ADR-045-existing-root-bootstrap-and-initial-upload-admission.md).
+
+## Gate: attention production trên desktop và resolve conflict (Prompt 106)
+
+Prompt 106 được validate local qua canonical conflict store của client-sync,
+control boundary Prompt 96, desktop controller có generation fence và Qt/QML
+shell. Các command focused là:
+
+```text
+cargo test -p synveil-client-sync --lib --locked
+cargo test -p synveil-client --lib --locked
+cargo test -p synveil-desktop --locked
+scripts/test-desktop-ui.sh
+cargo fmt --all -- --check
+git diff --check
+```
+
+Evidence local bao phủ sáu canonical conflict kind, action matrix tường minh
+AcceptRemote/RetryLocalAgainstCurrentBase, attention snapshot bounded với path
+an toàn, count theo library, thứ tự durable-before-wake, stale và duplicate
+action có generation fence, giữ nguyên paused-by-user, durability sau restart,
+admission một operation, mất response không replay và QML presentation an toàn
+không có content bytes hay action mở filesystem. Script desktop còn chạy Rust
+test native, `clippy` với `-D warnings`, build debug/release, QML lint và
+offscreen smoke debug/release.
+
+Live acceptance vẫn là matrix riêng. Cần PostgreSQL disposable mới cho coverage
+server-backed conflict/authentication và process/restart; khi
+`SYNVEIL_TEST_DATABASE_URL` unset thì các target đó là unverified, không phải
+pass. Native Secret Service, authenticated online/offline, root
+disappear/reappear, GUI/background restart và evidence lifecycle process thật
+phải ghi not run hoặc unverified khi thiếu environment tương ứng. Readiness
+marker Prompt 106 chỉ hợp lệ khi toàn bộ repository, live server, native
+credential, process, restart và supported-platform gate thật sự pass. Xem
+[`ADR-047`](../adr/ADR-047-production-desktop-attention-and-conflict-resolution.md).
+
+## Gate: UX recovery và resilience desktop production (Prompt 107)
+
+Prompt 107 thêm recovery projection derived và surface native shell bounded.
+Projection phải luôn phụ thuộc các owner canonical hiện có: client/runtime,
+profile, authentication, setup, launch, pause và attention. Chỉ unit evidence
+không đủ để hợp lệ readiness marker.
+
+Các case local trọng tâm:
+
+| Case | Assertion bắt buộc |
+|---|---|
+| `RECOVERY-UNIT-1` | snapshot canonical tạo recovery summary typed, bounded |
+| `RECOVERY-UNIT-2` | waiting/backoff khác với action-required |
+| `RECOVERY-UNIT-3` | root unavailable hiển thị và không thành empty-tree/deletion |
+| `RECOVERY-UNIT-4` | same-root recovery giữ identity library và runtime state |
+| `RECOVERY-UNIT-5` | marker/identity mismatch vẫn fail-closed |
+| `RECOVERY-UNIT-6` | pending setup resume bằng durable identity cũ |
+| `RECOVERY-UNIT-7` | outcome không chắc chắn refresh và không blind replay |
+| `RECOVERY-UNIT-8` | admission launch background vẫn bounded |
+| `RECOVERY-UNIT-9` | connection generation fence recovery presentation cũ |
+| `RECOVERY-UNIT-10` | pause của user vẫn giữ khi recovery check |
+| `RECOVERY-UNIT-11` | recovery không resolve hoặc duplicate conflict |
+| `RECOVERY-UNIT-12` | projection sang QML được redact và bounded |
+
+Implementation dùng lại command controller/IPC hiện có, không thêm
+`GetRecoveryState`, `RetryRecovery` hay repair endpoint. Integration cần kiểm
+tra client unavailable/start coalescing, root biến mất và đúng root trở lại,
+pending setup/bootstrap, auth handoff, SecretStore tạm lỗi nhưng không xóa
+credential, response không chắc chắn, GUI/controller reconstruction, client
+reconstruction, pause composition và attention Prompt 106 đồng thời.
+
+Các command affected chính:
+
+```text
+cargo fmt --all -- --check
+cargo test -p synveil-client --lib --locked
+cargo test -p synveil-client --test desktop_control_ipc --locked
+cargo test -p synveil-desktop --locked
+scripts/test-desktop-ui.sh
+git diff --check
+```
+
+Full repository vẫn cần `cargo check --workspace --locked`,
+`cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`,
+`cargo test --workspace --locked` và `cargo deny check`. Kết quả QML tương tác
+native, client/process restart thật, PostgreSQL bootstrap/auth, Secret Service,
+systemd-user và Windows runtime phải báo riêng. Linux build hoặc offscreen
+smoke không phải interactive acceptance; `SYNVEIL_TEST_DATABASE_URL` unset
+không phải evidence PostgreSQL. Schema vẫn server 36 và client 7; prompt này
+không thêm migration hoặc server API.
+
+Xem [`ADR-048`](../adr/ADR-048-production-desktop-recovery-and-resilience-ux.md)
+về ownership, action an toàn, root semantics, restart và boundary không repair
+destructive.

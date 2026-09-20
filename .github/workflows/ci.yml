@@ -79,6 +79,12 @@ jobs:
       - name: Test the bounded desktop launch manager
         run: cargo test -p synveil-client --lib --locked
 
+      - name: Test the desktop authentication command and redaction boundary
+        run: cargo test -p synveil-client --lib --locked authentication
+
+      - name: Test the desktop authentication presentation boundary
+        run: cargo test -p synveil-desktop --locked authentication_feedback
+
       - name: Test the Linux user launch policy
         run: cargo test -p synveil-metadata --test linux_desktop_launch_units --locked
 
@@ -120,6 +126,12 @@ jobs:
 
       - name: Test the Windows launch and Task Scheduler policy
         run: cargo test -p synveil-client --lib --locked
+
+      - name: Test the Windows authentication command and redaction boundary
+        run: cargo test -p synveil-client --lib --locked authentication
+
+      - name: Check the Windows sync-host authentication boundary
+        run: cargo check -p synveil-client-sync --locked
 
       - name: Build the native desktop shell
         run: cargo build -p synveil-desktop --locked

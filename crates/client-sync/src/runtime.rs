@@ -259,6 +259,7 @@ pub enum SyncRuntimeWakeResult {
     Queued,
     Coalesced,
     AlreadyRunningFollowupRecorded,
+    PausedByUser,
     RuntimeStopped,
     UnknownLibrary,
 }
@@ -280,6 +281,11 @@ impl SyncRuntimeWakeResult {
     #[must_use]
     pub const fn is_unknown_library(self) -> bool {
         matches!(self, Self::UnknownLibrary)
+    }
+
+    #[must_use]
+    pub const fn is_paused_by_user(self) -> bool {
+        matches!(self, Self::PausedByUser)
     }
 
     fn into_control_result(self) -> Result<Self, SyncRuntimeError> {
@@ -325,6 +331,17 @@ impl SyncRuntimeIdentity {
     pub const fn as_u64(self) -> u64 {
         self.0
     }
+}
+
+/// Process-wide user-controlled synchronization state.
+///
+/// This is deliberately separate from authentication, network, and root
+/// availability. Those conditions remain represented by the existing runtime
+/// outcomes and phases while this state is paused.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SyncRuntimeControlState {
+    Running,
+    PausedByUser,
 }
 
 /// Safe result category used by scheduling and status reporting.
@@ -408,6 +425,9 @@ pub enum SyncRuntimeEvent {
     RuntimeStopping,
     RuntimeStopped,
     RuntimeTaskFaulted,
+    SyncControlStateChanged {
+        state: SyncRuntimeControlState,
+    },
     CycleStarted {
         library_id: LibraryId,
     },
@@ -708,6 +728,18 @@ impl SyncRuntime {
         self.wake_library_status(library_id, SyncRuntimeWakeReason::Manual)
     }
 
+    #[must_use]
+    pub fn sync_control_state(&self) -> SyncRuntimeControlState {
+        self.shared.sync_control_state()
+    }
+
+    /// Change only the process-local user pause reason. The caller owns any
+    /// durable-setting write and must complete it before invoking this signal.
+    #[must_use]
+    pub fn set_user_paused(&self, paused: bool) -> SyncRuntimeControlState {
+        self.shared.set_user_paused(paused)
+    }
+
     /// Notify every currently registered library that connectivity may have
     /// returned. This only changes scheduling; the bounded active set still
     /// enforces the global concurrency limit.
@@ -810,6 +842,18 @@ impl SyncRuntimeHandle {
     #[must_use]
     pub fn sync_now_status(&self, library_id: LibraryId) -> SyncRuntimeWakeResult {
         self.wake_library_status(library_id, SyncRuntimeWakeReason::Manual)
+    }
+
+    #[must_use]
+    pub fn sync_control_state(&self) -> SyncRuntimeControlState {
+        self.shared.sync_control_state()
+    }
+
+    /// Change only the process-local user pause reason. The caller owns any
+    /// durable-setting write and must complete it before invoking this signal.
+    #[must_use]
+    pub fn set_user_paused(&self, paused: bool) -> SyncRuntimeControlState {
+        self.shared.set_user_paused(paused)
     }
 
     #[must_use]
@@ -936,6 +980,7 @@ struct RuntimeShared {
     lifecycle: StdMutex<RuntimeLifecycle>,
     scheduling_gate: StdMutex<()>,
     shutdown_requested: AtomicBool,
+    user_paused: AtomicBool,
     wake_notify: Notify,
     shutdown_notify: Notify,
     completion_notify: Notify,
@@ -958,6 +1003,7 @@ impl RuntimeShared {
             }),
             scheduling_gate: StdMutex::new(()),
             shutdown_requested: AtomicBool::new(false),
+            user_paused: AtomicBool::new(false),
             wake_notify: Notify::new(),
             shutdown_notify: Notify::new(),
             completion_notify: Notify::new(),
@@ -997,6 +1043,7 @@ impl RuntimeShared {
             }
             LifecyclePhase::Running => {}
         }
+        let _scheduling_gate = lock_unpoisoned(&self.scheduling_gate);
         let mut libraries = lock_unpoisoned(&self.libraries);
         let Some(entry) = libraries.get_mut(&library_id) else {
             return SyncRuntimeWakeResult::UnknownLibrary;
@@ -1004,11 +1051,60 @@ impl RuntimeShared {
         if !entry.registered {
             return SyncRuntimeWakeResult::UnknownLibrary;
         }
+        if self.user_paused.load(Ordering::Acquire) {
+            // A manual request is intentionally declined rather than queued:
+            // Resume Sync must be the explicit user action that makes it
+            // eligible. Durable local/network/credential/root hints are kept
+            // as bounded scheduler intent so they are not lost while paused.
+            if reason != SyncRuntimeWakeReason::Manual {
+                entry.state.pending_wake = Some(merge_wake(entry.state.pending_wake, reason));
+            }
+            return SyncRuntimeWakeResult::PausedByUser;
+        }
         let result = apply_wake(&mut entry.state, reason, Instant::now());
         drop(libraries);
         drop(lifecycle);
         self.wake_notify.notify_one();
         result
+    }
+
+    fn sync_control_state(&self) -> SyncRuntimeControlState {
+        if self.user_paused.load(Ordering::Acquire) {
+            SyncRuntimeControlState::PausedByUser
+        } else {
+            SyncRuntimeControlState::Running
+        }
+    }
+
+    fn set_user_paused(&self, paused: bool) -> SyncRuntimeControlState {
+        let _scheduling_gate = lock_unpoisoned(&self.scheduling_gate);
+        let previous = self.user_paused.swap(paused, Ordering::AcqRel);
+        let state = if paused {
+            SyncRuntimeControlState::PausedByUser
+        } else {
+            SyncRuntimeControlState::Running
+        };
+
+        if previous != paused {
+            if !paused {
+                // Apply only non-manual wake intent accumulated while paused.
+                // `Manual` is never retained by `wake_library`, so Resume is
+                // not a hidden Sync Now override.
+                let now = Instant::now();
+                let mut libraries = lock_unpoisoned(&self.libraries);
+                for entry in libraries.values_mut().filter(|entry| entry.registered) {
+                    if entry.state.running {
+                        continue;
+                    }
+                    if let Some(reason) = entry.state.pending_wake.take() {
+                        let _ = apply_wake(&mut entry.state, reason, now);
+                    }
+                }
+            }
+            self.emit(SyncRuntimeEvent::SyncControlStateChanged { state });
+            self.wake_notify.notify_one();
+        }
+        state
     }
 
     fn status(&self, library_id: LibraryId) -> Option<SyncRuntimeLibraryStatus> {
@@ -1180,7 +1276,9 @@ fn spawn_due_cycles(
     round_robin_cursor: &mut Option<LibraryId>,
 ) -> usize {
     let _scheduling_gate = lock_unpoisoned(&shared.scheduling_gate);
-    if shared.shutdown_requested.load(Ordering::Acquire) {
+    if shared.shutdown_requested.load(Ordering::Acquire)
+        || shared.user_paused.load(Ordering::Acquire)
+    {
         return 0;
     }
     let available = shared
@@ -1244,6 +1342,9 @@ fn spawn_due_cycles(
 }
 
 fn earliest_due(shared: &Arc<RuntimeShared>) -> Option<Instant> {
+    if shared.user_paused.load(Ordering::Acquire) {
+        return None;
+    }
     let libraries = lock_unpoisoned(&shared.libraries);
     libraries
         .values()
@@ -1825,6 +1926,58 @@ mod tests {
         tokio::task::yield_now().await;
     }
 
+    async fn assert_user_pause_preserves_suspension_reason(
+        first_outcome: Result<SyncCycleResult, ClientSyncError>,
+        wake_reason: SyncRuntimeWakeReason,
+        expected_phase: SyncRuntimeLibraryPhase,
+    ) {
+        let executor = FakeExecutor::new(scope(), vec![first_outcome, Ok(idle_result())]);
+        let library_id = executor.scope.library_id();
+        let runtime = SyncRuntime::new(config());
+        runtime
+            .register_library(executor.clone())
+            .expect("register composition fixture");
+        let handle = runtime.start().expect("start composition fixture");
+        settle().await;
+        assert_eq!(executor.calls(), 1);
+        assert_eq!(
+            handle
+                .status(library_id)
+                .expect("post-cycle status")
+                .phase(),
+            expected_phase
+        );
+
+        assert_eq!(
+            handle.set_user_paused(true),
+            SyncRuntimeControlState::PausedByUser
+        );
+        assert_eq!(
+            handle
+                .wake_library(library_id, wake_reason)
+                .expect("composed wake"),
+            SyncRuntimeWakeResult::PausedByUser
+        );
+        assert_eq!(
+            handle
+                .status(library_id)
+                .expect("paused composition status")
+                .phase(),
+            expected_phase
+        );
+
+        assert_eq!(
+            handle.set_user_paused(false),
+            SyncRuntimeControlState::Running
+        );
+        settle().await;
+        assert_eq!(executor.calls(), 2);
+        handle
+            .shutdown()
+            .await
+            .expect("composition fixture shutdown");
+    }
+
     #[test]
     fn config_rejects_unsafe_bounds() {
         assert_eq!(
@@ -2396,6 +2549,75 @@ mod tests {
         settle().await;
         assert_eq!(executor.calls(), 2);
         handle.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn user_pause_blocks_manual_and_background_wakes_until_explicit_resume() {
+        let executor = FakeExecutor::new(scope(), vec![Ok(idle_result()), Ok(idle_result())]);
+        let library_id = executor.scope.library_id();
+        let runtime = SyncRuntime::new(config());
+        runtime
+            .register_library(executor.clone())
+            .expect("register paused executor");
+        assert_eq!(
+            runtime.set_user_paused(true),
+            SyncRuntimeControlState::PausedByUser
+        );
+        let handle = runtime.start().expect("start paused runtime");
+        settle().await;
+        assert_eq!(executor.calls(), 0);
+        assert_eq!(
+            handle.sync_control_state(),
+            SyncRuntimeControlState::PausedByUser
+        );
+        assert_eq!(
+            handle.sync_now(library_id),
+            SyncRuntimeWakeResult::PausedByUser
+        );
+        assert_eq!(
+            handle.wake_library_status(library_id, SyncRuntimeWakeReason::LocalChange),
+            SyncRuntimeWakeResult::PausedByUser
+        );
+        assert!(
+            handle
+                .status(library_id)
+                .expect("paused status")
+                .wake_pending()
+        );
+
+        assert_eq!(
+            handle.set_user_paused(false),
+            SyncRuntimeControlState::Running
+        );
+        settle().await;
+        assert_eq!(executor.calls(), 1);
+        assert_eq!(
+            handle.sync_control_state(),
+            SyncRuntimeControlState::Running
+        );
+        handle.shutdown().await.expect("paused runtime shutdown");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn user_pause_composes_with_auth_network_and_root_suspension() {
+        assert_user_pause_preserves_suspension_reason(
+            Err(ClientSyncError::AuthenticationRequired),
+            SyncRuntimeWakeReason::CredentialChanged,
+            SyncRuntimeLibraryPhase::AuthBlocked,
+        )
+        .await;
+        assert_user_pause_preserves_suspension_reason(
+            Err(ClientSyncError::HandoffTransport),
+            SyncRuntimeWakeReason::NetworkAvailable,
+            SyncRuntimeLibraryPhase::BackingOff,
+        )
+        .await;
+        assert_user_pause_preserves_suspension_reason(
+            Err(ClientSyncError::RootUnavailable),
+            SyncRuntimeWakeReason::RootAvailable,
+            SyncRuntimeLibraryPhase::RootBlocked,
+        )
+        .await;
     }
 
     #[tokio::test(start_paused = true)]

@@ -1709,3 +1709,81 @@ the explicit Prompt 96 shutdown command.
 Prompt 99 therefore adds zero server migrations, zero client schema migrations,
 and zero domain tables. The schema baseline remains server migration 36 and
 client schema V6. See [`ADR-041`](../adr/ADR-041-production-desktop-launch-orchestration.md).
+
+## Desktop authentication is an existing credential transition, not a new domain entity (Prompt 101)
+
+The Prompt 101 enrollment input is a transient `EnrollmentSecret`; it is not a
+`User`, `Session`, `Device`, credential record, or synchronization entity. The
+server's existing one-time device-enrollment exchange returns the existing
+`EnrollmentCredentials` receipt. The client validates its immutable server
+profile, owner, and device binding and promotes it through the existing
+`DeviceEnrollmentRecord` plus profile-bound `SecretStore` lifecycle.
+
+The durable model remains the existing profile enrollment metadata, the
+profile-scoped secure-store value, and the existing cleanup/forgotten marker
+used by explicit credential removal. Authentication result categories,
+controller gates, IPC request IDs, QML fields, and GUI affordances are
+application/process state. They are not durable domain facts and must not be
+written to PostgreSQL, client SQLite, Qt settings, snapshots, or event history.
+
+The durable ordering is credential metadata/SecretStore verification first,
+then the existing `CredentialChanged` runtime hint. Sign Out writes the
+forgotten marker and completes secure-store cleanup before that hint. A wake is
+only a scheduling signal; runtime status remains authoritative and can become
+`AuthBlocked` when the durable credential is absent, revoked, or expired.
+
+Profile and device scope are immutable boundaries. A receipt for another
+profile, owner, or device is rejected; no automatic rebind or cross-profile
+wake is allowed. Prompt 101 therefore adds zero server migrations, zero client
+schema migrations, zero tables, and zero new synchronization entities. See
+[`ADR-042`](../adr/ADR-042-secure-desktop-authentication-and-credential-lifecycle.md).
+
+## Desktop profile onboarding is configuration state, not a new domain entity (Prompt 102)
+
+The desktop's first-run profile identity is an opaque UUIDv7 process binding.
+The existing `ServerProfile` remains the canonical non-secret record: origin,
+display label, creation timestamp, and last-connected timestamp. A profile may
+exist with no libraries. Onboarding does not create a default library, infer a
+root, or treat an empty list as deletion.
+
+`ValidateProfileConfiguration` probes without mutation. Apply probes the
+existing anonymous readiness endpoint and then uses the canonical SQLite
+transaction. The profile ID remains immutable; `0007_profile_reconfiguration.sql`
+allows only the Rust-owned correction path to change origin/label while the
+database trigger still protects profile identity. An origin change fences the
+existing enrollment and removes its profile-bound secure-store material before
+the new origin is durable. The client schema is therefore V7; the server
+schema remains unchanged. See
+[`ADR-043`](../adr/ADR-043-desktop-profile-onboarding-and-connection-configuration.md).
+
+## Desktop library onboarding uses existing domain records (Prompt 104)
+
+Library setup does not add a desktop-specific library entity. `POST
+/api/v1/libraries` creates the existing owner-scoped `Library` and canonical
+root `Node`; the client-generated UUID makes the request recoverable. The
+existing profile-bound `replicas` state row, profiled managed-root marker, and
+non-secret active/pending process manifest together represent the local
+binding. The absolute path is a local capability and is not server metadata.
+
+The first-bind filesystem contract accepts ordinary existing files and
+directories when the same flow creates the new remote library. The client
+retains the authoritative remote `root_node_id`, seeds the existing local
+`replicas` and `local_nodes` rows transactionally, and starts the bounded scan
+with that root already known. Existing files are represented as ordinary
+directory/file create intents and proceed through the existing namespace,
+upload-session, and mutation-idempotency contracts. An existing remote-library
+attach/import flow remains intentionally unsupported. Missing roots remain
+deferred/fenced and never imply an empty logical tree or mass deletion. See
+[`ADR-044`](../adr/ADR-044-desktop-library-onboarding-and-local-root-binding.md)
+and [`ADR-045`](../adr/ADR-045-existing-root-bootstrap-and-initial-upload-admission.md).
+
+## Recovery is not a new domain record (Prompt 107)
+
+The recovery summary is derived from existing profile, replica/root, runtime,
+authentication, setup, and attention state. It is not stored beside the
+library, does not introduce a repair table, and cannot mutate a root or SQLite
+row. Pending setup continues to use the existing profile-bound pending
+identity and server reconciliation. A returning same-path root is validated by
+the canonical root/marker contract; a missing or mismatched root is fenced and
+never becomes an empty logical tree. See
+[`ADR-048`](../adr/ADR-048-production-desktop-recovery-and-resilience-ux.md).

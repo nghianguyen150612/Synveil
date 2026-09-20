@@ -4,9 +4,9 @@ use async_trait::async_trait;
 use futures_core::Stream;
 use synveil_core::{
     ChangeEvent, ChangeEventId, ClientMutationId, ClientMutationRequest, DeviceId, FileVersionId,
-    LibraryId, LogicalSnapshotNode, NodeId, NodeState, OutboundIntentId, RebaselineSnapshotId,
-    Revision, Sequence, Sha256Digest, SyncBootstrap, SyncBootstrapId, SyncConflictId,
-    UploadSessionId, UploadSessionState, UserId,
+    LibraryId, LogicalName, LogicalSnapshotNode, NodeId, NodeState, OutboundIntentId,
+    RebaselineSnapshotId, Revision, Sequence, Sha256Digest, SyncBootstrap, SyncBootstrapId,
+    SyncConflictId, UploadSessionId, UploadSessionState, UserId,
 };
 
 use crate::{ClientSyncError, MAX_OPAQUE_EVIDENCE_BYTES, MAX_PAGE_ITEMS};
@@ -42,6 +42,43 @@ impl ReplicaScope {
     #[must_use]
     pub const fn library_id(self) -> LibraryId {
         self.library_id
+    }
+}
+
+/// Minimal authoritative library identity used by desktop onboarding
+/// reconciliation. The server root is retained because it is the durable
+/// parent identity for the first local observation scan; all later namespace
+/// and content work still uses the normal sync contracts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemoteLibrary {
+    id: LibraryId,
+    name: LogicalName,
+    root_node_id: NodeId,
+}
+
+impl RemoteLibrary {
+    #[must_use]
+    pub const fn new(id: LibraryId, name: LogicalName, root_node_id: NodeId) -> Self {
+        Self {
+            id,
+            name,
+            root_node_id,
+        }
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> LibraryId {
+        self.id
+    }
+
+    #[must_use]
+    pub const fn name(&self) -> &LogicalName {
+        &self.name
+    }
+
+    #[must_use]
+    pub const fn root_node_id(&self) -> NodeId {
+        self.root_node_id
     }
 }
 

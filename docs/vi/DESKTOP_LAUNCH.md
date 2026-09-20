@@ -213,3 +213,79 @@ dependency của launch/package boundary; PostgreSQL integration bị ignore khi
 Prompt 99 không đổi server migration, client schema, HTTP route, OpenAPI
 operation hoặc web feature. Phase kế tiếp là checkpoint và ownership release
 gate của Prompt 100, không phải một launch implementation thứ hai.
+
+## Authentication độc lập với launch và quit (Prompt 101)
+
+Prompt 101 không đổi ownership process launch. `synveil-client` background vẫn
+là owner của HTTP enrollment, access `LocalStateStore`/`SecretStore` theo
+profile, runtime wake và credential reload. Qt shell chỉ expose enrollment
+field masked, transient và route request qua `DesktopController` cùng IPC local
+Prompt 96 hiện có.
+
+GUI close, tray Quit, background-client restart và process termination không phải
+Sign Out. Chúng không xóa credential durable và không gửi credential-change
+wake. Sign Out explicit là controller command tới background host, ghi
+forgotten marker hiện có, hoàn tất cleanup secure-store rồi mới wake library bị
+ảnh hưởng. Cleanup fail trả typed result an toàn và suppress wake.
+
+Sau background-client restart, client reload profile metadata durable và secure
+credential. Sau GUI restart, controller chỉ dựng lại auth status an toàn và
+affordance Sign Out; không gửi enrollment token hay bearer value vào QML. Nếu
+mất IPC response, controller trả `OutcomeUnknown` và không replay enrollment
+hay Sign Out khi reconnect. Bound 69 byte, gate một auth operation, result
+generic và profile isolation áp dụng giống nhau cho client launch qua
+supervisor hoặc direct.
+
+Prompt 101 không thêm supervisor registration, package payload, server route,
+OpenAPI operation, schema migration, installer behavior hay credential store
+theo platform. Live enrollment, restart recovery và native Windows execution
+vẫn là validation gate tường minh. Xem
+[`ADR-042`](../adr/ADR-042-secure-desktop-authentication-and-credential-lifecycle.md).
+
+## Onboarding profile do client sở hữu (Prompt 102)
+
+First launch chỉ tạo process profile identity không bí mật và khởi chạy client/
+control process hiện có với zero library. Native shell nhận server origin và
+display label; client thực hiện parse canonical, anonymous readiness verification
+và tạo profile durable. Khi thành công, controller chuyển từ
+configuration-required sang state unauthenticated của Prompt 101; auth vẫn là
+enrollment operation riêng.
+
+Edit connection probe target mới trước durable apply. Đổi origin giữ opaque
+profile ID nhưng fence enrollment cũ và SecretStore trước khi wake runtime.
+GUI close, tray Quit và GUI restart vẫn độc lập với client lifecycle. Restart
+đọc manifest canonical, SQLite profile state và secure store, không cần QML
+cache. Migration `0007_profile_reconfiguration.sql` chỉ đổi trigger semantics
+phía client; không cần server migration. Xem
+[`ADR-043`](../adr/ADR-043-desktop-profile-onboarding-and-connection-configuration.md).
+
+## Setting desktop thiết yếu (Prompt 105)
+
+Panel settings dùng launch manager hiện có để đọc/đổi login startup theo user.
+Linux dùng unit `systemd --user` cố định; Windows dùng Task Scheduler của user
+hiện tại. Bridge nhận category authoritative `Enabled`, `Disabled` hoặc
+`Unavailable`, gọi typed manager API, không tạo service thứ hai, không truyền
+shell text và không đưa path/profile, URL, credential hay token vào metadata.
+
+Disable chỉ áp dụng login sau này, không stop client đang chạy. Enable không
+spawn duplicate. Toggle nhanh được coalesced thành latest intent sau một bounded
+operation; lỗi hoặc outcome không chắc chắn sẽ refresh status authoritative.
+
+Close-to-tray là setting riêng cục bộ desktop lưu bằng `QSettings`. Chỉ khi
+setting bật và Qt có system tray thật thì close window mới hide; nếu không dùng
+controller-only shell exit hiện có. Cả hai đường không gửi client `Shutdown`,
+không terminate `synveil-client`, không đổi global pause và không đụng
+credential. Setting không lưu trong SQLite, client manifest, `SecretStore`,
+server hay IPC snapshot. Xem
+[`ADR-046`](../adr/ADR-046-essential-desktop-settings-and-user-sync-controls.md).
+
+## Launch recovery tương tác (Prompt 107)
+
+Khi controller báo background client hiện có không khả dụng, recovery card
+desktop có thể gọi `BackgroundClientManager::ensure_running`. Đây vẫn là
+manager bounded dùng cho startup settings: resolve packaged sibling canonical,
+không PATH lookup hoặc shell interpolation, một attempt in-flight và
+coalescing/cooldown. Action recovery không bật login startup, không truyền
+profile path/credential làm argument và không spawn client thứ hai. Sau request,
+controller reconnect và fetch status authoritative. Xem
+[`ADR-048`](../adr/ADR-048-production-desktop-recovery-and-resilience-ux.md).

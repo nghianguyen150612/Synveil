@@ -49,15 +49,29 @@ roots, home data are **never package-owned** and never deleted.
 ### `install.sh` — fresh install / idempotent reinstall / upgrade
 
 ```sh
-# Staged (rootless, no host mutation):
-./deploy/install/install.sh --root=/tmp/synveil-root --binary=/path/to/synveil-scheduled-maintenance-once
+# Staged (rootless, no host mutation) with the complete desktop payload:
+./deploy/install/install.sh --root=/tmp/synveil-root \
+  --binary=/path/to/synveil-scheduled-maintenance-once \
+  --client-binary=/path/to/synveil-client \
+  --desktop-binary=/path/to/synveil-desktop
 
 # With DESTDIR env (make-style):
-DESTDIR=/tmp/synveil-root ./deploy/install/install.sh --binary=...
+DESTDIR=/tmp/synveil-root ./deploy/install/install.sh \
+  --binary=/path/to/synveil-scheduled-maintenance-once \
+  --client-binary=/path/to/synveil-client \
+  --desktop-binary=/path/to/synveil-desktop
 
 # Real host (requires root, explicit allow):
-sudo SYNVEIL_ALLOW_HOST_ROOT=1 ./deploy/install/install.sh --root=/ --binary=...
+sudo SYNVEIL_ALLOW_HOST_ROOT=1 ./deploy/install/install.sh --root=/ \
+  --binary=/path/to/synveil-scheduled-maintenance-once \
+  --client-binary=/path/to/synveil-client \
+  --desktop-binary=/path/to/synveil-desktop
 ```
+
+The DEB/RPM builders call the same layer with all three production binaries;
+they do not maintain a second destination list. The Windows ZIP is assembled
+by `deploy/packages/build-windows.sh` and is intentionally not installed by
+this Linux lifecycle script.
 
 Properties:
 

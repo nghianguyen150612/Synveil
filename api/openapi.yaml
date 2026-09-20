@@ -2172,8 +2172,11 @@ paths:
       summary: List libraries owned by the authenticated user
       x-synveil-status: IMPLEMENTED
       x-synveil-owner: Metadata / Rust Backend
+      x-synveil-auth-classes: [BROWSER_SESSION, DEVICE_CREDENTIAL]
+      x-synveil-device-auth: The authenticated device bearer is owner-scoped and bypasses browser CSRF; browser sessions require the CSRF header. No local filesystem path is accepted.
       security:
         - BrowserSession: []
+        - DeviceBearer: []
       parameters:
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
@@ -2191,6 +2194,50 @@ paths:
           $ref: '#/components/responses/InvalidRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      tags: [Files]
+      operationId: createLibrary
+      summary: Create an empty logical library for the authenticated owner
+      x-synveil-status: IMPLEMENTED
+      x-synveil-owner: Metadata / Rust Backend
+      x-synveil-max-body-bytes: 16384
+      x-synveil-auth-classes: [BROWSER_SESSION, DEVICE_CREDENTIAL]
+      x-synveil-csrf: 'Required for BrowserSession; not applicable to an actually authenticated DeviceBearer request.'
+      x-synveil-device-auth: The authenticated device bearer is owner-scoped and bypasses browser CSRF. No local filesystem path is accepted.
+      description: |
+        Create the server's canonical empty logical library and root node.
+        The caller supplies a UUIDv7 so a retried request can be reconciled
+        without creating a second library. This operation does not select,
+        inspect, or attach a local filesystem root.
+      security:
+        - BrowserSession: []
+        - DeviceBearer: []
+      parameters:
+        - $ref: '#/components/parameters/BrowserCsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateLibraryRequest'
+      responses:
+        '201':
+          description: The empty logical library was created or the same idempotent request was replayed.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/libraries/{library_id}/nodes:
@@ -5739,6 +5786,19 @@ components:
           description: Raw logical directory name; no host-filesystem normalization is applied.
         parent_id:
           $ref: '#/components/schemas/OpaqueId'
+    CreateLibraryRequest:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id:
+          $ref: '#/components/schemas/OpaqueId'
+          description: Caller-supplied UUIDv7 used to reconcile a retried request.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: Owner-visible logical library name; never a path or physical storage locator.
     UpdateNodeRequest:
       oneOf:
         - $ref: '#/components/schemas/RenameNodeRequest'
@@ -6535,6 +6595,15 @@ components:
             $ref: '#/components/schemas/LibraryResource'
         page:
           $ref: '#/components/schemas/Page'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    LibraryResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          $ref: '#/components/schemas/LibraryResource'
         meta:
           $ref: '#/components/schemas/ResponseMeta'
     NodeCollectionResponse:

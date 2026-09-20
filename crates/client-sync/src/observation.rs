@@ -3055,6 +3055,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn existing_tree_scan_creates_content_intents_without_deletes() {
+        let harness = Harness::manual().await;
+        fs::create_dir_all(harness.root.join("nested")).unwrap();
+        fs::write(harness.root.join("alpha.txt"), b"alpha").unwrap();
+        fs::write(harness.root.join("nested/beta.txt"), b"beta").unwrap();
+
+        harness.start().await;
+        let intents = harness.engine.list_pending_intents().await.unwrap();
+        assert!(intents.iter().any(|intent| {
+            intent.kind() == OutboundIntentKind::CreateFile
+                && intent.observed_relative_path().as_str() == "alpha.txt"
+                && intent.parent_node_id() == Some(harness.root_id)
+        }));
+        assert!(intents.iter().any(|intent| {
+            intent.kind() == OutboundIntentKind::CreateDirectory
+                && intent.observed_relative_path().as_str() == "nested"
+                && intent.parent_node_id() == Some(harness.root_id)
+        }));
+        assert!(intents.iter().any(|intent| {
+            intent.kind() == OutboundIntentKind::CreateFile
+                && intent.observed_relative_path().as_str() == "nested/beta.txt"
+                && intent.parent_node_id().is_none()
+        }));
+        assert!(
+            !intents
+                .iter()
+                .any(|intent| intent.kind() == OutboundIntentKind::DeleteOrTrashNode)
+        );
+
+        harness.close().await;
+    }
+
+    #[tokio::test]
     async fn thousand_observation_events_emit_one_wake_and_preserve_intents() {
         let (watcher, source) = ManualChangeWatcher::with_capacity(1_024);
         let notifier = RecordingNotifier::new();

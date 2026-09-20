@@ -13,9 +13,11 @@ use std::{
 
 use synveil_client::{
     ControlClient, ControlClientHello, ControlCommand, ControlErrorCode, ControlEvent,
-    ControlProcessStatus, ControlRequest, ControlResponse, ControlResponseBody, ControlServerHello,
-    DESKTOP_CONTROL_PROTOCOL_VERSION, DesktopControlClient, DesktopControlEndpoint,
-    DesktopControlHandle, DesktopControlServer, DesktopProcessStatus, read_frame, write_frame,
+    ControlProcessStatus, ControlProfileConfigurationOutcome, ControlRequest, ControlResponse,
+    ControlResponseBody, ControlServerHello, ControlSyncControlResult, ControlSyncControlState,
+    DEFAULT_DESKTOP_CLIENT_SYNC_STATE_FILE, DESKTOP_CONTROL_PROTOCOL_VERSION, DesktopControlClient,
+    DesktopControlEndpoint, DesktopControlHandle, DesktopControlServer, DesktopProcessStatus,
+    DesktopSyncPauseStore, read_frame, write_frame,
 };
 use synveil_client_sync::{
     DesktopSyncHost, DesktopSyncHostConfig, LocalStateConfig, LocalStateStore, ServerProfileId,
@@ -99,6 +101,7 @@ impl PlatformRuntime for TestPlatformRuntime {
 
 struct Fixture {
     root: PathBuf,
+    profile_id: ServerProfileId,
     state: Arc<LocalStateStore>,
     host: DesktopSyncHost,
     control: DesktopControlHandle,
@@ -110,7 +113,7 @@ impl Fixture {
     async fn new() -> Self {
         let root = std::env::temp_dir().join(format!("sv96-{}", uuid::Uuid::now_v7()));
         fs::create_dir_all(&root).expect("fixture root");
-        let platform = TestPlatformRuntime::new(&root);
+        let platform = Arc::new(TestPlatformRuntime::new(&root));
         let state = Arc::new(
             LocalStateStore::open(&LocalStateConfig::new(root.join("state.sqlite3")))
                 .await
@@ -125,8 +128,22 @@ impl Fixture {
         .await
         .expect("empty host");
         host.start().await.expect("host start");
-        let control = DesktopControlHandle::new(host.handle(), DesktopProcessStatus::Running);
-        let endpoint = DesktopControlEndpoint::for_profile(&platform, ServerProfileId::new())
+        let profile_id = ServerProfileId::new();
+        let sync_pause_store = DesktopSyncPauseStore::from_path(
+            root.join("config")
+                .join(DEFAULT_DESKTOP_CLIENT_SYNC_STATE_FILE),
+        );
+        let control = DesktopControlHandle::new_with_library_setup_and_sync_store(
+            host.handle(),
+            DesktopProcessStatus::Running,
+            platform.clone(),
+            profile_id,
+            sync_pause_store,
+        );
+        host.handle()
+            .bind_profile_id(profile_id)
+            .expect("bind fixture profile");
+        let endpoint = DesktopControlEndpoint::for_profile(platform.as_ref(), profile_id)
             .expect("linux endpoint");
         let mut server = DesktopControlServer::bind(endpoint.clone())
             .await
@@ -134,6 +151,7 @@ impl Fixture {
         server.start(control.clone()).expect("control start");
         Self {
             root,
+            profile_id,
             state,
             host,
             control,
@@ -148,6 +166,111 @@ impl Fixture {
         self.state.close_pool().await;
         fs::remove_dir_all(self.root).expect("fixture cleanup");
     }
+}
+
+#[tokio::test]
+async fn profile_configuration_ipc_is_typed_and_zero_library_safe() {
+    let fixture = Fixture::new().await;
+    let mut client = DesktopControlClient::connect(fixture.endpoint.clone())
+        .await
+        .expect("profile control client");
+
+    let configuration = client
+        .get_profile_configuration()
+        .await
+        .expect("profile configuration");
+    assert!(!configuration.configured);
+    assert!(!configuration.authenticated);
+    assert!(
+        client
+            .list_libraries()
+            .await
+            .expect("library list")
+            .libraries
+            .is_empty()
+    );
+
+    assert_eq!(
+        client
+            .validate_profile_configuration("http://example.com/".to_owned(), "Example".to_owned())
+            .await
+            .expect("validation response"),
+        ControlProfileConfigurationOutcome::InvalidServerAddress
+    );
+    assert_eq!(
+        client
+            .configure_profile(
+                fixture.profile_id.to_string(),
+                "https://bad path.example/".to_owned(),
+                "Example".to_owned(),
+            )
+            .await
+            .expect("configuration response"),
+        ControlProfileConfigurationOutcome::InvalidServerAddress
+    );
+
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn sync_control_ipc_persists_before_runtime_state_changes_and_reopens() {
+    let fixture = Fixture::new().await;
+    let state_path = fixture
+        .root
+        .join("config")
+        .join(DEFAULT_DESKTOP_CLIENT_SYNC_STATE_FILE);
+    let mut client = DesktopControlClient::connect(fixture.endpoint.clone())
+        .await
+        .expect("sync control client");
+
+    assert_eq!(
+        client
+            .sync_control_state()
+            .await
+            .expect("initial sync control state"),
+        ControlSyncControlState::Running
+    );
+    assert_eq!(
+        client.pause_sync().await.expect("pause response"),
+        ControlSyncControlResult::Paused
+    );
+    assert_eq!(
+        fs::read_to_string(&state_path).expect("durable paused state"),
+        "paused\n"
+    );
+    assert_eq!(
+        client
+            .sync_control_state()
+            .await
+            .expect("paused sync control state"),
+        ControlSyncControlState::PausedByUser
+    );
+    assert_eq!(
+        client
+            .pause_sync()
+            .await
+            .expect("idempotent pause response"),
+        ControlSyncControlResult::AlreadyPaused
+    );
+    assert_eq!(
+        client.resume_sync().await.expect("resume response"),
+        ControlSyncControlResult::Resumed
+    );
+    assert_eq!(
+        fs::read_to_string(&state_path).expect("durable running state"),
+        "running\n"
+    );
+    assert_eq!(
+        client
+            .sync_control_state()
+            .await
+            .expect("running sync control state"),
+        ControlSyncControlState::Running
+    );
+
+    let reopened = DesktopSyncPauseStore::from_path(state_path);
+    assert!(!reopened.is_paused().expect("reopened running state"));
+    fixture.close().await;
 }
 
 async fn raw_hello(path: &Path, version: u16) -> (UnixStream, ControlServerHello) {

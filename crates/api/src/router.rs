@@ -52,8 +52,22 @@ pub fn router(state: ApiState) -> Router {
         .route("/auth/logout", post(auth::logout))
         .layer(from_fn_with_state(state.clone(), auth::logout_boundary))
         .with_state(state.clone());
+    let protected_library_catalog = Router::new()
+        .route(
+            "/libraries",
+            get(files::list_libraries).post(files::create_library),
+        )
+        .layer(RequestBodyLimitLayer::new(FILE_METADATA_BODY_LIMIT_BYTES))
+        .layer(from_fn_with_state(
+            state.clone(),
+            auth::require_csrf_for_mutations,
+        ))
+        .layer(from_fn_with_state(
+            state.clone(),
+            auth::require_inbound_authentication,
+        ))
+        .with_state(state.clone());
     let protected_files = Router::new()
-        .route("/libraries", get(files::list_libraries))
         .route(
             "/libraries/{library_id}/nodes",
             get(files::list_children).post(files::create_directory),
@@ -63,8 +77,8 @@ pub fn router(state: ApiState) -> Router {
         .route("/nodes/{node_id}/restore", post(files::restore_node))
         .layer(RequestBodyLimitLayer::new(FILE_METADATA_BODY_LIMIT_BYTES))
         // The authentication layer is added last so it runs first on the
-        // request and installs AuthContext before the CSRF layer evaluates a
-        // state-changing method.
+        // request and installs AuthContext before
+        // the CSRF layer evaluates a state-changing method.
         .layer(from_fn_with_state(
             state.clone(),
             auth::require_csrf_for_mutations,
@@ -402,6 +416,7 @@ pub fn router(state: ApiState) -> Router {
     // upload PATCH route is merged afterwards because its body is streamed and
     // bounded by the upload application's configured chunk limit.
     let api = api
+        .merge(protected_library_catalog)
         .merge(protected_files)
         .layer(RequestBodyLimitLayer::new(state.body_limit_bytes()))
         .merge(protected_downloads)

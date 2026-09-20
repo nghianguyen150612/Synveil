@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import QtQuick.Window
 import com.synveil.desktop 1.0
@@ -21,12 +22,19 @@ ApplicationWindow {
         id: bridge
     }
 
+    FolderDialog {
+        id: libraryFolderDialog
+        title: qsTr("Choose a local library folder")
+        onAccepted: bridge.setLibraryFolder(selectedFolder.toString())
+    }
+
     property var ui_bridge: bridge
     property int liveTestPhase: bridge.live_test ? 0 : -1
     property int liveTestWaitTicks: 0
     property string liveTestSignature: ""
     property bool liveTestRecoveringObserved: false
     property int liveTestAvailableGeneration: -1
+    property bool editingConnection: !bridge.profile_configured
 
     Component.onCompleted: {
         bridge.installTray()
@@ -66,6 +74,11 @@ ApplicationWindow {
             "auth=" + bridge.selected_auth_label,
             "error=" + bridge.last_error_label,
             "can_sync=" + bridge.selected_can_sync,
+            "auth_required=" + bridge.auth_required,
+            "auth_in_flight=" + bridge.auth_in_flight,
+            "can_sign_out=" + bridge.selected_can_sign_out,
+            "profile_configured=" + bridge.profile_configured,
+            "profile_authenticated=" + bridge.profile_authenticated,
             "tray=" + bridge.tray_available,
             "library_list_count=" + libraryList.count
         ].join(" ")
@@ -199,7 +212,7 @@ ApplicationWindow {
     }
 
     onClosing: function(close) {
-        if (bridge.tray_available) {
+        if (bridge.close_to_tray && bridge.tray_available) {
             close.accepted = false
             root.hide()
         } else {
@@ -263,6 +276,232 @@ ApplicationWindow {
                 color: palette.mid
                 Accessible.name: qsTr("Freshness")
             }
+
+            Label {
+                text: qsTr("Needs attention (%1)").arg(bridge.attention_count)
+                visible: bridge.attention_count > 0
+                color: "#a86213"
+                font.pixelSize: 12
+                Accessible.name: qsTr("Needs attention")
+            }
+
+            Label {
+                text: qsTr("Needs recovery (%1)").arg(bridge.recovery_action_required_count)
+                visible: bridge.recovery_action_required_count > 0
+                color: "#a86213"
+                font.pixelSize: 12
+                Accessible.name: qsTr("Needs recovery")
+            }
+
+            Button {
+                text: qsTr("Settings")
+                onClicked: settingsDrawer.open()
+                Accessible.name: qsTr("Open desktop settings")
+            }
+        }
+    }
+
+    Drawer {
+        id: settingsDrawer
+        edge: Qt.RightEdge
+        width: Math.min(420, root.width * 0.82)
+        height: root.height
+        modal: true
+        interactive: true
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 24
+            spacing: 18
+
+            RowLayout {
+                Layout.fillWidth: true
+
+                Label {
+                    text: qsTr("Settings")
+                    font.pixelSize: 22
+                    font.weight: Font.DemiBold
+                    Layout.fillWidth: true
+                }
+
+                Button {
+                    text: qsTr("Close")
+                    onClicked: settingsDrawer.close()
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight: syncSettingsColumn.implicitHeight + 28
+                radius: 10
+                color: palette.base
+                border.color: palette.midlight
+
+                ColumnLayout {
+                    id: syncSettingsColumn
+                    anchors.fill: parent
+                    anchors.margins: 14
+                    spacing: 9
+
+                    Label {
+                        text: qsTr("Synchronization")
+                        font.pixelSize: 15
+                        font.weight: Font.DemiBold
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: qsTr("Global sync: %1").arg(bridge.sync_control_label)
+                        color: palette.mid
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+
+                        Button {
+                            text: bridge.sync_paused ? qsTr("Resume Sync") : qsTr("Pause Sync")
+                            enabled: !bridge.sync_control_busy
+                                     && bridge.connection_label === qsTr("Connected")
+                                     && bridge.sync_control_label !== qsTr("Sync status unavailable")
+                            onClicked: {
+                                if (bridge.sync_paused) {
+                                    bridge.resumeSync()
+                                } else {
+                                    bridge.pauseSync()
+                                }
+                            }
+                            Accessible.name: bridge.sync_paused
+                                             ? qsTr("Resume synchronization")
+                                             : qsTr("Pause synchronization")
+                        }
+
+                        BusyIndicator {
+                            running: bridge.sync_control_busy
+                            visible: running
+                            Layout.preferredWidth: 24
+                            Layout.preferredHeight: 24
+                        }
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        visible: bridge.sync_control_feedback.length > 0
+                        text: bridge.sync_control_feedback
+                        color: palette.mid
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 12
+                    }
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight: startupSettingsColumn.implicitHeight + 28
+                radius: 10
+                color: palette.base
+                border.color: palette.midlight
+
+                ColumnLayout {
+                    id: startupSettingsColumn
+                    anchors.fill: parent
+                    anchors.margins: 14
+                    spacing: 9
+
+                    Label {
+                        text: qsTr("Background sync at login")
+                        font.pixelSize: 15
+                        font.weight: Font.DemiBold
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: qsTr("Current state: %1").arg(bridge.background_startup_state)
+                        color: palette.mid
+                        wrapMode: Text.WordWrap
+                    }
+
+                    CheckBox {
+                        id: startupCheckBox
+                        text: qsTr("Start the background client when I sign in")
+                        checked: bridge.background_startup_state === qsTr("Enabled")
+                        enabled: !bridge.background_startup_busy
+                        onClicked: bridge.setBackgroundStartup(checked)
+                    }
+
+                    BusyIndicator {
+                        running: bridge.background_startup_busy
+                        visible: running
+                        Layout.preferredWidth: 24
+                        Layout.preferredHeight: 24
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        visible: bridge.background_startup_feedback.length > 0
+                        text: bridge.background_startup_feedback
+                        color: palette.mid
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 12
+                    }
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight: traySettingsColumn.implicitHeight + 28
+                radius: 10
+                color: palette.base
+                border.color: palette.midlight
+
+                ColumnLayout {
+                    id: traySettingsColumn
+                    anchors.fill: parent
+                    anchors.margins: 14
+                    spacing: 9
+
+                    Label {
+                        text: qsTr("Window behavior")
+                        font.pixelSize: 15
+                        font.weight: Font.DemiBold
+                    }
+
+                    CheckBox {
+                        text: qsTr("Close the window to the system tray")
+                        checked: bridge.close_to_tray
+                        enabled: bridge.tray_available
+                        onClicked: bridge.setCloseToTray(checked)
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: bridge.tray_available
+                              ? qsTr("The background client keeps running when the window is hidden.")
+                              : qsTr("A system tray is unavailable; closing will exit the desktop shell.")
+                        color: palette.mid
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 12
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        visible: bridge.close_to_tray_feedback.length > 0
+                        text: bridge.close_to_tray_feedback
+                        color: palette.mid
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 12
+                    }
+                }
+            }
+
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("Connection: %1 · %2").arg(bridge.connection_label).arg(bridge.freshness_label)
+                color: palette.mid
+                wrapMode: Text.WordWrap
+                font.pixelSize: 12
+            }
+
+            Item { Layout.fillHeight: true }
         }
     }
 
@@ -308,7 +547,7 @@ ApplicationWindow {
                     spacing: 10
 
                     Label {
-                        text: qsTr("Attention: %1").arg(bridge.attention_count)
+                        text: qsTr("Needs attention: %1").arg(bridge.attention_count)
                         color: bridge.attention_count > 0 ? "#a86213" : palette.mid
                         font.pixelSize: 12
                         Layout.fillWidth: true
@@ -439,7 +678,11 @@ ApplicationWindow {
                         spacing: 4
 
                         Label {
-                            text: bridge.selected_library_label
+                            text: bridge.library_count > 0
+                                  ? bridge.selected_library_label
+                                  : (bridge.profile_display_name.length > 0
+                                     ? bridge.profile_display_name
+                                     : qsTr("Synveil desktop"))
                             font.pixelSize: 25
                             font.weight: Font.DemiBold
                             elide: Text.ElideRight
@@ -462,6 +705,15 @@ ApplicationWindow {
                         onClicked: bridge.syncNow()
                         Accessible.name: qsTr("Request a sync")
                     }
+
+                    Button {
+                        text: qsTr("Edit connection")
+                        visible: bridge.profile_configured
+                                 && !root.editingConnection
+                                 && !bridge.configuration_busy
+                        onClicked: root.editingConnection = true
+                        Accessible.name: qsTr("Edit server connection")
+                    }
                 }
 
                 Label {
@@ -470,6 +722,678 @@ ApplicationWindow {
                     text: bridge.sync_feedback
                     color: palette.mid
                     wrapMode: Text.WordWrap
+                }
+
+                Rectangle {
+                    id: recoveryCard
+                    Layout.fillWidth: true
+                    visible: bridge.recovery_action_required_count > 0
+                             || bridge.recovery_waiting_count > 0
+                             || bridge.recovery_feedback.length > 0
+                             || bridge.recovery_busy
+                    implicitHeight: recoveryColumn.implicitHeight + 28
+                    radius: 10
+                    color: palette.base
+                    border.color: bridge.recovery_action_required_count > 0
+                                  ? "#d8ad72" : palette.midlight
+
+                    ColumnLayout {
+                        id: recoveryColumn
+                        anchors.fill: parent
+                        anchors.margins: 14
+                        spacing: 8
+
+                        RowLayout {
+                            Layout.fillWidth: true
+
+                            Label {
+                                text: qsTr("Recovery")
+                                font.pixelSize: 15
+                                font.weight: Font.DemiBold
+                                Layout.fillWidth: true
+                            }
+
+                            Label {
+                                text: bridge.client_recovery_label
+                                color: palette.mid
+                                font.pixelSize: 12
+                            }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: bridge.recovery_waiting_count > 0
+                                  ? qsTr("Some conditions are retrying automatically; action-required items are listed below.")
+                                  : qsTr("Use only the supported action for each condition. Synveil keeps recovery state across desktop restarts.")
+                            color: palette.mid
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 12
+                        }
+
+                        ListView {
+                            id: recoveryList
+                            Layout.fillWidth: true
+                            visible: count > 0
+                            implicitHeight: Math.min(260, Math.max(56, contentHeight))
+                            clip: true
+                            model: bridge.recovery_items
+                            spacing: 5
+                            ScrollBar.vertical: ScrollBar { }
+
+                            delegate: ItemDelegate {
+                                id: recoveryDelegate
+                                required property var modelData
+                                width: ListView.view.width
+                                Accessible.name: modelData.kindLabel
+                                Accessible.description: modelData.detail
+
+                                contentItem: ColumnLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 12
+                                    anchors.rightMargin: 12
+                                    spacing: 3
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+
+                                        Label {
+                                            text: recoveryDelegate.modelData.kindLabel
+                                            font.weight: Font.Medium
+                                            Layout.fillWidth: true
+                                        }
+
+                                        Label {
+                                            text: recoveryDelegate.modelData.libraryLabel
+                                            color: palette.mid
+                                            font.pixelSize: 12
+                                        }
+                                    }
+
+                                    Label {
+                                        text: recoveryDelegate.modelData.detail
+                                        color: palette.mid
+                                        wrapMode: Text.WordWrap
+                                        font.pixelSize: 12
+                                        Layout.fillWidth: true
+                                    }
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 8
+
+                                        Label {
+                                            visible: recoveryDelegate.modelData.waiting
+                                            text: qsTr("Waiting")
+                                            color: palette.mid
+                                            font.pixelSize: 12
+                                        }
+
+                                        Button {
+                                            visible: recoveryDelegate.modelData.actionCode === "configure_profile"
+                                            text: qsTr("Open connection")
+                                            enabled: !bridge.recovery_busy
+                                            onClicked: root.editingConnection = true
+                                            Accessible.name: qsTr("Open server connection settings")
+                                        }
+
+                                        Button {
+                                            visible: recoveryDelegate.modelData.actionCode === "authenticate"
+                                            text: qsTr("Open sign-in")
+                                            enabled: !bridge.recovery_busy
+                                            onClicked: bridge.selectLibrary(recoveryDelegate.modelData.libraryId)
+                                            Accessible.name: qsTr("Open sign-in for this library")
+                                        }
+
+                                        Button {
+                                            visible: recoveryDelegate.modelData.actionCode === "start_client"
+                                            text: qsTr("Start client")
+                                            enabled: !bridge.recovery_busy
+                                            onClicked: bridge.startBackgroundClient()
+                                            Accessible.name: qsTr("Start the background client")
+                                        }
+
+                                        Button {
+                                            visible: recoveryDelegate.modelData.actionCode === "check_again"
+                                            text: qsTr("Check again")
+                                            enabled: !bridge.recovery_busy
+                                            onClicked: {
+                                                bridge.selectLibrary(recoveryDelegate.modelData.libraryId)
+                                                bridge.retrySelectedRecovery(
+                                                    recoveryDelegate.modelData.libraryId,
+                                                    recoveryDelegate.modelData.connectionGeneration)
+                                            }
+                                            Accessible.name: qsTr("Check this recovery condition again")
+                                        }
+
+                                        Button {
+                                            visible: recoveryDelegate.modelData.actionCode === "resume_setup"
+                                            text: qsTr("Resume setup")
+                                            enabled: !bridge.recovery_busy
+                                            onClicked: bridge.resumePendingSetup()
+                                            Accessible.name: qsTr("Resume library setup")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            visible: bridge.recovery_items_truncated
+                            text: qsTr("Only the first safe recovery conditions are shown.")
+                            color: palette.mid
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 12
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            visible: bridge.recovery_feedback.length > 0
+                            text: bridge.recovery_feedback
+                            color: palette.mid
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 12
+                        }
+
+                        BusyIndicator {
+                            running: bridge.recovery_busy
+                            visible: running
+                            Layout.preferredWidth: 24
+                            Layout.preferredHeight: 24
+                        }
+                    }
+                }
+
+                Rectangle {
+                    id: profileCard
+                    Layout.fillWidth: true
+                    visible: !bridge.profile_configured
+                             || root.editingConnection
+                             || bridge.configuration_busy
+                             || bridge.configuration_feedback.length > 0
+                    implicitHeight: profileColumn.implicitHeight + 28
+                    radius: 10
+                    color: palette.base
+                    border.color: palette.midlight
+
+                    ColumnLayout {
+                        id: profileColumn
+                        anchors.fill: parent
+                        anchors.margins: 14
+                        spacing: 8
+
+                        Label {
+                            text: bridge.profile_configured
+                                  ? qsTr("Server connection")
+                                  : qsTr("Connect to a Synveil server")
+                            font.pixelSize: 15
+                            font.weight: Font.DemiBold
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: bridge.profile_configured
+                                  ? qsTr("The server address and label are stored locally without credentials.")
+                                  : qsTr("Enter the HTTPS address of the Synveil server. You can authenticate this device after the connection is verified.")
+                            color: palette.mid
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 12
+                        }
+
+                        TextField {
+                            id: serverUrlField
+                            Layout.fillWidth: true
+                            visible: !bridge.profile_configured
+                                     || root.editingConnection
+                                     || bridge.configuration_busy
+                            enabled: !bridge.configuration_busy
+                            text: bridge.profile_server_url
+                            placeholderText: qsTr("https://server.example")
+                            maximumLength: 2048
+                            inputMethodHints: Qt.ImhUrlCharactersOnly
+                            Accessible.name: qsTr("Synveil server address")
+                        }
+
+                        TextField {
+                            id: profileLabelField
+                            Layout.fillWidth: true
+                            visible: !bridge.profile_configured
+                                     || root.editingConnection
+                                     || bridge.configuration_busy
+                            enabled: !bridge.configuration_busy
+                            text: bridge.profile_display_name
+                            placeholderText: qsTr("Server label")
+                            maximumLength: 256
+                            Accessible.name: qsTr("Server label")
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            Button {
+                                text: bridge.profile_configured
+                                      ? qsTr("Save connection")
+                                      : qsTr("Verify and connect")
+                                visible: !bridge.profile_configured
+                                         || root.editingConnection
+                                         || bridge.configuration_busy
+                                enabled: !bridge.configuration_busy
+                                         && serverUrlField.text.trim().length > 0
+                                onClicked: bridge.configureProfile(
+                                    serverUrlField.text,
+                                    profileLabelField.text)
+                                Accessible.name: qsTr("Verify and save server connection")
+                            }
+
+                            Button {
+                                text: qsTr("Cancel")
+                                visible: bridge.profile_configured
+                                         && root.editingConnection
+                                         && !bridge.configuration_busy
+                                onClicked: root.editingConnection = false
+                                Accessible.name: qsTr("Cancel server connection edit")
+                            }
+
+                            BusyIndicator {
+                                running: bridge.configuration_busy
+                                visible: running
+                                Layout.preferredWidth: 24
+                                Layout.preferredHeight: 24
+                            }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            visible: bridge.configuration_feedback.length > 0
+                            text: bridge.configuration_feedback
+                            color: palette.mid
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 12
+                        }
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    visible: bridge.auth_required
+                             || bridge.auth_in_flight
+                             || bridge.selected_can_sign_out
+                             || bridge.auth_feedback.length > 0
+                    implicitHeight: authColumn.implicitHeight + 28
+                    radius: 10
+                    color: palette.base
+                    border.color: palette.midlight
+
+                    ColumnLayout {
+                        id: authColumn
+                        anchors.fill: parent
+                        anchors.margins: 14
+                        spacing: 8
+
+                        Label {
+                            text: qsTr("Device authentication")
+                            font.pixelSize: 15
+                            font.weight: Font.DemiBold
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: bridge.credential_store_unavailable
+                                  ? qsTr("Secure credential storage is temporarily unavailable. Try again later; Synveil has not removed the stored credential.")
+                                  : bridge.auth_required
+                                  ? qsTr("Enter the one-time enrollment token to reconnect this device.")
+                                  : bridge.auth_status_unknown
+                                    ? qsTr("Checking authentication status.")
+                                  : qsTr("This device uses the configured secure credential.")
+                            color: palette.mid
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 12
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            TextField {
+                                id: enrollmentToken
+                                Layout.fillWidth: true
+                                visible: bridge.auth_required || bridge.auth_in_flight
+                                enabled: !bridge.auth_in_flight
+                                placeholderText: qsTr("Enrollment token")
+                                echoMode: TextInput.Password
+                                maximumLength: 69
+                                inputMethodHints: Qt.ImhSensitiveData
+                                persistentSelection: false
+                                selectByMouse: false
+                                Accessible.name: qsTr("Enrollment token")
+
+                                function submitToken() {
+                                    var token = text
+                                    clear()
+                                    bridge.authenticate(token)
+                                }
+
+                                onAccepted: submitToken()
+                                onVisibleChanged: {
+                                    if (!visible) {
+                                        clear()
+                                    }
+                                }
+                            }
+
+                            Button {
+                                text: qsTr("Sign In")
+                                visible: bridge.auth_required
+                                enabled: !bridge.auth_in_flight
+                                onClicked: enrollmentToken.submitToken()
+                                Accessible.name: qsTr("Sign in this device")
+                            }
+
+                            Button {
+                                text: qsTr("Sign Out")
+                                visible: bridge.selected_can_sign_out
+                                enabled: !bridge.auth_in_flight
+                                onClicked: bridge.signOut()
+                                Accessible.name: qsTr("Sign out this device")
+                            }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            visible: bridge.auth_feedback.length > 0
+                            text: bridge.auth_feedback
+                            color: palette.mid
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 12
+                        }
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    visible: bridge.library_setup_required
+                             || bridge.library_setup_busy
+                             || (bridge.library_setup_feedback.length > 0
+                                 && bridge.library_count === 0)
+                    implicitHeight: librarySetupColumn.implicitHeight + 28
+                    radius: 10
+                    color: palette.base
+                    border.color: palette.midlight
+
+                    ColumnLayout {
+                        id: librarySetupColumn
+                        anchors.fill: parent
+                        anchors.margins: 14
+                        spacing: 8
+
+                        Label {
+                            text: qsTr("Set up your first library")
+                            font.pixelSize: 15
+                            font.weight: Font.DemiBold
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: qsTr("Choose a writable folder. Existing files are admitted to the new library, and Synveil will not delete them during setup.")
+                            color: palette.mid
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 12
+                        }
+
+                        TextField {
+                            id: libraryNameField
+                            Layout.fillWidth: true
+                            enabled: !bridge.library_setup_busy
+                            placeholderText: qsTr("Library name")
+                            maximumLength: 1024
+                            Accessible.name: qsTr("Library name")
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            Button {
+                                text: qsTr("Choose folder")
+                                enabled: !bridge.library_setup_busy
+                                onClicked: libraryFolderDialog.open()
+                                Accessible.name: qsTr("Choose local library folder")
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: bridge.library_setup_folder.length > 0
+                                      ? bridge.library_setup_folder
+                                      : qsTr("No folder selected")
+                                color: bridge.library_setup_folder.length > 0
+                                       ? palette.text : palette.mid
+                                elide: Text.ElideMiddle
+                                Accessible.name: qsTr("Selected library folder")
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            Button {
+                                text: qsTr("Create library")
+                                enabled: !bridge.library_setup_busy
+                                         && libraryNameField.text.trim().length > 0
+                                         && bridge.library_setup_folder.length > 0
+                                highlighted: true
+                                onClicked: bridge.setupLibrary(libraryNameField.text)
+                                Accessible.name: qsTr("Create library")
+                            }
+
+                            BusyIndicator {
+                                running: bridge.library_setup_busy
+                                visible: running
+                                Layout.preferredWidth: 24
+                                Layout.preferredHeight: 24
+                            }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            visible: bridge.library_setup_feedback.length > 0
+                            text: bridge.library_setup_feedback
+                            color: palette.mid
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 12
+                        }
+                    }
+                }
+
+                Rectangle {
+                    id: attentionCard
+                    Layout.fillWidth: true
+                    visible: bridge.attention_count > 0
+                             || bridge.attention_feedback.length > 0
+                             || bridge.attention_resolution_busy
+                    implicitHeight: attentionColumn.implicitHeight + 28
+                    radius: 10
+                    color: palette.base
+                    border.color: bridge.attention_count > 0 ? "#d8ad72" : palette.midlight
+
+                    ColumnLayout {
+                        id: attentionColumn
+                        anchors.fill: parent
+                        anchors.margins: 14
+                        spacing: 8
+
+                        RowLayout {
+                            Layout.fillWidth: true
+
+                            Label {
+                                text: qsTr("Needs attention")
+                                font.pixelSize: 15
+                                font.weight: Font.DemiBold
+                                Layout.fillWidth: true
+                            }
+
+                            Label {
+                                text: qsTr("%1 conflicts · %2 other problems")
+                                      .arg(bridge.conflict_attention_count)
+                                      .arg(bridge.other_attention_count)
+                                color: bridge.attention_count > 0 ? "#a86213" : palette.mid
+                                font.pixelSize: 12
+                            }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: qsTr("Review the safe details below. Decisions apply only to the selected conflict and never open local files.")
+                            color: palette.mid
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 12
+                        }
+
+                        ListView {
+                            id: attentionList
+                            Layout.fillWidth: true
+                            visible: count > 0
+                            implicitHeight: Math.min(180, Math.max(54, contentHeight))
+                            clip: true
+                            model: bridge.attention_items
+                            spacing: 4
+                            ScrollBar.vertical: ScrollBar { }
+
+                            delegate: ItemDelegate {
+                                id: attentionDelegate
+                                required property var modelData
+                                width: ListView.view.width
+                                highlighted: bridge.selected_attention_id === modelData.attentionId
+                                Accessible.name: modelData.pathLabel
+                                Accessible.description: modelData.categoryLabel
+
+                                background: Rectangle {
+                                    radius: 8
+                                    color: attentionDelegate.highlighted
+                                           ? palette.highlight : "transparent"
+                                    opacity: attentionDelegate.highlighted ? 0.16 : 1
+                                }
+
+                                contentItem: ColumnLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 12
+                                    anchors.rightMargin: 12
+                                    spacing: 2
+
+                                    Label {
+                                        text: attentionDelegate.modelData.pathLabel
+                                        font.weight: Font.Medium
+                                        elide: Text.ElideMiddle
+                                        Layout.fillWidth: true
+                                    }
+
+                                    Label {
+                                        text: attentionDelegate.modelData.categoryLabel
+                                              + qsTr("  ·  ")
+                                              + attentionDelegate.modelData.libraryLabel
+                                        color: palette.mid
+                                        font.pixelSize: 12
+                                        elide: Text.ElideRight
+                                        Layout.fillWidth: true
+                                    }
+                                }
+
+                                onClicked: bridge.selectAttention(modelData.attentionId)
+                            }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            visible: bridge.attention_count > 0 && attentionList.count === 0
+                            text: qsTr("No conflict item details are available. Other library status still needs attention.")
+                            color: palette.mid
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 12
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            visible: bridge.selected_attention_id.length > 0
+                            spacing: 5
+
+                            Label {
+                                text: bridge.selected_attention_category_label
+                                font.weight: Font.DemiBold
+                                color: "#a86213"
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: bridge.selected_attention_path
+                                elide: Text.ElideMiddle
+                                Accessible.name: qsTr("Selected attention path")
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: bridge.selected_attention_library_label
+                                      + qsTr("  ·  ")
+                                      + bridge.selected_attention_kind_label
+                                color: palette.mid
+                                font.pixelSize: 12
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: bridge.selected_attention_detail
+                                color: palette.mid
+                                wrapMode: Text.WordWrap
+                                font.pixelSize: 12
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+
+                                Button {
+                                    text: qsTr("Accept remote")
+                                    visible: bridge.selected_attention_can_accept_remote
+                                    enabled: !bridge.attention_resolution_busy
+                                    onClicked: bridge.acceptSelectedConflict()
+                                    Accessible.name: qsTr("Accept the remote conflict state")
+                                }
+
+                                Button {
+                                    text: qsTr("Retry local")
+                                    visible: bridge.selected_attention_can_retry_local
+                                    enabled: !bridge.attention_resolution_busy
+                                    onClicked: bridge.retrySelectedConflict()
+                                    Accessible.name: qsTr("Retry the local change against the current remote state")
+                                }
+
+                                BusyIndicator {
+                                    running: bridge.attention_resolution_busy
+                                    visible: running
+                                    Layout.preferredWidth: 24
+                                    Layout.preferredHeight: 24
+                                }
+                            }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            visible: bridge.attention_feedback.length > 0
+                            text: bridge.attention_feedback
+                            color: palette.mid
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 12
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            visible: bridge.attention_items_truncated
+                            text: qsTr("Only the first safe attention items are shown; the counts above remain exact.")
+                            color: palette.mid
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 12
+                        }
+                    }
                 }
 
                 GridLayout {

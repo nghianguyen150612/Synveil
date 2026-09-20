@@ -878,6 +878,22 @@ impl FileMetadataBackend for TestFileMetadataBackend {
         Ok(LibraryPage::new(vec![state.library.clone()], None, false))
     }
 
+    async fn create_library(
+        &self,
+        user_id: UserId,
+        library_id: LibraryId,
+        name: LogicalName,
+    ) -> Result<Library, FileMetadataError> {
+        let state = self.state.lock().expect("file metadata state lock");
+        if state.library.owner_user_id() != user_id || state.library.id() != library_id {
+            return Err(FileMetadataError::NotFound);
+        }
+        if state.library.name() != &name {
+            return Err(FileMetadataError::InvalidRequest);
+        }
+        Ok(state.library.clone())
+    }
+
     async fn list_children(
         &self,
         user_id: UserId,
@@ -3812,6 +3828,25 @@ async fn logical_metadata_routes_are_authenticated_csrf_protected_and_conditiona
         .expect("library list request must not fail");
     assert_eq!(list.status(), StatusCode::OK);
     assert_eq!(json_body(list).await["data"][0]["type"], "library");
+
+    let mut create_library = json_request(
+        Method::POST,
+        "/api/v1/libraries",
+        &format!(r#"{{"id":"{}","name":"Primary"}}"#, library_id),
+    );
+    create_library
+        .headers_mut()
+        .insert("cookie", cookie_header(&session, &csrf));
+    mark_same_origin(&mut create_library);
+    add_csrf_header(&mut create_library, &csrf);
+    let created_library = router(state.clone())
+        .oneshot(create_library)
+        .await
+        .expect("library creation request must not fail");
+    assert_eq!(created_library.status(), StatusCode::CREATED);
+    let created_library_body = json_body(created_library).await;
+    assert_eq!(created_library_body["data"]["type"], "library");
+    assert_eq!(created_library_body["data"]["id"], library_id.to_string());
 
     let invalid_cursor_path =
         format!("/api/v1/libraries/{library_id}/nodes?cursor=invalid&limit=1");

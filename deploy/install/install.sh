@@ -249,6 +249,10 @@ install_one() {
         CONFIG_DIRECTORY|CREDENTIAL_DIRECTORY)
             synveil_dest_under_root "$STAGED_ROOT" "$dest" || return 1
             local full="${STAGED_ROOT%/}${dest}"
+            if [[ -L "$full" ]]; then
+                synveil_err "refusing to follow symlink at $class destination: $dest"
+                return 1
+            fi
             synveil_log "ensure $class $dest ($mode $owner:$group)"
             # mkdir -p with mode; only set mode/owner on the leaf, not recursively chown parent.
             mkdir -p "$full"

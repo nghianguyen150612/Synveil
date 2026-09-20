@@ -1250,11 +1250,14 @@ backend credential, storage key, server filesystem path, or file contents.
 
 A filesystem mutation requires all of the following:
 
-- an explicitly selected absolute managed root that was empty at initialization
-  or already carried the exact Synveil marker;
+- an explicitly selected absolute managed root that passed the bounded root
+  safety checks; a newly created remote library may admit ordinary existing
+  entries, while an already managed root must carry the exact Synveil marker;
 - marker owner, device, library, and random UUIDv7 binding matching SQLite;
 - rejection of filesystem roots, HOME/USERPROFILE, the current process root,
-  arbitrary populated-folder adoption, and different-root/database bindings;
+  incompatible or incomplete `.synveil` control trees, and different-root/
+  database bindings; ordinary existing entries are not rejected merely because
+  the new onboarding root is non-empty;
 - a relative path composed only of exact portable logical segments or a closed
   Synveil control path;
 - root, marker, and every existing target component passing symlink/reparse
@@ -1339,3 +1342,15 @@ transport failures preserve local files, applied/acknowledged progress,
 pending evidence, and local issues. This phase adds no watcher, outbound
 mutation generator, automatic conflict resolver, GUI/QR UX, installer,
 certificate pinning/TOFU, relay, or custom TLS stack.
+
+## Recovery presentation boundary (Prompt 107)
+
+The recovery projection contains only stable IDs, fixed category/action codes,
+generic labels, booleans, and a connection generation. It excludes absolute
+roots, endpoint paths, SQLite rows, SecretStore identifiers, tokens, cookies,
+HTTP bodies, and raw OS errors. `SecureStoreUnavailable` is kept distinct from
+invalid credentials and is rendered as temporary secure-storage unavailability;
+the recovery path never deletes or overwrites a stored secret merely because a
+read failed. Client launch recovery remains inside the existing bounded
+manager, and `OutcomeUnknown` always refreshes instead of replaying. See
+[`ADR-048`](../adr/ADR-048-production-desktop-recovery-and-resilience-ux.md).

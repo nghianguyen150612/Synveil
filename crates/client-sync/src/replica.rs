@@ -225,8 +225,10 @@ pub struct FilesystemLocalReplica {
 }
 
 impl FilesystemLocalReplica {
-    /// Explicitly initialize an empty user-approved root, or reopen an already
-    /// initialized root for the same authenticated logical scope.
+    /// Initialize a user-approved root, or reopen an already initialized root
+    /// for the same authenticated logical scope. Existing ordinary files and
+    /// directories are admitted; only an incompatible reserved control tree
+    /// is rejected.
     pub fn initialize(
         root: impl AsRef<Path>,
         scope: ReplicaScope,
@@ -244,6 +246,30 @@ impl FilesystemLocalReplica {
         Self::initialize_inner(root.as_ref(), scope, Some(profile_id))
     }
 
+    /// Validate an existing profiled marker before a caller performs remote
+    /// creation. A new ordinary root has no marker and is accepted without
+    /// mutation; an existing marker must already prove the exact scope/profile.
+    pub(crate) fn validate_existing_marker_for_profile(
+        root: &Path,
+        scope: ReplicaScope,
+        profile_id: ServerProfileId,
+    ) -> Result<(), ClientSyncError> {
+        let canonical = validate_onboarding_root(root)?;
+        let control = canonical.join(CONTROL_DIRECTORY);
+        let marker = control.join(MARKER_FILE);
+        match fs::symlink_metadata(&marker) {
+            Ok(metadata) if is_redirect(&metadata) || !metadata.is_file() => {
+                Err(ClientSyncError::InvalidRoot)
+            }
+            Ok(_) => {
+                Self::open_marker_only(&marker, scope, Some(profile_id)).map(|_| ())?;
+                validate_existing_control_children(&control)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(_) => Err(ClientSyncError::InvalidRoot),
+        }
+    }
+
     fn initialize_inner(
         root: &Path,
         scope: ReplicaScope,
@@ -258,20 +284,29 @@ impl FilesystemLocalReplica {
         let control = root.join(CONTROL_DIRECTORY);
         let marker = control.join(MARKER_FILE);
 
-        if marker.exists() {
-            return Self::open_inner(&root, scope, server_profile_id);
+        match fs::symlink_metadata(&control) {
+            Ok(metadata) if is_redirect(&metadata) || !metadata.is_dir() => {
+                return Err(ClientSyncError::InvalidRoot);
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(ClientSyncError::InvalidRoot),
         }
-        if fs::read_dir(&root)
-            .map_err(|_| ClientSyncError::InvalidRoot)?
-            .next()
-            .is_some()
-        {
+        match fs::symlink_metadata(&marker) {
+            Ok(metadata) if is_redirect(&metadata) || !metadata.is_file() => {
+                return Err(ClientSyncError::InvalidRoot);
+            }
+            Ok(_) => return Self::open_inner(&root, scope, server_profile_id),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(ClientSyncError::InvalidRoot),
+        }
+        if control.exists() {
+            // Never turn an unrelated `.synveil` directory into a managed
+            // root by overwriting or adopting it without its exact marker.
             return Err(ClientSyncError::InvalidRoot);
         }
 
         fs::create_dir(&control)?;
-        fs::create_dir(control.join(STAGING_DIRECTORY))?;
-        fs::create_dir(control.join(QUARANTINE_DIRECTORY))?;
         let binding_id = RootBindingId::new();
         let mut file = OpenOptions::new()
             .write(true)
@@ -293,6 +328,8 @@ impl FilesystemLocalReplica {
             writeln!(file, "{profile_id}")?;
         }
         file.sync_all()?;
+        sync_directory(&control)?;
+        ensure_control_layout(&control)?;
         sync_directory(&control)?;
         sync_directory(&root)?;
         Ok(Self {
@@ -441,6 +478,7 @@ impl LocalReplica for FilesystemLocalReplica {
         if reopened != self.binding_id {
             return Err(ClientSyncError::WrongRootBinding);
         }
+        ensure_control_layout(marker.parent().ok_or(ClientSyncError::InvalidRoot)?)?;
         Ok(())
     }
 
@@ -1021,6 +1059,138 @@ fn reject_unsafe_root_choice(root: &Path) -> Result<(), ClientSyncError> {
     Ok(())
 }
 
+/// Validate a user-selected onboarding root at the same filesystem boundary
+/// used by the managed replica. Ordinary existing files and directories are
+/// admitted for a new remote library. The reserved `.synveil` name is only
+/// accepted when it is a directory carrying a bounded regular root marker;
+/// unrelated control-tree content is rejected rather than overwritten.
+pub fn validate_onboarding_root(root: &Path) -> Result<PathBuf, ClientSyncError> {
+    if root.as_os_str().to_string_lossy().len() > 16 * 1024
+        || root
+            .as_os_str()
+            .to_string_lossy()
+            .chars()
+            .any(char::is_control)
+    {
+        return Err(ClientSyncError::InvalidRoot);
+    }
+    reject_unsafe_root_choice(root)?;
+    reject_redirect(root)?;
+    let metadata = fs::metadata(root).map_err(|_| ClientSyncError::InvalidRoot)?;
+    if !metadata.is_dir() || metadata.permissions().readonly() {
+        return Err(ClientSyncError::InvalidRoot);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o222 == 0 {
+            return Err(ClientSyncError::InvalidRoot);
+        }
+    }
+    let canonical = fs::canonicalize(root).map_err(|_| ClientSyncError::InvalidRoot)?;
+    fs::read_dir(&canonical).map_err(|_| ClientSyncError::InvalidRoot)?;
+    let control = canonical.join(CONTROL_DIRECTORY);
+    match fs::symlink_metadata(&control) {
+        Ok(metadata) if is_redirect(&metadata) || !metadata.is_dir() => {
+            return Err(ClientSyncError::InvalidRoot);
+        }
+        Ok(_) => {
+            let marker = control.join(MARKER_FILE);
+            match fs::symlink_metadata(&marker) {
+                Ok(metadata)
+                    if is_redirect(&metadata) || !metadata.is_file() || metadata.len() > 512 =>
+                {
+                    return Err(ClientSyncError::InvalidRoot);
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(ClientSyncError::InvalidRoot);
+                }
+                Err(_) => return Err(ClientSyncError::InvalidRoot),
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err(ClientSyncError::InvalidRoot),
+    }
+    Ok(canonical)
+}
+
+/// Ensure only Synveil-owned control children exist beneath an already
+/// marker-verified control directory. This is intentionally recoverable after
+/// a crash between marker publication and control-layout creation.
+fn ensure_control_layout(control: &Path) -> Result<(), ClientSyncError> {
+    let metadata = fs::symlink_metadata(control).map_err(|_| ClientSyncError::InvalidRoot)?;
+    if is_redirect(&metadata) || !metadata.is_dir() {
+        return Err(ClientSyncError::InvalidRoot);
+    }
+    for child in [STAGING_DIRECTORY, QUARANTINE_DIRECTORY] {
+        let path = control.join(child);
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) if !is_redirect(&metadata) && metadata.is_dir() => {}
+            Ok(_) => return Err(ClientSyncError::InvalidRoot),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(&path)?;
+                sync_directory(control)?;
+            }
+            Err(_) => return Err(ClientSyncError::InvalidRoot),
+        }
+    }
+    Ok(())
+}
+
+fn validate_existing_control_children(control: &Path) -> Result<(), ClientSyncError> {
+    for child in [STAGING_DIRECTORY, QUARANTINE_DIRECTORY] {
+        let path = control.join(child);
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) if !is_redirect(&metadata) && metadata.is_dir() => {}
+            Ok(_) => return Err(ClientSyncError::InvalidRoot),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(ClientSyncError::InvalidRoot),
+        }
+    }
+    Ok(())
+}
+
+/// Canonicalize a configured root for component-aware overlap checks. Missing
+/// descendants are retained in canonical-parent form so restart-time deferred
+/// roots participate in the same duplicate/overlap policy.
+pub fn canonical_root_for_comparison(root: &Path) -> Result<PathBuf, ClientSyncError> {
+    if root.exists() {
+        reject_unsafe_root_choice(root)?;
+        reject_redirect(root)?;
+        return fs::canonicalize(root).map_err(|_| ClientSyncError::InvalidRoot);
+    }
+    canonical_deferred_root(root)
+}
+
+/// Component-aware root comparison. This deliberately does not use raw
+/// string prefixes, so `/data/lib` cannot collide with `/data/library`; the
+/// Windows comparison key also avoids a false negative on normal
+/// case-insensitive paths.
+pub fn roots_overlap(first: &Path, second: &Path) -> Result<bool, ClientSyncError> {
+    let first = canonical_root_for_comparison(first)?;
+    let second = canonical_root_for_comparison(second)?;
+    let first = comparison_components(&first);
+    let second = comparison_components(&second);
+    Ok(first.starts_with(&second) || second.starts_with(&first))
+}
+
+fn comparison_components(path: &Path) -> Vec<String> {
+    path.components()
+        .map(|component| {
+            let value = component.as_os_str().to_string_lossy().into_owned();
+            #[cfg(windows)]
+            {
+                value.to_lowercase()
+            }
+            #[cfg(not(windows))]
+            {
+                value
+            }
+        })
+        .collect()
+}
+
 fn reject_existing_redirects(
     root: &Path,
     relative: &ManagedRelativePath,
@@ -1142,7 +1312,10 @@ mod tests {
     use sha2::{Digest, Sha256};
     use synveil_core::{DeviceId, LibraryId, UserId};
 
-    use super::{FilesystemLocalReplica, LocalFingerprint, LocalReplica};
+    use super::{
+        FilesystemLocalReplica, LocalFingerprint, LocalReplica, roots_overlap,
+        validate_onboarding_root,
+    };
     use crate::{
         ManagedRelativePath, ReplicaScope, boxed_content_stream,
         test_support::remove_dir_all_bounded,
@@ -1158,6 +1331,90 @@ mod tests {
         ));
         fs::create_dir(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn onboarding_root_validation_admits_existing_content_but_reserves_control_tree() {
+        let root = temporary_directory("onboarding-existing");
+        assert_eq!(
+            validate_onboarding_root(&root).unwrap(),
+            fs::canonicalize(&root).unwrap()
+        );
+
+        fs::create_dir(root.join("existing-directory")).unwrap();
+        fs::write(root.join("user-file.txt"), b"must be admitted").unwrap();
+        assert!(validate_onboarding_root(&root).is_ok());
+
+        let replica_scope = scope();
+        let profile_id = crate::ServerProfileId::new();
+        let replica =
+            FilesystemLocalReplica::initialize_for_profile(&root, replica_scope, profile_id)
+                .unwrap();
+        assert!(
+            FilesystemLocalReplica::validate_existing_marker_for_profile(
+                &root,
+                replica_scope,
+                profile_id,
+            )
+            .is_ok()
+        );
+        assert!(
+            FilesystemLocalReplica::validate_existing_marker_for_profile(
+                &root,
+                replica_scope,
+                crate::ServerProfileId::new(),
+            )
+            .is_err()
+        );
+        assert_eq!(
+            validate_onboarding_root(&root).unwrap(),
+            replica.root_path()
+        );
+        drop(replica);
+
+        let control = root.join(".synveil");
+        fs::remove_dir_all(&control).unwrap();
+        fs::create_dir(&control).unwrap();
+        fs::write(control.join("unrelated-file"), b"must not be adopted").unwrap();
+        assert!(validate_onboarding_root(&root).is_err());
+
+        remove_dir_all_bounded(&root).unwrap();
+    }
+
+    #[test]
+    fn onboarding_root_validation_rejects_relative_file_and_redirect() {
+        let root = temporary_directory("onboarding-invalid");
+        let file = root.join("file");
+        fs::write(&file, b"not a directory").unwrap();
+        assert!(validate_onboarding_root(&file).is_err());
+        assert!(validate_onboarding_root(PathBuf::from("relative").as_path()).is_err());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let target = root.join("target");
+            fs::create_dir(&target).unwrap();
+            let link = root.join("link");
+            symlink(&target, &link).unwrap();
+            assert!(validate_onboarding_root(&link).is_err());
+        }
+
+        remove_dir_all_bounded(&root).unwrap();
+    }
+
+    #[test]
+    fn root_overlap_uses_components_not_string_prefixes() {
+        let root = temporary_directory("onboarding-overlap");
+        let library = root.join("lib");
+        let library_prefix = root.join("library");
+        let nested = library.join("nested");
+        fs::create_dir(&library).unwrap();
+        fs::create_dir(&library_prefix).unwrap();
+        fs::create_dir(&nested).unwrap();
+
+        assert!(roots_overlap(&library, &nested).unwrap());
+        assert!(!roots_overlap(&library, &library_prefix).unwrap());
+        remove_dir_all_bounded(&root).unwrap();
     }
 
     fn scope() -> ReplicaScope {

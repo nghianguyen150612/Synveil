@@ -1761,3 +1761,167 @@ The locked decision is recorded in
 [`ADR-041`](../adr/ADR-041-production-desktop-launch-orchestration.md). The
 implementation and operating procedures are in
 [`DESKTOP_LAUNCH.md`](DESKTOP_LAUNCH.md).
+
+## Secure enrollment and credential lifecycle (Prompt 101)
+
+Desktop authentication is a one-time enrollment-grant exchange owned by the
+existing HTTP client in `synveil-client`. The GUI path is
+`QML -> DesktopUiBridge -> DesktopController -> Prompt 96 IPC ->
+DesktopSyncHostHandle -> HttpEnrollmentClient -> existing exchange`; QML and
+the desktop bridge never open HTTP, SQLite, or `SecretStore` and never receive
+the returned bearer secret.
+
+The enrollment field is masked, transient, and bounded to 69 encoded bytes. It
+is cleared after dispatch and is absent from snapshots, events, tray labels,
+clipboard operations, and logs. The controller rejects invalid input before
+IPC and admits one authentication operation at a time. The bounded local
+command path adds `Authenticate` and `SignOut` with finite category results;
+it does not add retry tasks.
+
+The successful path is durable-first: exchange once; validate the receipt's
+profile/owner/device; persist and read back the existing profile enrollment and
+secure-store value; clean superseded secret material; then emit
+`CredentialChanged`; then let the runtime reload and publish status. A failed
+write, readback, cleanup, or validation suppresses the success result and the
+post-persistence wake. A stopped/coalesced wake does not undo durable state;
+startup and periodic status refresh remain the safety fallback.
+
+Sign Out is explicit. It writes the existing forgotten/tombstone metadata and
+finishes secure-store deletion before waking the affected HTTP libraries. The
+runtime then reloads no credential and reports its existing `AuthBlocked`
+behavior. GUI close, tray quit, GUI/client restart, and process shutdown do not
+implicitly sign out.
+
+If an admitted auth or Sign Out response is lost, the controller returns
+`OutcomeUnknown`, refreshes authoritative status, and never replays the
+one-time exchange or removal after reconnect. Revoke/expiry remains the
+existing runtime `AuthBlocked` path. Profile isolation filters wake targets and
+rejects mismatched receipts. No auth database, route, OpenAPI operation,
+schema migration, OAuth/password/API-key scheme, or sync-cycle rewrite is
+added. See [`ADR-042`](../adr/ADR-042-secure-desktop-authentication-and-credential-lifecycle.md).
+
+## Desktop profile onboarding and connection correction (Prompt 102)
+
+The desktop can now begin with a process-owned profile ID but no configured
+server and no libraries. The native onboarding path stays
+`QML -> DesktopUiBridge -> DesktopController -> Prompt 96 IPC -> synveil-client`.
+The client uses the existing strict `CanonicalBaseUrl` contract and the
+existing anonymous `GET /health/ready` DTO before applying a profile. There is
+no GUI-owned HTTP client, profile registry, or durable draft.
+
+Configuration success is durable-first. Exact repeats are idempotent; a label
+edit keeps the profile ID and connection timestamp; an origin edit fences the
+old profile-bound credential and wakes the runtime only after the new state is
+committed. The controller exposes profile metadata separately from connection
+freshness and maps lost mutation responses to `OutcomeUnknown` with refresh,
+never blind replay. `0007_profile_reconfiguration.sql` is the only new client
+migration; no server migration is required. Empty library state remains safe
+and is not a root deletion signal. See
+[`ADR-043`](../adr/ADR-043-desktop-profile-onboarding-and-connection-configuration.md).
+
+## Production library and local-root onboarding (Prompt 104)
+
+An authenticated profile with zero libraries is a valid state. The supported
+first-library path is `QML -> DesktopUiBridge -> DesktopController -> Prompt
+96 IPC -> synveil-client`; QML never performs HTTP, SQLite, credential, watcher,
+or sync-runtime work. The user supplies only a bounded logical name and a
+native-selected folder. The client generates the UUIDv7 library identity and
+uses the authenticated canonical `POST /api/v1/libraries` contract to create
+the empty server library and root node. The repository has no canonical
+attach/import API, so onboarding does not invent one or duplicate an existing
+remote library.
+
+The root must be absolute, canonicalizable, non-redirecting, writable, and
+outside filesystem root, home, and the process current directory. Prompt 104
+allows ordinary pre-existing files and directories when the flow creates the
+new remote library. A conflicting or incomplete `.synveil` control tree,
+missing path, read-only root, symlink/junction redirect, and other unsafe root
+are still rejected. Duplicate and nested/overlapping roots are checked by
+canonical path components rather than string prefixes. The local absolute path
+never crosses the server boundary or the safe presentation surface.
+
+Onboarding records a pending UUID/root manifest entry before remote mutation,
+reconciles an ambiguous create response with one bounded authoritative library
+list, commits the existing profiled managed root and `LocalStateStore` binding,
+then promotes the active manifest entry before host/runtime/watcher
+registration. The authoritative remote root NodeId is durably seeded before
+watcher/runtime admission. Existing files are discovered by the bounded
+observer as ordinary create intents; directory parents are submitted first,
+then nested observations resume after the normal server NodeId assignment.
+File bytes use the existing verified staging/upload-session pipeline, and no
+bulk uploader or second sync engine is introduced. `OutcomeUnknown` is never
+blind replay. The existing SyncRuntime receives only a post-persistence
+eligibility/wake signal and performs normal bounded initial/rebaseline work.
+
+An unavailable active root remains fenced and deferred. It is never interpreted
+as an empty tree, mass deletion, detach, or sign-out. On restart, active
+bindings reconstruct the same host context, while a pending binding provides a
+safe recovery identity for an interrupted setup. The locked decision is in
+[`ADR-044`](../adr/ADR-044-desktop-library-onboarding-and-local-root-binding.md)
+and [`ADR-045`](../adr/ADR-045-existing-root-bootstrap-and-initial-upload-admission.md).
+
+## Essential desktop settings and global user pause (Prompt 105)
+
+Prompt 105 keeps synchronization ownership in the one process-wide
+`synveil-client` runtime. A small non-secret setting beside the existing
+profile manifest stores only `paused` or `running`; it is not a SQLite row,
+server preference, per-library flag, credential, or sync journal. The client
+loads it before starting `DesktopSyncHost`, and a malformed setting fails
+closed rather than inventing a state.
+
+`PausedByUser` is distinct from auth, network, root, conflict, and runtime
+fault categories. At the existing runtime admission boundary it blocks
+periodic, manual, local-change, network/inbound, and credential wake paths.
+Filesystem/local durable observation may continue to record bounded durable
+facts, but no filesystem wake bypasses the pause. A cycle already in flight
+finishes through the existing bounded operation; the client does not hard-kill
+or abort it. `SyncNow` returns `Paused` and never acts as an implicit resume.
+
+Resume persists `running` before signaling the runtime, clears only the user
+pause reason, wakes the existing scheduler, and makes retained eligibility
+available without broad rescan or a new worker. Auth/sign-out, profile
+configuration, library setup, root status, and local control remain usable
+while paused. A failed setting write leaves runtime state unchanged; a lost
+IPC response is `OutcomeUnknown` followed by authoritative refresh rather than
+replay. The local protocol uses `GetSyncControlState`, `PauseSync`, and
+`ResumeSync`, plus a best-effort state-change invalidation event.
+
+Login startup remains process management through `BackgroundClientManager`,
+not sync state. Close-to-tray remains a Qt-local `QSettings` value. Neither
+setting changes sync correctness or client lifecycle. Server migration remains
+**36** and client schema remains **V7** with **7 client migrations**. See
+[`ADR-046`](../adr/ADR-046-essential-desktop-settings-and-user-sync-controls.md).
+
+## Production desktop attention projection (Prompt 106)
+
+The desktop attention card is a local projection over the existing durable
+client-sync conflict model. It does not add a server conflict API, merge
+policy, conflict-copy operation, or SQLite migration. The six canonical kinds
+remain `RemoteRevisionChanged`, `RemoteContentChanged`, `RemoteStateChanged`,
+`RemoteMissing`, `NameCollision`, and `ParentChangedOrUnavailable`. The only
+desktop decisions are `AcceptRemote` and, except for `RemoteMissing` and
+`NameCollision`, `RetryLocalAgainstCurrentBase`.
+
+`LocalStateStore` returns exact unresolved counts for conflicts, local-apply
+issues, and observation issues, plus a bounded conflict page: 32 items by
+default and 128 maximum. Items carry stable IDs, safe managed relative paths,
+file/directory kind, known lengths, revision/state metadata, and supported
+actions. They carry no bytes, hashes, absolute roots, staging paths,
+credentials, or raw server diagnostics. `truncated` is explicit. Resolution
+uses the existing durable transaction and generation fence, then wakes the
+normal runtime only after persistence. A user pause is preserved. Duplicate,
+stale, missing, unsupported, busy, and uncertain outcomes are typed; uncertain
+responses trigger refresh and are never replayed. See
+[`ADR-047`](../adr/ADR-047-production-desktop-attention-and-conflict-resolution.md)
+and [`DESKTOP_CONTROL.md`](DESKTOP_CONTROL.md).
+
+## Recovery and resilience boundary (Prompt 107)
+
+The desktop recovery card does not add a sync engine. `Check again` is the
+existing bounded `SyncNow` wake, so runtime backoff, root fencing, auth gating,
+and `PausedByUser` remain canonical. A same-path root return is observed by the
+existing root lifecycle and wakes normal eligibility; root loss never means an
+empty tree or mass deletion. Server-transient conditions stay waiting while
+auth/root/local durable blockers can be action-required. Prompt 106 attention
+is independent and is not auto-resolved. See
+[`ADR-048`](../adr/ADR-048-production-desktop-recovery-and-resilience-ux.md).

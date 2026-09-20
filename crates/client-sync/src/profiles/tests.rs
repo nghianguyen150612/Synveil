@@ -1202,8 +1202,44 @@ async fn replica_profile_binding_is_durable_in_database_and_physical_root() {
             .await
             .is_err()
     );
-    assert!(sqlx::query("UPDATE server_profiles SET canonical_base_url='https://changed.example/' WHERE profile_id=?")
-        .bind(a.profile_id().to_string()).execute(&state.pool).await.is_err());
+    assert!(
+        sqlx::query("UPDATE server_profiles SET profile_id=? WHERE profile_id=?")
+            .bind(b.profile_id().to_string())
+            .bind(a.profile_id().to_string())
+            .execute(&state.pool)
+            .await
+            .is_err()
+    );
+    let corrected = a
+        .reconfigured(
+            CanonicalBaseUrl::parse("https://changed.example/").unwrap(),
+            "Corrected profile",
+        )
+        .unwrap();
+    assert_eq!(
+        state
+            .configure_server_profile(&corrected, &store)
+            .await
+            .unwrap(),
+        ServerProfileConfigurationChange::Updated
+    );
+    assert_eq!(
+        state
+            .server_profile(a.profile_id())
+            .await
+            .unwrap()
+            .unwrap()
+            .base_url()
+            .as_str(),
+        "https://changed.example/"
+    );
+    assert!(
+        state
+            .load_device_credential(a.profile_id(), &store)
+            .await
+            .unwrap()
+            .is_none()
+    );
     drop(state);
     let state = LocalStateStore::open(&config).await.unwrap();
     assert_eq!(

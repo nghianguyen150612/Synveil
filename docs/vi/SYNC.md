@@ -1671,3 +1671,156 @@ client/server, HTTP route, OpenAPI operation hoặc web behavior.
 Quyết định khóa nằm trong
 [`ADR-041`](../adr/ADR-041-production-desktop-launch-orchestration.md). Quy
 trình vận hành nằm trong [`DESKTOP_LAUNCH.md`](DESKTOP_LAUNCH.md).
+
+## Enrollment an toàn và lifecycle credential (Prompt 101)
+
+Desktop authentication là one-time enrollment-grant exchange do HTTP client
+hiện có trong `synveil-client` sở hữu. Đường GUI là
+`QML -> DesktopUiBridge -> DesktopController -> IPC Prompt 96 ->
+DesktopSyncHostHandle -> HttpEnrollmentClient -> exchange hiện có`; QML và
+desktop bridge không mở HTTP, SQLite hay `SecretStore` và không nhận bearer
+secret trả về.
+
+Enrollment field được mask, transient và giới hạn 69 encoded byte. Nó được
+clear sau dispatch và không có trong snapshot, event, tray label, clipboard hay
+log. Controller reject input invalid trước IPC và admit một authentication
+operation mỗi lần. Local command path bounded thêm `Authenticate` và `SignOut`
+với result category hữu hạn; không thêm retry task.
+
+Đường thành công là durable-first: exchange một lần; validate profile/owner/
+device của receipt; persist và read back enrollment profile cùng secure-store
+value hiện có; cleanup secret cũ; rồi emit `CredentialChanged`; sau đó runtime
+reload và publish status. Write, readback, cleanup hoặc validation fail thì
+không trả success và không gửi wake sau persistence. Wake stopped/coalesced
+không undo durable state; startup và periodic status refresh vẫn là fallback an
+toàn.
+
+Sign Out là explicit. Nó ghi forgotten/tombstone metadata hiện có và hoàn tất
+xóa SecretStore trước khi wake các HTTP library bị ảnh hưởng. Runtime sau đó
+reload không có credential và dùng behavior `AuthBlocked` hiện có. GUI close,
+tray quit, GUI/client restart và process shutdown không tự động sign out.
+
+Nếu auth hoặc Sign Out đã admit nhưng mất response, controller trả
+`OutcomeUnknown`, refresh status authoritative và không replay exchange một lần
+hay removal sau reconnect. Revoke/expiry vẫn đi qua runtime `AuthBlocked` hiện
+có. Profile isolation lọc wake target và reject receipt mismatch. Không thêm
+auth database, route, OpenAPI operation, schema migration, OAuth/password/API
+key scheme hay rewrite sync cycle. Xem
+[`ADR-042`](../adr/ADR-042-secure-desktop-authentication-and-credential-lifecycle.md).
+
+## Onboarding profile desktop và sửa cấu hình kết nối (Prompt 102)
+
+Desktop có thể bắt đầu với process-owned profile ID nhưng chưa có server và
+library. Native onboarding giữ path
+`QML -> DesktopUiBridge -> DesktopController -> IPC Prompt 96 -> synveil-client`.
+Client dùng contract `CanonicalBaseUrl` strict và DTO anonymous
+`GET /health/ready` hiện có trước khi apply profile. Không có HTTP client,
+profile registry hay durable draft riêng của GUI.
+
+Configuration success là durable-first. Repeat exact idempotent; edit label giữ
+profile ID và connection timestamp; edit origin fence credential theo profile cũ
+và chỉ wake runtime sau khi state mới commit. Controller tách profile metadata
+khỏi connection freshness và map response mutation bị mất thành
+`OutcomeUnknown` rồi refresh, không blind replay. `0007_profile_reconfiguration.sql`
+là client migration duy nhất; không cần server migration. Zero library an toàn và
+không phải root deletion signal. Xem
+[`ADR-043`](../adr/ADR-043-desktop-profile-onboarding-and-connection-configuration.md).
+
+## Onboarding library và root cục bộ production (Prompt 104)
+
+Profile đã authenticated nhưng có zero library là state hợp lệ. Flow library
+đầu tiên là `QML -> DesktopUiBridge -> DesktopController -> IPC Prompt 96 ->
+synveil-client`; QML không làm HTTP, SQLite, credential, watcher hay sync
+runtime. User chỉ nhập logical name bounded và chọn folder bằng native picker.
+Client tự sinh UUIDv7 rồi dùng contract canonical đã authenticated
+`POST /api/v1/libraries` để tạo logical library và root node canonical trên server;
+local tree đã có dữ liệu được admit trong flow này, không phải remote attach.
+Repository chưa có API attach/import canonical, nên onboarding không tự phát minh
+attach và không tạo duplicate remote library để giả lập attach.
+
+Root phải absolute, canonicalizable, không redirect, writable và không phải
+filesystem root, home hay current directory. Prompt 104 cho phép ordinary
+file/directory có sẵn khi flow tạo remote library mới. `.synveil` conflict hoặc
+control tree không đầy đủ, path không tồn tại, read-only, symlink/junction
+redirect và root unsafe vẫn bị reject. Duplicate/nested/overlap được so bằng
+path components canonical, không dùng string prefix. Absolute local path không
+gửi server và không đi qua safe presentation surface.
+
+Client ghi pending UUID/root vào manifest trước remote mutation, reconcile
+response ambiguous bằng một authoritative library list bounded, commit managed
+root và binding `LocalStateStore`, rồi mới ghi active manifest và register
+host/runtime/watcher. `root_node_id` authoritative được seed durable trước khi
+admit watcher/runtime. Existing file được bounded observer phát hiện thành
+create intent; directory parent submit trước, sau đó nested observation tiếp tục
+khi server cấp NodeId. Byte file đi qua staged/upload-session verify hiện có,
+không có bulk uploader hay sync engine thứ hai. `OutcomeUnknown` không blind
+replay. SyncRuntime chỉ nhận eligibility/wake sau persistence và tự chạy
+initial/rebaseline bounded hiện có.
+
+Root active mất sẽ bị fence/deferred, không bị hiểu là empty tree, mass
+deletion, detach hay sign-out. Khi restart, active binding dựng lại cùng host
+context; pending binding giữ identity để recover setup bị gián đoạn. Quyết định
+khóa nằm trong
+[`ADR-044`](../adr/ADR-044-desktop-library-onboarding-and-local-root-binding.md)
+và [`ADR-045`](../adr/ADR-045-existing-root-bootstrap-and-initial-upload-admission.md).
+
+## Setting desktop thiết yếu và global user pause (Prompt 105)
+
+Prompt 105 giữ ownership synchronization ở một runtime process-wide
+`synveil-client`. File non-secret nhỏ cạnh profile manifest chỉ lưu `paused`
+hoặc `running`; đây không phải SQLite row, server preference, cờ per-library,
+credential hay sync journal. Client load file trước khi start `DesktopSyncHost`;
+nội dung malformed làm bootstrap fail closed.
+
+`PausedByUser` khác auth, network, root, conflict và runtime fault. Ở admission
+boundary hiện có, nó chặn periodic, manual, local-change, network/inbound và
+credential wake. Observer/durable observation local vẫn có thể ghi fact bounded,
+nhưng không wake filesystem nào bypass pause. Cycle đang chạy được hoàn tất;
+client không hard-kill/abort. `SyncNow` trả `Paused`, không thể dùng để implicit
+resume.
+
+Resume persist `running` trước signal runtime, chỉ xóa user-pause reason, wake
+scheduler hiện có và cho eligibility đã giữ được xử lý; không broad rescan hay
+worker mới. Auth/sign-out, profile config, library setup, root status và local
+control vẫn usable khi paused. Write fail không đổi runtime; mất response là
+`OutcomeUnknown` rồi refresh authoritative, không replay. Local protocol dùng
+`GetSyncControlState`, `PauseSync`, `ResumeSync` và event invalidation bounded.
+
+Login startup vẫn là process management của `BackgroundClientManager`; close-
+to-tray là `QSettings` local của Qt shell. Hai setting không đổi sync
+correctness hay client lifecycle. Server migration vẫn **36**, client schema
+**V7**, tổng **7 client migrations**. Xem
+[`ADR-046`](../adr/ADR-046-essential-desktop-settings-and-user-sync-controls.md).
+
+## Projection attention desktop production (Prompt 106)
+
+Attention card desktop là projection local trên conflict model durable hiện có
+của `client-sync`. Không thêm server conflict API, merge policy, conflict-copy
+operation hay SQLite migration. Sáu kind canonical vẫn là
+`RemoteRevisionChanged`, `RemoteContentChanged`, `RemoteStateChanged`,
+`RemoteMissing`, `NameCollision` và `ParentChangedOrUnavailable`. Desktop chỉ
+có `AcceptRemote` và, ngoại trừ `RemoteMissing`/`NameCollision`,
+`RetryLocalAgainstCurrentBase`.
+
+`LocalStateStore` trả exact unresolved count cho conflict, local-apply issue và
+observation issue, cùng page conflict bounded: mặc định 32 item, tối đa 128.
+Item chỉ mang stable ID, managed relative path an toàn, kind file/directory,
+length đã biết, revision/state metadata và action được phép. Không có bytes,
+hash, absolute root, staging path, credential hay raw server diagnostic; cờ
+`truncated` là explicit. Resolve dùng transaction durable và generation fence
+hiện có, sau khi persist mới wake runtime bình thường. User pause được giữ
+nguyên. Duplicate, stale, missing, unsupported, busy và uncertain outcome là
+typed; uncertain response chỉ refresh, không replay. Xem
+[`ADR-047`](../adr/ADR-047-production-desktop-attention-and-conflict-resolution.md)
+và [`DESKTOP_CONTROL.md`](DESKTOP_CONTROL.md).
+
+## Boundary recovery và resilience (Prompt 107)
+
+Recovery card desktop không thêm sync engine. `Check again` là wake
+`SyncNow` bounded hiện có, nên runtime backoff, root fence, auth gate và
+`PausedByUser` vẫn canonical. Same-path root trở lại được root lifecycle hiện
+có quan sát và wake eligibility bình thường; root mất không bao giờ thành tree
+rỗng hay mass deletion. Lỗi server transient là waiting; blocker durable của
+auth/root/local có thể action-required. Attention Prompt 106 độc lập và không
+tự resolve. Xem
+[`ADR-048`](../adr/ADR-048-production-desktop-recovery-and-resilience-ux.md).

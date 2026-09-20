@@ -347,7 +347,6 @@ async fn bearer_cannot_authorize_browser_admin_or_conflict_routes() {
         (Method::GET, "/api/v1/auth/session".to_owned()),
         (Method::GET, "/api/v1/auth/csrf".to_owned()),
         (Method::POST, "/api/v1/auth/logout".to_owned()),
-        (Method::GET, "/api/v1/libraries".to_owned()),
         (Method::POST, "/api/v1/devices/enrollment-grants".to_owned()),
         (
             Method::POST,
@@ -370,6 +369,57 @@ async fn bearer_cannot_authorize_browser_admin_or_conflict_routes() {
             "route must stay browser-only"
         );
     }
+}
+
+#[tokio::test]
+async fn device_bearer_can_use_library_catalog_without_browser_csrf() {
+    let browser = Arc::new(TestAuthenticationBackend::new());
+    let file_backend = Arc::new(TestFileMetadataBackend::new(browser.user_id));
+    let library_id = file_backend.library_id();
+    let device = DeviceId::new();
+    let device_auth = Arc::new(TestDeviceAuth {
+        principal: DeviceCredentialPrincipal {
+            owner_user_id: browser.user_id,
+            device_id: device,
+            credential_id: DeviceCredentialId::new(),
+        },
+        secret: DeviceCredentialSecret::from_bytes([0x73; 32]),
+        revoked: std::sync::atomic::AtomicBool::new(false),
+    });
+    let state = state(true)
+        .with_auth_backend(browser)
+        .with_device_auth_backend(device_auth.clone())
+        .with_file_metadata_backend(file_backend);
+
+    let response = router(state.clone())
+        .oneshot(device_request(
+            Method::GET,
+            "/api/v1/libraries",
+            Value::Null,
+            &device_auth.secret,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(response).await["data"][0]["id"],
+        library_id.to_string()
+    );
+
+    let response = router(state)
+        .oneshot(device_request(
+            Method::POST,
+            "/api/v1/libraries",
+            serde_json::json!({"id": library_id.to_string(), "name": "Primary"}),
+            &device_auth.secret,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(
+        json_body(response).await["data"]["id"],
+        library_id.to_string()
+    );
 }
 
 #[tokio::test]

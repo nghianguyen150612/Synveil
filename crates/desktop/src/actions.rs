@@ -5,7 +5,7 @@
 //! policies make native C++/QML behavior auditable without a display server.
 
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex,
 };
 
@@ -13,12 +13,14 @@ pub(crate) const TRAY_ACTION_LABELS: [&str; 3] =
     ["Open Synveil", "Sync Now", "Quit Synveil Desktop"];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(dead_code)]
 pub(crate) enum CloseDisposition {
     HideToTray,
     Exit,
 }
 
 #[must_use]
+#[allow(dead_code)]
 pub(crate) const fn close_disposition(tray_available: bool) -> CloseDisposition {
     if tray_available {
         CloseDisposition::HideToTray
@@ -46,6 +48,49 @@ impl SyncRequestGate {
 
     pub(crate) fn release(&self) {
         self.0.store(false, Ordering::Release);
+    }
+}
+
+/// Coalesces repeated startup-toggle clicks to the latest desired value while
+/// one bounded supervisor operation is in flight. It never creates one task
+/// or one process-management command per click.
+#[derive(Debug, Default)]
+pub(crate) struct StartupIntentGate {
+    desired: AtomicBool,
+    generation: AtomicU64,
+    in_flight: AtomicBool,
+}
+
+impl StartupIntentGate {
+    pub(crate) fn set_intent(&self, enabled: bool) {
+        self.desired.store(enabled, Ordering::Release);
+        self.generation.fetch_add(1, Ordering::AcqRel);
+    }
+
+    pub(crate) fn try_start(&self) -> Option<(bool, u64)> {
+        if self
+            .in_flight
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            Some((
+                self.desired.load(Ordering::Acquire),
+                self.generation.load(Ordering::Acquire),
+            ))
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn current(&self) -> (bool, u64) {
+        (
+            self.desired.load(Ordering::Acquire),
+            self.generation.load(Ordering::Acquire),
+        )
+    }
+
+    pub(crate) fn release(&self) {
+        self.in_flight.store(false, Ordering::Release);
     }
 }
 
@@ -196,6 +241,24 @@ mod tests {
     }
 
     #[test]
+    fn ui41_one_thousand_auth_actions_are_bounded_to_one_in_flight_request() {
+        let gate = Arc::new(SyncRequestGate::default());
+        let admitted = Arc::new(AtomicUsize::new(0));
+        thread::scope(|scope| {
+            for _ in 0..1_000 {
+                let gate = Arc::clone(&gate);
+                let admitted = Arc::clone(&admitted);
+                scope.spawn(move || {
+                    if gate.try_acquire() {
+                        admitted.fetch_add(1, Ordering::Relaxed);
+                    }
+                });
+            }
+        });
+        assert_eq!(admitted.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
     fn ui31_ten_thousand_updates_keep_only_the_latest_value() {
         let latest = LatestValue::default();
         for value in 0_u64..10_000 {
@@ -280,5 +343,17 @@ mod tests {
         let latest = LatestValue::default();
         assert!(latest.publish(1_u64));
         assert_eq!(latest.take(), (Some(1), false));
+    }
+
+    #[test]
+    fn ui42_startup_intent_keeps_latest_value_with_one_in_flight_worker() {
+        let gate = StartupIntentGate::default();
+        gate.set_intent(true);
+        assert_eq!(gate.try_start(), Some((true, 1)));
+        gate.set_intent(false);
+        assert!(!gate.current().0);
+        assert_eq!(gate.try_start(), None);
+        gate.release();
+        assert_eq!(gate.try_start(), Some((false, 2)));
     }
 }

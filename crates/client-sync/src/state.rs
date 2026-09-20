@@ -24,11 +24,13 @@ use synveil_platform::PlatformRuntime;
 use uuid::Uuid;
 
 use crate::{
-    ClientSyncError, ConflictCursor, ConflictPage, EngineStatus, InboundChange, LocalFingerprint,
-    MAX_CONFLICT_PAGE_LIMIT, ManagedRelativePath, ObservationIssue, ObservationIssueKind,
-    ObservationState, OpaqueEvidence, OutboundIntent, OutboundIntentKind, OutboundIntentState,
-    RebaselineSnapshotDescriptor, RebaselineSnapshotPage, RemoteFeedPage, RemoteMutationApplied,
-    RemoteMutationConflict, ReplicaScope, RootBindingId, ServerProfileId, SyncConflictKind,
+    ClientSyncError, ConflictCursor, ConflictPage, DEFAULT_ATTENTION_PAGE_LIMIT, EngineStatus,
+    InboundChange, LocalFingerprint, MAX_ATTENTION_PAGE_LIMIT, MAX_CONFLICT_PAGE_LIMIT,
+    ManagedRelativePath, ObservationIssue, ObservationIssueKind, ObservationState, OpaqueEvidence,
+    OutboundIntent, OutboundIntentKind, OutboundIntentState, RebaselineSnapshotDescriptor,
+    RebaselineSnapshotPage, RemoteFeedPage, RemoteMutationApplied, RemoteMutationConflict,
+    ReplicaScope, RootBindingId, ServerProfileId, SyncAttentionLibrarySummary,
+    SyncAttentionSnapshot, SyncAttentionSummary, SyncConflictItem, SyncConflictKind,
     SyncConflictRecord, SyncConflictResolution, SyncConflictStatus, UploadCompletion,
     conflict_policy::ConflictEvidence, local_collision_key,
 };
@@ -1145,6 +1147,118 @@ impl LocalStateStore {
         }
         self.bind_replica_inner(scope, binding_id, Some(profile_id))
             .await
+    }
+
+    /// Durably admit a newly created remote library's authoritative root into
+    /// the local replica before observation or runtime registration starts.
+    /// This is idempotent for the same `(library, binding, profile, root)` and
+    /// never rewrites existing local descendants or journal progress.
+    pub async fn prepare_new_library_root(
+        &self,
+        scope: ReplicaScope,
+        binding_id: RootBindingId,
+        profile_id: ServerProfileId,
+        root_node_id: NodeId,
+    ) -> Result<ReplicaRecord, ClientSyncError> {
+        let mut transaction = self.pool.begin().await?;
+        let row = sqlx::query(
+            "SELECT owner_user_id, device_id, library_id, root_binding_id,
+                    root_node_id, journal_epoch, applied_sequence,
+                    acknowledged_sequence, status, server_profile_id
+             FROM replicas WHERE library_id = ?",
+        )
+        .bind(scope.library_id().to_string())
+        .fetch_optional(&mut *transaction)
+        .await?
+        .ok_or(ClientSyncError::InvalidState)?;
+        let record = decode_replica(row)?;
+        if record.scope() != scope || record.root_binding_id() != binding_id {
+            return Err(ClientSyncError::WrongRootBinding);
+        }
+        if record.server_profile_id() != Some(profile_id) {
+            return Err(ClientSyncError::WrongServerProfile);
+        }
+        if record
+            .root_node_id()
+            .is_some_and(|existing| existing != root_node_id)
+        {
+            return Err(ClientSyncError::WrongRootBinding);
+        }
+
+        let rows = sqlx::query(
+            "SELECT * FROM local_nodes WHERE library_id = ?
+             ORDER BY length(relative_path), relative_path LIMIT 100001",
+        )
+        .bind(scope.library_id().to_string())
+        .fetch_all(&mut *transaction)
+        .await?;
+        if rows.len() > MAX_LOCAL_NODE_QUERY_ROWS {
+            return Err(ClientSyncError::ResourceLimit);
+        }
+        let mut nodes = Vec::with_capacity(rows.len());
+        for row in rows {
+            nodes.push(decode_local_node(row)?);
+        }
+        let root = nodes
+            .iter()
+            .filter(|node| node.parent_node_id().is_none())
+            .collect::<Vec<_>>();
+        if root.len() > 1 {
+            return Err(ClientSyncError::InvalidState);
+        }
+        if let Some(existing) = root.first() {
+            if existing.node_id() != root_node_id
+                || existing.relative_path() != &ManagedRelativePath::root()
+                || existing.kind() != NodeKind::Directory
+                || existing.state() != NodeState::Active
+            {
+                return Err(ClientSyncError::WrongRootBinding);
+            }
+        } else if !nodes.is_empty() {
+            // A local child without a durable root is corrupt state. Do not
+            // attach a new server root to it or reinterpret it as user data.
+            return Err(ClientSyncError::InvalidState);
+        } else {
+            let root_node = LocalNode::new(
+                scope.library_id(),
+                root_node_id,
+                None,
+                ManagedRelativePath::root(),
+                LogicalName::new("root").map_err(|_| ClientSyncError::InvalidState)?,
+                NodeKind::Directory,
+                NodeState::Active,
+                Revision::new(1),
+                None,
+                None,
+                None,
+                None,
+                None,
+                Sequence::new(0),
+                true,
+                None,
+            );
+            upsert_local_node_tx(&mut transaction, &root_node).await?;
+        }
+
+        if record.root_node_id().is_none() {
+            let changed = sqlx::query(
+                "UPDATE replicas SET root_node_id = ?, updated_at_ms = ?
+                 WHERE library_id = ? AND root_node_id IS NULL",
+            )
+            .bind(root_node_id.to_string())
+            .bind(now_ms()?)
+            .bind(scope.library_id().to_string())
+            .execute(&mut *transaction)
+            .await?
+            .rows_affected();
+            if changed != 1 {
+                return Err(ClientSyncError::WrongRootBinding);
+            }
+        }
+        transaction.commit().await?;
+        self.replica(scope.library_id())
+            .await?
+            .ok_or(ClientSyncError::InvalidState)
     }
 
     /// Prepare a profile-bound local replica before credentials are
@@ -2497,6 +2611,10 @@ impl LocalStateStore {
         let row = sqlx::query(
             "SELECT * FROM outbound_intents
              WHERE library_id = ? AND state IN ('PENDING','READY','PREPARING','UPLOADING','SUBMITTING')
+               AND NOT (
+                   intent_kind IN ('CREATE_DIRECTORY','CREATE_FILE')
+                   AND parent_node_id IS NULL
+               )
              ORDER BY created_at_ms, intent_id LIMIT 1",
         )
         .bind(library_id.to_string())
@@ -2751,6 +2869,68 @@ impl LocalStateStore {
         .execute(&mut *transaction)
         .await?;
         transaction.commit().await?;
+
+        if let Some(intent) = self.outbound_intent(intent_id).await?
+            && intent.kind() == OutboundIntentKind::CreateDirectory
+        {
+            self.resolve_pending_create_children(
+                intent.library_id(),
+                intent.observed_relative_path(),
+                result.node_id(),
+                result.revision(),
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Bind already-observed child creates to a directory NodeId once the
+    /// normal namespace mutation has been durably accepted. Initial scans are
+    /// allowed to persist child facts before that identity exists, but the
+    /// outbound submitter must never guess a parent or submit a child at the
+    /// wrong path.
+    async fn resolve_pending_create_children(
+        &self,
+        library_id: LibraryId,
+        parent_path: &ManagedRelativePath,
+        parent_node_id: NodeId,
+        parent_revision: Revision,
+    ) -> Result<(), ClientSyncError> {
+        let rows = sqlx::query(
+            "SELECT * FROM outbound_intents
+             WHERE library_id = ? AND node_id IS NULL
+               AND intent_kind IN ('CREATE_DIRECTORY','CREATE_FILE')
+               AND state IN ('PENDING','BLOCKED','NEEDS_REBASE_VALIDATION')
+             ORDER BY created_at_ms, intent_id LIMIT 4097",
+        )
+        .bind(library_id.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+        if rows.len() > MAX_OBSERVATION_QUERY_ROWS {
+            return Err(ClientSyncError::ResourceLimit);
+        }
+        for row in rows {
+            let intent = decode_outbound_intent(row)?;
+            if intent.observed_relative_path().parent().as_ref() != Some(parent_path) {
+                continue;
+            }
+            let replacement = OutboundIntent::new(
+                library_id,
+                None,
+                Some(parent_node_id),
+                intent.kind(),
+                intent.observed_relative_path().clone(),
+                intent.old_relative_path().cloned(),
+                intent.observed_fingerprint(),
+                intent.base_epoch(),
+                intent.base_applied_sequence(),
+                intent.base_revision(),
+                intent.base_current_version_id(),
+                Some(parent_revision),
+            )?;
+            self.upsert_outbound_intent_with_result(&replacement)
+                .await?;
+        }
         Ok(())
     }
 
@@ -2945,6 +3125,118 @@ impl LocalStateStore {
             .await
     }
 
+    /// Read one coherent, profile-scoped attention snapshot. Counts remain
+    /// exact while conflict details are bounded to a finite UI window. The
+    /// caller supplies the registered library scope; rows from an old or
+    /// unregistered profile context never enter the desktop model.
+    pub async fn attention_snapshot(
+        &self,
+        library_ids: &[LibraryId],
+        limit: Option<u32>,
+    ) -> Result<SyncAttentionSnapshot, ClientSyncError> {
+        let limit = limit.unwrap_or(DEFAULT_ATTENTION_PAGE_LIMIT);
+        if limit == 0 || limit > MAX_ATTENTION_PAGE_LIMIT {
+            return Err(ClientSyncError::ResourceLimit);
+        }
+
+        let mut scoped_libraries = library_ids.to_vec();
+        scoped_libraries.sort_unstable();
+        scoped_libraries.dedup();
+        let mut transaction = self.pool.begin().await?;
+        let mut summaries = Vec::with_capacity(scoped_libraries.len());
+        let mut conflict_items = Vec::new();
+        let mut conflict_count = 0_u64;
+        let mut other_count = 0_u64;
+
+        for library_id in scoped_libraries {
+            let conflict_count_for_library: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM sync_conflicts
+                 WHERE library_id = ? AND status = 'UNRESOLVED'",
+            )
+            .bind(library_id.to_string())
+            .fetch_one(&mut *transaction)
+            .await?;
+            let local_issue_count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM local_apply_issues
+                 WHERE library_id = ? AND resolved_at_ms IS NULL",
+            )
+            .bind(library_id.to_string())
+            .fetch_one(&mut *transaction)
+            .await?;
+            let observation_issue_count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM observation_issues
+                 WHERE library_id = ? AND resolved_at_ms IS NULL",
+            )
+            .bind(library_id.to_string())
+            .fetch_one(&mut *transaction)
+            .await?;
+            let conflict_count_for_library = u64_from_i64(conflict_count_for_library)?;
+            let other_count_for_library = u64_from_i64(
+                local_issue_count
+                    .checked_add(observation_issue_count)
+                    .ok_or(ClientSyncError::ResourceLimit)?,
+            )?;
+            conflict_count = conflict_count.saturating_add(conflict_count_for_library);
+            other_count = other_count.saturating_add(other_count_for_library);
+            summaries.push(SyncAttentionLibrarySummary::new(
+                library_id,
+                conflict_count_for_library,
+                other_count_for_library,
+            ));
+
+            let rows = sqlx::query(
+                "SELECT * FROM sync_conflicts
+                 WHERE library_id = ? AND status = 'UNRESOLVED'
+                 ORDER BY detected_at_ms, conflict_id LIMIT ?",
+            )
+            .bind(library_id.to_string())
+            .bind(i64::from(limit))
+            .fetch_all(&mut *transaction)
+            .await?;
+            for row in rows {
+                let record = decode_sync_conflict(row)?;
+                let intent_row = sqlx::query("SELECT * FROM outbound_intents WHERE intent_id = ?")
+                    .bind(record.intent_id().to_string())
+                    .fetch_optional(&mut *transaction)
+                    .await?;
+                let intent = intent_row.map(decode_outbound_intent).transpose()?;
+                let local_node = if let Some(node_id) = record.node_id() {
+                    let node_row = sqlx::query(
+                        "SELECT * FROM local_nodes WHERE library_id = ? AND node_id = ?",
+                    )
+                    .bind(record.library_id().to_string())
+                    .bind(node_id.to_string())
+                    .fetch_optional(&mut *transaction)
+                    .await?;
+                    node_row.map(decode_local_node).transpose()?
+                } else {
+                    None
+                };
+                conflict_items.push(SyncConflictItem::from_sources(
+                    record,
+                    intent.as_ref(),
+                    local_node.as_ref(),
+                ));
+            }
+        }
+
+        conflict_items.sort_by(|left, right| {
+            left.detected_at_ms()
+                .cmp(&right.detected_at_ms())
+                .then_with(|| left.conflict_id().cmp(&right.conflict_id()))
+                .then_with(|| left.library_id().cmp(&right.library_id()))
+        });
+        let truncated = conflict_items.len() > limit as usize || conflict_count > limit as u64;
+        conflict_items.truncate(limit as usize);
+        transaction.commit().await?;
+        Ok(SyncAttentionSnapshot::new(
+            SyncAttentionSummary::new(conflict_count, other_count),
+            summaries,
+            conflict_items,
+            truncated,
+        ))
+    }
+
     pub async fn list_resolved_conflicts(
         &self,
         library_id: LibraryId,
@@ -3014,6 +3306,37 @@ impl LocalStateStore {
         conflict_id: SyncConflictId,
         resolution: SyncConflictResolution,
     ) -> Result<SyncConflictRecord, ClientSyncError> {
+        self.resolve_conflict_inner(conflict_id, None, resolution, false)
+            .await
+    }
+
+    /// Resolve only the exact conflict generation presented to a caller.
+    /// Library, intent, and detection timestamp are checked inside the same
+    /// transaction as the durable resolution transition.
+    pub async fn resolve_conflict_if_current(
+        &self,
+        library_id: LibraryId,
+        conflict_id: SyncConflictId,
+        intent_id: OutboundIntentId,
+        detected_at_ms: u64,
+        resolution: SyncConflictResolution,
+    ) -> Result<SyncConflictRecord, ClientSyncError> {
+        self.resolve_conflict_inner(
+            conflict_id,
+            Some((library_id, intent_id, detected_at_ms)),
+            resolution,
+            true,
+        )
+        .await
+    }
+
+    async fn resolve_conflict_inner(
+        &self,
+        conflict_id: SyncConflictId,
+        expected: Option<(LibraryId, OutboundIntentId, u64)>,
+        resolution: SyncConflictResolution,
+        reject_duplicate: bool,
+    ) -> Result<SyncConflictRecord, ClientSyncError> {
         let now = now_ms()?;
         let mut transaction = self.pool.begin().await?;
         let row = sqlx::query("SELECT * FROM sync_conflicts WHERE conflict_id = ?")
@@ -3022,8 +3345,15 @@ impl LocalStateStore {
             .await?
             .ok_or(ClientSyncError::ConflictNotFound)?;
         let existing = decode_sync_conflict(row)?;
+        if let Some((library_id, intent_id, detected_at_ms)) = expected
+            && (existing.library_id() != library_id
+                || existing.intent_id() != intent_id
+                || existing.detected_at_ms() != detected_at_ms)
+        {
+            return Err(ClientSyncError::ConflictStale);
+        }
         if existing.status() == SyncConflictStatus::Resolved {
-            if existing.resolution() == Some(resolution) {
+            if !reject_duplicate && existing.resolution() == Some(resolution) {
                 transaction.commit().await?;
                 return Ok(existing);
             }
@@ -3052,10 +3382,7 @@ impl LocalStateStore {
         let replacement = match resolution {
             SyncConflictResolution::AcceptRemote => None,
             SyncConflictResolution::RetryLocalAgainstCurrentBase => {
-                if matches!(
-                    existing.kind(),
-                    SyncConflictKind::RemoteMissing | SyncConflictKind::NameCollision
-                ) {
+                if !resolution.is_supported_for(existing.kind()) {
                     return Err(ClientSyncError::ResolutionNotApplicable);
                 }
                 Some(replacement_intent_tx(&mut transaction, &intent, now).await?)
@@ -6245,7 +6572,7 @@ mod tests {
     use super::{LocalNode, LocalOperation, LocalOperationKind, LocalStateConfig, LocalStateStore};
     use crate::{
         LOCAL_SCHEMA_VERSION, ManagedRelativePath, OutboundIntentState, ReplicaScope,
-        RootBindingId, test_support::remove_dir_all_bounded,
+        RootBindingId, ServerProfileId, test_support::remove_dir_all_bounded,
     };
 
     fn temporary_database(label: &str) -> (PathBuf, PathBuf) {
@@ -6388,6 +6715,85 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn new_library_root_seed_is_idempotent_and_preserves_descendants() {
+        let (path, directory) = temporary_database("new-root-seed");
+        let store = LocalStateStore::open(&LocalStateConfig::new(&path))
+            .await
+            .unwrap();
+        let replica_scope = scope();
+        let binding = RootBindingId::new();
+        let profile_id = ServerProfileId::new();
+        sqlx::query(
+            "INSERT INTO server_profiles (
+                 profile_id, canonical_base_url, transport_policy, display_label,
+                 created_at_ms, last_connected_at_ms
+             ) VALUES (?, 'https://example.com/', 'HTTPS', 'test', 0, NULL)",
+        )
+        .bind(profile_id.to_string())
+        .execute(&store.pool)
+        .await
+        .unwrap();
+        store
+            .prepare_replica_for_profile(replica_scope, binding, profile_id)
+            .await
+            .unwrap();
+
+        let root_id = NodeId::new();
+        let seeded = store
+            .prepare_new_library_root(replica_scope, binding, profile_id, root_id)
+            .await
+            .unwrap();
+        assert_eq!(seeded.root_node_id(), Some(root_id));
+        assert_eq!(
+            store
+                .local_nodes(replica_scope.library_id())
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let child_id = NodeId::new();
+        store
+            .upsert_local_node(&LocalNode::new(
+                replica_scope.library_id(),
+                child_id,
+                Some(root_id),
+                ManagedRelativePath::new("existing").unwrap(),
+                LogicalName::new("existing").unwrap(),
+                NodeKind::Directory,
+                NodeState::Active,
+                Revision::new(1),
+                None,
+                None,
+                None,
+                None,
+                None,
+                Sequence::new(0),
+                true,
+                None,
+            ))
+            .await
+            .unwrap();
+        let repeated = store
+            .prepare_new_library_root(replica_scope, binding, profile_id, root_id)
+            .await
+            .unwrap();
+        assert_eq!(repeated.root_node_id(), Some(root_id));
+        assert!(
+            store
+                .local_node(replica_scope.library_id(), child_id)
+                .await
+                .unwrap()
+                .is_some()
+        );
+
+        store.close_pool().await;
+        drop(store);
+        remove_dir_all_bounded(&directory).unwrap();
+    }
+
+    #[tokio::test]
     async fn durability_pragmas_checks_and_foreign_keys_are_enforced() {
         let (path, directory) = temporary_database("pragmas");
         let store = LocalStateStore::open(&LocalStateConfig::new(&path))
@@ -6507,6 +6913,26 @@ mod tests {
         )
         .unwrap();
         let intent = store.upsert_outbound_intent(&intent).await.unwrap();
+        let child_intent = store
+            .upsert_outbound_intent(
+                &crate::OutboundIntent::new(
+                    replica_scope.library_id(),
+                    None,
+                    None,
+                    crate::OutboundIntentKind::CreateDirectory,
+                    ManagedRelativePath::new("created/nested").unwrap(),
+                    None,
+                    Some(crate::LocalFingerprint::directory()),
+                    Sequence::new(1),
+                    Sequence::new(0),
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
         let request = synveil_core::ClientMutationRequest::new(
             synveil_core::ClientMutationId::new(),
             Sequence::new(1),
@@ -6528,12 +6954,13 @@ mod tests {
             .unwrap();
         assert_eq!(first.mutation_id(), second.mutation_id());
         let event_id = synveil_core::ChangeEventId::new();
+        let created_node_id = NodeId::new();
         store
             .record_mutation_applied(
                 intent.intent_id(),
                 crate::RemoteMutationApplied::new(
                     request.mutation_id(),
-                    root_id,
+                    created_node_id,
                     Revision::new(8),
                     event_id,
                     Sequence::new(2),
@@ -6542,6 +6969,15 @@ mod tests {
             )
             .await
             .unwrap();
+        assert_eq!(
+            store
+                .outbound_intent(child_intent.intent_id())
+                .await
+                .unwrap()
+                .unwrap()
+                .parent_node_id(),
+            Some(created_node_id)
+        );
         assert_eq!(
             store
                 .durable_mutation_request(intent.intent_id())

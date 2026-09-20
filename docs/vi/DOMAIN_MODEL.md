@@ -1655,3 +1655,76 @@ recovery completion, authentication result hay fresh sync state. GUI close chỉ
 Vì vậy Prompt 99 thêm zero server migration, zero client schema migration và
 zero domain table. Schema baseline vẫn là server migration 36 và client schema
 V6. Xem [`ADR-041`](../adr/ADR-041-production-desktop-launch-orchestration.md).
+
+## Authentication desktop là credential transition hiện có, không phải domain entity mới (Prompt 101)
+
+Input enrollment của Prompt 101 là `EnrollmentSecret` transient; nó không phải
+`User`, `Session`, `Device`, credential record hay synchronization entity.
+One-time device-enrollment exchange hiện có của server trả về receipt
+`EnrollmentCredentials` hiện có. Client validate server profile bất biến,
+owner và device binding rồi promote qua lifecycle `DeviceEnrollmentRecord` và
+`SecretStore` theo profile hiện có.
+
+Durable model vẫn chỉ gồm enrollment metadata theo profile, secure-store value
+theo profile và cleanup/forgotten marker hiện có dùng khi remove credential
+tường minh. Category result authentication, controller gate, IPC request ID,
+QML field và GUI affordance là application/process state. Chúng không phải
+domain fact durable và không được ghi vào PostgreSQL, SQLite client, Qt
+settings, snapshot hay event history.
+
+Thứ tự durable là verify metadata/SecretStore trước, rồi mới gửi runtime hint
+`CredentialChanged`. Sign Out ghi forgotten marker và hoàn tất SecretStore
+cleanup trước hint đó. Wake chỉ là scheduling signal; runtime status mới là
+authoritative và có thể chuyển thành `AuthBlocked` khi credential thiếu, bị
+revoke hoặc hết hạn.
+
+Profile và device scope là boundary bất biến. Receipt của profile, owner hoặc
+device khác bị reject; không tự động rebind và không wake cross-profile.
+Prompt 101 vì vậy thêm zero server migration, zero client schema migration,
+zero table và zero synchronization entity mới. Xem
+[`ADR-042`](../adr/ADR-042-secure-desktop-authentication-and-credential-lifecycle.md).
+
+## Onboarding profile desktop là configuration state, không phải domain entity mới (Prompt 102)
+
+First-run profile identity là process binding opaque UUIDv7. `ServerProfile`
+hiện có vẫn là record canonical không bí mật: origin, display label, creation
+timestamp và last-connected timestamp. Profile có thể tồn tại khi không có
+library. Onboarding không tạo default library, không suy luận root và không coi
+list rỗng là deletion.
+
+`ValidateProfileConfiguration` probe không mutation. Apply probe readiness
+anonymous rồi dùng SQLite transaction canonical. Profile ID immutable;
+`0007_profile_reconfiguration.sql` chỉ cho Rust-owned correction path đổi
+origin/label trong khi trigger vẫn bảo vệ profile identity. Origin change fence
+enrollment và xóa secure-store material theo profile trước khi origin mới
+durable. Client schema vì vậy là V7, server schema không đổi. Xem
+[`ADR-043`](../adr/ADR-043-desktop-profile-onboarding-and-connection-configuration.md).
+
+## Onboarding library desktop dùng record domain hiện có (Prompt 104)
+
+Setup library không thêm desktop-specific library entity. `POST
+/api/v1/libraries` tạo `Library` owner-scoped và root `Node` canonical hiện có;
+UUID do client sinh giúp request recoverable. Replica state row theo profile,
+managed-root marker profiled và process manifest active/pending không bí mật
+cùng biểu diễn local binding. Absolute path là local capability, không phải
+server metadata.
+
+First-bind nhận file/directory ordinary đã có khi cùng flow tạo remote library
+mới. Client giữ `root_node_id` authoritative, seed transactional các row
+`replicas` và `local_nodes` hiện có, rồi bắt đầu bounded scan với root đã biết.
+File hiện có trở thành create intent directory/file bình thường và đi qua
+namespace, upload-session, mutation-idempotency hiện có. Attach/import vào
+remote library đã tồn tại vẫn chưa được hỗ trợ. Root mất vẫn là
+deferred/fenced, không phải logical tree rỗng hay mass deletion. Xem
+[`ADR-044`](../adr/ADR-044-desktop-library-onboarding-and-local-root-binding.md)
+và [`ADR-045`](../adr/ADR-045-existing-root-bootstrap-and-initial-upload-admission.md).
+
+## Recovery không phải domain record mới (Prompt 107)
+
+Recovery summary được derive từ profile, replica/root, runtime,
+authentication, setup và attention state hiện có. Nó không lưu cạnh library,
+không thêm repair table và không được mutate root hay SQLite row. Pending setup
+tiếp tục dùng pending identity theo profile và server reconciliation hiện có.
+Root đúng same path trở lại được validate theo root/marker contract canonical;
+root mất hoặc mismatch bị fence và không bao giờ thành logical tree rỗng. Xem
+[`ADR-048`](../adr/ADR-048-production-desktop-recovery-and-resilience-ux.md).

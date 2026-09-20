@@ -83,6 +83,21 @@ fn node(revision: u64) -> Value {
     )
 }
 
+fn library(library_id: &str, name: &str) -> Value {
+    json!({
+        "id": library_id,
+        "type": "library",
+        "revision": "0",
+        "attributes": {
+            "name": name,
+            "root_node_id": ROOT,
+            "status": "ACTIVE",
+            "created_at": CREATED,
+            "updated_at": CREATED
+        }
+    })
+}
+
 fn version(bytes: &[u8]) -> Value {
     envelope(json!({"id":VERSION,"type":"file_version","attributes":{
         "node_id":NODE,"created_at":CREATED,"byte_length":bytes.len().to_string(),
@@ -529,6 +544,76 @@ async fn every_sync_operation_matches_real_dto_method_path_headers_and_evidence(
         Some(server.profile.profile_id())
     );
     assert!(!format!("{remote:?}").contains(credential().expose_secret()));
+    server.assert_finished();
+}
+
+#[tokio::test]
+async fn library_create_uses_device_authority_and_validates_identity() {
+    let server = Script::new(vec![
+        Step::json(
+            "POST",
+            "/api/v1/libraries",
+            envelope(library(LIBRARY, "First library")),
+        )
+        .created()
+        .request(json!({"id": LIBRARY, "name": "First library"})),
+    ])
+    .await;
+    let remote = server.remote();
+    let created = remote
+        .create_library(
+            scope(),
+            LIBRARY.parse().unwrap(),
+            &LogicalName::new("First library").unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(created.id(), LIBRARY.parse().unwrap());
+    assert_eq!(created.name().as_str(), "First library");
+    assert_eq!(created.root_node_id(), ROOT.parse().unwrap());
+    server.assert_finished();
+}
+
+#[tokio::test]
+async fn library_list_accepts_terminal_page_without_a_cursor() {
+    let server = Script::new(vec![Step::json(
+        "GET",
+        "/api/v1/libraries?limit=100",
+        json!({
+            "data": [library(LIBRARY, "First library")],
+            "page": {"has_more": false},
+            "meta": {"request_id": "fixture-request-37"},
+        }),
+    )])
+    .await;
+    let libraries = server.remote().list_libraries(scope()).await.unwrap();
+    assert_eq!(libraries.len(), 1);
+    assert_eq!(libraries[0].id(), LIBRARY.parse().unwrap());
+    server.assert_finished();
+}
+
+#[tokio::test]
+async fn uncertain_library_create_requires_an_empty_root() {
+    let server = Script::new(vec![Step::json(
+        "GET",
+        format!("/api/v1/libraries/{LIBRARY}/nodes?parent_id={ROOT}&limit=1"),
+        json!({
+            "data": [],
+            "page": {"has_more": false},
+            "meta": {"request_id": "fixture-request-37"},
+        }),
+    )])
+    .await;
+    let library = RemoteLibrary::new(
+        LIBRARY.parse().unwrap(),
+        LogicalName::new("First library").unwrap(),
+        ROOT.parse().unwrap(),
+    );
+    server
+        .remote()
+        .verify_new_library_empty(scope(), &library)
+        .await
+        .unwrap();
     server.assert_finished();
 }
 
@@ -1377,6 +1462,23 @@ async fn enrollment_lost_response_is_not_retried() {
     assert_eq!(error.kind(), RemoteErrorKind::Timeout);
     assert_eq!(server.received(), 1);
     assert!(!format!("{error:?}").contains(enrollment.expose_secret()));
+}
+
+#[tokio::test]
+async fn anonymous_enrollment_probe_requires_strict_ready_dto() {
+    let server = Script::new(vec![
+        Step::json("GET", "/health/ready", json!({"status": "ready"})).anonymous(),
+        Step::json("GET", "/health/ready", json!({"status": "degraded"})).anonymous(),
+    ])
+    .await;
+    let client =
+        HttpEnrollmentClient::new(server.profile.clone(), HttpClientConfig::default()).unwrap();
+    assert!(client.probe_ready().await.is_ok());
+    assert_eq!(
+        client.probe_ready().await.unwrap_err().kind(),
+        RemoteErrorKind::Protocol
+    );
+    server.assert_finished();
 }
 
 #[tokio::test]

@@ -4,7 +4,7 @@ Release:        @SYNVEIL_RELEASE@%{?dist}
 Summary:        Synveil desktop and background synchronization runtime (Linux)
 License:        MIT
 BuildArch:      @SYNVEIL_ARCH@
-Requires:       systemd, glibc, libgcc, libstdc++, qt6-qtbase, qt6-qtdeclarative
+Requires:       systemd, systemd-libs, glibc, libgcc, libstdc++, dbus-libs, qt6-qtbase, qt6-qtdeclarative, qt6-qtquickcontrols2
 # Preserve byte-identical release binary (Prompt 79 binary integrity): disable
 # automatic stripping so the packaged binary SHA256 equals the cargo release
 # binary SHA256. The release profile already applies its own optimizations;

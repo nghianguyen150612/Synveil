@@ -992,7 +992,7 @@ async fn live_pg17_adversarial_crash_restart_handoff() {
             .await
             .unwrap(),
     );
-    assert_eq!(state_b.schema_version().await.unwrap(), 6);
+    assert_eq!(state_b.schema_version().await.unwrap(), 7);
     let (candidates, handoffs) = sqlite_counts(&state_b, library.id()).await;
     // S10: new remote base active, handoff pending, inbound fenced, outbound unchanged.
     assert_eq!(

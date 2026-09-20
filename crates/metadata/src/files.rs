@@ -143,6 +143,19 @@ pub trait FileMetadataBackend: Send + Sync {
         limit: u32,
     ) -> Result<LibraryPage, FileMetadataError>;
 
+    /// Create one owner-scoped library and its canonical logical root.
+    /// Implementations may use the supplied UUID to make a retried client
+    /// request idempotent. The default keeps older composition fixtures
+    /// fail-closed until they explicitly opt into library creation.
+    async fn create_library(
+        &self,
+        _user_id: UserId,
+        _library_id: LibraryId,
+        _name: LogicalName,
+    ) -> Result<Library, FileMetadataError> {
+        Err(FileMetadataError::InvalidRequest)
+    }
+
     async fn list_children(
         &self,
         user_id: UserId,
@@ -248,6 +261,28 @@ impl FileMetadataService {
             })
             .flatten();
         Ok(LibraryPage::new(rows.libraries, next_cursor, rows.has_more))
+    }
+
+    pub async fn create_library(
+        &self,
+        user_id: UserId,
+        library_id: LibraryId,
+        name: LogicalName,
+    ) -> Result<Library, FileMetadataError> {
+        let library = DomainRepository::new(&self.pool)
+            .create_library_owned(user_id, library_id, name.clone(), Timestamp::now())
+            .await
+            .map_err(map_metadata_error)?;
+        if library.owner_user_id() != user_id {
+            // Do not reveal whether a caller-supplied UUID belongs to another
+            // owner. The API maps this to the same inaccessible-resource
+            // boundary used by ordinary metadata reads.
+            return Err(FileMetadataError::NotFound);
+        }
+        if library.name() != &name {
+            return Err(FileMetadataError::InvalidRequest);
+        }
+        Ok(library)
     }
 
     pub async fn list_children(
@@ -400,6 +435,15 @@ impl FileMetadataBackend for FileMetadataService {
         limit: u32,
     ) -> Result<LibraryPage, FileMetadataError> {
         self.list_libraries(user_id, cursor, limit).await
+    }
+
+    async fn create_library(
+        &self,
+        user_id: UserId,
+        library_id: LibraryId,
+        name: LogicalName,
+    ) -> Result<Library, FileMetadataError> {
+        self.create_library(user_id, library_id, name).await
     }
 
     async fn list_children(

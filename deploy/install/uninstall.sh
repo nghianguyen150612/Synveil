@@ -145,6 +145,7 @@ synveil_log "uninstalling Synveil (purge=$PURGE) from staged root: $STAGED_ROOT"
 safe_unlink_package() {
     local dest="$1"
     synveil_dest_under_root_lexical "$STAGED_ROOT" "$dest" || return 1
+    synveil_dest_under_root "$STAGED_ROOT" "$dest" || return 1
     local full="${STAGED_ROOT%/}${dest}"
     if [[ -L "$full" ]]; then
         synveil_log "unlink symlink PACKAGE $dest -> $(readlink "$full" 2>/dev/null || echo "?") (not following target)"
