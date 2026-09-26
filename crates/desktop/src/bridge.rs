@@ -91,6 +91,7 @@ pub mod ffi {
         #[qproperty(QString, recovery_feedback)]
         #[qproperty(bool, credential_store_unavailable)]
         #[qproperty(QVariant, libraries)]
+        #[qproperty(QString, empty_library_message)]
         #[qproperty(i32, library_count)]
         #[qproperty(i32, attention_count)]
         #[qproperty(i32, conflict_attention_count)]
@@ -291,6 +292,7 @@ pub struct DesktopUiBridgeRust {
     pub(crate) recovery_feedback: QString,
     pub(crate) credential_store_unavailable: bool,
     pub(crate) libraries: QVariant,
+    pub(crate) empty_library_message: QString,
     pub(crate) library_count: i32,
     pub(crate) attention_count: i32,
     pub(crate) conflict_attention_count: i32,
@@ -413,7 +415,7 @@ impl Default for DesktopUiBridgeRust {
             profile_message: QString::from(if profile_ready {
                 "Configure a Synveil server to continue."
             } else {
-                "Desktop profile identity is unavailable."
+                "Synveil could not load this device's server settings."
             }),
             profile_configured: false,
             profile_authenticated: false,
@@ -435,6 +437,7 @@ impl Default for DesktopUiBridgeRust {
             recovery_feedback: QString::default(),
             credential_store_unavailable: false,
             libraries: QVariant::default(),
+            empty_library_message: QString::from("Connect to a Synveil server to get started."),
             library_count: 0,
             attention_count: 0,
             conflict_attention_count: 0,
@@ -579,8 +582,9 @@ impl ffi::DesktopUiBridge {
         self.as_mut().rust_mut().get_mut().started = true;
 
         let Some(runtime) = runtime else {
-            self.as_mut()
-                .set_sync_feedback(QString::from("Desktop shell tasks are unavailable."));
+            self.as_mut().set_sync_feedback(QString::from(
+                "Synveil could not start this action. Reopen the desktop app and try again.",
+            ));
             return;
         };
         let dispatcher = SnapshotDispatcher::new(self.as_ref().get_ref().qt_thread());
@@ -702,10 +706,10 @@ impl ffi::DesktopUiBridge {
     fn resume_pending_setup(mut self: Pin<&mut Self>) {
         self.as_mut().set_library_setup_required(true);
         self.as_mut().set_library_setup_feedback(QString::from(
-            "Choose the same folder and submit its library name to resume safely.",
+            "Choose the same local folder and library name to continue setup safely.",
         ));
         self.as_mut().set_recovery_feedback(QString::from(
-            "Use the library setup form below; the existing pending identity will be reconciled.",
+            "Use the library setup form below to continue the existing setup.",
         ));
     }
 
@@ -944,7 +948,7 @@ fn apply_snapshot(mut object: Pin<&mut ffi::DesktopUiBridge>, snapshot: UiSnapsh
     let profile_message = {
         let state = object.rust();
         if !state.profile_ready {
-            "Desktop profile identity is unavailable."
+            "Synveil could not load this device's server settings."
         } else if snapshot.profile_configured {
             "Server connection configured; authenticate this device if required."
         } else {
@@ -1012,6 +1016,9 @@ fn apply_snapshot(mut object: Pin<&mut ffi::DesktopUiBridge>, snapshot: UiSnapsh
     object
         .as_mut()
         .set_recovery_items_truncated(snapshot.recovery_items_truncated);
+    object
+        .as_mut()
+        .set_empty_library_message(QString::from(snapshot.empty_library_message));
     object
         .as_mut()
         .set_libraries(to_qvariant_list(&snapshot.libraries));
@@ -1284,9 +1291,9 @@ fn request_attention_resolution(
     }
     let Some(runtime) = runtime else {
         gate.release();
-        object
-            .as_mut()
-            .set_attention_feedback(QString::from("Desktop shell tasks are unavailable."));
+        object.as_mut().set_attention_feedback(QString::from(
+            "Synveil could not start this action. Reopen the desktop app and try again.",
+        ));
         return;
     };
     let Ok(library_id) = item.library_id.parse::<LibraryId>() else {
@@ -1357,9 +1364,9 @@ fn request_attention_resolution(
                 .as_mut()
                 .set_attention_feedback(QString::from(feedback));
             if unknown {
-                object.as_mut().set_attention_feedback(QString::from(
-                    "Request status is unknown; refreshed attention status without replaying.",
-                ));
+            object.as_mut().set_attention_feedback(QString::from(
+                "Synveil cannot confirm whether this conflict decision completed. It is checking the current conflict status.",
+            ));
             }
             update_selected_attention_properties(object);
         });
@@ -1412,7 +1419,7 @@ fn request_recovery_retry(
 
     let Some(item) = item else {
         object.as_mut().set_recovery_feedback(QString::from(
-            "There is no retryable recovery item in the current status.",
+            "That recovery condition is no longer available.",
         ));
         return;
     };
@@ -1429,7 +1436,7 @@ fn request_recovery_retry(
     let Some(library_id) = item.library_id.as_deref().and_then(|id| id.parse().ok()) else {
         controller.refresh_state();
         object.as_mut().set_recovery_feedback(QString::from(
-            "Recovery identity changed; checking the current state.",
+            "Recovery status changed; checking the current state.",
         ));
         return;
     };
@@ -1441,9 +1448,9 @@ fn request_recovery_retry(
     }
     let Some(runtime) = runtime else {
         gate.release();
-        object
-            .as_mut()
-            .set_recovery_feedback(QString::from("Desktop shell tasks are unavailable."));
+        object.as_mut().set_recovery_feedback(QString::from(
+            "Synveil could not start this action. Reopen the desktop app and try again.",
+        ));
         return;
     };
 
@@ -1465,7 +1472,7 @@ fn request_recovery_retry(
                     controller.refresh_state();
                 }
                 let feedback = if unknown {
-                    "Recovery check status is unknown; refreshed without replaying."
+                    "Synveil cannot confirm whether that recovery check completed. It is checking the current status without repeating the check."
                 } else {
                     presentation::command_feedback(result)
                 };
@@ -1484,7 +1491,7 @@ fn request_recovery_retry(
                 .set_recovery_feedback(QString::from(feedback));
             if outcome_unknown {
                 object.as_mut().set_last_error_label(QString::from(
-                    "Request status is unknown; current status is being refreshed.",
+                    "Synveil cannot confirm whether the recovery check completed. Current status is being checked.",
                 ));
             }
         });
@@ -1513,9 +1520,9 @@ fn request_background_client_start(mut object: Pin<&mut ffi::DesktopUiBridge>) {
     }
     let Some(runtime) = runtime else {
         gate.release();
-        object
-            .as_mut()
-            .set_recovery_feedback(QString::from("Desktop shell tasks are unavailable."));
+        object.as_mut().set_recovery_feedback(QString::from(
+            "Synveil could not start this action. Reopen the desktop app and try again.",
+        ));
         return;
     };
     object.as_mut().set_recovery_busy(true);
@@ -1611,9 +1618,9 @@ fn request_sync_for(
     }
     let Some(runtime) = runtime else {
         gate.release();
-        object
-            .as_mut()
-            .set_sync_feedback(QString::from("Desktop shell tasks are unavailable."));
+        object.as_mut().set_sync_feedback(QString::from(
+            "Synveil could not start this action. Reopen the desktop app and try again.",
+        ));
         return;
     };
 
@@ -1628,10 +1635,17 @@ fn request_sync_for(
     let qt_thread = object.as_ref().get_ref().qt_thread();
     runtime.spawn(async move {
         let feedback = match library_id.parse::<LibraryId>() {
-            Ok(library_id) => controller.sync_now(library_id).await.map_or(
-                "Background service unavailable.",
-                presentation::command_feedback,
-            ),
+            Ok(library_id) => match controller.sync_now(library_id).await {
+                Ok(result) => {
+                    if result == DesktopControllerCommandResult::OutcomeUnknown {
+                        // The request may already have been accepted. Refresh
+                        // the authoritative status and never replay Sync Now.
+                        controller.refresh_state();
+                    }
+                    presentation::command_feedback(result)
+                }
+                Err(_) => "Background service unavailable.",
+            },
             Err(_) => "That library is no longer available.",
         };
         if live_test {
@@ -1669,9 +1683,9 @@ fn request_sync_control(mut object: Pin<&mut ffi::DesktopUiBridge>, paused: bool
     };
     let Some(runtime) = runtime else {
         gate.release();
-        object
-            .as_mut()
-            .set_sync_control_feedback(QString::from("Desktop shell tasks are unavailable."));
+        object.as_mut().set_sync_control_feedback(QString::from(
+            "Synveil could not start this action. Reopen the desktop app and try again.",
+        ));
         return;
     };
 
@@ -1786,7 +1800,9 @@ fn request_background_startup(mut object: Pin<&mut ffi::DesktopUiBridge>, enable
         gate.release();
         object
             .as_mut()
-            .set_background_startup_feedback(QString::from("Desktop shell tasks are unavailable."));
+            .set_background_startup_feedback(QString::from(
+                "Synveil could not start this action. Reopen the desktop app and try again.",
+            ));
         return;
     };
 
@@ -1860,9 +1876,9 @@ fn request_profile_configuration(
     };
 
     if !profile_ready {
-        object
-            .as_mut()
-            .set_configuration_feedback(QString::from("Desktop profile identity is unavailable."));
+        object.as_mut().set_configuration_feedback(QString::from(
+            "Synveil could not load this device's server settings.",
+        ));
         return;
     }
     if !gate.try_acquire() {
@@ -1873,9 +1889,9 @@ fn request_profile_configuration(
     }
     let Some(runtime) = runtime else {
         gate.release();
-        object
-            .as_mut()
-            .set_configuration_feedback(QString::from("Desktop shell tasks are unavailable."));
+        object.as_mut().set_configuration_feedback(QString::from(
+            "Synveil could not start this action. Reopen the desktop app and try again.",
+        ));
         return;
     };
 
@@ -1887,6 +1903,8 @@ fn request_profile_configuration(
         eprintln!("SYNVEIL-LIVE-UI ACTION configure_profile");
     }
     let qt_thread = object.as_ref().get_ref().qt_thread();
+    let saved_server_url = server_url.clone();
+    let saved_display_label = display_label.clone();
     runtime.spawn(async move {
         let (feedback, configured, outcome_unknown) = match controller
             .configure_profile(server_url, display_label)
@@ -1920,11 +1938,26 @@ fn request_profile_configuration(
                 .set_configuration_feedback(QString::from(feedback));
             if configured {
                 object.as_mut().set_profile_configured(true);
+                object
+                    .as_mut()
+                    .set_profile_server_url(QString::from(saved_server_url));
+                object
+                    .as_mut()
+                    .set_profile_display_name(QString::from(saved_display_label));
+                object.as_mut().set_configuration_feedback(QString::default());
+                object
+                    .as_mut()
+                    .set_profile_message(QString::from("Server connection saved."));
             }
             if outcome_unknown {
                 object
                     .as_mut()
-                    .set_profile_message(QString::from("Server status is unknown; refreshing."));
+                    .set_configuration_feedback(QString::default());
+                object
+                    .as_mut()
+                    .set_profile_message(QString::from(
+                        "Synveil cannot confirm whether the server connection was saved. It is checking the current profile status.",
+                    ));
             }
         });
     });
@@ -1984,9 +2017,9 @@ fn request_library_setup(mut object: Pin<&mut ffi::DesktopUiBridge>, name: Strin
     }
     let Some(runtime) = runtime else {
         gate.release();
-        object
-            .as_mut()
-            .set_library_setup_feedback(QString::from("Desktop shell tasks are unavailable."));
+        object.as_mut().set_library_setup_feedback(QString::from(
+            "Synveil could not start this action. Reopen the desktop app and try again.",
+        ));
         return;
     };
     object.as_mut().set_library_setup_busy(true);
@@ -2058,9 +2091,9 @@ fn request_authentication(mut object: Pin<&mut ffi::DesktopUiBridge>, input: Zer
     }
     let Some(runtime) = runtime else {
         gate.release();
-        object
-            .as_mut()
-            .set_auth_feedback(QString::from("Desktop shell tasks are unavailable."));
+        object.as_mut().set_auth_feedback(QString::from(
+            "Synveil could not start this action. Reopen the desktop app and try again.",
+        ));
         return;
     };
 
@@ -2143,9 +2176,9 @@ fn request_sign_out(mut object: Pin<&mut ffi::DesktopUiBridge>) {
     }
     let Some(runtime) = runtime else {
         gate.release();
-        object
-            .as_mut()
-            .set_auth_feedback(QString::from("Desktop shell tasks are unavailable."));
+        object.as_mut().set_auth_feedback(QString::from(
+            "Synveil could not start this action. Reopen the desktop app and try again.",
+        ));
         return;
     };
 

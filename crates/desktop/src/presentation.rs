@@ -92,6 +92,7 @@ pub struct UiSnapshot {
     pub sync_control_label: &'static str,
     pub libraries: Vec<UiLibrary>,
     pub libraries_truncated: bool,
+    pub empty_library_message: &'static str,
     pub attention_items: Vec<UiAttentionItem>,
     pub attention_items_truncated: bool,
     pub revision: u64,
@@ -179,9 +180,23 @@ pub fn map_snapshot(snapshot: &DesktopControllerSnapshot) -> UiSnapshot {
         .count();
     let can_sync_any = libraries.iter().any(|library| library.can_sync);
     let recovery = snapshot.recovery_summary();
+    // Setup, sign-in, and first-library actions already have dedicated forms.
+    // Keep those same actions out of the recovery card so the user sees one
+    // clear next step. Per-library sign-in recovery remains listed so its
+    // action can select the affected library.
+    let dedicated_recovery_actions = recovery
+        .items
+        .iter()
+        .filter(|item| recovery_action_has_dedicated_surface(snapshot, item))
+        .collect::<Vec<_>>();
+    let hidden_recovery_action_count = dedicated_recovery_actions
+        .iter()
+        .filter(|item| item.action_required)
+        .count();
     let recovery_items = recovery
         .items
         .iter()
+        .filter(|item| !recovery_action_has_dedicated_surface(snapshot, item))
         .map(map_recovery_item)
         .collect::<Vec<_>>();
     let (client_recovery_code, client_recovery_label) =
@@ -209,6 +224,7 @@ pub fn map_snapshot(snapshot: &DesktopControllerSnapshot) -> UiSnapshot {
         sync_control_label,
         libraries,
         libraries_truncated: snapshot.libraries_truncated || presented_truncated,
+        empty_library_message: empty_library_presentation(snapshot),
         attention_items,
         attention_items_truncated: snapshot.attention.truncated,
         revision: snapshot.revision,
@@ -228,7 +244,11 @@ pub fn map_snapshot(snapshot: &DesktopControllerSnapshot) -> UiSnapshot {
         profile_server_url: snapshot.profile_server_url.clone(),
         recovery_items,
         recovery_items_truncated: recovery.truncated,
-        recovery_action_required: bounded_usize(recovery.total_action_required),
+        recovery_action_required: bounded_usize(
+            recovery
+                .total_action_required
+                .saturating_sub(u64::try_from(hidden_recovery_action_count).unwrap_or(u64::MAX)),
+        ),
         recovery_waiting_count: bounded_usize(recovery.total_waiting),
         client_recovery_code,
         client_recovery_label,
@@ -259,6 +279,20 @@ pub fn selected_library_id(previous: Option<&str>, snapshot: &UiSnapshot) -> Opt
 
 fn bounded_usize(value: u64) -> usize {
     usize::try_from(value).unwrap_or(usize::MAX)
+}
+
+fn empty_library_presentation(snapshot: &DesktopControllerSnapshot) -> &'static str {
+    if !snapshot.profile_configured {
+        "Connect to a Synveil server to get started."
+    } else if snapshot.connection_state != DesktopControllerConnectionState::Connected
+        || snapshot.freshness != DesktopControllerFreshness::Fresh
+    {
+        "Library status will appear here when Synveil reconnects."
+    } else if !snapshot.profile_authenticated {
+        "Sign in to this device to continue."
+    } else {
+        "Set up a library to start syncing."
+    }
 }
 
 fn map_attention_item(item: &DesktopControllerAttentionItem) -> UiAttentionItem {
@@ -323,6 +357,29 @@ fn map_recovery_item(item: &DesktopControllerRecoveryItem) -> UiRecoveryItem {
     }
 }
 
+fn recovery_action_has_dedicated_surface(
+    snapshot: &DesktopControllerSnapshot,
+    item: &DesktopControllerRecoveryItem,
+) -> bool {
+    match item.kind {
+        DesktopControllerRecoveryKind::ProfileConfigurationRequired => !snapshot.profile_configured,
+        DesktopControllerRecoveryKind::AuthenticationRequired => {
+            item.library_id.is_none()
+                && snapshot.profile_configured
+                && !snapshot.profile_authenticated
+        }
+        DesktopControllerRecoveryKind::LibrarySetupIncomplete => {
+            snapshot.profile_configured
+                && snapshot.profile_authenticated
+                && snapshot.libraries.is_empty()
+        }
+        DesktopControllerRecoveryKind::ClientUnavailable
+        | DesktopControllerRecoveryKind::RootUnavailable
+        | DesktopControllerRecoveryKind::ServerRetryable
+        | DesktopControllerRecoveryKind::LocalFailure => false,
+    }
+}
+
 fn client_recovery_presentation(
     state: synveil_client::DesktopControllerClientRecoveryState,
 ) -> (&'static str, &'static str) {
@@ -367,17 +424,17 @@ fn recovery_kind_presentation(
         DesktopControllerRecoveryKind::ServerRetryable => (
             "server_retryable",
             "Waiting for server",
-            "Synveil will retry automatically; a check now remains bounded.",
+            "The server is temporarily unavailable. Synveil will retry automatically; select Check again to refresh its status.",
         ),
         DesktopControllerRecoveryKind::LocalFailure => (
             "local_failure",
             "Local sync needs attention",
-            "A local sync condition needs a safe retry or authoritative recheck.",
+            "Synveil needs to check the local sync status before it can continue.",
         ),
         DesktopControllerRecoveryKind::LibrarySetupIncomplete => (
             "library_setup_incomplete",
             "Library setup incomplete",
-            "Resume setup with the same folder so the existing identity can be reconciled safely.",
+            "Choose the same local folder to continue setup. Synveil keeps existing files.",
         ),
     }
 }
@@ -665,7 +722,9 @@ pub const fn command_feedback(result: DesktopControllerCommandResult) -> &'stati
         DesktopControllerCommandResult::RuntimeStopped
         | DesktopControllerCommandResult::Stopped => "Background service is stopped.",
         DesktopControllerCommandResult::AdmissionLimited => "Try again in a moment.",
-        DesktopControllerCommandResult::OutcomeUnknown => "Request status is unknown.",
+        DesktopControllerCommandResult::OutcomeUnknown => {
+            "Synveil cannot confirm whether that completed. It is checking the current status; wait for the update."
+        }
         DesktopControllerCommandResult::ProtocolError => "Background service is incompatible.",
         DesktopControllerCommandResult::Authenticated => "Signed in; status will update.",
         DesktopControllerCommandResult::SignedOut => "Signed out; local credential removed.",
@@ -741,7 +800,9 @@ pub const fn command_feedback(result: DesktopControllerCommandResult) -> &'stati
         // The desktop shell never exposes the Prompt 96 process-shutdown
         // command.  Keep this defensive mapping generic if a future caller
         // hands the presentation layer that result anyway.
-        DesktopControllerCommandResult::ShutdownAccepted => "Request status is unknown.",
+        DesktopControllerCommandResult::ShutdownAccepted => {
+            "Synveil cannot confirm whether that completed. It is checking the current status; wait for the update."
+        }
     }
 }
 
@@ -758,7 +819,7 @@ pub const fn sync_control_feedback(result: DesktopControllerCommandResult) -> &'
         }
         DesktopControllerCommandResult::Busy => "Another sync setting request is in progress.",
         DesktopControllerCommandResult::OutcomeUnknown => {
-            "Sync setting status is unknown; refreshing status."
+            "Synveil cannot confirm whether the sync setting changed. It is checking the current status."
         }
         DesktopControllerCommandResult::Disconnected
         | DesktopControllerCommandResult::Unavailable
@@ -805,7 +866,7 @@ pub const fn library_setup_feedback(result: DesktopControllerCommandResult) -> &
         }
         DesktopControllerCommandResult::Busy => "Another request is already being processed.",
         DesktopControllerCommandResult::OutcomeUnknown => {
-            "Request status is unknown; refresh status before trying again."
+            "Synveil cannot confirm whether library setup completed. It is checking the current status before another setup action."
         }
         DesktopControllerCommandResult::Unavailable
         | DesktopControllerCommandResult::Disconnected
@@ -873,7 +934,7 @@ pub const fn auth_feedback(result: DesktopControllerCommandResult) -> &'static s
             "An authentication request is already being processed."
         }
         DesktopControllerCommandResult::OutcomeUnknown => {
-            "Authentication result is unknown; refreshing status."
+            "Synveil cannot confirm whether the sign-in change completed. It is checking the current authentication status."
         }
         DesktopControllerCommandResult::ProtocolError => "Background service is incompatible.",
         DesktopControllerCommandResult::Disconnected
@@ -896,7 +957,9 @@ pub const fn auth_feedback(result: DesktopControllerCommandResult) -> &'static s
         | DesktopControllerCommandResult::ConflictNotFound
         | DesktopControllerCommandResult::UnsupportedConflictAction
         | DesktopControllerCommandResult::ConflictPersistenceFailure
-        | DesktopControllerCommandResult::ShutdownAccepted => "Request status is unknown.",
+        | DesktopControllerCommandResult::ShutdownAccepted => {
+            "Synveil cannot confirm whether that completed. It is checking the current status; wait for the update."
+        }
     }
 }
 
@@ -955,6 +1018,249 @@ mod tests {
         snapshot.profile_configured = true;
         snapshot.profile_authenticated = true;
         snapshot
+    }
+
+    #[test]
+    fn ux_unit_1_configuration_required_has_a_clear_next_step() {
+        let ui = map_snapshot(&fresh_snapshot(Vec::new()));
+        assert_eq!(
+            ui.empty_library_message,
+            "Connect to a Synveil server to get started."
+        );
+        assert!(ui.recovery_items.is_empty());
+        assert_eq!(ui.recovery_action_required, 0);
+    }
+
+    #[test]
+    fn ux_unit_2_unauthenticated_empty_state_prompts_sign_in() {
+        let mut snapshot = fresh_snapshot(Vec::new());
+        snapshot.profile_configured = true;
+        snapshot.profile_authenticated = false;
+        let ui = map_snapshot(&snapshot);
+
+        assert_eq!(
+            ui.empty_library_message,
+            "Sign in to this device to continue."
+        );
+        assert!(ui.recovery_items.is_empty());
+        assert_eq!(ui.recovery_action_required, 0);
+    }
+
+    #[test]
+    fn ux_unit_3_authenticated_empty_state_uses_one_library_setup_action() {
+        let ui = map_snapshot(&authenticated_snapshot(Vec::new()));
+
+        assert_eq!(
+            ui.empty_library_message,
+            "Set up a library to start syncing."
+        );
+        assert!(ui.recovery_items.is_empty());
+        assert_eq!(ui.recovery_action_required, 0);
+    }
+
+    #[test]
+    fn ux_unit_4_pause_and_recovery_are_shown_as_separate_states() {
+        let mut unavailable = status(library_id(1144));
+        unavailable.root_state = DesktopControllerRootState::Unavailable;
+        unavailable.runtime_state = DesktopControllerRuntimeState::RootBlocked;
+        let mut snapshot = authenticated_snapshot(vec![unavailable]);
+        snapshot.sync_control_state = DesktopControllerSyncControlState::PausedByUser;
+
+        let ui = map_snapshot(&snapshot);
+        assert_eq!(ui.sync_control_label, "Paused by user");
+        assert!(!ui.can_sync_any);
+        assert_eq!(ui.recovery_action_required, 1);
+        assert!(ui
+            .recovery_items
+            .iter()
+            .any(|item| item.kind_code == "root_unavailable" && item.action_required));
+    }
+
+    #[test]
+    fn ux_unit_5_root_unavailable_never_looks_like_an_empty_folder() {
+        let mut unavailable = status(library_id(1145));
+        unavailable.root_state = DesktopControllerRootState::Unavailable;
+        unavailable.runtime_state = DesktopControllerRuntimeState::RootBlocked;
+
+        let ui = map_snapshot(&authenticated_snapshot(vec![unavailable]));
+        let recovery = ui
+            .recovery_items
+            .iter()
+            .find(|item| item.kind_code == "root_unavailable")
+            .expect("root-unavailable recovery item");
+
+        assert_eq!(ui.libraries[0].root_label, "Folder unavailable");
+        assert!(recovery.detail.contains("not treated it as empty"));
+        assert!(!recovery.detail.to_ascii_lowercase().contains("deleted"));
+    }
+
+    #[test]
+    fn ux_unit_6_conflict_actions_match_only_the_supported_choices() {
+        let library = library_id(1146);
+        let mut snapshot = authenticated_snapshot(vec![status(library.clone())]);
+        snapshot.attention = synveil_client::DesktopControllerAttentionSnapshot {
+            summary: synveil_client::DesktopControllerAttentionSummary {
+                total_count: 2,
+                conflict_count: 2,
+                other_count: 0,
+            },
+            libraries: Vec::new(),
+            items: vec![
+                synveil_client::DesktopControllerAttentionItem {
+                    attention_id: "attention-accept".to_owned(),
+                    library_id: library.clone(),
+                    conflict_id: "conflict-accept".to_owned(),
+                    intent_id: "intent-accept".to_owned(),
+                    node_id: None,
+                    category: "REMOTE_CONTENT_CHANGED".to_owned(),
+                    relative_path: Some("notes/today.txt".to_owned()),
+                    previous_relative_path: None,
+                    item_kind: Some(synveil_client::DesktopControllerAttentionItemKind::File),
+                    local_length: None,
+                    remote_length: None,
+                    local_base_revision: None,
+                    remote_observed_revision: None,
+                    remote_observed_state: None,
+                    detected_at_ms: 1,
+                    supported_actions: vec![synveil_client::DesktopControllerConflictAction::AcceptRemote],
+                },
+                synveil_client::DesktopControllerAttentionItem {
+                    attention_id: "attention-retry".to_owned(),
+                    library_id: library.clone(),
+                    conflict_id: "conflict-retry".to_owned(),
+                    intent_id: "intent-retry".to_owned(),
+                    node_id: None,
+                    category: "REMOTE_REVISION_CHANGED".to_owned(),
+                    relative_path: Some("notes/later.txt".to_owned()),
+                    previous_relative_path: None,
+                    item_kind: Some(synveil_client::DesktopControllerAttentionItemKind::File),
+                    local_length: None,
+                    remote_length: None,
+                    local_base_revision: None,
+                    remote_observed_revision: None,
+                    remote_observed_state: None,
+                    detected_at_ms: 2,
+                    supported_actions: vec![
+                        synveil_client::DesktopControllerConflictAction::RetryLocalAgainstCurrentBase,
+                    ],
+                },
+            ],
+            truncated: false,
+        };
+
+        let ui = map_snapshot(&snapshot);
+        assert_eq!(ui.attention_items.len(), 2);
+        assert!(ui.attention_items[0].can_accept_remote);
+        assert!(!ui.attention_items[0].can_retry_local);
+        assert!(!ui.attention_items[1].can_accept_remote);
+        assert!(ui.attention_items[1].can_retry_local);
+    }
+
+    #[test]
+    fn ux_unit_7_errors_are_short_and_never_expose_internal_details() {
+        let errors = [
+            DesktopControllerErrorKind::EndpointUnavailable,
+            DesktopControllerErrorKind::EndpointSecurity,
+            DesktopControllerErrorKind::ProtocolIncompatible,
+            DesktopControllerErrorKind::ConnectionLost,
+            DesktopControllerErrorKind::MalformedServerResponse,
+            DesktopControllerErrorKind::CommandRejected,
+            DesktopControllerErrorKind::UnsupportedPlatform,
+            DesktopControllerErrorKind::Stopped,
+            DesktopControllerErrorKind::Internal,
+        ];
+
+        for error in errors {
+            let label = error_label(&error);
+            let lower = label.to_ascii_lowercase();
+            assert!(!label.is_empty());
+            assert!(!lower.contains("debug"));
+            assert!(!lower.contains("sqlite"));
+            assert!(!lower.contains("token"));
+            assert!(!label.contains("/"));
+            assert!(!label.contains("::"));
+        }
+    }
+
+    #[test]
+    fn ux_unit_8_unknown_outcomes_wait_for_reconciliation_without_retry_advice() {
+        let messages = [
+            command_feedback(DesktopControllerCommandResult::OutcomeUnknown),
+            sync_control_feedback(DesktopControllerCommandResult::OutcomeUnknown),
+            library_setup_feedback(DesktopControllerCommandResult::OutcomeUnknown),
+            auth_feedback(DesktopControllerCommandResult::OutcomeUnknown),
+        ];
+
+        for message in messages {
+            let lower = message.to_ascii_lowercase();
+            assert!(lower.contains("cannot confirm"), "{message}");
+            assert!(lower.contains("checking"), "{message}");
+            assert!(!lower.contains("retry"), "{message}");
+            assert!(!lower.contains("try again"), "{message}");
+            assert!(!lower.contains("outcomeunknown"), "{message}");
+        }
+
+        let bridge = include_str!("bridge.rs");
+        assert!(bridge.contains("controller.refresh_state();"));
+        assert!(bridge.contains("never replay Sync Now"));
+    }
+
+    #[test]
+    fn ux_unit_10_critical_controls_have_accessible_names_and_keyboard_submission() {
+        let qml = include_str!("../qml/Main.qml");
+        for accessible_name in [
+            "Open desktop settings",
+            "Close desktop settings",
+            "Pause synchronization",
+            "Resume synchronization",
+            "Close the desktop window to the system tray",
+            "Synveil server address",
+            "Sign in this device",
+            "Library name",
+            "Choose local library folder",
+            "Create library",
+            "Accept the remote conflict state",
+            "Retry the local change against the current remote state",
+        ] {
+            assert!(
+                qml.contains(accessible_name),
+                "missing accessible name: {accessible_name}"
+            );
+        }
+        assert!(qml.contains("onAccepted: root.submitProfileConfiguration()"));
+        assert!(qml.contains("onAccepted: root.submitLibrarySetup()"));
+        assert!(qml.contains("function submitToken()"));
+        assert!(qml.contains("ScrollView {"));
+    }
+
+    #[test]
+    fn ux_unit_11_idle_empty_attention_state_is_neutral() {
+        let ui = map_snapshot(&authenticated_snapshot(vec![status(library_id(1147))]));
+        assert_eq!(ui.libraries[0].runtime_label, "Idle");
+        assert_eq!(ui.libraries[0].outcome_label, "No recent sync result");
+        assert_eq!(ui.libraries[0].conflict_label, "No conflict reported");
+        assert_eq!(ui.attention_count, 0);
+        assert_eq!(ui.recovery_action_required, 0);
+        assert_eq!(ui.recovery_waiting_count, 0);
+    }
+
+    #[test]
+    fn ux_unit_12_recovery_copy_uses_plain_language_and_safe_next_steps() {
+        let server = recovery_kind_presentation(DesktopControllerRecoveryKind::ServerRetryable).2;
+        let local = recovery_kind_presentation(DesktopControllerRecoveryKind::LocalFailure).2;
+        let setup =
+            recovery_kind_presentation(DesktopControllerRecoveryKind::LibrarySetupIncomplete).2;
+
+        assert!(server.contains("retry automatically"));
+        assert!(server.contains("Check again"));
+        assert!(local.contains("check the local sync status"));
+        assert!(setup.contains("same local folder"));
+        for message in [server, local, setup] {
+            let lower = message.to_ascii_lowercase();
+            for term in ["bounded", "authoritative", "identity", "reconcile"] {
+                assert!(!lower.contains(term), "{message}");
+            }
+        }
     }
 
     #[test]
@@ -1049,10 +1355,12 @@ mod tests {
     #[test]
     fn recovery_ui_uses_same_setup_surface_for_an_empty_authenticated_profile() {
         let ui = map_snapshot(&authenticated_snapshot(Vec::new()));
-        assert_eq!(ui.recovery_action_required, 1);
-        assert_eq!(ui.recovery_items[0].kind_code, "library_setup_incomplete");
-        assert_eq!(ui.recovery_items[0].action_code, Some("resume_setup"));
-        assert!(ui.recovery_items[0].detail.contains("same folder"));
+        assert_eq!(ui.recovery_action_required, 0);
+        assert!(ui.recovery_items.is_empty());
+        assert_eq!(
+            ui.empty_library_message,
+            "Set up a library to start syncing."
+        );
     }
 
     #[test]
@@ -1255,7 +1563,7 @@ mod tests {
             ),
             (
                 DesktopControllerCommandResult::OutcomeUnknown,
-                "Authentication result is unknown; refreshing status.",
+                "Synveil cannot confirm whether the sign-in change completed. It is checking the current authentication status.",
             ),
             (
                 DesktopControllerCommandResult::ProtocolError,
@@ -1275,7 +1583,7 @@ mod tests {
     fn shutdown_result_is_not_a_desktop_shell_message() {
         assert_eq!(
             command_feedback(DesktopControllerCommandResult::ShutdownAccepted),
-            "Request status is unknown."
+            "Synveil cannot confirm whether that completed. It is checking the current status; wait for the update."
         );
     }
 

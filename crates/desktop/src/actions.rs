@@ -21,8 +21,11 @@ pub(crate) enum CloseDisposition {
 
 #[must_use]
 #[allow(dead_code)]
-pub(crate) const fn close_disposition(tray_available: bool) -> CloseDisposition {
-    if tray_available {
+pub(crate) const fn close_disposition(
+    close_to_tray: bool,
+    tray_available: bool,
+) -> CloseDisposition {
+    if close_to_tray && tray_available {
         CloseDisposition::HideToTray
     } else {
         CloseDisposition::Exit
@@ -188,9 +191,22 @@ mod tests {
     }
 
     #[test]
-    fn ui25_close_to_tray_is_selected_only_when_available() {
-        assert_eq!(close_disposition(true), CloseDisposition::HideToTray);
-        assert_eq!(close_disposition(false), CloseDisposition::Exit);
+    fn ux_unit_9_close_to_tray_requires_preference_and_available_tray() {
+        assert_eq!(close_disposition(true, true), CloseDisposition::HideToTray);
+        assert_eq!(close_disposition(false, true), CloseDisposition::Exit);
+        assert_eq!(close_disposition(true, false), CloseDisposition::Exit);
+
+        let qml = include_str!("../qml/Main.qml");
+        assert!(qml.contains("if (bridge.close_to_tray && bridge.tray_available)"));
+        assert!(qml.contains("root.hide()"));
+        assert!(qml.contains("bridge.requestQuit()"));
+        assert!(qml.contains("checked: bridge.close_to_tray && bridge.tray_available"));
+
+        let tray = include_str!("native/tray.cpp");
+        assert!(tray.contains("\"trayOpen\""));
+        assert!(tray.contains("\"traySyncNow\""));
+        assert!(tray.contains("\"trayQuit\""));
+        assert_eq!(DESKTOP_QUIT_SCOPE, QuitScope::ControllerOnly);
     }
 
     #[test]
