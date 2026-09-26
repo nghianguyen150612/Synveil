@@ -398,6 +398,61 @@ async fn profile_and_secret_survive_reopen_without_plaintext_in_sqlite_or_debug(
 }
 
 #[tokio::test]
+async fn security_unit_8_error_messages_are_sanitized() {
+    let (directory, config) = database();
+    let state = LocalStateStore::open(&config).await.unwrap();
+    let store = TestSecretStore::default();
+    let profile = profile("https://server.example");
+    let scope = scope();
+    let secret = DeviceCredentialSecret::from_bytes([0xe8; 32]);
+    let credential_id = enroll(&state, &store, &profile, scope, &secret).await;
+    let name = credential_secret_name(profile.profile_id(), credential_id).unwrap();
+    store
+        .put_secret(&name, secret.expose_secret().as_bytes())
+        .unwrap();
+
+    let error = state
+        .load_device_credential(profile.profile_id(), &store)
+        .await
+        .unwrap_err();
+    let rendered = format!("{error:?} {error}");
+    assert!(!rendered.contains(secret.expose_secret()));
+    assert!(!rendered.to_ascii_lowercase().contains("bearer"));
+    assert!(!rendered.to_ascii_lowercase().contains("authorization"));
+    assert!(!rendered.contains("server.example"));
+    assert!(rendered.contains(error.code()));
+
+    state.close_pool().await;
+    drop(state);
+    remove_dir_all_bounded(&directory).unwrap();
+}
+
+#[tokio::test]
+async fn security_unit_9_debug_output_does_not_leak_loaded_credentials() {
+    let (directory, config) = database();
+    let state = LocalStateStore::open(&config).await.unwrap();
+    let store = TestSecretStore::default();
+    let profile = profile("https://server.example");
+    let scope = scope();
+    let secret = DeviceCredentialSecret::from_bytes([0xe9; 32]);
+    enroll(&state, &store, &profile, scope, &secret).await;
+
+    let loaded = state
+        .load_device_credential(profile.profile_id(), &store)
+        .await
+        .unwrap()
+        .unwrap();
+    let rendered = format!("{loaded:?}");
+    assert!(rendered.contains("[REDACTED]"));
+    assert!(!rendered.contains(secret.expose_secret()));
+    assert!(!rendered.to_ascii_lowercase().contains("svd1_"));
+
+    state.close_pool().await;
+    drop(state);
+    remove_dir_all_bounded(&directory).unwrap();
+}
+
+#[tokio::test]
 async fn multiple_profiles_and_origin_aliases_never_share_credential_keys() {
     let (directory, config) = database();
     let state = LocalStateStore::open(&config).await.unwrap();

@@ -10,12 +10,10 @@ use crate::state::{RebaselineHandoffFinalizeOutcome, RebaselineHandoffRecord, St
 use crate::{
     BootstrapRecord, ClientSyncError, EngineStatus, LocalFingerprint, LocalIssueKind, LocalNode,
     LocalObjectKind, LocalOperation, LocalOperationKind, LocalOperationState, LocalReplica,
-    LocalStateStore, ManagedRelativePath, RebaselineHandoffOutcome, RecoveryClassification,
-    RemoteCheckpoint, RemoteError, RemoteErrorKind, ReplicaScope, ServerProfileId, SyncRemote,
-    local_collision_key, validate_logical_name,
+    LocalStateStore, MAX_REBASELINE_ITEMS, ManagedRelativePath, RebaselineHandoffOutcome,
+    RecoveryClassification, RemoteCheckpoint, RemoteError, RemoteErrorKind, ReplicaScope,
+    ServerProfileId, SyncRemote, local_collision_key, validate_logical_name,
 };
-
-const MAX_BOOTSTRAP_ITEMS: u64 = 1_000_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EngineConfig {
@@ -479,7 +477,7 @@ impl InboundSyncEngine {
             || bootstrap.library_id() != self.scope.library_id()
             || bootstrap.state() != SyncBootstrapState::Open
             || bootstrap.manifest_item_count() == 0
-            || bootstrap.manifest_item_count() > MAX_BOOTSTRAP_ITEMS
+            || bootstrap.manifest_item_count() > MAX_REBASELINE_ITEMS
         {
             return Err(ClientSyncError::InvalidRemoteResponse);
         }

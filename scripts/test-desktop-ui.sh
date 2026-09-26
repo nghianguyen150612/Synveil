@@ -3,6 +3,11 @@ set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
+# Use the same path-remapped, non-incremental release environment as package
+# production builds so the release smoke binary is an auditable artifact.
+# shellcheck source=deploy/packages/common/reproducible.sh
+source "$repo_root/deploy/packages/common/reproducible.sh"
+synveil_prepare_reproducible_rust_build "$repo_root"
 
 cargo fmt --manifest-path crates/desktop/Cargo.toml -- --check
 

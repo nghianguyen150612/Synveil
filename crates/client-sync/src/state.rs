@@ -4,7 +4,7 @@ use std::{
     fs::{self, File, OpenOptions},
     path::{Path, PathBuf},
     str::FromStr,
-    sync::{Arc, Mutex as StdMutex},
+    sync::{Arc, Mutex as StdMutex, Weak},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -26,13 +26,13 @@ use uuid::Uuid;
 use crate::{
     ClientSyncError, ConflictCursor, ConflictPage, DEFAULT_ATTENTION_PAGE_LIMIT, EngineStatus,
     InboundChange, LocalFingerprint, MAX_ATTENTION_PAGE_LIMIT, MAX_CONFLICT_PAGE_LIMIT,
-    ManagedRelativePath, ObservationIssue, ObservationIssueKind, ObservationState, OpaqueEvidence,
-    OutboundIntent, OutboundIntentKind, OutboundIntentState, RebaselineSnapshotDescriptor,
-    RebaselineSnapshotPage, RemoteFeedPage, RemoteMutationApplied, RemoteMutationConflict,
-    ReplicaScope, RootBindingId, ServerProfileId, SyncAttentionLibrarySummary,
-    SyncAttentionSnapshot, SyncAttentionSummary, SyncConflictItem, SyncConflictKind,
-    SyncConflictRecord, SyncConflictResolution, SyncConflictStatus, UploadCompletion,
-    conflict_policy::ConflictEvidence, local_collision_key,
+    MAX_REBASELINE_ITEMS, MAX_SYNC_RUNTIME_LIBRARIES, ManagedRelativePath, ObservationIssue,
+    ObservationIssueKind, ObservationState, OpaqueEvidence, OutboundIntent, OutboundIntentKind,
+    OutboundIntentState, RebaselineSnapshotDescriptor, RebaselineSnapshotPage, RemoteFeedPage,
+    RemoteMutationApplied, RemoteMutationConflict, ReplicaScope, RootBindingId, ServerProfileId,
+    SyncAttentionLibrarySummary, SyncAttentionSnapshot, SyncAttentionSummary, SyncConflictItem,
+    SyncConflictKind, SyncConflictRecord, SyncConflictResolution, SyncConflictStatus,
+    UploadCompletion, conflict_policy::ConflictEvidence, local_collision_key,
 };
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
@@ -983,8 +983,8 @@ pub(crate) struct StoredChange {
 pub struct LocalStateStore {
     pub(crate) pool: SqlitePool,
     pub(crate) credential_lifecycle_lock: tokio::sync::Mutex<()>,
-    replica_writer_guards: StdMutex<HashMap<LibraryId, Arc<tokio::sync::Mutex<()>>>>,
-    rebaseline_convergence_guards: StdMutex<HashMap<LibraryId, Arc<tokio::sync::Mutex<()>>>>,
+    replica_writer_guards: StdMutex<HashMap<LibraryId, Weak<tokio::sync::Mutex<()>>>>,
+    rebaseline_convergence_guards: StdMutex<HashMap<LibraryId, Weak<tokio::sync::Mutex<()>>>>,
     writer_lock: File,
     database_path: PathBuf,
 }
@@ -1072,7 +1072,7 @@ impl LocalStateStore {
         &self,
         library_id: LibraryId,
     ) -> tokio::sync::OwnedMutexGuard<()> {
-        self.library_guard(&self.replica_writer_guards, library_id)
+        Self::library_guard(&self.replica_writer_guards, library_id)
             .lock_owned()
             .await
     }
@@ -1085,24 +1085,29 @@ impl LocalStateStore {
         &self,
         library_id: LibraryId,
     ) -> tokio::sync::OwnedMutexGuard<()> {
-        self.library_guard(&self.rebaseline_convergence_guards, library_id)
+        Self::library_guard(&self.rebaseline_convergence_guards, library_id)
             .lock_owned()
             .await
     }
 
     fn library_guard(
-        &self,
-        guards: &StdMutex<HashMap<LibraryId, Arc<tokio::sync::Mutex<()>>>>,
+        guards: &StdMutex<HashMap<LibraryId, Weak<tokio::sync::Mutex<()>>>>,
         library_id: LibraryId,
     ) -> Arc<tokio::sync::Mutex<()>> {
         let mut guards = guards
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        Arc::clone(
-            guards
-                .entry(library_id)
-                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
-        )
+        if let Some(guard) = guards.get(&library_id).and_then(Weak::upgrade) {
+            return guard;
+        }
+        // A guard is owned by the in-flight operation, not by the store for
+        // the lifetime of the process. Prune dead library entries before
+        // inserting the next one so dynamic register/unregister churn cannot
+        // turn these coordination maps into an unbounded cache.
+        guards.retain(|_, guard| guard.strong_count() != 0);
+        let guard = Arc::new(tokio::sync::Mutex::new(()));
+        guards.insert(library_id, Arc::downgrade(&guard));
+        guard
     }
 
     pub async fn schema_version(&self) -> Result<i64, ClientSyncError> {
@@ -3139,12 +3144,19 @@ impl LocalStateStore {
             return Err(ClientSyncError::ResourceLimit);
         }
 
+        if library_ids.len() > MAX_SYNC_RUNTIME_LIBRARIES {
+            return Err(ClientSyncError::ResourceLimit);
+        }
         let mut scoped_libraries = library_ids.to_vec();
         scoped_libraries.sort_unstable();
         scoped_libraries.dedup();
         let mut transaction = self.pool.begin().await?;
         let mut summaries = Vec::with_capacity(scoped_libraries.len());
-        let mut conflict_items = Vec::new();
+        // Keep one extra candidate so the detail window can report
+        // truncation. Details are globally bounded, rather than allocating a
+        // `limit`-sized batch for every registered library first.
+        let detail_limit = (limit as usize).saturating_add(1);
+        let mut conflict_items = Vec::with_capacity(detail_limit);
         let mut conflict_count = 0_u64;
         let mut other_count = 0_u64;
 
@@ -3184,39 +3196,43 @@ impl LocalStateStore {
                 other_count_for_library,
             ));
 
-            let rows = sqlx::query(
-                "SELECT * FROM sync_conflicts
-                 WHERE library_id = ? AND status = 'UNRESOLVED'
-                 ORDER BY detected_at_ms, conflict_id LIMIT ?",
-            )
-            .bind(library_id.to_string())
-            .bind(i64::from(limit))
-            .fetch_all(&mut *transaction)
-            .await?;
-            for row in rows {
-                let record = decode_sync_conflict(row)?;
-                let intent_row = sqlx::query("SELECT * FROM outbound_intents WHERE intent_id = ?")
-                    .bind(record.intent_id().to_string())
-                    .fetch_optional(&mut *transaction)
-                    .await?;
-                let intent = intent_row.map(decode_outbound_intent).transpose()?;
-                let local_node = if let Some(node_id) = record.node_id() {
-                    let node_row = sqlx::query(
-                        "SELECT * FROM local_nodes WHERE library_id = ? AND node_id = ?",
-                    )
-                    .bind(record.library_id().to_string())
-                    .bind(node_id.to_string())
-                    .fetch_optional(&mut *transaction)
-                    .await?;
-                    node_row.map(decode_local_node).transpose()?
-                } else {
-                    None
-                };
-                conflict_items.push(SyncConflictItem::from_sources(
-                    record,
-                    intent.as_ref(),
-                    local_node.as_ref(),
-                ));
+            if conflict_items.len() < detail_limit {
+                let remaining = detail_limit - conflict_items.len();
+                let rows = sqlx::query(
+                    "SELECT * FROM sync_conflicts
+                     WHERE library_id = ? AND status = 'UNRESOLVED'
+                     ORDER BY detected_at_ms, conflict_id LIMIT ?",
+                )
+                .bind(library_id.to_string())
+                .bind(i64::try_from(remaining).map_err(|_| ClientSyncError::ResourceLimit)?)
+                .fetch_all(&mut *transaction)
+                .await?;
+                for row in rows {
+                    let record = decode_sync_conflict(row)?;
+                    let intent_row =
+                        sqlx::query("SELECT * FROM outbound_intents WHERE intent_id = ?")
+                            .bind(record.intent_id().to_string())
+                            .fetch_optional(&mut *transaction)
+                            .await?;
+                    let intent = intent_row.map(decode_outbound_intent).transpose()?;
+                    let local_node = if let Some(node_id) = record.node_id() {
+                        let node_row = sqlx::query(
+                            "SELECT * FROM local_nodes WHERE library_id = ? AND node_id = ?",
+                        )
+                        .bind(record.library_id().to_string())
+                        .bind(node_id.to_string())
+                        .fetch_optional(&mut *transaction)
+                        .await?;
+                        node_row.map(decode_local_node).transpose()?
+                    } else {
+                        None
+                    };
+                    conflict_items.push(SyncConflictItem::from_sources(
+                        record,
+                        intent.as_ref(),
+                        local_node.as_ref(),
+                    ));
+                }
             }
         }
 
@@ -4549,6 +4565,14 @@ impl LocalStateStore {
         scope: ReplicaScope,
         descriptor: RebaselineSnapshotDescriptor,
     ) -> Result<(), ClientSyncError> {
+        if descriptor.library_id() != scope.library_id()
+            || descriptor.boundary().journal_epoch().get() == 0
+        {
+            return Err(ClientSyncError::InvalidRemoteResponse);
+        }
+        if descriptor.entry_count() == 0 || descriptor.entry_count() > MAX_REBASELINE_ITEMS {
+            return Err(ClientSyncError::ResourceLimit);
+        }
         let mut transaction = self.pool.begin().await?;
         let existing = sqlx::query("SELECT snapshot_id, journal_epoch, resume_sequence, expected_count FROM rebaseline_candidates WHERE library_id = ?")
             .bind(scope.library_id().to_string()).fetch_optional(&mut *transaction).await?;
@@ -4631,6 +4655,9 @@ impl LocalStateStore {
             || descriptor.boundary().journal_epoch().get() == 0
         {
             return Err(ClientSyncError::InvalidRemoteResponse);
+        }
+        if descriptor.entry_count() == 0 || descriptor.entry_count() > MAX_REBASELINE_ITEMS {
+            return Err(ClientSyncError::ResourceLimit);
         }
         let changed = sqlx::query(
             "UPDATE rebaseline_candidates
@@ -4830,10 +4857,17 @@ impl LocalStateStore {
             .into_iter()
             .map(decode_snapshot_node)
             .collect::<Result<_, _>>()?;
-        let rows = sqlx::query("SELECT * FROM local_nodes WHERE library_id = ?")
+        let rows = sqlx::query("SELECT * FROM local_nodes WHERE library_id = ? LIMIT ?")
             .bind(scope.library_id().to_string())
+            .bind(
+                i64::try_from(MAX_LOCAL_NODE_QUERY_ROWS.saturating_add(1))
+                    .map_err(|_| ClientSyncError::ResourceLimit)?,
+            )
             .fetch_all(&self.pool)
             .await?;
+        if rows.len() > MAX_LOCAL_NODE_QUERY_ROWS {
+            return Err(ClientSyncError::ResourceLimit);
+        }
         let old: HashMap<NodeId, LocalNode> = rows
             .into_iter()
             .map(decode_local_node)
@@ -6561,7 +6595,7 @@ pub(crate) fn now_ms() -> Result<i64, ClientSyncError> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf, str::FromStr};
+    use std::{collections::HashMap, fs, path::PathBuf, str::FromStr, sync::Arc};
 
     use sqlx::Row;
     use synveil_core::{
@@ -6571,8 +6605,8 @@ mod tests {
 
     use super::{LocalNode, LocalOperation, LocalOperationKind, LocalStateConfig, LocalStateStore};
     use crate::{
-        LOCAL_SCHEMA_VERSION, ManagedRelativePath, OutboundIntentState, ReplicaScope,
-        RootBindingId, ServerProfileId, test_support::remove_dir_all_bounded,
+        LOCAL_SCHEMA_VERSION, MAX_SYNC_RUNTIME_LIBRARIES, ManagedRelativePath, OutboundIntentState,
+        ReplicaScope, RootBindingId, ServerProfileId, test_support::remove_dir_all_bounded,
     };
 
     fn temporary_database(label: &str) -> (PathBuf, PathBuf) {
@@ -6590,6 +6624,39 @@ mod tests {
 
     fn timestamp(value: &str) -> Timestamp {
         Timestamp::from_str(value).unwrap()
+    }
+
+    #[test]
+    fn library_coordination_guards_do_not_retain_dynamic_library_ids() {
+        let guards = std::sync::Mutex::new(HashMap::new());
+        for _ in 0..512 {
+            let guard = LocalStateStore::library_guard(&guards, LibraryId::new());
+            drop(guard);
+        }
+        assert!(guards.lock().unwrap().len() <= 1);
+
+        let library_id = LibraryId::new();
+        let first = LocalStateStore::library_guard(&guards, library_id);
+        let second = LocalStateStore::library_guard(&guards, library_id);
+        assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[tokio::test]
+    async fn attention_scope_rejects_more_than_the_runtime_library_bound() {
+        let (path, directory) = temporary_database("attention-library-bound");
+        let store = LocalStateStore::open(&LocalStateConfig::new(&path))
+            .await
+            .unwrap();
+        let libraries = (0..=MAX_SYNC_RUNTIME_LIBRARIES)
+            .map(|_| LibraryId::new())
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            store.attention_snapshot(&libraries, Some(1)).await,
+            Err(crate::ClientSyncError::ResourceLimit)
+        ));
+        store.close_pool().await;
+        drop(store);
+        remove_dir_all_bounded(&directory).unwrap();
     }
 
     #[tokio::test]

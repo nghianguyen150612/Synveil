@@ -137,10 +137,24 @@ jobs:
         run: cargo build -p synveil-desktop --locked
 
       - name: Build the release native desktop shell
-        run: cargo build -p synveil-desktop --release --locked
+        shell: bash
+        run: |
+          set -euo pipefail
+          source deploy/packages/common/reproducible.sh
+          synveil_prepare_reproducible_rust_build "$PWD"
+          cargo build -p synveil-desktop --release --locked
 
       - name: Build the release background client
-        run: cargo build -p synveil-client --release --locked
+        shell: bash
+        run: |
+          set -euo pipefail
+          source deploy/packages/common/reproducible.sh
+          synveil_prepare_reproducible_rust_build "$PWD"
+          cargo build -p synveil-client --release --locked
+
+      - name: Rebuild Windows release binaries after clearing release outputs
+        shell: bash
+        run: scripts/verify-release-build-reproducibility.sh
 
       - name: Build and audit the reproducible Windows runtime ZIP
         shell: bash
@@ -150,6 +164,21 @@ jobs:
             --desktop-binary=target/release/synveil-desktop.exe \
             --client-binary=target/release/synveil-client.exe \
             --output-dir=target/windows-packages
+
+      - name: Rebuild and compare the Windows runtime ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./deploy/packages/build-windows.sh \
+            --desktop-binary=target/release/synveil-desktop.exe \
+            --client-binary=target/release/synveil-client.exe \
+            --output-dir=target/windows-packages-reproducible
+          source deploy/packages/common/reproducible.sh
+          zip="$(find target/windows-packages -maxdepth 1 -type f -name '*.zip' -print | LC_ALL=C sort | head -n 1)"
+          zip_repro="$(find target/windows-packages-reproducible -maxdepth 1 -type f -name '*.zip' -print | LC_ALL=C sort | head -n 1)"
+          test -n "$zip"
+          test -n "$zip_repro"
+          synveil_require_identical_artifacts "$zip" "$zip_repro" windows-runtime-ZIP
 
       - name: Verify generated QML module and PE output
         shell: pwsh

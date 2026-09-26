@@ -1403,6 +1403,39 @@ mod tests {
     }
 
     #[test]
+    fn security_unit_4_unauthorized_filesystem_roots_are_rejected() {
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        if let Some(home) = home.as_ref().and_then(|path| fs::canonicalize(path).ok()) {
+            assert!(validate_onboarding_root(&home).is_err());
+        }
+        let cwd = std::env::current_dir().unwrap();
+        assert!(validate_onboarding_root(&cwd).is_err());
+        let filesystem_root = PathBuf::from(std::path::MAIN_SEPARATOR.to_string());
+        assert!(validate_onboarding_root(&filesystem_root).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn security_unit_5_symlink_safety_preserves_external_targets() {
+        use std::os::unix::fs::symlink;
+
+        let root = temporary_directory("symlink-preserve-root");
+        let outside = temporary_directory("symlink-preserve-outside");
+        let replica = FilesystemLocalReplica::initialize(&root, scope()).unwrap();
+        let outside_secret = outside.join("secret.txt");
+        fs::write(&outside_secret, b"external secret").unwrap();
+        symlink(&outside_secret, root.join("managed.txt")).unwrap();
+
+        let result = replica.inspect(&ManagedRelativePath::new("managed.txt").unwrap());
+        assert!(matches!(result, Err(ClientSyncError::RootRedirected)));
+        assert_eq!(fs::read(&outside_secret).unwrap(), b"external secret");
+
+        fs::remove_file(root.join("managed.txt")).unwrap();
+        remove_dir_all_bounded(&root).unwrap();
+        remove_dir_all_bounded(&outside).unwrap();
+    }
+
+    #[test]
     fn root_overlap_uses_components_not_string_prefixes() {
         let root = temporary_directory("onboarding-overlap");
         let library = root.join("lib");

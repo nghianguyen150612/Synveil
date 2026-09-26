@@ -725,6 +725,18 @@ from explicit registrations and resumes work from Prompt 87/88 durable state.
 The component adds no service manager integration, filesystem watcher wiring,
 server push, broker, route, frontend persistence, or OS-specific lifecycle.
 
+Runtime-facing memory is bounded at each producer boundary. The scheduler
+coalesces one pending wake per Library and publishes through a finite event
+buffer; the local observer caps raw watcher queues at 8,192 hints, caps one
+poll at the watcher capacity, and converts over-wide native events into a
+rescan hint. Attention detail reads retain at most the requested global window
+plus one truncation candidate across all Libraries, while the input scope is
+capped at the runtime's 4,096-Library limit. Per-Library writer and
+rebaseline coordination maps retain weak mutex references and prune dead
+entries, so unregister/re-register churn does not create a process-lifetime
+cache. Durable rebaseline descriptors accept at most 1,000,000 logical nodes;
+pages remain incrementally persisted and activation remains transactional.
+
 ## Prompt 93 durable-change-first runtime signals
 
 Prompt 93 connects the real local producers to that one process-local runtime

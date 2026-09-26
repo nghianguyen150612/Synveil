@@ -40,6 +40,12 @@ pub const OUTBOUND_INTENT_DEDUPE_VERSION: u8 = 1;
 /// Conservative cap for queued raw platform events per managed root.
 pub const DEFAULT_RAW_WATCHER_QUEUE_CAPACITY: usize = 1_024;
 
+/// Hard cap used even by direct watcher constructors. Production
+/// [`ObservationConfig`] validation already enforces this bound, but the
+/// public deterministic/native watcher constructors must be safe on their
+/// own as well.
+pub const MAX_RAW_WATCHER_QUEUE_CAPACITY: usize = 8_192;
+
 /// Safe work bounds used by the correctness-first observer implementation.
 pub const DEFAULT_MAX_HINTS_PER_POLL: usize = 256;
 pub const DEFAULT_SCAN_BATCH_ENTRIES: usize = 128;
@@ -837,7 +843,7 @@ impl ManualChangeWatcher {
     #[must_use]
     pub fn with_capacity(capacity: usize) -> (Self, ManualChangeSource) {
         let queue = Arc::new(Mutex::new(ManualWatcherQueue {
-            capacity: capacity.max(1),
+            capacity: capacity.clamp(1, MAX_RAW_WATCHER_QUEUE_CAPACITY),
             started: false,
             hints: VecDeque::new(),
         }));
@@ -899,6 +905,7 @@ impl LocalChangeWatcher for ManualChangeWatcher {
         if !queue.started {
             return Err(ClientSyncError::InvalidState);
         }
+        let maximum = maximum.min(queue.capacity);
         Ok((0..maximum)
             .filter_map(|_| queue.hints.pop_front())
             .collect())
@@ -938,7 +945,7 @@ impl NotifyLocalChangeWatcher {
     #[must_use]
     pub fn new(capacity: usize) -> Self {
         Self {
-            capacity: capacity.max(1),
+            capacity: capacity.clamp(1, MAX_RAW_WATCHER_QUEUE_CAPACITY),
             root: None,
             receiver: None,
             watcher: None,
@@ -979,6 +986,7 @@ impl LocalChangeWatcher for NotifyLocalChangeWatcher {
         if maximum == 0 {
             return Err(ClientSyncError::ResourceLimit);
         }
+        let maximum = maximum.min(self.capacity);
         let root = self.root.as_deref().ok_or(ClientSyncError::InvalidState)?;
         let receiver = self
             .receiver
@@ -1015,13 +1023,19 @@ impl LocalChangeWatcher for NotifyLocalChangeWatcher {
 }
 
 fn notify_event_to_hint(root: &Path, event: Event) -> Result<Option<WatchHint>, ClientSyncError> {
-    let mut paths = Vec::with_capacity(event.paths.len());
+    let mut paths = Vec::with_capacity(event.paths.len().min(2));
     for native_path in event.paths {
         let Some(relative) = native_to_managed_relative(root, &native_path)? else {
             continue;
         };
         if is_control_path(&relative) {
             continue;
+        }
+        // A logical hint can contain at most two paths. Treat a malformed or
+        // unusually coalesced native event as a rescan before retaining a
+        // path vector proportional to the OS event size.
+        if paths.len() >= 2 {
+            return Ok(Some(WatchHint::rescan_required()));
         }
         paths.push(relative);
     }
@@ -1114,7 +1128,7 @@ impl ObservationConfig {
         if raw_queue_capacity == 0
             || max_hints_per_poll == 0
             || scan_batch_entries == 0
-            || raw_queue_capacity > 8_192
+            || raw_queue_capacity > MAX_RAW_WATCHER_QUEUE_CAPACITY
             || max_hints_per_poll > 4_096
             || scan_batch_entries > 1_024
             || debounce_window > Duration::from_secs(5)
@@ -2604,6 +2618,17 @@ mod tests {
             "visible/file.txt"
         );
         assert!(native_to_managed_relative(&root, &root.join("../outside"),).is_err());
+    }
+
+    #[test]
+    fn direct_watcher_constructors_clamp_capacity() {
+        let (watcher, _) = ManualChangeWatcher::with_capacity(usize::MAX);
+        assert_eq!(
+            watcher.queue.lock().unwrap().capacity,
+            super::MAX_RAW_WATCHER_QUEUE_CAPACITY
+        );
+        let native = super::NotifyLocalChangeWatcher::new(usize::MAX);
+        assert_eq!(native.capacity, super::MAX_RAW_WATCHER_QUEUE_CAPACITY);
     }
 
     #[cfg(target_os = "linux")]

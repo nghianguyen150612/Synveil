@@ -69,6 +69,27 @@ ar/tar rootless tạo đúng container DEB thật khi máy thiếu `dpkg-deb`.
 `SOURCE_DATE_EPOCH` có thể là số nguyên không âm. Nếu bỏ trống, builder dùng
 timestamp của source revision hiện tại, normalize mtime file/thư mục, sort
 archive và normalize ownership; cùng source/binary phải cho cùng byte package.
+Release Cargo build cũng tắt incremental compilation và remap path của
+checkout, Cargo cache và target tạm về prefix tổng hợp ổn định. Linux builder
+ghi `SYNVEIL-LINUX-ARTIFACT-MANIFEST.txt` cạnh package; manifest bind
+fingerprint source tree, toolchain, ELF build ID, size và SHA-256 với đúng input
+của lần build. Đây là provenance record sinh theo từng build, không phải hash
+binary expected được commit sẵn.
+
+Parity check không so với desktop binary được commit sẵn: repository không có
+binary đó hay expected SHA-256. Package test hiện có so byte executable trong
+mỗi package với output `target/release` hiện tại. Release desktop đi qua native
+`cc::Build` của CXX-Qt và Qt QML AOT compiler. Builder dùng chung áp dụng
+prefix map cho Rust/C/C++ và đặt `QT_HASH_SEED=0` cho build tools để thứ tự
+QHash không làm đổi QML code được sinh giữa các process; build script desktop
+theo dõi các biến môi trường này. Builder cũng bọc qmake/rcc trên host:
+resource QML được copy vào output tạm của Cargo và chỉ bản copy được đặt
+mtime theo SOURCE_DATE_EPOCH trước khi chạy rcc. File QML nguồn không bị
+sửa. Build helper CXX-Qt được vendored sort tên Qt module trước khi emit link
+directive native, tránh thứ tự HashSet của Rust làm thay đổi symbol và layout
+code trong ELF. CI chỉ xoá release output của Cargo, build lại với cùng flags
+rồi so từng byte executable. Path trong manifest cũng phải
+trỏ đúng file `target/release` có hash được ghi.
 
 `ldd` có dependency `not found` là hard failure. DEB khai báo trực tiếp
 `libdbus-1-3` và `libsystemd0`, cùng glibc, libgcc/libstdc++ và runtime Qt 6
@@ -150,6 +171,9 @@ git diff --check
 cargo test -p synveil-metadata --test production_packaging_units --locked -- --nocapture
 cargo test -p synveil-metadata --test linux_native_packaging_units --locked -- --nocapture
 cargo test -p synveil-metadata --test linux_install_lifecycle --locked -- --nocapture
+scripts/verify-release-build-reproducibility.sh
+scripts/validate-release-artifacts.sh \
+  --manifest=target/packages/SYNVEIL-LINUX-ARTIFACT-MANIFEST.txt
 ```
 
 PACKAGE-UNIT-1..10 lần lượt kiểm metadata, executable layout, desktop
@@ -157,6 +181,12 @@ entry/icon, version consistency, install path safety, upgrade state,
 uninstall data, runtime dependency closure, Windows manifest và ownership/mode
 Linux. Artifact inspection chạy khi DEB/RPM/ZIP local tồn tại; nếu chưa có,
 source contract vẫn chạy và test báo artifact check skip.
+
+Bộ unit release-artifact là `ARTIFACT-UNIT-1..6`: metadata ổn định cùng source,
+phát hiện hash bị sửa có chủ ý, reject developer path, reject temporary build
+path, parity với generated manifest và diagnostic mismatch. Manifest có source
+fingerprint khác sẽ fail closed với giá trị provenance expected/current; validator
+không nhận hash tùy ý và không che mismatch.
 
 Live Linux package gate gồm `systemd-analyze verify`, inspection metadata/file
 list DEB/RPM, hai lần build byte-identical và rehearsal staged

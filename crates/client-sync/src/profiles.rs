@@ -310,11 +310,26 @@ impl DeviceEnrollmentRecord {
 
 /// Loaded only through the profile-bound SecretStore lifecycle. Public callers
 /// cannot relabel a bearer from one profile as a credential for another.
-#[derive(Debug)]
 pub struct LoadedDeviceCredential {
     metadata: DeviceEnrollmentRecord,
     verified_base_url: CanonicalBaseUrl,
     secret: DeviceCredentialSecret,
+}
+
+impl fmt::Debug for LoadedDeviceCredential {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LoadedDeviceCredential")
+            .field("profile_id", &self.metadata.profile_id)
+            .field("owner_user_id", &self.metadata.owner_user_id)
+            .field("device_id", &self.metadata.device_id)
+            .field("credential_id", &self.metadata.credential_id)
+            .field("completed_at_ms", &self.metadata.completed_at_ms)
+            .field("forgotten_at_ms", &self.metadata.forgotten_at_ms)
+            .field("verified_base_url", &self.verified_base_url)
+            .field("secret", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl LoadedDeviceCredential {

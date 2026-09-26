@@ -78,7 +78,30 @@ creates the same real ar/tar DEB container when `dpkg-deb` is unavailable.
 both builders use the checked-out source revision timestamp, normalize staged
 file and directory mtimes, sort archive entries, and normalize archive
 ownership. Rebuilding the same source and audited binaries must produce the
-same package bytes.
+same package bytes. Release Cargo builds also disable incremental compilation
+and remap checkout, Cargo-cache, and temporary target paths to stable synthetic
+prefixes. The Linux builder writes
+`SYNVEIL-LINUX-ARTIFACT-MANIFEST.txt` beside the packages; its source-tree
+fingerprint, toolchain, ELF build IDs, sizes, and SHA-256 values bind expected
+metadata to the exact build inputs. It is generated per build and is not a
+checked-in binary hash.
+
+The release parity check does not compare against a checked-in desktop binary:
+the repository has no such binary or expected SHA-256. Its existing package
+test compares each package's executable bytes with the current
+`target/release` output. The desktop release build uses CXX-Qt's native
+`cc::Build` path and Qt's QML AOT compiler. The shared builder applies Rust and
+C/C++ prefix maps and sets `QT_HASH_SEED=0` for build tools so QHash iteration
+cannot reorder generated QML code between processes. The desktop build script
+tracks those environment inputs. It also wraps the host qmake/rcc tools:
+QML-module resources are copied under Cargo's disposable output directory and
+the copies receive the fixed SOURCE_DATE_EPOCH before rcc runs. The source
+QML files are never touched. The vendored CXX-Qt build helper sorts Qt module
+names before emitting native link directives, so Rust HashSet iteration cannot
+change ELF symbol and text layout. CI clears only Cargo's release outputs,
+rebuilds with the same flags, then compares exact executable bytes.
+The manifest path is also required to name the exact `target/release` file
+whose hash it records.
 
 Linux `ldd` output is a hard gate: a `not found` dependency aborts the build.
 The DEB declares the direct `libdbus-1-3` and `libsystemd0` dependencies in
@@ -167,6 +190,9 @@ git diff --check
 cargo test -p synveil-metadata --test production_packaging_units --locked -- --nocapture
 cargo test -p synveil-metadata --test linux_native_packaging_units --locked -- --nocapture
 cargo test -p synveil-metadata --test linux_install_lifecycle --locked -- --nocapture
+scripts/verify-release-build-reproducibility.sh
+scripts/validate-release-artifacts.sh \
+  --manifest=target/packages/SYNVEIL-LINUX-ARTIFACT-MANIFEST.txt
 ```
 
 The packaging unit set is organized as PACKAGE-UNIT-1 through PACKAGE-UNIT-10:
@@ -175,6 +201,13 @@ path safety, upgrade state preservation, uninstall data preservation, runtime
 dependency closure, Windows manifest, and Linux ownership/mode policy. Artifact
 inspection runs when local DEB/RPM/ZIP outputs exist; otherwise the source
 contract remains testable and the test reports the artifact check as skipped.
+
+The release-artifact unit set is ARTIFACT-UNIT-1 through ARTIFACT-UNIT-6:
+stable same-source metadata, intentional hash-tamper detection, developer-path
+rejection, temporary-build-path rejection, generated-manifest parity, and
+mismatch diagnostics. A manifest from another source fingerprint fails closed
+with the expected/current provenance values; the validator never accepts an
+arbitrary hash or suppresses a mismatch.
 
 Live package gates on a Linux packaging runner are `systemd-analyze verify`,
 DEB/RPM metadata and file-list inspection, two-byte-identical package builds,

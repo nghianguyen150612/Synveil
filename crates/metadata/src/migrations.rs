@@ -1,11 +1,10 @@
-use std::{
-    collections::BTreeSet,
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeSet, path::PathBuf};
 
 use sqlx::{Row, migrate::Migrator};
 
 use crate::{DatabaseError, DatabasePool};
+
+static EMBEDDED_MIGRATOR: Migrator = sqlx::migrate!("../../migrations");
 
 /// Ordered migration status without exposing SQLx row types.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -55,7 +54,13 @@ impl MigrationStatus {
 /// application/domain boundary.
 #[derive(Clone, Debug)]
 pub struct MigrationRunner {
-    directory: PathBuf,
+    source: MigrationSource,
+}
+
+#[derive(Clone, Debug)]
+enum MigrationSource {
+    Embedded,
+    Directory(PathBuf),
 }
 
 impl Default for MigrationRunner {
@@ -67,7 +72,9 @@ impl Default for MigrationRunner {
 impl MigrationRunner {
     #[must_use]
     pub fn new() -> Self {
-        Self::from_path(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations"))
+        Self {
+            source: MigrationSource::Embedded,
+        }
     }
 
     /// Construct a runner from an explicitly supplied migration directory.
@@ -78,14 +85,22 @@ impl MigrationRunner {
     #[must_use]
     pub fn from_path(path: impl Into<PathBuf>) -> Self {
         Self {
-            directory: path.into(),
+            source: MigrationSource::Directory(path.into()),
         }
     }
 
     async fn migrator(&self) -> Result<Migrator, DatabaseError> {
-        Migrator::new(self.directory.clone())
-            .await
-            .map_err(DatabaseError::migration)
+        match &self.source {
+            MigrationSource::Embedded => Ok(Migrator {
+                migrations: EMBEDDED_MIGRATOR.migrations.clone(),
+                ignore_missing: EMBEDDED_MIGRATOR.ignore_missing,
+                locking: EMBEDDED_MIGRATOR.locking,
+                no_tx: EMBEDDED_MIGRATOR.no_tx,
+            }),
+            MigrationSource::Directory(directory) => Migrator::new(directory.clone())
+                .await
+                .map_err(DatabaseError::migration),
+        }
     }
 
     pub async fn run(&self, pool: &DatabasePool) -> Result<MigrationStatus, DatabaseError> {
@@ -146,7 +161,8 @@ mod tests {
     #[test]
     fn default_runner_targets_the_workspace_migration_directory() {
         let runner = MigrationRunner::new();
-        assert!(runner.directory.ends_with("migrations"));
+        assert!(matches!(runner.source, super::MigrationSource::Embedded));
+        assert_eq!(super::EMBEDDED_MIGRATOR.iter().count(), 36);
     }
 
     #[test]

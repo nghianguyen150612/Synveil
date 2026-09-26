@@ -679,6 +679,17 @@ Restart dựng lại runtime từ registration explicit và tiếp tục work t�
 state Prompt 87/88. Component không thêm service manager, filesystem watcher,
 server push, broker, route, frontend persistence hay lifecycle OS-specific.
 
+Memory ở các boundary hướng vào runtime đều có bound. Scheduler coalesce tối
+đa một wake pending cho mỗi Library và publish qua event buffer hữu hạn;
+observer local giới hạn raw watcher queue ở 8.192 hint, giới hạn một poll ở
+capacity của watcher, và chuyển native event có quá nhiều path thành rescan
+hint. Attention chỉ giữ detail window global cộng một candidate để phát hiện
+truncation trên mọi Library, còn scope input bị giới hạn ở 4.096 Library theo
+runtime. Map mutex writer và rebaseline theo Library chỉ giữ weak reference và
+prune entry đã chết, nên churn unregister/register không tạo cache sống suốt
+process. Descriptor rebaseline durable nhận tối đa 1.000.000 logical node;
+page vẫn persist incremental và activation vẫn transactional.
+
 ## Signal runtime theo thứ tự durable-change trước Prompt 93
 
 Prompt 93 nối các producer local thật vào runtime process-local duy nhất qua

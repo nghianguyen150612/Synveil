@@ -70,10 +70,10 @@ pub use http_remote::{
 };
 pub use names::{NamePortability, local_collision_key, validate_logical_name};
 pub use observation::{
-    LocalChangeWatcher, ManualChangeSource, ManualChangeWatcher, NotifyLocalChangeWatcher,
-    ObservationConfig, ObservationIssue, ObservationIssueKind, ObservationPollResult,
-    ObservationReconciliationResult, ObservationState, OutboundIntent, OutboundIntentKind,
-    OutboundIntentState, OutboundObservationEngine, WatchHint, WatchHintKind,
+    LocalChangeWatcher, MAX_RAW_WATCHER_QUEUE_CAPACITY, ManualChangeSource, ManualChangeWatcher,
+    NotifyLocalChangeWatcher, ObservationConfig, ObservationIssue, ObservationIssueKind,
+    ObservationPollResult, ObservationReconciliationResult, ObservationState, OutboundIntent,
+    OutboundIntentKind, OutboundIntentState, OutboundObservationEngine, WatchHint, WatchHintKind,
 };
 pub use outbound::{OutboundSubmissionEngine, OutboundSubmissionOutcome};
 pub use path::ManagedRelativePath;
@@ -124,6 +124,11 @@ pub const LOCAL_SCHEMA_VERSION: i64 = 7;
 
 /// Feed and snapshot pages are deliberately processed one at a time.
 pub const MAX_PAGE_ITEMS: usize = 1_000;
+
+/// Maximum number of logical nodes accepted in one durable rebaseline
+/// snapshot. The candidate is persisted incrementally, but activation still
+/// needs a finite in-memory validation window.
+pub const MAX_REBASELINE_ITEMS: u64 = 1_000_000;
 
 /// Opaque server evidence is bounded before it reaches SQLite.
 pub const MAX_OPAQUE_EVIDENCE_BYTES: usize = 4 * 1024;

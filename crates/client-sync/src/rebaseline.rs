@@ -11,7 +11,8 @@ use async_trait::async_trait;
 use synveil_core::{LibraryId, LogicalSnapshotNode, RebaselineSnapshotId, Sequence};
 
 use crate::{
-    ClientSyncError, LocalStateStore, MAX_PAGE_ITEMS, OpaqueEvidence, RemoteError, ReplicaScope,
+    ClientSyncError, LocalStateStore, MAX_PAGE_ITEMS, MAX_REBASELINE_ITEMS, OpaqueEvidence,
+    RemoteError, ReplicaScope,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -92,7 +93,7 @@ impl RebaselineSnapshotPage {
         entries: Vec<LogicalSnapshotNode>,
         next_cursor: Option<OpaqueEvidence>,
     ) -> Result<Self, ClientSyncError> {
-        if entries.len() > MAX_PAGE_ITEMS {
+        if entries.len() > MAX_PAGE_ITEMS || descriptor.entry_count() > MAX_REBASELINE_ITEMS {
             return Err(ClientSyncError::ResourceLimit);
         }
         Ok(Self {
@@ -184,6 +185,9 @@ impl RebaselineApplier {
     ) -> Result<RebaselineApplyOutcome, ClientSyncError> {
         if descriptor.library_id() != self.scope.library_id() {
             return Err(ClientSyncError::WrongScope);
+        }
+        if descriptor.entry_count() == 0 || descriptor.entry_count() > MAX_REBASELINE_ITEMS {
+            return Err(ClientSyncError::ResourceLimit);
         }
         match self
             .state

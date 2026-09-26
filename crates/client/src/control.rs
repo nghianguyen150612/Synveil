@@ -79,6 +79,8 @@ const CONTROL_STALE_ENDPOINT_PROBE_TIMEOUT: Duration = Duration::from_millis(250
 // comfortably below the 64 KiB response-frame ceiling.
 const CONTROL_MAX_LIBRARY_STATUS_ITEMS: usize = 128;
 const CONTROL_MAX_FRAME_U32: u64 = u32::MAX as u64;
+const CONTROL_MAX_BASE_URL_BYTES: usize = 2_048;
+const CONTROL_MAX_PROFILE_LABEL_BYTES: usize = 256;
 
 /// Capabilities advertised after a successful protocol handshake.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -145,7 +147,7 @@ pub struct ControlRequest {
 
 /// Deliberately small Prompt 96 command set.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlCommand {
     Ping,
     GetProcessStatus,
@@ -732,6 +734,71 @@ where
     serde_json::from_slice(payload).map_err(|_| ControlFrameError::PayloadMalformed)
 }
 
+fn decode_control_request_payload(payload: &[u8]) -> Result<ControlRequest, ControlFrameError> {
+    let value: serde_json::Value =
+        serde_json::from_slice(payload).map_err(|_| ControlFrameError::PayloadMalformed)?;
+    validate_control_request_shape(&value)?;
+    serde_json::from_value(value).map_err(|_| ControlFrameError::PayloadMalformed)
+}
+
+fn validate_control_request_shape(value: &serde_json::Value) -> Result<(), ControlFrameError> {
+    let object = value
+        .as_object()
+        .ok_or(ControlFrameError::PayloadMalformed)?;
+    if !object.contains_key("request_id")
+        || !object.contains_key("command")
+        || object
+            .keys()
+            .any(|key| key != "request_id" && key != "command")
+    {
+        return Err(ControlFrameError::PayloadMalformed);
+    }
+    let command = object
+        .get("command")
+        .and_then(serde_json::Value::as_object)
+        .ok_or(ControlFrameError::PayloadMalformed)?;
+    let kind = command
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(ControlFrameError::PayloadMalformed)?;
+    let allowed: &[&str] = match kind {
+        "ping"
+        | "get_process_status"
+        | "list_libraries"
+        | "get_attention_snapshot"
+        | "get_sync_control_state"
+        | "pause_sync"
+        | "resume_sync"
+        | "shutdown"
+        | "subscribe_events"
+        | "sign_out"
+        | "get_profile_configuration" => &["kind"],
+        "resolve_conflict" => &[
+            "kind",
+            "library_id",
+            "conflict_id",
+            "intent_id",
+            "detected_at_ms",
+            "action",
+        ],
+        "get_library_status" | "sync_now" => &["kind", "library_id"],
+        "setup_library" => &["kind", "name", "root_path"],
+        "authenticate" => &["kind", "enrollment_token"],
+        "validate_profile_configuration" => &["kind", "base_url", "display_label"],
+        "create_or_configure_profile" | "update_profile_configuration" => {
+            &["kind", "profile_id", "base_url", "display_label"]
+        }
+        _ => &["kind"],
+    };
+    if command
+        .keys()
+        .any(|key| !allowed.iter().any(|allowed| allowed == key))
+    {
+        return Err(ControlFrameError::PayloadMalformed);
+    }
+    Ok(())
+}
+
 /// Endpoint kind, kept separate from the endpoint value so logs need not print
 /// a path or pipe name.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -839,6 +906,10 @@ fn windows_pipe_name(profile_id: synveil_client_sync::ServerProfileId) -> String
 #[cfg(any(windows, test))]
 fn validate_pipe_name(name: &str) -> Result<(), DesktopControlServerError> {
     if name.len() > 256 || !name.starts_with(CONTROL_PIPE_PREFIX) {
+        return Err(DesktopControlServerError::EndpointNameTooLong);
+    }
+    let profile_id = &name[CONTROL_PIPE_PREFIX.len()..];
+    if synveil_client_sync::ServerProfileId::parse_str(profile_id).is_err() {
         return Err(DesktopControlServerError::EndpointNameTooLong);
     }
     Ok(())
@@ -1253,6 +1324,9 @@ impl DesktopControlHandle {
         else {
             return ControlProfileConfigurationOutcome::Busy;
         };
+        if !profile_configuration_input_is_bounded(&base_url, &display_label) {
+            return ControlProfileConfigurationOutcome::InvalidConfiguration;
+        }
         map_profile_outcome(
             self.inner
                 .host
@@ -1272,6 +1346,9 @@ impl DesktopControlHandle {
         else {
             return ControlProfileConfigurationOutcome::Busy;
         };
+        if !profile_configuration_input_is_bounded(&base_url, &display_label) {
+            return ControlProfileConfigurationOutcome::InvalidConfiguration;
+        }
         let Ok(profile_id) = profile_id.parse() else {
             return ControlProfileConfigurationOutcome::InvalidConfiguration;
         };
@@ -1447,6 +1524,15 @@ impl DesktopControlHandle {
             transient_failures: status.transient_failures(),
         })
     }
+}
+
+fn profile_configuration_input_is_bounded(base_url: &str, display_label: &str) -> bool {
+    !base_url.is_empty()
+        && base_url.len() <= CONTROL_MAX_BASE_URL_BYTES
+        && !base_url.chars().any(char::is_control)
+        && !display_label.trim().is_empty()
+        && display_label.len() <= CONTROL_MAX_PROFILE_LABEL_BYTES
+        && !display_label.chars().any(char::is_control)
 }
 
 struct AuthOperationGuard<'a> {
@@ -2271,7 +2357,7 @@ async fn serve_connection_inner(
             Ok(result) => result.map_err(DesktopControlClientError::Frame)?,
             Err(_) => return Err(DesktopControlClientError::Closed),
         };
-        let request: ControlRequest = decode_payload(&payload)
+        let request = decode_control_request_payload(&payload)
             .map_err(|_| DesktopControlClientError::Frame(ControlFrameError::PayloadMalformed))?;
         if request.request_id == 0 {
             write_control_frame(
@@ -3496,6 +3582,10 @@ mod tests {
         assert!(!CONTROL_PIPE_SECURITY_DESCRIPTOR.contains("WD"));
         assert!(!CONTROL_PIPE_SECURITY_DESCRIPTOR.contains("AN"));
         assert!(validate_pipe_name(&windows_pipe_name(test_profile())).is_ok());
+        assert!(validate_pipe_name("\\\\.\\pipe\\synveil-not-a-profile-id").is_err());
+        assert!(
+            validate_pipe_name("\\\\.\\pipe\\other-018f12b8-558a-7000-8000-000000000000").is_err()
+        );
     }
 
     #[test]
@@ -3561,6 +3651,87 @@ mod tests {
             "x".repeat(DEVICE_SECRET_ENCODED_BYTES + 1)
         );
         assert!(serde_json::from_str::<ControlRequest>(&oversized).is_err());
+    }
+
+    #[test]
+    fn security_unit_1_control_credentials_and_errors_are_redacted() {
+        let secret = EnrollmentSecret::from_bytes([0x31; 32]);
+        let request = ControlRequest {
+            request_id: 111,
+            command: ControlCommand::Authenticate {
+                enrollment_token: ControlAuthInput::from_secret(&secret),
+            },
+        };
+        let debug = format!(
+            "{request:?} {:?} {:?} {} {}",
+            DesktopControlClientError::Frame(ControlFrameError::PayloadMalformed),
+            DesktopControlServerError::UnsafeEndpoint,
+            DesktopControlClientError::Frame(ControlFrameError::PayloadMalformed),
+            DesktopControlServerError::UnsafeEndpoint,
+        );
+        let lower = debug.to_ascii_lowercase();
+        assert!(!debug.contains(secret.expose_secret()));
+        assert!(!lower.contains("bearer"));
+        assert!(!lower.contains("authorization"));
+        assert!(!lower.contains("/tmp/"));
+        assert!(!lower.contains("\\\\.\\pipe"));
+    }
+
+    #[test]
+    fn security_unit_2_ipc_malformed_input_is_rejected() {
+        for (index, payload) in [
+            br#"{"request_id":1,"command":{"kind":"pause_sync","extra":true}}"#.as_slice(),
+            br#"{"request_id":"1","command":{"kind":"pause_sync"}}"#.as_slice(),
+            br#"{"request_id":1,"command":{"kind":"resolve_conflict","library_id":"x","conflict_id":"x","intent_id":"x","detected_at_ms":1,"action":"shell"}}"#.as_slice(),
+            br#"{"request_id":1,"command":{"kind":"unsupported_future"}}"#.as_slice(),
+            b"not json".as_slice(),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let decoded = decode_control_request_payload(payload);
+            if payload == br#"{"request_id":1,"command":{"kind":"unsupported_future"}}"# {
+                assert!(matches!(
+                    decoded.unwrap().command,
+                    ControlCommand::Unsupported
+                ));
+            } else {
+                assert!(decoded.is_err(), "payload {index} decoded unexpectedly");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn security_unit_3_ipc_oversized_frame_is_rejected_before_payload_allocation() {
+        let declared = (DESKTOP_CONTROL_MAX_FRAME_BYTES as u32 + 1).to_be_bytes();
+        let mut reader = std::io::Cursor::new(declared.to_vec());
+        assert_eq!(
+            read_frame(&mut reader).await,
+            Err(ControlFrameError::TooLarge)
+        );
+    }
+
+    #[test]
+    fn profile_configuration_inputs_are_bounded_before_host_dispatch() {
+        assert!(profile_configuration_input_is_bounded(
+            "https://example.com/",
+            "Example"
+        ));
+        assert!(!profile_configuration_input_is_bounded(
+            &format!(
+                "https://{}example.com/",
+                "a".repeat(CONTROL_MAX_BASE_URL_BYTES)
+            ),
+            "Example"
+        ));
+        assert!(!profile_configuration_input_is_bounded(
+            "https://example.com/",
+            &"a".repeat(CONTROL_MAX_PROFILE_LABEL_BYTES + 1)
+        ));
+        assert!(!profile_configuration_input_is_bounded(
+            "https://example.com/?token=synthetic",
+            "Example\n"
+        ));
     }
 
     #[test]

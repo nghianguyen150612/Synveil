@@ -14,6 +14,16 @@ use std::{
     process::Command,
 };
 
+const SECRET_SCAN_NEEDLES: &[&str] = &[
+    "svd1_",
+    "sve1_",
+    "bearer ",
+    "authorization:",
+    "api_key=",
+    "private_key",
+    "postgresql://user:password@",
+];
+
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -362,4 +372,41 @@ fn package_unit_10_linux_ownership_and_modes() {
     let spec = read(repo_root().join("deploy/packages/rpm/synveil.spec.tmpl"));
     assert!(spec.contains("%attr(0755,root,root) /usr/bin/synveil-desktop"));
     assert!(spec.contains("%dir %attr(0750,root,synveil) /etc/synveil"));
+}
+
+#[test]
+fn security_unit_7_package_artifact_secret_scan() {
+    let root = repo_root();
+    for path in [
+        root.join("deploy/install/MANIFEST"),
+        root.join("deploy/packages/debian/control.tmpl"),
+        root.join("deploy/packages/rpm/synveil.spec.tmpl"),
+        root.join("deploy/config/synveil-scheduled-maintenance.env.example"),
+        root.join("deploy/NOTICE"),
+    ] {
+        let content = read(&path).to_ascii_lowercase();
+        for needle in SECRET_SCAN_NEEDLES {
+            assert!(
+                !content.contains(needle),
+                "{} contains secret-like marker {needle}",
+                path.display()
+            );
+        }
+    }
+
+    for artifact in package_files("deb")
+        .into_iter()
+        .chain(package_files("rpm"))
+        .chain(windows_package_files("zip"))
+    {
+        let bytes = fs::read(&artifact).expect("read package artifact");
+        let lowercase = String::from_utf8_lossy(&bytes).to_ascii_lowercase();
+        for needle in SECRET_SCAN_NEEDLES {
+            assert!(
+                !lowercase.contains(needle),
+                "{} contains secret-like marker {needle}",
+                artifact.display()
+            );
+        }
+    }
 }

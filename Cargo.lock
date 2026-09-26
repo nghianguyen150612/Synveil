@@ -604,8 +604,6 @@ dependencies = [
 [[package]]
 name = "cxx-qt-build"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7bb2bb9e19b427e79ec5db1d88cde2f44f2d4190e5a0177e2d599ceb9277b670"
 dependencies = [
  "cc",
  "codespan-reporting 0.11.1",

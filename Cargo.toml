@@ -89,3 +89,8 @@ windows-sys = { version = "0.61.2", default-features = false, features = [
     "Win32_System_Threading",
     "Win32_System_WindowsProgramming",
 ] }
+
+[patch.crates-io]
+# CXX-Qt 0.10 collects Qt modules in a randomized HashSet before emitting
+# native link directives. Keep the release link order stable across processes.
+cxx-qt-build = { path = "vendor/cxx-qt-build" }

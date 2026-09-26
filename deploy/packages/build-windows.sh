@@ -13,12 +13,16 @@
 # SPDX-License-Identifier: MIT
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd -P)"
 # shellcheck source=deploy/packages/common/version.sh
 source "${SCRIPT_DIR}/common/version.sh"
+# shellcheck source=deploy/packages/common/reproducible.sh
+source "${SCRIPT_DIR}/common/reproducible.sh"
 
 OUTPUT_DIR="${REPO_ROOT}/target/windows-packages"
+CARGO_TARGET_DIR="${REPO_ROOT}/target"
+export CARGO_TARGET_DIR
 DESKTOP_BINARY=""
 CLIENT_BINARY=""
 QT_PREFIX="${SYNVEIL_QT_PREFIX:-}"
@@ -118,6 +122,15 @@ log() {
     printf '[synveil-windows-package] %s\n' "$*" >&2
 }
 
+PACKAGE_VERSION="$(synveil_cargo_version)"
+SOURCE_DATE_EPOCH="$(synveil_source_date_epoch)"
+export SOURCE_DATE_EPOCH
+log "archive timestamp: $SOURCE_DATE_EPOCH"
+
+if [[ -z "$DESKTOP_BINARY" || -z "$CLIENT_BINARY" ]]; then
+    synveil_prepare_reproducible_rust_build "$REPO_ROOT"
+fi
+
 find_existing_binary() {
     local requested="$1"
     local name="$2"
@@ -170,12 +183,9 @@ for binary in "$DESKTOP_BINARY" "$CLIENT_BINARY"; do
             fi
         done
     fi
+    synveil_assert_portable_release_binary "$binary" "$(basename "$binary")"
 done
 
-PACKAGE_VERSION="$(synveil_cargo_version)"
-SOURCE_DATE_EPOCH="$(synveil_source_date_epoch)"
-export SOURCE_DATE_EPOCH
-log "archive timestamp: $SOURCE_DATE_EPOCH"
 STAGE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/synveil-windows-stage.XXXXXX")"
 trap 'rm -rf -- "$STAGE_ROOT"' EXIT
 
@@ -405,6 +415,11 @@ write_package_manifest() {
         printf 'format=1\n'
         printf 'version=%s\n' "$PACKAGE_VERSION"
         printf 'platform=windows-x86_64\n'
+        printf 'source_revision=%s\n' "$(synveil_source_revision "$REPO_ROOT")"
+        printf 'source_fingerprint=%s\n' "$(synveil_source_fingerprint "$REPO_ROOT")"
+        printf 'source_date_epoch=%s\n' "$SOURCE_DATE_EPOCH"
+        printf 'rustc=%s\n' "$(synveil_toolchain_value rustc)"
+        printf 'cargo=%s\n' "$(synveil_toolchain_value cargo)"
         printf 'files=sha256 size path\n'
         while IFS= read -r relative; do
             relative="${relative#./}"
@@ -474,6 +489,8 @@ validate_package_manifest() {
 
 write_package_manifest
 validate_package_manifest
+synveil_assert_no_private_paths "${STAGE_ROOT}/${MANIFEST_NAME}" "$MANIFEST_NAME"
+synveil_assert_no_secret_markers "${STAGE_ROOT}/${MANIFEST_NAME}" "$MANIFEST_NAME"
 if grep -nE '/(mnt|tmp|home)/|[A-Za-z]:[\\/]Users[\\/].*\\.cargo|/usr/(include|lib)' "${STAGE_ROOT}/${MANIFEST_NAME}" >/dev/null 2>&1; then
     printf '[synveil-windows-package] ERROR: development path in package manifest\n' >&2
     exit 1
@@ -486,6 +503,11 @@ fi
 
 ZIP_PATH="${OUTPUT_DIR}/synveil-${PACKAGE_VERSION}-windows-x86_64.zip"
 rm -f "$ZIP_PATH"
+# ZIP external attributes are derived from staged modes. Normalize them so a
+# copied Qt closure cannot inherit host-specific executable bits or mtimes.
+find "$STAGE_ROOT" -type d -exec chmod 0755 {} +
+find "$STAGE_ROOT" -type f -exec chmod 0644 {} +
+chmod 0755 "${STAGE_ROOT}/synveil-desktop.exe" "${STAGE_ROOT}/synveil-client.exe"
 find "$STAGE_ROOT" -exec touch -d "@${SOURCE_DATE_EPOCH}" {} +
 (
     cd "$STAGE_ROOT"

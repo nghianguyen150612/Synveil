@@ -54,6 +54,9 @@ jobs:
           bash -n deploy/packages/common/version.sh
           bash -n deploy/packages/common/arch.sh
           bash -n deploy/packages/common/payload.sh
+          bash -n deploy/packages/common/reproducible.sh
+          bash -n scripts/validate-release-artifacts.sh
+          bash -n scripts/verify-release-build-reproducibility.sh
           sh -n deploy/packages/debian/postinst
           sh -n deploy/packages/debian/prerm
           sh -n deploy/packages/debian/postrm
@@ -62,6 +65,9 @@ jobs:
           bash -n deploy/install/common.sh
           shellcheck -S warning \
             deploy/packages/build.sh deploy/packages/build-windows.sh \
+            deploy/packages/common/reproducible.sh \
+            scripts/validate-release-artifacts.sh \
+            scripts/verify-release-build-reproducibility.sh \
             deploy/packages/debian/postinst deploy/packages/debian/prerm deploy/packages/debian/postrm
 
       - name: Build release binary + DEB + RPM
@@ -69,6 +75,9 @@ jobs:
           set -euo pipefail
           ./deploy/packages/build.sh --format=all
           ls -la target/packages/
+
+      - name: Rebuild release binaries after clearing release outputs
+        run: scripts/verify-release-build-reproducibility.sh
 
       - name: DEB inspection (dpkg-deb info + contents)
         run: |
@@ -116,14 +125,28 @@ jobs:
           DEB_REPRO="$(ls target/packages-reproducible/*.deb | head -n 1)"
           RPM="$(ls target/packages/*.rpm | grep -v '.src.' | head -n 1)"
           RPM_REPRO="$(ls target/packages-reproducible/*.rpm | grep -v '.src.' | head -n 1)"
-          cmp "$DEB" "$DEB_REPRO"
-          cmp "$RPM" "$RPM_REPRO"
+          source deploy/packages/common/reproducible.sh
+          synveil_require_identical_artifacts "$DEB" "$DEB_REPRO" DEB
+          synveil_require_identical_artifacts "$RPM" "$RPM_REPRO" RPM
+          synveil_require_identical_artifacts \
+            target/packages/SYNVEIL-LINUX-ARTIFACT-MANIFEST.txt \
+            target/packages-reproducible/SYNVEIL-LINUX-ARTIFACT-MANIFEST.txt \
+            release-artifact-manifest
           sha256sum "$DEB" "$DEB_REPRO" "$RPM" "$RPM_REPRO"
+
+      - name: Validate release artifact provenance and metadata
+        run: |
+          set -euo pipefail
+          scripts/validate-release-artifacts.sh \
+            --manifest=target/packages/SYNVEIL-LINUX-ARTIFACT-MANIFEST.txt
+          scripts/validate-release-artifacts.sh \
+            --manifest=target/packages-reproducible/SYNVEIL-LINUX-ARTIFACT-MANIFEST.txt
 
       - name: Static packaging units (version/arch/metadata/parity/safety)
         run: |
           set -euo pipefail
           cargo test -p synveil-metadata --test linux_native_packaging_units --locked -- --nocapture
+          cargo test -p synveil-metadata --test release_artifact_units --locked -- --nocapture
           cargo test -p synveil-metadata --test production_packaging_units --locked -- --nocapture
           cargo test -p synveil-metadata --test linux_desktop_launch_units --locked -- --nocapture
           cargo test -p synveil-metadata --test windows_desktop_packaging_units --locked -- --nocapture

@@ -1634,6 +1634,41 @@ fn shell_safety_set_euo_pipefail_and_no_eval() {
     }
 }
 
+#[test]
+fn security_unit_6_install_script_safety_fail_closed_contract() {
+    let common = fs::read_to_string(repo_root().join("deploy/install/common.sh")).unwrap();
+    let install = fs::read_to_string(install_script()).unwrap();
+    let uninstall = fs::read_to_string(uninstall_script()).unwrap();
+
+    for (name, script) in [
+        ("common", common.as_str()),
+        ("install", install.as_str()),
+        ("uninstall", uninstall.as_str()),
+    ] {
+        assert!(
+            script.contains("set -euo pipefail"),
+            "{name} must fail closed"
+        );
+        assert!(!script.contains("eval "), "{name} must not use eval");
+        assert!(
+            !script.contains("curl | sh"),
+            "{name} must not pipe remote shell"
+        );
+        assert!(
+            !script.contains("rm -rf /"),
+            "{name} must not contain root deletion literal"
+        );
+    }
+
+    assert!(common.contains("realpath -m -s"));
+    assert!(common.contains("destination parent escapes staged root"));
+    assert!(install.contains("SYNVEIL_ALLOW_HOST_ROOT"));
+    assert!(install.contains("refusing to follow symlink at $class destination"));
+    assert!(uninstall.contains("synveil_dest_under_root_lexical"));
+    assert!(uninstall.contains("handle_purge_target"));
+    assert!(uninstall.contains("purge target not in allowlist"));
+}
+
 // ---------------------------------------------------------------------------
 // Additional: manifest not duplicated
 // ---------------------------------------------------------------------------
@@ -1785,6 +1820,40 @@ fn credential_ordinary_uninstall_preserves() {
     assert_eq!(fs::read(&cred_path).unwrap(), before);
     assert!(root.join("etc/synveil/credentials").exists());
     assert!(root.join("etc/synveil").exists());
+    let _ = fs::remove_dir_all(&root);
+    let _ = fs::remove_file(&bin);
+}
+
+#[test]
+fn security_unit_10_uninstall_preserves_user_data_without_purge() {
+    let root = temp_root("sec-uninstall-preserve");
+    let bin = temp_binary("sec-uninstall-preserve-v1");
+    let out = run_install(&root, &bin, &[]);
+    assert!(out.status.success());
+
+    let config_path = root.join("etc/synveil/admin.conf");
+    let state_path = root.join("var/lib/synveil/user-state.db");
+    fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(state_path.parent().unwrap()).unwrap();
+    fs::write(&config_path, "admin-selected-setting=keep").unwrap();
+    fs::write(&state_path, "runtime-user-state=keep").unwrap();
+
+    let out = run_uninstall(&root, false);
+    assert!(
+        out.status.success(),
+        "ordinary uninstall failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(&config_path).unwrap(),
+        "admin-selected-setting=keep"
+    );
+    assert_eq!(
+        fs::read_to_string(&state_path).unwrap(),
+        "runtime-user-state=keep"
+    );
+    assert!(!root.join("usr/bin/synveil-client").exists());
+
     let _ = fs::remove_dir_all(&root);
     let _ = fs::remove_file(&bin);
 }

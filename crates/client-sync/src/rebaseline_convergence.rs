@@ -16,9 +16,9 @@ use synveil_core::RebaselineSnapshotId;
 
 use crate::state::{RebaselineCandidateRecord, RebaselineCandidateState};
 use crate::{
-    ClientSyncError, InboundSyncEngine, LocalStateStore, RebaselineApplier, RebaselineBoundary,
-    RebaselineSnapshotDescriptor, RebaselineSnapshotRemote, RemoteErrorKind, ReplicaScope,
-    SyncOutcome,
+    ClientSyncError, InboundSyncEngine, LocalStateStore, MAX_REBASELINE_ITEMS, RebaselineApplier,
+    RebaselineBoundary, RebaselineSnapshotDescriptor, RebaselineSnapshotRemote, RemoteErrorKind,
+    ReplicaScope, SyncOutcome,
 };
 
 /// The finite, transport-neutral outcome of one convergence invocation.
@@ -208,6 +208,12 @@ impl RebaselineConvergenceCoordinator {
                 .release_rebaseline_snapshot_creation_claim(self.scope.library_id(), claim_id)
                 .await?;
             return Err(ClientSyncError::InvalidRemoteResponse);
+        }
+        if descriptor.entry_count() == 0 || descriptor.entry_count() > MAX_REBASELINE_ITEMS {
+            self.state
+                .release_rebaseline_snapshot_creation_claim(self.scope.library_id(), claim_id)
+                .await?;
+            return Err(ClientSyncError::ResourceLimit);
         }
         self.state
             .promote_rebaseline_snapshot_creation_claim(self.scope, claim_id, descriptor)

@@ -5,17 +5,21 @@
 # SPDX-License-Identifier: MIT
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd -P)"
 # shellcheck source=deploy/packages/common/version.sh
 source "${SCRIPT_DIR}/common/version.sh"
 # shellcheck source=deploy/packages/common/arch.sh
 source "${SCRIPT_DIR}/common/arch.sh"
 # shellcheck source=deploy/packages/common/payload.sh
 source "${SCRIPT_DIR}/common/payload.sh"
+# shellcheck source=deploy/packages/common/reproducible.sh
+source "${SCRIPT_DIR}/common/reproducible.sh"
 
 PACKAGE_NAME="synveil"
 DEFAULT_OUTPUT_DIR="${REPO_ROOT}/target/packages"
+CARGO_TARGET_DIR="${REPO_ROOT}/target"
+export CARGO_TARGET_DIR
 
 usage() {
     cat >&2 <<'EOF'
@@ -52,6 +56,11 @@ Environment:
   SOURCE_DATE_EPOCH      Optional non-negative archive timestamp. If omitted,
                          the checked-out source revision timestamp is used.
   SYNVEIL_RPM_RELEASE    RPM Release tag override (default 1; test-only fixture use).
+
+Outputs:
+  SYNVEIL-LINUX-ARTIFACT-MANIFEST.txt is written beside the package output.
+  It binds artifact hashes to the actual source tree, toolchain, and build
+  timestamp used by this invocation; it is not a checked-in expected binary.
 EOF
 }
 
@@ -151,6 +160,13 @@ log "cargo version: $CARGO_VERSION"
 log "deb version: $DEB_VERSION ($DEB_ARCH) | rpm version: $RPM_VERSION-$RPM_RELEASE ($RPM_ARCH)"
 log "archive timestamp: $SOURCE_DATE_EPOCH"
 
+# All default release builds use the same path-remapped, non-incremental
+# compiler environment. Explicit binary overrides are still audited below;
+# they do not bypass the release artifact policy.
+if [[ -z "$BINARY_OVERRIDE" || -z "$CLIENT_BINARY_OVERRIDE" || -z "$DESKTOP_BINARY_OVERRIDE" ]]; then
+    synveil_prepare_reproducible_rust_build "$REPO_ROOT"
+fi
+
 # ---------------------------------------------------------------------------
 # Release binary (real artifact only)
 # ---------------------------------------------------------------------------
@@ -201,7 +217,15 @@ for binary_source in "$BINARY_SRC" "$CLIENT_BINARY_SRC" "$DESKTOP_BINARY_SRC"; d
     BIN_SIZE="$(wc -c < "$binary_source" | tr -d ' ')"
     BIN_SHA="$(sha256sum "$binary_source" | awk '{print $1}')"
     log "binary: $binary_source (${BIN_SIZE} bytes, sha256 ${BIN_SHA})"
+    synveil_assert_linux_release_binary "$binary_source" "$(basename "$binary_source")"
 done
+
+ARTIFACT_MANIFEST="${OUTPUT_DIR}/SYNVEIL-LINUX-ARTIFACT-MANIFEST.txt"
+synveil_write_linux_artifact_manifest "$ARTIFACT_MANIFEST" "$REPO_ROOT" "$SOURCE_DATE_EPOCH" \
+    "target/release/synveil-scheduled-maintenance-once:$BINARY_SRC" \
+    "target/release/synveil-client:$CLIENT_BINARY_SRC" \
+    "target/release/synveil-desktop:$DESKTOP_BINARY_SRC"
+log "release artifact manifest: $ARTIFACT_MANIFEST"
 
 # Dynamic-link audit (evidence for dependency declarations; informational here,
 # authoritative audit is recorded by the caller).
@@ -310,8 +334,11 @@ if [[ "$(id -u)" -eq 0 ]]; then
     chown root:root "${STAGE_ROOT}/etc/synveil/credentials"
 fi
 
-# Installed-Size for DEB control (KiB, du -sk of payload).
-INSTALLED_SIZE="$(du -sk "$STAGE_ROOT" | awk '{print $1}')"
+# Installed-Size for DEB control. Sum regular-file bytes and round once to
+# KiB so the control metadata cannot depend on filesystem block size or
+# directory allocation on the build host.
+INSTALLED_BYTES="$(find "$STAGE_ROOT" -type f -printf '%s\n' | awk '{total += $1} END {printf "%.0f\n", total + 0}')"
+INSTALLED_SIZE="$(( (INSTALLED_BYTES + 1023) / 1024 ))"
 # Minimal native dependencies from the dynamic-link audit documented with the
 # packaging contract in docs/en/DEPLOYMENT.md. The maintenance and client
 # binaries require the glibc/libgcc/libstdc++ runtime; the Qt desktop binary
@@ -372,20 +399,22 @@ build_deb() {
         # data.tar.gz from payload (exclude DEBIAN).
         (
             cd "$deb_stage"
-            tar "${tar_owner_flags[@]}" -czf "${work}/data.tar.gz" \
+            tar "${tar_owner_flags[@]}" -cf "${work}/data.tar" \
                 usr etc
+            gzip -n -f "${work}/data.tar"
         )
         # control.tar.gz from DEBIAN (rename to control dir content without prefix quirks).
         (
             cd "${deb_stage}/DEBIAN"
-            tar "${tar_owner_flags[@]}" -czf "${work}/control.tar.gz" \
+            tar "${tar_owner_flags[@]}" -cf "${work}/control.tar" \
                 control postinst prerm postrm
+            gzip -n -f "${work}/control.tar"
         )
         printf '2.0\n' > "${work}/debian-binary"
         # Deterministic ar: debian-binary, control.tar.gz, data.tar.gz order.
         (
             cd "$work"
-            ar rcs "$deb_path" debian-binary control.tar.gz data.tar.gz
+            ar rcsD "$deb_path" debian-binary control.tar.gz data.tar.gz
         )
         rm -rf "$work"
     fi
