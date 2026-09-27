@@ -24,6 +24,9 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Validate v0.2 installation acceptance contract
+        run: ./scripts/validate-install-acceptance.sh
+
       - name: Install Linux secret-service build dependencies
         if: runner.os == 'Linux'
         run: |

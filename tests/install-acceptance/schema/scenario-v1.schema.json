@@ -1,0 +1,678 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://synveil.invalid/schemas/install-acceptance/scenario-v1.schema.json",
+  "title": "Synveil installation acceptance scenario",
+  "description": "Versioned contract. scripts/install_acceptance.py applies the normative closed-enum and cross-field rules without third-party dependencies.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "architecture",
+    "artifact_requirements",
+    "assertions",
+    "availability",
+    "capability_conditions",
+    "cleanup_policy",
+    "evidence_requirements",
+    "execution_class",
+    "forbidden_outcomes",
+    "future_owner",
+    "id",
+    "interruption_points",
+    "journey",
+    "milestones",
+    "platform",
+    "preconditions",
+    "preservation_assertions",
+    "recovery_classifications",
+    "required_capabilities",
+    "schema_version",
+    "source_installation",
+    "steps",
+    "timeout_policy",
+    "title"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "journey": {
+      "type": "string",
+      "minLength": 1
+    },
+    "platform": {
+      "type": "object",
+      "required": [
+        "family",
+        "applicable_families",
+        "qualified_versions",
+        "desktop_session",
+        "package_manager",
+        "native_gui_package_handler"
+      ],
+      "properties": {
+        "family": {
+          "enum": [
+            "windows",
+            "debian",
+            "ubuntu",
+            "fedora",
+            "rpm_family",
+            "linux_generic"
+          ]
+        },
+        "applicable_families": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "windows",
+              "debian",
+              "ubuntu",
+              "fedora",
+              "rpm_family",
+              "linux_generic"
+            ]
+          }
+        },
+        "qualified_versions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "desktop_session": {
+          "type": "string"
+        },
+        "package_manager": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "native_gui_package_handler": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "architecture": {
+      "enum": [
+        "x86_64",
+        "aarch64",
+        "x86",
+        "unknown"
+      ]
+    },
+    "execution_class": {
+      "enum": [
+        "STATIC",
+        "FIXTURE",
+        "CI_NATIVE",
+        "NATIVE_CLEAN_MACHINE",
+        "LIVE_EXTERNAL_DEPENDENCY",
+        "PHYSICAL_OR_VM_INTERRUPTION"
+      ]
+    },
+    "preconditions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "required_capabilities": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "graphical_session",
+          "native_package_manager",
+          "administrator_elevation",
+          "systemd_user",
+          "systemd_system",
+          "windows_task_scheduler",
+          "secret_store",
+          "network_access",
+          "loopback_server",
+          "postgresql",
+          "reboot",
+          "power_cycle",
+          "release_download",
+          "internet_access"
+        ]
+      }
+    },
+    "artifact_requirements": {
+      "type": "object",
+      "required": [
+        "required",
+        "artifact_type",
+        "identity_fields"
+      ],
+      "properties": {
+        "required": {
+          "type": "boolean"
+        },
+        "artifact_type": {
+          "type": "string"
+        },
+        "identity_fields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "action",
+          "description"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "action": {
+            "enum": [
+              "obtain_artifact",
+              "open_installer",
+              "accept_terms_and_options",
+              "install",
+              "launch",
+              "connect_to_server",
+              "authenticate",
+              "choose_library",
+              "choose_local_folder",
+              "observe_sync",
+              "damage_package_owned_state",
+              "repair",
+              "uninstall",
+              "interrupt_at_boundary",
+              "rerun_and_reconcile",
+              "host_setup",
+              "create_first_admin",
+              "upgrade_from_source",
+              "assertion_checkpoint"
+            ]
+          },
+          "description": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "milestones": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "INSTALLATION_READY",
+          "APPLICATION_LAUNCHED",
+          "PROFILE_READY",
+          "AUTHENTICATED",
+          "LIBRARY_READY",
+          "SYNC_STARTED",
+          "SERVER_READY"
+        ]
+      }
+    },
+    "interruption_points": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "acquisition",
+          "package_payload_mutation",
+          "platform_integration",
+          "verification"
+        ]
+      }
+    },
+    "recovery_classifications": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "known_pre_mutation_failure",
+          "known_partial_mutation",
+          "OutcomeUnknown"
+        ]
+      }
+    },
+    "assertions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "description"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "administrator_elevation_expected",
+              "ambiguous_mutation_reconciled",
+              "authenticated",
+              "config_preserved",
+              "credential_preserved",
+              "database_preserved",
+              "entrypoint_launches",
+              "file_absent",
+              "file_exists",
+              "health_ready",
+              "installation_ready",
+              "ipc_available",
+              "library_preserved",
+              "library_ready",
+              "no_public_control_listener",
+              "no_terminal_required",
+              "no_unexpected_elevation",
+              "package_installed",
+              "package_removed",
+              "process_not_running",
+              "process_running",
+              "process_starts",
+              "profile_ready",
+              "secret_store_used",
+              "server_objects_preserved",
+              "server_ready",
+              "startup_registration_disabled",
+              "startup_registration_enabled",
+              "state_preserved",
+              "sync_observed",
+              "unknown_schema_rejected_safely",
+              "unsupported_platform_rejected_safely",
+              "version_equals"
+            ]
+          },
+          "description": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "preservation_assertions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "resource",
+          "snapshot"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "resource": {
+            "enum": [
+              "APPLICATION_CONFIG",
+              "CREDENTIAL_STATE",
+              "CLIENT_SYNC_STATE",
+              "USER_LIBRARY_CONTENT",
+              "SERVER_CONFIG",
+              "SERVER_DATABASE",
+              "SERVER_OBJECT_DATA"
+            ]
+          },
+          "snapshot": {
+            "enum": [
+              "exists",
+              "canonical_path_identity",
+              "content_digest",
+              "database_logical_fingerprint",
+              "configuration_value_fingerprint",
+              "credential_presence_identity_usable",
+              "library_tree_digest",
+              "record_count_logical_digest"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "forbidden_outcomes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "description",
+          "on_observed"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "on_observed": {
+            "const": "FAIL"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "evidence_requirements": {
+      "type": "object",
+      "required": [
+        "minimum",
+        "satisfies"
+      ],
+      "properties": {
+        "minimum": {
+          "enum": [
+            "contract-valid",
+            "static",
+            "fixture",
+            "ci-native-scoped",
+            "native-clean-machine",
+            "live-external-dependency",
+            "interruption-power-cycle",
+            "release-acceptance"
+          ]
+        },
+        "satisfies": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "contract-valid",
+              "static",
+              "fixture",
+              "ci-native-scoped",
+              "native-clean-machine",
+              "live-external-dependency",
+              "interruption-power-cycle",
+              "release-acceptance"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "timeout_policy": {
+      "type": "object",
+      "required": [
+        "seconds",
+        "on_unknown_outcome"
+      ],
+      "properties": {
+        "seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "on_unknown_outcome": {
+          "const": "reconcile_before_retry"
+        }
+      },
+      "additionalProperties": false
+    },
+    "cleanup_policy": {
+      "type": "object",
+      "required": [
+        "ownership_scope",
+        "best_effort",
+        "record_failure"
+      ],
+      "properties": {
+        "ownership_scope": {
+          "const": "scenario_created_only"
+        },
+        "best_effort": {
+          "type": "boolean"
+        },
+        "record_failure": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "future_owner": {
+      "type": "object",
+      "required": [
+        "implementation",
+        "acceptance"
+      ],
+      "properties": {
+        "implementation": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "P001",
+              "P002",
+              "P003",
+              "P004",
+              "P005",
+              "P006",
+              "P007",
+              "P008",
+              "P009",
+              "P010",
+              "P011",
+              "P012",
+              "P013",
+              "P014",
+              "P015",
+              "P016",
+              "P017",
+              "P018",
+              "P019",
+              "P020",
+              "P021",
+              "P022",
+              "P023",
+              "P024",
+              "P025",
+              "P026",
+              "P027",
+              "P028",
+              "P029",
+              "P030",
+              "P031",
+              "P032",
+              "P033",
+              "P034",
+              "P035",
+              "P036",
+              "P037",
+              "P038",
+              "P039",
+              "P040",
+              "P041",
+              "P042",
+              "P043",
+              "P044",
+              "P045",
+              "P046",
+              "P047",
+              "P048"
+            ]
+          }
+        },
+        "acceptance": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "P001",
+              "P002",
+              "P003",
+              "P004",
+              "P005",
+              "P006",
+              "P007",
+              "P008",
+              "P009",
+              "P010",
+              "P011",
+              "P012",
+              "P013",
+              "P014",
+              "P015",
+              "P016",
+              "P017",
+              "P018",
+              "P019",
+              "P020",
+              "P021",
+              "P022",
+              "P023",
+              "P024",
+              "P025",
+              "P026",
+              "P027",
+              "P028",
+              "P029",
+              "P030",
+              "P031",
+              "P032",
+              "P033",
+              "P034",
+              "P035",
+              "P036",
+              "P037",
+              "P038",
+              "P039",
+              "P040",
+              "P041",
+              "P042",
+              "P043",
+              "P044",
+              "P045",
+              "P046",
+              "P047",
+              "P048"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "availability": {
+      "enum": [
+        "IMPLEMENTATION_PENDING",
+        "IMPLEMENTED_UNQUALIFIED",
+        "AVAILABLE"
+      ]
+    },
+    "source_installation": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "required": [
+        "source_product_version",
+        "source_commit",
+        "source_schema_version",
+        "source_installation_type",
+        "source_artifact_identity"
+      ],
+      "properties": {
+        "source_product_version": {
+          "type": "string"
+        },
+        "source_commit": {
+          "type": "string"
+        },
+        "source_schema_version": {
+          "type": "object",
+          "required": [
+            "server_migrations",
+            "client_migrations",
+            "local_schema_version"
+          ],
+          "properties": {
+            "server_migrations": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "client_migrations": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "local_schema_version": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "source_installation_type": {
+          "type": "string"
+        },
+        "source_artifact_identity": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "capability_conditions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "families",
+          "require_all"
+        ],
+        "properties": {
+          "families": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "windows",
+                "debian",
+                "ubuntu",
+                "fedora",
+                "rpm_family",
+                "linux_generic"
+              ]
+            }
+          },
+          "require_all": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "graphical_session",
+                "native_package_manager",
+                "administrator_elevation",
+                "systemd_user",
+                "systemd_system",
+                "windows_task_scheduler",
+                "secret_store",
+                "network_access",
+                "loopback_server",
+                "postgresql",
+                "reboot",
+                "power_cycle",
+                "release_download",
+                "internet_access"
+              ]
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}

@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "id": "INSTALL-JOURNEY-4",
+  "title": "Generic Linux AppImage open",
+  "journey": "User-level open succeeds without root or terminal chmod; payload stays immutable and writable state external; SecretStore and user-scoped IPC remain in force.",
+  "platform": {
+    "family": "linux_generic",
+    "qualified_versions": [
+      "pending exact qualified version (P018/P020)"
+    ],
+    "desktop_session": "required for graphical desktop journeys; otherwise not applicable",
+    "package_manager": "pending native family qualification",
+    "native_gui_package_handler": "pending qualified desktop handler",
+    "applicable_families": [
+      "linux_generic"
+    ]
+  },
+  "architecture": "x86_64",
+  "execution_class": "NATIVE_CLEAN_MACHINE",
+  "preconditions": [
+    "Disposable dedicated acceptance identity and scenario-owned state.",
+    "No prior Synveil installation, package registration, installer-owned integration or stale acceptance state unless a declared upgrade/recovery source is required.",
+    "A brand-new OS and removal of unrelated user files are not required."
+  ],
+  "required_capabilities": [
+    "graphical_session",
+    "secret_store"
+  ],
+  "artifact_requirements": {
+    "required": true,
+    "artifact_type": "AppImage",
+    "identity_fields": [
+      "product_version",
+      "source_commit",
+      "artifact_type",
+      "filename",
+      "sha256",
+      "platform",
+      "architecture",
+      "release_channel",
+      "trust_status"
+    ]
+  },
+  "steps": [
+    {
+      "id": "STEP-01",
+      "action": "obtain_artifact",
+      "description": "Obtain and identify the required artifact."
+    },
+    {
+      "id": "STEP-02",
+      "action": "launch",
+      "description": "Launch through the supported installed entrypoint."
+    }
+  ],
+  "assertions": [
+    {
+      "id": "ASSERT-01",
+      "type": "entrypoint_launches",
+      "description": "Opening the AppImage in the supported graphical session launches Synveil without root."
+    },
+    {
+      "id": "ASSERT-02",
+      "type": "no_terminal_required",
+      "description": "No terminal chmod or installation command is required."
+    },
+    {
+      "id": "ASSERT-03",
+      "type": "no_unexpected_elevation",
+      "description": "AppImage execution is user-level and does not require root."
+    },
+    {
+      "id": "ASSERT-04",
+      "type": "ipc_available",
+      "description": "Desktop/client control remains local and user-scoped."
+    },
+    {
+      "id": "ASSERT-05",
+      "type": "installation_ready",
+      "description": "Portable application payload launches while writable state stays external to the immutable artifact."
+    }
+  ],
+  "preservation_assertions": [],
+  "forbidden_outcomes": [
+    {
+      "id": "FORBID_LIBRARY_DELETE",
+      "description": "Installer lifecycle deletes user library content.",
+      "on_observed": "FAIL"
+    },
+    {
+      "id": "FORBID_SECRET_LEAK",
+      "description": "Credential value is written to ordinary config or diagnostics.",
+      "on_observed": "FAIL"
+    },
+    {
+      "id": "FORBID_UNKNOWN_SCHEMA_RESET",
+      "description": "Unknown or newer schema is reset or downgraded.",
+      "on_observed": "FAIL"
+    },
+    {
+      "id": "FORBID_SILENT_STARTUP",
+      "description": "Persistent startup is enabled without explicit user consent.",
+      "on_observed": "FAIL"
+    },
+    {
+      "id": "FORBID_PUBLIC_CONTROL",
+      "description": "Desktop control is exposed through a public TCP/HTTP listener.",
+      "on_observed": "FAIL"
+    },
+    {
+      "id": "FORBID_BLIND_REPLAY",
+      "description": "An ambiguous mutation is blindly replayed without authoritative reconciliation.",
+      "on_observed": "FAIL"
+    },
+    {
+      "id": "FORBID_EARLY_SUCCESS",
+      "description": "Installation is reported complete before payload, integration and launch verification.",
+      "on_observed": "FAIL"
+    }
+  ],
+  "evidence_requirements": {
+    "minimum": "native-clean-machine",
+    "satisfies": [
+      "native-clean-machine",
+      "release-acceptance"
+    ]
+  },
+  "timeout_policy": {
+    "seconds": 1800,
+    "on_unknown_outcome": "reconcile_before_retry"
+  },
+  "cleanup_policy": {
+    "ownership_scope": "scenario_created_only",
+    "best_effort": true,
+    "record_failure": true
+  },
+  "future_owner": {
+    "implementation": [
+      "P015",
+      "P016"
+    ],
+    "acceptance": [
+      "P020"
+    ]
+  },
+  "availability": "IMPLEMENTATION_PENDING",
+  "source_installation": null,
+  "milestones": [
+    "APPLICATION_LAUNCHED"
+  ],
+  "interruption_points": [],
+  "recovery_classifications": [],
+  "capability_conditions": []
+}

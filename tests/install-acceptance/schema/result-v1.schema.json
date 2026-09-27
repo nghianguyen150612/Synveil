@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://synveil.invalid/schemas/install-acceptance/result-v1.schema.json",
+  "title": "Synveil installation acceptance result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "scenario_id", "scenario_definition_digest", "runner_version", "start_time", "end_time", "platform_facts", "capability_results", "artifact_identity", "result", "completed_steps", "assertion_results", "evidence_classification", "reason", "diagnostics_redacted", "diagnostic_references", "cleanup_result"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "scenario_id": {"type": "string"},
+    "scenario_definition_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "runner_version": {"type": "string"},
+    "start_time": {"type": ["string", "null"], "format": "date-time"},
+    "end_time": {"type": ["string", "null"], "format": "date-time"},
+    "platform_facts": {"type": "object", "required": ["family", "version", "architecture", "desktop_session", "package_manager", "native_gui_package_handler"]},
+    "capability_results": {"type": "array", "items": {"type": "object", "required": ["name", "status"], "properties": {"name": {"type": "string"}, "status": {"enum": ["available", "unavailable", "unknown"]}}, "additionalProperties": false}},
+    "artifact_identity": {"type": "object", "required": ["status", "product_version", "source_commit", "artifact_type", "filename", "digest", "platform", "architecture", "release_channel", "trust_status"]},
+    "result": {"enum": ["PASS", "FAIL", "SKIPPED", "BLOCKED", "ERROR"]},
+    "completed_steps": {"type": "array", "items": {"type": "string"}},
+    "assertion_results": {"type": "array", "items": {"type": "object", "required": ["assertion_id", "result"]}},
+    "evidence_classification": {"enum": ["contract-valid", "static", "fixture", "ci-native-scoped", "native-clean-machine", "live-external-dependency", "interruption-power-cycle", "release-acceptance"]},
+    "reason": {"type": ["string", "null"]},
+    "diagnostics_redacted": {"const": true},
+    "diagnostic_references": {"type": "array", "items": {"type": "string"}},
+    "cleanup_result": {"type": "object", "required": ["status", "details"], "properties": {"status": {"enum": ["not-run", "complete", "incomplete", "failed"]}, "details": {"type": ["string", "null"]}}, "additionalProperties": false}
+  }
+}

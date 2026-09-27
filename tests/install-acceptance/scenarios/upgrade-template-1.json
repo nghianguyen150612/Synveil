@@ -1,0 +1,224 @@
+{
+  "schema_version": 1,
+  "id": "UPGRADE-TEMPLATE-1",
+  "title": "Upgrade from supported prior installation while preserving state",
+  "journey": "Represent source version, commit, schema version, install type and artifact identity. v0.1.0 commit fa23232ff0154f627ebdd221ec5435134f177af0 is representable; unknown/newer schema fails closed; no rollback claim for irreversible migrations.",
+  "platform": {
+    "family": "linux_generic",
+    "qualified_versions": [
+      "pending exact qualified version (P018/P020)"
+    ],
+    "desktop_session": "required for graphical desktop journeys; otherwise not applicable",
+    "package_manager": "pending native family qualification",
+    "native_gui_package_handler": "pending qualified desktop handler",
+    "applicable_families": [
+      "windows",
+      "debian",
+      "ubuntu",
+      "fedora",
+      "rpm_family",
+      "linux_generic"
+    ]
+  },
+  "architecture": "x86_64",
+  "execution_class": "NATIVE_CLEAN_MACHINE",
+  "preconditions": [
+    "Disposable dedicated acceptance identity and scenario-owned state.",
+    "No prior Synveil installation, package registration, installer-owned integration or stale acceptance state unless a declared upgrade/recovery source is required.",
+    "A brand-new OS and removal of unrelated user files are not required.",
+    "Seed dedicated scenario-owned application config, credential presence/identity, client sync state, non-empty library and server config/database/object records where applicable; capture logical snapshots before the lifecycle operation.",
+    "Record an explicit disabled startup preference before upgrade; assert it remains disabled after platform integration reconciliation."
+  ],
+  "required_capabilities": [],
+  "artifact_requirements": {
+    "required": true,
+    "artifact_type": "upgrade artifact plus supported source installation",
+    "identity_fields": [
+      "product_version",
+      "source_commit",
+      "artifact_type",
+      "filename",
+      "sha256",
+      "platform",
+      "architecture",
+      "release_channel",
+      "trust_status"
+    ]
+  },
+  "steps": [
+    {
+      "id": "STEP-01",
+      "action": "upgrade_from_source",
+      "description": "Upgrade from a declared supported source installation."
+    },
+    {
+      "id": "STEP-02",
+      "action": "launch",
+      "description": "Launch through the supported installed entrypoint."
+    }
+  ],
+  "assertions": [
+    {
+      "id": "ASSERT-01",
+      "type": "version_equals",
+      "description": "Installed application reaches the declared target product version."
+    },
+    {
+      "id": "ASSERT-02",
+      "type": "health_ready",
+      "description": "Upgraded application passes health and launch checks after guarded compatible migration."
+    },
+    {
+      "id": "ASSERT-03",
+      "type": "entrypoint_launches",
+      "description": "Supported installed entrypoint launches after upgrade."
+    },
+    {
+      "id": "ASSERT-04",
+      "type": "unknown_schema_rejected_safely",
+      "description": "Unknown or newer source schema stops safely without reset or downgrade."
+    },
+    {
+      "id": "ASSERT-05",
+      "type": "startup_registration_disabled",
+      "description": "An explicitly disabled current-user startup registration remains disabled after upgrade."
+    }
+  ],
+  "preservation_assertions": [
+    {
+      "id": "PRESERVE-01",
+      "resource": "APPLICATION_CONFIG",
+      "snapshot": "configuration_value_fingerprint"
+    },
+    {
+      "id": "PRESERVE-02",
+      "resource": "CREDENTIAL_STATE",
+      "snapshot": "credential_presence_identity_usable"
+    },
+    {
+      "id": "PRESERVE-03",
+      "resource": "CLIENT_SYNC_STATE",
+      "snapshot": "content_digest"
+    },
+    {
+      "id": "PRESERVE-04",
+      "resource": "USER_LIBRARY_CONTENT",
+      "snapshot": "library_tree_digest"
+    },
+    {
+      "id": "PRESERVE-05",
+      "resource": "SERVER_CONFIG",
+      "snapshot": "configuration_value_fingerprint"
+    },
+    {
+      "id": "PRESERVE-06",
+      "resource": "SERVER_DATABASE",
+      "snapshot": "database_logical_fingerprint"
+    },
+    {
+      "id": "PRESERVE-07",
+      "resource": "SERVER_OBJECT_DATA",
+      "snapshot": "record_count_logical_digest"
+    }
+  ],
+  "forbidden_outcomes": [
+    {
+      "id": "FORBID_LIBRARY_DELETE",
+      "description": "Installer lifecycle deletes user library content.",
+      "on_observed": "FAIL"
+    },
+    {
+      "id": "FORBID_SECRET_LEAK",
+      "description": "Credential value is written to ordinary config or diagnostics.",
+      "on_observed": "FAIL"
+    },
+    {
+      "id": "FORBID_UNKNOWN_SCHEMA_RESET",
+      "description": "Unknown or newer schema is reset or downgraded.",
+      "on_observed": "FAIL"
+    },
+    {
+      "id": "FORBID_SILENT_STARTUP",
+      "description": "Persistent startup is enabled without explicit user consent.",
+      "on_observed": "FAIL"
+    },
+    {
+      "id": "FORBID_PUBLIC_CONTROL",
+      "description": "Desktop control is exposed through a public TCP/HTTP listener.",
+      "on_observed": "FAIL"
+    },
+    {
+      "id": "FORBID_BLIND_REPLAY",
+      "description": "An ambiguous mutation is blindly replayed without authoritative reconciliation.",
+      "on_observed": "FAIL"
+    },
+    {
+      "id": "FORBID_EARLY_SUCCESS",
+      "description": "Installation is reported complete before payload, integration and launch verification.",
+      "on_observed": "FAIL"
+    }
+  ],
+  "evidence_requirements": {
+    "minimum": "native-clean-machine",
+    "satisfies": [
+      "native-clean-machine",
+      "release-acceptance"
+    ]
+  },
+  "timeout_policy": {
+    "seconds": 1800,
+    "on_unknown_outcome": "reconcile_before_retry"
+  },
+  "cleanup_policy": {
+    "ownership_scope": "scenario_created_only",
+    "best_effort": true,
+    "record_failure": true
+  },
+  "future_owner": {
+    "implementation": [
+      "P009",
+      "P027"
+    ],
+    "acceptance": [
+      "P020",
+      "P028",
+      "P045",
+      "P047"
+    ]
+  },
+  "availability": "IMPLEMENTATION_PENDING",
+  "source_installation": {
+    "source_product_version": "0.1.0",
+    "source_commit": "fa23232ff0154f627ebdd221ec5435134f177af0",
+    "source_schema_version": {
+      "server_migrations": 36,
+      "client_migrations": 7,
+      "local_schema_version": 7
+    },
+    "source_installation_type": "pending supported source type",
+    "source_artifact_identity": {
+      "status": "fixture-representable",
+      "artifact_type": "v0.1.0 release artifact",
+      "identity": "exact artifact identity pending P047"
+    }
+  },
+  "milestones": [
+    "APPLICATION_LAUNCHED",
+    "INSTALLATION_READY"
+  ],
+  "interruption_points": [],
+  "recovery_classifications": [],
+  "capability_conditions": [
+    {
+      "families": [
+        "debian",
+        "ubuntu",
+        "fedora",
+        "rpm_family"
+      ],
+      "require_all": [
+        "native_package_manager"
+      ]
+    }
+  ]
+}

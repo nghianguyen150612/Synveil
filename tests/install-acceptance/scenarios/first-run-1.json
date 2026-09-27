@@ -1,0 +1,223 @@
+{
+  "schema_version": 1,
+  "id": "FIRST-RUN-1",
+  "title": "Connect, authenticate, choose library and begin synchronization",
+  "journey": "A reachable test server is a precondition, not Connect implementation; installer completion, profile/auth/library readiness and sync start are separate; client owns sync; non-empty folders are not deletion state.",
+  "platform": {
+    "family": "linux_generic",
+    "qualified_versions": [
+      "pending exact qualified version (P018/P020)"
+    ],
+    "desktop_session": "required for graphical desktop journeys; otherwise not applicable",
+    "package_manager": "pending native family qualification",
+    "native_gui_package_handler": "pending qualified desktop handler",
+    "applicable_families": [
+      "windows",
+      "debian",
+      "ubuntu",
+      "fedora",
+      "rpm_family",
+      "linux_generic"
+    ]
+  },
+  "architecture": "x86_64",
+  "execution_class": "LIVE_EXTERNAL_DEPENDENCY",
+  "preconditions": [
+    "Disposable dedicated acceptance identity and scenario-owned state.",
+    "No prior Synveil installation, package registration, installer-owned integration or stale acceptance state unless a declared upgrade/recovery source is required.",
+    "A brand-new OS and removal of unrelated user files are not required.",
+    "Seed a non-empty scenario-owned local folder with a marker file to verify safe existing-folder onboarding."
+  ],
+  "required_capabilities": [
+    "graphical_session",
+    "network_access",
+    "loopback_server",
+    "secret_store"
+  ],
+  "artifact_requirements": {
+    "required": true,
+    "artifact_type": "installed desktop/client artifact",
+    "identity_fields": [
+      "product_version",
+      "source_commit",
+      "artifact_type",
+      "filename",
+      "sha256",
+      "platform",
+      "architecture",
+      "release_channel",
+      "trust_status"
+    ]
+  },
+  "steps": [
+    {
+      "id": "STEP-01",
+      "action": "launch",
+      "description": "Launch through the supported installed entrypoint."
+    },
+    {
+      "id": "STEP-02",
+      "action": "connect_to_server",
+      "description": "Connect to the pre-provisioned test server."
+    },
+    {
+      "id": "STEP-03",
+      "action": "authenticate",
+      "description": "Authenticate using the canonical credential owner."
+    },
+    {
+      "id": "STEP-04",
+      "action": "choose_library",
+      "description": "Choose or create the authorized library."
+    },
+    {
+      "id": "STEP-05",
+      "action": "choose_local_folder",
+      "description": "Choose the local synchronization folder."
+    },
+    {
+      "id": "STEP-06",
+      "action": "observe_sync",
+      "description": "Observe synchronization start as a distinct milestone."
+    }
+  ],
+  "assertions": [
+    {
+      "id": "ASSERT-01",
+      "type": "profile_ready",
+      "description": "Profile configuration is ready after choosing Connect."
+    },
+    {
+      "id": "ASSERT-02",
+      "type": "authenticated",
+      "description": "Server authentication succeeds without recording credential bytes in config or output."
+    },
+    {
+      "id": "ASSERT-03",
+      "type": "secret_store_used",
+      "description": "Credential is durably stored by the OS SecretStore and usable by the next product operation."
+    },
+    {
+      "id": "ASSERT-04",
+      "type": "library_ready",
+      "description": "Authorized library selection and local folder binding complete."
+    },
+    {
+      "id": "ASSERT-05",
+      "type": "sync_observed",
+      "description": "Client-owned synchronization begins as a milestone separate from install and first-run completion."
+    },
+    {
+      "id": "ASSERT-06",
+      "type": "ipc_available",
+      "description": "Desktop/client control remains local and scoped to the signed-in user."
+    },
+    {
+      "id": "ASSERT-07",
+      "type": "no_terminal_required",
+      "description": "Connect onboarding and initial sync start require no terminal."
+    }
+  ],
+  "preservation_assertions": [
+    {
+      "id": "PRESERVE-01",
+      "resource": "CREDENTIAL_STATE",
+      "snapshot": "credential_presence_identity_usable"
+    },
+    {
+      "id": "PRESERVE-02",
+      "resource": "CLIENT_SYNC_STATE",
+      "snapshot": "content_digest"
+    },
+    {
+      "id": "PRESERVE-03",
+      "resource": "USER_LIBRARY_CONTENT",
+      "snapshot": "library_tree_digest"
+    }
+  ],
+  "forbidden_outcomes": [
+    {
+      "id": "FORBID_LIBRARY_DELETE",
+      "description": "Installer lifecycle deletes user library content.",
+      "on_observed": "FAIL"
+    },
+    {
+      "id": "FORBID_SECRET_LEAK",
+      "description": "Credential value is written to ordinary config or diagnostics.",
+      "on_observed": "FAIL"
+    },
+    {
+      "id": "FORBID_UNKNOWN_SCHEMA_RESET",
+      "description": "Unknown or newer schema is reset or downgraded.",
+      "on_observed": "FAIL"
+    },
+    {
+      "id": "FORBID_SILENT_STARTUP",
+      "description": "Persistent startup is enabled without explicit user consent.",
+      "on_observed": "FAIL"
+    },
+    {
+      "id": "FORBID_PUBLIC_CONTROL",
+      "description": "Desktop control is exposed through a public TCP/HTTP listener.",
+      "on_observed": "FAIL"
+    },
+    {
+      "id": "FORBID_BLIND_REPLAY",
+      "description": "An ambiguous mutation is blindly replayed without authoritative reconciliation.",
+      "on_observed": "FAIL"
+    },
+    {
+      "id": "FORBID_EARLY_SUCCESS",
+      "description": "Installation is reported complete before payload, integration and launch verification.",
+      "on_observed": "FAIL"
+    },
+    {
+      "id": "FORBID_NONEMPTY_FOLDER_DELETE",
+      "description": "An existing non-empty chosen local folder is treated as authoritative deletion state or its files are silently removed.",
+      "on_observed": "FAIL"
+    }
+  ],
+  "evidence_requirements": {
+    "minimum": "live-external-dependency",
+    "satisfies": [
+      "live-external-dependency",
+      "release-acceptance"
+    ]
+  },
+  "timeout_policy": {
+    "seconds": 1800,
+    "on_unknown_outcome": "reconcile_before_retry"
+  },
+  "cleanup_policy": {
+    "ownership_scope": "scenario_created_only",
+    "best_effort": true,
+    "record_failure": true
+  },
+  "future_owner": {
+    "implementation": [
+      "P037",
+      "P038",
+      "P039",
+      "P040",
+      "P041",
+      "P042"
+    ],
+    "acceptance": [
+      "P036",
+      "P045",
+      "P047"
+    ]
+  },
+  "availability": "IMPLEMENTATION_PENDING",
+  "source_installation": null,
+  "milestones": [
+    "APPLICATION_LAUNCHED",
+    "PROFILE_READY",
+    "AUTHENTICATED",
+    "LIBRARY_READY",
+    "SYNC_STARTED"
+  ],
+  "interruption_points": [],
+  "recovery_classifications": [],
+  "capability_conditions": []
+}

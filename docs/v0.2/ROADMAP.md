@@ -53,7 +53,14 @@ Windows/Linux install, first run, upgrade, repair and uninstall. Record exact
 platform/version/artifact preconditions and assertions; do not claim native
 acceptance from fixtures alone.
 
-Checkpoint: **V0.2 INSTALLATION FOUNDATION LOCKED**
+**Complete:** [clean-machine acceptance contract](CLEAN_MACHINE_ACCEPTANCE.md),
+versioned scenarios and validator, and the [Prompt004 manifest](PROMPT004_MANIFEST.md).
+The contract is defined; native execution remains pending under its named
+acceptance owners.
+
+Phase A checkpoint: **V0.2 INSTALLATION FOUNDATION LOCKED** — the P001–P004
+product, audit, ownership and acceptance contracts are consistent and frozen
+for Phase B. This does not claim that installer journeys are implemented.
 
 ## PHASE B — RELEASE DISTRIBUTION FOUNDATION (P005–011)
 
