@@ -789,12 +789,14 @@ impl BackgroundLaunchBackend for NativeBackgroundLaunchBackend {
         #[cfg(target_os = "windows")]
         {
             return match self.windows_task_state() {
-                WindowsTaskState::Registered => Ok(AutostartState::Enabled),
-                WindowsTaskState::Absent | WindowsTaskState::Unavailable => {
+                WindowsTaskState::Registered | WindowsTaskState::Absent => {
+                    // Replace this same profile task on explicit enable so
+                    // an upgraded or relocated payload refreshes its action.
                     let definition = native_windows_task_definition(self.profile_id)?;
                     windows_register_task(&definition)?;
                     Ok(AutostartState::Enabled)
                 }
+                WindowsTaskState::Unavailable => Err(BackgroundLaunchError::SupervisorUnavailable),
             };
         }
         #[allow(unreachable_code)]
@@ -875,7 +877,15 @@ impl BackgroundLaunchBackend for NativeBackgroundLaunchBackend {
         {
             return match self.windows_task_state() {
                 WindowsTaskState::Registered => {
-                    windows_task_action(self.profile_id, WindowsTaskAction::Stop)
+                    // Task Scheduler /End forcibly terminates the process.
+                    // Use the profile-bound transport so the client follows
+                    // the same bounded host shutdown path as Linux signals.
+                    let endpoint = DesktopControlEndpoint::for_profile(
+                        self.platform.as_ref(),
+                        self.profile_id,
+                    )
+                    .map_err(|_| BackgroundLaunchError::LaunchDenied)?;
+                    request_graceful_client_stop(endpoint).await
                 }
                 WindowsTaskState::Absent => Ok(()),
                 WindowsTaskState::Unavailable => Err(BackgroundLaunchError::SupervisorUnavailable),
@@ -884,6 +894,24 @@ impl BackgroundLaunchBackend for NativeBackgroundLaunchBackend {
         #[allow(unreachable_code)]
         Err(BackgroundLaunchError::Unsupported)
     }
+}
+
+#[cfg(any(windows, test))]
+async fn request_graceful_client_stop(
+    endpoint: DesktopControlEndpoint,
+) -> Result<(), BackgroundLaunchError> {
+    let shutdown = async {
+        let mut client = DesktopControlClient::connect(endpoint)
+            .await
+            .map_err(|_| BackgroundLaunchError::SupervisorUnavailable)?;
+        client
+            .shutdown()
+            .await
+            .map_err(|_| BackgroundLaunchError::Failed)
+    };
+    time::timeout(DEFAULT_PROBE_TIMEOUT, shutdown)
+        .await
+        .map_err(|_| BackgroundLaunchError::Failed)?
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1046,7 +1074,11 @@ impl WindowsTaskDefinition {
             || !executable.is_file()
             || !is_expected_windows_client_name(&executable)
             || principal.is_empty()
-            || principal.contains(['\r', '\n'])
+            || principal.chars().any(char::is_control)
+            || executable
+                .as_os_str()
+                .to_str()
+                .is_none_or(|value| value.chars().any(char::is_control))
         {
             return Err(BackgroundLaunchError::LaunchDenied);
         }
@@ -1076,6 +1108,7 @@ impl WindowsTaskDefinition {
     /// escaped, and the task contains no password or credential element.
     #[must_use]
     pub fn to_xml(&self) -> String {
+        let principal = xml_escape(&self.principal);
         let command = xml_escape(&self.executable.to_string_lossy());
         let working_directory = self
             .executable
@@ -1086,8 +1119,8 @@ impl WindowsTaskDefinition {
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
 <Task version=\"1.4\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\n\
   <RegistrationInfo><Description>Synveil background client</Description></RegistrationInfo>\n\
-  <Triggers><LogonTrigger><Enabled>true</Enabled></LogonTrigger></Triggers>\n\
-  <Principals><Principal id=\"SynveilUser\"><UserId>{}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>\n\
+  <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>{principal}</UserId></LogonTrigger></Triggers>\n\
+  <Principals><Principal id=\"SynveilUser\"><UserId>{principal}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>\n\
   <Settings>\n\
     <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>\n\
     <RestartOnFailure><Interval>PT30S</Interval><Count>5</Count></RestartOnFailure>\n\
@@ -1095,8 +1128,7 @@ impl WindowsTaskDefinition {
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\n\
   </Settings>\n\
   <Actions Context=\"SynveilUser\"><Exec><Command>{command}</Command><WorkingDirectory>{working_directory}</WorkingDirectory></Exec></Actions>\n\
-</Task>\n",
-            xml_escape(&self.principal)
+</Task>\n"
         )
     }
 }
@@ -1132,7 +1164,6 @@ enum WindowsTaskState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum WindowsTaskAction {
     Run,
-    Stop,
     Delete,
 }
 
@@ -1183,11 +1214,25 @@ fn current_windows_user() -> Result<String, BackgroundLaunchError> {
     // SAFETY: buffer is valid writable storage and the length includes its
     // capacity as required by GetUserNameW. No user-controlled pointer exists.
     let success = unsafe { GetUserNameW(buffer.as_mut_ptr(), &mut length) } != 0;
-    if !success || length == 0 {
+    if !success {
         return Err(BackgroundLaunchError::SupervisorUnavailable);
     }
-    String::from_utf16(&buffer[..length as usize])
-        .map_err(|_| BackgroundLaunchError::SupervisorUnavailable)
+    decode_windows_username(&buffer, length as usize)
+}
+
+#[cfg(any(windows, test))]
+fn decode_windows_username(buffer: &[u16], length: usize) -> Result<String, BackgroundLaunchError> {
+    // GetUserNameW includes the terminating NUL in its successful length.
+    let terminated = buffer
+        .get(..length)
+        .filter(|value| value.len() > 1 && value.last() == Some(&0))
+        .ok_or(BackgroundLaunchError::SupervisorUnavailable)?;
+    let username = String::from_utf16(&terminated[..terminated.len() - 1])
+        .map_err(|_| BackgroundLaunchError::SupervisorUnavailable)?;
+    if username.chars().any(char::is_control) {
+        return Err(BackgroundLaunchError::SupervisorUnavailable);
+    }
+    Ok(username)
 }
 
 #[cfg(target_os = "windows")]
@@ -1206,7 +1251,6 @@ fn windows_task_action(
 ) -> Result<(), BackgroundLaunchError> {
     let verb = match action {
         WindowsTaskAction::Run => "/Run",
-        WindowsTaskAction::Stop => "/End",
         WindowsTaskAction::Delete => "/Delete",
     };
     let mut args = vec![
@@ -1607,6 +1651,10 @@ mod tests {
             AutostartState::Enabled
         );
         assert_eq!(
+            manager.enable_autostart().await.unwrap(),
+            AutostartState::Enabled
+        );
+        assert_eq!(
             manager.autostart_status().await.unwrap(),
             AutostartState::Enabled
         );
@@ -1614,6 +1662,85 @@ mod tests {
             manager.disable_autostart().await.unwrap(),
             AutostartState::Disabled
         );
+        assert_eq!(
+            manager.disable_autostart().await.unwrap(),
+            AutostartState::Disabled
+        );
+        assert_eq!(
+            manager.autostart_status().await.unwrap(),
+            AutostartState::Disabled
+        );
+    }
+
+    #[test]
+    fn platform_windows_username_removes_only_the_api_terminator() {
+        let buffer: Vec<_> = "Nguyễn & User\0".encode_utf16().collect();
+        assert_eq!(
+            decode_windows_username(&buffer, buffer.len()).unwrap(),
+            "Nguyễn & User"
+        );
+        for (buffer, length) in [
+            (vec![0], 1),
+            (vec![65], 1),
+            (vec![65, 0], 3),
+            (vec![65, 0, 66, 0], 4),
+            (vec![0xd800, 0], 2),
+        ] {
+            assert!(decode_windows_username(&buffer, length).is_err());
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn platform_supervised_stop_requests_canonical_shutdown_over_ipc() {
+        use std::os::unix::fs::PermissionsExt;
+        use synveil_client_sync::{
+            DesktopSyncHost, DesktopSyncHostConfig, LocalStateConfig, LocalStateStore,
+        };
+        let root = std::env::temp_dir().join(format!("sv116-{}", ServerProfileId::new()));
+        fs::create_dir_all(root.join("runtime/control")).unwrap();
+        fs::set_permissions(root.join("runtime"), fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(
+            root.join("runtime/control"),
+            fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
+        let state = Arc::new(
+            LocalStateStore::open(&LocalStateConfig::new(root.join("state.sqlite3")))
+                .await
+                .unwrap(),
+        );
+        let host = DesktopSyncHost::new(
+            state.clone(),
+            Arc::new(synveil_platform::UnsupportedSecureSecretStore::new()),
+            DesktopSyncHostConfig::default(),
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+        host.start().await.unwrap();
+        let control =
+            crate::DesktopControlHandle::new(host.handle(), DesktopProcessStatus::Running);
+        let endpoint = DesktopControlEndpoint::UnixSocket {
+            path: root.join("runtime/control/client.sock"),
+        };
+        let mut server = crate::DesktopControlServer::bind(endpoint.clone())
+            .await
+            .unwrap();
+        server.start(control.clone()).unwrap();
+        request_graceful_client_stop(endpoint.clone())
+            .await
+            .unwrap();
+        time::timeout(Duration::from_secs(1), control.wait_for_shutdown_request())
+            .await
+            .unwrap();
+        // The helper requests shutdown; the process owner drains and releases
+        // resources through the existing host/server path.
+        server.stop().await.unwrap();
+        host.shutdown().await.unwrap();
+        assert!(!endpoint.unix_path().unwrap().exists());
+        state.close_pool().await;
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1631,6 +1758,8 @@ mod tests {
         let xml = definition.to_xml();
         assert_eq!(definition.task_name(), windows_task_name(profile));
         assert!(xml.contains("<LogonTrigger>"));
+        // The triggerBaseType sequence precedes the logon-specific UserId.
+        assert!(xml.contains("<LogonTrigger><Enabled>true</Enabled><UserId>CURRENT_USER</UserId>"));
         assert!(xml.contains("<RunLevel>LeastPrivilege</RunLevel>"));
         assert!(xml.contains("<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>"));
         assert!(xml.contains("<Interval>PT30S</Interval><Count>5</Count>"));
@@ -1638,6 +1767,16 @@ mod tests {
         assert!(!xml.contains("/RU"));
         assert!(!xml.contains("DATABASE_URL"));
         assert!(!definition.task_name().contains("CURRENT_USER"));
+        let escaped = WindowsTaskDefinition::new(profile, &client, "User & <name>")
+            .expect("XML principal")
+            .to_xml();
+        assert!(escaped.contains("User &amp; &lt;name&gt;"));
+        for invalid in ["user\0", "user\u{1}", "user\r", "user\n"] {
+            assert_eq!(
+                WindowsTaskDefinition::new(profile, &client, invalid),
+                Err(BackgroundLaunchError::LaunchDenied)
+            );
+        }
         let _ = fs::remove_dir_all(root);
     }
 }

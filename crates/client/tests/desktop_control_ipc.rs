@@ -213,6 +213,31 @@ async fn profile_configuration_ipc_is_typed_and_zero_library_safe() {
 }
 
 #[tokio::test]
+async fn platform_state_root_setup_is_rejected_without_mutation() {
+    let fixture = Fixture::new().await;
+    let mut client = DesktopControlClient::connect(fixture.endpoint.clone())
+        .await
+        .unwrap();
+    for role in ["data", "config", "cache", "runtime"] {
+        let root = fixture.root.join(role);
+        let evidence = root.join("platform-evidence");
+        fs::write(&evidence, b"application state").unwrap();
+        let result = client
+            .setup_library("Library".to_owned(), root.to_str().unwrap().to_owned())
+            .await
+            .unwrap();
+        assert_eq!(
+            result,
+            synveil_client::ControlLibrarySetupOutcome::InvalidRoot
+        );
+        assert_eq!(fs::read(&evidence).unwrap(), b"application state");
+        assert!(!root.join(".synveil").exists());
+    }
+    assert!(!fixture.root.join("config/client.conf").exists());
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn sync_control_ipc_persists_before_runtime_state_changes_and_reopens() {
     let fixture = Fixture::new().await;
     let state_path = fixture

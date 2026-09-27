@@ -92,7 +92,7 @@ pub use rebaseline_convergence::{
 };
 pub use replica::{
     FilesystemLocalReplica, LocalFingerprint, LocalObjectKind, LocalReplica, RootBindingId,
-    canonical_root_for_comparison, roots_overlap, validate_onboarding_root,
+    canonical_root_for_comparison, roots_overlap, roots_same, validate_onboarding_root,
 };
 pub use runtime::{
     DEFAULT_SYNC_RUNTIME_MAX_CONCURRENT_LIBRARIES, DEFAULT_SYNC_RUNTIME_POLL_INTERVAL,

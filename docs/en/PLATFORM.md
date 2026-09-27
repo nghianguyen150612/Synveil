@@ -597,3 +597,22 @@ packaging plans into implemented installers.
 - **Decision evidence:** clean destination drill, key recovery, large-data
   transfer interruption, device re-registration, hostname/remote-access change,
   and rollback tests.
+
+## v0.1 Linux/Windows integration audit (Prompt116)
+
+Desktop and background client keep the same product semantics on both platforms.
+Root overlap and same-root matching use components; Linux identity preserves
+native bytes and case, while Windows retains the conservative case comparison
+policy without rewriting display paths. Application-owned state cannot become
+library content. Unsupported names/case collisions fail through existing typed
+errors without renaming or overwriting user content; file contents remain bytes.
+Windows Task Scheduler principal decoding removes the Win32 NUL terminator, and
+supervised stop uses graceful profile-bound IPC rather than forced termination.
+The Windows ZIP's Qt plugin root matches its `platforms/` layout. Linux DEB
+dependencies explicitly include the separate QML modules and QPA plugins used
+by the shell; Qt CI prerequisites match that runtime policy.
+
+The full source audit, required test mapping and native-runtime limitations are
+recorded in [Prompt116 platform audit](../PROMPT116_PLATFORM_AUDIT.md). Windows
+source/static checks on Linux are distinct from native Windows acceptance.
+No macOS/mobile capability, installer framework or migration is introduced.

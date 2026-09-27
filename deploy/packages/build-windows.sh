@@ -290,7 +290,7 @@ fi
 cat > "${STAGE_ROOT}/qt.conf" <<'EOF'
 [Paths]
 Prefix=.
-Plugins=plugins
+Plugins=.
 Qml2Imports=qml
 EOF
 

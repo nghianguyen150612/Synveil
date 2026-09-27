@@ -566,3 +566,21 @@ implementation.
 - **Decision evidence:** clean destination drill, key recovery, transfer dữ liệu
   lớn bị gián đoạn, device re-register, hostname/remote-access change và
   rollback test.
+
+## Audit tích hợp Linux/Windows v0.1 (Prompt116)
+
+Desktop và background client giữ nguyên product semantics trên cả hai platform.
+Overlap và same-root matching so sánh theo component; Linux giữ nguyên byte native
+và phân biệt hoa/thường, Windows dùng policy so sánh case bảo thủ hiện có mà không
+sửa display path. Root thư viện không được chứa hoặc nằm trong application state.
+Tên không hỗ trợ/case collision trả typed error hiện có, không tự đổi tên hoặc
+ghi đè nội dung; nội dung file luôn là byte. Decode principal Task Scheduler loại
+bỏ NUL kết thúc của Win32; supervised stop gửi IPC graceful theo profile thay cho
+forced termination. Qt plugin root trong Windows ZIP khớp layout `platforms/`. DEB trên Linux
+khai báo rõ QML module và QPA plugin mà shell sử dụng; prerequisite Qt trong CI
+khớp policy runtime này.
+
+Source audit, mapping test và giới hạn native runtime nằm trong
+[Prompt116 platform audit](../PROMPT116_PLATFORM_AUDIT.md). Source/static check
+Windows trên Linux không phải native Windows acceptance. Không thêm capability
+macOS/mobile, installer framework hoặc migration.

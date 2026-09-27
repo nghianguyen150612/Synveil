@@ -1,5 +1,6 @@
 use std::{
     collections::VecDeque,
+    ffi::{OsStr, OsString},
     fmt,
     fs::{self, File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
@@ -469,7 +470,7 @@ impl LocalReplica for FilesystemLocalReplica {
                 ClientSyncError::InvalidRoot
             }
         })?;
-        if current != self.root {
+        if !canonical_paths_same(&current, &self.root)? {
             return Err(ClientSyncError::RootRedirected);
         }
         let marker = self.root.join(CONTROL_DIRECTORY).join(MARKER_FILE);
@@ -970,15 +971,13 @@ fn canonical_deferred_root(root: &Path) -> Result<PathBuf, ClientSyncError> {
         std::env::var_os(variable)
             .map(PathBuf::from)
             .and_then(|path| fs::canonicalize(path).ok())
-            .as_ref()
-            == Some(&candidate)
+            .is_some_and(|home| canonical_paths_same(&home, &candidate).unwrap_or(true))
     });
     if is_home
         || std::env::current_dir()
             .ok()
             .and_then(|path| fs::canonicalize(path).ok())
-            .as_ref()
-            == Some(&candidate)
+            .is_some_and(|cwd| canonical_paths_same(&cwd, &candidate).unwrap_or(true))
     {
         return Err(ClientSyncError::InvalidRoot);
     }
@@ -1044,15 +1043,13 @@ fn reject_unsafe_root_choice(root: &Path) -> Result<(), ClientSyncError> {
         std::env::var_os(variable)
             .map(PathBuf::from)
             .and_then(|path| fs::canonicalize(path).ok())
-            .as_ref()
-            == Some(&canonical)
+            .is_some_and(|home| canonical_paths_same(&home, &canonical).unwrap_or(true))
     });
     if is_home
         || std::env::current_dir()
             .ok()
             .and_then(|path| fs::canonicalize(path).ok())
-            .as_ref()
-            == Some(&canonical)
+            .is_some_and(|cwd| canonical_paths_same(&cwd, &canonical).unwrap_or(true))
     {
         return Err(ClientSyncError::InvalidRoot);
     }
@@ -1077,7 +1074,9 @@ pub fn validate_onboarding_root(root: &Path) -> Result<PathBuf, ClientSyncError>
     reject_unsafe_root_choice(root)?;
     reject_redirect(root)?;
     let metadata = fs::metadata(root).map_err(|_| ClientSyncError::InvalidRoot)?;
-    if !metadata.is_dir() || metadata.permissions().readonly() {
+    // Windows' directory READONLY attribute is an Explorer hint, not a write
+    // permission. ACL-denied writes still fail at the existing I/O boundary.
+    if !metadata.is_dir() || (!cfg!(windows) && metadata.permissions().readonly()) {
         return Err(ClientSyncError::InvalidRoot);
     }
     #[cfg(unix)]
@@ -1170,25 +1169,44 @@ pub fn canonical_root_for_comparison(root: &Path) -> Result<PathBuf, ClientSyncE
 pub fn roots_overlap(first: &Path, second: &Path) -> Result<bool, ClientSyncError> {
     let first = canonical_root_for_comparison(first)?;
     let second = canonical_root_for_comparison(second)?;
-    let first = comparison_components(&first);
-    let second = comparison_components(&second);
+    let first = comparison_components(&first)?;
+    let second = comparison_components(&second)?;
     Ok(first.starts_with(&second) || second.starts_with(&first))
 }
 
-fn comparison_components(path: &Path) -> Vec<String> {
+/// Same-root identity uses the same policy as overlap checks, while leaving
+/// the stored/display path unchanged. Missing roots use their canonical parent.
+pub fn roots_same(first: &Path, second: &Path) -> Result<bool, ClientSyncError> {
+    let first = canonical_root_for_comparison(first)?;
+    let second = canonical_root_for_comparison(second)?;
+    canonical_paths_same(&first, &second)
+}
+
+fn canonical_paths_same(first: &Path, second: &Path) -> Result<bool, ClientSyncError> {
+    Ok(comparison_components(first)? == comparison_components(second)?)
+}
+
+fn comparison_components(path: &Path) -> Result<Vec<OsString>, ClientSyncError> {
     path.components()
-        .map(|component| {
-            let value = component.as_os_str().to_string_lossy().into_owned();
-            #[cfg(windows)]
-            {
-                value.to_lowercase()
-            }
-            #[cfg(not(windows))]
-            {
-                value
-            }
-        })
+        .map(|component| root_component_identity(component.as_os_str(), cfg!(windows)))
         .collect()
+}
+
+fn root_component_identity(
+    component: &OsStr,
+    case_insensitive: bool,
+) -> Result<OsString, ClientSyncError> {
+    if case_insensitive {
+        // Preserve the existing conservative Windows case policy. An invalid
+        // Unicode component fails closed instead of aliasing through U+FFFD.
+        component
+            .to_str()
+            .map(|value| OsString::from(value.to_lowercase()))
+            .ok_or(ClientSyncError::InvalidRoot)
+    } else {
+        // Linux path identity is byte-exact, including non-UTF-8 names.
+        Ok(component.to_owned())
+    }
 }
 
 fn reject_existing_redirects(
@@ -1447,6 +1465,90 @@ mod tests {
 
         assert!(roots_overlap(&library, &nested).unwrap());
         assert!(!roots_overlap(&library, &library_prefix).unwrap());
+        assert!(super::roots_same(&library, &library).unwrap());
+        assert!(!super::roots_same(&library, &nested).unwrap());
+        assert!(roots_overlap(&library.join("missing"), &library.join("missing/child")).unwrap());
+        assert!(!roots_overlap(&library.join("missing"), &library.join("missing-old")).unwrap());
+        remove_dir_all_bounded(&root).unwrap();
+    }
+
+    #[test]
+    fn platform_root_case_policy_is_deterministic_without_changing_display() {
+        use std::ffi::OsStr;
+        let windows_components = ["C:", "Sync", "Folder"];
+        let identity = |components: &[&str], insensitive| {
+            components
+                .iter()
+                .map(|value| {
+                    super::root_component_identity(OsStr::new(value), insensitive).unwrap()
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            identity(&windows_components, true),
+            identity(&["c:", "sync", "folder"], true)
+        );
+        assert_ne!(
+            identity(&windows_components, false),
+            identity(&["C:", "sync", "Folder"], false)
+        );
+        assert!(!identity(&["C:", "sync-old"], true).starts_with(&identity(&["c:", "sync"], true)));
+        assert!(
+            identity(&["UNC", "Server", "Share", "sync"], true)
+                .starts_with(&identity(&["unc", "server", "share"], true))
+        );
+        assert_eq!(windows_components, ["C:", "Sync", "Folder"]);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn platform_linux_identity_is_case_sensitive_and_lossless() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+        let root = temporary_directory("platform-lossless");
+        let first = root.join(OsString::from_vec(vec![b'x', 0xfe]));
+        let second = root.join(OsString::from_vec(vec![b'x', 0xff]));
+        let upper = root.join("Sync");
+        let lower = root.join("sync");
+        for path in [&first, &second, &upper, &lower] {
+            fs::create_dir(path).unwrap();
+        }
+        assert!(!roots_overlap(&first, &second).unwrap());
+        assert!(!super::roots_same(&first, &second).unwrap());
+        assert!(!roots_overlap(&upper, &lower).unwrap());
+        assert!(super::root_component_identity(first.file_name().unwrap(), true).is_err());
+        remove_dir_all_bounded(&root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn platform_windows_deferred_roots_and_drive_safety() {
+        let root = temporary_directory("platform-windows");
+        assert!(super::roots_same(&root.join("Missing"), &root.join("missing")).unwrap());
+        assert!(roots_overlap(&root.join("Missing"), &root.join("missing/child")).unwrap());
+        assert!(!roots_overlap(&root.join("Missing"), &root.join("missing-old")).unwrap());
+        let drive_root = root.ancestors().last().unwrap();
+        assert!(validate_onboarding_root(drive_root).is_err());
+        for ambiguous in [r"C:relative", r"\relative", r"relative\folder"] {
+            assert!(super::canonical_root_for_comparison(std::path::Path::new(ambiguous)).is_err());
+        }
+        remove_dir_all_bounded(&root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn platform_windows_readonly_directory_attribute_is_not_a_write_permission() {
+        let root = temporary_directory("platform-readonly-directory");
+        let mut permissions = fs::metadata(&root).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&root, permissions).unwrap();
+        let admitted = validate_onboarding_root(&root);
+        let written = fs::write(root.join("content"), b"unchanged bytes");
+        let mut permissions = fs::metadata(&root).unwrap().permissions();
+        permissions.set_readonly(false);
+        fs::set_permissions(&root, permissions).unwrap();
+        assert!(admitted.is_ok());
+        assert!(written.is_ok());
         remove_dir_all_bounded(&root).unwrap();
     }
 
@@ -1464,7 +1566,7 @@ mod tests {
 
         let parent = ManagedRelativePath::new("folder").unwrap();
         replica.ensure_directory(&parent).unwrap();
-        let bytes = bytes::Bytes::from_static(b"verified bytes");
+        let bytes = bytes::Bytes::from_static(b"LF\nCRLF\r\nCR\r\0\xff\xfe\x80");
         let digest = synveil_core::Sha256Digest::from_bytes(Sha256::digest(&bytes).into());
         let staging = replica
             .stage_content(
@@ -1483,6 +1585,7 @@ mod tests {
             replica.inspect(&destination).unwrap(),
             Some(LocalFingerprint::file(bytes.len() as u64, digest))
         );
+        assert_eq!(fs::read(root.join(destination.as_path())).unwrap(), bytes);
         remove_dir_all_bounded(&root).unwrap();
     }
 

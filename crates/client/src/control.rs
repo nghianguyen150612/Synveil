@@ -1394,6 +1394,12 @@ impl DesktopControlHandle {
             Ok(root) => root,
             Err(_) => return ControlLibrarySetupOutcome::InvalidRoot,
         };
+        if let Err(error) = crate::config::validate_library_platform_root(
+            context.platform.as_ref(),
+            &canonical_root,
+        ) {
+            return map_library_setup_config_error(error);
+        }
         let pending_id = match crate::DesktopClientConfig::pending_library_for_root(
             context.platform.as_ref(),
             context.profile_id,
@@ -3582,10 +3588,63 @@ mod tests {
         assert!(!CONTROL_PIPE_SECURITY_DESCRIPTOR.contains("WD"));
         assert!(!CONTROL_PIPE_SECURITY_DESCRIPTOR.contains("AN"));
         assert!(validate_pipe_name(&windows_pipe_name(test_profile())).is_ok());
+        let profile = "018f12b8-558a-7000-8000-000000000000".to_owned();
+        for invalid in [
+            profile.to_uppercase(),
+            profile.replace('-', ""),
+            format!("{{{profile}}}"),
+            format!("{profile}\\child"),
+            format!("{profile}\0"),
+        ] {
+            assert!(validate_pipe_name(&format!("{CONTROL_PIPE_PREFIX}{invalid}")).is_err());
+        }
         assert!(validate_pipe_name("\\\\.\\pipe\\synveil-not-a-profile-id").is_err());
         assert!(
             validate_pipe_name("\\\\.\\pipe\\other-018f12b8-558a-7000-8000-000000000000").is_err()
         );
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn platform_native_windows_pipe_command_and_shutdown_parity() {
+        use std::{fs, sync::Arc};
+        use synveil_client_sync::{
+            DesktopSyncHost, DesktopSyncHostConfig, LocalStateConfig, LocalStateStore,
+        };
+        let root = std::env::temp_dir().join(format!("sv116-pipe-{}", test_profile()));
+        fs::create_dir(&root).unwrap();
+        let state = Arc::new(
+            LocalStateStore::open(&LocalStateConfig::new(root.join("state.sqlite3")))
+                .await
+                .unwrap(),
+        );
+        let host = DesktopSyncHost::new(
+            state.clone(),
+            Arc::new(synveil_platform::UnsupportedSecureSecretStore::new()),
+            DesktopSyncHostConfig::default(),
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+        host.start().await.unwrap();
+        let control = DesktopControlHandle::new(host.handle(), DesktopProcessStatus::Running);
+        let endpoint = DesktopControlEndpoint::NamedPipe {
+            name: windows_pipe_name(test_profile()),
+        };
+        let mut server = DesktopControlServer::bind(endpoint.clone()).await.unwrap();
+        server.start(control.clone()).unwrap();
+        let mut client = DesktopControlClient::connect(endpoint).await.unwrap();
+        assert_eq!(client.ping().await.unwrap(), DesktopProcessStatus::Running);
+        assert!(client.list_libraries().await.unwrap().libraries.is_empty());
+        client.shutdown().await.unwrap();
+        time::timeout(Duration::from_secs(1), control.wait_for_shutdown_request())
+            .await
+            .unwrap();
+        drop(client);
+        server.stop().await.unwrap();
+        host.shutdown().await.unwrap();
+        state.close_pool().await;
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

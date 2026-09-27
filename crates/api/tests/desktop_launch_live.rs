@@ -884,6 +884,62 @@ fn assert_success(status: ExitStatus, label: &str) {
 }
 
 #[tokio::test]
+#[ignore = "explicit Prompt116 lightweight Linux process/Qt/IPC gate; run serially with real binaries"]
+async fn live_platform_graceful_shutdown_acceptance() {
+    let mut fixture = ProcessFixture::create().await;
+    let _environment = fixture.with_parent_environment();
+    for termination in ["INT", "TERM", "IPC"] {
+        let log = fixture
+            .root
+            .join(format!("platform-{termination}-client.log"));
+        let output = File::create(&log).expect("client log");
+        let mut command = Command::new(&fixture.client_binary);
+        fixture.child_command_environment(&mut command, &fixture.root);
+        command
+            .stdin(Stdio::null())
+            .stdout(output.try_clone().unwrap())
+            .stderr(output);
+        let mut client_process = ChildCapture {
+            child: command.spawn().expect("real client"),
+            log,
+        };
+        let mut control = fixture.wait_for_control().await;
+        if termination == "INT" {
+            let mut shell = fixture.spawn_shell(
+                &fixture.desktop_binary,
+                fixture.root.join("platform-gui.log"),
+                true,
+                false,
+            );
+            assert_success(wait_for_child_exit(&mut shell).await, "platform GUI quit");
+            assert_eq!(control.ping().await.unwrap(), DesktopProcessStatus::Running);
+            assert_eq!(
+                fixture
+                    .wait_for_client_pids(&fixture.client_binary, 1)
+                    .await,
+                vec![client_process.child.id()]
+            );
+            eprintln!("PLATFORM-LIVE GUI quit -> exact client remains Running over real UDS");
+        }
+        if termination == "IPC" {
+            control
+                .shutdown()
+                .await
+                .expect("graceful IPC shutdown accepted");
+        } else {
+            kill_pid(client_process.child.id(), termination);
+        }
+        drop(control);
+        assert_success(wait_for_child_exit(&mut client_process).await, termination);
+        fixture.wait_for_endpoint_absent().await;
+        fixture.sqlite_integrity_check().await;
+        eprintln!(
+            "PLATFORM-LIVE {termination} -> successful process exit, endpoint removed, SQLite preserved"
+        );
+    }
+}
+
+#[tokio::test]
 #[ignore = "explicit Prompt 99 Linux live launch gate; requires Qt and a systemd user session"]
 async fn live_production_desktop_launch_acceptance() {
     let mut fixture = ProcessFixture::create().await;

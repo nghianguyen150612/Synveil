@@ -17,7 +17,7 @@ use std::{
 
 use synveil_client_sync::{
     ClientSyncError, DesktopSyncHostConfig, DesktopSyncLibraryConfig, FilesystemLocalReplica,
-    LocalStateStore, ServerProfileId, canonical_root_for_comparison, roots_overlap,
+    LocalStateStore, ServerProfileId, roots_overlap, roots_same,
 };
 use synveil_core::LibraryId;
 use synveil_platform::PlatformRuntime;
@@ -422,6 +422,18 @@ impl DesktopClientConfig {
         DesktopSyncPauseStore::for_platform(platform)
     }
 
+    /// Application state cannot become library content, including when a
+    /// configured library would contain a state directory as a descendant.
+    pub(crate) fn validate_platform_roots(
+        &self,
+        platform: &dyn PlatformRuntime,
+    ) -> Result<(), DesktopClientConfigError> {
+        for library in self.libraries.iter().chain(self.pending_libraries.iter()) {
+            validate_library_platform_root(platform, library.root())?;
+        }
+        Ok(())
+    }
+
     /// Persist a pending root choice before making a network or filesystem
     /// side effect. The append is fsynced and the manifest remains bounded.
     pub fn append_pending_library_binding(
@@ -456,9 +468,8 @@ impl DesktopClientConfig {
         if config.profile_id != profile_id {
             return Err(DesktopClientConfigError::ProfileMismatch);
         }
-        let canonical = canonical_root_for_comparison(root)?;
         for pending in &config.pending_libraries {
-            if canonical_root_for_comparison(pending.root())? == canonical {
+            if roots_same(pending.root(), root)? {
                 return Ok(Some(pending.library_id()));
             }
         }
@@ -686,6 +697,7 @@ fn append_library_binding(
         return Err(DesktopClientConfigError::ConfigurationWriteFailed);
     }
     validate_root_manifest(root)?;
+    validate_library_platform_root(platform, root)?;
     let path = ensure_profile_manifest(platform)?;
     let bytes = fs::read(&path).map_err(|_| DesktopClientConfigError::ConfigurationUnreadable)?;
     if bytes.len() > MAX_CONFIG_BYTES {
@@ -705,12 +717,8 @@ fn append_library_binding(
         .pending_libraries
         .iter()
         .find(|library| library.library_id() == library_id);
-    let equivalent_root = |configured: &DesktopClientLibrary| {
-        canonical_root_for_comparison(configured.root())
-            .ok()
-            .zip(canonical_root_for_comparison(root).ok())
-            .is_some_and(|(configured, requested)| configured == requested)
-    };
+    let equivalent_root =
+        |configured: &DesktopClientLibrary| roots_same(configured.root(), root).unwrap_or(false);
     if active.is_some_and(|library| !equivalent_root(library))
         || pending.is_some_and(|library| !equivalent_root(library))
     {
@@ -761,6 +769,36 @@ fn config_path(platform: &dyn PlatformRuntime) -> Result<PathBuf, DesktopClientC
                 }
             },
         )
+}
+
+pub(crate) fn validate_library_platform_root(
+    platform: &dyn PlatformRuntime,
+    root: &Path,
+) -> Result<(), DesktopClientConfigError> {
+    let paths = platform
+        .resolve_paths()
+        .map_err(|_| DesktopClientConfigError::PlatformPaths)?;
+    reject_state_root_overlap(root, &paths)?;
+    let manifest = config_path(platform)?;
+    let parent = manifest
+        .parent()
+        .ok_or(DesktopClientConfigError::PlatformPaths)?;
+    if roots_overlap(root, parent)? {
+        return Err(DesktopClientConfigError::InvalidRootPath);
+    }
+    Ok(())
+}
+
+fn reject_state_root_overlap(
+    root: &Path,
+    paths: &synveil_platform::PlatformPaths,
+) -> Result<(), DesktopClientConfigError> {
+    for kind in synveil_platform::PathKind::ALL {
+        if roots_overlap(root, paths.root(kind))? {
+            return Err(DesktopClientConfigError::InvalidRootPath);
+        }
+    }
+    Ok(())
 }
 
 /// Return the canonical manifest path, creating only the process-owned
@@ -962,6 +1000,34 @@ mod tests {
             DesktopClientLibrary::new(library_id, "/tmp/bad\nroot"),
             Err(DesktopClientConfigError::InvalidRootPath)
         ));
+    }
+
+    #[test]
+    fn platform_application_state_roots_cannot_become_library_content() {
+        let base =
+            std::env::temp_dir().join(format!("synveil-platform-roots-{}", ServerProfileId::new()));
+        let paths = synveil_platform::PlatformPaths::new(
+            base.join("data"),
+            base.join("config"),
+            base.join("cache"),
+            base.join("runtime"),
+        );
+        fs::create_dir_all(&base).unwrap();
+        for kind in synveil_platform::PathKind::ALL {
+            let state = paths.root(kind);
+            fs::create_dir(state).unwrap();
+            fs::write(state.join("evidence"), b"preserved state").unwrap();
+            for unsafe_root in [state.to_path_buf(), state.join("child"), base.clone()] {
+                assert!(reject_state_root_overlap(&unsafe_root, &paths).is_err());
+            }
+            assert_eq!(
+                fs::read(state.join("evidence")).unwrap(),
+                b"preserved state"
+            );
+        }
+        assert!(reject_state_root_overlap(&base.join("data-old"), &paths).is_ok());
+        assert!(reject_state_root_overlap(&base.join("library"), &paths).is_ok());
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[test]

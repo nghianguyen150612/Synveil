@@ -33,7 +33,11 @@ jobs:
             libdbus-1-dev \
             qt6-base-dev \
             qt6-declarative-dev \
-            qt6-tools-dev-tools
+            qt6-tools-dev-tools \
+            qt6-qpa-plugins \
+            qml6-module-qtqml qml6-module-qtqml-models qml6-module-qtqml-workerscript \
+            qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-dialogs \
+            qml6-module-qtquick-layouts qml6-module-qtquick-templates qml6-module-qtquick-window
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -71,7 +75,11 @@ jobs:
             libdbus-1-dev \
             qt6-base-dev \
             qt6-declarative-dev \
-            qt6-tools-dev-tools
+            qt6-tools-dev-tools \
+            qt6-qpa-plugins \
+            qml6-module-qtqml qml6-module-qtqml-models qml6-module-qtqml-workerscript \
+            qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-dialogs \
+            qml6-module-qtquick-layouts qml6-module-qtquick-templates qml6-module-qtquick-window
 
       - name: Build and test the native desktop shell
         run: ./scripts/test-desktop-ui.sh
@@ -130,8 +138,8 @@ jobs:
       - name: Test the Windows authentication command and redaction boundary
         run: cargo test -p synveil-client --lib --locked authentication
 
-      - name: Check the Windows sync-host authentication boundary
-        run: cargo check -p synveil-client-sync --locked
+      - name: Test the Windows sync-host and shared filesystem policy
+        run: cargo test -p synveil-client-sync --lib --locked
 
       - name: Build the native desktop shell
         run: cargo build -p synveil-desktop --locked
@@ -210,10 +218,17 @@ jobs:
           Write-Host "PE executable: $binary"
           Write-Host "PE machine: AMD64 (0x8664)"
 
-      - name: Load the QML shell offscreen
+      - name: Load the packaged QML shell with the Windows platform plugin
         shell: pwsh
         run: |
-          $env:QT_QPA_PLATFORM = "offscreen"
+          $package = Get-ChildItem -Path "target\windows-packages" -Filter "*.zip" | Select-Object -First 1
+          if ($null -eq $package) { throw "The Windows runtime ZIP is missing" }
+          $packageRoot = Join-Path $env:RUNNER_TEMP "synveil-packaged-runtime"
+          Expand-Archive -LiteralPath $package.FullName -DestinationPath $packageRoot -Force
+          Remove-Item Env:QT_PLUGIN_PATH, Env:QT_QPA_PLATFORM_PLUGIN_PATH, Env:QML_IMPORT_PATH, Env:QML2_IMPORT_PATH -ErrorAction SilentlyContinue
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          $env:QT_QPA_PLATFORM = "windows"
+          $env:QT_QUICK_BACKEND = "software"
           $smokeRoot = Join-Path $env:RUNNER_TEMP "synveil-desktop-smoke"
           New-Item -ItemType Directory -Force -Path $smokeRoot, "$smokeRoot\config", "$smokeRoot\data", "$smokeRoot\cache", "$smokeRoot\runtime" | Out-Null
           $env:SYNVEIL_CONFIG_DIR = "$smokeRoot\config"
@@ -222,7 +237,7 @@ jobs:
           $env:SYNVEIL_RUNTIME_DIR = "$smokeRoot\runtime"
           $env:SYNVEIL_CLIENT_CONFIG = "$smokeRoot\config\client.conf"
           Push-Location $smokeRoot
-          & (Resolve-Path "$env:GITHUB_WORKSPACE\target\release\synveil-desktop.exe") --qml-smoke-test
+          & (Join-Path $packageRoot "synveil-desktop.exe") --qml-smoke-test
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Pop-Location
 

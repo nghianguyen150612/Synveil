@@ -86,3 +86,30 @@ fn windows_packager_has_complete_explicit_runtime_policy() {
         );
     }
 }
+
+#[test]
+fn platform_qt_plugin_discovery_matches_the_windows_manifest_layout() {
+    let content = fs::read_to_string(script()).expect("read Windows packager");
+    let configuration = content
+        .split("cat > \"${STAGE_ROOT}/qt.conf\" <<'EOF'\n")
+        .nth(1)
+        .expect("qt.conf owner")
+        .split("\nEOF")
+        .next()
+        .unwrap();
+    let value = |key: &str| {
+        configuration
+            .lines()
+            .find_map(|line| line.strip_prefix(key))
+            .unwrap()
+    };
+    assert_eq!(value("Prefix="), ".");
+    assert_eq!(value("Plugins="), ".");
+    assert_eq!(value("Qml2Imports="), "qml");
+    assert!(content.contains("${STAGE_ROOT}/platforms/qwindows.dll"));
+    // The native Windows job exercises the shipped qwindows plugin, after
+    // extracting the ZIP outside the source/build tree and SDK plugin paths.
+    let ci = fs::read_to_string(repo_root().join(".github/workflows/ci.yml")).unwrap();
+    assert!(ci.contains("Expand-Archive"));
+    assert!(ci.contains("$env:QT_QPA_PLATFORM = \"windows\""));
+}

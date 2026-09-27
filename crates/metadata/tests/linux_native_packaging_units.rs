@@ -276,6 +276,34 @@ fn dependencies_are_minimal_and_exclude_server_packages() {
         depends_line.contains("libc6"),
         "must depend on libc6 (dynamic loader)"
     );
+    for runtime in [
+        "qt6-qpa-plugins",
+        "qml6-module-qtqml",
+        "qml6-module-qtqml-models",
+        "qml6-module-qtqml-workerscript",
+        "qml6-module-qtquick",
+        "qml6-module-qtquick-controls",
+        "qml6-module-qtquick-dialogs",
+        "qml6-module-qtquick-layouts",
+        "qml6-module-qtquick-templates",
+        "qml6-module-qtquick-window",
+    ] {
+        let depends = depends_line.split_once('=').unwrap().1.trim_matches('"');
+        assert!(
+            depends
+                .split(',')
+                .map(str::trim)
+                .any(|dependency| dependency == runtime),
+            "DEB must require the QML/QPA runtime {runtime}"
+        );
+        for workflow in ["ci.yml", "linux-packages.yml", "postgres-17.yml"] {
+            let ci = read(&repo_root().join(".github/workflows").join(workflow));
+            assert!(
+                ci.contains(runtime),
+                "Qt CI prerequisite missing {runtime} in {workflow}"
+            );
+        }
+    }
     let spec = read(&repo_root().join("deploy/packages/rpm/synveil.spec.tmpl"));
     assert!(spec.contains("Requires:"), "RPM must declare Requires");
     assert!(spec.contains("systemd"), "RPM must require systemd");

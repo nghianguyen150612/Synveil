@@ -86,6 +86,27 @@ mod tests {
 
     #[test]
     fn portability_blocks_windows_and_separator_hazards_without_rewriting() {
+        for value in [
+            "CON",
+            "PRN",
+            "AUX",
+            "NUL",
+            "COM1",
+            "LPT1",
+            "com9.txt",
+            "LPT\u{b9}.log",
+        ] {
+            assert_eq!(
+                validate_logical_name(value),
+                NamePortability::WindowsReservedDeviceName
+            );
+        }
+        for value in ["a:b", "a<b", "a>b", "a\"b", "a|b", "a?b", "a*b"] {
+            assert_eq!(
+                validate_logical_name(value),
+                NamePortability::ContainsWindowsIllegalCharacter
+            );
+        }
         assert_eq!(
             validate_logical_name("report.txt"),
             NamePortability::Portable

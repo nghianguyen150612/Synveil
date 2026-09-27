@@ -144,6 +144,7 @@ impl DesktopClientProcess {
         platform: Arc<dyn PlatformRuntime>,
         config: DesktopClientConfig,
     ) -> Result<Self, DesktopProcessError> {
+        config.validate_platform_roots(platform.as_ref())?;
         let state_config = synveil_client_sync::LocalStateConfig::from_platform(platform.as_ref())?;
         let sync_pause_store = DesktopSyncPauseStore::for_platform(platform.as_ref())?;
         let sync_paused = config.sync_paused();
