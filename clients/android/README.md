@@ -2,14 +2,17 @@
 
 ## Status
 
-Prompt 1 establishes the native Android foundation only. The current build is a
-real Compose/Material 3 application shell that identifies itself as Synveil and
-reports which product capabilities are not implemented yet.
+Prompt 2 adds durable local server-profile configuration on top of the native
+Android foundation. The app can create, edit, select, and remove non-secret
+server profiles without making network requests. Authentication, transport,
+and synchronization remain future milestones.
 
 ## Stack and targets
 
 - Kotlin with Gradle Kotlin DSL and one `app` module.
 - Jetpack Compose with Material 3, AndroidX lifecycle, and Navigation Compose.
+- AndroidX Preferences DataStore with a versioned kotlinx.serialization JSON
+  representation for small local application configuration.
 - `compileSdk = 36` and `targetSdk = 36` for the Android 16 baseline.
 - Samsung One UI 8.5 is a compatibility target, not a proprietary dependency.
 - Pre-release namespace and application ID are both `com.synveil.android`.
@@ -24,16 +27,40 @@ app/src/main/java/com/synveil/android/
 ├── app/                 # Activity and navigation composition root
 ├── core/model/          # Small app-facing value models
 ├── core/ui/             # Theme and shared Compose UI foundation
+├── data/profile/        # DataStore-backed profile repository and schema
 └── feature/
-    ├── home/            # Minimal startup/home surface
+    ├── home/            # Startup/home surface
+    ├── profile/         # Profile list, editor, and lifecycle-safe ViewModels
     └── startup/         # Lifecycle-safe presentation state and ViewModel
 ```
 
 The intended dependency direction is Compose UI -> presentation state ->
-future domain/use-case boundaries -> future repository/data adapters. Prompt 1
-does not add a repository or persistence adapter because no network, database,
-credential, or filesystem behavior is implemented yet. Compose code therefore
-has no direct HTTP, storage, protocol serialization, or filesystem access.
+future domain/use-case boundaries -> repository -> data adapter. Compose code
+does not access DataStore directly and has no HTTP, credential, database,
+protocol serialization, or filesystem responsibilities.
+
+### Server profiles
+
+Each profile stores an opaque locally generated UUIDv7, a human-readable label,
+canonical server origin, transport policy, creation time, and a nullable future
+connection timestamp. Profile IDs are unrelated to hostnames, owners, Devices,
+or server database IDs and remain unchanged when a profile is edited. Changing
+the origin is an explicit origin reconfiguration and clears any future
+`lastConnectedAt` value.
+
+Production profiles require HTTPS. The only HTTP exception is the explicit
+`LOOPBACK_TEST_HTTP` policy enabled in debug builds for numeric `127.0.0.1` or
+`[::1]` origins. Hostnames such as `localhost`, LAN addresses, and `.local`
+names remain rejected. Origins cannot contain credentials, paths, queries,
+fragments, backslashes, or malformed ports. No TLS bypass or cleartext network
+policy is configured by Prompt 2.
+
+The DataStore representation is schema version 1 and contains only the active
+profile ID plus non-secret profile records. It contains no password, session,
+CSRF, enrollment, bearer, API-key, or private-key fields. Corrupt or invalid
+persisted values fail closed as a typed configuration error rather than being
+silently repaired. Duplicate canonical origins and invalid active-profile
+references are rejected atomically.
 
 `MainActivity` enables edge-to-edge and applies safe drawing insets rather than
 hardcoding system bar sizes. Navigation Compose owns the initial route and
@@ -81,8 +108,8 @@ portability and FFI decision.
 
 ## Unsupported features and next milestone
 
-Authentication, server profiles, networking, sync, uploads, backups, file
-browsing, local persistence, background work, and production signing are not
-implemented. The next Android milestone should review the server device/profile
-and authentication protocol before adding a narrow client boundary and its
-deterministic tests.
+Authentication, server enrollment, networking, health probes, sync, uploads,
+backups, file browsing, background work, and production signing are not
+implemented. The next Android milestone should add a reviewed HTTPS transport
+that consumes the canonical origin produced here without adding credential
+storage or API behavior prematurely.

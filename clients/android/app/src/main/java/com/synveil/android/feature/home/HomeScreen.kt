@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -13,12 +14,26 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.synveil.android.R
+import com.synveil.android.data.profile.ServerProfileRepository
 import com.synveil.android.feature.startup.StartupViewModel
 
 @Composable
-fun HomeScreen(startupViewModel: StartupViewModel = viewModel()) {
+fun HomeScreen(
+    repository: ServerProfileRepository,
+    onOpenProfiles: () -> Unit,
+    startupViewModel: StartupViewModel = viewModel(
+        factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                return StartupViewModel(repository) as T
+            }
+        },
+    ),
+) {
     val uiState by startupViewModel.uiState.collectAsStateWithLifecycle()
 
     Column(
@@ -48,6 +63,9 @@ fun HomeScreen(startupViewModel: StartupViewModel = viewModel()) {
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
+        }
+        Button(onClick = onOpenProfiles) {
+            Text(text = "Manage server profiles")
         }
         Text(
             text = stringResource(R.string.foundation_boundary_note),
