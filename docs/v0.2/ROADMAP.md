@@ -30,6 +30,11 @@ Inventory every current package, install script, service, first-run flow,
 dependency, manual step and blocker inherited from v0.1. Label source, fixtures,
 native platform and environment-gated evidence separately.
 
+**Complete:** [existing installation surface audit](EXISTING_INSTALLATION_SURFACE_AUDIT.md)
+and [Prompt002 evidence manifest](PROMPT002_MANIFEST.md). The audit records
+the v0.1.0 source baseline and distinguishes CI package/smoke evidence from
+clean-machine GUI installation acceptance.
+
 ### P003 — Installation Architecture and Component Ownership
 
 Define installer engine, platform adapters, package ownership, server bootstrap
@@ -410,7 +415,8 @@ inspecting durable files and the worktree; never reset or clean unrelated work.
 | Record | State |
 | --- | --- |
 | Prompt001 | Contract, architecture record and authoritative prompt map are documented; no installer or runtime behavior is implemented. |
-| Prompt002–048 | Planned by the exact named allocation above; no completion or clean-machine delivery is claimed. |
+| Prompt002 | Existing v0.1 installation/deployment surface audited; see the evidence manifest. No installer/runtime behavior was implemented by this audit. |
+| Prompt003–048 | Planned by the exact named allocation above; no completion or clean-machine delivery is claimed. |
 
 Future completion records must point to concrete source and validation evidence
 and state unavailable gates honestly. A successful Prompt001 push is not a v0.2

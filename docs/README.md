@@ -53,6 +53,7 @@ installation and recovery.
 v0.1 đã phát hành. Cài đặt/phục hồi hiện tại vẫn theo hướng dẫn release ở trên.
 
 - [v0.2 installation product contract](v0.2/INSTALLATION_PRODUCT_CONTRACT.md)
+- [v0.2 existing installation surface audit](v0.2/EXISTING_INSTALLATION_SURFACE_AUDIT.md)
 - [v0.2 Prompt001–048 scope roadmap](v0.2/ROADMAP.md)
 - [ADR-049: installation architecture](adr/ADR-049-v0.2-effortless-installation-architecture.md)
 - [Prompt001 documentation manifest](v0.2/PROMPT001_MANIFEST.md)
