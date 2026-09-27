@@ -1,54 +1,357 @@
 # Synveil v0.2 roadmap — Effortless Setup
 
-Status: **Prompt001 product roadmap; implementation targets, not shipped claims**.
-Released baseline: `v0.1.0` at
+Status: **Authoritative Prompt001–048 roadmap; implementation targets, not shipped claims**.
+Target release: `v0.2.0`. Development starts from released v0.1.0 at
 `fa23232ff0154f627ebdd221ec5435134f177af0`.
 
-The objective is a clean supported computer → download → install → launch →
-guided setup → first library → synchronization, without a terminal on the
-ordinary desktop path. The [installation product contract](INSTALLATION_PRODUCT_CONTRACT.md)
-and [ADR-049](../adr/ADR-049-v0.2-effortless-installation-architecture.md) govern
-the work. The [v0.1 roadmap](../en/ROADMAP.md) remains historical context;
-this document does not reclassify its future platform/features as v0.2 delivery.
+The north star is:
 
-The user supplied the seven phases below and explicitly selected a
-scope-oriented allocation when no separate Prompt001–048 breakdown was supplied.
-The ranges record that allocation as planning guidance, not a recovered list
-of previously approved implementation prompts. Detailed later prompts must
-define their own prerequisites, owners, allowed paths, tests and completion
-gates. Scope adjustments must retain the release contract and be recorded.
+> Clean machine → installed Synveil → usable first-run experience → syncing files, with no terminal required for normal users.
 
-## Phase allocation: Prompt001–048
+The [installation product contract](INSTALLATION_PRODUCT_CONTRACT.md) and
+[ADR-049](../adr/ADR-049-v0.2-effortless-installation-architecture.md) define
+the product and architecture constraints for this roadmap. Every successful
+prompt validates its scope, stages explicit reviewed paths, creates one focused
+commit, pushes `origin/main`, verifies the live remote and clean worktree, then
+reports its gate. Prompt048 is the sole v0.2.0 tag/release gate.
 
-| Phase | Prompts | Scope | Exit evidence |
-| --- | --- | --- | --- |
-| Installation contract | **001** | Product language, primary artifacts, installer/first-run boundary, ownership, recovery, acceptance journeys and this roadmap | Documentation validated; version/schema unchanged; one documentation commit pushed. No installer implemented. |
-| Distribution foundation | **002–008** | Freeze OS/architecture/runtime support, release trust/signatures and verified acquisition, payload/component identities, common typed plans/results, ownership verification and platform adapter boundaries | Exact support matrix and trust bootstrap defined; safe plans and verification reject incompatible/tampered inputs; existing manifest/native manager remain authoritative. |
-| Linux installation | **009–016** | Qualify DEB and RPM GUI install/update/removal, dependency closure and user integration; deliver AppImage and verified quick-install script; native recovery/repair | INSTALL-JOURNEY-2/3/4/5 plus Linux repair/uninstall/interruption variants pass on each named native environment. |
-| Windows installer | **017–024** | Select and implement `SynveilSetup.exe`, per-user install, runtime closure, minimal screens/options, current-user integration, verified Finish/Open, repair/update/removal | INSTALL-JOURNEY-1 plus Windows repair/uninstall/interruption variants pass on qualified clean Windows. ZIP remains an optional advanced artifact. |
-| Guided self-hosting | **025–034** | Close managed-database and host-supervisor decisions; define host component delivery, protected bootstrap, storage/access choices, readiness, compatible lifecycle and recoverable setup | FIRST-RUN-2's managed host foundation works without manual infrastructure; database/service/access decisions have the required evidence and accepted ADRs. |
-| First-run UX | **035–042** | Deliver Host/Connect entry, canonical authentication/profile/library flows, safe folder selection, understandable progress/errors, accessibility, bilingual copy and resume behavior | FIRST-RUN-1/2 pass through application UI, retaining existing authentication/sync/root/unknown-outcome ownership. |
-| Release hardening | **043–048** | Full clean-machine journey matrix, v0.1.0/supported-source upgrade preservation, backup/restore, repair/uninstall/power-loss drills, usability and release documentation/artifact verification | Native evidence for advertised platforms and all applicable journeys; frozen release policy satisfied; no engineering-doc dependency on ordinary installation. |
+## PHASE A — PRODUCT / INSTALLATION CONTRACT (P001–004)
 
-The allocation covers each prompt from 001 through 048 once. It is deliberately
-scope-oriented: it does not pre-authorize features, prescribe every prompt's
-implementation, or imply a version bump/tag/release date. Linux and Windows
-work depend on distribution foundation; guided hosting needs approved component
-acquisition and lifecycle plans; first-run integrates those capabilities;
-release hardening cannot promote incomplete phases.
+### P001 — Effortless Installation Product Contract and Blueprint
+
+Freeze installer philosophy, flows, support matrix, architecture and acceptance
+criteria. Establishes the [installation product contract](INSTALLATION_PRODUCT_CONTRACT.md),
+ADR-049 and the authoritative roadmap. Documentation only; does not implement
+an installer or change v0.1 runtime behavior.
+
+### P002 — Existing Installation Surface Audit
+
+Inventory every current package, install script, service, first-run flow,
+dependency, manual step and blocker inherited from v0.1. Label source, fixtures,
+native platform and environment-gated evidence separately.
+
+### P003 — Installation Architecture and Component Ownership
+
+Define installer engine, platform adapters, package ownership, server bootstrap
+boundary, rollback/repair model and privilege model. Reconcile existing data,
+credential, process and migration owners before implementation.
+
+### P004 — Clean-Machine Acceptance Harness
+
+Create deterministic acceptance definitions and machine-readable scenarios for
+Windows/Linux install, first run, upgrade, repair and uninstall. Record exact
+platform/version/artifact preconditions and assertions; do not claim native
+acceptance from fixtures alone.
+
+Checkpoint: **V0.2 INSTALLATION FOUNDATION LOCKED**
+
+## PHASE B — RELEASE DISTRIBUTION FOUNDATION (P005–011)
+
+### P005 — Unified Release Artifact Manifest
+
+Define one authoritative artifact metadata format for DEB, RPM, AppImage,
+Windows installer and retained portable artifacts.
+
+### P006 — Release Download and Integrity Contract
+
+Specify SHA-256/signature-ready metadata, version selection, architecture
+detection and fail-closed download verification. Checksums alone do not
+authenticate metadata delivered by the same untrusted source.
+
+### P007 — Installer Common Engine
+
+Define shared installer stages:
+
+```text
+Preflight → Plan → Install → Integrate → Verify → Complete
+```
+
+Use native package managers and existing ownership authorities where applicable.
+
+### P008 — Installation Transaction Journal
+
+Define durable interrupted-install state, resumability and safe retry. Reconcile
+an unknown mutation outcome before repeating it; never treat it as permission
+for a blind replay.
+
+### P009 — Upgrade / Repair / Uninstall Common Contract
+
+Define shared semantics for reinstall, repair and removal while preserving user
+data and respecting the existing package/database/client ownership boundaries.
+
+### P010 — Installer Error Model
+
+Map internal failures to finite, safe user-facing categories, actionable next
+steps and bounded redacted diagnostics.
+
+### P011 — Release Channel and Version Selection
+
+Establish stable-channel metadata and compatible version selection. Do not add
+automatic update behavior unless a later prompt explicitly enables it.
+
+Checkpoint: **V0.2 DISTRIBUTION CORE READY**
+
+## PHASE C — LINUX EASY INSTALL (P012–020)
+
+### P012 — Linux Package Integration Reconciliation
+
+Unify current DEB/RPM lifecycle with installer-common semantics while retaining
+native manager ownership, safe hooks and data-preserving package removal.
+
+### P013 — Debian/Ubuntu Desktop Package UX
+
+Deliver and qualify double-click DEB installation, desktop entry, runtime
+dependencies and first launch on each advertised Debian/Ubuntu environment.
+
+### P014 — Fedora/RPM Desktop Package UX
+
+Deliver and qualify the equivalent native RPM experience on each advertised
+Fedora/RPM environment.
+
+### P015 — AppImage Build Foundation
+
+Produce a self-contained supported AppImage without breaking SecretStore or
+IPC semantics. Define the qualified runtime baseline and fail-closed behavior.
+
+### P016 — AppImage Runtime Integration
+
+Define desktop integration, icons, safe writable state and background-client
+strategy for the portable AppImage lifecycle.
+
+### P017 — Linux Quick Install Script
+
+Implement the supported installer script using `curl ... | sh` or an explicitly
+documented safer equivalent. Verify release identity and payload before
+privileged package changes.
+
+### P018 — Linux Distro and Architecture Detection
+
+Detect package family, architecture and version compatibility. Choose an
+artifact only when the environment is qualified; reject unsupported systems.
+
+### P019 — Linux First Launch Integration
+
+Deliver Install → Open Synveil without requiring ordinary users to enter
+manual systemd commands. Preserve explicit autostart choices.
+
+### P020 — Linux Clean-Machine Acceptance
+
+Validate DEB, RPM, AppImage and script paths on disposable supported native
+environments, including launch, repair, upgrade, data-preserving uninstall and
+interruption recovery as applicable.
+
+Checkpoint: **V0.2 LINUX INSTALL EXPERIENCE READY**
+
+## PHASE D — WINDOWS SETUP EXPERIENCE (P021–028)
+
+### P021 — Windows Installer Technology Decision
+
+Choose and lock installer technology based on current architecture,
+maintainability, per-user installation and unattended-test support.
+
+### P022 — SynveilSetup.exe Skeleton
+
+Create the real Windows installer executable project and build path.
+
+### P023 — Windows Installer UI
+
+Implement the concise native flow:
+
+```text
+Welcome → Terms/options → Install → Finish
+```
+
+### P024 — Windows Runtime Deployment
+
+Install desktop, client and Qt runtime correctly without requiring manual ZIP
+extraction.
+
+### P025 — Windows Per-User Installation
+
+Support normal per-user installation without administrator access where
+feasible; justify and disclose any privileged operation.
+
+### P026 — Windows Startup Integration
+
+Provide the friendly choice **Start Synveil when I sign in**, backed by the
+existing least-privilege current-user Task Scheduler implementation.
+
+### P027 — Windows Repair / Upgrade / Uninstall
+
+Preserve Synveil state while repairing or replacing package-owned files. Keep
+ordinary uninstall data-preserving and provide a separate explicit destructive
+data-removal choice only under its own reviewed contract.
+
+### P028 — Windows Native Acceptance CI
+
+Run the installer on native Windows CI, launch the actual installed app, and
+validate named-pipe and Task Scheduler behavior. Cross-build evidence alone
+does not pass this gate.
+
+Checkpoint: **V0.2 WINDOWS INSTALL EXPERIENCE READY**
+
+## PHASE E — GUIDED SERVER SETUP (P029–036)
+
+### P029 — Server Setup Product Contract
+
+Define normal and Advanced server setup. The primary product choice is:
+
+```text
+Host Synveil on this device
+or
+Connect to existing Synveil
+```
+
+### P030 — Server Dependency Strategy
+
+Decide supported automatic database/runtime provisioning without exposing
+PostgreSQL complexity to ordinary users. Preserve PostgreSQL as the canonical
+server metadata authority.
+
+### P031 — Managed Server Configuration
+
+Generate safe configuration, credentials and directories from user-friendly
+choices, preserving secret ownership, permissions and recovery boundaries.
+
+### P032 — Storage Location Wizard
+
+Let the user select where Synveil stores data; validate capacity, path and
+ownership safely. Distinguish server storage from the user's synchronized
+folder.
+
+### P033 — Server Service Installation
+
+Automatically configure approved service supervision with a defined privilege
+boundary, startup policy, repair and data-preserving removal.
+
+### P034 — Server Network and Reachability Setup
+
+Guide local, LAN and approved remote reachability without requiring ordinary
+users to understand raw bind configuration. Do not silently expose public
+listeners or add a mandatory proprietary relay.
+
+### P035 — Server First-Admin Bootstrap
+
+Deliver secure guided initial administrator creation with protected credentials,
+safe recovery and explicit readiness.
+
+### P036 — End-to-End Self-Host Wizard
+
+Validate the clean supported server journey:
+
+```text
+Install → Host this device → choose storage → admin setup → server ready
+```
+
+Checkpoint: **V0.2 GUIDED SELF-HOSTING READY**
+
+## PHASE F — FIRST-RUN PRODUCT UX (P037–042)
+
+### P037 — Unified Welcome Experience
+
+On first launch, offer **Host Synveil** or **Connect to Synveil** in product
+language without engineering terminology.
+
+### P038 — Connection Setup Simplification
+
+Reduce server address and profile setup to ordinary user concepts while
+preserving existing origin validation and connection ownership.
+
+### P039 — Authentication UX Polish
+
+Improve user-facing sign-in, error and recovery states without changing the
+authentication protocol or credential owner.
+
+### P040 — Library First-Run Wizard
+
+Guide creation of the first library and selection of its local folder with
+minimal screens and safe existing-folder handling.
+
+### P041 — Installation-to-Sync Progress Experience
+
+Show truthful, meaningful progress from installation through setup and first
+synchronization, distinguishing completed stages and user action required.
+
+### P042 — Repair and Recovery UX
+
+Provide user-facing **Repair Synveil**, **Reconnect server**, **Restore missing
+folder** and **Restart background service** actions where supported, without
+exposing internal mechanisms. Missing local roots never imply remote deletion;
+unknown outcomes are reconciled before retry.
+
+Checkpoint: **V0.2 FIRST RUN EXPERIENCE READY**
+
+## PHASE G — RELEASE PRODUCTIZATION (P043–048)
+
+### P043 — Installer Security Hardening
+
+Harden privilege boundaries, path handling, download integrity, installer
+injection defenses and downgrade safety.
+
+### P044 — Installation Resilience Hardening
+
+Exercise power loss, interrupted upgrades, partial installs, resumability and
+disk-full behavior while preserving user data.
+
+### P045 — Cross-Platform Clean-Machine Matrix
+
+Run fresh Windows, Debian, Fedora and generic Linux acceptance on the exact
+platform versions advertised for v0.2.
+
+### P046 — v0.2 Documentation and Distribution Readiness
+
+Prepare concise user-facing installation documentation because the installer
+handles ordinary setup complexity. Keep unsupported cases and Advanced guidance
+clear.
+
+### P047 — v0.2 Final Release Candidate Validation
+
+Run full product, installation, server, first-run and package acceptance.
+Record exact artifact identities and distinguish native, fixture and unavailable
+evidence.
+
+### P048 — Synveil v0.2.0 Release Gate
+
+Freeze the exact source and final artifacts, create and verify the `v0.2.0` tag,
+and verify remote release state. This is the only roadmap prompt that may create
+the final v0.2.0 release tag after all required gates pass.
+
+Final gate: **SYNVEIL_V0_2_0_RELEASED**
+
+## Release acceptance retained by the roadmap
+
+| Surface | Required user journey |
+| --- | --- |
+| Windows | Download `SynveilSetup.exe` → double click → accept terms → choose options → Install → Finish → Synveil opens. |
+| Debian / Ubuntu | Download `.deb` → double click → Install → Open. |
+| Fedora / RPM | Download `.rpm` → Install → Open. |
+| Generic Linux | Download AppImage → open. |
+| Terminal alternate | One supported install command. |
+| Self-hosting | Offer **Host Synveil on this device**; do not require ordinary users to configure PostgreSQL, `DATABASE_URL` or service files manually. |
+
+## Product quality bar
+
+Preserve simplicity, clarity, safe defaults, minimal decisions, native
+conventions, reversibility, data preservation and progressive disclosure.
+
+> The easiest way to install Synveil should also be the recommended way to install Synveil.
 
 ## Architectural decisions and their deadlines
 
-| Decision | Owner | Required by / constraint |
+These existing architectural decision gates remain subordinate to the exact
+prompt ownership above. They do not move or merge prompts.
+
+| Decision | Owner | Required prompt / constraint |
 | --- | --- | --- |
-| Exact supported OS versions, Linux compatibility and GUI execution baseline | Platform / Distribution, Release | Distribution foundation, before package implementation/support claims. x86_64 only in the initial matrix. |
-| Release signing, bootstrap-script trust and key rotation | Release, Security | Distribution foundation, before executing downloaded components. Checksums alone do not authenticate a release. |
-| Windows installer technology and update/repair strategy | Distribution, Desktop, Security | Windows phase; must satisfy per-user/no-admin ordinary path and native lifecycle evidence. No framework is selected by Prompt001. |
-| Managed PostgreSQL distribution (`OD-PLAT-001`, proposed ADR-019) | Database, Release, Security, Product | Before guided-host provisioning code. Preserve canonical PostgreSQL; no SQLite server alternative. |
-| Host supervisor/elevation (`OD-PLAT-002`) | Platform, Release, Security | Before host service implementation. Existing least-privilege desktop client supervision stays under ADR-041. |
-| Offered access modes (`OD-PLAT-003`, proposed ADR-020) | Networking, Security, Product | Before new remote-access mechanisms. Local/private bootstrap, explicit reach, no silent public exposure or mandatory proprietary relay. |
-| Supported upgrade sources and rollback/restore limits | Database, Client, Release | Before release hardening; include v0.1.0 fixtures, unknown/future-schema rejection and coordinated restore evidence. |
-| Exact diagnostic limits and product copy | Desktop, Product, Security, Accessibility | Before first-run/error surfaces ship; finite typed categories and bounded redaction. |
+| Exact supported OS versions, Linux compatibility and GUI execution baseline | Platform / Distribution, Release | P002 audits the current surface; P003 assigns ownership; P018/P020 qualify Linux; P028/P045 qualify Windows and all advertised platforms before support claims. x86_64 only in the initial matrix unless a later decision adds evidence. |
+| Release signing, bootstrap-script trust and key rotation | Release, Security | P005 defines manifest; P006 closes integrity and trust before downloaded payloads are executed; P017 consumes the Linux script boundary; P043 hardens it. |
+| Shared engine, durable journal, repair and typed error boundaries | Distribution, Desktop, Security | P007 defines engine; P008 interruption journal; P009 lifecycle; P010 error categories. Their phase-B checkpoint is P011. |
+| Windows installer technology and update/repair strategy | Distribution, Desktop, Security | P021 selects technology; P022–027 implement the installer lifecycle; P028 supplies native evidence. |
+| Managed PostgreSQL distribution (`OD-PLAT-001`, proposed ADR-019) | Database, Release, Security, Product | P029 defines setup modes; P030 decides provisioning before implementation; preserve PostgreSQL and do not add SQLite as a production server authority. |
+| Host supervisor/elevation (`OD-PLAT-002`) | Platform, Release, Security | P030 decides dependency strategy; P033 closes service privilege/supervision before server service implementation. Existing desktop client supervision remains under ADR-041. |
+| Offered access modes (`OD-PLAT-003`, proposed ADR-020) | Networking, Security, Product | P029 defines product choices; P034 closes offered reachability before new remote-access mechanisms. No silent public exposure or mandatory proprietary relay. |
+| Supported upgrade sources and rollback/restore limits | Database, Client, Release | P009 defines lifecycle; P027 applies it on Windows; P043/P044 harden it; P047 validates supported sources and coordinated restore before P048. |
+| Exact diagnostic limits and product copy | Desktop, Product, Security, Accessibility | P010 bounds error categories; P037–042 apply them in first-run/recovery; P043 hardens redaction. |
 
 The open platform decisions remain in [PLATFORM.md](../en/PLATFORM.md).
 Prompt001 fixes the installation-versus-first-run product boundary and primary
@@ -57,29 +360,34 @@ ADRs or select a new privileged host supervisor.
 
 ## Required evidence and promotion rules
 
-- INSTALL-JOURNEY-1 through INSTALL-JOURNEY-5 qualify the primary Windows,
-  DEB, RPM, AppImage and alternate quick-install surfaces.
+- P004 defines deterministic acceptance scenarios for the release journeys
+  retained above; P020/P028 run native platform acceptance; P045 reruns the
+  exact cross-platform clean-machine matrix.
+- The contract's INSTALL-JOURNEY-1 through INSTALL-JOURNEY-5 qualify primary
+  Windows, DEB, RPM, AppImage and alternate quick-install surfaces.
 - INSTALL-JOURNEY-6/7/8 qualify repair, data-preserving ordinary uninstall and
   interruption recovery for every advertised applicable format.
 - FIRST-RUN-1 qualifies Connect through the first working library;
   FIRST-RUN-2 qualifies managed hosting, administrator setup and first library.
-- Supported upgrades preserve profiles, credentials, databases, library/server
+- P027 and P043–047 preserve profiles, credentials, databases, library/server
   content, bindings, checkpoint/intent/conflict identity and pause choices.
   Dangerous migrations need verified coordinated backup/restore and explicit
   rollback limits under ADR-021 and Prompt115.
 - Native machines/VMs establish install, privilege, supervisor and launch
-  evidence. Fixtures, cross-builds, static manifests and offscreen checks must
-  retain their narrower labels. Physical/VM power-loss evidence is separate
-  from process-termination tests. Ignored/skipped tests are not passes.
-- Usability review checks simple copy, accessibility, progressive disclosure,
-  safe recovery and the approximately five-minute target under stated
-  conditions. Timing is a target, not a promised benchmark.
+  evidence. Fixtures, cross-builds, static manifests and offscreen checks keep
+  their narrower labels. Physical/VM power-loss evidence is separate from
+  process-termination tests. Ignored/skipped tests are not passes.
+- P046/P047 usability review checks simple copy, accessibility, progressive
+  disclosure, safe recovery and the approximately five-minute target under
+  stated conditions. Timing is a target, not a promised benchmark.
+- P048 alone freezes the final `v0.2.0` source/artifacts, creates the final tag
+  and may emit **SYNVEIL_V0_2_0_RELEASED** after remote verification.
 
 See the exact paths/assertions in the
 [acceptance journeys](INSTALLATION_PRODUCT_CONTRACT.md#13-exact-acceptance-journeys-for-later-automation).
-No phase is complete merely because its documents or builders exist. Ordinary
-installation must succeed through UI alone; Advanced and terminal alternatives
-cannot substitute for failed primary journeys.
+An earlier checkpoint or a set of documents/builders does not complete later
+prompts. Ordinary installation must succeed through UI alone; Advanced and
+terminal alternatives cannot substitute for a failed primary journey.
 
 ## Scope and baseline discipline
 
@@ -89,20 +397,21 @@ Version remains `0.1.0`; server migrations `36`, client migrations `7`,
 `LOCAL_SCHEMA_VERSION = 7`. Each later prompt explicitly determines whether
 schema/version changes are authorized rather than inheriting authority here.
 
-v0.2 installation work does not expand into new synchronization semantics,
-authentication protocols, mobile/macOS support, AI, analytics, telemetry,
-mandatory relays or an unrequested automatic updater. Existing native lifecycle,
-SecretStore, credential, migration and canonical controller ownership must be
-preserved. Resume interrupted engineering work by inspecting durable files and
-the worktree; never reset/clean unrelated changes.
+The v0.2 work stays within the named prompts. Do not add macOS/mobile or Synveil
+OS implementation scope to this roadmap. The installation work does not expand
+into unrelated synchronization semantics, authentication protocols, AI,
+analytics, telemetry, mandatory relays or an unrequested automatic updater.
+Existing native lifecycle, SecretStore, credential, migration and canonical
+controller ownership must be preserved. Resume interrupted engineering work by
+inspecting durable files and the worktree; never reset or clean unrelated work.
 
 ## Progress record
 
 | Record | State |
 | --- | --- |
-| Prompt001 | Contract and architecture specification in this documentation change; checks and exact manifest are recorded in [PROMPT001_MANIFEST.md](PROMPT001_MANIFEST.md). |
-| Prompt002–048 | Planned scope only; no completion or clean-machine delivery claimed. |
+| Prompt001 | Contract, architecture record and authoritative prompt map are documented; no installer or runtime behavior is implemented. |
+| Prompt002–048 | Planned by the exact named allocation above; no completion or clean-machine delivery is claimed. |
 
-Future completion records must point to concrete source/validation evidence
-and state unavailable gates honestly. A documentation target is not a released
-capability, and a successful Prompt001 push is not a v0.2 product release.
+Future completion records must point to concrete source and validation evidence
+and state unavailable gates honestly. A successful Prompt001 push is not a v0.2
+product release. Only P048 owns the final v0.2.0 release/tag gate.
