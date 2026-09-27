@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Synveil</string>
+    <string name="foundation_boundary_note">This shell uses reviewed server APIs as its future protocol boundary. It does not access server storage, PostgreSQL, or private credentials.</string>
+</resources>
