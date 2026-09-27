@@ -2,416 +2,51 @@
 
 > **Your data. Your devices. Your cloud.**
 
-Synveil is a planned private cloud anyone can self-host for owning, protecting,
-synchronizing, organizing, and understanding files, backups, photos, devices,
-and development projects. It is designed to feel approachable to non-technical
-users while retaining advanced self-hosting control, and to remain useful
-without a mandatory hosted Synveil service or AI.
+Synveil v0.1 is a self-hosted, PostgreSQL-backed file and library platform
+with a native two-process desktop client. `synveil-client` owns synchronization
+and durable local state; `synveil-desktop` is the Qt UI/tray/control surface.
 
-> [!IMPORTANT]
-> Synveil is currently in the **foundation stage**. This repository contains a
-> validated Rust/API foundation, React/Vite web skeleton, optional isolated AI
-> package boundary, and cross-platform CI. Browser-session HTTP authentication,
-> the first-run bootstrap HTTP boundary, the minimal web setup/login/session
-> shell, and the authenticated logical file/folder metadata slice are
-> implemented and validated. Persisted resumable upload sessions and their
-> transport-neutral application service, authenticated exact-offset HTTP
-> upload transport, typed browser upload helpers, and a transport-neutral,
-> owner-authorized immutable content-read application service over verified
-> `ObjectStore` replicas are implemented and validated. The content service
-> supports full reads and application-level validated ranges. Authenticated
-> current-node and historical-version HTTP downloads now provide full and
-> single-range streaming, strong SHA-256 validators, safe attachment headers,
-> and private no-store caching. Authenticated immutable version-history listing
-> and direct metadata lookup are also implemented and validated. Safe
-> historical-version restore is implemented at the authenticated
-> API/metadata boundary as one new immutable FileVersion reusing the verified
-> historical Object; its disposable-PostgreSQL end-to-end gate remains
-> environment dependent. The durable owner/library-scoped PostgreSQL change
-> journal foundation is now implemented and live-tested: supported metadata
-> mutations append ordered facts atomically, and a bounded transport-neutral
-> reader resumes with an opaque cursor. Per-device/per-library checkpoints,
-> the bounded authenticated server change feed, and signed checkpoint
-> acknowledgment are implemented and validated. A server-side logical
-> snapshot/rebaseline bootstrap is implemented and validated: PostgreSQL
-> materializes one immutable, bounded manifest at the same coherent journal
-> epoch/sequence cut used for the later feed handoff. The first authenticated
-> client mutation submission protocol is implemented and live-validated for
-> one typed logical mutation per request, durable UUID/idempotency results,
-> canonical fingerprints, explicit optimistic preconditions, deterministic
-> conflicts, and exact journal integration. Every managed conflict now has one
-> durable immutable record and authenticated device-scoped list/detail APIs.
-> An owner can explicitly `ACCEPT_SERVER` or retry the preserved semantic
-> intent with fresh preconditions through an idempotent, fenced manual
-> resolution operation. It does not carry file bytes or resolve conflicts
-> automatically. A reusable desktop inbound-sync core and its crash-safe local
-> SQLite state are now implemented. Prompt 37 adds durable server profiles,
-> verified-HTTPS inbound HTTP transport, one-time Device enrollment, revocable
-> owner/Device-scoped bearer credentials, and OS-backed secure credential
-> storage. Prompt 38 implements the local filesystem observation boundary:
-> watcher events are hints only, reconciliation is authoritative, Synveil-
-> generated inbound changes are suppressed through durable operation evidence,
-> and local changes become durable typed outbound intents without any automatic
-> server mutation submission or upload initiation. Installation/service
-> lifecycle and desktop GUI are not implemented.
-> Download UI, backup, sharing, and deployment capabilities remain out of scope
-> for this phase. Every other
-> product capability below remains a blueprint unless explicitly marked
-> otherwise.
+## v0.1 support
 
-## Status vocabulary
+- **Server:** Linux deployment with PostgreSQL, a durable object root, and
+  operator-managed HTTPS termination and service supervision.
+- **Desktop:** Linux x86_64 DEB/RPM packages and Windows x86_64 portable ZIP.
+- **Deferred:** macOS, iOS, Android, and Synveil OS are not supported in v0.1.
+- **Validation:** Windows cross-build/compile evidence is not native Windows
+  runtime acceptance; see the operations guide for the distinction.
 
-| Label | Meaning |
+## Start here
+
+1. Read the [v0.1 operations guide](docs/en/RELEASE_OPERATIONS.md).
+2. Review [release notes](docs/en/RELEASE_NOTES_v0.1.md).
+3. Follow [package and install policy](docs/en/RELEASE_PACKAGING.md).
+4. Review [upgrade safety](docs/en/UPGRADE_SAFETY.md) before replacing a
+   package or database-connected runtime.
+5. Review the [security guide](docs/en/SECURITY.md) for trust and credential
+   assumptions.
+
+Vietnamese documentation is available under [`docs/vi`](docs/vi/PRODUCT.md).
+The complete documentation index is [`docs/README.md`](docs/README.md).
+
+## Workspace components
+
+| Component | Role |
 |---|---|
-| `IMPLEMENTED` | Shipped in this repository and covered by validation. |
-| `SKELETON IMPLEMENTED` | A foundation boundary exists, but it is not a product capability. |
-| `VALIDATED` | The applicable foundation checks have passed; this does not promote a product feature. |
-| `IN PROGRESS` | Actively being built but not a stable product capability. |
-| `PLANNED` | Specified in the blueprint; implementation has not been completed. |
-| `EXPERIMENTAL` | A future exploration with an unstable contract. |
-| `NON-GOAL` | Deliberately outside the stated scope. |
+| `synveil-api` | PostgreSQL-backed API/router and server binaries. |
+| `synveil-client` | Background sync process, local SQLite state, recovery, and IPC. |
+| `synveil-desktop` | Native Qt/QML desktop UI and tray/control surface. |
+| `synveil-worker` | Internal bounded maintenance/GC worker with no listener. |
 
-### Prompt 35 synchronization status (historical phase boundary)
+The desktop package does not bundle PostgreSQL or a guided server installer.
+Do not treat the architecture blueprint or historical Prompt reports as user
+manuals; the release-facing guides above are the operational source of truth.
 
-| Capability | Status |
-|---|---|
-| durable change journal | `VALIDATED` |
-| device checkpoints/feed | `VALIDATED` |
-| snapshot/rebaseline | `VALIDATED` |
-| client mutation submission | `VALIDATED` |
-| optimistic conflict detection | `VALIDATED` |
-| durable conflict records | `IMPLEMENTED` |
-| manual conflict inspection | `IMPLEMENTED` |
-| explicit manual resolution | `IMPLEMENTED` |
-| automatic conflict resolution | `NOT IMPLEMENTED` |
-| desktop sync agent | `NOT IMPLEMENTED` |
+## Development checks
 
-### Prompt 36–37 desktop inbound synchronization status
-
-| Capability | Status |
-|---|---|
-| server journal/checkpoint/feed/rebaseline/mutations/conflicts | `VALIDATED` |
-| desktop inbound sync core | `IMPLEMENTED` |
-| desktop local crash-safe state | `IMPLEMENTED` |
-| snapshot/feed local apply | `IMPLEMENTED` |
-| file download/apply | `IMPLEMENTED` |
-| local divergence detection | `IMPLEMENTED` |
-| durable server profiles and verified-HTTPS HTTP remote | `IMPLEMENTED` |
-| one-time Device enrollment and revocable bearer authentication | `IMPLEMENTED` |
-| Linux Secret Service / Windows Credential Manager integration | `IMPLEMENTED` |
-| filesystem observation | `IMPLEMENTED` |
-| self-generated change suppression | `IMPLEMENTED` |
-| durable outbound intent capture | `IMPLEMENTED` |
-| rename/move attribution | `IMPLEMENTED with conservative fallback` |
-| watcher overflow/reconciliation | `IMPLEMENTED` |
-| automatic outbound mutation submission | `NOT IMPLEMENTED` |
-| automatic conflict resolution | `NOT IMPLEMENTED` |
-| desktop GUI | `NOT IMPLEMENTED` |
-
-The new `synveil-client-sync` crate is a UI-free, transport-neutral inbound
-engine. It binds an explicitly initialized managed root to one owner/device/
-library replica, persists bootstrap, feed, operation, issue, and acknowledgement
-state in a separately migrated SQLite database, stages and verifies content
-before exposure, and never turns local filesystem changes into server
-mutations. Prompt 37 supplies the production `HttpSyncRemote` and a distinct
-Device bearer principal. Browser-cookie state changes still require CSRF;
-Device bearer access is limited to inbound sync and owner-authorized logical
-content/metadata reads. Production profiles require an HTTPS origin and normal
-certificate verification; redirects are rejected. SQLite contains no bearer
-secret. Credentials persist only through Linux Secret Service or Windows
-Credential Manager, without a plaintext fallback. Native Linux secure-storage
-and HTTP/SQLite integration are tested; Windows workspace cross-compilation and
-MinGW linking of client-sync/platform test executables do not claim native
-Windows secure-store, TLS, NTFS, or power-loss evidence.
-
-Trạng thái Prompt 38: profile server bền vững, HTTP inbound xác minh HTTPS,
-enrollment Device một lần và credential bearer thu hồi được đã implement.
-Observer filesystem local đã capture thay đổi thành durable outbound intent trong
-SQLite; watcher chỉ là hint, reconciliation mới là truth, change do Synveil tạo
-được suppress bằng evidence operation bền vững. Chưa có desktop GUI, automatic
-outbound mutation submission, upload tự động hay automatic conflict resolution.
-Bằng chứng Windows hiện là cross-target compilation toàn workspace và link test
-executable client-sync/platform bằng MinGW, không phải runtime Windows native.
-
-The bootstrap includes the canonical library root and current `ACTIVE` and
-`TRASHED` logical Nodes, ordered by immutable Node ID. Current files carry only
-their public version ID, byte length, and SHA-256 identity. `PURGING` rows,
-historical version lists, Object/ObjectReplica identities, storage keys,
-staging handles, filesystem paths, backend locators, credentials, and file
-bytes are excluded. Existing authenticated content-download routes remain the
-only byte-transfer path.
-
-Current repository status: **foundation skeleton, browser-auth transport,
-first-run bootstrap HTTP flow, minimal web auth UI, logical file/folder
-metadata API, authenticated resumable upload HTTP transport, authenticated
-immutable version-history metadata, metadata-only Trash retention/purge
-execution and reference accounting, a transport-neutral owner-authorized
-immutable content-read service, authenticated HTTP full/single-range download
-transport, per-device/per-library sync checkpoints, the authenticated bounded
-server change feed, signed checkpoint acknowledgment, and materialized logical
-snapshot/rebaseline bootstrap, durable desktop profiles, one-time Device
-enrollment, revocable bearer authentication, and the production inbound HTTP
-remote implemented**. The metadata slice covers
-owner-scoped library/root listing, directory creation, node reads, rename,
-move, logical delete, and restore. The upload slice streams bounded raw chunks,
-resumes at a server-authoritative exact offset, and commits one verified
-version through the upload service. Version history lists immutable records
-newest-first with owner-scoped cursors and direct IDs compatible with
-historical downloads. Safe historical-version restore appends one new
-current FileVersion under CSRF, If-Match, owner/file, verified-replica, and
-persisted idempotency controls; it never mutates historical rows, copies
-bytes, moves the current pointer backward, or creates an UploadSession. The
-Trash contract stores one server-observed `trashed_at`, derives a configurable
-30-day-by-default restore deadline, exposes bounded internal eligibility, and
-only begins the metadata `PURGING` state after owner/revision/transaction
-checks. It does not delete physical bytes or implement physical purge/GC.
-Metadata purge execution is an internal trusted operation: after a node is
-`PURGING`, it removes that node and its `FileVersion` rows transactionally,
-records metadata-only unreferenced-object candidates. The internal physical-GC
-execution service is now implemented: a `READY` candidate with a live
-lease/generation is revalidated transactionally, a durable operation and one
-action per replica are recorded, and exact replicas are reconciled and deleted
-one at a time through `ObjectStore`. The object enters `GC_DELETING`, which
-rejects new durable references; metadata is removed only after every replica is
-confirmed absent. The opt-in internal `synveil-worker` now drives bounded
-planning/recovery cycles through those accepted services: it resumes durable
-work before starting new work, persists retry scheduling, and records
-metadata-only reconciliation findings. It has no HTTP route or normal-user
-control surface, and it does not implement unknown-physical-orphan deletion,
-sync, backup, or sharing. The
-content service resolves active
-owner-authorized current content or an allowed immutable historical version to
-a verified replica, streams full bytes or a validated application-level range,
-and cross-checks object metadata before yielding bytes. The HTTP download
-routes keep filename/content-type/ETag/cache policy at the API boundary and
-stream through the content service. They do not provide upload UI, download UI,
-physical-GC controls, automatic conflict resolution, backup, or sharing. The
-public sync feed accepts authenticated owner browser sessions acting on behalf
-of existing active registered Devices or a verified Device bearer bound to
-that exact owner/Device. The same trust model applies to bootstrap. Browser
-start, ack, and complete require CSRF; verified bearer requests do not. Pages
-are reads, and all bootstrap responses are private/no-store.
-Terminal-page HMAC proof and a generation fence are required before the
-checkpoint is atomically replaced at exactly the captured cut. One-time
-enrollment and revocable Device credentials are implemented; the desktop
-GUI/background lifecycle remains planned. PostgreSQL-backed API
-startup requires a deployment-stable 32-byte
-`SYNVEIL_REBASELINE_TOKEN_KEY` (64 lowercase hexadecimal characters), so
-cursor and completion proof remain verifiable across process restart; missing
-or malformed configuration fails closed and the secret is never logged.
-
-The logical client-mutation route is `POST
-/api/v1/devices/{device_id}/libraries/{library_id}/mutations`. It accepts one
-strict typed `CREATE_DIRECTORY`, `RENAME_NODE`, `MOVE_NODE`, `TRASH_NODE`, or
-`RESTORE_NODE` envelope with canonical UUID/decimal fields and explicit
-revision/parent preconditions. The server persists the mutation fingerprint
-and terminal `APPLIED`/`CONFLICT` result, appends exactly one journal event on
-success, and returns the same result with `replayed=true` after a lost response.
-Conflicts are returned with safe logical state only; automatic conflict
-resolution, last-write-wins, conflict-copy renaming, and merge engines are not
-implemented.
-
-Durable conflict management is available at the device/library-scoped
-`GET .../conflicts`, `GET .../conflicts/{conflict_id}`, and CSRF-protected
-`POST .../conflicts/{conflict_id}/resolve` routes. Listing is OPEN-only,
-bounded, and uses an opaque HMAC-authenticated keyset cursor. Detail separates
-the immutable historical server observation from current truth; resolvers read
-the canonical Node separately. `ACCEPT_SERVER` dismisses without a Node change
-or resource journal event. `APPLY_CLIENT_INTENT` requires explicit fresh
-revision preconditions and reuses the canonical mutation executor; success
-emits exactly one normal resource event, while stale state leaves the conflict
-OPEN and changes nothing. Resolution IDs use canonical typed SHA-256
-fingerprints for exact lost-response replay. No action is selected
-automatically.
-
-The initial PostgreSQL canonical schema and explicit SQLx persistence mappings
-for the validated domain subset are implemented. Disposable PostgreSQL
-integration evidence remains environment-dependent and is reported separately;
-Argon2id password hashing, persistent first-admin bootstrap, verifier-only
-browser-session persistence, transport-neutral login/session semantics, HTTP
-login/logout/session/CSRF and first-run bootstrap routes, secure cookie policy,
-the minimal typed web API boundary, and the web setup/login/session shell are
-implemented; PostgreSQL end-to-end evidence remains environment-dependent and
-is reported separately. Device credentials and one-time enrollment are now
-implemented. Guided pairing UI, account recovery, automatic conflict
-resolution, download UI,
-backup, and sharing remain planned; the server-side one-way sync feed and
-durable device checkpoints plus logical rebaseline bootstrap are implemented
-below the future client sync product.
-Deployment-managed first-run secret delivery and
-installer lifecycle remain future work; the current bootstrap HTTP contract
-does not accept a setup-secret field.
-
-## Product direction
-
-Synveil's product north star is:
-
-> **A private cloud anyone can self-host.**
-
-The first-class audience includes technical users, power users, families, home
-users, students, creators, developers, small teams, and non-technical users.
-The intended experience is `install → choose storage → create account → connect
-devices → ready`. The architecture uses **Personal / Home Mode** for guided,
-installer-based operation and **Advanced / Server Mode** for Docker Compose,
-external PostgreSQL, NAS, S3/MinIO, custom networking, CLI, and detailed
-diagnostics. Both modes use the same protocol and data-correctness model.
-
-The product principles are **Easy by default**, **Safe by default**,
-**Cross-platform by design**, **Powerful when needed**, and the existing
-**correctness before cleverness**. A core user-facing feature should not require
-an ordinary user to open a terminal. These are planned product goals, not
-implemented capabilities.
-
-Synveil combines several related, but explicitly separated, domains:
-
-- `IMPLEMENTED/VALIDATED` (metadata, durable change-journal foundation,
-  exact-offset upload, authenticated
-  immutable version-history metadata, safe historical-version restore, Trash
-  retention metadata/purge eligibility, authenticated full/single-range
-  content-download transport, metadata-only GC planning, and physical
-  Object/ObjectReplica GC) plus `IMPLEMENTED` bounded internal GC-worker
-  orchestration/reconciliation / `PLANNED` (download UI and broader lifecycle)
-  —
-  authenticated files and folders, logical metadata, bounded streaming
-  resumable upload, immutable full/range content reads, versions, trash,
-  sharing, and integrity checks;
-- `IMPLEMENTED` foundation / `PLANNED` product — server device cursors and the
-  reusable desktop inbound apply core preserve unknown or diverged local data;
-  verified-HTTPS transport and scoped Device identity are implemented;
-  installation, background lifecycle, watching, and outbound synchronization
-  remain planned;
-- `PLANNED` — backup sets, committed snapshots, retention, and verified
-  restore, with deletion behavior distinct from sync;
-- `PLANNED` — photo originals, renditions, timeline, albums, and mobile upload;
-- `PLANNED` — whole-object deduplication and policy-based Zstandard
-  compression;
-- `PLANNED` — Forgejo repository inventory and backup through an integration
-  boundary rather than a new Git server;
-- `PLANNED` — optional asynchronous OCR, tagging, and semantic search using
-  local or explicitly configured remote models;
-- `PLANNED` — guided/native installation direction for Windows, macOS, Linux
-  Desktop, and Linux Server, with storage selection, service lifecycle,
-  human-readable health, safe updates, migration, and data-preserving
-  uninstall;
-- `IMPLEMENTED` one-time enrollment protocol / `PLANNED` guided pairing UI and
-  understandable remote-access paths,
-  with no mandatory proprietary Synveil relay;
-- `PLANNED` (advanced) — files on demand, content-defined chunking, and
-  deterministic smart tiering behind later phase gates;
-- `EXPERIMENTAL` — repository/model intelligence experiments, anomaly
-  detection, and multi-node scale-out.
-
-The canonical feature catalogue and status are in
-[docs/en/FEATURES.md](docs/en/FEATURES.md). The Vietnamese edition is in
-[docs/vi/FEATURES.md](docs/vi/FEATURES.md).
-
-## Architectural shape
-
-The first production shape is a modular monolith, not a premature collection
-of microservices:
-
-```mermaid
-flowchart LR
-    Clients["Web and future device clients"] --> Runtime["Platform runtime / Advanced edge"]
-    Runtime --> API["Rust API\nAxum + Tokio + Tower"]
-    API --> DB[(PostgreSQL metadata)]
-    API --> Store[(ObjectStore\ncapability-aware)]
-    API --> Outbox[(Transactional outbox/jobs)]
-    Worker["Rust background worker"] --> Outbox
-    Worker --> Store
-    AI["Optional Python AI worker"] --> Outbox
-    AI --> DB
+```sh
+./scripts/validate-docs.sh
+cargo fmt --all -- --check
 ```
 
-Core mutations commit metadata, a per-library change journal entry, audit
-information, and durable work in one PostgreSQL transaction. File bytes are
-made durable in the object store before metadata can reference them. Optional
-consumers run after the core operation succeeds. If AI or Forgejo is offline,
-file, sync, backup, and restore operations remain available.
-
-The preferred implementation stack is:
-
-- React, TypeScript, and Vite for the authenticated web application;
-- Rust, Axum, Tokio, Tower, Serde, SQLx, and `tracing` for the server and core
-  workers;
-- PostgreSQL for metadata, journals, jobs, audit state, and—later—`pgvector`;
-- an `ObjectStore` abstraction with local filesystem support first and
-  S3-compatible/MinIO/NAS-backed adapters later;
-- Python for optional, asynchronous ML/OCR/embedding workers;
-- Docker Compose and Caddy for Advanced / Server Mode;
-- future native installers and OS service adapters for Personal / Home Mode;
-- PostgreSQL remains canonical; Personal / Home Mode is intended to manage its
-  database dependency without asking ordinary users to administer it.
-
-See [Architecture](docs/en/ARCHITECTURE.md),
-[Platform](docs/en/PLATFORM.md),
-[Storage](docs/en/STORAGE.md), [Sync](docs/en/SYNC.md), and
-[Backup](docs/en/BACKUP.md) for the invariants and failure behavior.
-
-## Blueprint map
-
-| Area | English | Tiếng Việt |
-|---|---|---|
-| Product and scope | [PRODUCT](docs/en/PRODUCT.md) | [PRODUCT](docs/vi/PRODUCT.md) |
-| Platform and accessibility | [PLATFORM](docs/en/PLATFORM.md) | [PLATFORM](docs/vi/PLATFORM.md) |
-| System architecture | [ARCHITECTURE](docs/en/ARCHITECTURE.md) | [ARCHITECTURE](docs/vi/ARCHITECTURE.md) |
-| Domain and API | [DOMAIN_MODEL](docs/en/DOMAIN_MODEL.md), [API_ARCHITECTURE](docs/en/API_ARCHITECTURE.md), [OpenAPI contract](api/openapi.yaml) | [DOMAIN_MODEL](docs/vi/DOMAIN_MODEL.md), [API_ARCHITECTURE](docs/vi/API_ARCHITECTURE.md), [OpenAPI contract](api/openapi.yaml) |
-| Data safety | [STORAGE](docs/en/STORAGE.md), [UPLOADS](docs/en/UPLOADS.md), [SYNC](docs/en/SYNC.md), [BACKUP](docs/en/BACKUP.md) | [STORAGE](docs/vi/STORAGE.md), [UPLOADS](docs/vi/UPLOADS.md), [SYNC](docs/vi/SYNC.md), [BACKUP](docs/vi/BACKUP.md) |
-| Product extensions | [PHOTOS](docs/en/PHOTOS.md), [AI](docs/en/AI.md), [CODE_INTEGRATION](docs/en/CODE_INTEGRATION.md) | [PHOTOS](docs/vi/PHOTOS.md), [AI](docs/vi/AI.md), [CODE_INTEGRATION](docs/vi/CODE_INTEGRATION.md) |
-| Delivery | [ROADMAP](docs/en/ROADMAP.md), [TEAM_PLAN](docs/en/TEAM_PLAN.md), [TESTING](docs/en/TESTING.md) | [ROADMAP](docs/vi/ROADMAP.md), [TEAM_PLAN](docs/vi/TEAM_PLAN.md), [TESTING](docs/vi/TESTING.md) |
-| Operations and trust | [SECURITY](docs/en/SECURITY.md), [DEPLOYMENT](docs/en/DEPLOYMENT.md) | [SECURITY](docs/vi/SECURITY.md), [DEPLOYMENT](docs/vi/DEPLOYMENT.md) |
-| Decision process | [ADRs](docs/adr/README.md), [CONTRIBUTING_ARCHITECTURE](docs/en/CONTRIBUTING_ARCHITECTURE.md) | [ADRs](docs/adr/README.md), [CONTRIBUTING_ARCHITECTURE](docs/vi/CONTRIBUTING_ARCHITECTURE.md) |
-
-Most documents describe intended product contracts, not evidence of product
-implementation. The status markers above identify the limited foundation
-evidence that has been implemented and validated. The [repository audit](docs/en/REPOSITORY_AUDIT.md)
-records the exact starting state.
-
-## Proposed repository shape
-
-Implementation phases are expected to grow the repository deliberately:
-
-```text
-apps/web                 React application
-crates/                  Rust domain and adapter crates
-services/ai              optional Python AI worker
-clients/                 future device clients and shared Rust sync core
-api/openapi.yaml         reviewed public contract
-migrations/              forward database migrations
-deploy/                  Compose, Caddy, and operational assets
-docs/                    bilingual specifications and ADRs
-scripts/                 repeatable developer/operations commands
-tests/                   cross-component, recovery, and protocol suites
-```
-
-Directories should be introduced by scoped implementation tasks; this
-blueprint does not create empty product scaffolding.
-
-## Roadmap and contribution state
-
-The first implementation gate is Phase 0: repository/workspace scaffolding,
-CI, configuration boundaries, migration tooling, an OpenAPI skeleton, and a
-cross-platform/service abstraction foundation. Compose remains the local
-development topology and an Advanced / Server deployment option; it is not the
-only eventual user installation path. Storage and sync implementation must not
-begin by inventing contracts that conflict with accepted ADRs or platform
-boundaries.
-
-Start with [the roadmap](docs/en/ROADMAP.md), including the cross-platform
-foundation sub-phase, then use
-[the team plan](docs/en/TEAM_PLAN.md) to issue one gated task to an
-implementation agent. Architectural changes follow
-[the contribution protocol](docs/en/CONTRIBUTING_ARCHITECTURE.md).
-
-External contributions are welcome after the Phase 0 contribution workflow is
-implemented. Until then, design proposals should identify the affected ADR,
-protocol specification, API surface, migration, tests, and bilingual
-documentation.
-
-## Licensing
-
-The repository is currently licensed under the [MIT License](LICENSE). The
-blueprint proposes evaluating AGPL-3.0 for the future core/server/web and
-Apache-2.0 for selected SDKs, but **no relicensing has occurred**. That choice
-requires an explicit owner decision and a contributor-rights review; see
-[ADR-011](docs/adr/ADR-011-open-source-licensing.md).
+See the architecture contribution guide at
+[`docs/en/CONTRIBUTING_ARCHITECTURE.md`](docs/en/CONTRIBUTING_ARCHITECTURE.md).

@@ -2,7 +2,7 @@
 
 This document describes the production launch boundary added after the native
 Qt shell in Prompt 98. It is an operational companion to
-[`ADR-041`](adr/ADR-041-production-desktop-launch-orchestration.md) and
+[`ADR-041`](../adr/ADR-041-production-desktop-launch-orchestration.md) and
 [`DESKTOP_CONTROL.md`](DESKTOP_CONTROL.md).
 
 ## Runtime topology

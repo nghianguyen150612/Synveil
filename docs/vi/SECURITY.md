@@ -2,6 +2,13 @@
 
 Trạng thái: **Blueprint threat-model quy chuẩn**
 
+Ghi chú trạng thái release: lifecycle desktop/client native, profile onboarding,
+credential OS-backed, filesystem observation, outbound submission và desktop GUI
+đã implement trong v0.1. Automatic conflict resolution và sharing vẫn không hỗ
+trợ. Xem [`RELEASE_OPERATIONS.md`](RELEASE_OPERATIONS.md) cho contract operator;
+phần status chi tiết bên dưới giữ lại evidence foundation lịch sử và điều kiện
+validation.
+
 Trạng thái authentication foundation: **password hashing Argon2id đã
 IMPLEMENTED/VALIDATED bằng unit test; first-admin bootstrap persistent đã
 IMPLEMENTED**. Concurrency của bootstrap chỉ **VALIDATED khi test PostgreSQL

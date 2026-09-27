@@ -2,6 +2,13 @@
 
 Status: **Normative threat-model blueprint**
 
+Release status note: the native desktop/client lifecycle, profile onboarding,
+OS-backed credentials, filesystem observation, outbound submission, and desktop
+GUI are implemented in v0.1. Automatic conflict resolution and sharing remain
+unsupported. See [`RELEASE_OPERATIONS.md`](RELEASE_OPERATIONS.md) for the
+operator contract; the detailed status below retains historical foundation
+evidence and validation qualifiers.
+
 Authentication foundation status: **Argon2id password hashing is
 IMPLEMENTED/VALIDATED by unit tests; persistent first-admin bootstrap is
 IMPLEMENTED**. Bootstrap concurrency is **VALIDATED only when the disposable
@@ -42,8 +49,10 @@ canonical SHA-256 fingerprinting, optimistic preconditions, deterministic
 conflict persistence, and exact journal integration are **IMPLEMENTED**.
 Durable conflict records, manual inspection, and explicit idempotent manual
 resolution are **IMPLEMENTED**. The desktop inbound sync core is **VALIDATED**.
-Automatic conflict resolution, backup, sharing, filesystem watching, outbound
-mutation generation, and desktop GUI/pairing UX remain **NOT IMPLEMENTED/PLANNED**.
+Automatic conflict resolution and sharing remain **NOT IMPLEMENTED/PLANNED**.
+Backup/maintenance, filesystem watching, outbound mutation generation, and
+desktop GUI/pairing are covered by the v0.1 release implementation with
+platform/environment validation qualifiers.
 
 Synveil stores personal files, backups, photos, device state, repository data,
 credentials, and derived search information. Security is therefore a release

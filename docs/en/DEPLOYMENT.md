@@ -2008,4 +2008,4 @@ not claimed by Linux static or cross-build evidence.
 
 See [`docs/en/DESKTOP_LAUNCH.md`](DESKTOP_LAUNCH.md),
 [`docs/vi/DESKTOP_LAUNCH.md`](../vi/DESKTOP_LAUNCH.md), and
-[`ADR-041`](adr/ADR-041-production-desktop-launch-orchestration.md).
+[`ADR-041`](../adr/ADR-041-production-desktop-launch-orchestration.md).
