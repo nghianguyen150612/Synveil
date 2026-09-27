@@ -19,6 +19,10 @@ pub enum RecoveryClassification {
 #[derive(Debug)]
 pub enum ClientSyncError {
     Database,
+    /// Preserve the database and use software that supports its schema.
+    LocalSchemaUnsupported,
+    /// Preserve the database and investigate/restore a verified backup.
+    LocalSchemaInvalid,
     LocalIo,
     InvalidState,
     InvalidRelativePath,
@@ -64,6 +68,8 @@ impl ClientSyncError {
     #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::LocalSchemaUnsupported => "LOCAL_SCHEMA_UNSUPPORTED",
+            Self::LocalSchemaInvalid => "LOCAL_SCHEMA_INVALID",
             Self::Database => "LOCAL_DATABASE_UNAVAILABLE",
             Self::LocalIo => "LOCAL_IO_UNAVAILABLE",
             Self::InvalidState => "LOCAL_STATE_INVALID",

@@ -40,6 +40,7 @@ pub enum DatabaseErrorKind {
     ConnectionUnavailable,
     QueryFailed,
     MigrationFailed,
+    SchemaUnsupported,
     MigrationStateUnavailable,
     ReadinessCheckFailed,
 }
@@ -50,6 +51,7 @@ impl DatabaseErrorKind {
         match self {
             Self::ConnectionUnavailable => "database_connection_unavailable",
             Self::QueryFailed => "database_query_failed",
+            Self::SchemaUnsupported => "database_schema_unsupported",
             Self::MigrationFailed => "database_migration_failed",
             Self::MigrationStateUnavailable => "database_migration_state_unavailable",
             Self::ReadinessCheckFailed => "database_readiness_check_failed",
@@ -83,8 +85,13 @@ impl DatabaseError {
         Self::Failure(DatabaseErrorKind::QueryFailed)
     }
 
-    pub(crate) fn migration(_error: sqlx::migrate::MigrateError) -> Self {
-        Self::Failure(DatabaseErrorKind::MigrationFailed)
+    pub(crate) fn migration(error: sqlx::migrate::MigrateError) -> Self {
+        let kind = if matches!(error, sqlx::migrate::MigrateError::VersionMissing(_)) {
+            DatabaseErrorKind::SchemaUnsupported
+        } else {
+            DatabaseErrorKind::MigrationFailed
+        };
+        Self::Failure(kind)
     }
 
     pub(crate) fn migration_state(_error: sqlx::Error) -> Self {

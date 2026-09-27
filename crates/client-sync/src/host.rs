@@ -868,6 +868,8 @@ fn map_profile_client_error(error: ClientSyncError) -> DesktopProfileConfigurati
         | ClientSyncError::WrongScope => DesktopProfileConfigurationOutcome::InvalidConfiguration,
         ClientSyncError::Remote(error) => map_profile_remote_error(error),
         ClientSyncError::Database
+        | ClientSyncError::LocalSchemaUnsupported
+        | ClientSyncError::LocalSchemaInvalid
         | ClientSyncError::LocalIo
         | ClientSyncError::SecureStoreUnavailable
         | ClientSyncError::ConcurrentWriter
@@ -945,6 +947,8 @@ fn map_auth_client_error(error: ClientSyncError) -> DesktopAuthError {
         ClientSyncError::AuthenticationRequired
         | ClientSyncError::CredentialReplacementRequired => DesktopAuthError::InvalidCredentials,
         ClientSyncError::Database
+        | ClientSyncError::LocalSchemaUnsupported
+        | ClientSyncError::LocalSchemaInvalid
         | ClientSyncError::LocalIo
         | ClientSyncError::InvalidState
         | ClientSyncError::InvalidRelativePath

@@ -992,6 +992,12 @@ mod tests {
         );
         store.persist(true).expect("pause state persists");
         assert!(store.is_paused().expect("paused state reads"));
+        let reopened = DesktopSyncPauseStore::from_path(directory.join("sync-state.conf"));
+        assert!(
+            reopened
+                .is_paused()
+                .expect("restart preserves durable pause")
+        );
         store.persist(false).expect("resume state persists");
         assert!(!store.is_paused().expect("running state reads"));
         assert_eq!(

@@ -1028,10 +1028,7 @@ impl LocalStateStore {
             .max_connections(1)
             .connect_with(options)
             .await?;
-        MIGRATOR
-            .run(&pool)
-            .await
-            .map_err(|_| ClientSyncError::Database)?;
+        crate::local_migrations::run(&pool, &MIGRATOR).await?;
         sqlx::query("PRAGMA foreign_keys = ON")
             .execute(&pool)
             .await?;

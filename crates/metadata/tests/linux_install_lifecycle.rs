@@ -2057,3 +2057,53 @@ fn credential_directory_ownership_contract() {
     assert_eq!(owner, "root", "credential directory owner must be root");
     assert_eq!(group, "root", "credential directory group must be root");
 }
+
+#[test]
+fn purge_rejects_escaped_parent_before_unlinking_final_symlink() {
+    for parent in ["etc", "var/lib"] {
+        let root = temp_root("purge-parent-escape");
+        let external = temp_root("purge-parent-external");
+        fs::write(external.join("evidence"), "preserve external content").unwrap();
+        let outside_link = external.join("synveil");
+        std::os::unix::fs::symlink(external.join("evidence"), &outside_link).unwrap();
+        if let Some(ancestor) = root.join(parent).parent() {
+            fs::create_dir_all(ancestor).unwrap();
+        }
+        std::os::unix::fs::symlink(&external, root.join(parent)).unwrap();
+        let output = run_uninstall(&root, true);
+        assert!(
+            !output.status.success(),
+            "purge must reject an escaped parent"
+        );
+        assert!(
+            outside_link.is_symlink(),
+            "must preserve the external symlink itself"
+        );
+        assert_eq!(
+            fs::read_to_string(external.join("evidence")).unwrap(),
+            "preserve external content"
+        );
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(external).unwrap();
+    }
+}
+
+#[test]
+fn purge_rejects_parent_redirect_to_unowned_state_inside_staged_root() {
+    for parent in ["etc", "var/lib"] {
+        let root = temp_root("purge-internal-parent");
+        let unowned = root.join("unrelated");
+        fs::create_dir_all(unowned.join("synveil")).unwrap();
+        fs::write(unowned.join("synveil/evidence"), "unrelated state").unwrap();
+        if let Some(ancestor) = root.join(parent).parent() {
+            fs::create_dir_all(ancestor).unwrap();
+        }
+        std::os::unix::fs::symlink(&unowned, root.join(parent)).unwrap();
+        assert!(!run_uninstall(&root, true).status.success());
+        assert_eq!(
+            fs::read_to_string(unowned.join("synveil/evidence")).unwrap(),
+            "unrelated state"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+}

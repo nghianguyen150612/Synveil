@@ -105,10 +105,38 @@ impl MigrationRunner {
 
     pub async fn run(&self, pool: &DatabasePool) -> Result<MigrationStatus, DatabaseError> {
         let migrator = self.migrator().await?;
-        migrator
-            .run(pool.sqlx_pool())
+        let mut connection = pool
+            .sqlx_pool()
+            .acquire()
             .await
-            .map_err(DatabaseError::migration)?;
+            .map_err(DatabaseError::connection)?;
+        if let Err(error) = migrator.run(&mut *connection).await {
+            // SQLx returns early on migration errors before its advisory-lock
+            // release. Do not return that session to the pool still locked.
+            let _ = connection.close().await;
+            return Err(DatabaseError::migration(error));
+        }
+        drop(connection);
+        if matches!(self.source, MigrationSource::Embedded) {
+            // SQLx verifies the ledger, but a recorded successful migration
+            // does not prove its tables still exist after external damage.
+            // Metadata-only probes reject missing current tables at startup.
+            let missing: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM unnest($1::text[]) AS required(name)
+                 WHERE NOT EXISTS (
+                     SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                     WHERE n.nspname = current_schema() AND c.relname = required.name
+                       AND c.relkind IN ('r', 'p')
+                 )",
+            )
+            .bind(REQUIRED_TABLES)
+            .fetch_one(pool.sqlx_pool())
+            .await
+            .map_err(DatabaseError::migration_state)?;
+            if missing != 0 {
+                return Err(DatabaseError::migration_state_decode());
+            }
+        }
         self.status(pool).await
     }
 
@@ -154,6 +182,64 @@ impl MigrationRunner {
     }
 }
 
+const REQUIRED_TABLES: &[&str] = &[
+    "users",
+    "devices",
+    "libraries",
+    "objects",
+    "nodes",
+    "file_versions",
+    "user_credentials",
+    "bootstrap_state",
+    "sessions",
+    "object_replicas",
+    "upload_sessions",
+    "file_version_restore_operations",
+    "metadata_purge_operations",
+    "object_gc_candidates",
+    "object_gc_holds",
+    "object_gc_operations",
+    "object_gc_replica_actions",
+    "change_journal",
+    "device_sync_checkpoints",
+    "sync_bootstraps",
+    "sync_bootstrap_nodes",
+    "device_mutation_operations",
+    "sync_conflicts",
+    "sync_conflict_resolutions",
+    "device_credentials",
+    "device_enrollment_grants",
+    "backup_sets",
+    "backup_snapshots",
+    "backup_snapshot_nodes",
+    "backup_snapshot_content_pins",
+    "backup_restore_plans",
+    "backup_restore_plan_entries",
+    "backup_restore_executions",
+    "backup_restore_execution_entries",
+    "backup_prune_plans",
+    "backup_prune_plan_entries",
+    "backup_prune_plan_object_impacts",
+    "backup_prune_executions",
+    "backup_prune_execution_object_results",
+    "backup_snapshot_retention_policy_revisions",
+    "backup_snapshot_expiry_plans",
+    "backup_snapshot_expiry_plan_entries",
+    "backup_snapshot_expiry_executions",
+    "backup_snapshot_expiry_execution_entries",
+    "backup_maintenance_runs",
+    "backup_schedules",
+    "backup_schedule_revisions",
+    "backup_schedule_operations",
+    "backup_schedule_occurrences",
+    "backup_schedule_occurrence_handoffs",
+    "backup_schedule_misfire_skips",
+    "backup_scheduled_maintenance_claims",
+    "rebaseline_snapshots",
+    "rebaseline_snapshot_entries",
+    "rebaseline_snapshot_handoff_proofs",
+];
+
 #[cfg(test)]
 mod tests {
     use super::{MigrationRunner, MigrationStatus};
@@ -163,6 +249,46 @@ mod tests {
         let runner = MigrationRunner::new();
         assert!(matches!(runner.source, super::MigrationSource::Embedded));
         assert_eq!(super::EMBEDDED_MIGRATOR.iter().count(), 36);
+        let migrations = super::EMBEDDED_MIGRATOR.iter().collect::<Vec<_>>();
+        assert!(
+            migrations
+                .windows(2)
+                .all(|pair| pair[0].version < pair[1].version)
+        );
+        assert!(migrations.iter().all(|migration| !migration.no_tx));
+        assert!(!super::EMBEDDED_MIGRATOR.ignore_missing);
+        assert!(super::EMBEDDED_MIGRATOR.locking);
+        assert_eq!(migrations.last().unwrap().version, 20260910000000);
+    }
+
+    #[test]
+    fn required_table_catalog_covers_every_frozen_table() {
+        let tables = super::EMBEDDED_MIGRATOR
+            .iter()
+            .flat_map(|migration| {
+                migration.sql.lines().filter_map(|line| {
+                    line.strip_prefix("CREATE TABLE ")
+                        .and_then(|rest| rest.split_whitespace().next())
+                })
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        let required = super::REQUIRED_TABLES
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(tables, required);
+    }
+
+    #[test]
+    fn unknown_schema_error_is_typed_and_redacted() {
+        let error = crate::DatabaseError::migration(sqlx::migrate::MigrateError::VersionMissing(
+            20270101000000,
+        ));
+        assert_eq!(
+            error.kind(),
+            Some(crate::DatabaseErrorKind::SchemaUnsupported)
+        );
+        assert_eq!(error.to_string(), "database_schema_unsupported");
     }
 
     #[test]

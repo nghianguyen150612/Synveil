@@ -16,6 +16,7 @@ mod engine;
 mod error;
 mod host;
 mod http_remote;
+mod local_migrations;
 mod names;
 mod observation;
 mod outbound;

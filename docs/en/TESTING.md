@@ -2916,3 +2916,33 @@ migration or server API.
 See [`ADR-048`](../adr/ADR-048-production-desktop-recovery-and-resilience-ux.md)
 for ownership, safe actions, root semantics, restart behavior, and the
 no-destructive-repair boundary.
+
+## Prompt115: frozen-schema upgrade safety
+
+See [Upgrade and persistent-state safety](UPGRADE_SAFETY.md) for schema versions,
+ownership, failure actions, rollback limits, and uninstall/purge boundaries.
+
+The disposable-file SQLite matrix covers every frozen migration prefix, fresh
+schema equivalence, reopen, v6 identity/intent/conflict preservation, failed
+transaction rollback and restart, future versions, malformed ledgers, missing
+schema objects, and non-SQLite evidence preservation:
+
+```bash
+CARGO_BUILD_JOBS=1 cargo test -p synveil-client-sync --locked local_migrations
+CARGO_BUILD_JOBS=1 cargo test -p synveil-metadata --locked --lib migrations
+CARGO_BUILD_JOBS=1 cargo test -p synveil-metadata --locked --test linux_install_lifecycle
+```
+
+Existing profile/SecretStore, outbound crash/lost-response, conflict resolution,
+root-loss, and durable-pause tests remain part of the workspace gate. The purge
+parent-escape regression exercises both `/etc` and `/var/lib` on disposable roots.
+
+The PG17 gate requires a disposable PostgreSQL 17 service and permission to create
+isolated schemas. It includes the existing 36-migration fresh gate and the new
+future-version/missing-table evidence-preservation gate. Without that environment,
+these ignored tests are **blocked by environment**, not passed:
+
+```bash
+CARGO_BUILD_JOBS=1 cargo test -p synveil-metadata --locked \
+  --test pg17_migration_gate_postgres -- --ignored --test-threads=1
+```

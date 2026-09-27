@@ -191,6 +191,19 @@ handle_purge_target() {
     local dest="$1"
     local label="$2"
     synveil_dest_under_root_lexical "$STAGED_ROOT" "$dest" || return 1
+    # Validate the parent before even unlinking a final symlink: an escaped
+    # /etc or /var/lib would otherwise remove a link in an external tree.
+    synveil_dest_under_root "$STAGED_ROOT" "$dest" || return 1
+    # Even an in-root parent redirect can point at unrelated state. Only the
+    # documented lexical owned directory may be purged.
+    local ancestor="${dest%/*}"
+    while [[ -n "$ancestor" && "$ancestor" != "/" ]]; do
+        if [[ -L "${STAGED_ROOT%/}${ancestor}" ]]; then
+            synveil_err "refusing purge through symlinked parent: $ancestor"
+            return 1
+        fi
+        ancestor="${ancestor%/*}"
+    done
     local full="${STAGED_ROOT%/}${dest}"
     if [[ ! -e "$full" && ! -L "$full" ]]; then
         synveil_log "$label $dest already absent"

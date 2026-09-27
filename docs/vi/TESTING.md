@@ -2736,3 +2736,33 @@ không thêm migration hoặc server API.
 Xem [`ADR-048`](../adr/ADR-048-production-desktop-recovery-and-resilience-ux.md)
 về ownership, action an toàn, root semantics, restart và boundary không repair
 destructive.
+
+## Prompt115: an toàn nâng cấp schema đóng băng
+
+Xem [An toàn nâng cấp và trạng thái bền vững](UPGRADE_SAFETY.md) về version,
+ownership, xử lý lỗi, giới hạn rollback và uninstall/purge.
+
+Matrix SQLite dùng file disposable kiểm tra mọi prefix migration, schema fresh
+tương đương, reopen, bảo toàn identity/intent/conflict v6, rollback transaction
+lỗi rồi restart, future version, ledger sai, object schema thiếu và giữ bằng
+chứng file không phải SQLite:
+
+```bash
+CARGO_BUILD_JOBS=1 cargo test -p synveil-client-sync --locked local_migrations
+CARGO_BUILD_JOBS=1 cargo test -p synveil-metadata --locked --lib migrations
+CARGO_BUILD_JOBS=1 cargo test -p synveil-metadata --locked --test linux_install_lifecycle
+```
+
+Test profile/SecretStore, outbound crash/lost-response, conflict resolution,
+root-loss và pause bền vững hiện có vẫn thuộc workspace gate. Regression purge
+parent-escape thử cả `/etc` và `/var/lib` bằng root disposable.
+
+Gate PG17 cần service PostgreSQL 17 disposable và quyền tạo schema riêng. Gate
+bao gồm fresh 36 migration hiện có cùng future-version/missing-table bảo toàn
+bằng chứng mới. Thiếu môi trường, test ignored là **blocked by environment**,
+không phải passed:
+
+```bash
+CARGO_BUILD_JOBS=1 cargo test -p synveil-metadata --locked \
+  --test pg17_migration_gate_postgres -- --ignored --test-threads=1
+```
