@@ -41,6 +41,11 @@ Define installer engine, platform adapters, package ownership, server bootstrap
 boundary, rollback/repair model and privilege model. Reconcile existing data,
 credential, process and migration owners before implementation.
 
+**Complete:** [installation architecture and component ownership](INSTALLATION_ARCHITECTURE.md),
+[ADR-050](../adr/ADR-050-v0.2-installation-component-ownership.md), and the
+[Prompt003 manifest](PROMPT003_MANIFEST.md). Architecture only; no installer,
+server bootstrap, schema, artifact, runtime or v0.1 behavior was implemented.
+
 ### P004 — Clean-Machine Acceptance Harness
 
 Create deterministic acceptance definitions and machine-readable scenarios for
@@ -416,7 +421,8 @@ inspecting durable files and the worktree; never reset or clean unrelated work.
 | --- | --- |
 | Prompt001 | Contract, architecture record and authoritative prompt map are documented; no installer or runtime behavior is implemented. |
 | Prompt002 | Existing v0.1 installation/deployment surface audited; see the evidence manifest. No installer/runtime behavior was implemented by this audit. |
-| Prompt003–048 | Planned by the exact named allocation above; no completion or clean-machine delivery is claimed. |
+| Prompt003 | Installation architecture and component ownership documented; implementation and clean-machine delivery are not claimed. |
+| Prompt004–048 | Planned by the exact named allocation above; no completion or clean-machine delivery is claimed. |
 
 Future completion records must point to concrete source and validation evidence
 and state unavailable gates honestly. A successful Prompt001 push is not a v0.2

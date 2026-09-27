@@ -68,6 +68,7 @@ một tệp để trạng thái và hệ quả không bị lệch giữa hai b�
 | [047](ADR-047-production-desktop-attention-and-conflict-resolution.md) | Production desktop attention and conflict resolution / Attention desktop production và phân giải conflict | Accepted — LOCKED Prompt 106 |
 | [048](ADR-048-production-desktop-recovery-and-resilience-ux.md) | Production desktop recovery and resilience UX / UX recovery và resilience desktop production | Accepted — LOCKED Prompt 107 |
 | [049](ADR-049-v0.2-effortless-installation-architecture.md) | v0.2 effortless installation architecture / Kiến trúc cài đặt dễ dàng v0.2 | Accepted / Chấp thuận — v0.2 target contract |
+| [050](ADR-050-v0.2-installation-component-ownership.md) | v0.2 installation component ownership / Quyền sở hữu thành phần cài đặt v0.2 | Accepted — v0.2 target architecture |
 
 ## Process / Quy trình
 
