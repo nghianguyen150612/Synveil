@@ -9,6 +9,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.synveil.android.core.model.ServerProfileId
 import com.synveil.android.data.profile.ServerProfileRepository
+import com.synveil.android.data.network.SynveilHttpTransport
 import com.synveil.android.feature.home.HomeScreen
 import com.synveil.android.feature.profile.ProfileEditorScreen
 import com.synveil.android.feature.profile.ServerProfilesScreen
@@ -21,6 +22,7 @@ private const val ProfileIdArgument = "profileId"
 @Composable
 fun SynveilNavHost(
     repository: ServerProfileRepository,
+    transportFactory: (com.synveil.android.core.model.ServerProfile) -> SynveilHttpTransport,
     modifier: Modifier = Modifier,
 ) {
     val navController = rememberNavController()
@@ -39,6 +41,7 @@ fun SynveilNavHost(
         composable(ProfilesRoute) {
             ServerProfilesScreen(
                 repository = repository,
+                transportFactory = transportFactory,
                 onBack = navController::popBackStack,
                 onAdd = { navController.navigate(ProfileEditorRoute) },
                 onEdit = { profileId ->

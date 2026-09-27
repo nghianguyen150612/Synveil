@@ -63,6 +63,18 @@ class ServerProfileRepositoryTest {
     }
 
     @Test
+    fun successfulConnectionTimestampIsExplicitAndDurable() = runBlocking {
+        val fixture = Fixture()
+        val created = (fixture.repository.addProfile("Primary", "https://example.com") as ProfileMutationResult.Created).profile
+
+        fixture.repository.recordSuccessfulConnection(created.profileId, 1_700_000_000_123L)
+
+        val persisted = fixture.repository().state.first() as ProfileRepositoryState.Configured
+        assertEquals(1_700_000_000_123L, persisted.configuration.profiles.single().lastConnectedAt)
+        fixture.close()
+    }
+
+    @Test
     fun activeSelectionAndRemovalMaintainInvariant() = runBlocking {
         val fixture = Fixture()
         val first = (fixture.repository.addProfile("One", "https://one.example.com") as ProfileMutationResult.Created).profile

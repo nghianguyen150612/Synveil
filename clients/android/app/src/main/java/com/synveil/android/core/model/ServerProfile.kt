@@ -328,6 +328,11 @@ data class ServerProfile private constructor(
         )
     }
 
+    fun markConnected(atMillis: Long): ServerProfile {
+        require(atMillis >= 0) { "lastConnectedAt must not be negative" }
+        return copy(lastConnectedAt = atMillis)
+    }
+
     companion object {
         fun create(
             profileId: ServerProfileId,

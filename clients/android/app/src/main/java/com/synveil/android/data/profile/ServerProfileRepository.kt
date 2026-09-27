@@ -87,6 +87,8 @@ interface ServerProfileRepository {
     suspend fun selectActiveProfile(profileId: ServerProfileId)
 
     suspend fun removeProfile(profileId: ServerProfileId)
+
+    suspend fun recordSuccessfulConnection(profileId: ServerProfileId, connectedAt: Long)
 }
 
 class DataStoreServerProfileRepository(
@@ -180,6 +182,20 @@ class DataStoreServerProfileRepository(
                 else -> remaining.first().profileId
             }
             current.copy(profiles = remaining, activeProfileId = nextActive)
+        }
+    }
+
+    override suspend fun recordSuccessfulConnection(profileId: ServerProfileId, connectedAt: Long) {
+        updateConfiguration { current ->
+            if (current.profiles.none { it.profileId == profileId }) {
+                throw ProfileOperationException(ProfileOperationError.PROFILE_NOT_FOUND)
+            }
+            ProfileConfiguration(
+                profiles = current.profiles.map { profile ->
+                    if (profile.profileId == profileId) profile.markConnected(connectedAt) else profile
+                },
+                activeProfileId = current.activeProfileId,
+            )
         }
     }
 

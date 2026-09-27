@@ -37,16 +37,19 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.synveil.android.core.model.ServerProfile
 import com.synveil.android.core.model.ServerProfileId
 import com.synveil.android.data.profile.ServerProfileRepository
+import com.synveil.android.data.network.SynveilHttpTransport
+import com.synveil.android.data.network.SynveilTransportError
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ServerProfilesScreen(
     repository: ServerProfileRepository,
+    transportFactory: (ServerProfile) -> SynveilHttpTransport,
     onBack: () -> Unit,
     onAdd: () -> Unit,
     onEdit: (ServerProfileId) -> Unit,
     profilesViewModel: ServerProfilesViewModel = viewModel(
-        factory = profilesViewModelFactory(repository),
+        factory = profilesViewModelFactory(repository, transportFactory),
     ),
 ) {
     val uiState by profilesViewModel.uiState.collectAsStateWithLifecycle()
@@ -94,9 +97,11 @@ fun ServerProfilesScreen(
                         ProfileCard(
                             profile = profile,
                             isActive = profile.profileId == uiState.activeProfileId,
+                            connectionState = uiState.connectionStates[profile.profileId] ?: ConnectionUiState.Idle,
                             onSelect = { profilesViewModel.select(profile.profileId) },
                             onEdit = { onEdit(profile.profileId) },
                             onRemove = { profileToRemove = profile },
+                            onTestConnection = { profilesViewModel.testConnection(profile.profileId) },
                         )
                     }
                 }
@@ -128,9 +133,11 @@ fun ServerProfilesScreen(
 private fun ProfileCard(
     profile: ServerProfile,
     isActive: Boolean,
+    connectionState: ConnectionUiState,
     onSelect: () -> Unit,
     onEdit: () -> Unit,
     onRemove: () -> Unit,
+    onTestConnection: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -148,15 +155,65 @@ private fun ProfileCard(
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.primary,
             )
+            ConnectionStatusText(connectionState)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (!isActive) {
                     OutlinedButton(onClick = onSelect) { Text("Use") }
                 }
                 OutlinedButton(onClick = onEdit) { Text("Edit") }
+                OutlinedButton(
+                    onClick = onTestConnection,
+                    enabled = connectionState != ConnectionUiState.Checking,
+                ) {
+                    if (connectionState == ConnectionUiState.Checking) {
+                        CircularProgressIndicator()
+                    } else {
+                        Text("Test connection")
+                    }
+                }
                 TextButton(onClick = onRemove) { Text("Remove") }
             }
         }
     }
+}
+
+@Composable
+private fun ConnectionStatusText(state: ConnectionUiState) {
+    val message = when (state) {
+        ConnectionUiState.Idle -> "Connection not tested"
+        ConnectionUiState.Checking -> "Checking server…"
+        is ConnectionUiState.Ready -> if (state.requestIds.isEmpty()) {
+            "Ready"
+        } else {
+            "Ready · request ID available"
+        }
+        is ConnectionUiState.AliveButNotReady -> "Server is running but not ready"
+        is ConnectionUiState.Failed -> connectionErrorMessage(state.error)
+    }
+    Text(
+        text = message,
+        style = MaterialTheme.typography.bodySmall,
+        color = if (state is ConnectionUiState.Failed) {
+            MaterialTheme.colorScheme.error
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+    )
+}
+
+private fun connectionErrorMessage(error: SynveilTransportError): String = when (error) {
+    SynveilTransportError.Offline -> "Server unavailable"
+    SynveilTransportError.DnsFailure -> "Server address could not be resolved"
+    SynveilTransportError.Timeout -> "Connection timed out"
+    SynveilTransportError.TlsError -> "TLS verification failed"
+    is SynveilTransportError.RedirectRejected -> "Server redirect was rejected"
+    is SynveilTransportError.HttpError -> "Server returned HTTP ${error.statusCode}"
+    SynveilTransportError.BodyLimitExceeded -> "Server response was too large"
+    is SynveilTransportError.UnexpectedContentType -> "Invalid Synveil response type"
+    SynveilTransportError.MalformedResponse -> "Invalid Synveil response"
+    is SynveilTransportError.ProtocolError -> "Invalid Synveil response"
+    SynveilTransportError.ConfigurationError -> "Server configuration is unavailable"
+    SynveilTransportError.Cancelled -> "Connection check cancelled"
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -223,7 +280,7 @@ fun ProfileEditorScreen(
                 }
             }
             Text(
-                "Profiles store only non-secret configuration. Authentication and networking are not implemented yet.",
+                "Profiles store only non-secret configuration. Connection checks use unauthenticated health probes; authentication is not implemented yet.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -231,11 +288,14 @@ fun ProfileEditorScreen(
     }
 }
 
-private fun profilesViewModelFactory(repository: ServerProfileRepository): ViewModelProvider.Factory =
+private fun profilesViewModelFactory(
+    repository: ServerProfileRepository,
+    transportFactory: (ServerProfile) -> SynveilHttpTransport,
+): ViewModelProvider.Factory =
     object : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            ServerProfilesViewModel(repository) as T
+            ServerProfilesViewModel(repository, transportFactory) as T
     }
 
 private fun profileEditorViewModelFactory(

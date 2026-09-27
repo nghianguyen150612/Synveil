@@ -2,10 +2,11 @@
 
 ## Status
 
-Prompt 2 adds durable local server-profile configuration on top of the native
-Android foundation. The app can create, edit, select, and remove non-secret
-server profiles without making network requests. Authentication, transport,
-and synchronization remain future milestones.
+Prompt 3 adds a verified, unauthenticated HTTP transport on top of durable
+server-profile configuration. The app can run the canonical `/health/live` and
+`/health/ready` probes from a selected profile and reports typed connection
+states. Authentication, synchronization, uploads, and file browsing remain
+future milestones.
 
 ## Stack and targets
 
@@ -27,6 +28,7 @@ app/src/main/java/com/synveil/android/
 ├── app/                 # Activity and navigation composition root
 ├── core/model/          # Small app-facing value models
 ├── core/ui/             # Theme and shared Compose UI foundation
+├── data/network/        # Profile-bound HTTP transport and health protocol
 ├── data/profile/        # DataStore-backed profile repository and schema
 └── feature/
     ├── home/            # Startup/home surface
@@ -52,8 +54,9 @@ Production profiles require HTTPS. The only HTTP exception is the explicit
 `LOOPBACK_TEST_HTTP` policy enabled in debug builds for numeric `127.0.0.1` or
 `[::1]` origins. Hostnames such as `localhost`, LAN addresses, and `.local`
 names remain rejected. Origins cannot contain credentials, paths, queries,
-fragments, backslashes, or malformed ports. No TLS bypass or cleartext network
-policy is configured by Prompt 2.
+fragments, backslashes, or malformed ports. Release cleartext traffic is
+disabled; the debug manifest permits platform cleartext only so the transport
+can exercise its tightly bounded numeric-loopback policy.
 
 The DataStore representation is schema version 1 and contains only the active
 profile ID plus non-secret profile records. It contains no password, session,
@@ -102,14 +105,32 @@ Synveil documentation remain authoritative; this client must not invent a
 parallel protocol or duplicate server/domain business logic.
 
 The existing Rust `synveil-client` and `synveil-client-sync` crates implement
-desktop process/synchronization concerns and are not linked into Prompt 1.
+desktop process/synchronization concerns and are not linked into Prompt 3.
 JNI, UniFFI, native Rust libraries, and C/C++ bridges require a later explicit
 portability and FFI decision.
 
+## HTTP transport
+
+`SynveilHttpTransport` is constructed from one validated `ServerProfile`; it
+does not accept arbitrary caller URLs. It uses OkHttp with redirects,
+connection retries, and cookies disabled. Requests use finite connect, read,
+write, and call timeouts, `Accept: application/json`, identity encoding, and a
+non-secret client user-agent. Release profiles are HTTPS-only and use standard
+Android TLS verification with no trust-all or certificate-error bypass. Debug
+numeric-loopback HTTP remains the only cleartext exception.
+
+Health response bodies are bounded to 64 KiB, require compatible JSON content
+types, and use strict kotlinx.serialization schemas. Valid `X-Request-Id`
+values are retained only as bounded diagnostics. The full server check calls
+`/health/live` before `/health/ready`; a valid readiness `503` is reported as
+alive-but-not-ready. A successful ready result is the only event that updates
+the profile's historical `lastConnectedAt` value. No current-online state is
+inferred from that timestamp.
+
 ## Unsupported features and next milestone
 
-Authentication, server enrollment, networking, health probes, sync, uploads,
-backups, file browsing, background work, and production signing are not
-implemented. The next Android milestone should add a reviewed HTTPS transport
-that consumes the canonical origin produced here without adding credential
-storage or API behavior prematurely.
+Authentication, server enrollment, bearer credentials, Android Keystore, sync,
+uploads, backups, file browsing, background work, and production signing are
+not implemented. The next Android milestone should add reviewed
+authentication and secure credential lifecycle management without weakening
+the transport boundary.

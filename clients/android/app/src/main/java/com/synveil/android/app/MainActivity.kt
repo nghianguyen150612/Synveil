@@ -24,7 +24,10 @@ class MainActivity : ComponentActivity() {
                         .fillMaxSize()
                         .safeDrawingPadding(),
                 ) {
-                    SynveilNavHost(repository)
+                    SynveilNavHost(
+                        repository = repository,
+                        transportFactory = (application as SynveilApplication).transportFactory,
+                    )
                 }
             }
         }

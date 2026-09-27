@@ -19,7 +19,7 @@ class StartupStateTest {
         assertEquals("Development foundation", state.identity.releaseChannel)
         assertEquals("Native Android foundation ready", state.statusMessage)
         assertEquals(
-            "Authentication, networking, sync, uploads, backups, and file browsing are not implemented yet.",
+            "Authentication, sync, uploads, backups, and file browsing are not implemented yet.",
             state.unsupportedFeaturesMessage,
         )
     }

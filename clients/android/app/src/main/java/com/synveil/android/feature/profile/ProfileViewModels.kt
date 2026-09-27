@@ -12,6 +12,10 @@ import com.synveil.android.data.profile.ProfileOperationError
 import com.synveil.android.data.profile.ProfileOperationException
 import com.synveil.android.data.profile.ProfileRepositoryState
 import com.synveil.android.data.profile.ServerProfileRepository
+import com.synveil.android.data.network.ConnectionCheckResult
+import com.synveil.android.data.network.SynveilHttpTransport
+import com.synveil.android.data.network.SynveilTransportError
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -20,6 +24,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 
 data class ProfilesUiState(
@@ -27,12 +33,25 @@ data class ProfilesUiState(
     val activeProfileId: ServerProfileId? = null,
     val isLoading: Boolean = true,
     val errorMessage: String? = null,
+    val connectionStates: Map<ServerProfileId, ConnectionUiState> = emptyMap(),
 )
+
+sealed interface ConnectionUiState {
+    data object Idle : ConnectionUiState
+    data object Checking : ConnectionUiState
+    data class Ready(val requestIds: List<String>) : ConnectionUiState
+    data class AliveButNotReady(val code: String?) : ConnectionUiState
+    data class Failed(val error: SynveilTransportError) : ConnectionUiState
+}
 
 class ServerProfilesViewModel(
     private val repository: ServerProfileRepository,
+    private val transportFactory: (ServerProfile) -> SynveilHttpTransport,
+    private val nowMillis: () -> Long = { System.currentTimeMillis() },
 ) : ViewModel() {
     private val actionError = MutableStateFlow<String?>(null)
+    private val connectionStates = MutableStateFlow<Map<ServerProfileId, ConnectionUiState>>(emptyMap())
+    private val checksInFlight = mutableSetOf<ServerProfileId>()
 
     private val repositoryState: StateFlow<ProfilesUiState> = repository.state
         .map { state ->
@@ -51,8 +70,11 @@ class ServerProfilesViewModel(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ProfilesUiState())
 
-    val uiState: StateFlow<ProfilesUiState> = combine(repositoryState, actionError) { base, actionMessage ->
-        if (actionMessage == null) base else base.copy(errorMessage = actionMessage)
+    val uiState: StateFlow<ProfilesUiState> = combine(repositoryState, actionError, connectionStates) { base, actionMessage, checks ->
+        base.copy(
+            errorMessage = actionMessage ?: base.errorMessage,
+            connectionStates = checks,
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ProfilesUiState())
 
     fun select(profileId: ServerProfileId) {
@@ -61,6 +83,46 @@ class ServerProfilesViewModel(
 
     fun remove(profileId: ServerProfileId) {
         runAction { repository.removeProfile(profileId) }
+    }
+
+    fun testConnection(profileId: ServerProfileId) {
+        if (!checksInFlight.add(profileId)) return
+        viewModelScope.launch {
+            connectionStates.update { it + (profileId to ConnectionUiState.Checking) }
+            val result = try {
+                val profile = repository.state.first().let { state ->
+                    (state as? ProfileRepositoryState.Configured)
+                        ?.configuration
+                        ?.profiles
+                        ?.firstOrNull { it.profileId == profileId }
+                }
+                if (profile == null) {
+                    ConnectionCheckResult.Failure(SynveilTransportError.ConfigurationError)
+                } else {
+                    withContext(Dispatchers.IO) { transportFactory(profile).checkServer() }
+                }
+            } catch (_: kotlinx.coroutines.CancellationException) {
+                ConnectionCheckResult.Failure(SynveilTransportError.Cancelled)
+            } catch (_: Exception) {
+                ConnectionCheckResult.Failure(SynveilTransportError.ConfigurationError)
+            }
+            val uiState = when (result) {
+                is ConnectionCheckResult.Ready -> {
+                    try {
+                        repository.recordSuccessfulConnection(profileId, nowMillis())
+                        ConnectionUiState.Ready(
+                            requestIds = listOfNotNull(result.livenessRequestId, result.readinessRequestId),
+                        )
+                    } catch (_: Exception) {
+                        ConnectionUiState.Failed(SynveilTransportError.ConfigurationError)
+                    }
+                }
+                is ConnectionCheckResult.AliveButNotReady -> ConnectionUiState.AliveButNotReady(result.code)
+                is ConnectionCheckResult.Failure -> ConnectionUiState.Failed(result.error)
+            }
+            connectionStates.update { it + (profileId to uiState) }
+            checksInFlight.remove(profileId)
+        }
     }
 
     private fun runAction(action: suspend () -> Unit) {

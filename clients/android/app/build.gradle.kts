@@ -63,9 +63,11 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.okhttp)
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
 
     testImplementation(libs.junit)
+    testImplementation(libs.okhttp.mockwebserver)
 }
