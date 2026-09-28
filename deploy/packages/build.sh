@@ -61,6 +61,8 @@ Outputs:
   SYNVEIL-LINUX-ARTIFACT-MANIFEST.txt is written beside the package output.
   It binds artifact hashes to the actual source tree, toolchain, and build
   timestamp used by this invocation; it is not a checked-in expected binary.
+  SYNVEIL-RELEASE-MANIFEST.json is the authoritative v0.2 release-artifact
+  metadata and describes only packages produced by this invocation.
 EOF
 }
 
@@ -480,19 +482,40 @@ build_rpm() {
     printf '%s\n' "$dest"
 }
 
+BUILT_ARTIFACTS=()
 case "$FORMAT" in
     deb)
-        build_deb
+        BUILT_ARTIFACTS+=("$(build_deb)")
         ;;
     rpm)
-        build_rpm
+        BUILT_ARTIFACTS+=("$(build_rpm)")
         ;;
     all)
-        build_deb
+        BUILT_ARTIFACTS+=("$(build_deb)")
         printf '\n' >&2
-        build_rpm
+        BUILT_ARTIFACTS+=("$(build_rpm)")
         ;;
 esac
+
+RELEASE_MANIFEST_ARGS=()
+for artifact_path in "${BUILT_ARTIFACTS[@]}"; do
+    artifact_name="$(basename "$artifact_path")"
+    case "$artifact_name" in
+        *.deb)
+            RELEASE_MANIFEST_ARGS+=(--artifact "{\"id\":\"debian-x86_64-deb\",\"artifact_type\":\"deb\",\"filename\":\"${artifact_name}\",\"platform\":\"linux\",\"architecture\":\"x86_64\",\"role\":\"native_package\",\"components\":[\"synveil-desktop\",\"synveil-client\",\"scheduled-maintenance\"],\"package_metadata\":{\"format\":\"deb\",\"package_name\":\"${PACKAGE_NAME}\",\"package_version\":\"${DEB_VERSION}\",\"package_architecture\":\"${DEB_ARCH}\"}}")
+            ;;
+        *.rpm)
+            RELEASE_MANIFEST_ARGS+=(--artifact "{\"id\":\"rpm-x86_64-rpm\",\"artifact_type\":\"rpm\",\"filename\":\"${artifact_name}\",\"platform\":\"linux\",\"architecture\":\"x86_64\",\"role\":\"native_package\",\"components\":[\"synveil-desktop\",\"synveil-client\",\"scheduled-maintenance\"],\"package_metadata\":{\"format\":\"rpm\",\"package_name\":\"${PACKAGE_NAME}\",\"package_version\":\"${RPM_VERSION}\",\"package_release\":\"${RPM_RELEASE}\",\"package_architecture\":\"${RPM_ARCH}\"}}")
+            ;;
+    esac
+done
+python3 "${REPO_ROOT}/scripts/release_manifest.py" create \
+    --artifact-root "$OUTPUT_DIR" --product-version "$CARGO_VERSION" \
+    --source-commit "$(git -C "$REPO_ROOT" rev-parse HEAD)" \
+    --output "${OUTPUT_DIR}/SYNVEIL-RELEASE-MANIFEST.json" \
+    "${RELEASE_MANIFEST_ARGS[@]}"
+python3 "${REPO_ROOT}/scripts/release_manifest.py" validate \
+    --artifact-root "$OUTPUT_DIR" "${OUTPUT_DIR}/SYNVEIL-RELEASE-MANIFEST.json"
 
 log "done. artifacts in $OUTPUT_DIR"
 ls -la "$OUTPUT_DIR" >&2

@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://synveil.org/schemas/release-manifest-v1.schema.json",
+  "title": "Synveil release artifact manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "product", "product_version", "source_commit", "artifacts"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "product": { "const": "Synveil" },
+    "product_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" },
+    "source_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "artifacts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/artifact" }
+    }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "artifact_type", "filename", "platform", "architecture", "role", "product_version", "size_bytes", "sha256", "components"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9]+(?:[a-z0-9_-]*[a-z0-9])?$" },
+        "artifact_type": { "enum": ["deb", "rpm", "appimage", "windows_installer", "windows_portable_zip"] },
+        "filename": { "type": "string", "minLength": 1 },
+        "platform": { "enum": ["linux", "windows"] },
+        "architecture": { "enum": ["x86_64", "aarch64"] },
+        "role": { "enum": ["native_package", "primary_installer", "portable"] },
+        "product_version": { "type": "string" },
+        "size_bytes": { "type": "integer", "minimum": 0 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "components": {
+          "type": "array", "uniqueItems": true,
+          "items": { "enum": ["synveil-desktop", "synveil-client", "scheduled-maintenance"] }
+        },
+        "package_metadata": {
+          "oneOf": [
+            {
+              "type": "object", "additionalProperties": false,
+              "required": ["format", "package_name", "package_version", "package_architecture"],
+              "properties": {
+                "format": { "const": "deb" }, "package_name": { "type": "string", "minLength": 1 },
+                "package_version": { "type": "string", "minLength": 1 }, "package_architecture": { "type": "string", "minLength": 1 }
+              }
+            },
+            {
+              "type": "object", "additionalProperties": false,
+              "required": ["format", "package_name", "package_version", "package_release", "package_architecture"],
+              "properties": {
+                "format": { "const": "rpm" }, "package_name": { "type": "string", "minLength": 1 },
+                "package_version": { "type": "string", "minLength": 1 }, "package_release": { "type": "string", "minLength": 1 },
+                "package_architecture": { "type": "string", "minLength": 1 }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

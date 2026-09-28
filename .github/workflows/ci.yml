@@ -190,6 +190,12 @@ jobs:
           test -n "$zip"
           test -n "$zip_repro"
           synveil_require_identical_artifacts "$zip" "$zip_repro" windows-runtime-ZIP
+          synveil_require_identical_artifacts \
+            target/windows-packages/SYNVEIL-RELEASE-MANIFEST.json \
+            target/windows-packages-reproducible/SYNVEIL-RELEASE-MANIFEST.json \
+            windows-release-manifest
+          python3 scripts/release_manifest.py validate --artifact-root target/windows-packages \
+            target/windows-packages/SYNVEIL-RELEASE-MANIFEST.json
 
       - name: Verify generated QML module and PE output
         shell: pwsh

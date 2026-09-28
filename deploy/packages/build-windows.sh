@@ -532,3 +532,10 @@ fi
 
 log "ZIP built: $ZIP_PATH"
 sha256_file "$ZIP_PATH"
+python3 "${REPO_ROOT}/scripts/release_manifest.py" create \
+    --artifact-root "$OUTPUT_DIR" --product-version "$PACKAGE_VERSION" \
+    --source-commit "$(git -C "$REPO_ROOT" rev-parse HEAD)" \
+    --output "${OUTPUT_DIR}/SYNVEIL-RELEASE-MANIFEST.json" \
+    --artifact "{\"id\":\"windows-x86_64-portable\",\"artifact_type\":\"windows_portable_zip\",\"filename\":\"$(basename "$ZIP_PATH")\",\"platform\":\"windows\",\"architecture\":\"x86_64\",\"role\":\"portable\",\"components\":[\"synveil-desktop\",\"synveil-client\"]}"
+python3 "${REPO_ROOT}/scripts/release_manifest.py" validate \
+    --artifact-root "$OUTPUT_DIR" "${OUTPUT_DIR}/SYNVEIL-RELEASE-MANIFEST.json"

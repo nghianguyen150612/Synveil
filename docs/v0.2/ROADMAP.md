@@ -69,6 +69,12 @@ for Phase B. This does not claim that installer journeys are implemented.
 Define one authoritative artifact metadata format for DEB, RPM, AppImage,
 Windows installer and retained portable artifacts.
 
+**Complete (Prompt005):** schema v1, deterministic standard-library tooling,
+current DEB/RPM/portable-ZIP producer integration, composition, safety tests,
+and CI validation are defined in the [release artifact manifest contract](RELEASE_ARTIFACT_MANIFEST.md)
+and [Prompt005 evidence manifest](PROMPT005_MANIFEST.md). AppImage and Windows
+installer are schema-supported but remain unimplemented. Phase B remains open.
+
 ### P006 — Release Download and Integrity Contract
 
 Specify SHA-256/signature-ready metadata, version selection, architecture
