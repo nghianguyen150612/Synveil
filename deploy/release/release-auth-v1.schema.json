@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://synveil.org/schemas/release-auth-v1.schema.json",
+  "title": "Synveil release authentication descriptor v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "manifest_filename", "manifest_size_bytes", "manifest_sha256", "signatures"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "manifest_filename": { "const": "SYNVEIL-RELEASE-MANIFEST.json" },
+    "manifest_size_bytes": { "type": "integer", "minimum": 1, "maximum": 1048576 },
+    "manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "signatures": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["scheme", "key_id", "signature_filename"],
+        "properties": {
+          "scheme": { "type": "string", "minLength": 1 },
+          "key_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+          "signature_filename": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" }
+        }
+      }
+    }
+  }
+}

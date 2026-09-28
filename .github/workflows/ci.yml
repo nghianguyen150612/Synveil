@@ -27,6 +27,12 @@ jobs:
       - name: Validate v0.2 installation acceptance contract
         run: ./scripts/validate-install-acceptance.sh
 
+      - name: Validate v0.2 release manifest contract
+        run: ./scripts/validate-release-manifest.sh
+
+      - name: Validate v0.2 release download integrity contract
+        run: ./scripts/validate-release-download.sh
+
       - name: Install Linux secret-service build dependencies
         if: runner.os == 'Linux'
         run: |

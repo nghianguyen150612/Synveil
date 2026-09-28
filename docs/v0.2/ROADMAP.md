@@ -77,9 +77,12 @@ installer are schema-supported but remain unimplemented. Phase B remains open.
 
 ### P006 — Release Download and Integrity Contract
 
-Specify SHA-256/signature-ready metadata, version selection, architecture
-detection and fail-closed download verification. Checksums alone do not
-authenticate metadata delivered by the same untrusted source.
+**Complete (Prompt006):** exact-manifest pin authentication, signature-ready
+fail-closed trust boundaries, HTTPS/origin/redirect policy, deterministic exact
+artifact selection, and bounded atomic verification are defined in the
+[release download contract](RELEASE_DOWNLOAD_INTEGRITY.md) and
+[Prompt006 evidence](PROMPT006_MANIFEST.md). Production signing and P011
+channel/version recommendation remain pending. Phase B remains open.
 
 ### P007 — Installer Common Engine
 
