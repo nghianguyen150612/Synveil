@@ -71,6 +71,7 @@ một tệp để trạng thái và hệ quả không bị lệch giữa hai b�
 | [050](ADR-050-v0.2-installation-component-ownership.md) | v0.2 installation component ownership / Quyền sở hữu thành phần cài đặt v0.2 | Accepted — v0.2 target architecture |
 | [051](ADR-051-v0.2-release-download-integrity.md) | v0.2 release acquisition and integrity trust boundary | Accepted — Prompt006 contract |
 | [052](ADR-052-v0.2-installer-common-engine.md) | v0.2 installer common engine and platform adapter boundary | Accepted — Prompt007 contract |
+| [053](ADR-053-v0.2-installation-transaction-journal.md) | v0.2 installation transaction journal | Accepted — Prompt008 contract |
 
 ## Process / Quy trình
 
