@@ -34,3 +34,9 @@ P009 retains detailed lifecycle policy. P010 retains user-facing error copy and
 diagnostic UX. P011 retains channel/version policy. Publication follows one
 task-branch commit and a squash PR to `main`; this manifest does not predict the
 final squash SHA.
+
+## Prompt008A hardening amendment
+
+Prompt008A preserves journal schema version 1 while tightening its intended fail-closed semantics. The common engine owns the compensation candidate/order policy used by both ordinary and journal-aware execution. Durable execution records `CompensationStarted` before compensation mutation and `CompensationVerified` only after compensation and its verification succeed. Replay distinguishes verified compensation from ambiguous in-flight compensation and stops compensated transactions for replan.
+
+Journal append and load now validate the full semantic sequence against the exact ordered plan. Completion requires all effects verified, final verification recorded, and then one terminal completion record. Integrity hashes remain necessary but are not treated as semantic authorization. The focused inventory is 81 Prompt007 tests plus 78 Prompt008/Prompt008A tests (159 total install-engine integration tests).
