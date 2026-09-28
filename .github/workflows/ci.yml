@@ -33,6 +33,9 @@ jobs:
       - name: Validate v0.2 release download integrity contract
         run: ./scripts/validate-release-download.sh
 
+      - name: Validate v0.2 installer common engine
+        run: ./scripts/validate-installer-engine.sh
+
       - name: Install Linux secret-service build dependencies
         if: runner.os == 'Linux'
         run: |

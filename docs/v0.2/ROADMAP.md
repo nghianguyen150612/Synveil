@@ -86,13 +86,19 @@ channel/version recommendation remain pending. Phase B remains open.
 
 ### P007 — Installer Common Engine
 
-Define shared installer stages:
+**Complete (Prompt007):** the `synveil-install-engine` workspace crate implements
+the shared, platform-neutral coordinator documented in the
+[installer common engine contract](INSTALLER_COMMON_ENGINE.md), with 81 focused
+fake-adapter tests and [Prompt007 evidence](PROMPT007_MANIFEST.md):
 
 ```text
 Preflight → Plan → Install → Integrate → Verify → Complete
 ```
 
-Use native package managers and existing ownership authorities where applicable.
+It validates the complete plan before mutation, preserves native package and
+durable-state ownership, rechecks preconditions, verifies every mutation,
+reconciles uncertain outcomes without replay, and requires final verification.
+P008–P011 remain pending; Phase B remains open.
 
 ### P008 — Installation Transaction Journal
 
