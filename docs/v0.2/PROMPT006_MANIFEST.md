@@ -2,8 +2,8 @@
 
 ## Starting state and scope
 
-- Starting main: `e2361304e58cc61a28138b8ad8df7a938e100e6d`.
-- Task branch: `work` (environment-provided isolated branch).
+- Prompt006A starting main: `e487b01397fb5baa7fe29450ab2d30ccf1d7fb86`.
+- Task branch: `prompt006a-release-download-hardening`.
 - Starting worktree: clean.
 - Workflow: one focused commit, PR to `main`, review, squash merge, and live-main
   verification are required. This file intentionally does not predict the merge
@@ -30,12 +30,19 @@ are explicitly evaluated, trusted-origin-only, downgrade-safe, loop-safe, and
 bounded at five. Manifests are bounded at 1 MiB. Selection uses exact version,
 optional exact source commit, normalized platform and architecture, explicit
 P005 type and role, and requires one match; it never performs channel or version
-ordering. Streaming artifact verification enforces exact size/digest before
-same-directory atomic promotion.
+ordering. An authenticated-manifest context binds exact bytes, validated
+document, selection, staging, and evidence. No artifact URL or request is made
+before that binding is checked. Artifact responses are incrementally streamed;
+existing targets are verified before network access; root symlinks are rejected
+before resolution; and hard-link promotion atomically refuses to clobber a
+concurrently created target. Injected HTTP transports must expose redirects and
+cannot be ordinary auto-following openers. All locally eligible detached
+signatures are tried deterministically, supporting order-independent key
+rotation and recording the key that actually verified.
 
 ## Validation record
 
-The focused suite contains **44 tests** and has no network dependency. Required
+The focused suite contains **66 tests** and has no network dependency. Required
 commands are:
 
 ```text

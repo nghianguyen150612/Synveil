@@ -36,6 +36,11 @@ own source is trusted. The raw manifest limit is **1 MiB**, inclusive.
 After authentication, the implementation reuses the P005 semantic validator.
 Optional expected product version and full source commit are equality checks;
 there is no version ordering, recommendation, or latest-release behavior.
+Parsing produces an immutable `AuthenticatedManifest` context containing the
+exact bytes, validated document, and authentication evidence. Selection produces
+a `SelectedArtifact` tied to that context. URL construction, download, staging,
+and result creation revalidate that binding, so independently sourced
+authentication, manifest, and artifact values cannot be combined.
 
 The version-1 authentication descriptor schema binds the manifest filename,
 size, SHA-256 and detached signature entries (`scheme`, stable `key_id`, and
@@ -53,6 +58,12 @@ keys remain isolated from production policy. Private keys must never be
 committed, logged, or generated in source-controlled paths. Production signing
 key provisioning is pending.
 
+All descriptor signatures whose scheme and key ID are locally allowed are
+considered in deterministic order. Authentication succeeds on the first one
+that verifies and records that entry's actual key ID; no eligible entries, an
+unavailable verifier, or failure of every eligible entry fails closed. Thus an
+old/new overlap is independent of descriptor ordering.
+
 ## Network and selection policy
 
 Origins are normalized as HTTPS scheme, lowercase host, and effective port.
@@ -63,6 +74,11 @@ are limited to five, and each target must independently be trusted HTTPS;
 downgrades, untrusted targets, loops, and excessive redirects fail. No remote
 metadata may supply origins, keys, arbitrary request headers, or credentials.
 P005 filenames are joined to a trusted base URL; manifests never provide URLs.
+The injectable boundary accepts only a `RawHttpsTransport`, whose contract is
+to expose redirect responses. A normal potentially auto-following urllib opener
+is rejected, so redirect policy cannot silently be bypassed by test or product
+injection. Artifact URLs and requests are not constructed until the manifest
+and selected-artifact binding have been validated.
 
 Selection requires platform, architecture, artifact type, role, and exact
 product version and returns exactly one record. Zero and multiple matches fail;
@@ -74,14 +90,23 @@ P005's closed enum, never a filename extension. Distro detection remains P018.
 
 ## Safe staging and handoff
 
-An owned unpredictable temporary file is securely created inside the resolved
-destination root. The expected manifest size is a streaming hard limit; early
-EOF and any extra byte fail. SHA-256 is computed while writing, the file is
+The originally supplied destination root is rejected if it is a symlink before
+resolution or creation. An owned unpredictable temporary file is then securely
+created inside the resolved destination root. The authenticated artifact size
+is a streaming hard limit; bounded chunks move directly from the HTTP response
+to disk, early EOF and any extra byte fail, and memory use does not scale with
+artifact size. SHA-256 is computed incrementally while writing, the file is
 flushed and fsynced, and only exact size and digest permit atomic same-directory
-promotion. Failures remove the owned temporary file, never the final path.
+promotion. Promotion uses a same-filesystem hard-link creation, whose atomic
+create-if-absent semantics never replace a destination created concurrently;
+platforms/filesystems without that primitive fail closed with `STAGING_ERROR`.
+Failures remove the owned temporary file, never the final path.
 Unsafe names and destination symlinks fail. An existing target is rehashed: an
 exact match is `NOOP_ALREADY_VERIFIED`, while a mismatch is
-`DESTINATION_CONFLICT` and is never overwritten.
+`DESTINATION_CONFLICT` and is never overwritten. This target check happens
+before opening the artifact response, so either existing-target outcome makes
+zero artifact network requests. Invalid or unbound authentication likewise
+makes zero artifact requests and writes.
 
 The machine-readable result binds artifact ID/type/role/platform/architecture,
 product version and source commit, artifact size/digest, exact manifest

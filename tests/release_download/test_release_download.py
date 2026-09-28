@@ -17,9 +17,17 @@ class Response(io.BytesIO):
     def getcode(self): return self.status
 
 
-class Opener:
-    def __init__(self, responses): self.responses=iter(responses)
-    def open(self, request): return next(self.responses)
+class Opener(download.RawHttpsTransport):
+    def __init__(self, responses): self.responses=iter(responses); self.calls=[]
+    def request(self, request): self.calls.append(request.full_url); return next(self.responses)
+
+
+class IncrementalResponse(Response):
+    def __init__(self, body): super().__init__(body); self.read_sizes=[]
+    def read(self, size=-1):
+        if size < 0: raise AssertionError("unbounded read")
+        self.read_sizes.append(size)
+        return super().read(min(size, 3))
 
 
 class ReleaseDownloadTests(unittest.TestCase):
@@ -30,6 +38,8 @@ class ReleaseDownloadTests(unittest.TestCase):
         self.raw=json.dumps(self.manifest,sort_keys=True).encode(); self.pin=hashlib.sha256(self.raw).hexdigest()
         self.policy=download.ReleaseTrustPolicy(frozenset({"https://release.example"}),frozenset({"https://release.example"}),expected_manifest_sha256=self.pin)
         self.auth=download.authenticate_manifest(self.raw,self.policy)
+        self.context=download.parse_authenticated_manifest(self.raw,self.auth)
+        self.selection=download.select_artifact(self.context,platform="linux",architecture="x86_64",artifact_type="deb",role="native_package",expected_version="0.1.0")
         self.temp=tempfile.TemporaryDirectory(); self.root=Path(self.temp.name)
     def tearDown(self): self.temp.cleanup()
     def error(self, code, function, *args, **kwargs):
@@ -42,13 +52,13 @@ class ReleaseDownloadTests(unittest.TestCase):
     def test_05_http_rejected(self): self.error("UNTRUSTED_ORIGIN",download.require_allowed_url,"http://release.example/x",self.policy.allowed_manifest_origins)
     def test_06_https_allowed(self): download.require_allowed_url("https://release.example/x",self.policy.allowed_manifest_origins)
     def test_07_untrusted_origin(self): self.error("UNTRUSTED_ORIGIN",download.require_allowed_url,"https://evil.example/x",self.policy.allowed_manifest_origins)
-    def test_08_downgrade_redirect(self): self.error("UNSAFE_REDIRECT",download.fetch_https,"https://release.example/x",self.policy.allowed_manifest_origins,20,opener=Opener([Response(status=302,location="http://release.example/y")]))
-    def test_09_cross_origin_redirect(self): self.error("UNSAFE_REDIRECT",download.fetch_https,"https://release.example/x",self.policy.allowed_manifest_origins,20,opener=Opener([Response(status=302,location="https://evil.example/y")]))
-    def test_10_allowlisted_redirect(self): self.assertEqual(b"ok",download.fetch_https("https://release.example/x",frozenset({"https://release.example","https://cdn.example"}),20,opener=Opener([Response(status=302,location="https://cdn.example/y"),Response(b"ok")])))
-    def test_11_redirect_loop(self): self.error("UNSAFE_REDIRECT",download.fetch_https,"https://release.example/x",self.policy.allowed_manifest_origins,20,opener=Opener([Response(status=302,location="/x")]))
+    def test_08_downgrade_redirect(self): self.error("UNSAFE_REDIRECT",download.fetch_https,"https://release.example/x",self.policy.allowed_manifest_origins,20,transport=Opener([Response(status=302,location="http://release.example/y")]))
+    def test_09_cross_origin_redirect(self): self.error("UNSAFE_REDIRECT",download.fetch_https,"https://release.example/x",self.policy.allowed_manifest_origins,20,transport=Opener([Response(status=302,location="https://evil.example/y")]))
+    def test_10_allowlisted_redirect(self): self.assertEqual(b"ok",download.fetch_https("https://release.example/x",frozenset({"https://release.example","https://cdn.example"}),20,transport=Opener([Response(status=302,location="https://cdn.example/y"),Response(b"ok")])))
+    def test_11_redirect_loop(self): self.error("UNSAFE_REDIRECT",download.fetch_https,"https://release.example/x",self.policy.allowed_manifest_origins,20,transport=Opener([Response(status=302,location="/x")]))
     def test_12_credentials_rejected(self): self.error("UNTRUSTED_ORIGIN",download.origin,"https://user:pass@release.example/x")
     def test_13_manifest_limit(self): self.error("MANIFEST_TOO_LARGE",download.authenticate_manifest,self.raw,self.policy.__class__(frozenset(),frozenset(),expected_manifest_sha256=self.pin,max_manifest_bytes=1))
-    def test_14_version_match(self): self.assertEqual(self.manifest,download.parse_authenticated_manifest(self.raw,self.auth,"0.1.0"))
+    def test_14_version_match(self): self.assertEqual(self.manifest,download.parse_authenticated_manifest(self.raw,self.auth,"0.1.0").document)
     def test_15_version_mismatch(self): self.error("VERSION_MISMATCH",download.parse_authenticated_manifest,self.raw,self.auth,"0.2.0")
     def test_16_commit_match(self): download.parse_authenticated_manifest(self.raw,self.auth,expected_source_commit=COMMIT)
     def test_17_commit_mismatch(self): self.error("SOURCE_COMMIT_MISMATCH",download.parse_authenticated_manifest,self.raw,self.auth,None,"b"*40)
@@ -56,24 +66,28 @@ class ReleaseDownloadTests(unittest.TestCase):
     def test_19_arm_aliases(self): self.assertEqual({"aarch64"},{download.normalize_architecture(x) for x in ("aarch64","arm64")})
     def test_20_bad_arch(self): self.error("UNSUPPORTED_ARCHITECTURE",download.normalize_architecture,"i686")
     def test_21_bad_platform(self): self.error("UNSUPPORTED_PLATFORM",download.normalize_platform,"darwin")
-    def test_22_exact_selection(self): self.assertEqual(self.artifact,download.select_artifact(self.manifest,platform="Linux",architecture="amd64",artifact_type="deb",role="native_package",expected_version="0.1.0"))
-    def test_23_no_match(self): self.error("NO_MATCHING_ARTIFACT",download.select_artifact,self.manifest,platform="linux",architecture="arm64",artifact_type="deb",role="native_package",expected_version="0.1.0")
+    def test_22_exact_selection(self): self.assertEqual(self.artifact,download.select_artifact(self.context,platform="Linux",architecture="amd64",artifact_type="deb",role="native_package",expected_version="0.1.0").artifact)
+    def test_23_no_match(self): self.error("NO_MATCHING_ARTIFACT",download.select_artifact,self.context,platform="linux",architecture="arm64",artifact_type="deb",role="native_package",expected_version="0.1.0")
     def test_24_ambiguous(self):
         manifest=copy.deepcopy(self.manifest); duplicate=copy.deepcopy(self.artifact); duplicate["id"]="other"; manifest["artifacts"].append(duplicate)
-        self.error("AMBIGUOUS_ARTIFACT",download.select_artifact,manifest,platform="linux",architecture="x64",artifact_type="deb",role="native_package",expected_version="0.1.0")
-    def test_25_exact_size(self): self.assertEqual("VERIFIED",download.stage_artifact(io.BytesIO(self.payload),self.root,self.artifact,self.manifest,self.auth)["result"])
-    def test_26_oversize(self): self.error("ARTIFACT_TOO_LARGE",download.stage_artifact,io.BytesIO(self.payload+b"x"),self.root,self.artifact,self.manifest,self.auth)
-    def test_27_truncated(self): self.error("ARTIFACT_TRUNCATED",download.stage_artifact,io.BytesIO(self.payload[:-1]),self.root,self.artifact,self.manifest,self.auth)
-    def test_28_digest_mismatch(self): self.error("ARTIFACT_DIGEST_MISMATCH",download.stage_artifact,io.BytesIO(b"x"*len(self.payload)),self.root,self.artifact,self.manifest,self.auth)
-    def test_29_promoted(self): download.stage_artifact(io.BytesIO(self.payload),self.root,self.artifact,self.manifest,self.auth); self.assertEqual(self.payload,(self.root/"synveil.deb").read_bytes())
+        raw=json.dumps(manifest,sort_keys=True).encode(); policy=download.ReleaseTrustPolicy(frozenset(),frozenset(),expected_manifest_sha256=hashlib.sha256(raw).hexdigest())
+        context=download.parse_authenticated_manifest(raw,download.authenticate_manifest(raw,policy))
+        self.error("AMBIGUOUS_ARTIFACT",download.select_artifact,context,platform="linux",architecture="x64",artifact_type="deb",role="native_package",expected_version="0.1.0")
+    def test_25_exact_size(self): self.assertEqual("VERIFIED",download.stage_artifact(io.BytesIO(self.payload),self.root,self.selection)["result"])
+    def test_26_oversize(self): self.error("ARTIFACT_TOO_LARGE",download.stage_artifact,io.BytesIO(self.payload+b"x"),self.root,self.selection)
+    def test_27_truncated(self): self.error("ARTIFACT_TRUNCATED",download.stage_artifact,io.BytesIO(self.payload[:-1]),self.root,self.selection)
+    def test_28_digest_mismatch(self): self.error("ARTIFACT_DIGEST_MISMATCH",download.stage_artifact,io.BytesIO(b"x"*len(self.payload)),self.root,self.selection)
+    def test_29_promoted(self): download.stage_artifact(io.BytesIO(self.payload),self.root,self.selection); self.assertEqual(self.payload,(self.root/"synveil.deb").read_bytes())
     def test_30_partial_not_promoted(self):
-        self.error("ARTIFACT_TRUNCATED",download.stage_artifact,io.BytesIO(b"x"),self.root,self.artifact,self.manifest,self.auth); self.assertFalse((self.root/"synveil.deb").exists())
-    def test_31_existing_verified(self): (self.root/"synveil.deb").write_bytes(self.payload); self.assertEqual("NOOP_ALREADY_VERIFIED",download.stage_artifact(io.BytesIO(b""),self.root,self.artifact,self.manifest,self.auth)["result"])
-    def test_32_existing_conflict(self): (self.root/"synveil.deb").write_bytes(b"evil"); self.error("DESTINATION_CONFLICT",download.stage_artifact,io.BytesIO(self.payload),self.root,self.artifact,self.manifest,self.auth)
-    def test_33_traversal(self): bad=dict(self.artifact,filename="../evil"); self.error("UNSAFE_PATH",download.stage_artifact,io.BytesIO(self.payload),self.root,bad,self.manifest,self.auth)
+        self.error("ARTIFACT_TRUNCATED",download.stage_artifact,io.BytesIO(b"x"),self.root,self.selection); self.assertFalse((self.root/"synveil.deb").exists())
+    def test_31_existing_verified(self): (self.root/"synveil.deb").write_bytes(self.payload); self.assertEqual("NOOP_ALREADY_VERIFIED",download.stage_artifact(io.BytesIO(b""),self.root,self.selection)["result"])
+    def test_32_existing_conflict(self): (self.root/"synveil.deb").write_bytes(b"evil"); self.error("DESTINATION_CONFLICT",download.stage_artifact,io.BytesIO(self.payload),self.root,self.selection)
+    def test_33_traversal(self):
+        bad=download.SelectedArtifact(self.context,0,dict(self.artifact,filename="../evil"))
+        self.error("MANIFEST_AUTH_FAILED",download.stage_artifact,io.BytesIO(self.payload),self.root,bad)
     def test_34_symlink_escape(self):
         outside=self.root.parent/"outside-p006"; outside.write_bytes(b"x"); (self.root/"synveil.deb").symlink_to(outside)
-        try: self.error("UNSAFE_PATH",download.stage_artifact,io.BytesIO(self.payload),self.root,self.artifact,self.manifest,self.auth)
+        try: self.error("UNSAFE_PATH",download.stage_artifact,io.BytesIO(self.payload),self.root,self.selection)
         finally: outside.unlink(missing_ok=True)
     def test_35_unknown_auth_mode(self): self.error("UNSUPPORTED_AUTHENTICATION",download.authenticate_manifest,self.raw,download.ReleaseTrustPolicy(frozenset(),frozenset(),authentication_method="magic"))
     def signature_policy(self, schemes=frozenset({"ed25519"}), keys=frozenset({"test-key"})): return download.ReleaseTrustPolicy(frozenset(),frozenset(),authentication_method="detached_signature",trusted_key_ids=keys,allowed_signature_schemes=schemes)
@@ -83,11 +97,80 @@ class ReleaseDownloadTests(unittest.TestCase):
     def test_38_unavailable_verifier(self): self.error("UNSUPPORTED_AUTHENTICATION",download.authenticate_manifest,self.raw,self.signature_policy(),signature_descriptor=self.descriptor())
     def test_39_test_key_not_implicit(self): self.error("UNSUPPORTED_AUTHENTICATION",download.authenticate_manifest,self.raw,self.signature_policy(keys=frozenset()),signature_descriptor=self.descriptor(),verifier=lambda *_:True)
     def test_40_result_no_secrets(self):
-        result=download.stage_artifact(io.BytesIO(self.payload),self.root,self.artifact,self.manifest,self.auth)
+        result=download.stage_artifact(io.BytesIO(self.payload),self.root,self.selection)
         self.assertNotIn("token",json.dumps(result).lower()); self.assertEqual([],result["diagnostics_redacted"])
     def test_41_invalid_signature(self): self.error("MANIFEST_AUTH_FAILED",download.authenticate_manifest,self.raw,self.signature_policy(),signature_descriptor=self.descriptor(),verifier=lambda *_:False)
     def test_42_mock_valid_signature(self): self.assertEqual("AUTHENTICATED_SIGNATURE",download.authenticate_manifest(self.raw,self.signature_policy(),signature_descriptor=self.descriptor(),verifier=lambda *_:True).state)
-    def test_43_manifest_fetch_limit(self): self.error("MANIFEST_TOO_LARGE",download.fetch_https,"https://release.example/x",self.policy.allowed_manifest_origins,2,opener=Opener([Response(b"abc")]))
-    def test_44_unauthenticated_cannot_stage(self): self.error("MANIFEST_AUTH_FAILED",download.stage_artifact,io.BytesIO(self.payload),self.root,self.artifact,self.manifest,download.ManifestAuthentication("UNAUTHENTICATED","none",self.pin,len(self.raw)))
+    def test_43_manifest_fetch_limit(self): self.error("MANIFEST_TOO_LARGE",download.fetch_https,"https://release.example/x",self.policy.allowed_manifest_origins,2,transport=Opener([Response(b"abc")]))
+    def test_44_unauthenticated_cannot_stage(self):
+        context=download.AuthenticatedManifest(self.raw,self.manifest,download.ManifestAuthentication("UNAUTHENTICATED","none",self.pin,len(self.raw)))
+        self.error("MANIFEST_AUTH_FAILED",download.stage_artifact,io.BytesIO(self.payload),self.root,download.SelectedArtifact(context,0,self.artifact))
+    def test_45_auth_a_manifest_b_rejected(self):
+        self.error("MANIFEST_AUTH_FAILED",download.parse_authenticated_manifest,b"{}",self.auth)
+    def test_46_artifact_b_rejected(self):
+        forged=download.SelectedArtifact(self.context,0,dict(self.artifact,id="forged"))
+        self.error("MANIFEST_AUTH_FAILED",download.stage_artifact,io.BytesIO(self.payload),self.root,forged)
+    def test_47_invalid_auth_zero_requests(self):
+        context=download.AuthenticatedManifest(self.raw,self.manifest,download.ManifestAuthentication("NO","none",self.pin,len(self.raw)))
+        transport=Opener([Response(self.payload)])
+        self.error("MANIFEST_AUTH_FAILED",download.download_artifact,"https://release.example",self.root,download.SelectedArtifact(context,0,self.artifact),self.policy,transport=transport)
+        self.assertEqual([],transport.calls)
+    def test_48_url_requires_authenticated_selection(self):
+        context=download.AuthenticatedManifest(self.raw,self.manifest,download.ManifestAuthentication("NO","none",self.pin,len(self.raw)))
+        self.error("MANIFEST_AUTH_FAILED",download.trusted_artifact_url,"https://release.example",download.SelectedArtifact(context,0,self.artifact),self.policy.allowed_artifact_origins)
+    def test_49_destination_root_symlink(self):
+        actual=self.root/"actual"; actual.mkdir(); link=self.root/"link"; link.symlink_to(actual,target_is_directory=True)
+        self.error("UNSAFE_PATH",download.stage_artifact,io.BytesIO(self.payload),link,self.selection)
+        self.assertEqual([],list(actual.iterdir()))
+    def test_50_concurrent_target_no_clobber(self):
+        class Racing(io.BytesIO):
+            def read(inner,size=-1):
+                value=super(Racing,inner).read(size)
+                if not value and not (self.root/"synveil.deb").exists(): (self.root/"synveil.deb").write_bytes(b"racer")
+                return value
+        self.error("DESTINATION_CONFLICT",download.stage_artifact,Racing(self.payload),self.root,self.selection)
+        self.assertEqual(b"racer",(self.root/"synveil.deb").read_bytes())
+    def test_51_stream_consumed_incrementally(self):
+        response=IncrementalResponse(self.payload); result=download.download_artifact("https://release.example",self.root,self.selection,self.policy,transport=Opener([response]))
+        self.assertEqual("VERIFIED",result["result"]); self.assertTrue(response.read_sizes); self.assertNotIn(-1,response.read_sizes)
+    def test_52_stream_oversize(self):
+        response=IncrementalResponse(self.payload+b"x")
+        self.error("ARTIFACT_TOO_LARGE",download.download_artifact,"https://release.example",self.root,self.selection,self.policy,transport=Opener([response]))
+        self.assertFalse((self.root/"synveil.deb").exists())
+    def test_53_stream_truncated(self):
+        self.error("ARTIFACT_TRUNCATED",download.download_artifact,"https://release.example",self.root,self.selection,self.policy,transport=Opener([IncrementalResponse(self.payload[:-1])]))
+    def test_54_stream_digest_mismatch(self):
+        self.error("ARTIFACT_DIGEST_MISMATCH",download.download_artifact,"https://release.example",self.root,self.selection,self.policy,transport=Opener([IncrementalResponse(b"x"*len(self.payload))]))
+    def test_55_existing_verified_zero_network(self):
+        (self.root/"synveil.deb").write_bytes(self.payload); transport=Opener([])
+        self.assertEqual("NOOP_ALREADY_VERIFIED",download.download_artifact("https://release.example",self.root,self.selection,self.policy,transport=transport)["result"]); self.assertEqual([],transport.calls)
+    def test_56_existing_conflict_zero_network(self):
+        (self.root/"synveil.deb").write_bytes(b"bad"); transport=Opener([])
+        self.error("DESTINATION_CONFLICT",download.download_artifact,"https://release.example",self.root,self.selection,self.policy,transport=transport); self.assertEqual([],transport.calls)
+    def rotation_descriptor(self, reverse=False):
+        entries=[{"scheme":"ed25519","key_id":"old","signature_filename":"old.sig"},{"scheme":"ed25519","key_id":"new","signature_filename":"new.sig"}]
+        return {"signatures":list(reversed(entries)) if reverse else entries}
+    def test_57_rotation_old_only(self):
+        auth=download.authenticate_manifest(self.raw,self.signature_policy(keys=frozenset({"old"})),signature_descriptor=self.rotation_descriptor(),verifier=lambda *_:True); self.assertEqual("old",auth.key_id)
+    def test_58_rotation_new_only(self):
+        auth=download.authenticate_manifest(self.raw,self.signature_policy(keys=frozenset({"new"})),signature_descriptor=self.rotation_descriptor(),verifier=lambda *_:True); self.assertEqual("new",auth.key_id)
+    def test_59_rotation_order_independent(self):
+        policy=self.signature_policy(keys=frozenset({"old"})); verify=lambda *_:True
+        self.assertEqual(download.authenticate_manifest(self.raw,policy,signature_descriptor=self.rotation_descriptor(),verifier=verify).key_id,download.authenticate_manifest(self.raw,policy,signature_descriptor=self.rotation_descriptor(True),verifier=verify).key_id)
+    def test_60_later_eligible_succeeds(self):
+        auth=download.authenticate_manifest(self.raw,self.signature_policy(keys=frozenset({"old","new"})),signature_descriptor=self.rotation_descriptor(),verifier=lambda key,*_:key=="old"); self.assertEqual("old",auth.key_id)
+    def test_61_all_eligible_fail(self):
+        self.error("MANIFEST_AUTH_FAILED",download.authenticate_manifest,self.raw,self.signature_policy(keys=frozenset({"old","new"})),signature_descriptor=self.rotation_descriptor(),verifier=lambda *_:False)
+    def test_62_none_eligible(self):
+        self.error("UNSUPPORTED_AUTHENTICATION",download.authenticate_manifest,self.raw,self.signature_policy(keys=frozenset({"other"})),signature_descriptor=self.rotation_descriptor(),verifier=lambda *_:True)
+    def test_63_cross_origin_not_requested(self):
+        transport=Opener([Response(status=302,location="https://evil.example/x")]); self.error("UNSAFE_REDIRECT",download.fetch_https,"https://release.example/x",self.policy.allowed_manifest_origins,10,transport=transport); self.assertEqual(["https://release.example/x"],transport.calls)
+    def test_64_http_target_not_requested(self):
+        transport=Opener([Response(status=302,location="http://release.example/x")]); self.error("UNSAFE_REDIRECT",download.fetch_https,"https://release.example/x",self.policy.allowed_manifest_origins,10,transport=transport); self.assertEqual(["https://release.example/x"],transport.calls)
+    def test_65_normal_opener_rejected(self):
+        with self.assertRaises(TypeError): download.fetch_https("https://release.example/x",self.policy.allowed_manifest_origins,10,transport=object())
+    def test_66_result_single_context(self):
+        result=download.stage_artifact(io.BytesIO(self.payload),self.root,self.selection)
+        self.assertEqual((self.pin,"0.1.0",COMMIT,self.artifact["id"],self.artifact["sha256"],len(self.payload)),(result["manifest_identity"]["sha256"],result["product_version"],result["source_commit"],result["artifact_id"],result["artifact_sha256"],result["artifact_size"]))
 
 if __name__ == "__main__": unittest.main()
