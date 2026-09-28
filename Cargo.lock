@@ -2879,8 +2879,11 @@ dependencies = [
 name = "synveil-install-engine"
 version = "0.1.0"
 dependencies = [
+ "fs2",
  "serde",
  "serde_json",
+ "sha2",
+ "tempfile",
 ]
 
 [[package]]

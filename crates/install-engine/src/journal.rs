@@ -1,0 +1,821 @@
+//! Durable, append-only execution journal for the common installer engine.
+
+use crate::*;
+use fs2::FileExt;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+
+pub const JOURNAL_SCHEMA_VERSION: u32 = 1;
+pub const MAX_CHECKPOINT_BYTES: u64 = 1024 * 1024;
+pub const MAX_CHECKPOINT_RECORDS: usize = 16_384;
+pub const MAX_PLAN_BYTES: usize = 4 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum JournalMode {
+    StartNew,
+    ResumeExisting,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum JournalVerifiedResult {
+    VerifiedSuccess,
+    VerifiedNoop,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(
+    tag = "record",
+    rename_all = "SCREAMING_SNAKE_CASE",
+    deny_unknown_fields
+)]
+pub enum JournalRecord {
+    TransactionOpened {
+        plan_id: String,
+        intent: InstallationIntent,
+        target_scope: TargetScope,
+    },
+    StageEntered {
+        stage: Stage,
+    },
+    EffectMutationStarted {
+        effect_id: String,
+    },
+    EffectOutcome {
+        effect_id: String,
+        outcome: EffectResultState,
+    },
+    EffectVerified {
+        effect_id: String,
+        result: JournalVerifiedResult,
+    },
+    CompensationStarted {
+        effect_id: String,
+    },
+    CompensationVerified {
+        effect_id: String,
+    },
+    FinalVerificationSucceeded,
+    TransactionCompleted,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct JournalEnvelope {
+    pub schema_version: u32,
+    pub generation: u64,
+    pub plan_fingerprint_sha256: String,
+    pub previous_record_sha256: Option<String>,
+    pub record: JournalRecord,
+    pub record_sha256: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RecoveryDisposition {
+    Fresh,
+    ResumeReady,
+    ReconciledApplied,
+    ReplanRequired,
+    InspectionRequired,
+    AlreadyCompleted,
+    StillUnknown,
+    JournalBusy,
+    JournalCorrupt,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum JournalErrorCode {
+    JournalMissing,
+    JournalBusy,
+    JournalCorrupt,
+    JournalUnsupportedSchema,
+    JournalPlanMismatch,
+    JournalIoFailed,
+    JournalLimitExceeded,
+    ActiveTransactionExists,
+    RecoveryInspectionRequired,
+}
+
+#[derive(Debug)]
+pub struct JournalError {
+    pub code: JournalErrorCode,
+    pub inspection_required: bool,
+}
+
+impl JournalError {
+    fn new(code: JournalErrorCode) -> Self {
+        Self {
+            code,
+            inspection_required: matches!(
+                code,
+                JournalErrorCode::JournalMissing
+                    | JournalErrorCode::JournalCorrupt
+                    | JournalErrorCode::JournalUnsupportedSchema
+                    | JournalErrorCode::JournalLimitExceeded
+                    | JournalErrorCode::RecoveryInspectionRequired
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum JournalFaultPoint {
+    Write,
+    FileSync,
+    Commit,
+    DirectorySync,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct JournalOptions {
+    pub fail_at: Option<(JournalRecordClass, JournalFaultPoint)>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum JournalRecordClass {
+    TransactionStart,
+    StageEntry,
+    EffectMutationStart,
+    EffectResult,
+    EffectVerification,
+    Reconciliation,
+    CompensationStart,
+    CompensationCompletion,
+    FinalVerification,
+    TransactionCompletion,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JournalExecutionResult {
+    pub disposition: RecoveryDisposition,
+    pub completed: bool,
+    pub error: Option<JournalErrorCode>,
+}
+
+pub fn plan_fingerprint(plan: &InstallationPlan) -> Result<String, JournalError> {
+    let bytes = serde_json::to_vec(plan)
+        .map_err(|_| JournalError::new(JournalErrorCode::JournalCorrupt))?;
+    if bytes.len() > MAX_PLAN_BYTES {
+        return Err(JournalError::new(JournalErrorCode::JournalLimitExceeded));
+    }
+    Ok(hex_hash(&bytes))
+}
+
+pub struct InstallationJournal {
+    directory: PathBuf,
+    lock: File,
+    fingerprint: String,
+    records: Vec<JournalEnvelope>,
+    options: JournalOptions,
+}
+
+impl std::fmt::Debug for InstallationJournal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InstallationJournal")
+            .field("directory", &self.directory)
+            .field("fingerprint", &self.fingerprint)
+            .field("records", &self.records)
+            .finish_non_exhaustive()
+    }
+}
+
+impl InstallationJournal {
+    pub fn open(
+        root: &Path,
+        plan: &InstallationPlan,
+        mode: JournalMode,
+    ) -> Result<Self, JournalError> {
+        Self::open_with_options(root, plan, mode, JournalOptions::default())
+    }
+
+    pub fn open_with_options(
+        root: &Path,
+        plan: &InstallationPlan,
+        mode: JournalMode,
+        options: JournalOptions,
+    ) -> Result<Self, JournalError> {
+        validate_id(&plan.plan_id)?;
+        reject_symlink(root)?;
+        match mode {
+            JournalMode::StartNew => fs::create_dir_all(root).map_err(io_error)?,
+            JournalMode::ResumeExisting if !root.exists() => {
+                return Err(JournalError::new(JournalErrorCode::JournalMissing));
+            }
+            _ => {}
+        }
+        reject_symlink(root)?;
+        let directory = root.join(&plan.plan_id);
+        reject_symlink(&directory)?;
+        if directory.exists() {
+            if mode == JournalMode::StartNew {
+                return Err(JournalError::new(JournalErrorCode::ActiveTransactionExists));
+            }
+        } else if mode == JournalMode::ResumeExisting {
+            return Err(JournalError::new(JournalErrorCode::JournalMissing));
+        } else {
+            fs::create_dir(&directory).map_err(io_error)?;
+            sync_directory(root)?;
+        }
+        let lock_path = directory.join("lock");
+        reject_symlink(&lock_path)?;
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)
+            .map_err(io_error)?;
+        lock.try_lock_exclusive()
+            .map_err(|_| JournalError::new(JournalErrorCode::JournalBusy))?;
+        let fingerprint = plan_fingerprint(plan)?;
+        let records = load_records(&directory, &fingerprint)?;
+        if mode == JournalMode::ResumeExisting && records.is_empty() {
+            return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+        }
+        Ok(Self {
+            directory,
+            lock,
+            fingerprint,
+            records,
+            options,
+        })
+    }
+
+    pub fn records(&self) -> &[JournalEnvelope] {
+        &self.records
+    }
+    pub fn transaction_directory(&self) -> &Path {
+        &self.directory
+    }
+
+    pub fn append(&mut self, record: JournalRecord) -> Result<(), JournalError> {
+        if self.records.len() >= MAX_CHECKPOINT_RECORDS {
+            return Err(JournalError::new(JournalErrorCode::JournalLimitExceeded));
+        }
+        let generation = self.records.len() as u64;
+        let previous_record_sha256 = self.records.last().map(|r| r.record_sha256.clone());
+        let class = record_class(&record);
+        let hash_input = HashInput {
+            schema_version: JOURNAL_SCHEMA_VERSION,
+            generation,
+            plan_fingerprint_sha256: &self.fingerprint,
+            previous_record_sha256: previous_record_sha256.as_deref(),
+            record: &record,
+        };
+        let record_sha256 = hex_hash(
+            &serde_json::to_vec(&hash_input)
+                .map_err(|_| JournalError::new(JournalErrorCode::JournalCorrupt))?,
+        );
+        let envelope = JournalEnvelope {
+            schema_version: JOURNAL_SCHEMA_VERSION,
+            generation,
+            plan_fingerprint_sha256: self.fingerprint.clone(),
+            previous_record_sha256,
+            record,
+            record_sha256,
+        };
+        let bytes = serde_json::to_vec(&envelope)
+            .map_err(|_| JournalError::new(JournalErrorCode::JournalCorrupt))?;
+        if bytes.len() as u64 > MAX_CHECKPOINT_BYTES {
+            return Err(JournalError::new(JournalErrorCode::JournalLimitExceeded));
+        }
+        self.maybe_fail(class, JournalFaultPoint::Write)?;
+        let temp = self
+            .directory
+            .join(format!("checkpoint-{generation:016}.tmp"));
+        let final_path = self
+            .directory
+            .join(format!("checkpoint-{generation:016}.json"));
+        reject_symlink(&temp)?;
+        reject_symlink(&final_path)?;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .map_err(io_error)?;
+        file.write_all(&bytes)
+            .and_then(|_| file.flush())
+            .map_err(io_error)?;
+        self.maybe_fail(class, JournalFaultPoint::FileSync)?;
+        file.sync_all().map_err(io_error)?;
+        self.maybe_fail(class, JournalFaultPoint::Commit)?;
+        fs::hard_link(&temp, &final_path)
+            .map_err(|_| JournalError::new(JournalErrorCode::JournalCorrupt))?;
+        fs::remove_file(&temp).map_err(io_error)?;
+        File::open(&final_path)
+            .and_then(|f| f.sync_all())
+            .map_err(io_error)?;
+        self.maybe_fail(class, JournalFaultPoint::DirectorySync)?;
+        sync_directory(&self.directory)?;
+        self.records.push(envelope);
+        Ok(())
+    }
+
+    fn maybe_fail(
+        &self,
+        class: JournalRecordClass,
+        point: JournalFaultPoint,
+    ) -> Result<(), JournalError> {
+        if self.options.fail_at == Some((class, point)) {
+            Err(JournalError::new(JournalErrorCode::JournalIoFailed))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl Drop for InstallationJournal {
+    fn drop(&mut self) {
+        let _ = self.lock.unlock();
+    }
+}
+
+#[derive(Serialize)]
+struct HashInput<'a> {
+    schema_version: u32,
+    generation: u64,
+    plan_fingerprint_sha256: &'a str,
+    previous_record_sha256: Option<&'a str>,
+    record: &'a JournalRecord,
+}
+
+fn load_records(directory: &Path, fingerprint: &str) -> Result<Vec<JournalEnvelope>, JournalError> {
+    let mut paths = Vec::new();
+    for item in fs::read_dir(directory).map_err(io_error)? {
+        let path = item.map_err(io_error)?.path();
+        let name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| JournalError::new(JournalErrorCode::JournalCorrupt))?;
+        if name == "lock" {
+            continue;
+        }
+        if name.starts_with("checkpoint-") && name.ends_with(".tmp") {
+            reject_symlink(&path)?;
+            if !item_type_is_regular(&path)? {
+                return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+            }
+            fs::remove_file(&path).map_err(io_error)?;
+            continue;
+        }
+        if !name.starts_with("checkpoint-") || !name.ends_with(".json") {
+            continue;
+        }
+        reject_symlink(&path)?;
+        let digits = &name[11..name.len() - 5];
+        let generation = digits
+            .parse::<u64>()
+            .map_err(|_| JournalError::new(JournalErrorCode::JournalCorrupt))?;
+        paths.push((generation, path));
+    }
+    paths.sort_by_key(|p| p.0);
+    if paths.len() > MAX_CHECKPOINT_RECORDS {
+        return Err(JournalError::new(JournalErrorCode::JournalLimitExceeded));
+    }
+    let mut records: Vec<JournalEnvelope> = Vec::new();
+    for (expected, (generation, path)) in paths.into_iter().enumerate() {
+        if generation != expected as u64 {
+            return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+        }
+        let metadata = fs::symlink_metadata(&path).map_err(io_error)?;
+        if metadata.len() > MAX_CHECKPOINT_BYTES {
+            return Err(JournalError::new(JournalErrorCode::JournalLimitExceeded));
+        }
+        let mut bytes = Vec::with_capacity(metadata.len() as usize);
+        File::open(path)
+            .map_err(io_error)?
+            .take(MAX_CHECKPOINT_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(io_error)?;
+        let envelope: JournalEnvelope = serde_json::from_slice(&bytes)
+            .map_err(|_| JournalError::new(JournalErrorCode::JournalCorrupt))?;
+        if envelope.schema_version != JOURNAL_SCHEMA_VERSION {
+            return Err(JournalError::new(
+                JournalErrorCode::JournalUnsupportedSchema,
+            ));
+        }
+        if envelope.generation != generation {
+            return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+        }
+        if envelope.plan_fingerprint_sha256 != fingerprint {
+            return Err(JournalError::new(JournalErrorCode::JournalPlanMismatch));
+        }
+        let previous = records.last().map(|r| r.record_sha256.as_str());
+        if envelope.previous_record_sha256.as_deref() != previous {
+            return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+        }
+        let input = HashInput {
+            schema_version: envelope.schema_version,
+            generation,
+            plan_fingerprint_sha256: &envelope.plan_fingerprint_sha256,
+            previous_record_sha256: envelope.previous_record_sha256.as_deref(),
+            record: &envelope.record,
+        };
+        let expected_hash = hex_hash(
+            &serde_json::to_vec(&input)
+                .map_err(|_| JournalError::new(JournalErrorCode::JournalCorrupt))?,
+        );
+        if envelope.record_sha256 != expected_hash {
+            return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+        }
+        records.push(envelope);
+    }
+    validate_semantics(&records)?;
+    Ok(records)
+}
+
+fn item_type_is_regular(path: &Path) -> Result<bool, JournalError> {
+    Ok(fs::symlink_metadata(path)
+        .map_err(io_error)?
+        .file_type()
+        .is_file())
+}
+
+fn validate_semantics(records: &[JournalEnvelope]) -> Result<(), JournalError> {
+    if records.is_empty() {
+        return Ok(());
+    }
+    if !matches!(records[0].record, JournalRecord::TransactionOpened { .. }) {
+        return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+    }
+    let mut completed = false;
+    for r in records {
+        if completed {
+            return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+        }
+        completed = matches!(r.record, JournalRecord::TransactionCompleted);
+    }
+    Ok(())
+}
+
+fn validate_id(id: &str) -> Result<(), JournalError> {
+    if id.is_empty()
+        || id == "."
+        || id == ".."
+        || !id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'-'))
+    {
+        return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+    }
+    Ok(())
+}
+
+fn reject_symlink(path: &Path) -> Result<(), JournalError> {
+    if let Ok(meta) = fs::symlink_metadata(path)
+        && meta.file_type().is_symlink()
+    {
+        return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+    }
+    Ok(())
+}
+
+fn sync_directory(path: &Path) -> Result<(), JournalError> {
+    File::open(path)
+        .and_then(|f| f.sync_all())
+        .map_err(io_error)
+}
+fn io_error(_: std::io::Error) -> JournalError {
+    JournalError::new(JournalErrorCode::JournalIoFailed)
+}
+fn hex_hash(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+fn record_class(record: &JournalRecord) -> JournalRecordClass {
+    match record {
+        JournalRecord::TransactionOpened { .. } => JournalRecordClass::TransactionStart,
+        JournalRecord::StageEntered { .. } => JournalRecordClass::StageEntry,
+        JournalRecord::EffectMutationStarted { .. } => JournalRecordClass::EffectMutationStart,
+        JournalRecord::EffectOutcome { .. } => JournalRecordClass::EffectResult,
+        JournalRecord::EffectVerified { .. } => JournalRecordClass::EffectVerification,
+        JournalRecord::CompensationStarted { .. } => JournalRecordClass::CompensationStart,
+        JournalRecord::CompensationVerified { .. } => JournalRecordClass::CompensationCompletion,
+        JournalRecord::FinalVerificationSucceeded => JournalRecordClass::FinalVerification,
+        JournalRecord::TransactionCompleted => JournalRecordClass::TransactionCompletion,
+    }
+}
+
+impl InstallerEngine {
+    pub fn execute_journaled<A: InstallationAdapter>(
+        &self,
+        request: &InstallationRequest,
+        plan: &InstallationPlan,
+        adapter: &mut A,
+        root: &Path,
+        mode: JournalMode,
+    ) -> JournalExecutionResult {
+        self.execute_journaled_with_options(
+            request,
+            plan,
+            adapter,
+            root,
+            mode,
+            JournalOptions::default(),
+        )
+    }
+
+    pub fn execute_journaled_with_options<A: InstallationAdapter>(
+        &self,
+        request: &InstallationRequest,
+        plan: &InstallationPlan,
+        adapter: &mut A,
+        root: &Path,
+        mode: JournalMode,
+        options: JournalOptions,
+    ) -> JournalExecutionResult {
+        if self.validate(request, plan).is_err() {
+            return journal_stop(JournalErrorCode::JournalPlanMismatch);
+        }
+        let mut journal = match InstallationJournal::open_with_options(root, plan, mode, options) {
+            Ok(j) => j,
+            Err(e) => return journal_stop(e.code),
+        };
+        if mode == JournalMode::StartNew
+            && let Err(e) = journal.append(JournalRecord::TransactionOpened {
+                plan_id: plan.plan_id.clone(),
+                intent: plan.intent,
+                target_scope: plan.target_scope,
+            })
+        {
+            return journal_stop(e.code);
+        }
+        let state = match replay(plan, journal.records()) {
+            Ok(s) => s,
+            Err(e) => return journal_stop(e.code),
+        };
+        if state.completed {
+            return JournalExecutionResult {
+                disposition: RecoveryDisposition::AlreadyCompleted,
+                completed: true,
+                error: None,
+            };
+        }
+        let mut disposition = if mode == JournalMode::StartNew {
+            RecoveryDisposition::Fresh
+        } else {
+            RecoveryDisposition::ResumeReady
+        };
+        for effect in &plan.ordered_effects {
+            match state.effects.get(&effect.effect_id).copied() {
+                Some(EffectState::Verified) => {
+                    if !adapter.verify_effect(effect) {
+                        return JournalExecutionResult {
+                            disposition: RecoveryDisposition::ReplanRequired,
+                            completed: false,
+                            error: Some(JournalErrorCode::RecoveryInspectionRequired),
+                        };
+                    }
+                    continue;
+                }
+                Some(EffectState::MutationStarted) => match adapter.reconcile_unknown(effect) {
+                    ReconciliationOutcome::VerifiedApplied => {
+                        if !adapter.verify_effect(effect) {
+                            return inspection();
+                        }
+                        if let Err(e) = journal.append(JournalRecord::EffectVerified {
+                            effect_id: effect.effect_id.clone(),
+                            result: JournalVerifiedResult::VerifiedSuccess,
+                        }) {
+                            return journal_stop(e.code);
+                        }
+                        disposition = RecoveryDisposition::ReconciledApplied;
+                        continue;
+                    }
+                    ReconciliationOutcome::VerifiedNotApplied => {
+                        return JournalExecutionResult {
+                            disposition: RecoveryDisposition::ReplanRequired,
+                            completed: false,
+                            error: None,
+                        };
+                    }
+                    ReconciliationOutcome::StillUnknown => {
+                        return JournalExecutionResult {
+                            disposition: RecoveryDisposition::StillUnknown,
+                            completed: false,
+                            error: Some(JournalErrorCode::RecoveryInspectionRequired),
+                        };
+                    }
+                },
+                Some(EffectState::Partial | EffectState::CompensationStarted) => {
+                    return inspection();
+                }
+                Some(EffectState::FailureBeforeMutation) => {
+                    return JournalExecutionResult {
+                        disposition: RecoveryDisposition::ReplanRequired,
+                        completed: false,
+                        error: None,
+                    };
+                }
+                None => {}
+            }
+            if !adapter.privilege_available(effect.privilege)
+                || !adapter.inspect_preconditions(effect)
+            {
+                return JournalExecutionResult {
+                    disposition: RecoveryDisposition::ReplanRequired,
+                    completed: false,
+                    error: None,
+                };
+            }
+            if let Err(e) = journal.append(JournalRecord::EffectMutationStarted {
+                effect_id: effect.effect_id.clone(),
+            }) {
+                return journal_stop(e.code);
+            }
+            let outcome = adapter.apply_effect(effect);
+            match outcome {
+                ApplyOutcome::Success | ApplyOutcome::Noop => {
+                    if !adapter.verify_effect(effect) {
+                        if let Err(e) = journal.append(JournalRecord::EffectOutcome {
+                            effect_id: effect.effect_id.clone(),
+                            outcome: EffectResultState::KnownPartialMutation,
+                        }) {
+                            return journal_stop(e.code);
+                        }
+                        return inspection();
+                    }
+                    let result = if outcome == ApplyOutcome::Noop {
+                        JournalVerifiedResult::VerifiedNoop
+                    } else {
+                        JournalVerifiedResult::VerifiedSuccess
+                    };
+                    if let Err(e) = journal.append(JournalRecord::EffectVerified {
+                        effect_id: effect.effect_id.clone(),
+                        result,
+                    }) {
+                        return journal_stop(e.code);
+                    }
+                }
+                ApplyOutcome::FailureBeforeMutation => {
+                    if let Err(e) = journal.append(JournalRecord::EffectOutcome {
+                        effect_id: effect.effect_id.clone(),
+                        outcome: EffectResultState::FailureBeforeMutation,
+                    }) {
+                        return journal_stop(e.code);
+                    }
+                    return JournalExecutionResult {
+                        disposition: RecoveryDisposition::ReplanRequired,
+                        completed: false,
+                        error: None,
+                    };
+                }
+                ApplyOutcome::KnownPartialMutation => {
+                    if let Err(e) = journal.append(JournalRecord::EffectOutcome {
+                        effect_id: effect.effect_id.clone(),
+                        outcome: EffectResultState::KnownPartialMutation,
+                    }) {
+                        return journal_stop(e.code);
+                    }
+                    return inspection();
+                }
+                ApplyOutcome::OutcomeUnknown => match adapter.reconcile_unknown(effect) {
+                    ReconciliationOutcome::VerifiedApplied if adapter.verify_effect(effect) => {
+                        if let Err(e) = journal.append(JournalRecord::EffectVerified {
+                            effect_id: effect.effect_id.clone(),
+                            result: JournalVerifiedResult::VerifiedSuccess,
+                        }) {
+                            return journal_stop(e.code);
+                        }
+                        disposition = RecoveryDisposition::ReconciledApplied;
+                    }
+                    ReconciliationOutcome::VerifiedNotApplied => {
+                        return JournalExecutionResult {
+                            disposition: RecoveryDisposition::ReplanRequired,
+                            completed: false,
+                            error: None,
+                        };
+                    }
+                    _ => return inspection(),
+                },
+            }
+        }
+        if !adapter.verify_installation(plan) {
+            return inspection();
+        }
+        if let Err(e) = journal.append(JournalRecord::FinalVerificationSucceeded) {
+            return journal_stop(e.code);
+        }
+        if let Err(e) = journal.append(JournalRecord::TransactionCompleted) {
+            return journal_stop(e.code);
+        }
+        JournalExecutionResult {
+            disposition,
+            completed: true,
+            error: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum EffectState {
+    MutationStarted,
+    Verified,
+    FailureBeforeMutation,
+    Partial,
+    CompensationStarted,
+}
+struct ReplayState {
+    effects: BTreeMap<String, EffectState>,
+    completed: bool,
+}
+fn replay(
+    plan: &InstallationPlan,
+    records: &[JournalEnvelope],
+) -> Result<ReplayState, JournalError> {
+    let valid: BTreeSet<&str> = plan
+        .ordered_effects
+        .iter()
+        .map(|e| e.effect_id.as_str())
+        .collect();
+    let mut effects = BTreeMap::new();
+    let mut completed = false;
+    for envelope in records {
+        match &envelope.record {
+            JournalRecord::TransactionOpened {
+                plan_id,
+                intent,
+                target_scope,
+            } if plan_id == &plan.plan_id
+                && intent == &plan.intent
+                && target_scope == &plan.target_scope => {}
+            JournalRecord::TransactionOpened { .. } => {
+                return Err(JournalError::new(JournalErrorCode::JournalPlanMismatch));
+            }
+            JournalRecord::EffectMutationStarted { effect_id } => {
+                ensure_effect(&valid, effect_id)?;
+                effects.insert(effect_id.clone(), EffectState::MutationStarted);
+            }
+            JournalRecord::EffectVerified { effect_id, .. } => {
+                ensure_effect(&valid, effect_id)?;
+                if !matches!(effects.get(effect_id), Some(EffectState::MutationStarted)) {
+                    return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+                }
+                effects.insert(effect_id.clone(), EffectState::Verified);
+            }
+            JournalRecord::EffectOutcome { effect_id, outcome } => {
+                ensure_effect(&valid, effect_id)?;
+                if !matches!(effects.get(effect_id), Some(EffectState::MutationStarted)) {
+                    return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+                }
+                effects.insert(
+                    effect_id.clone(),
+                    match outcome {
+                        EffectResultState::FailureBeforeMutation => {
+                            EffectState::FailureBeforeMutation
+                        }
+                        EffectResultState::KnownPartialMutation
+                        | EffectResultState::OutcomeUnknown => EffectState::Partial,
+                        _ => return Err(JournalError::new(JournalErrorCode::JournalCorrupt)),
+                    },
+                );
+            }
+            JournalRecord::CompensationStarted { effect_id } => {
+                ensure_effect(&valid, effect_id)?;
+                effects.insert(effect_id.clone(), EffectState::CompensationStarted);
+            }
+            JournalRecord::CompensationVerified { effect_id } => {
+                ensure_effect(&valid, effect_id)?;
+                if !matches!(
+                    effects.get(effect_id),
+                    Some(EffectState::CompensationStarted)
+                ) {
+                    return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+                }
+            }
+            JournalRecord::TransactionCompleted => completed = true,
+            JournalRecord::StageEntered { .. } | JournalRecord::FinalVerificationSucceeded => {}
+        }
+    }
+    Ok(ReplayState { effects, completed })
+}
+fn ensure_effect(valid: &BTreeSet<&str>, id: &str) -> Result<(), JournalError> {
+    if valid.contains(id) {
+        Ok(())
+    } else {
+        Err(JournalError::new(JournalErrorCode::JournalCorrupt))
+    }
+}
+fn journal_stop(code: JournalErrorCode) -> JournalExecutionResult {
+    JournalExecutionResult {
+        disposition: match code {
+            JournalErrorCode::JournalBusy => RecoveryDisposition::JournalBusy,
+            JournalErrorCode::JournalCorrupt
+            | JournalErrorCode::JournalUnsupportedSchema
+            | JournalErrorCode::JournalLimitExceeded => RecoveryDisposition::JournalCorrupt,
+            _ => RecoveryDisposition::InspectionRequired,
+        },
+        completed: false,
+        error: Some(code),
+    }
+}
+fn inspection() -> JournalExecutionResult {
+    JournalExecutionResult {
+        disposition: RecoveryDisposition::InspectionRequired,
+        completed: false,
+        error: Some(JournalErrorCode::RecoveryInspectionRequired),
+    }
+}

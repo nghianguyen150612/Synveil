@@ -36,6 +36,9 @@ jobs:
       - name: Validate v0.2 installer common engine
         run: ./scripts/validate-installer-engine.sh
 
+      - name: Validate v0.2 installation transaction journal
+        run: ./scripts/validate-install-journal.sh
+
       - name: Install Linux secret-service build dependencies
         if: runner.os == 'Linux'
         run: |

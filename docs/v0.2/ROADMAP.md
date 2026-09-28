@@ -98,13 +98,15 @@ Preflight → Plan → Install → Integrate → Verify → Complete
 It validates the complete plan before mutation, preserves native package and
 durable-state ownership, rechecks preconditions, verifies every mutation,
 reconciles uncertain outcomes without replay, and requires final verification.
-P008–P011 remain pending; Phase B remains open.
+P009–P011 remain pending; Phase B remains open.
 
 ### P008 — Installation Transaction Journal
 
-Define durable interrupted-install state, resumability and safe retry. Reconcile
-an unknown mutation outcome before repeating it; never treat it as permission
-for a blind replay.
+**Complete (Prompt008):** the [installation transaction journal](INSTALLATION_TRANSACTION_JOURNAL.md)
+provides exact-plan binding, append-only durable checkpoints, exclusive writer
+semantics, fail-closed restart detection, and safe recovery. An ambiguous
+mutation is reconciled and never blindly replayed. Evidence is fixture and
+process-interruption simulation, not native physical power-loss acceptance.
 
 ### P009 — Upgrade / Repair / Uninstall Common Contract
 
