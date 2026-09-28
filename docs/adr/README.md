@@ -70,6 +70,7 @@ một tệp để trạng thái và hệ quả không bị lệch giữa hai b�
 | [049](ADR-049-v0.2-effortless-installation-architecture.md) | v0.2 effortless installation architecture / Kiến trúc cài đặt dễ dàng v0.2 | Accepted / Chấp thuận — v0.2 target contract |
 | [050](ADR-050-v0.2-installation-component-ownership.md) | v0.2 installation component ownership / Quyền sở hữu thành phần cài đặt v0.2 | Accepted — v0.2 target architecture |
 | [051](ADR-051-v0.2-release-download-integrity.md) | v0.2 release acquisition and integrity trust boundary | Accepted — Prompt006 contract |
+| [052](ADR-052-v0.2-installer-common-engine.md) | v0.2 installer common engine and platform adapter boundary | Accepted — Prompt007 contract |
 
 ## Process / Quy trình
 

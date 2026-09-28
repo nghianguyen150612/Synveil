@@ -2876,6 +2876,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "synveil-install-engine"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "synveil-metadata"
 version = "0.1.0"
 dependencies = [

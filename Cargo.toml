@@ -10,6 +10,7 @@ members = [
     "crates/client-sync",
     "crates/client",
     "crates/desktop",
+    "crates/install-engine",
 ]
 resolver = "3"
 
