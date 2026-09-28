@@ -60,6 +60,7 @@ jobs:
           bash -n deploy/packages/common/payload.sh
           bash -n deploy/packages/common/reproducible.sh
           bash -n scripts/validate-release-artifacts.sh
+          bash -n scripts/validate-release-manifest.sh
           bash -n scripts/verify-release-build-reproducibility.sh
           sh -n deploy/packages/debian/postinst
           sh -n deploy/packages/debian/prerm
@@ -136,6 +137,10 @@ jobs:
             target/packages/SYNVEIL-LINUX-ARTIFACT-MANIFEST.txt \
             target/packages-reproducible/SYNVEIL-LINUX-ARTIFACT-MANIFEST.txt \
             release-artifact-manifest
+          synveil_require_identical_artifacts \
+            target/packages/SYNVEIL-RELEASE-MANIFEST.json \
+            target/packages-reproducible/SYNVEIL-RELEASE-MANIFEST.json \
+            unified-release-manifest
           sha256sum "$DEB" "$DEB_REPRO" "$RPM" "$RPM_REPRO"
 
       - name: Validate release artifact provenance and metadata
@@ -145,6 +150,11 @@ jobs:
             --manifest=target/packages/SYNVEIL-LINUX-ARTIFACT-MANIFEST.txt
           scripts/validate-release-artifacts.sh \
             --manifest=target/packages-reproducible/SYNVEIL-LINUX-ARTIFACT-MANIFEST.txt
+          python3 scripts/release_manifest.py validate --artifact-root target/packages \
+            target/packages/SYNVEIL-RELEASE-MANIFEST.json
+          python3 scripts/release_manifest.py validate --artifact-root target/packages-reproducible \
+            target/packages-reproducible/SYNVEIL-RELEASE-MANIFEST.json
+          ./scripts/validate-release-manifest.sh
 
       - name: Static packaging units (version/arch/metadata/parity/safety)
         run: |
