@@ -48,6 +48,9 @@ jobs:
       - name: Validate v0.2 installer error model
         run: ./scripts/validate-install-error-model.sh
 
+      - name: Validate v0.2 Linux package integration reconciliation
+        run: ./scripts/validate-linux-package-integration.sh
+
       - name: Install Linux secret-service build dependencies
         if: runner.os == 'Linux'
         run: |
