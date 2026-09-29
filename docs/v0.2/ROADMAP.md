@@ -131,8 +131,7 @@ Checkpoint achieved: **V0.2 DISTRIBUTION CORE READY** — P005–P011 common dis
 
 ### P012 — Linux Package Integration Reconciliation
 
-Unify current DEB/RPM lifecycle with installer-common semantics while retaining
-native manager ownership, safe hooks and data-preserving package removal.
+**Complete (Prompt012):** the [Linux package integration reconciliation](LINUX_PACKAGE_INTEGRATION_RECONCILIATION.md) and [Prompt012 evidence](PROMPT012_MANIFEST.md) unify current DEB/RPM lifecycle with installer-common semantics while retaining native manager ownership, safe hooks and data-preserving package removal. P013–P020 and the Phase C checkpoint remain pending.
 
 ### P013 — Debian/Ubuntu Desktop Package UX
 

@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "product_version": "0.1.0",
+  "binary_identity": "synveil-desktop",
+  "desktop_application_id": "synveil.desktop",
+  "autostart": false,
+  "formats": [
+    {
+      "format": "DEB",
+      "package_identity": "synveil",
+      "artifact_type": "deb",
+      "architectures": [
+        "amd64",
+        "arm64"
+      ],
+      "runtime_dependencies": [
+        "systemd",
+        "libc6 (>= 2.34)",
+        "libgcc-s1",
+        "libstdc++6",
+        "libdbus-1-3",
+        "libsystemd0",
+        "libqt6core6",
+        "libqt6gui6",
+        "libqt6widgets6",
+        "libqt6qml6",
+        "libqt6quick6",
+        "libqt6quickcontrols2-6",
+        "libqt6network6",
+        "qt6-qpa-plugins",
+        "qml6-module-qtqml",
+        "qml6-module-qtqml-models",
+        "qml6-module-qtqml-workerscript",
+        "qml6-module-qtquick",
+        "qml6-module-qtquick-controls",
+        "qml6-module-qtquick-dialogs",
+        "qml6-module-qtquick-layouts",
+        "qml6-module-qtquick-templates",
+        "qml6-module-qtquick-window"
+      ],
+      "hooks": [
+        "postinst",
+        "prerm",
+        "postrm"
+      ]
+    },
+    {
+      "format": "RPM",
+      "package_identity": "synveil",
+      "artifact_type": "rpm",
+      "architectures": [
+        "x86_64",
+        "aarch64"
+      ],
+      "runtime_dependencies": [
+        "systemd",
+        "systemd-libs",
+        "glibc",
+        "libgcc",
+        "libstdc++",
+        "dbus-libs",
+        "qt6-qtbase",
+        "qt6-qtdeclarative",
+        "qt6-qtquickcontrols2"
+      ],
+      "hooks": [
+        "post",
+        "preun",
+        "postun"
+      ]
+    }
+  ],
+  "surfaces": [
+    {
+      "path": "/usr/bin/synveil-scheduled-maintenance-once",
+      "owner": "PACKAGE_OWNED",
+      "verification": "executable"
+    },
+    {
+      "path": "/usr/bin/synveil-client",
+      "owner": "PACKAGE_OWNED",
+      "verification": "executable"
+    },
+    {
+      "path": "/usr/bin/synveil-desktop",
+      "owner": "PACKAGE_OWNED",
+      "verification": "executable"
+    },
+    {
+      "path": "/usr/lib/systemd/user/synveil-client.service",
+      "owner": "PACKAGE_OWNED",
+      "verification": "static-user-unit"
+    },
+    {
+      "path": "/usr/lib/systemd/system/synveil-scheduled-maintenance.service",
+      "owner": "PACKAGE_OWNED",
+      "verification": "static-system-unit"
+    },
+    {
+      "path": "/usr/lib/systemd/system/synveil-scheduled-maintenance.timer",
+      "owner": "PACKAGE_OWNED",
+      "verification": "static-system-unit"
+    },
+    {
+      "path": "/usr/lib/sysusers.d/synveil.conf",
+      "owner": "PACKAGE_OWNED",
+      "verification": "sysusers-config"
+    },
+    {
+      "path": "/usr/lib/tmpfiles.d/synveil.conf",
+      "owner": "PACKAGE_OWNED",
+      "verification": "tmpfiles-config"
+    },
+    {
+      "path": "/usr/share/applications/synveil.desktop",
+      "owner": "PACKAGE_OWNED",
+      "verification": "desktop-entry"
+    },
+    {
+      "path": "/usr/share/icons/hicolor/scalable/apps/synveil.svg",
+      "owner": "PACKAGE_OWNED",
+      "verification": "icon"
+    },
+    {
+      "path": "/usr/share/doc/synveil/LICENSE",
+      "owner": "PACKAGE_OWNED",
+      "verification": "regular-file"
+    },
+    {
+      "path": "/usr/share/doc/synveil/NOTICE",
+      "owner": "PACKAGE_OWNED",
+      "verification": "regular-file"
+    },
+    {
+      "path": "/usr/share/synveil/synveil-scheduled-maintenance.env.example",
+      "owner": "PACKAGE_OWNED",
+      "verification": "regular-file"
+    }
+  ],
+  "preservation": [
+    "APPLICATION_CONFIG",
+    "CREDENTIAL_STATE",
+    "CLIENT_SYNC_STATE",
+    "USER_LIBRARY_CONTENT",
+    "SERVER_CONFIG",
+    "SERVER_DATABASE",
+    "SERVER_OBJECT_DATA",
+    "EXTERNAL_DEPENDENCY"
+  ]
+}

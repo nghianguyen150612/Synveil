@@ -63,6 +63,7 @@ v0.1 đã phát hành. Cài đặt/phục hồi hiện tại vẫn theo hướng
 - [v0.2 upgrade/repair/uninstall contract](v0.2/UPGRADE_REPAIR_UNINSTALL_CONTRACT.md)
 - [v0.2 installer error model](v0.2/INSTALLER_ERROR_MODEL.md)
 - [v0.2 release channel and version selection](v0.2/RELEASE_CHANNEL_SELECTION.md)
+- [v0.2 Linux package integration reconciliation](v0.2/LINUX_PACKAGE_INTEGRATION_RECONCILIATION.md)
 - [ADR-049: installation architecture](adr/ADR-049-v0.2-effortless-installation-architecture.md)
 - [Prompt001 documentation manifest](v0.2/PROMPT001_MANIFEST.md)
 - [Prompt005 implementation manifest](v0.2/PROMPT005_MANIFEST.md)
@@ -72,3 +73,4 @@ v0.1 đã phát hành. Cài đặt/phục hồi hiện tại vẫn theo hướng
 - [Prompt009 implementation manifest](v0.2/PROMPT009_MANIFEST.md)
 - [Prompt010 implementation manifest](v0.2/PROMPT010_MANIFEST.md)
 - [Prompt011 implementation manifest](v0.2/PROMPT011_MANIFEST.md)
+- [Prompt012 implementation manifest](v0.2/PROMPT012_MANIFEST.md)
