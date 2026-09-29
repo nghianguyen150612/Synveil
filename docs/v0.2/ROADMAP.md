@@ -123,10 +123,9 @@ pending and Phase B is still open.
 
 ### P011 — Release Channel and Version Selection
 
-Establish stable-channel metadata and compatible version selection. Do not add
-automatic update behavior unless a later prompt explicitly enables it.
+**Complete (Prompt011):** the [release channel contract](RELEASE_CHANNEL_SELECTION.md) and [Prompt011 evidence](PROMPT011_MANIFEST.md) define authenticated stable-only metadata, generation/high-water rollback protection, deterministic highest compatible selection, and exact P006 manifest binding. P009 remains mutation authority; no automatic updater is introduced.
 
-Checkpoint: **V0.2 DISTRIBUTION CORE READY**
+Checkpoint achieved: **V0.2 DISTRIBUTION CORE READY** — P005–P011 common distribution contracts and engines are ready. This does not claim Linux easy install, Windows Setup, AppImage, server setup, or a v0.2.0 release.
 
 ## PHASE C — LINUX EASY INSTALL (P012–020)
 

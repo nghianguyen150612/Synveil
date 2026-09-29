@@ -74,6 +74,7 @@ một tệp để trạng thái và hệ quả không bị lệch giữa hai b�
 | [053](ADR-053-v0.2-installation-transaction-journal.md) | v0.2 installation transaction journal | Accepted — Prompt008 contract |
 | [054](ADR-054-v0.2-upgrade-repair-uninstall-policy.md) | v0.2 upgrade, repair, uninstall policy | Accepted — Prompt009 contract |
 | [055](ADR-055-v0.2-installer-error-and-diagnostics-model.md) | v0.2 installer error and diagnostics model | Accepted — Prompt010 contract |
+| [056](ADR-056-v0.2-release-channel-and-version-selection.md) | v0.2 release channel and version selection | Accepted — Prompt011 contract |
 
 ## Process / Quy trình
 

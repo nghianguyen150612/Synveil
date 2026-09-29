@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://synveil.example/schemas/release-channel-auth-v1.schema.json",
+  "title": "Synveil release channel authentication descriptor v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "channel_filename", "channel_size_bytes", "channel_sha256", "signatures"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "channel_filename": {"const": "SYNVEIL-RELEASE-CHANNEL.json"},
+    "channel_size_bytes": {"type": "integer", "minimum": 0, "maximum": 1048576},
+    "channel_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "signatures": {"type": "array", "minItems": 1, "items": {"type": "object", "additionalProperties": false, "required": ["scheme", "key_id", "signature_filename"], "properties": {"scheme": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}, "key_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}, "signature_filename": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}}}}
+  }
+}
