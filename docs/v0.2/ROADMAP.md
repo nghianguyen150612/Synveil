@@ -110,8 +110,7 @@ process-interruption simulation, not native physical power-loss acceptance.
 
 ### P009 — Upgrade / Repair / Uninstall Common Contract
 
-Define shared semantics for reinstall, repair and removal while preserving user
-data and respecting the existing package/database/client ownership boundaries.
+**Complete (Prompt009):** the [shared lifecycle contract](UPGRADE_REPAIR_UNINSTALL_CONTRACT.md) defines exact upgrade compatibility, same-version repair, data-preserving ordinary uninstall, and a separate fail-closed purge boundary. Native acceptance remains pending.
 
 ### P010 — Installer Error Model
 

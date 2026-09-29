@@ -39,6 +39,9 @@ jobs:
       - name: Validate v0.2 installation transaction journal
         run: ./scripts/validate-install-journal.sh
 
+      - name: Validate v0.2 upgrade/repair/uninstall lifecycle contract
+        run: ./scripts/validate-install-lifecycle.sh
+
       - name: Install Linux secret-service build dependencies
         if: runner.os == 'Linux'
         run: |

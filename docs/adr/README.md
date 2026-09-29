@@ -72,6 +72,7 @@ một tệp để trạng thái và hệ quả không bị lệch giữa hai b�
 | [051](ADR-051-v0.2-release-download-integrity.md) | v0.2 release acquisition and integrity trust boundary | Accepted — Prompt006 contract |
 | [052](ADR-052-v0.2-installer-common-engine.md) | v0.2 installer common engine and platform adapter boundary | Accepted — Prompt007 contract |
 | [053](ADR-053-v0.2-installation-transaction-journal.md) | v0.2 installation transaction journal | Accepted — Prompt008 contract |
+| [054](ADR-054-v0.2-upgrade-repair-uninstall-policy.md) | v0.2 upgrade, repair, uninstall policy | Accepted — Prompt009 contract |
 
 ## Process / Quy trình
 
