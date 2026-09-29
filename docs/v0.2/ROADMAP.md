@@ -114,8 +114,12 @@ process-interruption simulation, not native physical power-loss acceptance.
 
 ### P010 — Installer Error Model
 
-Map internal failures to finite, safe user-facing categories, actionable next
-steps and bounded redacted diagnostics.
+**Complete (Prompt010):** the [installer error model](INSTALLER_ERROR_MODEL.md)
+maps P006 acquisition, P007 engine, P008 journal/recovery, and P009 lifecycle
+failures into finite user-facing categories, safe actions, explicit retry
+semantics, and bounded typed diagnostics. Unknown outcomes require
+reconciliation before retry; integrity failures expose no bypass. P011 remains
+pending and Phase B is still open.
 
 ### P011 — Release Channel and Version Selection
 

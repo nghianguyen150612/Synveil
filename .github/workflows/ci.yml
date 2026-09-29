@@ -42,6 +42,9 @@ jobs:
       - name: Validate v0.2 upgrade/repair/uninstall lifecycle contract
         run: ./scripts/validate-install-lifecycle.sh
 
+      - name: Validate v0.2 installer error model
+        run: ./scripts/validate-install-error-model.sh
+
       - name: Install Linux secret-service build dependencies
         if: runner.os == 'Linux'
         run: |
