@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://synveil.example/schemas/release-channel-v1.schema.json",
+  "title": "Synveil stable release channel v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "product", "channel", "generation", "releases"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "product": {"const": "Synveil"},
+    "channel": {"const": "stable"},
+    "generation": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
+    "releases": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["product_version", "source_commit", "manifest_filename", "manifest_size_bytes", "manifest_sha256", "fresh_install", "upgrade_from"],
+        "properties": {
+          "product_version": {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"},
+          "source_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+          "manifest_filename": {"const": "SYNVEIL-RELEASE-MANIFEST.json"},
+          "manifest_size_bytes": {"type": "integer", "minimum": 1, "maximum": 1048576},
+          "manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "fresh_install": {"type": "boolean"},
+          "upgrade_from": {"type": "array", "maxItems": 256, "uniqueItems": true, "items": {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"}}
+        }
+      }
+    }
+  }
+}
