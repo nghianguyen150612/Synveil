@@ -114,8 +114,9 @@ process-interruption simulation, not native physical power-loss acceptance.
 
 ### P010 — Installer Error Model
 
-Map internal failures to finite, safe user-facing categories, actionable next
-steps and bounded redacted diagnostics.
+**Complete (Prompt010):** the [installer error model](INSTALLER_ERROR_MODEL.md)
+maps authoritative failures to finite categories, retry-safety policy, safe
+actions, bilingual semantic copy, and bounded typed diagnostics. It adds no UI.
 
 ### P011 — Release Channel and Version Selection
 
