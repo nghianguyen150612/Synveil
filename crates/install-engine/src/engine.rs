@@ -330,24 +330,35 @@ fn fail_with_compensation_replan<A: InstallationAdapter>(
     adapter: &mut A,
     replan: bool,
 ) -> InstallationResult {
-    for effect in applied.iter().rev() {
-        if effect.reversibility == Reversibility::Reversible
-            && effect.safe_inverse.is_some()
-            && adapter.compensation_supported(effect)
-        {
-            let succeeded = adapter.compensate_effect(effect);
-            let verified = succeeded && adapter.verify_compensation(effect);
-            run.compensations.push(CompensationRecord {
-                effect_id: effect.effect_id.clone(),
-                succeeded,
-                verified,
-            });
-            if !verified {
-                code = EngineErrorCode::CompensationFailed;
-            }
+    for effect in compensation_candidates(applied, adapter) {
+        let succeeded = adapter.compensate_effect(effect);
+        let verified = succeeded && adapter.verify_compensation(effect);
+        run.compensations.push(CompensationRecord {
+            effect_id: effect.effect_id.clone(),
+            succeeded,
+            verified,
+        });
+        if !verified {
+            code = EngineErrorCode::CompensationFailed;
         }
     }
     run.stop(code, replan)
+}
+
+pub(crate) fn compensation_candidates<'a, A: InstallationAdapter>(
+    applied: &[&'a InstallationEffect],
+    adapter: &mut A,
+) -> Vec<&'a InstallationEffect> {
+    applied
+        .iter()
+        .rev()
+        .copied()
+        .filter(|effect| {
+            effect.reversibility == Reversibility::Reversible
+                && effect.safe_inverse.is_some()
+                && adapter.compensation_supported(effect)
+        })
+        .collect()
 }
 
 struct Run {

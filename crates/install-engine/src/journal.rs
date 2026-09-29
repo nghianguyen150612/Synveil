@@ -171,6 +171,7 @@ pub struct InstallationJournal {
     fingerprint: String,
     records: Vec<JournalEnvelope>,
     options: JournalOptions,
+    plan: InstallationPlan,
 }
 
 impl std::fmt::Debug for InstallationJournal {
@@ -232,7 +233,7 @@ impl InstallationJournal {
         lock.try_lock_exclusive()
             .map_err(|_| JournalError::new(JournalErrorCode::JournalBusy))?;
         let fingerprint = plan_fingerprint(plan)?;
-        let records = load_records(&directory, &fingerprint)?;
+        let records = load_records(&directory, &fingerprint, plan)?;
         if mode == JournalMode::ResumeExisting && records.is_empty() {
             return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
         }
@@ -242,6 +243,7 @@ impl InstallationJournal {
             fingerprint,
             records,
             options,
+            plan: plan.clone(),
         })
     }
 
@@ -256,7 +258,11 @@ impl InstallationJournal {
         if self.records.len() >= MAX_CHECKPOINT_RECORDS {
             return Err(JournalError::new(JournalErrorCode::JournalLimitExceeded));
         }
+        // Hash integrity is not semantic validity.  Refuse an impossible transition
+        // before it can become durable, while recovery independently performs the
+        // same validation for journals written by older or damaged implementations.
         let generation = self.records.len() as u64;
+        let mut candidate = self.records.clone();
         let previous_record_sha256 = self.records.last().map(|r| r.record_sha256.clone());
         let class = record_class(&record);
         let hash_input = HashInput {
@@ -278,6 +284,8 @@ impl InstallationJournal {
             record,
             record_sha256,
         };
+        candidate.push(envelope.clone());
+        replay(&self.plan, &candidate)?;
         let bytes = serde_json::to_vec(&envelope)
             .map_err(|_| JournalError::new(JournalErrorCode::JournalCorrupt))?;
         if bytes.len() as u64 > MAX_CHECKPOINT_BYTES {
@@ -343,7 +351,11 @@ struct HashInput<'a> {
     record: &'a JournalRecord,
 }
 
-fn load_records(directory: &Path, fingerprint: &str) -> Result<Vec<JournalEnvelope>, JournalError> {
+fn load_records(
+    directory: &Path,
+    fingerprint: &str,
+    plan: &InstallationPlan,
+) -> Result<Vec<JournalEnvelope>, JournalError> {
     let mut paths = Vec::new();
     for item in fs::read_dir(directory).map_err(io_error)? {
         let path = item.map_err(io_error)?.path();
@@ -424,7 +436,9 @@ fn load_records(directory: &Path, fingerprint: &str) -> Result<Vec<JournalEnvelo
         }
         records.push(envelope);
     }
-    validate_semantics(&records)?;
+    if !records.is_empty() {
+        replay(plan, &records)?;
+    }
     Ok(records)
 }
 
@@ -433,23 +447,6 @@ fn item_type_is_regular(path: &Path) -> Result<bool, JournalError> {
         .map_err(io_error)?
         .file_type()
         .is_file())
-}
-
-fn validate_semantics(records: &[JournalEnvelope]) -> Result<(), JournalError> {
-    if records.is_empty() {
-        return Ok(());
-    }
-    if !matches!(records[0].record, JournalRecord::TransactionOpened { .. }) {
-        return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
-    }
-    let mut completed = false;
-    for r in records {
-        if completed {
-            return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
-        }
-        completed = matches!(r.record, JournalRecord::TransactionCompleted);
-    }
-    Ok(())
 }
 
 fn validate_id(id: &str) -> Result<(), JournalError> {
@@ -559,6 +556,7 @@ impl InstallerEngine {
         } else {
             RecoveryDisposition::ResumeReady
         };
+        let mut applied: Vec<&InstallationEffect> = Vec::new();
         for effect in &plan.ordered_effects {
             match state.effects.get(&effect.effect_id).copied() {
                 Some(EffectState::Verified) => {
@@ -569,6 +567,7 @@ impl InstallerEngine {
                             error: Some(JournalErrorCode::RecoveryInspectionRequired),
                         };
                     }
+                    applied.push(effect);
                     continue;
                 }
                 Some(EffectState::MutationStarted) => match adapter.reconcile_unknown(effect) {
@@ -583,6 +582,7 @@ impl InstallerEngine {
                             return journal_stop(e.code);
                         }
                         disposition = RecoveryDisposition::ReconciledApplied;
+                        applied.push(effect);
                         continue;
                     }
                     ReconciliationOutcome::VerifiedNotApplied => {
@@ -603,6 +603,13 @@ impl InstallerEngine {
                 Some(EffectState::Partial | EffectState::CompensationStarted) => {
                     return inspection();
                 }
+                Some(EffectState::Compensated) => {
+                    return JournalExecutionResult {
+                        disposition: RecoveryDisposition::ReplanRequired,
+                        completed: false,
+                        error: None,
+                    };
+                }
                 Some(EffectState::FailureBeforeMutation) => {
                     return JournalExecutionResult {
                         disposition: RecoveryDisposition::ReplanRequired,
@@ -615,11 +622,12 @@ impl InstallerEngine {
             if !adapter.privilege_available(effect.privilege)
                 || !adapter.inspect_preconditions(effect)
             {
-                return JournalExecutionResult {
-                    disposition: RecoveryDisposition::ReplanRequired,
-                    completed: false,
-                    error: None,
-                };
+                return journal_fail_with_compensation(
+                    &mut journal,
+                    &applied,
+                    adapter,
+                    RecoveryDisposition::ReplanRequired,
+                );
             }
             if let Err(e) = journal.append(JournalRecord::EffectMutationStarted {
                 effect_id: effect.effect_id.clone(),
@@ -636,7 +644,12 @@ impl InstallerEngine {
                         }) {
                             return journal_stop(e.code);
                         }
-                        return inspection();
+                        return journal_fail_with_compensation(
+                            &mut journal,
+                            &applied,
+                            adapter,
+                            RecoveryDisposition::InspectionRequired,
+                        );
                     }
                     let result = if outcome == ApplyOutcome::Noop {
                         JournalVerifiedResult::VerifiedNoop
@@ -649,6 +662,7 @@ impl InstallerEngine {
                     }) {
                         return journal_stop(e.code);
                     }
+                    applied.push(effect);
                 }
                 ApplyOutcome::FailureBeforeMutation => {
                     if let Err(e) = journal.append(JournalRecord::EffectOutcome {
@@ -657,11 +671,12 @@ impl InstallerEngine {
                     }) {
                         return journal_stop(e.code);
                     }
-                    return JournalExecutionResult {
-                        disposition: RecoveryDisposition::ReplanRequired,
-                        completed: false,
-                        error: None,
-                    };
+                    return journal_fail_with_compensation(
+                        &mut journal,
+                        &applied,
+                        adapter,
+                        RecoveryDisposition::ReplanRequired,
+                    );
                 }
                 ApplyOutcome::KnownPartialMutation => {
                     if let Err(e) = journal.append(JournalRecord::EffectOutcome {
@@ -670,7 +685,12 @@ impl InstallerEngine {
                     }) {
                         return journal_stop(e.code);
                     }
-                    return inspection();
+                    return journal_fail_with_compensation(
+                        &mut journal,
+                        &applied,
+                        adapter,
+                        RecoveryDisposition::InspectionRequired,
+                    );
                 }
                 ApplyOutcome::OutcomeUnknown => match adapter.reconcile_unknown(effect) {
                     ReconciliationOutcome::VerifiedApplied if adapter.verify_effect(effect) => {
@@ -681,6 +701,7 @@ impl InstallerEngine {
                             return journal_stop(e.code);
                         }
                         disposition = RecoveryDisposition::ReconciledApplied;
+                        applied.push(effect);
                     }
                     ReconciliationOutcome::VerifiedNotApplied => {
                         return JournalExecutionResult {
@@ -689,14 +710,23 @@ impl InstallerEngine {
                             error: None,
                         };
                     }
-                    _ => return inspection(),
+                    _ => {
+                        return journal_fail_with_compensation(
+                            &mut journal,
+                            &applied,
+                            adapter,
+                            RecoveryDisposition::InspectionRequired,
+                        );
+                    }
                 },
             }
         }
         if !adapter.verify_installation(plan) {
             return inspection();
         }
-        if let Err(e) = journal.append(JournalRecord::FinalVerificationSucceeded) {
+        if !state.final_verified
+            && let Err(e) = journal.append(JournalRecord::FinalVerificationSucceeded)
+        {
             return journal_stop(e.code);
         }
         if let Err(e) = journal.append(JournalRecord::TransactionCompleted) {
@@ -717,9 +747,11 @@ enum EffectState {
     FailureBeforeMutation,
     Partial,
     CompensationStarted,
+    Compensated,
 }
 struct ReplayState {
     effects: BTreeMap<String, EffectState>,
+    final_verified: bool,
     completed: bool,
 }
 fn replay(
@@ -732,8 +764,19 @@ fn replay(
         .map(|e| e.effect_id.as_str())
         .collect();
     let mut effects = BTreeMap::new();
+    let order: BTreeMap<&str, usize> = plan
+        .ordered_effects
+        .iter()
+        .enumerate()
+        .map(|(index, effect)| (effect.effect_id.as_str(), index))
+        .collect();
+    let mut opened = false;
+    let mut final_verified = false;
     let mut completed = false;
     for envelope in records {
+        if completed {
+            return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+        }
         match &envelope.record {
             JournalRecord::TransactionOpened {
                 plan_id,
@@ -741,15 +784,35 @@ fn replay(
                 target_scope,
             } if plan_id == &plan.plan_id
                 && intent == &plan.intent
-                && target_scope == &plan.target_scope => {}
+                && target_scope == &plan.target_scope
+                && envelope.generation == 0
+                && !opened =>
+            {
+                opened = true
+            }
             JournalRecord::TransactionOpened { .. } => {
-                return Err(JournalError::new(JournalErrorCode::JournalPlanMismatch));
+                return Err(JournalError::new(if !opened && envelope.generation == 0 {
+                    JournalErrorCode::JournalPlanMismatch
+                } else {
+                    JournalErrorCode::JournalCorrupt
+                }));
             }
             JournalRecord::EffectMutationStarted { effect_id } => {
+                require_opened(opened)?;
                 ensure_effect(&valid, effect_id)?;
+                if effects.contains_key(effect_id) {
+                    return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+                }
+                let index = order[effect_id.as_str()];
+                if plan.ordered_effects[..index].iter().any(|prior| {
+                    !matches!(effects.get(&prior.effect_id), Some(EffectState::Verified))
+                }) {
+                    return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+                }
                 effects.insert(effect_id.clone(), EffectState::MutationStarted);
             }
             JournalRecord::EffectVerified { effect_id, .. } => {
+                require_opened(opened)?;
                 ensure_effect(&valid, effect_id)?;
                 if !matches!(effects.get(effect_id), Some(EffectState::MutationStarted)) {
                     return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
@@ -757,6 +820,7 @@ fn replay(
                 effects.insert(effect_id.clone(), EffectState::Verified);
             }
             JournalRecord::EffectOutcome { effect_id, outcome } => {
+                require_opened(opened)?;
                 ensure_effect(&valid, effect_id)?;
                 if !matches!(effects.get(effect_id), Some(EffectState::MutationStarted)) {
                     return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
@@ -774,10 +838,15 @@ fn replay(
                 );
             }
             JournalRecord::CompensationStarted { effect_id } => {
+                require_opened(opened)?;
                 ensure_effect(&valid, effect_id)?;
+                if !matches!(effects.get(effect_id), Some(EffectState::Verified)) {
+                    return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+                }
                 effects.insert(effect_id.clone(), EffectState::CompensationStarted);
             }
             JournalRecord::CompensationVerified { effect_id } => {
+                require_opened(opened)?;
                 ensure_effect(&valid, effect_id)?;
                 if !matches!(
                     effects.get(effect_id),
@@ -785,12 +854,74 @@ fn replay(
                 ) {
                     return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
                 }
+                effects.insert(effect_id.clone(), EffectState::Compensated);
             }
-            JournalRecord::TransactionCompleted => completed = true,
-            JournalRecord::StageEntered { .. } | JournalRecord::FinalVerificationSucceeded => {}
+            JournalRecord::FinalVerificationSucceeded => {
+                require_opened(opened)?;
+                if final_verified
+                    || plan.ordered_effects.iter().any(|effect| {
+                        !matches!(effects.get(&effect.effect_id), Some(EffectState::Verified))
+                    })
+                {
+                    return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+                }
+                final_verified = true;
+            }
+            JournalRecord::TransactionCompleted => {
+                require_opened(opened)?;
+                if !final_verified {
+                    return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+                }
+                completed = true;
+            }
+            JournalRecord::StageEntered { .. } => require_opened(opened)?,
         }
     }
-    Ok(ReplayState { effects, completed })
+    if !opened {
+        return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+    }
+    Ok(ReplayState {
+        effects,
+        final_verified,
+        completed,
+    })
+}
+
+/// Mirrors the Prompt007 reverse-order compensation policy while adding the
+/// durable mutation boundaries required by the journaled execution path.
+fn journal_fail_with_compensation<A: InstallationAdapter>(
+    journal: &mut InstallationJournal,
+    applied: &[&InstallationEffect],
+    adapter: &mut A,
+    disposition: RecoveryDisposition,
+) -> JournalExecutionResult {
+    for effect in crate::engine::compensation_candidates(applied, adapter) {
+        if let Err(error) = journal.append(JournalRecord::CompensationStarted {
+            effect_id: effect.effect_id.clone(),
+        }) {
+            return journal_stop(error.code);
+        }
+        if !adapter.compensate_effect(effect) || !adapter.verify_compensation(effect) {
+            return inspection();
+        }
+        if let Err(error) = journal.append(JournalRecord::CompensationVerified {
+            effect_id: effect.effect_id.clone(),
+        }) {
+            return journal_stop(error.code);
+        }
+    }
+    JournalExecutionResult {
+        disposition,
+        completed: false,
+        error: None,
+    }
+}
+fn require_opened(opened: bool) -> Result<(), JournalError> {
+    if opened {
+        Ok(())
+    } else {
+        Err(JournalError::new(JournalErrorCode::JournalCorrupt))
+    }
 }
 fn ensure_effect(valid: &BTreeSet<&str>, id: &str) -> Result<(), JournalError> {
     if valid.contains(id) {

@@ -8,9 +8,12 @@ use tempfile::TempDir;
 struct Adapter {
     calls: Vec<String>,
     outcome: Option<ApplyOutcome>,
+    outcomes: BTreeMap<String, ApplyOutcome>,
     reconcile: Option<ReconciliationOutcome>,
     effect_ok: bool,
     final_ok: bool,
+    compensate_ok: bool,
+    compensation_verify_ok: bool,
 }
 impl InstallationAdapter for Adapter {
     fn preflight(&mut self) -> Vec<PreflightFinding> {
@@ -25,7 +28,11 @@ impl InstallationAdapter for Adapter {
     }
     fn apply_effect(&mut self, e: &InstallationEffect) -> ApplyOutcome {
         self.calls.push(format!("apply:{}", e.effect_id));
-        self.outcome.unwrap_or(ApplyOutcome::Success)
+        self.outcomes
+            .get(&e.effect_id)
+            .copied()
+            .or(self.outcome)
+            .unwrap_or(ApplyOutcome::Success)
     }
     fn verify_effect(&mut self, e: &InstallationEffect) -> bool {
         self.calls.push(format!("verify:{}", e.effect_id));
@@ -41,10 +48,11 @@ impl InstallationAdapter for Adapter {
     }
     fn compensate_effect(&mut self, e: &InstallationEffect) -> bool {
         self.calls.push(format!("compensate:{}", e.effect_id));
-        true
+        self.compensate_ok
     }
     fn verify_compensation(&mut self, _: &InstallationEffect) -> bool {
-        true
+        self.calls.push("verify-compensation".into());
+        self.compensation_verify_ok
     }
     fn verify_installation(&mut self, _: &InstallationPlan) -> bool {
         self.calls.push("final".into());
@@ -104,6 +112,18 @@ fn plan_with(ids: &[(&str, EffectPhase)]) -> InstallationPlan {
 fn plan() -> InstallationPlan {
     plan_with(&[("package.payload", EffectPhase::Install)])
 }
+fn reversible_plan(ids: &[&str]) -> InstallationPlan {
+    let mut plan = plan_with(
+        &ids.iter()
+            .map(|id| (*id, EffectPhase::Install))
+            .collect::<Vec<_>>(),
+    );
+    for effect in &mut plan.ordered_effects {
+        effect.reversibility = Reversibility::Reversible;
+        effect.safe_inverse = Some("REMOVE_OWNED_PAYLOAD".into());
+    }
+    plan
+}
 fn request(p: &InstallationPlan) -> InstallationRequest {
     InstallationRequest {
         intent: p.intent,
@@ -116,6 +136,8 @@ fn good_adapter() -> Adapter {
     Adapter {
         effect_ok: true,
         final_ok: true,
+        compensate_ok: true,
+        compensation_verify_ok: true,
         ..Default::default()
     }
 }
@@ -143,6 +165,17 @@ fn mutation_started(root: &Path, p: &InstallationPlan) {
     .unwrap();
     j.append(JournalRecord::EffectMutationStarted {
         effect_id: p.ordered_effects[0].effect_id.clone(),
+    })
+    .unwrap();
+}
+fn mark_first_verified(j: &mut InstallationJournal, p: &InstallationPlan) {
+    j.append(JournalRecord::EffectMutationStarted {
+        effect_id: p.ordered_effects[0].effect_id.clone(),
+    })
+    .unwrap();
+    j.append(JournalRecord::EffectVerified {
+        effect_id: p.ordered_effects[0].effect_id.clone(),
+        result: JournalVerifiedResult::VerifiedSuccess,
     })
     .unwrap();
 }
@@ -671,6 +704,7 @@ fn compensation_start_can_be_persisted() {
         target_scope: p.target_scope,
     })
     .unwrap();
+    mark_first_verified(&mut j, &p);
     j.append(JournalRecord::CompensationStarted {
         effect_id: "package.payload".into(),
     })
@@ -692,6 +726,13 @@ fn compensation_checkpoint_failure_is_typed() {
     };
     let mut j =
         InstallationJournal::open_with_options(d.path(), &p, JournalMode::StartNew, o).unwrap();
+    j.append(JournalRecord::TransactionOpened {
+        plan_id: p.plan_id.clone(),
+        intent: p.intent,
+        target_scope: p.target_scope,
+    })
+    .unwrap();
+    mark_first_verified(&mut j, &p);
     assert_eq!(
         j.append(JournalRecord::CompensationStarted {
             effect_id: "package.payload".into()
@@ -712,6 +753,7 @@ fn verified_compensation_persists() {
         target_scope: p.target_scope,
     })
     .unwrap();
+    mark_first_verified(&mut j, &p);
     j.append(JournalRecord::CompensationStarted {
         effect_id: "package.payload".into(),
     })
@@ -736,6 +778,7 @@ fn interrupted_compensation_not_repeated() {
         target_scope: p.target_scope,
     })
     .unwrap();
+    mark_first_verified(&mut j, &p);
     j.append(JournalRecord::CompensationStarted {
         effect_id: "package.payload".into(),
     })
@@ -936,4 +979,287 @@ fn journal_fixture() -> (TempDir, InstallationPlan) {
     let p = plan();
     mutation_started(d.path(), &p);
     (d, p)
+}
+
+fn opened_journal(d: &TempDir, p: &InstallationPlan) -> InstallationJournal {
+    let mut journal = InstallationJournal::open(d.path(), p, JournalMode::StartNew).unwrap();
+    journal
+        .append(JournalRecord::TransactionOpened {
+            plan_id: p.plan_id.clone(),
+            intent: p.intent,
+            target_scope: p.target_scope,
+        })
+        .unwrap();
+    journal
+}
+
+#[test]
+fn journaled_failure_compensates_prior_reversible_effect() {
+    let d = TempDir::new().unwrap();
+    let p = reversible_plan(&["a", "b"]);
+    let mut a = good_adapter();
+    a.outcomes
+        .insert("b".into(), ApplyOutcome::FailureBeforeMutation);
+    let r = execute(d.path(), &p, &mut a, JournalMode::StartNew);
+    assert!(!r.completed);
+    assert!(a.calls.contains(&"compensate:a".into()));
+    let j = InstallationJournal::open(d.path(), &p, JournalMode::ResumeExisting).unwrap();
+    assert!(j.records().iter().any(|record| matches!(
+        &record.record,
+        JournalRecord::CompensationVerified { effect_id } if effect_id == "a"
+    )));
+}
+
+#[test]
+fn journaled_compensation_is_reverse_order() {
+    let d = TempDir::new().unwrap();
+    let p = reversible_plan(&["a", "b", "c"]);
+    let mut a = good_adapter();
+    a.outcomes
+        .insert("c".into(), ApplyOutcome::FailureBeforeMutation);
+    execute(d.path(), &p, &mut a, JournalMode::StartNew);
+    let compensated: Vec<_> = a
+        .calls
+        .iter()
+        .filter(|call| call.starts_with("compensate:"))
+        .cloned()
+        .collect();
+    assert_eq!(compensated, ["compensate:b", "compensate:a"]);
+}
+
+#[test]
+fn irreversible_prior_effect_is_not_journal_compensated() {
+    let d = TempDir::new().unwrap();
+    let p = plan_with(&[("a", EffectPhase::Install), ("b", EffectPhase::Install)]);
+    let mut a = good_adapter();
+    a.outcomes
+        .insert("b".into(), ApplyOutcome::FailureBeforeMutation);
+    execute(d.path(), &p, &mut a, JournalMode::StartNew);
+    assert!(!a.calls.iter().any(|call| call.starts_with("compensate:")));
+}
+
+#[test]
+fn compensation_start_failure_prevents_compensation_call() {
+    let d = TempDir::new().unwrap();
+    let p = reversible_plan(&["a", "b"]);
+    let mut a = good_adapter();
+    a.outcomes
+        .insert("b".into(), ApplyOutcome::FailureBeforeMutation);
+    let result = InstallerEngine.execute_journaled_with_options(
+        &request(&p),
+        &p,
+        &mut a,
+        d.path(),
+        JournalMode::StartNew,
+        JournalOptions {
+            fail_at: Some((
+                JournalRecordClass::CompensationStart,
+                JournalFaultPoint::Write,
+            )),
+        },
+    );
+    assert_eq!(result.error, Some(JournalErrorCode::JournalIoFailed));
+    assert!(!a.calls.iter().any(|call| call.starts_with("compensate:")));
+}
+
+#[test]
+fn compensation_verification_failure_stops_without_earlier_compensation() {
+    let d = TempDir::new().unwrap();
+    let p = reversible_plan(&["a", "b", "c"]);
+    let mut a = good_adapter();
+    a.outcomes
+        .insert("c".into(), ApplyOutcome::FailureBeforeMutation);
+    a.compensation_verify_ok = false;
+    let result = execute(d.path(), &p, &mut a, JournalMode::StartNew);
+    assert_eq!(result.disposition, RecoveryDisposition::InspectionRequired);
+    assert!(a.calls.contains(&"compensate:b".into()));
+    assert!(!a.calls.contains(&"compensate:a".into()));
+}
+
+#[test]
+fn verified_compensation_resume_requires_replan_without_replay() {
+    let d = TempDir::new().unwrap();
+    let p = reversible_plan(&["a"]);
+    let mut j = opened_journal(&d, &p);
+    mark_first_verified(&mut j, &p);
+    j.append(JournalRecord::CompensationStarted {
+        effect_id: "a".into(),
+    })
+    .unwrap();
+    j.append(JournalRecord::CompensationVerified {
+        effect_id: "a".into(),
+    })
+    .unwrap();
+    drop(j);
+    let mut a = good_adapter();
+    let result = execute(d.path(), &p, &mut a, JournalMode::ResumeExisting);
+    assert_eq!(result.disposition, RecoveryDisposition::ReplanRequired);
+    assert_eq!(applies(&a), 0);
+    assert!(!a.calls.iter().any(|call| call.starts_with("compensate:")));
+}
+
+#[test]
+fn completion_directly_after_open_is_rejected_without_checkpoint() {
+    let d = TempDir::new().unwrap();
+    let p = plan();
+    let mut j = opened_journal(&d, &p);
+    assert_eq!(
+        j.append(JournalRecord::TransactionCompleted)
+            .unwrap_err()
+            .code,
+        JournalErrorCode::JournalCorrupt
+    );
+    assert_eq!(j.records().len(), 1);
+}
+
+#[test]
+fn completion_without_final_verification_is_rejected() {
+    let d = TempDir::new().unwrap();
+    let p = plan();
+    let mut j = opened_journal(&d, &p);
+    mark_first_verified(&mut j, &p);
+    assert_eq!(
+        j.append(JournalRecord::TransactionCompleted)
+            .unwrap_err()
+            .code,
+        JournalErrorCode::JournalCorrupt
+    );
+}
+
+#[test]
+fn final_verification_with_unverified_effect_is_rejected() {
+    let d = TempDir::new().unwrap();
+    let p = plan();
+    let mut j = opened_journal(&d, &p);
+    assert_eq!(
+        j.append(JournalRecord::FinalVerificationSucceeded)
+            .unwrap_err()
+            .code,
+        JournalErrorCode::JournalCorrupt
+    );
+}
+
+#[test]
+fn final_verification_with_partial_effect_is_rejected() {
+    let d = TempDir::new().unwrap();
+    let p = plan();
+    let mut j = opened_journal(&d, &p);
+    j.append(JournalRecord::EffectMutationStarted {
+        effect_id: "package.payload".into(),
+    })
+    .unwrap();
+    j.append(JournalRecord::EffectOutcome {
+        effect_id: "package.payload".into(),
+        outcome: EffectResultState::KnownPartialMutation,
+    })
+    .unwrap();
+    assert!(j.append(JournalRecord::FinalVerificationSucceeded).is_err());
+}
+
+#[test]
+fn final_verification_with_compensated_effect_is_rejected() {
+    let d = TempDir::new().unwrap();
+    let p = plan();
+    let mut j = opened_journal(&d, &p);
+    mark_first_verified(&mut j, &p);
+    j.append(JournalRecord::CompensationStarted {
+        effect_id: "package.payload".into(),
+    })
+    .unwrap();
+    j.append(JournalRecord::CompensationVerified {
+        effect_id: "package.payload".into(),
+    })
+    .unwrap();
+    assert!(j.append(JournalRecord::FinalVerificationSucceeded).is_err());
+}
+
+#[test]
+fn duplicate_transaction_open_is_rejected() {
+    let d = TempDir::new().unwrap();
+    let p = plan();
+    let mut j = opened_journal(&d, &p);
+    assert!(
+        j.append(JournalRecord::TransactionOpened {
+            plan_id: p.plan_id.clone(),
+            intent: p.intent,
+            target_scope: p.target_scope
+        })
+        .is_err()
+    );
+}
+
+#[test]
+fn effect_verified_before_mutation_started_is_rejected() {
+    let d = TempDir::new().unwrap();
+    let p = plan();
+    let mut j = opened_journal(&d, &p);
+    assert!(
+        j.append(JournalRecord::EffectVerified {
+            effect_id: "package.payload".into(),
+            result: JournalVerifiedResult::VerifiedSuccess
+        })
+        .is_err()
+    );
+}
+
+#[test]
+fn duplicate_mutation_started_is_rejected() {
+    let d = TempDir::new().unwrap();
+    let p = plan();
+    let mut j = opened_journal(&d, &p);
+    j.append(JournalRecord::EffectMutationStarted {
+        effect_id: "package.payload".into(),
+    })
+    .unwrap();
+    assert!(
+        j.append(JournalRecord::EffectMutationStarted {
+            effect_id: "package.payload".into()
+        })
+        .is_err()
+    );
+}
+
+#[test]
+fn duplicate_effect_verified_is_rejected() {
+    let d = TempDir::new().unwrap();
+    let p = plan();
+    let mut j = opened_journal(&d, &p);
+    mark_first_verified(&mut j, &p);
+    assert!(
+        j.append(JournalRecord::EffectVerified {
+            effect_id: "package.payload".into(),
+            result: JournalVerifiedResult::VerifiedSuccess
+        })
+        .is_err()
+    );
+}
+
+#[test]
+fn later_effect_cannot_start_before_prior_verification() {
+    let d = TempDir::new().unwrap();
+    let p = plan_with(&[("a", EffectPhase::Install), ("b", EffectPhase::Integrate)]);
+    let mut j = opened_journal(&d, &p);
+    assert!(
+        j.append(JournalRecord::EffectMutationStarted {
+            effect_id: "b".into()
+        })
+        .is_err()
+    );
+}
+
+#[test]
+fn duplicate_completion_and_records_after_completion_are_rejected() {
+    let d = TempDir::new().unwrap();
+    let p = plan();
+    let mut j = opened_journal(&d, &p);
+    mark_first_verified(&mut j, &p);
+    j.append(JournalRecord::FinalVerificationSucceeded).unwrap();
+    j.append(JournalRecord::TransactionCompleted).unwrap();
+    assert!(j.append(JournalRecord::TransactionCompleted).is_err());
+    assert!(
+        j.append(JournalRecord::StageEntered {
+            stage: Stage::Complete
+        })
+        .is_err()
+    );
 }

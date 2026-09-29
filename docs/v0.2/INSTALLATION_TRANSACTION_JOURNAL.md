@@ -103,3 +103,9 @@ marked native PASS.
 P009 owns lifecycle and supported-source policy, including repair/uninstall/
 purge decisions. P010 owns localized presentation and diagnostics. P011 owns
 channel/version selection.
+
+## Prompt008A recovery hardening
+
+The in-memory and durable paths now use the same common-engine compensation candidate policy: only an explicitly reversible effect with a safe inverse and adapter support is eligible, and eligible effects are visited in reverse successful-application order. The durable path surrounds that shared lifecycle policy with fallible checkpoints. It commits `CompensationStarted` before calling `compensate_effect`, calls `verify_compensation` only after compensation succeeds, and commits `CompensationVerified` only after both operations succeed. Failure to persist the start prevents compensation; interruption after the start requires inspection and never replays compensation. A verified compensation is represented as `Compensated`, causes a stopped/replan-required recovery, and is neither treated as installed nor automatically reapplied.
+
+Schema version 1 recovery now applies a strict semantic state machine in addition to the existing hash chain. `TransactionOpened` is required exactly once at generation zero; effect starts follow plan order; effect results require a prior mutation start; duplicate transitions are rejected; and no record may follow completion. `FinalVerificationSucceeded` requires every planned effect to be durably verified, while `TransactionCompleted` requires durable final verification. These rules run both before public `append` creates a checkpoint and again while loading all persisted records. A valid SHA-256 chain proves local integrity and ordering, not that an impossible record sequence is semantically valid.
