@@ -1,0 +1,66 @@
+name: Linux AppImage
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  appimage:
+    name: Build, reproduce, inspect, and smoke AppImage
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install conservative build/runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y file shellcheck pkg-config libdbus-1-dev \
+            libfuse2 qt6-base-dev qt6-declarative-dev qt6-tools-dev-tools qt6-qpa-plugins \
+            qml6-module-qtqml qml6-module-qtqml-models qml6-module-qtqml-workerscript \
+            qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-dialogs \
+            qml6-module-qtquick-layouts qml6-module-qtquick-templates qml6-module-qtquick-window
+      - name: Static contracts and shell checks
+        run: |
+          bash -n deploy/packages/build-appimage.sh scripts/validate-appimage-build.sh
+          shellcheck -S warning deploy/packages/build-appimage.sh deploy/packages/appimage/AppRun scripts/validate-appimage-build.sh
+          ./scripts/validate-appimage-build.sh
+      - name: Build and independently reproduce AppImage
+        run: ./deploy/packages/build-appimage.sh
+      - name: Inspect exact artifact, manifest, and bundled runtime
+        run: |
+          APPIMAGE="target/packages/Synveil-$(bash -c 'source deploy/packages/common/version.sh; synveil_cargo_version')-x86_64.AppImage"
+          ./scripts/validate-appimage-build.sh --artifact "$APPIMAGE" \
+            --manifest target/packages/SYNVEIL-RELEASE-MANIFEST.json
+          python3 scripts/release_manifest.py validate --artifact-root target/packages \
+            target/packages/SYNVEIL-RELEASE-MANIFEST.json
+      - name: Host-decontaminated bounded QML smoke
+        run: |
+          APPIMAGE="target/packages/Synveil-$(bash -c 'source deploy/packages/common/version.sh; synveil_cargo_version')-x86_64.AppImage"
+          ./scripts/validate-appimage-build.sh --artifact "$APPIMAGE" --smoke
+      - name: Record ABI symbol baseline
+        run: |
+          APPIMAGE=$(find target/packages -maxdepth 1 -name '*.AppImage' -print -quit)
+          work=$(mktemp -d)
+          (cd "$work" && env -u APPIMAGE_EXTRACT_AND_RUN "$GITHUB_WORKSPACE/$APPIMAGE" --appimage-extract >/dev/null)
+          find "$work/squashfs-root/usr/bin" -type f -exec strings {} + | \
+            grep -Eo 'GLIBC(_[A-Z]+)?_[0-9]+\.[0-9]+(\.[0-9]+)?' | sort -Vu | tail -20 | tee target/packages/ABI-SYMBOLS.txt
+          sha256sum "$APPIMAGE" | tee target/packages/APPIMAGE-SHA256.txt
+      - name: Upload unsigned portable artifact and evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: synveil-appimage-x86_64
+          path: |
+            target/packages/*.AppImage
+            target/packages/SYNVEIL-RELEASE-MANIFEST.json
+            target/packages/ABI-SYMBOLS.txt
+            target/packages/APPIMAGE-SHA256.txt
+          if-no-files-found: error

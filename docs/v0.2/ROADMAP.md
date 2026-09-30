@@ -153,8 +153,14 @@ interaction and broader distribution qualification remain P020 and P018.
 
 ### P015 — AppImage Build Foundation
 
-Produce a self-contained supported AppImage without breaking SecretStore or
-IPC semantics. Define the qualified runtime baseline and fail-closed behavior.
+**Implemented (Prompt015, subject to final-head hosted artifact evidence):** the
+[AppImage build foundation](APPIMAGE_BUILD_FOUNDATION.md) and
+[Prompt015 evidence manifest](PROMPT015_MANIFEST.md) add a pinned, verified
+linuxdeploy/Qt deployment path, version-derived x86_64 artifact, fail-closed
+AppRun, real-artifact closure/manifest inspection, decontaminated QML smoke,
+and independent byte-rebuild gate without changing SecretStore, IPC, or XDG
+state ownership. Optional integration and broad platform qualification remain
+P016–P020.
 
 ### P016 — AppImage Runtime Integration
 

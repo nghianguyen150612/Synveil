@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Synveil
+Comment=Synveil desktop synchronization
+Exec=AppRun
+TryExec=AppRun
+Icon=synveil
+Terminal=false
+Categories=Utility;Security;FileTransfer;
+StartupNotify=true
+X-AppImage-Name=Synveil
+X-AppImage-Architecture=x86_64
