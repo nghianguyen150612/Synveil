@@ -2,7 +2,7 @@
 # Minimal, fail-closed AppImage entry point. Runtime state remains in XDG paths.
 set -eu
 
-APPDIR=${APPDIR:-"$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"}
+APPDIR=${APPDIR:-"$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)"}
 for required in \
     "$APPDIR/usr/bin/synveil-desktop" \
     "$APPDIR/usr/bin/synveil-client" \
