@@ -51,6 +51,9 @@ jobs:
       - name: Validate v0.2 Linux package integration reconciliation
         run: ./scripts/validate-linux-package-integration.sh
 
+      - name: Validate v0.2 Debian/Ubuntu desktop package UX
+        run: ./scripts/validate-debian-desktop-package-ux.sh
+
       - name: Install Linux secret-service build dependencies
         if: runner.os == 'Linux'
         run: |

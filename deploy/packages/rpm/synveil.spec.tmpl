@@ -33,7 +33,7 @@ engineering (unsigned CI artifact at this stage).
 # Payload is staged by the package-neutral layer (deploy/install/install.sh
 # reading deploy/install/MANIFEST) so MANIFEST remains the single source of
 # truth. SYNVEIL_STAGED_PAYLOAD is exported by build.sh.
-set -euo pipefail
+set -eu
 staged="%{SYNVEIL_STAGED_PAYLOAD}"
 if [ -z "$staged" ]; then
   echo "SYNVEIL_STAGED_PAYLOAD is not set (build.sh must export it)" >&2

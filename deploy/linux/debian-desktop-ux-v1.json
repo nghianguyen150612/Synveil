@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "package_format": "DEB",
+  "product": "Synveil",
+  "supported_product_architecture": "x86_64",
+  "native_package_architecture": "amd64",
+  "package_name": "synveil",
+  "desktop_entry_path": "/usr/share/applications/synveil.desktop",
+  "desktop_exec": "/usr/bin/synveil-desktop",
+  "desktop_icon": "synveil",
+  "terminal": false,
+  "native_dependency_resolution": true,
+  "interactive_maintainer_scripts": false,
+  "auto_launch_after_install": false,
+  "auto_start_after_install": false
+}

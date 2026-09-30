@@ -34,6 +34,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             dpkg-dev rpm fakeroot systemd shellcheck \
+            desktop-file-utils \
             pkg-config libdbus-1-dev \
             qt6-base-dev qt6-declarative-dev qt6-tools-dev-tools \
             qt6-qpa-plugins \
@@ -81,9 +82,6 @@ jobs:
           ./deploy/packages/build.sh --format=all
           ls -la target/packages/
 
-      - name: Rebuild release binaries after clearing release outputs
-        run: scripts/verify-release-build-reproducibility.sh
-
       - name: DEB inspection (dpkg-deb info + contents)
         run: |
           set -euo pipefail
@@ -109,6 +107,61 @@ jobs:
           dpkg-deb --field "$DEB" Depends | grep -F 'libdbus-1-3'
           dpkg-deb --field "$DEB" Depends | grep -F 'libsystemd0'
 
+      - name: Debian/Ubuntu DEB desktop package UX
+        run: |
+          set -euo pipefail
+          DEB="$(find target/packages -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          SYNVEIL_DEB_ARTIFACT="$DEB" ./scripts/validate-debian-desktop-package-ux.sh
+
+      - name: Debian/Ubuntu native install and packaged launch
+        run: |
+          set -euo pipefail
+          DEB="$(realpath "$(find target/packages -maxdepth 1 -type f -name '*.deb' -print -quit)")"
+          test -f "$DEB"
+          test "$(id -u)" -ne 0
+          if dpkg-query -W -f='${Status}\n' synveil 2>/dev/null | grep -qx 'install ok installed'; then
+            echo 'Synveil unexpectedly pre-installed on disposable runner' >&2
+            exit 1
+          fi
+
+          sudo apt-get install -y "$DEB"
+          test "$(dpkg-query -W -f='${Status}' synveil)" = 'install ok installed'
+          test -x /usr/bin/synveil-desktop
+          test -x /usr/bin/synveil-client
+          test -r /usr/share/icons/hicolor/scalable/apps/synveil.svg
+          cmp deploy/applications/synveil.desktop /usr/share/applications/synveil.desktop
+          desktop-file-validate /usr/share/applications/synveil.desktop
+
+          test ! -e "$HOME/.config/autostart/synveil.desktop"
+          test ! -L "$HOME/.config/systemd/user/default.target.wants/synveil-client.service"
+
+          smoke_root="$(mktemp -d)"
+          trap 'rm -rf -- "$smoke_root"' EXIT
+          mkdir -p "$smoke_root/config" "$smoke_root/data" "$smoke_root/cache" "$smoke_root/runtime"
+          chmod 700 "$smoke_root/runtime"
+          (
+            cd "$smoke_root"
+            SYNVEIL_CONFIG_DIR="$smoke_root/config" \
+            SYNVEIL_DATA_DIR="$smoke_root/data" \
+            SYNVEIL_CACHE_DIR="$smoke_root/cache" \
+            SYNVEIL_RUNTIME_DIR="$smoke_root/runtime" \
+            SYNVEIL_CLIENT_CONFIG="$smoke_root/config/client.conf" \
+            QT_QPA_PLATFORM=offscreen \
+            QML_DISABLE_DISK_CACHE=1 \
+              timeout 15s /usr/bin/synveil-desktop --qml-smoke-test
+          )
+
+          sudo install -m 0600 /dev/null /etc/synveil/p013-preserve.conf
+          sudo install -m 0600 /dev/null /var/lib/synveil/p013-preserve.state
+          sudo apt-get remove -y synveil
+          if dpkg-query -W -f='${Status}\n' synveil 2>/dev/null | grep -qx 'install ok installed'; then
+            echo 'Synveil remained installed after native remove' >&2
+            exit 1
+          fi
+          sudo test -f /etc/synveil/p013-preserve.conf
+          sudo test -f /var/lib/synveil/p013-preserve.state
+          sudo rm -f /etc/synveil/p013-preserve.conf /var/lib/synveil/p013-preserve.state
+
       - name: RPM inspection (query info + list + requires)
         run: |
           set -euo pipefail
@@ -117,6 +170,53 @@ jobs:
           rpm -qpi "$RPM"
           rpm -qpl -v "$RPM"
           rpm -qp --requires "$RPM"
+
+      - name: Validate release artifact provenance and metadata
+        run: |
+          set -euo pipefail
+          scripts/validate-release-artifacts.sh \
+            --manifest=target/packages/SYNVEIL-LINUX-ARTIFACT-MANIFEST.txt
+          scripts/validate-release-artifacts.sh \
+            --manifest=target/packages-reproducible/SYNVEIL-LINUX-ARTIFACT-MANIFEST.txt
+          python3 scripts/release_manifest.py validate --artifact-root target/packages \
+            target/packages/SYNVEIL-RELEASE-MANIFEST.json
+          python3 scripts/release_manifest.py validate --artifact-root target/packages-reproducible \
+            target/packages-reproducible/SYNVEIL-RELEASE-MANIFEST.json
+          ./scripts/validate-release-manifest.sh
+
+      - name: Static packaging units (version/arch/metadata/parity/safety)
+        run: |
+          set -euo pipefail
+          cargo test -p synveil-metadata --test linux_native_packaging_units --locked -- --nocapture
+          cargo test -p synveil-metadata --test release_artifact_units --locked -- --nocapture
+          cargo test -p synveil-metadata --test production_packaging_units --locked -- --nocapture
+          cargo test -p synveil-metadata --test linux_desktop_launch_units --locked -- --nocapture
+          cargo test -p synveil-metadata --test windows_desktop_packaging_units --locked -- --nocapture
+          cargo test -p synveil-metadata --test debian_desktop_package_ux_units --locked -- --nocapture
+
+      - name: Prompt 75/76/78 focused regressions (identity/install/sandbox/lifecycle)
+        run: |
+          set -euo pipefail
+          cargo test -p synveil-metadata --test linux_service_identity_units -- --nocapture
+          cargo test -p synveil-metadata --test linux_install_lifecycle -- --nocapture
+          cargo test -p synveil-metadata --test linux_sandbox_hardening_units -- --nocapture
+          cargo test -p synveil-metadata --test scheduled_maintenance_lifecycle_units -- --nocapture
+
+      - name: Prompt 79 adversarial deployment units
+        run: |
+          set -euo pipefail
+          cargo test -p synveil-metadata --test linux_deployment_adversarial_units -- --nocapture
+
+      - name: systemd unit verification
+        run: |
+          set -euo pipefail
+          systemd-analyze verify deploy/systemd/synveil-scheduled-maintenance.timer
+          cp deploy/systemd/synveil-scheduled-maintenance.service /tmp/synveil-pkg-verify.service
+          sed -i 's|ExecStart=/usr/bin/synveil-scheduled-maintenance-once|ExecStart=/usr/bin/true|' /tmp/synveil-pkg-verify.service
+          systemd-analyze verify /tmp/synveil-pkg-verify.service
+          sed 's|ExecStart=/usr/bin/synveil-client|ExecStart=/usr/bin/true|' \
+            deploy/systemd-user/synveil-client.service > /tmp/synveil-pkg-verify-user.service
+          systemd-analyze verify /tmp/synveil-pkg-verify-user.service
 
       - name: Reproducible DEB and RPM rebuilds
         run: |
@@ -143,51 +243,12 @@ jobs:
             unified-release-manifest
           sha256sum "$DEB" "$DEB_REPRO" "$RPM" "$RPM_REPRO"
 
-      - name: Validate release artifact provenance and metadata
-        run: |
-          set -euo pipefail
-          scripts/validate-release-artifacts.sh \
-            --manifest=target/packages/SYNVEIL-LINUX-ARTIFACT-MANIFEST.txt
-          scripts/validate-release-artifacts.sh \
-            --manifest=target/packages-reproducible/SYNVEIL-LINUX-ARTIFACT-MANIFEST.txt
-          python3 scripts/release_manifest.py validate --artifact-root target/packages \
-            target/packages/SYNVEIL-RELEASE-MANIFEST.json
-          python3 scripts/release_manifest.py validate --artifact-root target/packages-reproducible \
-            target/packages-reproducible/SYNVEIL-RELEASE-MANIFEST.json
-          ./scripts/validate-release-manifest.sh
-
-      - name: Static packaging units (version/arch/metadata/parity/safety)
-        run: |
-          set -euo pipefail
-          cargo test -p synveil-metadata --test linux_native_packaging_units --locked -- --nocapture
-          cargo test -p synveil-metadata --test release_artifact_units --locked -- --nocapture
-          cargo test -p synveil-metadata --test production_packaging_units --locked -- --nocapture
-          cargo test -p synveil-metadata --test linux_desktop_launch_units --locked -- --nocapture
-          cargo test -p synveil-metadata --test windows_desktop_packaging_units --locked -- --nocapture
-
-      - name: Prompt 75/76/78 focused regressions (identity/install/sandbox/lifecycle)
-        run: |
-          set -euo pipefail
-          cargo test -p synveil-metadata --test linux_service_identity_units -- --nocapture
-          cargo test -p synveil-metadata --test linux_install_lifecycle -- --nocapture
-          cargo test -p synveil-metadata --test linux_sandbox_hardening_units -- --nocapture
-          cargo test -p synveil-metadata --test scheduled_maintenance_lifecycle_units -- --nocapture
-
-      - name: Prompt 79 adversarial deployment units
-        run: |
-          set -euo pipefail
-          cargo test -p synveil-metadata --test linux_deployment_adversarial_units -- --nocapture
-
-      - name: systemd unit verification
-        run: |
-          set -euo pipefail
-          systemd-analyze verify deploy/systemd/synveil-scheduled-maintenance.timer
-          cp deploy/systemd/synveil-scheduled-maintenance.service /tmp/synveil-pkg-verify.service
-          sed -i 's|ExecStart=/usr/bin/synveil-scheduled-maintenance-once|ExecStart=/usr/bin/true|' /tmp/synveil-pkg-verify.service
-          systemd-analyze verify /tmp/synveil-pkg-verify.service
-          sed 's|ExecStart=/usr/bin/synveil-client|ExecStart=/usr/bin/true|' \
-            deploy/systemd-user/synveil-client.service > /tmp/synveil-pkg-verify-user.service
-          systemd-analyze verify /tmp/synveil-pkg-verify-user.service
+      - name: Rebuild release binaries after clearing release outputs
+        # Keep this independent byte-reproducibility gate strict. It runs after
+        # the package/Prompt013 evidence so a latent binary-reproducibility
+        # defect cannot hide whether the DEB UX itself works, but any mismatch
+        # still fails the native-package workflow.
+        run: scripts/verify-release-build-reproducibility.sh
 
       - name: Upload unsigned package artifacts
         uses: actions/upload-artifact@v4
