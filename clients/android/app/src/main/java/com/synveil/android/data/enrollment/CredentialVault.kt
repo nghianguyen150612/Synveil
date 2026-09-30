@@ -8,7 +8,6 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import java.security.KeyStore
 import java.security.MessageDigest
-import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.spec.GCMParameterSpec
@@ -41,7 +40,6 @@ class AndroidKeystoreCredentialVault(
     private val keyGenerator: () -> KeyGenerator = {
         KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
     },
-    private val random: SecureRandom = SecureRandom(),
 ) : SecureCredentialVault {
     override suspend fun preflight(profileId: String) {
         try {
@@ -71,8 +69,8 @@ class AndroidKeystoreCredentialVault(
             val key = getOrCreateKey(scope.profileId)
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.ENCRYPT_MODE, key)
-            val iv = ByteArray(GCM_IV_BYTES).also(random::nextBytes)
-            cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
+            val iv = cipher.iv
+            if (iv.size != GCM_IV_BYTES) throw IllegalStateException("unexpected GCM IV size")
             val credentialDigest = digest(record.credential.rawValue)
             cipher.updateAAD(scope.aad(credentialDigest))
             val ciphertext = cipher.doFinal(json.encodeToString(envelope).toByteArray(Charsets.UTF_8))
