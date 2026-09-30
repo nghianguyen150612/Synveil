@@ -144,8 +144,12 @@ remain P020; Fedora/RPM UX remains P014.
 
 ### P014 — Fedora/RPM Desktop Package UX
 
-Deliver and qualify the equivalent native RPM experience on each advertised
-Fedora/RPM environment.
+**Implemented (Prompt014):** the [Fedora RPM desktop package UX](FEDORA_RPM_PACKAGE_UX.md)
+and [Prompt014 evidence manifest](PROMPT014_MANIFEST.md) deliver the canonical
+RPM runtime closure, portable and bounded scriptlets, real-artifact validation,
+byte reproducibility, and separate Fedora 42 userspace DNF install, installed
+non-root smoke, erase, and preservation gates. Full graphical clean-machine
+interaction and broader distribution qualification remain P020 and P018.
 
 ### P015 — AppImage Build Foundation
 
