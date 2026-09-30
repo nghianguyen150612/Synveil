@@ -13,6 +13,7 @@ The release-specific commands are:
 ./scripts/validate-install-acceptance.sh
 ./scripts/validate-release-manifest.sh
 ./scripts/validate-release-download.sh
+./scripts/validate-debian-package-ux.sh
 ```
 
 The installation acceptance command validates the static v0.2 JSON scenario
@@ -29,3 +30,8 @@ That manifest records the current source-tree fingerprint, toolchain, archive
 timestamp, binary sizes, ELF build IDs, and SHA-256 values. It is a generated
 provenance record, not a checked-in expected binary hash; a dirty-tree build
 must never be compared with a clean-checkpoint artifact.
+
+The Debian package UX validator locks the Prompt013 launcher, icon, runtime
+dependency, hook-safety, and CI producer/consumer-ordering contracts. Pass a
+produced package as `--deb target/packages/synveil_<version>_amd64.deb` to also
+inspect its real control metadata, payload ownership, and file modes.

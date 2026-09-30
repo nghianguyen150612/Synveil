@@ -75,6 +75,9 @@ jobs:
             scripts/verify-release-build-reproducibility.sh \
             deploy/packages/debian/postinst deploy/packages/debian/prerm deploy/packages/debian/postrm
 
+      - name: Prompt013 DEB UX source and CI ordering contract
+        run: ./scripts/validate-debian-package-ux.sh
+
       - name: Build release binary + DEB + RPM
         run: |
           set -euo pipefail
@@ -211,3 +214,92 @@ jobs:
           else
             echo "no package artifacts present (build step failed; see earlier steps)"
           fi
+
+  deb-native-ux:
+    name: APT install, non-root launch, removal, and preservation
+    needs: linux-packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out exact package source
+        uses: actions/checkout@v4
+
+      - name: Download exact newly-built package artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: synveil-linux-packages
+          path: target/packages
+
+      - name: Inspect and install exact DEB through APT
+        run: |
+          set -euo pipefail
+          DEB="$(find target/packages -maxdepth 1 -type f -name 'synveil_*_amd64.deb' -print -quit)"
+          test -n "$DEB"
+          python3 scripts/validate-debian-package-ux.py --deb "$DEB"
+          if pgrep -x synveil-desktop || pgrep -x synveil-client; then
+            echo 'Synveil unexpectedly running before package installation' >&2
+            exit 1
+          fi
+          sudo apt-get update
+          sudo apt-get install -y "$PWD/$DEB"
+          test -x /usr/bin/synveil-desktop
+          test -x /usr/bin/synveil-client
+          test -f /usr/share/applications/synveil.desktop
+          test -f /usr/share/icons/hicolor/scalable/apps/synveil.svg
+          test -f /usr/lib/systemd/user/synveil-client.service
+          if pgrep -x synveil-desktop || pgrep -x synveil-client; then
+            echo 'package installation auto-launched Synveil' >&2
+            exit 1
+          fi
+          if systemctl --user is-enabled synveil-client.service 2>/dev/null; then
+            echo 'package installation enabled the user client service' >&2
+            exit 1
+          fi
+          test ! -e "$HOME/.config/autostart/synveil.desktop"
+
+      - name: Launch installed desktop offscreen as non-root runner
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          SMOKE_ROOT="$(mktemp -d "$RUNNER_TEMP/synveil-installed-smoke.XXXXXX")"
+          mkdir -p "$SMOKE_ROOT/config" "$SMOKE_ROOT/data" "$SMOKE_ROOT/cache" "$SMOKE_ROOT/runtime"
+          chmod 700 "$SMOKE_ROOT/runtime"
+          env -u CARGO_HOME -u CARGO_TARGET_DIR -u QML2_IMPORT_PATH -u QT_PLUGIN_PATH \
+            HOME="$SMOKE_ROOT" \
+            XDG_CONFIG_HOME="$SMOKE_ROOT/config" \
+            XDG_DATA_HOME="$SMOKE_ROOT/data" \
+            XDG_CACHE_HOME="$SMOKE_ROOT/cache" \
+            XDG_RUNTIME_DIR="$SMOKE_ROOT/runtime" \
+            SYNVEIL_CONFIG_DIR="$SMOKE_ROOT/config/synveil" \
+            SYNVEIL_DATA_DIR="$SMOKE_ROOT/data/synveil" \
+            SYNVEIL_CACHE_DIR="$SMOKE_ROOT/cache/synveil" \
+            SYNVEIL_RUNTIME_DIR="$SMOKE_ROOT/runtime/synveil" \
+            SYNVEIL_CLIENT_CONFIG="$SMOKE_ROOT/config/synveil/client.conf" \
+            QT_QPA_PLATFORM=offscreen QML_DISABLE_DISK_CACHE=1 \
+            timeout 15s /usr/bin/synveil-desktop --qml-smoke-test
+
+      - name: Remove natively and verify durable state preservation
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.config/synveil" "$HOME/.local/state/synveil"
+          printf 'p013-config\n' > "$HOME/.config/synveil/p013-preserve"
+          printf 'p013-profile\n' > "$HOME/.local/state/synveil/p013-preserve"
+          sudo mkdir -p /etc/synveil /var/lib/synveil
+          printf 'p013-admin-config\n' | sudo tee /etc/synveil/p013-preserve >/dev/null
+          printf 'p013-app-state\n' | sudo tee /var/lib/synveil/p013-preserve >/dev/null
+          sudo apt-get remove -y synveil
+          for path in \
+            /usr/bin/synveil-desktop \
+            /usr/bin/synveil-client \
+            /usr/share/applications/synveil.desktop \
+            /usr/share/icons/hicolor/scalable/apps/synveil.svg \
+            /usr/lib/systemd/user/synveil-client.service; do
+            test ! -e "$path"
+          done
+          test "$(cat "$HOME/.config/synveil/p013-preserve")" = p013-config
+          test "$(cat "$HOME/.local/state/synveil/p013-preserve")" = p013-profile
+          test "$(sudo cat /etc/synveil/p013-preserve)" = p013-admin-config
+          test "$(sudo cat /var/lib/synveil/p013-preserve)" = p013-app-state

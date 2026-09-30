@@ -350,7 +350,7 @@ INSTALLED_SIZE="$(( (INSTALLED_BYTES + 1023) / 1024 ))"
 # PostgreSQL server/CLI, Docker, Nginx, or Redis is packaged or required.
 # Debian splits QML modules and QPA plugins from the shared libraries. They
 # are required even when installation disables Recommends or has no Qt SDK.
-DEB_DEPENDS="systemd, libc6 (>= 2.34), libgcc-s1, libstdc++6, libdbus-1-3, libsystemd0, libqt6core6, libqt6gui6, libqt6widgets6, libqt6qml6, libqt6quick6, libqt6quickcontrols2-6, libqt6network6, qt6-qpa-plugins, qml6-module-qtqml, qml6-module-qtqml-models, qml6-module-qtqml-workerscript, qml6-module-qtquick, qml6-module-qtquick-controls, qml6-module-qtquick-dialogs, qml6-module-qtquick-layouts, qml6-module-qtquick-templates, qml6-module-qtquick-window"
+DEB_DEPENDS="systemd, dbus-user-session, gnome-keyring, libc6 (>= 2.34), libgcc-s1, libstdc++6, libdbus-1-3, libsystemd0, libqt6core6, libqt6gui6, libqt6widgets6, libqt6qml6, libqt6quick6, libqt6quickcontrols2-6, libqt6network6, qt6-qpa-plugins, qml6-module-qtqml, qml6-module-qtqml-models, qml6-module-qtqml-workerscript, qml6-module-qtquick, qml6-module-qtquick-controls, qml6-module-qtquick-dialogs, qml6-module-qtquick-layouts, qml6-module-qtquick-templates, qml6-module-qtquick-window"
 
 # tar flags for determinism: sorted names, root ownership, and normalized mtime.
 tar_owner_flags=(--owner=0 --group=0 --numeric-owner --sort=name)
