@@ -19,18 +19,22 @@ import com.synveil.android.feature.profile.ProfileEditorScreen
 import com.synveil.android.feature.profile.ServerProfilesScreen
 import com.synveil.android.data.enrollment.EnrollmentManager
 import com.synveil.android.feature.enrollment.EnrollmentScreen
+import com.synveil.android.data.session.DeviceSessionManager
+import com.synveil.android.feature.library.LibraryScreen
 
 private const val HomeRoute = "home"
 private const val ProfilesRoute = "profiles"
 private const val ProfileEditorRoute = "profiles/editor"
 private const val ProfileIdArgument = "profileId"
 private const val EnrollmentRoute = "enrollment"
+private const val LibrariesRoute = "libraries"
 
 @Composable
 fun SynveilNavHost(
     repository: ServerProfileRepository,
     transportFactory: (com.synveil.android.core.model.ServerProfile) -> SynveilHttpTransport,
     enrollmentManager: EnrollmentManager,
+    deviceSessionManager: DeviceSessionManager,
     modifier: Modifier = Modifier,
 ) {
     val navController = rememberNavController()
@@ -45,6 +49,13 @@ fun SynveilNavHost(
             HomeScreen(
                 repository = repository,
                 onOpenProfiles = { navController.navigate(ProfilesRoute) },
+                onOpenLibraries = { navController.navigate(LibrariesRoute) },
+            )
+        }
+        composable(LibrariesRoute) {
+            LibraryScreen(
+                sessionManager = deviceSessionManager,
+                onBack = navController::popBackStack,
             )
         }
         composable(ProfilesRoute) {

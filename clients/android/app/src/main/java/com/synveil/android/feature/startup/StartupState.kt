@@ -22,7 +22,7 @@ data class StartupUiState(
         fun foundation(): StartupUiState = StartupUiState(
             identity = AppIdentity.development,
             statusMessage = "Native Android foundation ready",
-            unsupportedFeaturesMessage = "Authentication, sync, uploads, backups, and file browsing are not implemented yet.",
+            unsupportedFeaturesMessage = "Device authentication and library metadata are available; sync, uploads, backups, and file browsing are not implemented yet.",
             configurationState = StartupConfigurationState.NoServerConfigured,
         )
     }
@@ -65,7 +65,7 @@ fun startupUiStateFor(state: ProfileRepositoryState): StartupUiState {
     return StartupUiState(
         identity = AppIdentity.development,
         statusMessage = message,
-        unsupportedFeaturesMessage = "Authentication, sync, uploads, backups, and file browsing are not implemented yet.",
+        unsupportedFeaturesMessage = "Device authentication and library metadata are available; sync, uploads, backups, and file browsing are not implemented yet.",
         configurationState = configurationState,
     )
 }

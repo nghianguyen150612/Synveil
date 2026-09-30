@@ -2,10 +2,10 @@
 
 ## Status
 
-Prompt 3 adds a verified, unauthenticated HTTP transport on top of durable
-server-profile configuration. The app can run the canonical `/health/live` and
-`/health/ready` probes from a selected profile and reports typed connection
-states. Authentication, synchronization, uploads, and file browsing remain
+Prompt 5 adds authenticated DeviceBearer library discovery on top of the
+verified Prompt 4 enrollment vault. The app can run the canonical health
+probes, enroll a device, derive a profile-bound authenticated context, and
+list the owner's libraries. Synchronization, uploads, and file browsing remain
 future milestones.
 
 ## Stack and targets
@@ -28,7 +28,9 @@ app/src/main/java/com/synveil/android/
 ├── app/                 # Activity and navigation composition root
 ├── core/model/          # Small app-facing value models
 ├── core/ui/             # Theme and shared Compose UI foundation
-├── data/network/        # Profile-bound HTTP transport and health protocol
+├── data/network/        # Profile-bound HTTP transport and auth protocol
+├── data/library/        # Strict library catalog wire/domain models
+├── data/session/        # Profile-bound DeviceBearer session coordinator
 ├── data/profile/        # DataStore-backed profile repository and schema
 └── feature/
     ├── home/            # Startup/home surface
@@ -86,8 +88,9 @@ or exposed by `toString`.
 
 Enrollment finalization writes non-secret pending metadata, stores the secret,
 reads it back and verifies its scope, then commits active metadata and clears
-the pending marker. Startup recovery finishes a pending record only when the
-credential can be read and validated; otherwise it reports recovery required.
+the pending marker. Recovery is evaluated when enrollment/authenticated
+functionality is opened; process startup does not decrypt every profile's
+credential merely to render Home.
 Origin changes and profile deletion fence local credentials before committing,
 and remain blocked if secure cleanup fails. “Forget on this device” removes the
 local credential only and does not claim server revocation. Server-side revoke
@@ -157,11 +160,38 @@ alive-but-not-ready. A successful ready result is the only event that updates
 the profile's historical `lastConnectedAt` value. No current-online state is
 inferred from that timestamp.
 
+`AuthenticatedSynveilTransport` is created only by `DeviceSessionManager` after
+the active profile's non-secret enrollment metadata and Android Keystore vault
+record agree on profile, origin, transport, owner, Device, and credential
+scope. It sends exactly one `Authorization: Bearer svd1_...` header on
+profile-derived `/api/v1/libraries` requests. The bearer is never placed in a
+Compose state object, navigation argument, DataStore value, log, cookie, CSRF
+header, or process-wide OkHttp default. Kotlin/JVM strings cannot guarantee
+zeroization, so the implementation limits secret copies and lifetime instead
+of making a false zeroization claim.
+
+Library pages use a strict kotlinx.serialization schema, a 1 MiB response
+limit, a page size of 100, a 512-character opaque cursor bound, and finite
+budgets of 64 pages and 4096 accumulated libraries. Unknown fields, statuses,
+IDs, revisions, timestamps, names, and incoherent pagination fail closed.
+Authenticated error states distinguish authentication failure, device
+revocation, transient server unavailability, TLS failure, secure-store
+failure, recovery-required enrollment, and protocol incompatibility. A 401 or
+503 never deletes local enrollment and is never automatically retried or
+re-enrolled.
+
+The application-level device session means the currently usable enrolled
+profile context; it is not a browser login session. Browser cookies and CSRF
+are intentionally unsupported for this feature. The Libraries screen is
+foreground-only and has an explicit refresh action. It displays library name
+and status metadata only; node and file browsing are not implemented.
+
 ## Unsupported features and next milestone
 
-Sync, uploads, backups, file browsing, background work, and production signing
-remain unsupported. Prompt 4 includes JVM transport/lifecycle tests and a real
+Sync, uploads, backups, node/file browsing, background work, and production
+signing remain unsupported. Prompt 4 includes JVM transport/lifecycle tests and a real
 AndroidKeyStore instrumentation test for encrypted persistence, recreation,
 scope fencing, malformed ciphertext, missing keys, and deletion. Runtime smoke
 testing covers build/install/launch, enrollment navigation, secure token input,
-and local malformed-token validation; no external production grant is used.
+local malformed-token validation, and the authenticated library navigation
+shell; no external production grant or real credential is used.

@@ -9,6 +9,8 @@ import com.synveil.android.data.enrollment.EnrollmentExchangeResult
 import com.synveil.android.data.enrollment.EnrollmentFailureReason
 import com.synveil.android.data.enrollment.EnrollmentRecoveryReason
 import com.synveil.android.data.enrollment.EnrollmentToken
+import com.synveil.android.data.library.LibraryCollectionPage
+import com.synveil.android.data.library.LibraryWireParser
 import java.io.IOException
 import java.net.ConnectException
 import java.net.NoRouteToHostException
@@ -32,6 +34,7 @@ import okhttp3.MediaType.Companion.toMediaType
 
 const val MAX_PROBE_RESPONSE_BYTES = 64 * 1024
 const val MAX_ENROLLMENT_RESPONSE_BYTES = 16 * 1024
+const val MAX_LIBRARY_RESPONSE_BYTES = 1024 * 1024
 
 data class TransportTimeouts(
     val connectMillis: Long = 10_000,
@@ -70,6 +73,7 @@ enum class ProtocolErrorKind {
     INVALID_JSON,
     INVALID_HEALTH_STATUS,
     INVALID_ERROR_ENVELOPE,
+    INVALID_LIBRARY_RESPONSE,
 }
 
 sealed interface ProbeResult {
@@ -99,28 +103,14 @@ class SynveilHttpTransport(
     timeouts: TransportTimeouts = TransportTimeouts(),
     allowLoopbackTestHttp: Boolean = false,
 ) : EnrollmentExchangeClient {
-    private val origin: HttpUrl
-    private val client: OkHttpClient = buildClient(timeouts)
+    private val origin: HttpUrl = validatedOrigin(profile, allowLoopbackTestHttp)
+    private val client: OkHttpClient = buildSynveilClient(timeouts)
     private val json = Json {
         ignoreUnknownKeys = false
         explicitNulls = false
     }
 
     init {
-        origin = profile.canonicalBaseUrl.value.toHttpUrlOrNull()
-            ?: throw TransportConfigurationException()
-        val policyMatchesScheme = when (profile.transportPolicy) {
-            TransportPolicy.HTTPS -> origin.scheme == "https"
-            TransportPolicy.LOOPBACK_TEST_HTTP -> origin.scheme == "http"
-        }
-        if (!policyMatchesScheme) {
-            throw TransportConfigurationException()
-        }
-        if (profile.transportPolicy == TransportPolicy.LOOPBACK_TEST_HTTP &&
-            (!allowLoopbackTestHttp || !isNumericLoopback(origin.host))
-        ) {
-            throw TransportConfigurationException()
-        }
         require(userAgent.isNotBlank())
     }
 
@@ -393,15 +383,184 @@ class SynveilHttpTransport(
         val ERROR_CODE = Regex("^[a-z][a-z0-9_]{1,63}$")
         val JSON_MEDIA_TYPE = "application/json".toMediaType()
 
-        fun buildClient(timeouts: TransportTimeouts): OkHttpClient = OkHttpClient.Builder()
-            .followRedirects(false)
-            .followSslRedirects(false)
-            .retryOnConnectionFailure(false)
-            .cookieJar(CookieJar.NO_COOKIES)
-            .connectTimeout(timeouts.connectMillis, TimeUnit.MILLISECONDS)
-            .readTimeout(timeouts.readMillis, TimeUnit.MILLISECONDS)
-            .writeTimeout(timeouts.writeMillis, TimeUnit.MILLISECONDS)
-            .callTimeout(timeouts.callMillis, TimeUnit.MILLISECONDS)
-            .build()
     }
 }
+
+internal fun validatedOrigin(
+    profile: ServerProfile,
+    allowLoopbackTestHttp: Boolean,
+): HttpUrl {
+    val origin = profile.canonicalBaseUrl.value.toHttpUrlOrNull()
+        ?: throw TransportConfigurationException()
+    val policyMatchesScheme = when (profile.transportPolicy) {
+        TransportPolicy.HTTPS -> origin.scheme == "https"
+        TransportPolicy.LOOPBACK_TEST_HTTP -> origin.scheme == "http"
+    }
+    if (!policyMatchesScheme) throw TransportConfigurationException()
+    if (profile.transportPolicy == TransportPolicy.LOOPBACK_TEST_HTTP &&
+        (!allowLoopbackTestHttp || !isNumericLoopbackHost(origin.host))
+    ) {
+        throw TransportConfigurationException()
+    }
+    return origin
+}
+
+internal fun buildSynveilClient(timeouts: TransportTimeouts): OkHttpClient = OkHttpClient.Builder()
+    .followRedirects(false)
+    .followSslRedirects(false)
+    .retryOnConnectionFailure(false)
+    .cookieJar(CookieJar.NO_COOKIES)
+    .connectTimeout(timeouts.connectMillis, TimeUnit.MILLISECONDS)
+    .readTimeout(timeouts.readMillis, TimeUnit.MILLISECONDS)
+    .writeTimeout(timeouts.writeMillis, TimeUnit.MILLISECONDS)
+    .callTimeout(timeouts.callMillis, TimeUnit.MILLISECONDS)
+    .build()
+
+private fun isNumericLoopbackHost(host: String): Boolean = host == "127.0.0.1" || host == "::1"
+
+class AuthenticatedSynveilTransport internal constructor(
+    profile: ServerProfile,
+    credential: DeviceCredential,
+    userAgent: String,
+    timeouts: TransportTimeouts = TransportTimeouts(),
+    allowLoopbackTestHttp: Boolean = false,
+) {
+    private val origin = validatedOrigin(profile, allowLoopbackTestHttp)
+    private val client = buildSynveilClient(timeouts)
+    private val requestUserAgent = userAgent.also { require(it.isNotBlank()) }
+    private val bearer = credential.rawValue
+    private val json = Json {
+        ignoreUnknownKeys = false
+        explicitNulls = false
+    }
+
+    init {
+        require(bearer.startsWith("svd1_"))
+    }
+
+    fun listLibrariesPage(cursor: String?): LibraryPageResult {
+        if (cursor != null && (cursor.isEmpty() || cursor.length > 512)) {
+            return LibraryPageResult.Failure(
+                SynveilTransportError.ProtocolError(ProtocolErrorKind.INVALID_LIBRARY_RESPONSE),
+            )
+        }
+        val url = origin.newBuilder()
+            .encodedPath("/api/v1/libraries")
+            .addQueryParameter("limit", "100")
+            .apply { cursor?.let { addQueryParameter("cursor", it) } }
+            .build()
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .header("Accept", "application/json")
+            .header("Accept-Encoding", "identity")
+            .header("User-Agent", requestUserAgent)
+            .header("Authorization", "Bearer $bearer")
+            .build()
+        return try {
+            client.newCall(request).execute().use { response ->
+                if (response.isRedirect) {
+                    return LibraryPageResult.Failure(SynveilTransportError.RedirectRejected(response.code))
+                }
+                val body = response.body ?: return LibraryPageResult.Failure(SynveilTransportError.MalformedResponse)
+                val bodyBytes = try {
+                    readBounded(body.byteStream(), MAX_LIBRARY_RESPONSE_BYTES)
+                } catch (_: BodyLimitException) {
+                    return LibraryPageResult.Failure(SynveilTransportError.BodyLimitExceeded)
+                }
+                if (!isJsonContentType(response.header("Content-Type"))) {
+                    return LibraryPageResult.Failure(
+                        SynveilTransportError.UnexpectedContentType(response.header("Content-Type")),
+                    )
+                }
+                val requestId = safeRequestIdHeader(response.header("X-Request-Id"))
+                if (response.code == 200) {
+                    return LibraryWireParser.parse(json, bodyBytes, requestId)
+                }
+                LibraryPageResult.Failure(parseErrorResponse(json, bodyBytes, response.code, requestId))
+            }
+        } catch (_: CancellationException) {
+            LibraryPageResult.Failure(SynveilTransportError.Cancelled)
+        } catch (error: Exception) {
+            LibraryPageResult.Failure(mapNetworkTransportError(error))
+        }
+    }
+}
+
+sealed interface LibraryPageResult {
+    data class Success(val page: LibraryCollectionPage) : LibraryPageResult
+    data class Failure(val error: SynveilTransportError) : LibraryPageResult
+}
+
+private fun parseErrorResponse(
+    json: Json,
+    body: ByteArray,
+    statusCode: Int,
+    headerRequestId: String?,
+): SynveilTransportError {
+    val parsed = try {
+        json.decodeFromString<ErrorResponseEnvelope>(body.toString(StandardCharsets.UTF_8))
+    } catch (_: SerializationException) {
+        return SynveilTransportError.ProtocolError(ProtocolErrorKind.INVALID_ERROR_ENVELOPE)
+    }
+    val payload = parsed.error
+    if (payload.code.isEmpty() || payload.code.length > 64 || !ERROR_CODE_PATTERN.matches(payload.code) ||
+        payload.message.isEmpty() || payload.message.length > 512
+    ) {
+        return SynveilTransportError.ProtocolError(ProtocolErrorKind.INVALID_ERROR_ENVELOPE)
+    }
+    return SynveilTransportError.HttpError(
+        statusCode = statusCode,
+        code = payload.code,
+        requestId = headerRequestId ?: safeRequestIdHeader(payload.request_id),
+    )
+}
+
+private fun mapNetworkTransportError(error: Exception): SynveilTransportError = when (error) {
+    is SocketTimeoutException -> SynveilTransportError.Timeout
+    is UnknownHostException -> SynveilTransportError.DnsFailure
+    is SSLException -> SynveilTransportError.TlsError
+    is ConnectException, is NoRouteToHostException -> SynveilTransportError.Offline
+    is IOException -> SynveilTransportError.Offline
+    else -> SynveilTransportError.Offline
+}
+
+private fun isJsonContentType(value: String?): Boolean = value
+    ?.substringBefore(';')
+    ?.trim()
+    ?.equals("application/json", ignoreCase = true) == true
+
+private fun safeRequestIdHeader(value: String?): String? = value?.takeIf { REQUEST_ID_PATTERN.matches(it) }
+
+private fun readBounded(input: java.io.InputStream, maximumBytes: Int): ByteArray {
+    input.use { stream ->
+        val output = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(8 * 1024)
+        var total = 0
+        while (true) {
+            val count = stream.read(buffer)
+            if (count < 0) break
+            total += count
+            if (total > maximumBytes) throw BodyLimitException()
+            output.write(buffer, 0, count)
+        }
+        return output.toByteArray()
+    }
+}
+
+private class BodyLimitException : IOException()
+
+@Serializable
+private data class ErrorResponseEnvelope(val error: ErrorPayloadEnvelope)
+
+@Serializable
+private data class ErrorPayloadEnvelope(
+    val code: String,
+    val message: String,
+    val request_id: String,
+    val retryable: Boolean,
+    val details: JsonElement? = null,
+)
+
+private val REQUEST_ID_PATTERN = Regex("^[A-Za-z0-9._~-]{8,128}$")
+private val ERROR_CODE_PATTERN = Regex("^[a-z][a-z0-9_]{1,63}$")

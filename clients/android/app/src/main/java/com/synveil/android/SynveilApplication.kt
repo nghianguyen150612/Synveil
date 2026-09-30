@@ -9,11 +9,10 @@ import com.synveil.android.core.model.ServerProfile
 import com.synveil.android.data.enrollment.AndroidKeystoreCredentialVault
 import com.synveil.android.data.enrollment.DataStoreEnrollmentMetadataStore
 import com.synveil.android.data.enrollment.EnrollmentManager
+import com.synveil.android.data.session.DeviceSessionManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.launch
 
 class SynveilApplication : Application() {
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -58,15 +57,15 @@ class SynveilApplication : Application() {
         }
     }
 
-    override fun onCreate() {
-        super.onCreate()
-        applicationScope.launch {
-            serverProfileRepository.state.collectLatest { state ->
-                val configured = state as? com.synveil.android.data.profile.ProfileRepositoryState.Configured
-                configured?.configuration?.profiles?.forEach { profile ->
-                    enrollmentManager.recover(profile)
-                }
-            }
-        }
+    val deviceSessionManager by lazy {
+        DeviceSessionManager(
+            profileRepository = serverProfileRepository,
+            metadataStore = enrollmentMetadataStore,
+            vault = credentialVault,
+            userAgent = "Synveil Android/${BuildConfig.VERSION_NAME}",
+            allowLoopbackTestHttp = BuildConfig.DEBUG,
+            scope = applicationScope,
+        )
     }
+
 }

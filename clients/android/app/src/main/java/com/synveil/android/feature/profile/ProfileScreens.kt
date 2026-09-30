@@ -284,7 +284,7 @@ fun ProfileEditorScreen(
                 }
             }
             Text(
-                "Profiles store only non-secret configuration. Connection checks use unauthenticated health probes; authentication is not implemented yet.",
+                "Profiles store only non-secret configuration. Connection checks use unauthenticated health probes; authenticated library access uses the secure device vault.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

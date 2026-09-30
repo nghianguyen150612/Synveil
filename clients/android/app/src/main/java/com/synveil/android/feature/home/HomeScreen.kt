@@ -25,6 +25,7 @@ import com.synveil.android.feature.startup.StartupViewModel
 fun HomeScreen(
     repository: ServerProfileRepository,
     onOpenProfiles: () -> Unit,
+    onOpenLibraries: () -> Unit,
     startupViewModel: StartupViewModel = viewModel(
         factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
@@ -66,6 +67,9 @@ fun HomeScreen(
         }
         Button(onClick = onOpenProfiles) {
             Text(text = "Manage server profiles")
+        }
+        Button(onClick = onOpenLibraries) {
+            Text(text = "Open libraries")
         }
         Text(
             text = stringResource(R.string.foundation_boundary_note),

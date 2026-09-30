@@ -86,7 +86,7 @@ fun EnrollmentScreen(
                     Text("Forget on this device")
                 }
             }
-            Text("Enrollment has no automatic retry. If the result is unknown, use the trusted owner/browser recovery workflow.", style = MaterialTheme.typography.bodySmall)
+            Text("Enrollment has no automatic retry. If the result is unknown, use the trusted owner/browser recovery workflow. Libraries use the enrolled DeviceBearer only; browser cookies and CSRF are not used.", style = MaterialTheme.typography.bodySmall)
         }
     }
 }
