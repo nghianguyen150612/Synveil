@@ -55,7 +55,8 @@ build_release_set() (
     fi
 
     export PACKAGES_REPO_ROOT="$REPO_ROOT"
-    export SOURCE_DATE_EPOCH="$(synveil_source_date_epoch)"
+    SOURCE_DATE_EPOCH="$(synveil_source_date_epoch)"
+    export SOURCE_DATE_EPOCH
     export CARGO_TARGET_DIR="$target_dir"
     synveil_prepare_reproducible_rust_build "$REPO_ROOT"
 
