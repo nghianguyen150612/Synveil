@@ -14,6 +14,7 @@ The release-specific commands are:
 ./scripts/validate-release-manifest.sh
 ./scripts/validate-release-download.sh
 ./scripts/validate-debian-package-ux.sh
+./scripts/validate-rpm-package-ux.sh
 ```
 
 The installation acceptance command validates the static v0.2 JSON scenario
@@ -35,3 +36,9 @@ The Debian package UX validator locks the Prompt013 launcher, icon, runtime
 dependency, hook-safety, and CI producer/consumer-ordering contracts. Pass a
 produced package as `--deb target/packages/synveil_<version>_amd64.deb` to also
 inspect its real control metadata, payload ownership, and file modes.
+
+The Fedora RPM UX validator locks Prompt014's identity, x86_64 mapping,
+launcher/icon, Fedora runtime dependencies, portable and bounded scriptlets,
+and hosted acceptance structure. Pass a produced package as
+`--rpm target/packages/synveil-<version>-1.x86_64.rpm` to inspect its real RPM
+metadata, requirements, payload ownership, and modes.

@@ -1,10 +1,10 @@
 Name:           synveil
 Version:        @SYNVEIL_VERSION@
 Release:        @SYNVEIL_RELEASE@%{?dist}
-Summary:        Synveil desktop and background synchronization runtime (Linux)
+Summary:        Private file synchronization desktop application
 License:        MIT
 BuildArch:      @SYNVEIL_ARCH@
-Requires:       systemd, systemd-libs, glibc, libgcc, libstdc++, dbus-libs, qt6-qtbase, qt6-qtdeclarative, qt6-qtquickcontrols2
+Requires:       systemd, systemd-libs, glibc, libgcc, libstdc++, dbus-daemon, dbus-libs, gnome-keyring, qt6-qtbase, qt6-qtbase-gui, qt6-qtdeclarative, qt6-qtquickcontrols2
 # Preserve byte-identical release binary (Prompt 79 binary integrity): disable
 # automatic stripping so the packaged binary SHA256 equals the cargo release
 # binary SHA256. The release profile already applies its own optimizations;
@@ -16,24 +16,20 @@ Requires:       systemd, systemd-libs, glibc, libgcc, libstdc++, dbus-libs, qt6-
 # to PostgreSQL over TCP/Unix socket and needs no local server package.
 
 %description
-Synveil desktop shell and separately supervised background synchronization
-client, plus the one-shot scheduled-maintenance runtime with systemd
-sysusers/tmpfiles identity and LoadCredential database-credential delivery.
-
-The client user service is installed below /usr/lib/systemd/user and is never
-silently enabled by package installation. The system scheduled-maintenance
-timer is also NOT auto-enabled and its service is NOT auto-started on install.
-The package does NOT contain database credentials; the administrator
-provisions /etc/synveil/credentials/database-url (root:root 0600) separately.
-
-Package signing and YUM/DNF repository publishing are deferred to release
-engineering (unsigned CI artifact at this stage).
+Synveil provides a native desktop application for private file synchronization,
+a separately supervised background client, and scheduled maintenance support.
+Installation adds the Synveil application launcher but does not launch the
+application. Background synchronization is NOT auto-enabled or started. User
+profiles, credentials, configuration, and synchronized data remain under the
+user's control.
 
 %install
 # Payload is staged by the package-neutral layer (deploy/install/install.sh
 # reading deploy/install/MANIFEST) so MANIFEST remains the single source of
 # truth. SYNVEIL_STAGED_PAYLOAD is exported by build.sh.
-set -euo pipefail
+# rpmbuild runs this section with /bin/sh. Keep fail-fast and unset-variable
+# checks without relying on bash-only pipefail.
+set -eu
 staged="%{SYNVEIL_STAGED_PAYLOAD}"
 if [ -z "$staged" ]; then
   echo "SYNVEIL_STAGED_PAYLOAD is not set (build.sh must export it)" >&2

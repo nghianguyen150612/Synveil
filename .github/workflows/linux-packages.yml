@@ -61,6 +61,7 @@ jobs:
           bash -n deploy/packages/common/reproducible.sh
           bash -n scripts/validate-release-artifacts.sh
           bash -n scripts/validate-release-manifest.sh
+          bash -n scripts/validate-rpm-package-ux.sh
           bash -n scripts/verify-release-build-reproducibility.sh
           sh -n deploy/packages/debian/postinst
           sh -n deploy/packages/debian/prerm
@@ -77,6 +78,9 @@ jobs:
 
       - name: Prompt013 DEB UX source and CI ordering contract
         run: ./scripts/validate-debian-package-ux.sh
+
+      - name: Prompt014 RPM UX source contract
+        run: ./scripts/validate-rpm-package-ux.sh
 
       - name: Build release binary + DEB + RPM
         run: |
@@ -120,6 +124,7 @@ jobs:
           rpm -qpi "$RPM"
           rpm -qpl -v "$RPM"
           rpm -qp --requires "$RPM"
+          python3 scripts/validate-rpm-package-ux.py --rpm "$RPM"
 
       - name: Reproducible DEB and RPM rebuilds
         run: |
@@ -303,3 +308,112 @@ jobs:
           test "$(cat "$HOME/.local/state/synveil/p013-preserve")" = p013-profile
           test "$(sudo cat /etc/synveil/p013-preserve)" = p013-admin-config
           test "$(sudo cat /var/lib/synveil/p013-preserve)" = p013-app-state
+
+  rpm-native-ux:
+    name: Fedora 42 userspace DNF install, launch, erase, and preservation
+    needs: linux-packages
+    runs-on: ubuntu-latest
+    container: fedora:42
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install Fedora acceptance tooling
+        run: |
+          set -euo pipefail
+          dnf install -y git findutils procps-ng shadow-utils util-linux
+
+      - name: Check out exact package source
+        uses: actions/checkout@v4
+
+      - name: Download exact newly-built package artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: synveil-linux-packages
+          path: target/packages
+
+      - name: DNF install exact RPM
+        run: |
+          set -euo pipefail
+          RPM="$(find target/packages -maxdepth 1 -type f -name 'synveil-*.x86_64.rpm' -print -quit)"
+          test -n "$RPM"
+          python3 scripts/validate-rpm-package-ux.py --rpm "$RPM"
+          if pgrep -x synveil-desktop || pgrep -x synveil-client; then
+            echo 'Synveil unexpectedly running before package installation' >&2
+            exit 1
+          fi
+          dnf install -y "$PWD/$RPM"
+          rpm -q synveil
+          rpm -V synveil
+          test -x /usr/bin/synveil-desktop
+          test -x /usr/bin/synveil-client
+          test -f /usr/share/applications/synveil.desktop
+          test -f /usr/share/icons/hicolor/scalable/apps/synveil.svg
+          test -f /usr/lib/systemd/user/synveil-client.service
+          test ! -e /usr/lib/systemd/system/synveil-client.service
+          if pgrep -x synveil-desktop || pgrep -x synveil-client; then
+            echo 'RPM installation auto-launched Synveil' >&2
+            exit 1
+          fi
+          test ! -e /etc/xdg/autostart/synveil.desktop
+          if find /etc/systemd/user /root/.config/systemd/user -type l \
+              -path '*/synveil-client.service' -print -quit 2>/dev/null | grep -q .; then
+            echo 'RPM installation enabled the user client service' >&2
+            exit 1
+          fi
+
+      - name: Installed non-root desktop smoke
+        run: |
+          set -euo pipefail
+          useradd --create-home --user-group synveil-ci
+          SMOKE_ROOT="$(mktemp -d /tmp/synveil-installed-smoke.XXXXXX)"
+          mkdir -p "$SMOKE_ROOT/config" "$SMOKE_ROOT/data" "$SMOKE_ROOT/cache" "$SMOKE_ROOT/runtime"
+          chown -R synveil-ci:synveil-ci "$SMOKE_ROOT"
+          chmod 700 "$SMOKE_ROOT/runtime"
+          runuser -u synveil-ci -- env \
+            -u CARGO_HOME -u CARGO_TARGET_DIR -u QML2_IMPORT_PATH -u QT_PLUGIN_PATH \
+            HOME="$SMOKE_ROOT" \
+            XDG_CONFIG_HOME="$SMOKE_ROOT/config" \
+            XDG_DATA_HOME="$SMOKE_ROOT/data" \
+            XDG_CACHE_HOME="$SMOKE_ROOT/cache" \
+            XDG_RUNTIME_DIR="$SMOKE_ROOT/runtime" \
+            SYNVEIL_CONFIG_DIR="$SMOKE_ROOT/config/synveil" \
+            SYNVEIL_DATA_DIR="$SMOKE_ROOT/data/synveil" \
+            SYNVEIL_CACHE_DIR="$SMOKE_ROOT/cache/synveil" \
+            SYNVEIL_RUNTIME_DIR="$SMOKE_ROOT/runtime/synveil" \
+            SYNVEIL_CLIENT_CONFIG="$SMOKE_ROOT/config/synveil/client.conf" \
+            QT_QPA_PLATFORM=offscreen QML_DISABLE_DISK_CACHE=1 \
+            timeout 15s /usr/bin/synveil-desktop --qml-smoke-test
+
+      - name: RPM erase and durable-state preservation
+        run: |
+          set -euo pipefail
+          mkdir -p /etc/synveil /var/lib/synveil \
+            /home/synveil-ci/.config/synveil /home/synveil-ci/.local/state/synveil \
+            /tmp/synveil-external-library
+          printf 'p014-admin-config\n' > /etc/synveil/p014-preserve
+          printf 'p014-app-state\n' > /var/lib/synveil/p014-preserve
+          printf 'p014-user-config\n' > /home/synveil-ci/.config/synveil/p014-preserve
+          printf 'p014-profile\n' > /home/synveil-ci/.local/state/synveil/p014-preserve
+          printf 'p014-library-data\n' > /tmp/synveil-external-library/p014-preserve
+          chown -R synveil-ci:synveil-ci /home/synveil-ci/.config /home/synveil-ci/.local \
+            /tmp/synveil-external-library
+          dnf remove -y synveil
+          if rpm -q synveil; then
+            echo 'synveil remains in the RPM database after erase' >&2
+            exit 1
+          fi
+          for path in \
+            /usr/bin/synveil-desktop \
+            /usr/bin/synveil-client \
+            /usr/share/applications/synveil.desktop \
+            /usr/share/icons/hicolor/scalable/apps/synveil.svg \
+            /usr/lib/systemd/user/synveil-client.service; do
+            test ! -e "$path"
+          done
+          test "$(cat /etc/synveil/p014-preserve)" = p014-admin-config
+          test "$(cat /var/lib/synveil/p014-preserve)" = p014-app-state
+          test "$(cat /home/synveil-ci/.config/synveil/p014-preserve)" = p014-user-config
+          test "$(cat /home/synveil-ci/.local/state/synveil/p014-preserve)" = p014-profile
+          test "$(cat /tmp/synveil-external-library/p014-preserve)" = p014-library-data

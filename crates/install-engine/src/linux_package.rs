@@ -308,8 +308,11 @@ const RPM_RUNTIME_DEPENDENCIES: &[&str] = &[
     "glibc",
     "libgcc",
     "libstdc++",
+    "dbus-daemon",
     "dbus-libs",
+    "gnome-keyring",
     "qt6-qtbase",
+    "qt6-qtbase-gui",
     "qt6-qtdeclarative",
     "qt6-qtquickcontrols2",
 ];
