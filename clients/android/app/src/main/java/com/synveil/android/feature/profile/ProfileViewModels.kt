@@ -231,6 +231,7 @@ fun profileErrorMessage(error: Throwable): String = when (error) {
         ProfileOperationError.PROFILE_NOT_FOUND -> "Server profile was not found."
         ProfileOperationError.ACTIVE_PROFILE_REQUIRED -> "The active profile selection is invalid."
         ProfileOperationError.PROFILE_LIMIT_REACHED -> "The maximum number of server profiles has been reached."
+        ProfileOperationError.CREDENTIAL_CLEANUP_FAILED -> "Secure credential cleanup failed; the profile was not changed."
         ProfileOperationError.INVALID_PERSISTED_CONFIGURATION,
         ProfileOperationError.STORAGE_UNAVAILABLE -> "Server configuration could not be saved."
     }

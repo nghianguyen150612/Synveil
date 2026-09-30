@@ -48,6 +48,7 @@ fun ServerProfilesScreen(
     onBack: () -> Unit,
     onAdd: () -> Unit,
     onEdit: (ServerProfileId) -> Unit,
+    onEnroll: (ServerProfileId) -> Unit,
     profilesViewModel: ServerProfilesViewModel = viewModel(
         factory = profilesViewModelFactory(repository, transportFactory),
     ),
@@ -100,6 +101,7 @@ fun ServerProfilesScreen(
                             connectionState = uiState.connectionStates[profile.profileId] ?: ConnectionUiState.Idle,
                             onSelect = { profilesViewModel.select(profile.profileId) },
                             onEdit = { onEdit(profile.profileId) },
+                            onEnroll = { onEnroll(profile.profileId) },
                             onRemove = { profileToRemove = profile },
                             onTestConnection = { profilesViewModel.testConnection(profile.profileId) },
                         )
@@ -113,7 +115,7 @@ fun ServerProfilesScreen(
         AlertDialog(
             onDismissRequest = { profileToRemove = null },
             title = { Text("Remove server profile?") },
-            text = { Text("Remove ${profile.displayLabel} from this device? No server credentials are stored by this version.") },
+            text = { Text("Remove ${profile.displayLabel} from this device? Any local credential is fenced before removal; server revocation is not claimed.") },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -136,6 +138,7 @@ private fun ProfileCard(
     connectionState: ConnectionUiState,
     onSelect: () -> Unit,
     onEdit: () -> Unit,
+    onEnroll: () -> Unit,
     onRemove: () -> Unit,
     onTestConnection: () -> Unit,
 ) {
@@ -161,6 +164,7 @@ private fun ProfileCard(
                     OutlinedButton(onClick = onSelect) { Text("Use") }
                 }
                 OutlinedButton(onClick = onEdit) { Text("Edit") }
+                OutlinedButton(onClick = onEnroll) { Text("Enroll") }
                 OutlinedButton(
                     onClick = onTestConnection,
                     enabled = connectionState != ConnectionUiState.Checking,

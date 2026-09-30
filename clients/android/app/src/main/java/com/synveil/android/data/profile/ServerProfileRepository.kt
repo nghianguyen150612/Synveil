@@ -20,6 +20,10 @@ import com.synveil.android.core.model.ServerProfile
 import com.synveil.android.core.model.ServerProfileId
 import com.synveil.android.core.model.TransportPolicy
 import com.synveil.android.core.model.validateDisplayLabel
+import com.synveil.android.data.enrollment.CredentialCleanupResult
+import com.synveil.android.data.enrollment.CredentialLifecycle
+import com.synveil.android.data.enrollment.NoOpCredentialLifecycle
+import kotlinx.coroutines.flow.first
 
 const val PROFILE_SCHEMA_VERSION = 1
 
@@ -54,6 +58,7 @@ enum class ProfileOperationError {
     PROFILE_NOT_FOUND,
     ACTIVE_PROFILE_REQUIRED,
     PROFILE_LIMIT_REACHED,
+    CREDENTIAL_CLEANUP_FAILED,
     INVALID_PERSISTED_CONFIGURATION,
     STORAGE_UNAVAILABLE,
 }
@@ -96,6 +101,7 @@ class DataStoreServerProfileRepository(
     private val allowLoopbackTestHttp: Boolean,
     private val idGenerator: () -> ServerProfileId = { ServerProfileId.new() },
     private val nowMillis: () -> Long = { System.currentTimeMillis() },
+    private val credentialLifecycle: CredentialLifecycle = NoOpCredentialLifecycle(),
 ) : ServerProfileRepository {
     override val state: Flow<ProfileRepositoryState> = dataStore.data
         .map { preferences ->
@@ -139,16 +145,25 @@ class DataStoreServerProfileRepository(
         displayLabel: String,
         rawBaseUrl: String,
     ): ProfileMutationResult {
+        val current = state.first().let { repositoryState ->
+            (repositoryState as? ProfileRepositoryState.Configured)?.configuration
+                ?: throw ProfileOperationException(ProfileOperationError.STORAGE_UNAVAILABLE)
+        }
+        val existing = current.profiles.firstOrNull { it.profileId == profileId }
+            ?: throw ProfileOperationException(ProfileOperationError.PROFILE_NOT_FOUND)
+        val proposedOrigin = parseOrigin(rawBaseUrl)
+        if (existing.canonicalBaseUrl != proposedOrigin) {
+            fenceCredential(profileId)
+        }
         var result: ProfileMutationResult? = null
         updateConfiguration { current ->
-            val existing = current.profiles.firstOrNull { it.profileId == profileId }
+            val currentExisting = current.profiles.firstOrNull { it.profileId == profileId }
                 ?: throw ProfileOperationException(ProfileOperationError.PROFILE_NOT_FOUND)
-            val origin = parseOrigin(rawBaseUrl)
-            val edited = existing.edit(displayLabel, origin)
+            val edited = currentExisting.edit(displayLabel, proposedOrigin)
             if (current.profiles.any { it.profileId != profileId && it.canonicalBaseUrl.value == edited.canonicalBaseUrl.value }) {
                 throw ProfileOperationException(ProfileOperationError.DUPLICATE_ORIGIN)
             }
-            result = if (existing.canonicalBaseUrl == edited.canonicalBaseUrl) {
+            result = if (currentExisting.canonicalBaseUrl == edited.canonicalBaseUrl) {
                 ProfileMutationResult.UpdatedLabelOnly(edited)
             } else {
                 ProfileMutationResult.UpdatedOrigin(edited)
@@ -171,6 +186,14 @@ class DataStoreServerProfileRepository(
     }
 
     override suspend fun removeProfile(profileId: ServerProfileId) {
+        val current = state.first().let { repositoryState ->
+            (repositoryState as? ProfileRepositoryState.Configured)?.configuration
+                ?: throw ProfileOperationException(ProfileOperationError.STORAGE_UNAVAILABLE)
+        }
+        if (current.profiles.none { it.profileId == profileId }) {
+            throw ProfileOperationException(ProfileOperationError.PROFILE_NOT_FOUND)
+        }
+        fenceCredential(profileId)
         updateConfiguration { current ->
             if (current.profiles.none { it.profileId == profileId }) {
                 throw ProfileOperationException(ProfileOperationError.PROFILE_NOT_FOUND)
@@ -182,6 +205,15 @@ class DataStoreServerProfileRepository(
                 else -> remaining.first().profileId
             }
             current.copy(profiles = remaining, activeProfileId = nextActive)
+        }
+    }
+
+    private suspend fun fenceCredential(profileId: ServerProfileId) {
+        when (val result = credentialLifecycle.fence(profileId.toString())) {
+            CredentialCleanupResult.Success -> Unit
+            is CredentialCleanupResult.Failed -> throw ProfileOperationException(
+                ProfileOperationError.CREDENTIAL_CLEANUP_FAILED,
+            )
         }
     }
 

@@ -2,6 +2,13 @@ package com.synveil.android.data.network
 
 import com.synveil.android.core.model.ServerProfile
 import com.synveil.android.core.model.TransportPolicy
+import com.synveil.android.data.enrollment.DeviceCredential
+import com.synveil.android.data.enrollment.DeviceCredentialRecord
+import com.synveil.android.data.enrollment.EnrollmentExchangeClient
+import com.synveil.android.data.enrollment.EnrollmentExchangeResult
+import com.synveil.android.data.enrollment.EnrollmentFailureReason
+import com.synveil.android.data.enrollment.EnrollmentRecoveryReason
+import com.synveil.android.data.enrollment.EnrollmentToken
 import java.io.IOException
 import java.net.ConnectException
 import java.net.NoRouteToHostException
@@ -20,8 +27,11 @@ import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.MediaType.Companion.toMediaType
 
 const val MAX_PROBE_RESPONSE_BYTES = 64 * 1024
+const val MAX_ENROLLMENT_RESPONSE_BYTES = 16 * 1024
 
 data class TransportTimeouts(
     val connectMillis: Long = 10_000,
@@ -88,7 +98,7 @@ class SynveilHttpTransport(
     userAgent: String,
     timeouts: TransportTimeouts = TransportTimeouts(),
     allowLoopbackTestHttp: Boolean = false,
-) {
+) : EnrollmentExchangeClient {
     private val origin: HttpUrl
     private val client: OkHttpClient = buildClient(timeouts)
     private val json = Json {
@@ -119,6 +129,41 @@ class SynveilHttpTransport(
     fun checkLiveness(): ProbeResult = executeProbe("/health/live", "live")
 
     fun checkReadiness(): ProbeResult = executeProbe("/health/ready", "ready")
+
+    override fun exchange(token: EnrollmentToken): EnrollmentExchangeResult {
+        val request = Request.Builder()
+            .url(origin.resolve("/api/v1/device-enrollment/exchange") ?: return EnrollmentExchangeResult.Failed(EnrollmentFailureReason.INVALID_CONFIGURATION))
+            .header("Accept", "application/json")
+            .header("Accept-Encoding", "identity")
+            .header("Content-Type", "application/json")
+            .header("User-Agent", requestUserAgent)
+            .post(("{\"enrollment_token\":\"${token.rawValue}\"}").toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        return try {
+            client.newCall(request).execute().use { response ->
+                if (response.isRedirect) return EnrollmentExchangeResult.RecoveryRequired(EnrollmentRecoveryReason.REDIRECT)
+                val body = response.body?.byteStream()?.let(::readEnrollmentBounded)
+                    ?: return EnrollmentExchangeResult.RecoveryRequired(EnrollmentRecoveryReason.RESPONSE_LOSS)
+                if (!isJson(response.header("Content-Type"))) {
+                    return EnrollmentExchangeResult.RecoveryRequired(EnrollmentRecoveryReason.WRONG_CONTENT_TYPE)
+                }
+                val requestId = safeRequestId(response.header("X-Request-Id"))
+                if (response.code == 201) return parseEnrollment(body, requestId)
+                if (response.code == 503) return EnrollmentExchangeResult.RecoveryRequired(EnrollmentRecoveryReason.HTTP_503)
+                parseEnrollmentError(body, response.code, requestId)
+            }
+        } catch (_: SocketTimeoutException) {
+            EnrollmentExchangeResult.RecoveryRequired(EnrollmentRecoveryReason.TIMEOUT)
+        } catch (_: EnrollmentBodyLimitException) {
+            EnrollmentExchangeResult.RecoveryRequired(EnrollmentRecoveryReason.OVERSIZED_RESPONSE)
+        } catch (_: IOException) {
+            EnrollmentExchangeResult.RecoveryRequired(EnrollmentRecoveryReason.DISCONNECT)
+        } catch (_: CancellationException) {
+            EnrollmentExchangeResult.Failed(EnrollmentFailureReason.CANCELED)
+        } catch (_: Exception) {
+            EnrollmentExchangeResult.RecoveryRequired(EnrollmentRecoveryReason.MALFORMED_RESPONSE)
+        }
+    }
 
     fun checkServer(): ConnectionCheckResult {
         val liveness = checkLiveness()
@@ -246,6 +291,65 @@ class SynveilHttpTransport(
         }
     }
 
+    private fun readEnrollmentBounded(input: java.io.InputStream): ByteArray {
+        input.use { stream ->
+            val output = java.io.ByteArrayOutputStream()
+            val buffer = ByteArray(4 * 1024)
+            var total = 0
+            while (true) {
+                val count = stream.read(buffer)
+                if (count < 0) break
+                total += count
+                if (total > MAX_ENROLLMENT_RESPONSE_BYTES) {
+                    throw EnrollmentBodyLimitException()
+                }
+                output.write(buffer, 0, count)
+            }
+            return output.toByteArray()
+        }
+    }
+
+    private fun parseEnrollment(body: ByteArray, requestId: String?): EnrollmentExchangeResult {
+        val parsed = try {
+            json.decodeFromString<DeviceCredentialResponse>(body.toString(StandardCharsets.UTF_8))
+        } catch (_: SerializationException) {
+            return EnrollmentExchangeResult.RecoveryRequired(EnrollmentRecoveryReason.MALFORMED_RESPONSE)
+        }
+        val data = parsed.data
+        val credential = DeviceCredential.parse(data.device_credential)
+            ?: return EnrollmentExchangeResult.RecoveryRequired(EnrollmentRecoveryReason.MALFORMED_RESPONSE)
+        val metaRequestId = safeRequestId(parsed.meta.request_id)
+            ?: return EnrollmentExchangeResult.RecoveryRequired(EnrollmentRecoveryReason.MALFORMED_RESPONSE)
+        return try {
+            EnrollmentExchangeResult.Success(
+                DeviceCredentialRecord(
+                    ownerUserId = data.owner_user_id,
+                    deviceId = data.device_id,
+                    credentialId = data.credential_id,
+                    credential = credential,
+                    createdAt = data.created_at,
+                    requestId = requestId ?: metaRequestId,
+                ),
+            )
+        } catch (_: IllegalArgumentException) {
+            EnrollmentExchangeResult.RecoveryRequired(EnrollmentRecoveryReason.MALFORMED_RESPONSE)
+        }
+    }
+
+    private fun parseEnrollmentError(body: ByteArray, statusCode: Int, requestId: String?): EnrollmentExchangeResult {
+        val parsed = try {
+            json.decodeFromString<ErrorResponse>(body.toString(StandardCharsets.UTF_8))
+        } catch (_: SerializationException) {
+            return EnrollmentExchangeResult.RecoveryRequired(EnrollmentRecoveryReason.MALFORMED_RESPONSE)
+        }
+        val error = parsed.error
+        return if (error.code == "invalid_enrollment") {
+            EnrollmentExchangeResult.Rejected(error.code, requestId ?: safeRequestId(error.request_id))
+        } else {
+            EnrollmentExchangeResult.Failed(EnrollmentFailureReason.TRANSPORT)
+        }
+    }
+
     private fun isNumericLoopback(host: String): Boolean = host == "127.0.0.1" || host == "::1"
 
     @Serializable
@@ -264,10 +368,30 @@ class SynveilHttpTransport(
     )
 
     private class BodyLimitException : IOException()
+    private class EnrollmentBodyLimitException : IOException()
+
+    @Serializable
+    private data class DeviceCredentialResponse(
+        val data: DeviceCredentialPayload,
+        val meta: ResponseMeta,
+    )
+
+    @Serializable
+    private data class DeviceCredentialPayload(
+        val owner_user_id: String,
+        val device_id: String,
+        val credential_id: String,
+        val device_credential: String,
+        val created_at: String,
+    )
+
+    @Serializable
+    private data class ResponseMeta(val request_id: String)
 
     private companion object {
         val REQUEST_ID = Regex("^[A-Za-z0-9._~-]{8,128}$")
         val ERROR_CODE = Regex("^[a-z][a-z0-9_]{1,63}$")
+        val JSON_MEDIA_TYPE = "application/json".toMediaType()
 
         fun buildClient(timeouts: TransportTimeouts): OkHttpClient = OkHttpClient.Builder()
             .followRedirects(false)

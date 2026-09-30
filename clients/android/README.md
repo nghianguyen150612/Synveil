@@ -60,10 +60,39 @@ can exercise its tightly bounded numeric-loopback policy.
 
 The DataStore representation is schema version 1 and contains only the active
 profile ID plus non-secret profile records. It contains no password, session,
-CSRF, enrollment, bearer, API-key, or private-key fields. Corrupt or invalid
+CSRF, enrollment token, bearer, API-key, or private-key fields. Corrupt or invalid
 persisted values fail closed as a typed configuration error rather than being
 silently repaired. Duplicate canonical origins and invalid active-profile
 references are rejected atomically.
+
+## Device enrollment and credential lifecycle
+
+Device enrollment is implemented for a configured server profile through
+`POST /api/v1/device-enrollment/exchange`. The enrollment token is accepted only
+when it matches `sve1_` followed by 64 lowercase hexadecimal characters. The
+exchange is once-only: OkHttp redirects and connection retries are disabled and
+the client never automatically retries a timeout, disconnect, response loss, or
+HTTP 503. An ambiguous result is surfaced as recovery required; the token is
+never persisted or replayed automatically.
+
+Before sending the exchange, the client preflights Android Keystore. The
+returned `svd1_` credential is strictly validated, encrypted with AES-256-GCM
+using an AES key that remains in Android Keystore, and stored with a fresh
+12-byte IV. The encrypted versioned envelope is authenticated with profile,
+origin, transport, owner, device, and credential scope. Only ciphertext, IV,
+key alias, and non-secret scope metadata are kept in Preferences DataStore; the
+plaintext bearer is never persisted, logged, included in navigation arguments,
+or exposed by `toString`.
+
+Enrollment finalization writes non-secret pending metadata, stores the secret,
+reads it back and verifies its scope, then commits active metadata and clears
+the pending marker. Startup recovery finishes a pending record only when the
+credential can be read and validated; otherwise it reports recovery required.
+Origin changes and profile deletion fence local credentials before committing,
+and remain blocked if secure cleanup fails. “Forget on this device” removes the
+local credential only and does not claim server revocation. Server-side revoke
+and re-enrollment remain an owner/browser workflow requiring BrowserSession and
+CSRF; DeviceBearer is never used for those endpoints.
 
 `MainActivity` enables edge-to-edge and applies safe drawing insets rather than
 hardcoding system bar sizes. Navigation Compose owns the initial route and
@@ -90,6 +119,7 @@ From this directory:
 ./gradlew assembleDebug
 ./gradlew test
 ./gradlew lint
+./gradlew connectedDebugAndroidTest
 ```
 
 The debug APK is a generated local artifact and is not committed. No running
@@ -105,7 +135,7 @@ Synveil documentation remain authoritative; this client must not invent a
 parallel protocol or duplicate server/domain business logic.
 
 The existing Rust `synveil-client` and `synveil-client-sync` crates implement
-desktop process/synchronization concerns and are not linked into Prompt 3.
+desktop process/synchronization concerns and are not linked into Prompt 4.
 JNI, UniFFI, native Rust libraries, and C/C++ bridges require a later explicit
 portability and FFI decision.
 
@@ -129,8 +159,9 @@ inferred from that timestamp.
 
 ## Unsupported features and next milestone
 
-Authentication, server enrollment, bearer credentials, Android Keystore, sync,
-uploads, backups, file browsing, background work, and production signing are
-not implemented. The next Android milestone should add reviewed
-authentication and secure credential lifecycle management without weakening
-the transport boundary.
+Sync, uploads, backups, file browsing, background work, and production signing
+remain unsupported. Prompt 4 includes JVM transport/lifecycle tests and a real
+AndroidKeyStore instrumentation test for encrypted persistence, recreation,
+scope fencing, malformed ciphertext, missing keys, and deletion. Runtime smoke
+testing covers build/install/launch, enrollment navigation, secure token input,
+and local malformed-token validation; no external production grant is used.
