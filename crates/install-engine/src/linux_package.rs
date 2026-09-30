@@ -277,6 +277,8 @@ const DEB_HOOKS: &[&str] = &["postinst", "prerm", "postrm"];
 const RPM_HOOKS: &[&str] = &["post", "preun", "postun"];
 const DEB_RUNTIME_DEPENDENCIES: &[&str] = &[
     "systemd",
+    "dbus-user-session",
+    "gnome-keyring",
     "libc6 (>= 2.34)",
     "libgcc-s1",
     "libstdc++6",

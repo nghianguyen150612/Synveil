@@ -135,8 +135,12 @@ Checkpoint achieved: **V0.2 DISTRIBUTION CORE READY** — P005–P011 common dis
 
 ### P013 — Debian/Ubuntu Desktop Package UX
 
-Deliver and qualify double-click DEB installation, desktop entry, runtime
-dependencies and first launch on each advertised Debian/Ubuntu environment.
+**Implemented (Prompt013):** the [Debian/Ubuntu desktop package UX](DEBIAN_UBUNTU_PACKAGE_UX.md)
+and [Prompt013 evidence manifest](PROMPT013_MANIFEST.md) deliver the native DEB
+launcher/icon/runtime closure and final-head hosted APT install, installed
+non-root offscreen launch, ordinary removal, preservation, and deterministic
+rebuild gates. Graphical package-store interaction and broader distro coverage
+remain P020; Fedora/RPM UX remains P014.
 
 ### P014 — Fedora/RPM Desktop Package UX
 

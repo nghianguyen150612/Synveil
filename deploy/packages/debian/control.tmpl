@@ -7,18 +7,14 @@ Depends: @SYNVEIL_DEPENDS@
 Section: admin
 Priority: optional
 Description: Synveil desktop and background synchronization runtime (Linux)
- Synveil desktop shell and separately supervised background synchronization
- client, plus the existing one-shot scheduled-maintenance runtime.
+ Synveil provides a desktop application for managing synchronized files and a
+ separately supervised background synchronization client.
  .
  The desktop and client executables remain separate. The client user service
- is installed below /usr/lib/systemd/user and is never silently enabled by
- package installation. Enable it explicitly with systemctl --user after
- reviewing the local profile configuration.
+ is installed below /usr/lib/systemd/user. The client user service and
+ scheduled-maintenance timer are NOT auto-enabled by package installation.
+ Enable either only after reviewing the local configuration.
  .
- The package does NOT contain database credentials; the administrator
- provisions /etc/synveil/credentials/database-url (root:root 0600) separately.
- The scheduled-maintenance timer is also NOT auto-enabled and its service is
- NOT auto-started on install.
- .
- Package signing and APT repository publishing are deferred to release
- engineering (unsigned CI artifact at this stage).
+ Installation does not launch Synveil or enable background services. Existing
+ configuration, application state, profiles, and synchronized libraries are
+ preserved when the package is removed normally.
