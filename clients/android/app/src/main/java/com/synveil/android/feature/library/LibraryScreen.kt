@@ -2,6 +2,7 @@ package com.synveil.android.feature.library
 
 import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -9,6 +10,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -24,6 +28,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -231,19 +239,28 @@ fun LibraryScreen(
                 Text("Offline — cached metadata", color = MaterialTheme.colorScheme.tertiary)
             }
             if (uiState.isLoading) CircularProgressIndicator()
-            uiState.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            uiState.message?.let {
+                Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+            }
             if (!uiState.isLoading && uiState.message == "No libraries are available.") {
                 Text("The authenticated owner catalog is empty.")
             } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(uiState.libraries, key = { it.id.value }) { library ->
-                        LibraryRow(
-                            library,
-                            syncState = uiState.syncStates[library.id.value],
-                            schedulerState = uiState.schedulerStates[library.id.value],
-                            onClick = { onOpenLibrary(library) },
-                            onSync = { viewModel.syncNow(context, library) },
-                        )
+                BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(libraryColumnCount(maxWidth.value.toInt())),
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        items(uiState.libraries, key = { it.id.value }) { library ->
+                            LibraryRow(
+                                library,
+                                syncState = uiState.syncStates[library.id.value],
+                                schedulerState = uiState.schedulerStates[library.id.value],
+                                onClick = { onOpenLibrary(library) },
+                                onSync = { viewModel.syncNow(context, library) },
+                            )
+                        }
                     }
                 }
             }
@@ -285,7 +302,12 @@ private fun SessionStatus(state: DeviceSessionState) {
 
 @Composable
 private fun LibraryRow(library: Library, syncState: String?, schedulerState: SyncSchedulerState?, onClick: () -> Unit, onSync: () -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .semantics { contentDescription = "${library.name}, ${library.status.name.lowercase()}" },
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -305,6 +327,12 @@ private fun LibraryRow(library: Library, syncState: String?, schedulerState: Syn
             }
         }
     }
+}
+
+internal fun libraryColumnCount(widthDp: Int): Int = when {
+    widthDp >= 840 -> 3
+    widthDp >= 600 -> 2
+    else -> 1
 }
 
 internal fun librarySyncStateLabel(value: String?): String = when (value) {

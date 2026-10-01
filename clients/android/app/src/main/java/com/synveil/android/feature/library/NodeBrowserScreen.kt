@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
@@ -412,6 +413,7 @@ private fun NodeRow(node: Node, onOpen: () -> Unit, onRename: () -> Unit, onTras
     Card(
         Modifier
             .fillMaxWidth()
+            .sizeIn(minHeight = 48.dp)
             .semantics { contentDescription = "${node.name}, ${node.kind.name.lowercase()}, ${node.state.name.lowercase()}" },
     ) {
         Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {

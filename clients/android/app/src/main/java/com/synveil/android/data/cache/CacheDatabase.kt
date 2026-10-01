@@ -418,6 +418,9 @@ interface CacheDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertMutation(value: MutationQueueEntity)
 
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertMutations(values: List<MutationQueueEntity>)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertMutation(value: MutationQueueEntity)
 
@@ -459,6 +462,9 @@ interface CacheDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertConflict(value: CachedConflictEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertConflicts(values: List<CachedConflictEntity>)
 
     @Query("DELETE FROM cached_conflicts WHERE profileId = :profileId")
     suspend fun deleteConflictsForProfile(profileId: String)

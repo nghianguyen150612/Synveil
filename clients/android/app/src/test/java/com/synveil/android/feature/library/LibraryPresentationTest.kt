@@ -20,6 +20,13 @@ class LibraryPresentationTest {
     }
 
     @Test
+    fun libraryLayoutUsesOneColumnOnPhonesAndMoreOnLargeWindows() {
+        assertEquals(1, libraryColumnCount(599))
+        assertEquals(2, libraryColumnCount(600))
+        assertEquals(3, libraryColumnCount(840))
+    }
+
+    @Test
     fun schedulerStatesExplainRecoveryWithoutProtocolDetails() {
         assertEquals("Background sync is up to date.", librarySchedulerStateLabel(null))
         assertEquals(

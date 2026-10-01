@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -23,6 +22,7 @@ import com.synveil.android.data.profile.ServerProfileRepository
 import com.synveil.android.data.session.DeviceSessionManager
 import com.synveil.android.feature.startup.StartupPrimaryAction
 import com.synveil.android.feature.startup.StartupViewModel
+import com.synveil.android.feature.shared.AdaptiveStatusCard
 
 @Composable
 fun HomeScreen(
@@ -58,19 +58,10 @@ fun HomeScreen(
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.primary,
         )
-        Card {
-            Column(modifier = Modifier.padding(20.dp)) {
-                Text(
-                    text = uiState.statusMessage,
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Text(
-                    text = uiState.productBoundaryMessage,
-                    modifier = Modifier.padding(top = 8.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-        }
+        AdaptiveStatusCard(
+            title = uiState.statusMessage,
+            message = uiState.productBoundaryMessage,
+        )
         Button(
             onClick = when (uiState.primaryAction) {
                 StartupPrimaryAction.CONFIGURE_PROFILE,
