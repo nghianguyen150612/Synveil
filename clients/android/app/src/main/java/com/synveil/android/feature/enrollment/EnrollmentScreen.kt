@@ -9,6 +9,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -16,7 +17,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -44,6 +49,12 @@ fun EnrollmentScreen(
     ),
 ) {
     val uiState by enrollmentViewModel.uiState.collectAsStateWithLifecycle()
+    val presentation = enrollmentPresentationFor(uiState.state)
+    var token by remember { mutableStateOf("") }
+    var confirmForget by remember { mutableStateOf(false) }
+    LaunchedEffect(uiState.tokenClearGeneration) {
+        token = ""
+    }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -57,17 +68,26 @@ fun EnrollmentScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(profile.displayLabel, style = MaterialTheme.typography.titleLarge)
-            Text("Paste the one-time grant from the trusted owner workflow. It is used only in memory and is cleared after submission.")
-            OutlinedTextField(
-                value = uiState.token,
-                onValueChange = enrollmentViewModel::updateToken,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Enrollment token") },
-                supportingText = { Text("Required format: sve1_ followed by 64 lowercase hexadecimal characters") },
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                singleLine = true,
-            )
+            Text(presentation.statusLabel, style = MaterialTheme.typography.titleMedium)
+            Text(presentation.description)
+            if (presentation.primaryAction == EnrollmentAction.SUBMIT_TOKEN) {
+                Text("Paste the one-time grant from the trusted owner workflow. It is used only in memory and is cleared after submission.")
+                OutlinedTextField(
+                    value = token,
+                    onValueChange = {
+                        token = it
+                        enrollmentViewModel.updateToken(it)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Enrollment token") },
+                    supportingText = { Text("Required format: sve1_ followed by 64 lowercase hexadecimal characters") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    singleLine = true,
+                )
+            } else if (presentation.canForgetLocally) {
+                Text("To enroll a replacement credential, first forget the local credential. This does not revoke the server credential.")
+            }
             uiState.message?.let {
                 Text(
                     it,
@@ -78,16 +98,46 @@ fun EnrollmentScreen(
                     },
                 )
             }
-            Button(onClick = enrollmentViewModel::enroll, enabled = !uiState.isSubmitting && uiState.token.isNotEmpty()) {
-                if (uiState.isSubmitting) CircularProgressIndicator() else Text("Exchange once")
+            when (presentation.primaryAction) {
+                EnrollmentAction.SUBMIT_TOKEN -> Button(
+                    onClick = enrollmentViewModel::enroll,
+                    enabled = !uiState.isSubmitting && uiState.hasToken,
+                ) {
+                    if (uiState.isSubmitting) CircularProgressIndicator() else Text(presentation.primaryActionLabel)
+                }
+                EnrollmentAction.RETRY_RECOVERY -> OutlinedButton(
+                    onClick = enrollmentViewModel::retryRecovery,
+                    enabled = !uiState.isSubmitting,
+                ) {
+                    if (uiState.isSubmitting) CircularProgressIndicator() else Text(presentation.primaryActionLabel)
+                }
+                EnrollmentAction.NONE -> Unit
             }
-            if (uiState.state == EnrollmentStateKind.ENROLLED) {
-                OutlinedButton(onClick = enrollmentViewModel::forget, enabled = !uiState.isSubmitting) {
+            if (presentation.canForgetLocally) {
+                OutlinedButton(onClick = { confirmForget = true }, enabled = !uiState.isSubmitting) {
                     Text("Forget on this device")
                 }
             }
             Text("Enrollment has no automatic retry. If the result is unknown, use the trusted owner/browser recovery workflow. Libraries use the enrolled DeviceBearer only; browser cookies and CSRF are not used.", style = MaterialTheme.typography.bodySmall)
         }
+    }
+    if (confirmForget) {
+        AlertDialog(
+            onDismissRequest = { confirmForget = false },
+            title = { Text("Forget local enrollment?") },
+            text = { Text("This removes the credential from this device only. The server credential is not revoked, and you will need a new trusted-owner grant to enroll again.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmForget = false
+                        enrollmentViewModel.forget()
+                    },
+                ) { Text("Forget locally") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmForget = false }) { Text("Cancel") }
+            },
+        )
     }
 }
 

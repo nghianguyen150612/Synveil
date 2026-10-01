@@ -3,12 +3,32 @@ package com.synveil.android.data.enrollment
 import com.synveil.android.core.model.CanonicalServerOrigin
 import com.synveil.android.core.model.ServerProfile
 import com.synveil.android.core.model.ServerProfileId
+import com.synveil.android.feature.enrollment.EnrollmentAction
+import com.synveil.android.feature.enrollment.enrollmentPresentationFor
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class EnrollmentManagerTest {
+    @Test
+    fun enrollmentPresentationExplainsRecoveryAndNeverRequestsAutomaticRetry() {
+        assertEquals(
+            EnrollmentAction.RETRY_RECOVERY,
+            enrollmentPresentationFor(EnrollmentStateKind.RECOVERY_REQUIRED).primaryAction,
+        )
+        assertTrue(enrollmentPresentationFor(EnrollmentStateKind.RECOVERY_REQUIRED).canForgetLocally)
+        assertEquals(
+            "Re-check secure enrollment",
+            enrollmentPresentationFor(EnrollmentStateKind.RECOVERY_REQUIRED).primaryActionLabel,
+        )
+        assertEquals(
+            EnrollmentAction.SUBMIT_TOKEN,
+            enrollmentPresentationFor(EnrollmentStateKind.NOT_ENROLLED).primaryAction,
+        )
+        assertTrue(!enrollmentPresentationFor(EnrollmentStateKind.NOT_ENROLLED).canForgetLocally)
+    }
+
     @Test
     fun tokensAreStrictAndSecretStringsAreRedacted() {
         val valid = "sve1_" + "a".repeat(64)

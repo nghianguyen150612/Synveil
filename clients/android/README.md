@@ -2,6 +2,13 @@
 
 ## Status
 
+The Android client now includes lifecycle-safe onboarding from server profile
+creation through one-time device enrollment. Home and enrollment surfaces
+distinguish unconfigured, not-enrolled, recovery-required, authentication,
+revocation, secure-store, transport, and ready states without exposing
+credentials. Local forget is explicitly device-only, profile-scoped, and
+confirmable; ambiguous enrollment remains an owner/browser recovery boundary.
+
 Prompts 5–8 add authenticated DeviceBearer library discovery, logical
 file/folder browsing, streaming download, SAF save/open/share, and foreground
 resumable file-creation uploads on top of the verified Prompt 4 enrollment
@@ -190,6 +197,13 @@ are intentionally unsupported for DeviceBearer requests. The library and
 browser screens are foreground-only and use explicit refresh/actions. Child
 listing is an owner-scoped DeviceBearer read; mixed cookie and bearer
 authentication is rejected by the server.
+
+Enrollment input is held only in the active password field and a private
+ViewModel buffer while the exchange is in progress. It is cleared when a
+submission starts and is never part of public UI state, navigation arguments,
+saved state, logs, or diagnostics. Recreating the process re-reads only the
+profile-scoped non-secret enrollment metadata and Keystore-backed credential;
+an interrupted exchange is shown as recovery required rather than retried.
 
 ## File browsing and transfers
 

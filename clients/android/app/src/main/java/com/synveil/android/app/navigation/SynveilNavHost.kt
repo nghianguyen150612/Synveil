@@ -57,7 +57,17 @@ fun SynveilNavHost(
         composable(HomeRoute) {
             HomeScreen(
                 repository = repository,
+                sessionManager = deviceSessionManager,
                 onOpenProfiles = { navController.navigate(ProfilesRoute) },
+                onOpenActiveProfileEnrollment = {
+                    val activeProfileId = (repositoryState as? ProfileRepositoryState.Configured)
+                        ?.configuration?.activeProfile?.profileId
+                    if (activeProfileId == null) {
+                        navController.navigate(ProfilesRoute)
+                    } else {
+                        navController.navigate("$EnrollmentRoute/$activeProfileId")
+                    }
+                },
                 onOpenLibraries = { navController.navigate(LibrariesRoute) },
                 onOpenSyncSettings = { navController.navigate("sync-settings") },
             )
