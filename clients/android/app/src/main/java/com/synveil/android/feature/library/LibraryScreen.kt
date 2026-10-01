@@ -36,12 +36,14 @@ import com.synveil.android.data.cache.CacheRepository
 import com.synveil.android.data.session.DeviceSessionManager
 import com.synveil.android.data.session.DeviceSessionState
 import com.synveil.android.work.SyncWorkScheduler
+import com.synveil.android.SynveilApplication
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -162,8 +164,11 @@ fun LibraryScreen(
     LaunchedEffect(uiState.session, uiState.libraries) {
         val profileId = uiState.session.profileIdOrNull()
         if (profileId != null) {
+            val settings = (context.applicationContext as SynveilApplication).syncSettingsStore.settings.first()
             uiState.libraries.forEach { library ->
-                SyncWorkScheduler.enqueuePeriodic(context, profileId, library.id)
+                if (settings.backgroundEnabled) {
+                    SyncWorkScheduler.enqueuePeriodic(context, profileId, library.id, settings.periodicMinutes, settings.networkPolicy, settings.batteryNotLow)
+                }
             }
         }
     }

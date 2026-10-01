@@ -16,15 +16,29 @@ import com.synveil.android.data.cache.SynveilCacheDatabase
 import com.synveil.android.data.cache.CacheRepository
 import com.synveil.android.data.sync.SyncCoordinator
 import com.synveil.android.work.SyncWorkScheduler
+import com.synveil.android.data.settings.SyncSettingsStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import java.io.File
 
 class SynveilApplication : Application() {
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    override fun onCreate() {
+        super.onCreate()
+        applicationScope.launch {
+            val referenced = cacheRepository.allContentOperations().map { it.stagingPath }.toSet()
+            File(filesDir, "transfer-staging").listFiles().orEmpty().forEach { file ->
+                if (file.absolutePath !in referenced && System.currentTimeMillis() - file.lastModified() > 7L * 24 * 60 * 60 * 1000) file.delete()
+            }
+        }
+    }
+
     val cacheDatabase by lazy { SynveilCacheDatabase.create(applicationContext) }
     val cacheRepository by lazy { CacheRepository(cacheDatabase.cacheDao()) }
+    val syncSettingsStore by lazy { SyncSettingsStore(applicationContext) }
 
     private val enrollmentMetadataStore by lazy {
         DataStoreEnrollmentMetadataStore(
@@ -57,6 +71,7 @@ class SynveilApplication : Application() {
         object : CredentialLifecycle {
             override suspend fun fence(profileId: String): CredentialCleanupResult {
                 val result = enrollmentManager.fence(profileId)
+                cacheRepository.clearProfile(profileId)
                 return result
             }
         }

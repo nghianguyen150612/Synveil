@@ -42,4 +42,20 @@ class CacheDatabaseInstrumentationTest {
         context.deleteDatabase(name)
         assertTrue(true)
     }
+
+    @Test
+    fun outboundMutationAndContentRowsSurviveReopen() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "test-cache-${System.nanoTime()}.db"
+        val first = Room.databaseBuilder(context, SynveilCacheDatabase::class.java, name).build()
+        val dao = first.cacheDao()
+        dao.insertMutation(MutationQueueEntity("profile-a", "device-a", "library-a", "mutation-a", "RENAME_NODE", "node-a", null, "1", "2", "{}", 1, "OUTCOME_UNKNOWN", 1, null, "timeout", null, null, null, "fingerprint"))
+        dao.upsertContentOperation(ContentOperationEntity("profile-a", "device-a", "library-a", "operation-a", "node-a", "3", "/private/staging.part", 4, "a".repeat(64), null, 0, "READY", 1, null, null))
+        first.close()
+        val second = Room.databaseBuilder(context, SynveilCacheDatabase::class.java, name).build()
+        assertEquals(1, second.cacheDao().mutations("profile-a", "device-a", "library-a").size)
+        assertEquals(1, second.cacheDao().contentOperations("profile-a", "device-a", "library-a").size)
+        second.close()
+        context.deleteDatabase(name)
+    }
 }

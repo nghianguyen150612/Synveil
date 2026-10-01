@@ -136,6 +136,78 @@ data class RebaselineNodeEntity(
     val sha256: String?,
 )
 
+@Entity(
+    tableName = "mutation_queue",
+    primaryKeys = ["profileId", "deviceId", "libraryId", "mutationId"],
+    indices = [
+        Index(value = ["profileId", "deviceId", "libraryId", "state", "createdAt"]),
+        Index(value = ["profileId", "deviceId", "libraryId", "resourceId", "state"]),
+    ],
+)
+data class MutationQueueEntity(
+    val profileId: String,
+    val deviceId: String,
+    val libraryId: String,
+    val mutationId: String,
+    val kind: String,
+    val resourceId: String,
+    val parentDependencyId: String?,
+    val baseEpoch: String,
+    val baseSequence: String,
+    val payloadJson: String,
+    val createdAt: Long,
+    val state: String,
+    val attemptCount: Int,
+    val lastAttemptAt: Long?,
+    val lastErrorCategory: String?,
+    val journalEventId: String?,
+    val journalSequence: String?,
+    val conflictId: String?,
+    val localFingerprint: String,
+)
+
+@Entity(
+    tableName = "content_operations",
+    primaryKeys = ["profileId", "deviceId", "libraryId", "operationId"],
+    indices = [Index(value = ["profileId", "deviceId", "libraryId", "state", "createdAt"])],
+)
+data class ContentOperationEntity(
+    val profileId: String,
+    val deviceId: String,
+    val libraryId: String,
+    val operationId: String,
+    val nodeId: String,
+    val expectedNodeRevision: String,
+    val stagingPath: String,
+    val byteLength: Long,
+    val sha256: String,
+    val uploadSessionId: String?,
+    val serverOffset: Long,
+    val state: String,
+    val createdAt: Long,
+    val lastAttemptAt: Long?,
+    val lastErrorCategory: String?,
+)
+
+@Entity(
+    tableName = "cached_conflicts",
+    primaryKeys = ["profileId", "deviceId", "libraryId", "conflictId"],
+    indices = [Index(value = ["profileId", "deviceId", "libraryId", "lifecycle", "createdAt"])],
+)
+data class CachedConflictEntity(
+    val profileId: String,
+    val deviceId: String,
+    val libraryId: String,
+    val conflictId: String,
+    val mutationId: String,
+    val mutationKind: String,
+    val resourceId: String,
+    val reason: String,
+    val lifecycle: String,
+    val createdAt: String,
+    val lastObservedAt: Long,
+)
+
 @Dao
 interface CacheDao {
     @Query("SELECT * FROM cached_libraries WHERE profileId = :profileId ORDER BY name")
@@ -265,6 +337,7 @@ interface CacheDao {
         deleteAcks(profileId)
         deleteStagingForProfile(profileId)
         deleteStagingNodesForProfile(profileId)
+        clearOutboundForProfile(profileId)
     }
 
     @Query("SELECT * FROM sync_states WHERE profileId = :profileId")
@@ -284,6 +357,67 @@ interface CacheDao {
 
     @Query("DELETE FROM rebaseline_nodes WHERE profileId = :profileId")
     suspend fun deleteStagingNodesForProfile(profileId: String)
+
+    @Query("SELECT * FROM mutation_queue WHERE profileId = :profileId AND deviceId = :deviceId AND libraryId = :libraryId ORDER BY createdAt ASC, mutationId ASC")
+    suspend fun mutations(profileId: String, deviceId: String, libraryId: String): List<MutationQueueEntity>
+
+    @Query("SELECT * FROM mutation_queue WHERE profileId = :profileId AND deviceId = :deviceId AND libraryId = :libraryId AND state IN ('PENDING', 'OUTCOME_UNKNOWN') ORDER BY createdAt ASC, mutationId ASC LIMIT :limit")
+    suspend fun eligibleMutations(profileId: String, deviceId: String, libraryId: String, limit: Int): List<MutationQueueEntity>
+
+    @Query("UPDATE mutation_queue SET state = 'PENDING', lastErrorCategory = NULL WHERE profileId = :profileId AND deviceId = :deviceId AND libraryId = :libraryId AND state = 'BLOCKED_REBASELINE'")
+    suspend fun releaseBlockedMutations(profileId: String, deviceId: String, libraryId: String)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertMutation(value: MutationQueueEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertMutation(value: MutationQueueEntity)
+
+    @Transaction
+    suspend fun applyMutationResult(value: MutationQueueEntity, node: CachedNodeEntity) {
+        upsertNodes(listOf(node))
+        upsertMutation(value)
+    }
+
+    @Query("SELECT * FROM mutation_queue WHERE profileId = :profileId AND deviceId = :deviceId AND libraryId = :libraryId AND mutationId = :mutationId")
+    suspend fun mutation(profileId: String, deviceId: String, libraryId: String, mutationId: String): MutationQueueEntity?
+
+    @Query("SELECT EXISTS(SELECT 1 FROM mutation_queue WHERE profileId = :profileId AND deviceId = :deviceId AND libraryId = :libraryId AND state IN ('PENDING', 'SUBMITTING', 'OUTCOME_UNKNOWN', 'BLOCKED_REBASELINE') AND (resourceId = :resourceId OR parentDependencyId = :resourceId OR resourceId = :parentDependencyId OR parentDependencyId = :parentDependencyId))")
+    suspend fun hasOutstandingDependency(profileId: String, deviceId: String, libraryId: String, resourceId: String, parentDependencyId: String?): Boolean
+
+    @Query("DELETE FROM mutation_queue WHERE profileId = :profileId")
+    suspend fun deleteMutationsForProfile(profileId: String)
+
+    @Query("SELECT * FROM content_operations WHERE profileId = :profileId AND deviceId = :deviceId AND libraryId = :libraryId ORDER BY createdAt ASC")
+    suspend fun contentOperations(profileId: String, deviceId: String, libraryId: String): List<ContentOperationEntity>
+
+    @Query("SELECT * FROM content_operations")
+    suspend fun allContentOperations(): List<ContentOperationEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertContentOperation(value: ContentOperationEntity)
+
+    @Query("DELETE FROM content_operations WHERE profileId = :profileId AND deviceId = :deviceId AND libraryId = :libraryId AND operationId = :operationId")
+    suspend fun deleteContentOperation(profileId: String, deviceId: String, libraryId: String, operationId: String)
+
+    @Query("DELETE FROM content_operations WHERE profileId = :profileId")
+    suspend fun deleteContentOperationsForProfile(profileId: String)
+
+    @Query("SELECT * FROM cached_conflicts WHERE profileId = :profileId AND deviceId = :deviceId AND libraryId = :libraryId AND lifecycle = 'OPEN' ORDER BY createdAt DESC")
+    fun observeOpenConflicts(profileId: String, deviceId: String, libraryId: String): Flow<List<CachedConflictEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertConflict(value: CachedConflictEntity)
+
+    @Query("DELETE FROM cached_conflicts WHERE profileId = :profileId")
+    suspend fun deleteConflictsForProfile(profileId: String)
+
+    @Transaction
+    suspend fun clearOutboundForProfile(profileId: String) {
+        deleteMutationsForProfile(profileId)
+        deleteContentOperationsForProfile(profileId)
+        deleteConflictsForProfile(profileId)
+    }
 }
 
 @Database(
@@ -294,8 +428,11 @@ interface CacheDao {
         PendingAckEntity::class,
         RebaselineStagingEntity::class,
         RebaselineNodeEntity::class,
+        MutationQueueEntity::class,
+        ContentOperationEntity::class,
+        CachedConflictEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class SynveilCacheDatabase : RoomDatabase() {
@@ -306,11 +443,23 @@ abstract class SynveilCacheDatabase : RoomDatabase() {
             context,
             SynveilCacheDatabase::class.java,
             "synveil_cache.db",
-        ).addMigrations(MIGRATION_1_2).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
 
         val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE rebaseline_staging ADD COLUMN expiresAt TEXT")
+            }
+        }
+
+        val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS mutation_queue (profileId TEXT NOT NULL, deviceId TEXT NOT NULL, libraryId TEXT NOT NULL, mutationId TEXT NOT NULL, kind TEXT NOT NULL, resourceId TEXT NOT NULL, parentDependencyId TEXT, baseEpoch TEXT NOT NULL, baseSequence TEXT NOT NULL, payloadJson TEXT NOT NULL, createdAt INTEGER NOT NULL, state TEXT NOT NULL, attemptCount INTEGER NOT NULL, lastAttemptAt INTEGER, lastErrorCategory TEXT, journalEventId TEXT, journalSequence TEXT, conflictId TEXT, localFingerprint TEXT NOT NULL, PRIMARY KEY(profileId, deviceId, libraryId, mutationId))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_mutation_queue_profileId_deviceId_libraryId_state_createdAt ON mutation_queue(profileId, deviceId, libraryId, state, createdAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_mutation_queue_profileId_deviceId_libraryId_resourceId_state ON mutation_queue(profileId, deviceId, libraryId, resourceId, state)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS content_operations (profileId TEXT NOT NULL, deviceId TEXT NOT NULL, libraryId TEXT NOT NULL, operationId TEXT NOT NULL, nodeId TEXT NOT NULL, expectedNodeRevision TEXT NOT NULL, stagingPath TEXT NOT NULL, byteLength INTEGER NOT NULL, sha256 TEXT NOT NULL, uploadSessionId TEXT, serverOffset INTEGER NOT NULL, state TEXT NOT NULL, createdAt INTEGER NOT NULL, lastAttemptAt INTEGER, lastErrorCategory TEXT, PRIMARY KEY(profileId, deviceId, libraryId, operationId))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_content_operations_profileId_deviceId_libraryId_state_createdAt ON content_operations(profileId, deviceId, libraryId, state, createdAt)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS cached_conflicts (profileId TEXT NOT NULL, deviceId TEXT NOT NULL, libraryId TEXT NOT NULL, conflictId TEXT NOT NULL, mutationId TEXT NOT NULL, mutationKind TEXT NOT NULL, resourceId TEXT NOT NULL, reason TEXT NOT NULL, lifecycle TEXT NOT NULL, createdAt TEXT NOT NULL, lastObservedAt INTEGER NOT NULL, PRIMARY KEY(profileId, deviceId, libraryId, conflictId))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_cached_conflicts_profileId_deviceId_libraryId_lifecycle_createdAt ON cached_conflicts(profileId, deviceId, libraryId, lifecycle, createdAt)")
             }
         }
     }

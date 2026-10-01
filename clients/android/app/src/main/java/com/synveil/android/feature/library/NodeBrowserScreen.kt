@@ -21,6 +21,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -45,6 +47,9 @@ import com.synveil.android.data.session.DeviceSessionManager
 import com.synveil.android.data.session.DeviceSessionState
 import com.synveil.android.data.transfer.TransferOperations
 import com.synveil.android.data.transfer.TransferProgress
+import com.synveil.android.data.mutation.MutationEngine
+import com.synveil.android.data.mutation.MutationIntent
+import com.synveil.android.data.mutation.QueueResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -67,6 +72,7 @@ data class NodeBrowserUiState(
     val lastSavedUri: Uri? = null,
     val lastSavedMime: String? = null,
     val showingCachedData: Boolean = false,
+    val pendingOperations: Int = 0,
 )
 
 class NodeBrowserViewModel(
@@ -149,6 +155,24 @@ class NodeBrowserViewModel(
         }
     }
 
+    fun replaceContent(context: Context, node: Node, source: Uri) {
+        transferJob?.cancel()
+        transferJob = viewModelScope.launch {
+            val scope = sessionManager.authenticatedScope()
+                ?: return@launch setMessage("This profile is not ready for content replacement.")
+            mutableState.value = mutableState.value.copy(transfer = TransferProgress.Preparing, message = null)
+            val result = TransferOperations.replaceContent(
+                context, cache, scope.profileId, scope.deviceId, scope.transport, context.contentResolver,
+                source, libraryId, node.nodeId, node.revision.value,
+            ) { progress -> mutableState.value = mutableState.value.copy(transfer = progress) }
+            when (result) {
+                is com.synveil.android.data.transfer.TransferResult.Uploaded -> { setMessage("Content replacement committed; waiting for inbound sync."); refresh() }
+                is com.synveil.android.data.transfer.TransferResult.Failed -> setMessage("Replacement failed: ${result.error.userMessage()}")
+                else -> Unit
+            }
+        }
+    }
+
     fun cancelTransfer() {
         transferJob?.cancel()
         transferJob = null
@@ -156,11 +180,54 @@ class NodeBrowserViewModel(
 
     fun clearSaved() { mutableState.value = mutableState.value.copy(lastSavedUri = null) }
 
+    fun createDirectory(name: String) = enqueueMutation { parent, parentRevision ->
+        MutationIntent.CreateDirectory(parent, parentRevision, name.trim())
+    }
+
+    fun rename(node: Node, name: String) = enqueueMutation { _, _ ->
+        MutationIntent.RenameNode(node.nodeId, node.revision.value, name.trim())
+    }
+
+    fun trash(node: Node) = enqueueMutation { _, _ -> MutationIntent.TrashNode(node.nodeId, node.revision.value) }
+
+    fun moveToCurrentDirectory(node: Node) = enqueueMutation { parent, parentRevision ->
+        if (node.parentId == parent) null else MutationIntent.MoveNode(node.nodeId, node.revision.value, parent, parentRevision)
+    }
+
+    fun restore(node: Node) = enqueueMutation { _, parentRevision ->
+        val parent = node.parentId ?: return@enqueueMutation null
+        MutationIntent.RestoreNode(node.nodeId, node.revision.value, parent, parentRevision)
+    }
+
+    private fun enqueueMutation(factory: suspend (NodeId, String) -> MutationIntent?) {
+        viewModelScope.launch {
+            val scope = sessionManager.authenticatedScope()
+            val profileId = mutableState.value.session.profileIdOrNull()
+            if (scope == null || profileId == null) return@launch setMessage("Enrollment is required before changing metadata.")
+            val parent = mutableState.value.currentParent ?: rootNodeId
+            val nodes = withContext(Dispatchers.IO) { cache.activeNodes(profileId, libraryId) }
+            val parentNode = nodes.firstOrNull { it.nodeId == parent.value }
+            val parentRevision = parentNode?.revision ?: return@launch setMessage("Refresh this directory before changing it.")
+            val result = MutationEngine(cache, scope.transport, profileId, scope.deviceId, libraryId).enqueue(factory(parent, parentRevision) ?: return@launch)
+            when (result) {
+                is QueueResult.Enqueued -> { setMessage("Pending sync — the server has not changed yet."); updatePendingCount() }
+                is QueueResult.Rejected -> setMessage("Change not queued: ${result.reason.name.lowercase().replace('_', ' ')}.")
+            }
+        }
+    }
+
+    private suspend fun updatePendingCount() {
+        val scope = sessionManager.authenticatedScope() ?: return
+        val count = cache.mutations(scope.profileId, scope.deviceId, libraryId).count { it.state in setOf("PENDING", "SUBMITTING", "OUTCOME_UNKNOWN", "BLOCKED_REBASELINE", "CONFLICT") }
+        mutableState.value = mutableState.value.copy(pendingOperations = count)
+    }
+
     private fun load(parent: NodeId?, breadcrumbs: List<Breadcrumb>) {
         if (mutableState.value.loading) return
         viewModelScope.launch {
             mutableState.value = mutableState.value.copy(currentParent = parent, breadcrumbs = breadcrumbs, loading = true, message = null)
             val profileId = mutableState.value.session.profileIdOrNull()
+            updatePendingCount()
             val cached = profileId?.let {
                 withContext(Dispatchers.IO) { cache.observeChildren(it, libraryId, parent).first() }
             }?.filter { it.state == com.synveil.android.data.node.NodeState.ACTIVE }.orEmpty()
@@ -211,12 +278,22 @@ fun NodeBrowserScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var pendingDownload by remember { mutableStateOf<Node?>(null) }
+    var renameNode by remember { mutableStateOf<Node?>(null) }
+    var renameText by remember { mutableStateOf("") }
+    var createFolder by remember { mutableStateOf(false) }
+    var folderText by remember { mutableStateOf("") }
+    var pendingReplacement by remember { mutableStateOf<Node?>(null) }
     val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         pendingDownload?.let { node -> if (uri != null) viewModel.download(node, context, uri) }
         pendingDownload = null
     }
     val uploadLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) viewModel.upload(context, uri)
+    }
+    val replaceLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val node = pendingReplacement
+        pendingReplacement = null
+        if (uri != null && node != null) viewModel.replaceContent(context, node, uri)
     }
     Scaffold(
         topBar = {
@@ -237,14 +314,16 @@ fun NodeBrowserScreen(
             Text(state.breadcrumbs.joinToString(" / ") { it.label }.ifEmpty { "Library root" }, style = MaterialTheme.typography.titleMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { uploadLauncher.launch(arrayOf("*/*")) }, enabled = !state.loading) { Text("Upload") }
+                Button(onClick = { folderText = ""; createFolder = true }, enabled = !state.loading) { Text("New folder") }
             }
+            if (state.pendingOperations > 0) Text("${state.pendingOperations} pending change(s) — server state may differ", color = MaterialTheme.colorScheme.tertiary)
             if (state.loading) CircularProgressIndicator()
             if (state.showingCachedData) Text("Offline — cached metadata", color = MaterialTheme.colorScheme.tertiary)
             state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if (!state.loading && state.nodes.isEmpty()) Text("This folder is empty.")
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(state.nodes, key = { it.nodeId.value }) { node ->
-                    NodeRow(node, onOpen = { viewModel.openDirectory(node) }, onDownload = {
+                    NodeRow(node, onOpen = { viewModel.openDirectory(node) }, onRename = { renameNode = node; renameText = node.name }, onTrash = { viewModel.trash(node) }, onRestore = { viewModel.restore(node) }, onMove = { viewModel.moveToCurrentDirectory(node) }, onReplace = { pendingReplacement = node; replaceLauncher.launch(arrayOf("*/*")) }, onDownload = {
                         pendingDownload = node
                         saveLauncher.launch(TransferOperations.safeLogicalName(node.name))
                     })
@@ -267,10 +346,24 @@ fun NodeBrowserScreen(
             }
         }
     }
+    if (createFolder) AlertDialog(
+        onDismissRequest = { createFolder = false },
+        title = { Text("New folder") },
+        text = { OutlinedTextField(value = folderText, onValueChange = { folderText = it }, label = { Text("Name") }, singleLine = true) },
+        confirmButton = { TextButton(onClick = { createFolder = false; viewModel.createDirectory(folderText) }, enabled = folderText.trim().isNotEmpty()) { Text("Queue") } },
+        dismissButton = { TextButton(onClick = { createFolder = false }) { Text("Cancel") } },
+    )
+    renameNode?.let { node -> AlertDialog(
+        onDismissRequest = { renameNode = null },
+        title = { Text("Rename") },
+        text = { OutlinedTextField(value = renameText, onValueChange = { renameText = it }, label = { Text("Name") }, singleLine = true) },
+        confirmButton = { TextButton(onClick = { renameNode = null; viewModel.rename(node, renameText) }, enabled = renameText.trim().isNotEmpty()) { Text("Queue") } },
+        dismissButton = { TextButton(onClick = { renameNode = null }) { Text("Cancel") } },
+    ) }
 }
 
 @Composable
-private fun NodeRow(node: Node, onOpen: () -> Unit, onDownload: () -> Unit) {
+private fun NodeRow(node: Node, onOpen: () -> Unit, onRename: () -> Unit, onTrash: () -> Unit, onRestore: () -> Unit, onMove: () -> Unit, onReplace: () -> Unit, onDownload: () -> Unit) {
     Card(Modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             Column(Modifier.weight(1f)) {
@@ -278,7 +371,9 @@ private fun NodeRow(node: Node, onOpen: () -> Unit, onDownload: () -> Unit) {
                 Text(node.kind.name, style = MaterialTheme.typography.bodySmall)
             }
             if (node.kind == com.synveil.android.data.node.NodeKind.DIRECTORY) TextButton(onClick = onOpen) { Text("Open") }
-            else TextButton(onClick = onDownload) { Text("Save") }
+            else { TextButton(onClick = onDownload) { Text("Save") }; TextButton(onClick = onReplace) { Text("Replace") } }
+            if (node.state == com.synveil.android.data.node.NodeState.TRASHED) TextButton(onClick = onRestore) { Text("Restore") }
+            else { TextButton(onClick = onRename) { Text("Rename") }; TextButton(onClick = onMove) { Text("Move here") }; TextButton(onClick = onTrash) { Text("Trash") } }
         }
     }
 }

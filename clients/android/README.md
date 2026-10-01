@@ -259,3 +259,24 @@ build/install/launch, enrollment navigation, secure token input, local
 malformed-token validation, authenticated library navigation, cached-state
 recreation, and transfer intent paths; no external production grant or real
 credential is used.
+
+## Bidirectional sync (P13–P18)
+
+The Android client now maintains a durable Room outbound mutation queue for
+`CREATE_DIRECTORY`, `RENAME_NODE`, `MOVE_NODE`, `TRASH_NODE`, and
+`RESTORE_NODE`. Queue entries retain immutable UUIDv7 intent, base checkpoint,
+optimistic revisions, and exact typed payloads. Offline changes are labeled
+Pending sync and are replayed with the same mutation ID after response loss;
+server conflicts are never silently overwritten.
+
+Replacing file content uses the Android SAF picker and app-private staged
+content with streaming byte counting and SHA-256 verification. Upload session
+offsets remain server authoritative and staged content is retained for recovery.
+
+Inbound and outbound work share the existing per-profile/device/library
+coordinator and unique WorkManager scope. Background execution is bounded and
+approximate. Background settings support connected or unmetered networks,
+15-minute-or-longer periodic timing, and optional battery-not-low constraints.
+The current server keeps conflict inspection/resolution BrowserSession-only;
+Android surfaces owner-review state and does not fake manual resolution or
+perform automatic conflict winners.

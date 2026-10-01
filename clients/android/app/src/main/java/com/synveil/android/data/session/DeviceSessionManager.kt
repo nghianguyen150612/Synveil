@@ -131,6 +131,12 @@ class DeviceSessionManager(
         return authenticatedContext(profile)?.transport
     }
 
+    suspend fun authenticatedScope(): AuthenticatedScope? {
+        val profile = activeProfile() ?: return null
+        val authenticated = authenticatedContext(profile) ?: return null
+        return AuthenticatedScope(authenticated.profileId, authenticated.deviceId, authenticated.transport)
+    }
+
     private suspend fun authenticatedContext(profile: ServerProfile): AuthenticatedContext? = contextMutex.withLock {
         val profileId = profile.profileId.toString()
         context?.takeIf {
@@ -178,6 +184,7 @@ class DeviceSessionManager(
         )
         AuthenticatedContext(
             profileId = profileId,
+            deviceId = metadata.deviceId,
             canonicalBaseUrl = profile.canonicalBaseUrl.value,
             transportPolicy = profile.transportPolicy.name,
             repository = AuthenticatedLibraryRepository(transport::listLibrariesPage),
@@ -246,6 +253,7 @@ class DeviceSessionManager(
 
     private data class AuthenticatedContext(
         val profileId: String,
+        val deviceId: String,
         val canonicalBaseUrl: String,
         val transportPolicy: String,
         val repository: AuthenticatedLibraryRepository,
@@ -253,6 +261,12 @@ class DeviceSessionManager(
         val transport: AuthenticatedSynveilTransport,
     )
 }
+
+data class AuthenticatedScope(
+    val profileId: String,
+    val deviceId: String,
+    val transport: AuthenticatedSynveilTransport,
+)
 
 private fun EnrollmentMetadata.matches(profile: ServerProfile): Boolean =
     profileId == profile.profileId.toString() &&

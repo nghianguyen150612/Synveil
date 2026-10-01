@@ -10,6 +10,8 @@ import com.synveil.android.data.enrollment.SecureCredentialVault
 import com.synveil.android.data.library.LibraryId
 import com.synveil.android.data.network.AuthenticatedSynveilTransport
 import com.synveil.android.data.network.TransportTimeouts
+import com.synveil.android.data.mutation.MutationEngine
+import com.synveil.android.data.transfer.ContentOperationEngine
 import com.synveil.android.data.profile.ProfileRepositoryState
 import com.synveil.android.data.profile.ServerProfileRepository
 import kotlinx.coroutines.flow.first
@@ -36,11 +38,25 @@ class SyncCoordinator(
         val transport = AuthenticatedSynveilTransport(profile, record.credential, userAgent, timeouts, allowLoopbackTestHttp)
         val engine = SyncEngine(transport, cache, profileId, metadata.deviceId, libraryId)
         val state = cache.state(profileId, metadata.deviceId, libraryId)
-        return if (state?.state == SyncStateKind.REBASELINE_REQUIRED.name) {
+        val inbound = if (state?.state == SyncStateKind.REBASELINE_REQUIRED.name) {
             engine.rebaseline()
         } else {
             val result = engine.synchronize()
             if (result.kind == SyncOutcomeKind.REBASELINE_REQUIRED) engine.rebaseline() else result
+        }
+        if (inbound.kind !in setOf(SyncOutcomeKind.SUCCESS, SyncOutcomeKind.MORE_WORK)) return inbound
+        if (cache.state(profileId, metadata.deviceId, libraryId)?.state == SyncStateKind.READY.name) {
+            cache.releaseBlockedMutations(profileId, metadata.deviceId, libraryId)
+        }
+        val drain = MutationEngine(cache, transport, profileId, metadata.deviceId, libraryId).drain()
+        val contentTransient = ContentOperationEngine(cache, transport, profileId, metadata.deviceId, libraryId).drain()
+        val afterOutbound = engine.synchronize()
+        return if (afterOutbound.kind == SyncOutcomeKind.SUCCESS && (drain.transientFailure || contentTransient)) {
+            SyncOutcome(SyncOutcomeKind.TRANSIENT_ERROR)
+        } else if (afterOutbound.kind == SyncOutcomeKind.SUCCESS && (drain.attempted == 16 || drain.blocked > 0)) {
+            SyncOutcome(SyncOutcomeKind.MORE_WORK)
+        } else {
+            afterOutbound
         }
     }
 

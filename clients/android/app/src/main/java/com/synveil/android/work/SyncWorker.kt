@@ -5,10 +5,10 @@ import androidx.work.CoroutineWorker
 import androidx.work.Data
 import androidx.work.WorkerParameters
 import androidx.work.BackoffPolicy
-import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
+import androidx.work.Constraints
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
@@ -36,7 +36,10 @@ class SynveilSyncWorker(context: Context, params: WorkerParameters) : CoroutineW
 }
 
 object SyncWorkScheduler {
-    private fun constraints() = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+    fun constraints(networkPolicy: com.synveil.android.data.settings.SyncNetworkPolicy = com.synveil.android.data.settings.SyncNetworkPolicy.CONNECTED, batteryNotLow: Boolean = false): Constraints = Constraints.Builder()
+        .setRequiredNetworkType(if (networkPolicy == com.synveil.android.data.settings.SyncNetworkPolicy.UNMETERED) NetworkType.UNMETERED else NetworkType.CONNECTED)
+        .setRequiresBatteryNotLow(batteryNotLow)
+        .build()
     fun enqueueNow(context: Context, profileId: String, libraryId: LibraryId) {
         val request = OneTimeWorkRequestBuilder<SynveilSyncWorker>()
             .setInputData(Data.Builder().putString(SYNC_PROFILE_ID, profileId).putString(SYNC_LIBRARY_ID, libraryId.value).build())
@@ -47,11 +50,11 @@ object SyncWorkScheduler {
         WorkManager.getInstance(context).enqueueUniqueWork("synveil-sync:$profileId:${libraryId.value}", ExistingWorkPolicy.KEEP, request)
     }
 
-    fun enqueuePeriodic(context: Context, profileId: String, libraryId: LibraryId) {
-        val request = PeriodicWorkRequestBuilder<SynveilSyncWorker>(15, TimeUnit.MINUTES)
+    fun enqueuePeriodic(context: Context, profileId: String, libraryId: LibraryId, intervalMinutes: Int = 15, networkPolicy: com.synveil.android.data.settings.SyncNetworkPolicy = com.synveil.android.data.settings.SyncNetworkPolicy.CONNECTED, batteryNotLow: Boolean = false) {
+        val request = PeriodicWorkRequestBuilder<SynveilSyncWorker>(intervalMinutes.coerceAtLeast(15).toLong(), TimeUnit.MINUTES)
             .setInputData(Data.Builder().putString(SYNC_PROFILE_ID, profileId).putString(SYNC_LIBRARY_ID, libraryId.value).build())
             .addTag("synveil-profile:$profileId")
-            .setConstraints(constraints())
+            .setConstraints(constraints(networkPolicy, batteryNotLow))
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .build()
         WorkManager.getInstance(context).enqueueUniquePeriodicWork("synveil-periodic:$profileId:${libraryId.value}", ExistingPeriodicWorkPolicy.KEEP, request)

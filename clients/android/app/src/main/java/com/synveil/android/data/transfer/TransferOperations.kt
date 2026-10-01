@@ -9,6 +9,9 @@ import com.synveil.android.data.library.LibraryId
 import com.synveil.android.data.library.NodeId
 import com.synveil.android.data.network.AuthenticatedSynveilTransport
 import com.synveil.android.data.network.SynveilTransportError
+import com.synveil.android.data.cache.CacheRepository
+import com.synveil.android.data.cache.ContentOperationEntity
+import com.synveil.android.data.mutation.newUuidV7
 import java.io.File
 import java.io.IOException
 import java.io.RandomAccessFile
@@ -40,6 +43,162 @@ sealed interface TransferResult {
 }
 
 object TransferOperations {
+    suspend fun replaceContent(
+        context: Context,
+        cache: CacheRepository,
+        profileId: String,
+        deviceId: String,
+        transport: AuthenticatedSynveilTransport,
+        resolver: ContentResolver,
+        sourceUri: Uri,
+        libraryId: LibraryId,
+        nodeId: NodeId,
+        expectedRevision: String,
+        onProgress: (TransferProgress) -> Unit,
+    ): TransferResult = withContext(Dispatchers.IO) {
+        val stagingDirectory = File(context.filesDir, "transfer-staging").apply { mkdirs() }
+        val operationId = newUuidV7()
+        val staging = File(stagingDirectory, "$operationId.part")
+        val digest = MessageDigest.getInstance("SHA-256")
+        var bytes = 0L
+        try {
+            onProgress(TransferProgress.Preparing)
+            resolver.openInputStream(sourceUri)?.use { input ->
+                staging.outputStream().use { output ->
+                    val buffer = ByteArray(32 * 1024)
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        output.write(buffer, 0, count)
+                        digest.update(buffer, 0, count)
+                        bytes += count
+                    }
+                }
+            } ?: return@withContext TransferResult.Failed(SynveilTransportError.Offline)
+            val sha256 = digest.digest().joinToString("") { "%02x".format(Locale.ROOT, it) }
+            cache.upsertContentOperation(ContentOperationEntity(profileId, deviceId, libraryId.value, operationId, nodeId.value, expectedRevision, staging.absolutePath, bytes, sha256, null, 0, "READY", System.currentTimeMillis(), null, null))
+            val request = buildJsonObject {
+                put("operation", "REPLACE_CONTENT")
+                put("idempotency_key", operationId)
+                put("library_id", libraryId.value)
+                put("node_id", nodeId.value)
+                put("expected_revision", expectedRevision)
+                put("expected_bytes", bytes.toString())
+                put("expected_sha256", sha256)
+            }.toString()
+            var sessionResult = transport.createUploadSession(request)
+            if (sessionResult is UploadResult.Failure && sessionResult.error.isAmbiguousTransferFailure()) {
+                sessionResult = transport.createUploadSession(request)
+            }
+            var session = when (sessionResult) {
+                is UploadResult.Session -> sessionResult.session
+                is UploadResult.Failure -> return@withContext TransferResult.Failed(sessionResult.error)
+                else -> return@withContext TransferResult.Failed(protocolFailure())
+            }
+            if (session.operation != "REPLACE_CONTENT" || session.target.nodeId != nodeId.value || session.target.libraryId != libraryId.value || session.expectedBytes != bytes || session.expectedSha256 != sha256) return@withContext TransferResult.Failed(protocolFailure())
+            cache.upsertContentOperation(ContentOperationEntity(profileId, deviceId, libraryId.value, operationId, nodeId.value, expectedRevision, staging.absolutePath, bytes, sha256, session.id, session.receivedBytes, "UPLOADING", System.currentTimeMillis(), System.currentTimeMillis(), null))
+            var offset = session.receivedBytes
+            val chunkSize = 4 * 1024 * 1024
+            RandomAccessFile(staging, "r").use { file ->
+                while (offset < bytes) {
+                    file.seek(offset)
+                    val chunk = ByteArray(minOf(chunkSize.toLong(), bytes - offset).toInt())
+                    var read = 0
+                    while (read < chunk.size) { val count = file.read(chunk, read, chunk.size - read); if (count < 0) return@withContext TransferResult.Failed(protocolFailure()); read += count }
+                    when (val append = transport.appendUploadChunk(session.id, offset, chunk)) {
+                        is UploadResult.Offset -> { offset = append.value ?: return@withContext TransferResult.Failed(protocolFailure()); if (offset !in 0..bytes) return@withContext TransferResult.Failed(protocolFailure()) }
+                        is UploadResult.Failure -> {
+                            if (!append.error.isAmbiguousTransferFailure()) return@withContext TransferResult.Failed(append.error)
+                            session = when (val recovered = transport.getUploadSession(session.id)) { is UploadResult.Session -> recovered.session; is UploadResult.Failure -> return@withContext TransferResult.Failed(recovered.error); else -> return@withContext TransferResult.Failed(protocolFailure()) }
+                            offset = session.receivedBytes
+                        }
+                        else -> return@withContext TransferResult.Failed(protocolFailure())
+                    }
+                    cache.upsertContentOperation(ContentOperationEntity(profileId, deviceId, libraryId.value, operationId, nodeId.value, expectedRevision, staging.absolutePath, bytes, sha256, session.id, offset, "UPLOADING", System.currentTimeMillis(), System.currentTimeMillis(), null))
+                    onProgress(TransferProgress.Uploading(offset, bytes))
+                }
+            }
+            onProgress(TransferProgress.Verifying)
+            when (val completion = transport.completeUpload(session.id)) {
+                is UploadResult.Completion -> {
+                    if (completion.completion.nodeId != nodeId.value || completion.completion.bytes != bytes || completion.completion.sha256 != sha256) return@withContext TransferResult.Failed(protocolFailure())
+                    cache.upsertContentOperation(ContentOperationEntity(profileId, deviceId, libraryId.value, operationId, nodeId.value, expectedRevision, staging.absolutePath, bytes, sha256, session.id, bytes, "COMMITTED", System.currentTimeMillis(), System.currentTimeMillis(), null))
+                    staging.delete()
+                    onProgress(TransferProgress.Completed)
+                    TransferResult.Uploaded(completion.completion)
+                }
+                is UploadResult.Failure -> TransferResult.Failed(completion.error)
+                else -> TransferResult.Failed(protocolFailure())
+            }
+        } catch (_: CancellationException) { onProgress(TransferProgress.Cancelled); TransferResult.Cancelled }
+        catch (_: Exception) { TransferResult.Failed(SynveilTransportError.Offline) }
+    }
+
+    suspend fun resumeContentOperation(
+        cache: CacheRepository,
+        operation: ContentOperationEntity,
+        transport: AuthenticatedSynveilTransport,
+    ): TransferResult = withContext(Dispatchers.IO) {
+        val staging = File(operation.stagingPath)
+        if (!staging.isFile || staging.length() != operation.byteLength) {
+            cache.upsertContentOperation(operation.copy(state = "FAILED", lastErrorCategory = "staging_missing", lastAttemptAt = System.currentTimeMillis()))
+            return@withContext TransferResult.Failed(SynveilTransportError.ProtocolError(com.synveil.android.data.network.ProtocolErrorKind.INVALID_UPLOAD_RESPONSE))
+        }
+        val request = buildJsonObject {
+            put("operation", "REPLACE_CONTENT")
+            put("idempotency_key", operation.operationId)
+            put("library_id", operation.libraryId)
+            put("node_id", operation.nodeId)
+            put("expected_revision", operation.expectedNodeRevision)
+            put("expected_bytes", operation.byteLength.toString())
+            put("expected_sha256", operation.sha256)
+        }.toString()
+        try {
+            var session = if (operation.uploadSessionId == null) {
+                when (val created = transport.createUploadSession(request)) {
+                    is UploadResult.Session -> created.session
+                    is UploadResult.Failure -> return@withContext TransferResult.Failed(created.error)
+                    else -> return@withContext TransferResult.Failed(protocolFailure())
+                }
+            } else {
+                when (val recovered = transport.getUploadSession(operation.uploadSessionId)) {
+                    is UploadResult.Session -> recovered.session
+                    is UploadResult.Failure -> return@withContext TransferResult.Failed(recovered.error)
+                    else -> return@withContext TransferResult.Failed(protocolFailure())
+                }
+            }
+            var offset = session.receivedBytes
+            val chunkSize = 4 * 1024 * 1024
+            RandomAccessFile(staging, "r").use { file ->
+                while (offset < operation.byteLength) {
+                    file.seek(offset)
+                    val chunk = ByteArray(minOf(chunkSize.toLong(), operation.byteLength - offset).toInt())
+                    var read = 0
+                    while (read < chunk.size) { val count = file.read(chunk, read, chunk.size - read); if (count < 0) return@withContext TransferResult.Failed(protocolFailure()); read += count }
+                    when (val appended = transport.appendUploadChunk(session.id, offset, chunk)) {
+                        is UploadResult.Offset -> offset = appended.value ?: return@withContext TransferResult.Failed(protocolFailure())
+                        is UploadResult.Failure -> {
+                            if (!appended.error.isAmbiguousTransferFailure()) return@withContext TransferResult.Failed(appended.error)
+                            session = when (val recovered = transport.getUploadSession(session.id)) { is UploadResult.Session -> recovered.session; is UploadResult.Failure -> return@withContext TransferResult.Failed(recovered.error); else -> return@withContext TransferResult.Failed(protocolFailure()) }
+                            offset = session.receivedBytes
+                        }
+                        else -> return@withContext TransferResult.Failed(protocolFailure())
+                    }
+                    cache.upsertContentOperation(operation.copy(uploadSessionId = session.id, serverOffset = offset, state = "UPLOADING", lastAttemptAt = System.currentTimeMillis(), lastErrorCategory = null))
+                }
+            }
+            when (val completion = transport.completeUpload(session.id)) {
+                is UploadResult.Completion -> {
+                    if (completion.completion.nodeId != operation.nodeId || completion.completion.bytes != operation.byteLength || completion.completion.sha256 != operation.sha256) return@withContext TransferResult.Failed(protocolFailure())
+                    cache.upsertContentOperation(operation.copy(uploadSessionId = session.id, serverOffset = operation.byteLength, state = "COMMITTED", lastAttemptAt = System.currentTimeMillis(), lastErrorCategory = null))
+                    staging.delete()
+                    TransferResult.Uploaded(completion.completion)
+                }
+                is UploadResult.Failure -> TransferResult.Failed(completion.error)
+                else -> TransferResult.Failed(protocolFailure())
+            }
+        } catch (_: Exception) { TransferResult.Failed(SynveilTransportError.Offline) }
+    }
     suspend fun downloadTo(
         transport: AuthenticatedSynveilTransport,
         nodeId: NodeId,

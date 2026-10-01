@@ -21,6 +21,8 @@ import com.synveil.android.data.enrollment.EnrollmentManager
 import com.synveil.android.feature.enrollment.EnrollmentScreen
 import com.synveil.android.data.session.DeviceSessionManager
 import com.synveil.android.feature.library.LibraryScreen
+import com.synveil.android.feature.home.SyncSettingsScreen
+import com.synveil.android.data.settings.SyncSettingsStore
 import com.synveil.android.feature.library.NodeBrowserScreen
 import com.synveil.android.data.library.LibraryId
 import com.synveil.android.data.library.NodeId
@@ -41,6 +43,7 @@ fun SynveilNavHost(
     enrollmentManager: EnrollmentManager,
     deviceSessionManager: DeviceSessionManager,
     cache: CacheRepository,
+    syncSettingsStore: SyncSettingsStore,
     modifier: Modifier = Modifier,
 ) {
     val navController = rememberNavController()
@@ -56,6 +59,7 @@ fun SynveilNavHost(
                 repository = repository,
                 onOpenProfiles = { navController.navigate(ProfilesRoute) },
                 onOpenLibraries = { navController.navigate(LibrariesRoute) },
+                onOpenSyncSettings = { navController.navigate("sync-settings") },
             )
         }
         composable(LibrariesRoute) {
@@ -67,6 +71,9 @@ fun SynveilNavHost(
                     navController.navigate("libraries/${library.id.value}/${library.rootNodeId.value}")
                 },
             )
+        }
+        composable("sync-settings") {
+            SyncSettingsScreen(syncSettingsStore, navController::popBackStack)
         }
         composable(
             LibraryBrowserRoute,

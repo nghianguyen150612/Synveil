@@ -45,4 +45,13 @@ class SyncWorkSchedulerInstrumentationTest {
         assertEquals(1, infos.size)
         assertEquals(WorkInfo.State.ENQUEUED, infos.single().state)
     }
+
+    @Test
+    fun schedulerSupportsUnmeteredAndBatteryConstraints() = runBlocking {
+        val library = checkNotNull(LibraryId.parse("018bcfe5-687b-7001-8203-040506070811"))
+        SyncWorkScheduler.enqueuePeriodic(context, "profile-b", library, 15, com.synveil.android.data.settings.SyncNetworkPolicy.UNMETERED, true)
+        val info = workManager.getWorkInfosForUniqueWork("synveil-periodic:profile-b:${library.value}").get().single()
+        assertEquals(NetworkType.UNMETERED, info.constraints.requiredNetworkType)
+        org.junit.Assert.assertTrue(info.constraints.requiresBatteryNotLow())
+    }
 }

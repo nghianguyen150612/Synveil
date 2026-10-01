@@ -6,6 +6,9 @@ import com.synveil.android.data.library.LibraryRevision
 import com.synveil.android.data.library.LibraryStatus
 import com.synveil.android.data.library.NodeId
 import com.synveil.android.data.node.Node
+import com.synveil.android.data.cache.MutationQueueEntity
+import com.synveil.android.data.cache.ContentOperationEntity
+import com.synveil.android.data.cache.CachedConflictEntity
 import com.synveil.android.data.node.NodeKind
 import com.synveil.android.data.node.NodeRevision
 import com.synveil.android.data.node.NodeState
@@ -73,6 +76,28 @@ class CacheRepository(private val dao: CacheDao) {
     suspend fun confirmAck(state: SyncStateEntity, profileId: String, deviceId: String, libraryId: LibraryId) =
         dao.confirmAck(state, profileId, deviceId, libraryId.value)
     suspend fun activeNodes(profileId: String, libraryId: LibraryId) = dao.nodes(profileId, libraryId.value)
+
+    suspend fun enqueueMutation(value: MutationQueueEntity) = dao.insertMutation(value)
+    suspend fun updateMutation(value: MutationQueueEntity) = dao.upsertMutation(value)
+    suspend fun applyMutationResult(value: MutationQueueEntity, node: CachedNodeEntity) = dao.applyMutationResult(value, node)
+    suspend fun mutation(profileId: String, deviceId: String, libraryId: LibraryId, mutationId: String) =
+        dao.mutation(profileId, deviceId, libraryId.value, mutationId)
+    suspend fun eligibleMutations(profileId: String, deviceId: String, libraryId: LibraryId, limit: Int) =
+        dao.eligibleMutations(profileId, deviceId, libraryId.value, limit)
+    suspend fun releaseBlockedMutations(profileId: String, deviceId: String, libraryId: LibraryId) =
+        dao.releaseBlockedMutations(profileId, deviceId, libraryId.value)
+    suspend fun mutations(profileId: String, deviceId: String, libraryId: LibraryId) =
+        dao.mutations(profileId, deviceId, libraryId.value)
+    suspend fun hasOutstandingDependency(profileId: String, deviceId: String, libraryId: LibraryId, resourceId: String, parentDependencyId: String?) =
+        dao.hasOutstandingDependency(profileId, deviceId, libraryId.value, resourceId, parentDependencyId)
+    suspend fun upsertContentOperation(value: ContentOperationEntity) = dao.upsertContentOperation(value)
+    suspend fun deleteContentOperation(profileId: String, deviceId: String, libraryId: LibraryId, operationId: String) = dao.deleteContentOperation(profileId, deviceId, libraryId.value, operationId)
+    suspend fun contentOperations(profileId: String, deviceId: String, libraryId: LibraryId) =
+        dao.contentOperations(profileId, deviceId, libraryId.value)
+    suspend fun allContentOperations() = dao.allContentOperations()
+    fun observeOpenConflicts(profileId: String, deviceId: String, libraryId: LibraryId) =
+        dao.observeOpenConflicts(profileId, deviceId, libraryId.value)
+    suspend fun upsertConflict(value: CachedConflictEntity) = dao.upsertConflict(value)
 
     private fun CachedNodeEntity.toDomain(): Node? {
         val node = NodeId.parse(nodeId) ?: return null

@@ -30,6 +30,7 @@ class MainActivity : ComponentActivity() {
                             enrollmentManager = (application as SynveilApplication).enrollmentManager,
                             deviceSessionManager = (application as SynveilApplication).deviceSessionManager,
                             cache = (application as SynveilApplication).cacheRepository,
+                            syncSettingsStore = (application as SynveilApplication).syncSettingsStore,
                         )
                 }
             }

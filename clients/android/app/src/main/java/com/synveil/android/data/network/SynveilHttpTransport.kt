@@ -29,6 +29,9 @@ import com.synveil.android.data.sync.SyncWireParser
 import com.synveil.android.data.sync.SYNC_PAGE_SIZE
 import com.synveil.android.data.sync.REBASELINE_PAGE_SIZE
 import com.synveil.android.data.sync.MAX_SYNC_BODY_BYTES
+import com.synveil.android.data.mutation.MutationRequest
+import com.synveil.android.data.mutation.MutationResult
+import com.synveil.android.data.mutation.MutationWireParser
 import java.io.IOException
 import java.net.ConnectException
 import java.net.NoRouteToHostException
@@ -44,6 +47,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.jsonObject
 import okhttp3.CookieJar
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -59,6 +63,7 @@ private val AUTH_JSON_MEDIA_TYPE = "application/json".toMediaType()
 const val MAX_PROBE_RESPONSE_BYTES = 64 * 1024
 const val MAX_ENROLLMENT_RESPONSE_BYTES = 16 * 1024
 const val MAX_LIBRARY_RESPONSE_BYTES = 1024 * 1024
+const val MAX_MUTATION_BODY_BYTES = 16 * 1024
 
 data class TransportTimeouts(
     val connectMillis: Long = 10_000,
@@ -84,6 +89,7 @@ sealed interface SynveilTransportError {
         val statusCode: Int,
         val code: String?,
         val requestId: String?,
+        val details: JsonElement? = null,
     ) : SynveilTransportError
     data object BodyLimitExceeded : SynveilTransportError
     data class UnexpectedContentType(val contentType: String?) : SynveilTransportError
@@ -103,6 +109,7 @@ enum class ProtocolErrorKind {
     INVALID_DOWNLOAD_RESPONSE,
     INVALID_SYNC_RESPONSE,
     INVALID_REBASELINE_RESPONSE,
+    INVALID_MUTATION_RESPONSE,
 }
 
 sealed interface ProbeResult {
@@ -643,6 +650,44 @@ class AuthenticatedSynveilTransport internal constructor(
         catch (error: Exception) { NodePageResult.Failure(mapNetworkTransportError(error)) }
     }
 
+    fun submitMutation(deviceId: String, libraryId: String, request: MutationRequest): MutationResult {
+        if (!UUID_PATTERN.matches(deviceId) || !UUID_PATTERN.matches(libraryId) || !UUID_PATTERN.matches(request.mutationId) ||
+            request.baseEpoch.toLongOrNull() == null || request.baseSequence.toLongOrNull() == null
+        ) return MutationResult.Failure(SynveilTransportError.ProtocolError(ProtocolErrorKind.INVALID_MUTATION_RESPONSE))
+        val url = origin.newBuilder()
+            .encodedPath("/api/v1/devices/$deviceId/libraries/$libraryId/mutations")
+            .build()
+        val body = request.json().toRequestBody(AUTH_JSON_MEDIA_TYPE)
+        return try {
+            client.newCall(
+                Request.Builder().url(url).post(body).authenticatedHeaders(requestUserAgent, bearer).build(),
+            ).execute().use { response ->
+                if (response.isRedirect) return MutationResult.Failure(SynveilTransportError.RedirectRejected(response.code))
+                val bytes = try {
+                    readBounded(response.body?.byteStream() ?: return MutationResult.Failure(SynveilTransportError.MalformedResponse), MAX_MUTATION_BODY_BYTES)
+                } catch (_: BodyLimitException) {
+                    return MutationResult.Failure(SynveilTransportError.BodyLimitExceeded)
+                }
+                if (!isJsonContentType(response.header("Content-Type"))) {
+                    return MutationResult.Failure(SynveilTransportError.UnexpectedContentType(response.header("Content-Type")))
+                }
+                val requestId = safeRequestIdHeader(response.header("X-Request-Id"))
+                if (response.code in 200..299) {
+                    MutationWireParser.parse(json, bytes, requestId, request)
+                } else {
+                    val error = parseErrorResponse(json, bytes, response.code, requestId)
+                    if (error is SynveilTransportError.HttpError && error.code == "mutation_conflict") {
+                        MutationResult.Conflict(error, error.details?.jsonObject?.get("conflict_id")?.toString()?.trim('"'))
+                    } else MutationResult.Failure(error)
+                }
+            }
+        } catch (_: CancellationException) {
+            MutationResult.Failure(SynveilTransportError.Cancelled)
+        } catch (error: Exception) {
+            MutationResult.Failure(mapNetworkTransportError(error))
+        }
+    }
+
     private fun <T> executeSyncJson(path: String, parser: (ByteArray) -> SyncResult<T>): SyncResult<T> = executeSyncJson(path, "GET", null, parser)
 
     private fun <T> executeSyncJson(path: String, method: String, body: okhttp3.RequestBody? = null, parser: (ByteArray) -> SyncResult<T>): SyncResult<T> {
@@ -769,6 +814,7 @@ private fun parseErrorResponse(
         statusCode = statusCode,
         code = payload.code,
         requestId = headerRequestId ?: safeRequestIdHeader(payload.request_id),
+        details = payload.details,
     )
 }
 
@@ -820,6 +866,8 @@ private data class ErrorPayloadEnvelope(
     val retryable: Boolean,
     val details: JsonElement? = null,
 )
+
+private val UUID_PATTERN = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 private val REQUEST_ID_PATTERN = Regex("^[A-Za-z0-9._~-]{8,128}$")
 private val ERROR_CODE_PATTERN = Regex("^[a-z][a-z0-9_]{1,63}$")

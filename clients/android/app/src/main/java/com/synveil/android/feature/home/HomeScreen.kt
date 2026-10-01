@@ -26,6 +26,7 @@ fun HomeScreen(
     repository: ServerProfileRepository,
     onOpenProfiles: () -> Unit,
     onOpenLibraries: () -> Unit,
+    onOpenSyncSettings: () -> Unit,
     startupViewModel: StartupViewModel = viewModel(
         factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
@@ -70,6 +71,9 @@ fun HomeScreen(
         }
         Button(onClick = onOpenLibraries) {
             Text(text = "Open libraries")
+        }
+        Button(onClick = onOpenSyncSettings) {
+            Text(text = "Sync settings")
         }
         Text(
             text = stringResource(R.string.foundation_boundary_note),
