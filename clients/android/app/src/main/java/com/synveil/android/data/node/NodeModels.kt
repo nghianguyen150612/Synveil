@@ -43,8 +43,8 @@ data class Node(
     val name: String,
     val kind: NodeKind,
     val state: NodeState,
-    val createdAt: OffsetDateTime,
-    val updatedAt: OffsetDateTime,
+    val createdAt: OffsetDateTime?,
+    val updatedAt: OffsetDateTime?,
     val trashedAt: OffsetDateTime?,
     val restoreDeadline: OffsetDateTime?,
     val purgeEligible: Boolean,
@@ -137,6 +137,31 @@ internal object NodeWireParser {
         return NodePageResult.Success(NodePage(nodes, cursor, wire.page.has_more, requestId))
     }
 
+    fun parseSingle(json: Json, body: ByteArray, requestId: String?): NodePageResult {
+        val wire = try {
+            json.decodeFromString<NodeResponseWire>(body.toString(Charsets.UTF_8))
+        } catch (_: SerializationException) {
+            return invalid()
+        }
+        if (!REQUEST_ID.matches(wire.meta.request_id)) return invalid()
+        val resource = wire.data
+        if (resource.type != "node") return invalid()
+        val attributes = resource.attributes
+        if (attributes.name.length !in 1..1024) return invalid()
+        val nodeId = NodeId.parse(resource.id) ?: return invalid()
+        val libraryId = LibraryId.parse(attributes.library_id) ?: return invalid()
+        val parentId = attributes.parent_id?.let { NodeId.parse(it) ?: return invalid() }
+        val currentVersionId = attributes.current_version_id?.also { if (!CANONICAL_UUID.matches(it)) return invalid() }
+        val revision = NodeRevision.parse(resource.revision) ?: return invalid()
+        val kind = runCatching { NodeKind.valueOf(attributes.kind) }.getOrNull() ?: return invalid()
+        val state = runCatching { NodeState.valueOf(attributes.state) }.getOrNull() ?: return invalid()
+        val createdAt = parseTime(attributes.created_at) ?: return invalid()
+        val updatedAt = parseTime(attributes.updated_at) ?: return invalid()
+        val trashedAt = attributes.trashed_at?.let { parseTime(it) ?: return invalid() }
+        val restoreDeadline = attributes.restore_deadline?.let { parseTime(it) ?: return invalid() }
+        return NodePageResult.Success(NodePage(listOf(Node(nodeId, libraryId, parentId, currentVersionId, revision, attributes.name, kind, state, createdAt, updatedAt, trashedAt, restoreDeadline, attributes.purge_eligible)), null, false, requestId))
+    }
+
     private fun parseTime(value: String): OffsetDateTime? =
         runCatching { OffsetDateTime.parse(value, DateTimeFormatter.ISO_OFFSET_DATE_TIME) }.getOrNull()
 
@@ -147,6 +172,9 @@ internal object NodeWireParser {
 
 @Serializable
 private data class NodeCollectionWire(val data: List<NodeResourceWire>, val page: NodePageWire, val meta: NodeMetaWire)
+
+@Serializable
+private data class NodeResponseWire(val data: NodeResourceWire, val meta: NodeMetaWire)
 
 @Serializable
 private data class NodeResourceWire(

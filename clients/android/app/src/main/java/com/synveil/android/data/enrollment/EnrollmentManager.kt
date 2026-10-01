@@ -18,6 +18,7 @@ interface CredentialLifecycle {
 class EnrollmentManager(
     private val metadataStore: EnrollmentMetadataStore,
     private val vault: SecureCredentialVault,
+    private val onFenced: suspend (String) -> Unit = {},
 ) : CredentialLifecycle {
     suspend fun enroll(
         profile: ServerProfile,
@@ -106,6 +107,7 @@ class EnrollmentManager(
     override suspend fun fence(profileId: String): CredentialCleanupResult = try {
         vault.delete(profileId)
         metadataStore.clear(profileId)
+        onFenced(profileId)
         CredentialCleanupResult.Success
     } catch (error: Exception) {
         CredentialCleanupResult.Failed(error.message ?: "secure credential cleanup failed")

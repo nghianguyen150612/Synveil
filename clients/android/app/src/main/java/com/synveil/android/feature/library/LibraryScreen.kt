@@ -1,5 +1,6 @@
 package com.synveil.android.feature.library
 
+import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -30,12 +32,16 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.synveil.android.data.library.Library
 import com.synveil.android.data.library.LibraryFailure
 import com.synveil.android.data.library.LibraryRepositoryResult
+import com.synveil.android.data.cache.CacheRepository
 import com.synveil.android.data.session.DeviceSessionManager
 import com.synveil.android.data.session.DeviceSessionState
+import com.synveil.android.work.SyncWorkScheduler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -44,18 +50,58 @@ data class LibraryUiState(
     val libraries: List<Library> = emptyList(),
     val isLoading: Boolean = false,
     val message: String? = null,
+    val showingCachedData: Boolean = false,
+    val syncStates: Map<String, String> = emptyMap(),
 )
+
+private fun DeviceSessionState.profileIdOrNull(): String? = when (this) {
+    is DeviceSessionState.ProfileAvailable -> profileId
+    is DeviceSessionState.NotEnrolled -> profileId
+    is DeviceSessionState.LoadingCredential -> profileId
+    is DeviceSessionState.Ready -> profileId
+    is DeviceSessionState.AuthenticationRequired -> profileId
+    is DeviceSessionState.DeviceRevoked -> profileId
+    is DeviceSessionState.ServerUnavailable -> profileId
+    is DeviceSessionState.TlsError -> profileId
+    is DeviceSessionState.SecureStoreUnavailable -> profileId
+    is DeviceSessionState.RecoveryRequired -> profileId
+    is DeviceSessionState.ProtocolError -> profileId
+    DeviceSessionState.NoProfile -> null
+}
 
 class LibraryViewModel(
     private val sessionManager: DeviceSessionManager,
+    private val cache: CacheRepository,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(LibraryUiState())
     val uiState: StateFlow<LibraryUiState> = mutableState.asStateFlow()
+    private var cacheJob: Job? = null
 
     init {
         viewModelScope.launch {
-            sessionManager.state.collect { session ->
+            sessionManager.state.collectLatest { session ->
                 mutableState.value = mutableState.value.copy(session = session)
+                cacheJob?.cancel()
+                val profileId = session.profileIdOrNull()
+                if (profileId != null) {
+                    cacheJob = launch {
+                        cache.observeLibraries(profileId).collect { libraries ->
+                            if (libraries.isNotEmpty() && !mutableState.value.isLoading) {
+                                mutableState.value = mutableState.value.copy(
+                                    libraries = libraries,
+                                    showingCachedData = true,
+                                )
+                            }
+                        }
+                    }
+                    launch {
+                        cache.observeSyncStates(profileId).collect { states ->
+                            mutableState.value = mutableState.value.copy(
+                                syncStates = states.associate { it.libraryId to it.state },
+                            )
+                        }
+                    }
+                }
             }
         }
         refresh()
@@ -71,31 +117,56 @@ class LibraryViewModel(
                     libraries = result.libraries,
                     isLoading = false,
                     message = if (result.libraries.isEmpty()) "No libraries are available." else null,
+                    showingCachedData = false,
                 )
                 is LibraryRepositoryResult.Failed -> mutableState.value.copy(
                     isLoading = false,
-                    message = failureMessage(result.failure),
+                    message = if (mutableState.value.libraries.isNotEmpty()) {
+                        "Offline — showing cached libraries. ${failureMessage(result.failure)}"
+                    } else {
+                        failureMessage(result.failure)
+                    },
+                    showingCachedData = mutableState.value.libraries.isNotEmpty(),
                 )
             }
         }
     }
+
+    fun syncNow(context: Context, library: Library) {
+        val profileId = (mutableState.value.session as? DeviceSessionState.Ready)?.profileId
+            ?: (mutableState.value.session as? DeviceSessionState.ProfileAvailable)?.profileId
+            ?: return
+        SyncWorkScheduler.enqueueNow(context, profileId, library.id)
+        mutableState.value = mutableState.value.copy(message = "Sync queued for ${library.name}.")
+    }
+
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
     sessionManager: DeviceSessionManager,
+    cache: CacheRepository,
     onBack: () -> Unit,
     onOpenLibrary: (Library) -> Unit,
     viewModel: LibraryViewModel = viewModel(
         factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                LibraryViewModel(sessionManager) as T
+                LibraryViewModel(sessionManager, cache) as T
         },
     ),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(uiState.session, uiState.libraries) {
+        val profileId = uiState.session.profileIdOrNull()
+        if (profileId != null) {
+            uiState.libraries.forEach { library ->
+                SyncWorkScheduler.enqueuePeriodic(context, profileId, library.id)
+            }
+        }
+    }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -114,6 +185,9 @@ fun LibraryScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             SessionStatus(uiState.session)
+            if (uiState.showingCachedData) {
+                Text("Offline — cached metadata", color = MaterialTheme.colorScheme.tertiary)
+            }
             if (uiState.isLoading) CircularProgressIndicator()
             uiState.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if (!uiState.isLoading && uiState.message == "No libraries are available.") {
@@ -121,7 +195,12 @@ fun LibraryScreen(
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(uiState.libraries, key = { it.id.value }) { library ->
-                        LibraryRow(library, onClick = { onOpenLibrary(library) })
+                        LibraryRow(
+                            library,
+                            syncState = uiState.syncStates[library.id.value],
+                            onClick = { onOpenLibrary(library) },
+                            onSync = { viewModel.syncNow(context, library) },
+                        )
                     }
                 }
             }
@@ -157,7 +236,7 @@ private fun SessionStatus(state: DeviceSessionState) {
 }
 
 @Composable
-private fun LibraryRow(library: Library, onClick: () -> Unit) {
+private fun LibraryRow(library: Library, syncState: String?, onClick: () -> Unit, onSync: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -166,10 +245,25 @@ private fun LibraryRow(library: Library, onClick: () -> Unit) {
             Column {
                 Text(library.name, style = MaterialTheme.typography.titleMedium)
                 Text(library.status.name, style = MaterialTheme.typography.bodySmall)
+                Text(syncStateLabel(syncState), style = MaterialTheme.typography.bodySmall)
             }
-            Text(library.updatedAt.toString(), style = MaterialTheme.typography.bodySmall)
+            Column {
+                Text(library.updatedAt.toString(), style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = onSync) { Text("Sync now") }
+            }
         }
     }
+}
+
+private fun syncStateLabel(value: String?): String = when (value) {
+    null, "UNINITIALIZED" -> "Never synced"
+    "READY" -> "Up to date"
+    "SYNCING" -> "Syncing"
+    "REBASELINE_REQUIRED" -> "Rebaseline required"
+    "REBASELINING" -> "Rebaselining"
+    "PAUSED_AUTH" -> "Authentication required"
+    "ERROR_TRANSIENT" -> "Offline / retry pending"
+    else -> "Sync error"
 }
 
 private fun failureMessage(failure: LibraryFailure): String = when (failure) {

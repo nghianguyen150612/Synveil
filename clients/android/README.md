@@ -206,15 +206,56 @@ then create one idempotent `CREATE_FILE` upload session and append 4 MiB raw
 chunks. The server's `Upload-Offset` is authoritative. After an ambiguous
 PATCH, the client reads session status and resumes from the confirmed offset;
 it never blindly replays a chunk. Transfers remain foreground/lifecycle-
-managed; there is no WorkManager, foreground service, background scheduler,
-offline transfer queue, or automatic sync.
+managed and are separate from metadata synchronization.
+
+## Durable metadata cache and synchronization
+
+The app uses a versioned Room database for non-secret logical metadata only:
+cached libraries and nodes, per-profile/device/library sync state, pending
+acknowledgments, rebaseline staging, and bounded diagnostics. It never stores a
+DeviceBearer, enrollment token, browser cookie, CSRF token, Keystore key, or
+physical storage path. The cache is profile-scoped and is cleared when a
+profile is removed or enrollment is forgotten.
+
+Foreground refreshes update Room transactionally, and the browser can show the
+last-known logical tree while offline with an explicit cached/offline label.
+Cached rows are a local projection, not authorization evidence or a claim that
+the server is current. File bytes are not stored in Room.
+
+Incremental inbound synchronization uses the authenticated DeviceBearer
+checkpoint, change feed, canonical node reads, and signed page acknowledgments.
+Each feed page is applied in one Room transaction before its exact opaque ACK
+token is sent. If the process stops after local application or an ACK response
+is lost, the same pending token is replayed on the next run. Invalid scopes,
+epochs, sequence ordering, revisions, enums, cursors, tokens, and response
+metadata fail closed.
+
+When retained history is unavailable, the sync engine uses the server's
+rebaseline protocol. Manifest pages are staged durably and validated for one
+bootstrap/generation/cut, item count, ordering, and terminal completion token.
+The active node projection is replaced atomically only after the complete
+manifest is present; server completion is then retried with the same token if
+its response is lost. Expired staging is fenced without deleting the previous
+active cache.
+
+WorkManager provides unique, connected-network one-time and periodic sync for
+explicit profile/library scopes. Periodic work uses Android's minimum
+15-minute interval and is best-effort under Doze and battery scheduling. Only
+non-secret IDs are placed in WorkManager input; the worker resolves the
+profile-bound Keystore credential just in time and reuses the same bounded
+SyncEngine. Transient failures retry with WorkManager backoff, while permanent
+authentication, revocation, and protocol failures pause safely. There is no
+automatic file-byte mirroring, outbound mutation queue, conflict resolution,
+or always-running service.
 
 ## Unsupported features and next milestone
 
-Sync, backups, replace-content editing, background work, and production
-signing remain unsupported. Prompt 4 includes JVM transport/lifecycle tests and a real
-AndroidKeyStore instrumentation test for encrypted persistence, recreation,
-scope fencing, malformed ciphertext, missing keys, and deletion. Runtime smoke
-testing covers build/install/launch, enrollment navigation, secure token input,
-local malformed-token validation, and the authenticated library navigation
-shell; no external production grant or real credential is used.
+Backups, replace-content editing, outbound mutations, conflict resolution,
+automatic file-byte mirroring, and production signing remain unsupported.
+Prompt 4 includes JVM transport/lifecycle tests and a real AndroidKeyStore
+instrumentation test for encrypted persistence, recreation, scope fencing,
+malformed ciphertext, missing keys, and deletion. Runtime smoke testing covers
+build/install/launch, enrollment navigation, secure token input, local
+malformed-token validation, authenticated library navigation, cached-state
+recreation, and transfer intent paths; no external production grant or real
+credential is used.

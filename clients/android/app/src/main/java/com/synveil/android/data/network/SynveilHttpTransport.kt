@@ -19,6 +19,16 @@ import com.synveil.android.data.transfer.DownloadMetadata
 import com.synveil.android.data.transfer.DownloadResult
 import com.synveil.android.data.transfer.UploadResult
 import com.synveil.android.data.transfer.UploadWireParser
+import com.synveil.android.data.sync.RebaselineBootstrap
+import com.synveil.android.data.sync.RebaselineCompletion
+import com.synveil.android.data.sync.RebaselinePage
+import com.synveil.android.data.sync.SyncCheckpoint
+import com.synveil.android.data.sync.SyncFeedPage
+import com.synveil.android.data.sync.SyncResult
+import com.synveil.android.data.sync.SyncWireParser
+import com.synveil.android.data.sync.SYNC_PAGE_SIZE
+import com.synveil.android.data.sync.REBASELINE_PAGE_SIZE
+import com.synveil.android.data.sync.MAX_SYNC_BODY_BYTES
 import java.io.IOException
 import java.net.ConnectException
 import java.net.NoRouteToHostException
@@ -32,6 +42,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import okhttp3.CookieJar
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -89,6 +101,8 @@ enum class ProtocolErrorKind {
     INVALID_NODE_RESPONSE,
     INVALID_UPLOAD_RESPONSE,
     INVALID_DOWNLOAD_RESPONSE,
+    INVALID_SYNC_RESPONSE,
+    INVALID_REBASELINE_RESPONSE,
 }
 
 sealed interface ProbeResult {
@@ -572,6 +586,84 @@ class AuthenticatedSynveilTransport internal constructor(
 
     fun abortUpload(sessionId: String): UploadResult =
         executeUploadJson("/api/v1/upload-sessions/$sessionId/abort", "POST", "{}".toRequestBody(AUTH_JSON_MEDIA_TYPE))
+
+    fun getSyncCheckpoint(deviceId: String, libraryId: String): SyncResult<SyncCheckpoint> =
+        executeSyncJson("/api/v1/devices/$deviceId/libraries/$libraryId/checkpoint") {
+            SyncWireParser.parseCheckpoint(it, deviceId, libraryId)
+        }
+
+    fun fetchSyncChanges(deviceId: String, libraryId: String, limit: Int = SYNC_PAGE_SIZE): SyncResult<SyncFeedPage> {
+        if (limit !in 1..500) return SyncResult.Failure(SynveilTransportError.ProtocolError(ProtocolErrorKind.INVALID_SYNC_RESPONSE))
+        return executeSyncJson("/api/v1/devices/$deviceId/libraries/$libraryId/changes?limit=$limit") {
+            SyncWireParser.parseFeed(it, deviceId, libraryId)
+        }
+    }
+
+    fun acknowledgeSyncChanges(deviceId: String, libraryId: String, ackToken: String): SyncResult<SyncCheckpoint> {
+        if (ackToken.isEmpty() || ackToken.length > 256) return SyncResult.Failure(SynveilTransportError.ProtocolError(ProtocolErrorKind.INVALID_SYNC_RESPONSE))
+        val body = buildJsonObject { put("ack_token", ackToken) }.toString().toRequestBody(AUTH_JSON_MEDIA_TYPE)
+        return executeSyncJson("/api/v1/devices/$deviceId/libraries/$libraryId/changes/ack", "POST", body) {
+            SyncWireParser.parseCheckpoint(it, deviceId, libraryId)
+        }
+    }
+
+    fun startRebaseline(deviceId: String, libraryId: String): SyncResult<RebaselineBootstrap> =
+        executeSyncJson("/api/v1/devices/$deviceId/libraries/$libraryId/rebaseline", "POST", "{}".toRequestBody(AUTH_JSON_MEDIA_TYPE)) {
+            SyncWireParser.parseBootstrap(it, deviceId, libraryId)
+        }
+
+    fun fetchRebaselinePage(deviceId: String, libraryId: String, bootstrapId: String, cursor: String? = null, limit: Int = REBASELINE_PAGE_SIZE): SyncResult<RebaselinePage> {
+        if (limit !in 1..1000 || cursor?.let { it.isEmpty() || it.length > 320 } == true) return SyncResult.Failure(SynveilTransportError.ProtocolError(ProtocolErrorKind.INVALID_REBASELINE_RESPONSE))
+        val query = buildString { append("?limit=").append(limit); if (cursor != null) append("&cursor=").append(java.net.URLEncoder.encode(cursor, Charsets.UTF_8)) }
+        return executeSyncJson("/api/v1/devices/$deviceId/libraries/$libraryId/rebaseline/$bootstrapId/nodes$query") {
+            SyncWireParser.parsePage(it, deviceId, libraryId, bootstrapId)
+        }
+    }
+
+    fun completeRebaseline(deviceId: String, libraryId: String, bootstrapId: String, completionToken: String): SyncResult<RebaselineCompletion> {
+        if (completionToken.isEmpty() || completionToken.length > 336) return SyncResult.Failure(SynveilTransportError.ProtocolError(ProtocolErrorKind.INVALID_REBASELINE_RESPONSE))
+        val body = buildJsonObject { put("completion_token", completionToken) }.toString().toRequestBody(AUTH_JSON_MEDIA_TYPE)
+        return executeSyncJson("/api/v1/devices/$deviceId/libraries/$libraryId/rebaseline/$bootstrapId/complete", "POST", body) {
+            SyncWireParser.parseCompletion(it, deviceId, libraryId, bootstrapId)
+        }
+    }
+
+    fun getNode(nodeId: NodeId): NodePageResult {
+        val url = origin.newBuilder().encodedPath("/api/v1/nodes/${nodeId.value}").build()
+        return try {
+            client.newCall(Request.Builder().url(url).get().authenticatedHeaders(requestUserAgent, bearer).build()).execute().use { response ->
+                if (response.isRedirect) return@use NodePageResult.Failure(SynveilTransportError.RedirectRejected(response.code))
+                val body = try { readBounded(response.body?.byteStream() ?: return@use NodePageResult.Failure(SynveilTransportError.MalformedResponse), MAX_LIBRARY_RESPONSE_BYTES) }
+                catch (_: BodyLimitException) { return@use NodePageResult.Failure(SynveilTransportError.BodyLimitExceeded) }
+                if (!isJsonContentType(response.header("Content-Type"))) return@use NodePageResult.Failure(SynveilTransportError.UnexpectedContentType(response.header("Content-Type")))
+                if (response.code == 200) NodeWireParser.parseSingle(json, body, safeRequestIdHeader(response.header("X-Request-Id")))
+                else NodePageResult.Failure(parseErrorResponse(json, body, response.code, safeRequestIdHeader(response.header("X-Request-Id"))))
+            }
+        } catch (_: CancellationException) { NodePageResult.Failure(SynveilTransportError.Cancelled) }
+        catch (error: Exception) { NodePageResult.Failure(mapNetworkTransportError(error)) }
+    }
+
+    private fun <T> executeSyncJson(path: String, parser: (ByteArray) -> SyncResult<T>): SyncResult<T> = executeSyncJson(path, "GET", null, parser)
+
+    private fun <T> executeSyncJson(path: String, method: String, body: okhttp3.RequestBody? = null, parser: (ByteArray) -> SyncResult<T>): SyncResult<T> {
+        val request = Request.Builder().url(origin.newBuilder().encodedPath(path.substringBefore('?')).apply {
+            path.substringAfter('?', "").split('&').filter { it.isNotEmpty() }.forEach { pair ->
+                val parts = pair.split('=', limit = 2)
+                if (parts.size == 2) addQueryParameter(parts[0], java.net.URLDecoder.decode(parts[1], Charsets.UTF_8))
+            }
+        }.build()).method(method, body).authenticatedHeaders(requestUserAgent, bearer).build()
+        return try {
+            client.newCall(request).execute().use { response ->
+                if (response.isRedirect) return SyncResult.Failure(SynveilTransportError.RedirectRejected(response.code))
+                val bytes = try { readBounded(response.body?.byteStream() ?: return SyncResult.Failure(SynveilTransportError.MalformedResponse), MAX_SYNC_BODY_BYTES) }
+                catch (_: BodyLimitException) { return SyncResult.Failure(SynveilTransportError.BodyLimitExceeded) }
+                if (!isJsonContentType(response.header("Content-Type"))) return SyncResult.Failure(SynveilTransportError.UnexpectedContentType(response.header("Content-Type")))
+                if (response.code in 200..299) parser(bytes)
+                else SyncResult.Failure(parseErrorResponse(json, bytes, response.code, safeRequestIdHeader(response.header("X-Request-Id"))))
+            }
+        } catch (_: CancellationException) { SyncResult.Failure(SynveilTransportError.Cancelled) }
+        catch (error: Exception) { SyncResult.Failure(mapNetworkTransportError(error)) }
+    }
 
     private fun executeUploadJson(path: String, method: String, body: okhttp3.RequestBody?): UploadResult {
         val request = Request.Builder().url(origin.newBuilder().encodedPath(path).build())

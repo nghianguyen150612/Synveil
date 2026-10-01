@@ -37,6 +37,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.synveil.android.data.library.LibraryId
 import com.synveil.android.data.library.NodeId
+import com.synveil.android.data.cache.CacheRepository
 import com.synveil.android.data.node.Node
 import com.synveil.android.data.node.NodeFailure
 import com.synveil.android.data.node.NodeRepositoryResult
@@ -49,6 +50,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -64,10 +66,12 @@ data class NodeBrowserUiState(
     val transfer: TransferProgress? = null,
     val lastSavedUri: Uri? = null,
     val lastSavedMime: String? = null,
+    val showingCachedData: Boolean = false,
 )
 
 class NodeBrowserViewModel(
     private val sessionManager: DeviceSessionManager,
+    private val cache: CacheRepository,
     private val libraryId: LibraryId,
     private val rootNodeId: NodeId,
 ) : ViewModel() {
@@ -156,12 +160,34 @@ class NodeBrowserViewModel(
         if (mutableState.value.loading) return
         viewModelScope.launch {
             mutableState.value = mutableState.value.copy(currentParent = parent, breadcrumbs = breadcrumbs, loading = true, message = null)
+            val profileId = mutableState.value.session.profileIdOrNull()
+            val cached = profileId?.let {
+                withContext(Dispatchers.IO) { cache.observeChildren(it, libraryId, parent).first() }
+            }?.filter { it.state == com.synveil.android.data.node.NodeState.ACTIVE }.orEmpty()
+            if (cached.isNotEmpty()) {
+                mutableState.value = mutableState.value.copy(nodes = cached, showingCachedData = true)
+            }
             val result = withContext(Dispatchers.IO) { sessionManager.listChildren(libraryId, parent) }
             mutableState.value = when (result) {
-                is NodeRepositoryResult.Loaded -> mutableState.value.copy(nodes = result.nodes.filter { it.state == com.synveil.android.data.node.NodeState.ACTIVE }, loading = false)
-                is NodeRepositoryResult.Failed -> mutableState.value.copy(loading = false, message = result.failure.userMessage())
+                is NodeRepositoryResult.Loaded -> mutableState.value.copy(nodes = result.nodes.filter { it.state == com.synveil.android.data.node.NodeState.ACTIVE }, loading = false, showingCachedData = false)
+                is NodeRepositoryResult.Failed -> mutableState.value.copy(loading = false, message = if (cached.isNotEmpty()) "Offline — showing cached metadata. ${result.failure.userMessage()}" else result.failure.userMessage(), showingCachedData = cached.isNotEmpty())
             }
         }
+    }
+
+    private fun DeviceSessionState.profileIdOrNull(): String? = when (this) {
+        is DeviceSessionState.ProfileAvailable -> profileId
+        is DeviceSessionState.NotEnrolled -> profileId
+        is DeviceSessionState.LoadingCredential -> profileId
+        is DeviceSessionState.Ready -> profileId
+        is DeviceSessionState.AuthenticationRequired -> profileId
+        is DeviceSessionState.DeviceRevoked -> profileId
+        is DeviceSessionState.ServerUnavailable -> profileId
+        is DeviceSessionState.TlsError -> profileId
+        is DeviceSessionState.SecureStoreUnavailable -> profileId
+        is DeviceSessionState.RecoveryRequired -> profileId
+        is DeviceSessionState.ProtocolError -> profileId
+        DeviceSessionState.NoProfile -> null
     }
 
     private fun setMessage(value: String) { mutableState.value = mutableState.value.copy(message = value) }
@@ -171,13 +197,14 @@ class NodeBrowserViewModel(
 @Composable
 fun NodeBrowserScreen(
     sessionManager: DeviceSessionManager,
+    cache: CacheRepository,
     libraryId: LibraryId,
     rootNodeId: NodeId,
     onBack: () -> Unit,
     viewModel: NodeBrowserViewModel = viewModel(
         factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
-            override fun <T : ViewModel> create(modelClass: Class<T>): T = NodeBrowserViewModel(sessionManager, libraryId, rootNodeId) as T
+            override fun <T : ViewModel> create(modelClass: Class<T>): T = NodeBrowserViewModel(sessionManager, cache, libraryId, rootNodeId) as T
         },
     ),
 ) {
@@ -212,6 +239,7 @@ fun NodeBrowserScreen(
                 Button(onClick = { uploadLauncher.launch(arrayOf("*/*")) }, enabled = !state.loading) { Text("Upload") }
             }
             if (state.loading) CircularProgressIndicator()
+            if (state.showingCachedData) Text("Offline — cached metadata", color = MaterialTheme.colorScheme.tertiary)
             state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if (!state.loading && state.nodes.isEmpty()) Text("This folder is empty.")
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {

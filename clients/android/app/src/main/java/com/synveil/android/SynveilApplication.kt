@@ -9,13 +9,22 @@ import com.synveil.android.core.model.ServerProfile
 import com.synveil.android.data.enrollment.AndroidKeystoreCredentialVault
 import com.synveil.android.data.enrollment.DataStoreEnrollmentMetadataStore
 import com.synveil.android.data.enrollment.EnrollmentManager
+import com.synveil.android.data.enrollment.CredentialCleanupResult
+import com.synveil.android.data.enrollment.CredentialLifecycle
 import com.synveil.android.data.session.DeviceSessionManager
+import com.synveil.android.data.cache.SynveilCacheDatabase
+import com.synveil.android.data.cache.CacheRepository
+import com.synveil.android.data.sync.SyncCoordinator
+import com.synveil.android.work.SyncWorkScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 
 class SynveilApplication : Application() {
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    val cacheDatabase by lazy { SynveilCacheDatabase.create(applicationContext) }
+    val cacheRepository by lazy { CacheRepository(cacheDatabase.cacheDao()) }
 
     private val enrollmentMetadataStore by lazy {
         DataStoreEnrollmentMetadataStore(
@@ -34,7 +43,23 @@ class SynveilApplication : Application() {
     }
 
     val enrollmentManager by lazy {
-        EnrollmentManager(enrollmentMetadataStore, credentialVault)
+        EnrollmentManager(
+            enrollmentMetadataStore,
+            credentialVault,
+            onFenced = { profileId ->
+                cacheRepository.clearProfile(profileId)
+                SyncWorkScheduler.cancelProfile(this, profileId)
+            },
+        )
+    }
+
+    private val cacheAwareCredentialLifecycle by lazy {
+        object : CredentialLifecycle {
+            override suspend fun fence(profileId: String): CredentialCleanupResult {
+                val result = enrollmentManager.fence(profileId)
+                return result
+            }
+        }
     }
 
     val serverProfileRepository by lazy {
@@ -43,7 +68,7 @@ class SynveilApplication : Application() {
                 applicationContext.preferencesDataStoreFile("server_profiles.preferences_pb")
             },
             allowLoopbackTestHttp = BuildConfig.DEBUG,
-            credentialLifecycle = enrollmentManager,
+            credentialLifecycle = cacheAwareCredentialLifecycle,
         )
     }
 
@@ -65,6 +90,18 @@ class SynveilApplication : Application() {
             userAgent = "Synveil Android/${BuildConfig.VERSION_NAME}",
             allowLoopbackTestHttp = BuildConfig.DEBUG,
             scope = applicationScope,
+            cache = cacheRepository,
+        )
+    }
+
+    val syncCoordinator by lazy {
+        SyncCoordinator(
+            profileRepository = serverProfileRepository,
+            metadataStore = enrollmentMetadataStore,
+            vault = credentialVault,
+            cache = cacheRepository,
+            userAgent = "Synveil Android/${BuildConfig.VERSION_NAME}",
+            allowLoopbackTestHttp = BuildConfig.DEBUG,
         )
     }
 

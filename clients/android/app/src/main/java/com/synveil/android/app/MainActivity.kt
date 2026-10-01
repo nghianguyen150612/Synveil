@@ -29,6 +29,7 @@ class MainActivity : ComponentActivity() {
                             transportFactory = (application as SynveilApplication).transportFactory,
                             enrollmentManager = (application as SynveilApplication).enrollmentManager,
                             deviceSessionManager = (application as SynveilApplication).deviceSessionManager,
+                            cache = (application as SynveilApplication).cacheRepository,
                         )
                 }
             }

@@ -20,6 +20,7 @@ import com.synveil.android.data.network.SynveilTransportError
 import com.synveil.android.data.network.TransportTimeouts
 import com.synveil.android.data.transfer.DownloadResult
 import com.synveil.android.data.transfer.UploadResult
+import com.synveil.android.data.cache.CacheRepository
 import com.synveil.android.data.profile.ProfileRepositoryState
 import com.synveil.android.data.profile.ServerProfileRepository
 import kotlinx.coroutines.CoroutineScope
@@ -56,6 +57,7 @@ class DeviceSessionManager(
     private val allowLoopbackTestHttp: Boolean,
     scope: CoroutineScope,
     private val timeouts: TransportTimeouts = TransportTimeouts(),
+    private val cache: CacheRepository? = null,
 ) {
     private val mutableState = MutableStateFlow<DeviceSessionState>(DeviceSessionState.NoProfile)
     val state: StateFlow<DeviceSessionState> = mutableState.asStateFlow()
@@ -95,6 +97,7 @@ class DeviceSessionManager(
         )
         when (val result = authenticated.repository.listLibraries()) {
             is LibraryRepositoryResult.Loaded -> {
+                cache?.upsertLibraries(current.profileId.toString(), result.libraries, java.time.OffsetDateTime.now().toString())
                 mutableState.value = DeviceSessionState.Ready(current.profileId.toString(), current.displayLabel)
                 result
             }
@@ -112,6 +115,7 @@ class DeviceSessionManager(
                 ?: return@withLock NodeRepositoryResult.Failed(NodeFailure.Transport(SynveilTransportError.ConfigurationError))
             when (val result = authenticated.nodeRepository.listChildren(libraryId, parentId)) {
                 is NodeRepositoryResult.Loaded -> {
+                    cache?.upsertNodes(current.profileId.toString(), result.nodes)
                     mutableState.value = DeviceSessionState.Ready(current.profileId.toString(), current.displayLabel)
                     result
                 }
