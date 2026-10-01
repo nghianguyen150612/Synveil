@@ -11,6 +11,14 @@ import com.synveil.android.data.enrollment.EnrollmentRecoveryReason
 import com.synveil.android.data.enrollment.EnrollmentToken
 import com.synveil.android.data.library.LibraryCollectionPage
 import com.synveil.android.data.library.LibraryWireParser
+import com.synveil.android.data.library.LibraryId
+import com.synveil.android.data.library.NodeId
+import com.synveil.android.data.node.NodePage
+import com.synveil.android.data.node.NodeWireParser
+import com.synveil.android.data.transfer.DownloadMetadata
+import com.synveil.android.data.transfer.DownloadResult
+import com.synveil.android.data.transfer.UploadResult
+import com.synveil.android.data.transfer.UploadWireParser
 import java.io.IOException
 import java.net.ConnectException
 import java.net.NoRouteToHostException
@@ -31,6 +39,10 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Response
+
+private val OCTET_STREAM_MEDIA_TYPE = "application/octet-stream".toMediaType()
+private val AUTH_JSON_MEDIA_TYPE = "application/json".toMediaType()
 
 const val MAX_PROBE_RESPONSE_BYTES = 64 * 1024
 const val MAX_ENROLLMENT_RESPONSE_BYTES = 16 * 1024
@@ -74,6 +86,9 @@ enum class ProtocolErrorKind {
     INVALID_HEALTH_STATUS,
     INVALID_ERROR_ENVELOPE,
     INVALID_LIBRARY_RESPONSE,
+    INVALID_NODE_RESPONSE,
+    INVALID_UPLOAD_RESPONSE,
+    INVALID_DOWNLOAD_RESPONSE,
 }
 
 sealed interface ProbeResult {
@@ -485,6 +500,155 @@ class AuthenticatedSynveilTransport internal constructor(
             LibraryPageResult.Failure(mapNetworkTransportError(error))
         }
     }
+
+    fun listNodesPage(libraryId: LibraryId, parentId: NodeId?, cursor: String?): NodePageResult {
+        if (cursor != null && (cursor.isEmpty() || cursor.length > 512)) {
+            return NodePageResult.Failure(SynveilTransportError.ProtocolError(ProtocolErrorKind.INVALID_NODE_RESPONSE))
+        }
+        val url = origin.newBuilder().encodedPath("/api/v1/libraries/${libraryId.value}/nodes")
+            .addQueryParameter("limit", "100")
+            .apply {
+                parentId?.let { addQueryParameter("parent_id", it.value) }
+                cursor?.let { addQueryParameter("cursor", it) }
+            }.build()
+        return try {
+            client.newCall(Request.Builder().url(url).get().authenticatedHeaders(requestUserAgent, bearer).build()).execute().use { response ->
+                if (response.isRedirect) return NodePageResult.Failure(SynveilTransportError.RedirectRejected(response.code))
+                val body = try { readBounded(response.body?.byteStream() ?: return NodePageResult.Failure(SynveilTransportError.MalformedResponse), MAX_LIBRARY_RESPONSE_BYTES) }
+                catch (_: BodyLimitException) { return NodePageResult.Failure(SynveilTransportError.BodyLimitExceeded) }
+                if (!isJsonContentType(response.header("Content-Type"))) return NodePageResult.Failure(SynveilTransportError.UnexpectedContentType(response.header("Content-Type")))
+                val requestId = safeRequestIdHeader(response.header("X-Request-Id"))
+                if (response.code == 200) NodeWireParser.parse(json, body, requestId)
+                else NodePageResult.Failure(parseErrorResponse(json, body, response.code, requestId))
+            }
+        } catch (_: CancellationException) { NodePageResult.Failure(SynveilTransportError.Cancelled) }
+        catch (error: Exception) { NodePageResult.Failure(mapNetworkTransportError(error)) }
+    }
+
+    fun openCurrentContent(nodeId: NodeId, rangeStart: Long? = null): DownloadResult {
+        val url = origin.newBuilder().encodedPath("/api/v1/nodes/${nodeId.value}/content").build()
+        val builder = Request.Builder().url(url).get().authenticatedHeaders(requestUserAgent, bearer)
+        if (rangeStart != null) builder.header("Range", "bytes=$rangeStart-")
+        return try {
+            val response = client.newCall(builder.build()).execute()
+            if (response.isRedirect) {
+                response.close()
+                DownloadResult.Failure(SynveilTransportError.RedirectRejected(response.code))
+            } else if (response.code in setOf(200, 206, 304)) {
+                val metadata = validateDownloadHeaders(response)
+                if (metadata == null) {
+                    response.close()
+                    DownloadResult.Failure(SynveilTransportError.ProtocolError(ProtocolErrorKind.INVALID_DOWNLOAD_RESPONSE))
+                } else {
+                    DownloadResult.Success(response, metadata)
+                }
+            } else {
+                response.use { DownloadResult.Failure(parseErrorResponse(json, boundedBody(it), it.code, safeRequestIdHeader(it.header("X-Request-Id")))) }
+            }
+        } catch (_: CancellationException) {
+            DownloadResult.Failure(SynveilTransportError.Cancelled)
+        } catch (error: Exception) {
+            DownloadResult.Failure(mapNetworkTransportError(error))
+        }
+    }
+
+    fun createUploadSession(requestJson: String): UploadResult =
+        executeUploadJson("/api/v1/upload-sessions", "POST", requestJson.toRequestBody(AUTH_JSON_MEDIA_TYPE))
+
+    fun getUploadSession(sessionId: String): UploadResult =
+        executeUploadJson("/api/v1/upload-sessions/$sessionId", "GET", null)
+
+    fun appendUploadChunk(sessionId: String, offset: Long, chunk: ByteArray): UploadResult {
+        val request = Request.Builder().url(origin.newBuilder().encodedPath("/api/v1/upload-sessions/$sessionId").build())
+            .patch(chunk.toRequestBody(OCTET_STREAM_MEDIA_TYPE))
+            .authenticatedHeaders(requestUserAgent, bearer)
+            .header("Upload-Offset", offset.toString())
+            .build()
+        return executeUploadRequest(request)
+    }
+
+    fun completeUpload(sessionId: String): UploadResult =
+        executeUploadCompletion(sessionId)
+
+    fun abortUpload(sessionId: String): UploadResult =
+        executeUploadJson("/api/v1/upload-sessions/$sessionId/abort", "POST", "{}".toRequestBody(AUTH_JSON_MEDIA_TYPE))
+
+    private fun executeUploadJson(path: String, method: String, body: okhttp3.RequestBody?): UploadResult {
+        val request = Request.Builder().url(origin.newBuilder().encodedPath(path).build())
+            .method(method, body).authenticatedHeaders(requestUserAgent, bearer).build()
+        return executeUploadRequest(request)
+    }
+
+    private fun executeUploadCompletion(sessionId: String): UploadResult {
+        val request = Request.Builder().url(origin.newBuilder().encodedPath("/api/v1/upload-sessions/$sessionId/complete").build())
+            .post("{}".toRequestBody(AUTH_JSON_MEDIA_TYPE)).authenticatedHeaders(requestUserAgent, bearer).build()
+        return try {
+            client.newCall(request).execute().use { response ->
+                if (response.isRedirect) return UploadResult.Failure(SynveilTransportError.RedirectRejected(response.code))
+                val body = response.body?.byteStream()?.let { readBounded(it, MAX_LIBRARY_RESPONSE_BYTES) } ?: ByteArray(0)
+                if (!isJsonContentType(response.header("Content-Type"))) return UploadResult.Failure(SynveilTransportError.UnexpectedContentType(response.header("Content-Type")))
+                if (response.code in 200..299) {
+                    val completion = try { UploadWireParser.parseCompletion(json, body) }
+                    catch (_: Exception) { return UploadResult.Failure(SynveilTransportError.ProtocolError(ProtocolErrorKind.INVALID_UPLOAD_RESPONSE)) }
+                    UploadResult.Completion(completion)
+                } else UploadResult.Failure(parseErrorResponse(json, body, response.code, safeRequestIdHeader(response.header("X-Request-Id"))))
+            }
+        } catch (_: CancellationException) { UploadResult.Failure(SynveilTransportError.Cancelled) }
+        catch (error: Exception) { UploadResult.Failure(mapNetworkTransportError(error)) }
+    }
+
+    private fun executeUploadRequest(request: Request): UploadResult {
+        return try {
+            client.newCall(request).execute().use { response ->
+                if (response.isRedirect) return UploadResult.Failure(SynveilTransportError.RedirectRejected(response.code))
+                val body = response.body?.byteStream()?.let { readBounded(it, MAX_LIBRARY_RESPONSE_BYTES) } ?: ByteArray(0)
+                if (response.code == 204) {
+                    val offset = response.header("Upload-Offset")
+                        ?.takeIf(::isCanonicalUnsignedDecimal)
+                        ?.toLongOrNull()
+                    return UploadResult.Offset(offset)
+                }
+                if (!isJsonContentType(response.header("Content-Type"))) return UploadResult.Failure(SynveilTransportError.UnexpectedContentType(response.header("Content-Type")))
+                if (response.code in 200..299) {
+                    val session = try { UploadWireParser.parse(json, body, response.header("Upload-Offset")) }
+                    catch (_: Exception) { return UploadResult.Failure(SynveilTransportError.ProtocolError(ProtocolErrorKind.INVALID_UPLOAD_RESPONSE)) }
+                    UploadResult.Session(session)
+                }
+                else UploadResult.Failure(parseErrorResponse(json, body, response.code, safeRequestIdHeader(response.header("X-Request-Id"))))
+            }
+        } catch (_: CancellationException) { UploadResult.Failure(SynveilTransportError.Cancelled) }
+        catch (error: Exception) { UploadResult.Failure(mapNetworkTransportError(error)) }
+    }
+
+    private fun boundedBody(response: okhttp3.Response): ByteArray =
+        response.body?.byteStream()?.let { readBounded(it, MAX_LIBRARY_RESPONSE_BYTES) } ?: ByteArray(0)
+
+    private fun validateDownloadHeaders(response: okhttp3.Response): DownloadMetadata? {
+        val length = response.header("Content-Length")?.toLongOrNull()
+        if (response.header("Content-Length") != null && (length == null || length < 0)) return null
+        val contentType = response.header("Content-Type")?.substringBefore(';')?.trim()?.takeIf { it.isNotEmpty() }
+        if (contentType != null && !contentType.contains('/') ) return null
+        val contentRange = response.header("Content-Range")
+        if (response.code == 206) {
+            val match = Regex("bytes ([0-9]+)-([0-9]+)/([0-9]+)").matchEntire(contentRange ?: "") ?: return null
+            val start = match.groupValues[1].toLongOrNull() ?: return null
+            val end = match.groupValues[2].toLongOrNull() ?: return null
+            val total = match.groupValues[3].toLongOrNull() ?: return null
+            if (start > end || end >= total || length != end - start + 1) return null
+        }
+        return DownloadMetadata(length, contentType, response.header("Content-Disposition"), response.header("ETag"), contentRange)
+    }
+}
+
+private fun Request.Builder.authenticatedHeaders(userAgent: String, bearer: String): Request.Builder =
+    header("Accept", "application/json")
+        .header("Accept-Encoding", "identity")
+        .header("User-Agent", userAgent)
+        .header("Authorization", "Bearer $bearer")
+
+sealed interface NodePageResult {
+    data class Success(val page: NodePage) : NodePageResult
+    data class Failure(val error: SynveilTransportError) : NodePageResult
 }
 
 sealed interface LibraryPageResult {
@@ -531,6 +695,9 @@ private fun isJsonContentType(value: String?): Boolean = value
     ?.equals("application/json", ignoreCase = true) == true
 
 private fun safeRequestIdHeader(value: String?): String? = value?.takeIf { REQUEST_ID_PATTERN.matches(it) }
+
+private fun isCanonicalUnsignedDecimal(value: String): Boolean =
+    value.matches(Regex("^(0|[1-9][0-9]*)$"))
 
 private fun readBounded(input: java.io.InputStream, maximumBytes: Int): ByteArray {
     input.use { stream ->

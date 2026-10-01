@@ -2,11 +2,10 @@
 
 ## Status
 
-Prompt 5 adds authenticated DeviceBearer library discovery on top of the
-verified Prompt 4 enrollment vault. The app can run the canonical health
-probes, enroll a device, derive a profile-bound authenticated context, and
-list the owner's libraries. Synchronization, uploads, and file browsing remain
-future milestones.
+Prompts 5–8 add authenticated DeviceBearer library discovery, logical
+file/folder browsing, streaming download, SAF save/open/share, and foreground
+resumable file-creation uploads on top of the verified Prompt 4 enrollment
+vault. Synchronization and background transfer remain future milestones.
 
 ## Stack and targets
 
@@ -30,6 +29,8 @@ app/src/main/java/com/synveil/android/
 ├── core/ui/             # Theme and shared Compose UI foundation
 ├── data/network/        # Profile-bound HTTP transport and auth protocol
 ├── data/library/        # Strict library catalog wire/domain models
+├── data/node/           # Strict logical node models and child pagination
+├── data/transfer/       # Streaming download and resumable upload operations
 ├── data/session/        # Profile-bound DeviceBearer session coordinator
 ├── data/profile/        # DataStore-backed profile repository and schema
 └── feature/
@@ -164,7 +165,7 @@ inferred from that timestamp.
 the active profile's non-secret enrollment metadata and Android Keystore vault
 record agree on profile, origin, transport, owner, Device, and credential
 scope. It sends exactly one `Authorization: Bearer svd1_...` header on
-profile-derived `/api/v1/libraries` requests. The bearer is never placed in a
+profile-derived library, node, download, and upload-session requests. The bearer is never placed in a
 Compose state object, navigation argument, DataStore value, log, cookie, CSRF
 header, or process-wide OkHttp default. Kotlin/JVM strings cannot guarantee
 zeroization, so the implementation limits secret copies and lifetime instead
@@ -182,13 +183,35 @@ re-enrolled.
 
 The application-level device session means the currently usable enrolled
 profile context; it is not a browser login session. Browser cookies and CSRF
-are intentionally unsupported for this feature. The Libraries screen is
-foreground-only and has an explicit refresh action. It displays library name
-and status metadata only; node and file browsing are not implemented.
+are intentionally unsupported for DeviceBearer requests. The library and
+browser screens are foreground-only and use explicit refresh/actions. Child
+listing is an owner-scoped DeviceBearer read; mixed cookie and bearer
+authentication is rejected by the server.
+
+## File browsing and transfers
+
+The browser loads one logical directory at a time through
+`GET /api/v1/libraries/{library_id}/nodes`, with strict node parsing, opaque
+cursor validation, and finite page/item budgets. Node names are logical
+metadata and are never interpreted as host filesystem paths.
+
+Current file content is streamed from `GET /api/v1/nodes/{node_id}/content`
+directly into a user-selected Storage Access Framework destination. Saved
+content is reopened and shared only as a `content://` URI with temporary read
+permission; no `file://` URI or broad storage permission is used.
+
+File-creation uploads use `ACTION_OPEN_DOCUMENT`, stage the selected stream in
+app-private cache storage to obtain exact size/hash and enable random access,
+then create one idempotent `CREATE_FILE` upload session and append 4 MiB raw
+chunks. The server's `Upload-Offset` is authoritative. After an ambiguous
+PATCH, the client reads session status and resumes from the confirmed offset;
+it never blindly replays a chunk. Transfers remain foreground/lifecycle-
+managed; there is no WorkManager, foreground service, background scheduler,
+offline transfer queue, or automatic sync.
 
 ## Unsupported features and next milestone
 
-Sync, uploads, backups, node/file browsing, background work, and production
+Sync, backups, replace-content editing, background work, and production
 signing remain unsupported. Prompt 4 includes JVM transport/lifecycle tests and a real
 AndroidKeyStore instrumentation test for encrypted persistence, recreation,
 scope fencing, malformed ciphertext, missing keys, and deletion. Runtime smoke

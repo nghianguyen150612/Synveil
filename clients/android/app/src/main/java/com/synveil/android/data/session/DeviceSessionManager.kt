@@ -10,9 +10,16 @@ import com.synveil.android.data.enrollment.SecureCredentialVault
 import com.synveil.android.data.library.AuthenticatedLibraryRepository
 import com.synveil.android.data.library.LibraryFailure
 import com.synveil.android.data.library.LibraryRepositoryResult
+import com.synveil.android.data.library.LibraryId
+import com.synveil.android.data.library.NodeId
+import com.synveil.android.data.node.AuthenticatedNodeRepository
+import com.synveil.android.data.node.NodeFailure
+import com.synveil.android.data.node.NodeRepositoryResult
 import com.synveil.android.data.network.AuthenticatedSynveilTransport
 import com.synveil.android.data.network.SynveilTransportError
 import com.synveil.android.data.network.TransportTimeouts
+import com.synveil.android.data.transfer.DownloadResult
+import com.synveil.android.data.transfer.UploadResult
 import com.synveil.android.data.profile.ProfileRepositoryState
 import com.synveil.android.data.profile.ServerProfileRepository
 import kotlinx.coroutines.CoroutineScope
@@ -98,6 +105,28 @@ class DeviceSessionManager(
         }
     }
 
+    suspend fun listChildren(libraryId: LibraryId, parentId: NodeId?): NodeRepositoryResult =
+        refreshMutex.withLock {
+            val current = activeProfile() ?: return@withLock NodeRepositoryResult.Failed(NodeFailure.Transport(SynveilTransportError.ConfigurationError))
+            val authenticated = authenticatedContext(current)
+                ?: return@withLock NodeRepositoryResult.Failed(NodeFailure.Transport(SynveilTransportError.ConfigurationError))
+            when (val result = authenticated.nodeRepository.listChildren(libraryId, parentId)) {
+                is NodeRepositoryResult.Loaded -> {
+                    mutableState.value = DeviceSessionState.Ready(current.profileId.toString(), current.displayLabel)
+                    result
+                }
+                is NodeRepositoryResult.Failed -> {
+                    updateNodeFailureState(current, result.failure)
+                    result
+                }
+            }
+        }
+
+    suspend fun authenticatedTransport(): AuthenticatedSynveilTransport? {
+        val profile = activeProfile() ?: return null
+        return authenticatedContext(profile)?.transport
+    }
+
     private suspend fun authenticatedContext(profile: ServerProfile): AuthenticatedContext? = contextMutex.withLock {
         val profileId = profile.profileId.toString()
         context?.takeIf {
@@ -148,6 +177,8 @@ class DeviceSessionManager(
             canonicalBaseUrl = profile.canonicalBaseUrl.value,
             transportPolicy = profile.transportPolicy.name,
             repository = AuthenticatedLibraryRepository(transport::listLibrariesPage),
+            nodeRepository = AuthenticatedNodeRepository(transport::listNodesPage),
+            transport = transport,
         ).also { context = it }
     }
 
@@ -187,11 +218,35 @@ class DeviceSessionManager(
         }
     }
 
+    private fun updateNodeFailureState(profile: ServerProfile, failure: NodeFailure) {
+        val profileId = profile.profileId.toString()
+        mutableState.value = when (failure) {
+            is NodeFailure.Transport -> when (val error = failure.error) {
+                is SynveilTransportError.HttpError -> when {
+                    error.statusCode == 401 && error.code == "authentication_failed" -> DeviceSessionState.AuthenticationRequired(profileId, profile.displayLabel)
+                    error.statusCode == 401 && error.code == "device_revoked" -> DeviceSessionState.DeviceRevoked(profileId, profile.displayLabel)
+                    error.statusCode == 503 -> DeviceSessionState.ServerUnavailable(profileId, profile.displayLabel)
+                    else -> DeviceSessionState.ProtocolError(profileId, profile.displayLabel)
+                }
+                SynveilTransportError.TlsError -> DeviceSessionState.TlsError(profileId, profile.displayLabel)
+                SynveilTransportError.Offline,
+                SynveilTransportError.DnsFailure,
+                SynveilTransportError.Timeout -> DeviceSessionState.ServerUnavailable(profileId, profile.displayLabel)
+                else -> DeviceSessionState.ProtocolError(profileId, profile.displayLabel)
+            }
+            NodeFailure.ResourceLimit,
+            NodeFailure.RepeatedCursor,
+            NodeFailure.InvalidScope -> DeviceSessionState.ProtocolError(profileId, profile.displayLabel)
+        }
+    }
+
     private data class AuthenticatedContext(
         val profileId: String,
         val canonicalBaseUrl: String,
         val transportPolicy: String,
         val repository: AuthenticatedLibraryRepository,
+        val nodeRepository: AuthenticatedNodeRepository,
+        val transport: AuthenticatedSynveilTransport,
     )
 }
 

@@ -21,6 +21,9 @@ import com.synveil.android.data.enrollment.EnrollmentManager
 import com.synveil.android.feature.enrollment.EnrollmentScreen
 import com.synveil.android.data.session.DeviceSessionManager
 import com.synveil.android.feature.library.LibraryScreen
+import com.synveil.android.feature.library.NodeBrowserScreen
+import com.synveil.android.data.library.LibraryId
+import com.synveil.android.data.library.NodeId
 
 private const val HomeRoute = "home"
 private const val ProfilesRoute = "profiles"
@@ -28,6 +31,7 @@ private const val ProfileEditorRoute = "profiles/editor"
 private const val ProfileIdArgument = "profileId"
 private const val EnrollmentRoute = "enrollment"
 private const val LibrariesRoute = "libraries"
+private const val LibraryBrowserRoute = "libraries/{libraryId}/{rootNodeId}"
 
 @Composable
 fun SynveilNavHost(
@@ -56,7 +60,30 @@ fun SynveilNavHost(
             LibraryScreen(
                 sessionManager = deviceSessionManager,
                 onBack = navController::popBackStack,
+                onOpenLibrary = { library ->
+                    navController.navigate("libraries/${library.id.value}/${library.rootNodeId.value}")
+                },
             )
+        }
+        composable(
+            LibraryBrowserRoute,
+            arguments = listOf(
+                navArgument("libraryId") { type = NavType.StringType },
+                navArgument("rootNodeId") { type = NavType.StringType },
+            ),
+        ) { entry ->
+            val libraryId = entry.arguments?.getString("libraryId")?.let(LibraryId::parse)
+            val rootNodeId = entry.arguments?.getString("rootNodeId")?.let(NodeId::parse)
+            if (libraryId == null || rootNodeId == null) {
+                Text("The library identity was invalid.")
+            } else {
+                NodeBrowserScreen(
+                    sessionManager = deviceSessionManager,
+                    libraryId = libraryId,
+                    rootNodeId = rootNodeId,
+                    onBack = navController::popBackStack,
+                )
+            }
         }
         composable(ProfilesRoute) {
             ServerProfilesScreen(

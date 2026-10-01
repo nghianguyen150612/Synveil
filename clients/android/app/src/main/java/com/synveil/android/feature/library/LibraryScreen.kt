@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
@@ -85,6 +86,7 @@ class LibraryViewModel(
 fun LibraryScreen(
     sessionManager: DeviceSessionManager,
     onBack: () -> Unit,
+    onOpenLibrary: (Library) -> Unit,
     viewModel: LibraryViewModel = viewModel(
         factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
@@ -119,7 +121,7 @@ fun LibraryScreen(
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(uiState.libraries, key = { it.id.value }) { library ->
-                        LibraryRow(library)
+                        LibraryRow(library, onClick = { onOpenLibrary(library) })
                     }
                 }
             }
@@ -127,7 +129,7 @@ fun LibraryScreen(
                 Text("Load libraries")
             }
             Text(
-                "Library rows are metadata only. File and node browsing arrives in a later milestone.",
+                "Open a library to browse its logical folders and files.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -155,8 +157,8 @@ private fun SessionStatus(state: DeviceSessionState) {
 }
 
 @Composable
-private fun LibraryRow(library: Library) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+private fun LibraryRow(library: Library, onClick: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,

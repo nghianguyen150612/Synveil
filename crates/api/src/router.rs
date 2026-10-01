@@ -67,10 +67,17 @@ pub fn router(state: ApiState) -> Router {
             auth::require_inbound_authentication,
         ))
         .with_state(state.clone());
+    let protected_file_listing = Router::new()
+        .route("/libraries/{library_id}/nodes", get(files::list_children))
+        .layer(from_fn_with_state(
+            state.clone(),
+            auth::require_inbound_authentication,
+        ))
+        .with_state(state.clone());
     let protected_files = Router::new()
         .route(
             "/libraries/{library_id}/nodes",
-            get(files::list_children).post(files::create_directory),
+            post(files::create_directory),
         )
         .route("/nodes/{node_id}", axum::routing::patch(files::update_node))
         .route("/nodes/{node_id}/trash", post(files::delete_node))
@@ -417,6 +424,7 @@ pub fn router(state: ApiState) -> Router {
     // bounded by the upload application's configured chunk limit.
     let api = api
         .merge(protected_library_catalog)
+        .merge(protected_file_listing)
         .merge(protected_files)
         .layer(RequestBodyLimitLayer::new(state.body_limit_bytes()))
         .merge(protected_downloads)

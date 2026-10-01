@@ -2247,8 +2247,11 @@ paths:
       summary: List active direct children under a library root or directory
       x-synveil-status: IMPLEMENTED
       x-synveil-owner: Metadata / Rust Backend
+      x-synveil-auth-classes: [BROWSER_SESSION, DEVICE_CREDENTIAL]
+      x-synveil-device-auth: Same authenticated Device on scoped routes; active owner, Device and credential checked on every request. Mixed Cookie and Authorization are rejected. This is a read-only metadata route and does not require CSRF.
       security:
         - BrowserSession: []
+        - DeviceBearer: []
       parameters:
         - $ref: '#/components/parameters/LibraryId'
         - $ref: '#/components/parameters/ParentId'

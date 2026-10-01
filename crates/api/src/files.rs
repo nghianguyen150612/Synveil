@@ -286,7 +286,7 @@ pub(crate) async fn create_library(
 
 pub(crate) async fn list_children(
     State(state): State<ApiState>,
-    Extension(auth): Extension<AuthContext>,
+    Extension(auth): Extension<AuthenticatedPrincipal>,
     Extension(context): Extension<RequestContext>,
     Path(library_id): Path<String>,
     Query(query): Query<ChildrenQuery>,
@@ -301,13 +301,7 @@ pub(crate) async fn list_children(
         .transpose()?;
     let page = state
         .file_metadata_backend()
-        .list_children(
-            auth.principal().user_id(),
-            library_id,
-            parent_id,
-            cursor,
-            limit,
-        )
+        .list_children(auth.owner_user_id(), library_id, parent_id, cursor, limit)
         .await
         .map_err(|error| map_file_error(error, None, state.etag_key()))?;
     Ok(Json(node_page_response(
