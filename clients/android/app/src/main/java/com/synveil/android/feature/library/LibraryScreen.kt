@@ -33,6 +33,10 @@ import com.synveil.android.data.library.Library
 import com.synveil.android.data.library.LibraryFailure
 import com.synveil.android.data.library.LibraryRepositoryResult
 import com.synveil.android.data.cache.CacheRepository
+import com.synveil.android.data.connectivity.ConnectivityObserver
+import com.synveil.android.data.connectivity.ConnectivityStatus
+import com.synveil.android.data.connectivity.UnknownConnectivityObserver
+import com.synveil.android.data.connectivity.connectivityStatusMessage
 import com.synveil.android.data.session.DeviceSessionManager
 import com.synveil.android.data.session.DeviceSessionState
 import com.synveil.android.work.SyncWorkScheduler
@@ -54,6 +58,7 @@ data class LibraryUiState(
     val message: String? = null,
     val showingCachedData: Boolean = false,
     val syncStates: Map<String, String> = emptyMap(),
+    val connectivity: ConnectivityStatus = ConnectivityStatus.UNKNOWN,
 )
 
 private fun DeviceSessionState.profileIdOrNull(): String? = when (this) {
@@ -74,12 +79,18 @@ private fun DeviceSessionState.profileIdOrNull(): String? = when (this) {
 class LibraryViewModel(
     private val sessionManager: DeviceSessionManager,
     private val cache: CacheRepository,
+    private val connectivity: ConnectivityObserver = UnknownConnectivityObserver,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(LibraryUiState())
     val uiState: StateFlow<LibraryUiState> = mutableState.asStateFlow()
     private var cacheJob: Job? = null
 
     init {
+        viewModelScope.launch {
+            connectivity.status.collect { status ->
+                mutableState.value = mutableState.value.copy(connectivity = status)
+            }
+        }
         viewModelScope.launch {
             sessionManager.state.collectLatest { session ->
                 mutableState.value = mutableState.value.copy(session = session)
@@ -88,7 +99,7 @@ class LibraryViewModel(
                 if (profileId != null) {
                     cacheJob = launch {
                         cache.observeLibraries(profileId).collect { libraries ->
-                            if (libraries.isNotEmpty() && !mutableState.value.isLoading) {
+                            if (libraries.isNotEmpty()) {
                                 mutableState.value = mutableState.value.copy(
                                     libraries = libraries,
                                     showingCachedData = true,
@@ -112,6 +123,13 @@ class LibraryViewModel(
     fun refresh() {
         if (mutableState.value.isLoading) return
         viewModelScope.launch {
+            if (mutableState.value.connectivity == ConnectivityStatus.OFFLINE) {
+                mutableState.value = mutableState.value.copy(
+                    message = "Offline — showing cached metadata. Reconnect and retry.",
+                    showingCachedData = mutableState.value.libraries.isNotEmpty(),
+                )
+                return@launch
+            }
             mutableState.value = mutableState.value.copy(isLoading = true, message = null)
             val result = withContext(Dispatchers.IO) { sessionManager.listLibraries() }
             mutableState.value = when (result) {
@@ -151,11 +169,12 @@ fun LibraryScreen(
     cache: CacheRepository,
     onBack: () -> Unit,
     onOpenLibrary: (Library) -> Unit,
+    connectivityObserver: ConnectivityObserver = UnknownConnectivityObserver,
     viewModel: LibraryViewModel = viewModel(
         factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                LibraryViewModel(sessionManager, cache) as T
+                LibraryViewModel(sessionManager, cache, connectivityObserver) as T
         },
     ),
 ) {
@@ -192,6 +211,7 @@ fun LibraryScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             SessionStatus(uiState.session)
+            ConnectivityStatusText(uiState.connectivity)
             if (uiState.showingCachedData) {
                 Text("Offline — cached metadata", color = MaterialTheme.colorScheme.tertiary)
             }
@@ -221,6 +241,11 @@ fun LibraryScreen(
             )
         }
     }
+}
+
+@Composable
+private fun ConnectivityStatusText(status: ConnectivityStatus) {
+    Text(connectivityStatusMessage(status), style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable

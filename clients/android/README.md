@@ -24,6 +24,8 @@ not claim a live production-server synchronization run.
 - AndroidX Preferences DataStore with a versioned kotlinx.serialization JSON
   representation for small local application configuration.
 - `compileSdk = 36` and `targetSdk = 36` for the Android 16 baseline.
+- `INTERNET` and `ACCESS_NETWORK_STATE` are the only normal runtime-independent
+  permissions; network state is used only for bounded offline/cache messaging.
 - Samsung One UI 8.5 is a compatibility target, not a proprietary dependency.
 - Pre-release namespace and application ID are both `com.synveil.android`.
 
@@ -220,6 +222,13 @@ Library and browser rows expose screen-reader descriptions, explicit refresh,
 root/up breadcrumbs, cached/offline banners, pending mutation counts, and
 actionable transfer/recovery messages. No UI action creates a browser-session
 conflict request or silently chooses a conflict winner.
+
+Foreground library and browser refreshes observe Android connectivity without
+changing canonical-origin or TLS policy. Offline state never triggers an
+unbounded retry loop: cached metadata is shown immediately when available and
+the user explicitly retries after reconnecting. Connectivity diagnostics carry
+only the coarse `UNKNOWN`, `ONLINE`, or `OFFLINE` state and no profile secret,
+credential, cookie, or server response body.
 
 Current file content is streamed from `GET /api/v1/nodes/{node_id}/content`
 directly into a user-selected Storage Access Framework destination. Saved

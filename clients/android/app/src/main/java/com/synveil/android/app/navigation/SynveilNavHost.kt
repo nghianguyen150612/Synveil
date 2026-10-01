@@ -27,6 +27,7 @@ import com.synveil.android.feature.library.NodeBrowserScreen
 import com.synveil.android.data.library.LibraryId
 import com.synveil.android.data.library.NodeId
 import com.synveil.android.data.cache.CacheRepository
+import com.synveil.android.data.connectivity.ConnectivityObserver
 
 private const val HomeRoute = "home"
 private const val ProfilesRoute = "profiles"
@@ -44,6 +45,7 @@ fun SynveilNavHost(
     deviceSessionManager: DeviceSessionManager,
     cache: CacheRepository,
     syncSettingsStore: SyncSettingsStore,
+    connectivityObserver: ConnectivityObserver,
     modifier: Modifier = Modifier,
 ) {
     val navController = rememberNavController()
@@ -76,6 +78,7 @@ fun SynveilNavHost(
             LibraryScreen(
                 sessionManager = deviceSessionManager,
                 cache = cache,
+                connectivityObserver = connectivityObserver,
                 onBack = navController::popBackStack,
                 onOpenLibrary = { library ->
                     navController.navigate("libraries/${library.id.value}/${library.rootNodeId.value}")
@@ -103,6 +106,7 @@ fun SynveilNavHost(
                     libraryId = libraryId,
                     rootNodeId = rootNodeId,
                     onBack = navController::popBackStack,
+                    connectivityObserver = connectivityObserver,
                 )
             }
         }

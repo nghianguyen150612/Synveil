@@ -31,6 +31,7 @@ class MainActivity : ComponentActivity() {
                             deviceSessionManager = (application as SynveilApplication).deviceSessionManager,
                             cache = (application as SynveilApplication).cacheRepository,
                             syncSettingsStore = (application as SynveilApplication).syncSettingsStore,
+                            connectivityObserver = (application as SynveilApplication).connectivityObserver,
                         )
                 }
             }

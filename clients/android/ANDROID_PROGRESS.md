@@ -9,8 +9,8 @@ milestone at a time.
 - Accepted checkpoint: `18da4d20fd7cc55107e17c8b297cd9218c679750`
 - Branch: `android-app`
 - P1-P18A: `COMPLETE`
-- Current implementation state: P19 onboarding/session/recovery UX is complete;
-  P20 is the next implementation milestone.
+- Current implementation state: P21 offline-first cache/connectivity/recovery
+  UX is complete; P22 is the next implementation milestone.
 
 ## Milestone Ledger
 
@@ -36,9 +36,9 @@ milestone at a time.
 | P18 | COMPLETE | `18da4d2` | `18da4d2` | `test(android): harden bidirectional sync recovery` | `SYNVEIL_ANDROID_P18_READY` | Accepted checkpoint history; deterministic fault matrices and stress workloads | None recorded |
 | P18A | COMPLETE | `18da4d2` | `18da4d2` | `test(android): harden bidirectional sync recovery` | `SYNVEIL_ANDROID_P18A_READY` | Accepted checkpoint history; synchronization, crash-safety, and scope-lock hardening | None recorded |
 | P19 | COMPLETE | `18da4d20fd7cc55107e17c8b297cd9218c679750` | `034be60` | `feat(android): complete onboarding and recovery UX` | `SYNVEIL_ANDROID_P19_READY` | `./gradlew test` and `./gradlew lint` pass with local JDK 21; 11 API 36 connected tests pass; debug APK installs and launches after force-stop/relaunch; UI hierarchy contains no credential material; startup/session, enrollment recovery, redaction, profile-scope, and stale-session isolation tests pass | Dedicated API 36 AVD required relocation to `/mnt/e` because root filesystem had 4.5 GiB free versus 7.3 GiB userdata requirement; no product gate skipped |
-| P20 | COMPLETE | `034be60` | `PENDING_COMMIT_SHA` | `feat(android): complete file-management and metadata UX` | `SYNVEIL_ANDROID_P20_READY` | `./gradlew test` and `./gradlew lint` pass after browser/restore/accessibility changes; `LibraryPresentationTest` passes; 11 API 36 connected tests pass after emulator package-install recovery; active and trashed nodes remain visible, trash is confirmation-gated, and SAF/transfer state messages are covered | Full owner-server browse/metadata smoke requires a deterministic authenticated server fixture; protocol, SAF, transfer, mutation, and connected Android gates executed where available |
-| P21 | NEXT | After P20 | — | — | `SYNVEIL_ANDROID_P21_READY` | Not started; waiting for P20 | None recorded |
-| P22 | PENDING | After P21 | — | — | `SYNVEIL_ANDROID_P22_READY` | Not started; waiting for P21 | None recorded |
+| P20 | COMPLETE | `034be60` | `00f21a7` | `feat(android): complete file-management and metadata UX` | `SYNVEIL_ANDROID_P20_READY` | `./gradlew test` and `./gradlew lint` pass after browser/restore/accessibility changes; `LibraryPresentationTest` passes; 11 API 36 connected tests pass after emulator package-install recovery; active and trashed nodes remain visible, trash is confirmation-gated, and SAF/transfer state messages are covered | Full owner-server browse/metadata smoke requires a deterministic authenticated server fixture; protocol, SAF, transfer, mutation, and connected Android gates executed where available |
+| P21 | COMPLETE | `00f21a7` | `PENDING_COMMIT_SHA` | `feat(android): add offline-first connectivity recovery` | `SYNVEIL_ANDROID_P21_READY` | `./gradlew test` and `./gradlew lint` pass; `ConnectivityObserverTest` covers status presentation and offline-to-online transitions; 11 API 36 connected tests pass on API 36; library/browser cache-first paths show bounded offline state and explicit retry without changing TLS/origin/auth behavior | Airplane-mode UI with an authenticated owner server was not available in the local fixture; host cache/connectivity, protocol, and connected gates executed with no emulator gate suppressed |
+| P22 | NEXT | After P21 | — | — | `SYNVEIL_ANDROID_P22_READY` | Not started; waiting for P21 | None recorded |
 | P23 | PENDING | After P22 | — | — | `SYNVEIL_ANDROID_P23_READY` | Not started; waiting for P22 | None recorded |
 | P24 | PENDING | After P23 | — | — | `SYNVEIL_ANDROID_P24_READY` | Not started; waiting for P23 | None recorded |
 | P25 | PENDING | After P24 | — | — | `SYNVEIL_ANDROID_P25_READY` | Not started; waiting for P24 | None recorded |
@@ -47,8 +47,8 @@ milestone at a time.
 
 ## Durable Invariants
 
-- Exactly one unfinished milestone is `NEXT`: P21.
-- Every later milestone after P21 is `PENDING`; no later milestone is `IN PROGRESS`
+- Exactly one unfinished milestone is `NEXT`: P22.
+- Every later milestone after P22 is `PENDING`; no later milestone is `IN PROGRESS`
   or `COMPLETE`.
 - P1-P18A remain `COMPLETE` at the accepted checkpoint.
 - A completion SHA, focused commit subject, validation evidence, and clean

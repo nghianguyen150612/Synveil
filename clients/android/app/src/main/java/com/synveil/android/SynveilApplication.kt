@@ -14,6 +14,7 @@ import com.synveil.android.data.enrollment.CredentialLifecycle
 import com.synveil.android.data.session.DeviceSessionManager
 import com.synveil.android.data.cache.SynveilCacheDatabase
 import com.synveil.android.data.cache.CacheRepository
+import com.synveil.android.data.connectivity.SystemConnectivityObserver
 import com.synveil.android.data.sync.SyncCoordinator
 import com.synveil.android.work.SyncWorkScheduler
 import com.synveil.android.data.settings.SyncSettingsStore
@@ -43,6 +44,7 @@ class SynveilApplication : Application() {
     val cacheDatabase by lazy { SynveilCacheDatabase.create(applicationContext) }
     val cacheRepository by lazy { CacheRepository(cacheDatabase.cacheDao()) }
     val syncSettingsStore by lazy { SyncSettingsStore(applicationContext) }
+    val connectivityObserver by lazy { SystemConnectivityObserver(applicationContext) }
 
     private val enrollmentMetadataStore by lazy {
         DataStoreEnrollmentMetadataStore(

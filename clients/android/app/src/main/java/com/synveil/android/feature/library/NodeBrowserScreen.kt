@@ -42,6 +42,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.synveil.android.data.library.LibraryId
 import com.synveil.android.data.library.NodeId
 import com.synveil.android.data.cache.CacheRepository
+import com.synveil.android.data.connectivity.ConnectivityObserver
+import com.synveil.android.data.connectivity.ConnectivityStatus
+import com.synveil.android.data.connectivity.UnknownConnectivityObserver
 import com.synveil.android.data.node.Node
 import com.synveil.android.data.node.NodeFailure
 import com.synveil.android.data.node.NodeRepositoryResult
@@ -75,6 +78,7 @@ data class NodeBrowserUiState(
     val lastSavedMime: String? = null,
     val showingCachedData: Boolean = false,
     val pendingOperations: Int = 0,
+    val connectivity: ConnectivityStatus = ConnectivityStatus.UNKNOWN,
 )
 
 class NodeBrowserViewModel(
@@ -82,12 +86,18 @@ class NodeBrowserViewModel(
     private val cache: CacheRepository,
     private val libraryId: LibraryId,
     private val rootNodeId: NodeId,
+    private val connectivity: ConnectivityObserver = UnknownConnectivityObserver,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(NodeBrowserUiState())
     val uiState: StateFlow<NodeBrowserUiState> = mutableState.asStateFlow()
     private var transferJob: Job? = null
 
     init {
+        viewModelScope.launch {
+            connectivity.status.collect { status ->
+                mutableState.value = mutableState.value.copy(connectivity = status)
+            }
+        }
         viewModelScope.launch {
             sessionManager.state.collect { session -> mutableState.value = mutableState.value.copy(session = session) }
         }
@@ -236,6 +246,18 @@ class NodeBrowserViewModel(
             if (cached.isNotEmpty()) {
                 mutableState.value = mutableState.value.copy(nodes = cached, showingCachedData = true)
             }
+            if (mutableState.value.connectivity == ConnectivityStatus.OFFLINE) {
+                mutableState.value = mutableState.value.copy(
+                    loading = false,
+                    message = if (cached.isNotEmpty()) {
+                        "Offline — showing cached metadata. Reconnect and retry."
+                    } else {
+                        "Offline — no cached metadata is available. Reconnect and retry."
+                    },
+                    showingCachedData = cached.isNotEmpty(),
+                )
+                return@launch
+            }
             val result = withContext(Dispatchers.IO) { sessionManager.listChildren(libraryId, parent) }
             mutableState.value = when (result) {
                 is NodeRepositoryResult.Loaded -> mutableState.value.copy(nodes = result.nodes, loading = false, showingCachedData = false)
@@ -270,10 +292,11 @@ fun NodeBrowserScreen(
     libraryId: LibraryId,
     rootNodeId: NodeId,
     onBack: () -> Unit,
+    connectivityObserver: ConnectivityObserver = UnknownConnectivityObserver,
     viewModel: NodeBrowserViewModel = viewModel(
         factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
-            override fun <T : ViewModel> create(modelClass: Class<T>): T = NodeBrowserViewModel(sessionManager, cache, libraryId, rootNodeId) as T
+            override fun <T : ViewModel> create(modelClass: Class<T>): T = NodeBrowserViewModel(sessionManager, cache, libraryId, rootNodeId, connectivityObserver) as T
         },
     ),
 ) {
@@ -315,6 +338,14 @@ fun NodeBrowserScreen(
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(state.breadcrumbs.joinToString(" / ") { it.label }.ifEmpty { "Library root" }, style = MaterialTheme.typography.titleMedium)
+            Text(
+                when (state.connectivity) {
+                    ConnectivityStatus.UNKNOWN -> "Network status unavailable"
+                    ConnectivityStatus.ONLINE -> "Online"
+                    ConnectivityStatus.OFFLINE -> "Offline — cached metadata only; retry is explicit."
+                },
+                style = MaterialTheme.typography.bodySmall,
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { uploadLauncher.launch(arrayOf("*/*")) }, enabled = !state.loading) { Text("Upload") }
                 Button(onClick = { folderText = ""; createFolder = true }, enabled = !state.loading) { Text("New folder") }
