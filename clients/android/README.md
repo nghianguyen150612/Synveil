@@ -236,11 +236,15 @@ content is reopened and shared only as a `content://` URI with temporary read
 permission; no `file://` URI or broad storage permission is used.
 
 File-creation uploads use `ACTION_OPEN_DOCUMENT`, stage the selected stream in
-app-private cache storage to obtain exact size/hash and enable random access,
-then create one idempotent `CREATE_FILE` upload session and append 4 MiB raw
-chunks. The server's `Upload-Offset` is authoritative. After an ambiguous
+app-private `transfer-staging` storage to obtain exact size/hash and enable
+random access, then create one idempotent `CREATE_FILE` upload session and
+append 4 MiB raw chunks. Staging is bounded to 512 MiB with a 64 MiB free-space
+reserve; quota and low-storage failures are deterministic and do not send a
+request. The server's `Upload-Offset` is authoritative. After an ambiguous
 PATCH, the client reads session status and resumes from the confirmed offset;
-it never blindly replays a chunk. Transfers remain foreground/lifecycle-
+it never blindly replays a chunk. Transfer staging contains only bytes, while
+Room stores bounded operation metadata and verified hash/length/offset fields,
+never file bytes or bearer material. Transfers remain foreground/lifecycle-
 managed and are separate from metadata synchronization.
 
 ## Durable metadata cache and synchronization

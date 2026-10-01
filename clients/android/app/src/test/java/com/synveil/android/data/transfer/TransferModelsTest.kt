@@ -37,6 +37,19 @@ class TransferModelsTest {
         assertEquals("a".repeat(64), completion.sha256)
     }
 
+    @Test
+    fun stagingCapacityRejectsQuotaAndLowSpaceWithoutUnboundedGrowth() {
+        assertEquals(
+            TransferRejectionReason.STAGING_QUOTA_EXCEEDED,
+            stagingRejectionReason(MAX_STAGING_BYTES - 1, 2, MIN_STAGING_FREE_BYTES + 2),
+        )
+        assertEquals(
+            TransferRejectionReason.INSUFFICIENT_STORAGE,
+            stagingRejectionReason(0, 1, MIN_STAGING_FREE_BYTES),
+        )
+        assertEquals(null, stagingRejectionReason(0, 1, MIN_STAGING_FREE_BYTES + 1))
+    }
+
     private fun sessionJson(): String =
         """{"data":{"id":"018bcfe5-687b-7001-8203-040506070814","type":"upload_session","attributes":{"operation":"CREATE_FILE","state":"OPEN","received_bytes":"5","expected_bytes":"10","created_at":"2026-09-30T00:00:00Z","updated_at":"2026-09-30T00:00:00Z","expires_at":"2026-09-30T01:00:00Z","target":{"operation":"CREATE_FILE","library_id":"018bcfe5-687b-7001-8203-040506070810","parent_id":"018bcfe5-687b-7001-8203-040506070811","node_id":"018bcfe5-687b-7001-8203-040506070812","name":"report.txt"}}},"meta":{"request_id":"request-01"}}"""
 

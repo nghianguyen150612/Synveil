@@ -39,7 +39,28 @@ sealed interface TransferResult {
     data class Saved(val bytes: Long, val uri: Uri) : TransferResult
     data class Uploaded(val completion: UploadCompletion) : TransferResult
     data class Failed(val error: SynveilTransportError) : TransferResult
+    data class Rejected(val reason: TransferRejectionReason) : TransferResult
     data object Cancelled : TransferResult
+}
+
+enum class TransferRejectionReason {
+    STAGING_QUOTA_EXCEEDED,
+    INSUFFICIENT_STORAGE,
+    SOURCE_UNAVAILABLE,
+}
+
+const val MAX_STAGING_BYTES: Long = 512L * 1024L * 1024L
+const val MIN_STAGING_FREE_BYTES: Long = 64L * 1024L * 1024L
+
+internal fun stagingRejectionReason(
+    existingBytes: Long,
+    incomingBytes: Long,
+    availableBytes: Long,
+): TransferRejectionReason? = when {
+    existingBytes < 0L || incomingBytes < 0L || availableBytes < 0L -> TransferRejectionReason.INSUFFICIENT_STORAGE
+    existingBytes + incomingBytes > MAX_STAGING_BYTES -> TransferRejectionReason.STAGING_QUOTA_EXCEEDED
+    availableBytes < incomingBytes + MIN_STAGING_FREE_BYTES -> TransferRejectionReason.INSUFFICIENT_STORAGE
+    else -> null
 }
 
 object TransferOperations {
@@ -69,6 +90,14 @@ object TransferOperations {
                     while (true) {
                         val count = input.read(buffer)
                         if (count < 0) break
+                        stagingRejectionReason(
+                            existingBytes = stagingDirectory.stagedBytes(staging),
+                            incomingBytes = bytes + count,
+                            availableBytes = stagingDirectory.usableSpace,
+                        )?.let { reason ->
+                            onProgress(TransferProgress.Failed(reason.message()))
+                            return@withContext TransferResult.Rejected(reason)
+                        }
                         output.write(buffer, 0, count)
                         digest.update(buffer, 0, count)
                         bytes += count
@@ -255,8 +284,9 @@ object TransferOperations {
         name: String,
         onProgress: (TransferProgress) -> Unit,
     ): TransferResult = withContext(Dispatchers.IO) {
+        val stagingDirectory = File(context.filesDir, "transfer-staging").apply { mkdirs() }
         val staging = try {
-            File.createTempFile("synveil-upload-", ".part", context.cacheDir)
+            File.createTempFile("synveil-upload-", ".part", stagingDirectory)
         } catch (_: IOException) {
             return@withContext TransferResult.Failed(SynveilTransportError.Offline)
         }
@@ -271,6 +301,14 @@ object TransferOperations {
                     while (true) {
                         val read = input.read(buffer)
                         if (read < 0) break
+                        stagingRejectionReason(
+                            existingBytes = stagingDirectory.stagedBytes(staging),
+                            incomingBytes = expectedBytes + read,
+                            availableBytes = stagingDirectory.usableSpace,
+                        )?.let { reason ->
+                            onProgress(TransferProgress.Failed(reason.message()))
+                            return@withContext TransferResult.Rejected(reason)
+                        }
                         output.write(buffer, 0, read)
                         digest.update(buffer, 0, read)
                         expectedBytes += read
@@ -398,6 +436,16 @@ object TransferOperations {
     }
 
     private fun protocolFailure() = SynveilTransportError.ProtocolError(com.synveil.android.data.network.ProtocolErrorKind.INVALID_UPLOAD_RESPONSE)
+
+    private fun TransferRejectionReason.message(): String = when (this) {
+        TransferRejectionReason.STAGING_QUOTA_EXCEEDED -> "Transfer exceeds the local staging limit."
+        TransferRejectionReason.INSUFFICIENT_STORAGE -> "Not enough free storage to stage this transfer."
+        TransferRejectionReason.SOURCE_UNAVAILABLE -> "The selected source is no longer available."
+    }
+
+    private fun File.stagedBytes(current: File): Long = listFiles().orEmpty()
+        .filter { it != current && it.isFile }
+        .sumOf { it.length() }
 
     private fun SynveilTransportError.isAmbiguousTransferFailure(): Boolean =
         this is SynveilTransportError.Timeout || this is SynveilTransportError.Offline

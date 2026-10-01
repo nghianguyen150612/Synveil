@@ -162,6 +162,7 @@ class NodeBrowserViewModel(
                     refresh()
                 }
                 is com.synveil.android.data.transfer.TransferResult.Failed -> setMessage("Upload failed: ${transportFailureMessage(result.error)}")
+                is com.synveil.android.data.transfer.TransferResult.Rejected -> setMessage("Upload unavailable: ${transferRejectionMessage(result.reason)}")
                 else -> Unit
             }
         }
@@ -180,6 +181,7 @@ class NodeBrowserViewModel(
             when (result) {
                 is com.synveil.android.data.transfer.TransferResult.Uploaded -> { setMessage("Content replacement committed; waiting for inbound sync."); refresh() }
                 is com.synveil.android.data.transfer.TransferResult.Failed -> setMessage("Replacement failed: ${transportFailureMessage(result.error)}")
+                is com.synveil.android.data.transfer.TransferResult.Rejected -> setMessage("Replacement unavailable: ${transferRejectionMessage(result.reason)}")
                 else -> Unit
             }
         }
@@ -450,4 +452,10 @@ private fun transportFailureMessage(error: com.synveil.android.data.network.Synv
     com.synveil.android.data.network.SynveilTransportError.Offline,
     com.synveil.android.data.network.SynveilTransportError.DnsFailure -> "The server is unavailable."
     else -> "The transfer response was invalid."
+}
+
+private fun transferRejectionMessage(reason: com.synveil.android.data.transfer.TransferRejectionReason): String = when (reason) {
+    com.synveil.android.data.transfer.TransferRejectionReason.STAGING_QUOTA_EXCEEDED -> "local staging quota exceeded"
+    com.synveil.android.data.transfer.TransferRejectionReason.INSUFFICIENT_STORAGE -> "free storage is too low"
+    com.synveil.android.data.transfer.TransferRejectionReason.SOURCE_UNAVAILABLE -> "the selected source is unavailable"
 }
