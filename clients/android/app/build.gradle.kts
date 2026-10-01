@@ -6,6 +6,19 @@ plugins {
     id("org.jetbrains.kotlin.kapt")
 }
 
+val releaseVersionName = providers.gradleProperty("synveilVersionName").orElse("0.1.0")
+val releaseVersionCode = providers.gradleProperty("synveilVersionCode").map(String::toInt).orElse(1)
+val releaseStoreFile = providers.gradleProperty("synveilReleaseStoreFile").orElse(providers.environmentVariable("SYNVEIL_RELEASE_STORE_FILE")).orNull
+val releaseStorePassword = providers.gradleProperty("synveilReleaseStorePassword").orElse(providers.environmentVariable("SYNVEIL_RELEASE_STORE_PASSWORD")).orNull
+val releaseKeyAlias = providers.gradleProperty("synveilReleaseKeyAlias").orElse(providers.environmentVariable("SYNVEIL_RELEASE_KEY_ALIAS")).orNull
+val releaseKeyPassword = providers.gradleProperty("synveilReleaseKeyPassword").orElse(providers.environmentVariable("SYNVEIL_RELEASE_KEY_PASSWORD")).orNull
+val hasExternalReleaseSigning = listOf(
+    releaseStoreFile,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "com.synveil.android"
     compileSdk = 36
@@ -14,8 +27,8 @@ android {
         applicationId = "com.synveil.android"
         minSdk = 35
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0-dev"
+        versionCode = releaseVersionCode.get()
+        versionName = releaseVersionName.get()
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -23,9 +36,28 @@ android {
         }
     }
 
+    if (hasExternalReleaseSigning) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(checkNotNull(releaseStoreFile))
+                storePassword = checkNotNull(releaseStorePassword)
+                keyAlias = checkNotNull(releaseKeyAlias)
+                keyPassword = checkNotNull(releaseKeyPassword)
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            if (hasExternalReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

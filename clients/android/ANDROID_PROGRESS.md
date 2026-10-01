@@ -9,8 +9,9 @@ milestone at a time.
 - Accepted checkpoint: `18da4d20fd7cc55107e17c8b297cd9218c679750`
 - Branch: `android-app`
 - P1-P18A: `COMPLETE`
-- Current implementation state: P24 Room migration, profile isolation, and
-  bounded maintenance is complete; P25 is the next implementation milestone.
+- Current implementation state: P25 adaptive UI, accessibility coverage, and
+  bounded metadata workload hardening is complete; P26 is the next
+  implementation milestone.
 
 ## Milestone Ledger
 
@@ -41,14 +42,14 @@ milestone at a time.
 | P22 | COMPLETE | `8438882` | `acdd36d` | `feat(android): harden transfer lifecycle and storage safety` | `SYNVEIL_ANDROID_P22_READY` | `./gradlew test` and standalone `./gradlew lint` pass; transfer staging quota/free-space tests pass; 11 API 36 connected tests pass after manual install recovery; replace/upload paths retain bounded streaming, exact hashes, authoritative offsets, cleanup, and deterministic storage rejection messages | Full large-owner-server transfer and process-kill matrix requires an authenticated deterministic server fixture; host fault, staging, SAF, protocol, Keystore, and connected Android gates executed with no host gate skipped |
 | P23 | COMPLETE | `acdd36d` | `ad968c5` | `feat(android): complete WorkManager synchronization policy` | `SYNVEIL_ANDROID_P23_READY` | `./gradlew test` passes; standalone `./gradlew lint` passes; 15 API 36 connected tests pass including WorkManager TestDriver constraints, duplicate enqueue, cancellation/profile isolation, secret-free input, and durable scheduler-state isolation; debug APK installs, launches, force-stops, relaunches, and exposes no credential material; scheduler outcomes persist/display success, retry, paused-auth, revoked, protocol, and rebaseline states with bounded automatic retries | Authenticated owner-server revoked-device/reconnect smoke requires a deterministic authenticated server fixture; no host gate was skipped and the available API 36 scheduler/runtime gates executed |
 | P24 | COMPLETE | `ad968c5` | `9f02e1b` | `feat(android): harden Room migrations and cache maintenance` | `SYNVEIL_ANDROID_P24_READY` | `./gradlew test` and standalone `./gradlew lint` pass; 19 API 36 connected tests pass, including representative 1→2→3→4 migration coverage, cache-health schema creation, profile cleanup/isolation, expired staging/orphan pruning, stale-cache rebaseline fencing, and recoverable storage-failure classification; debug APK installs/upgrades, launches after force-stop, and shows no credential material | Authenticated owner-server re-enrollment and process-kill-during-cleanup smoke requires a deterministic authenticated server fixture; Room, host recovery classification, profile isolation, and API 36 gates executed with no host gate skipped |
-| P25 | COMPLETE | `9f02e1b` | `PENDING_COMMIT_SHA` | `feat(android): harden adaptive UI and metadata workload bounds` | `SYNVEIL_ANDROID_P25_READY` | `./gradlew test` and standalone `./gradlew lint` pass; 22 API 36 connected tests pass, including Compose semantics/action coverage, dark/light and 1.5x text-scale rendering, adaptive 1/2/3-column layout thresholds, 5,000-node/1,000-mutation/100-conflict Room workload ordering and bounded queries; debug APK installs and launches, force-stop/relaunch remains crash-free, UI hierarchy contains no credential material, TalkBack is enabled on the API 36 emulator, and a 1600x2560 large-window smoke completes without crash | A fully authenticated owner-server TalkBack/transfer stress flow requires a deterministic authenticated server fixture; host, Room, Compose, API 36 phone/large-window, accessibility-service, and secret/log audits executed with no host gate skipped |
-| P26 | NEXT | After P25 | — | — | `SYNVEIL_ANDROID_P26_READY` | Not started; waiting for P25 | None recorded |
-| P27 | PENDING | After P26 | — | — | `SYNVEIL_ANDROID_APP_COMPLETE` | Not started; waiting for P26 | None recorded |
+| P25 | COMPLETE | `9f02e1b` | `619eae5` | `feat(android): harden adaptive UI and metadata workload bounds` | `SYNVEIL_ANDROID_P25_READY` | `./gradlew test` and standalone `./gradlew lint` pass; 22 API 36 connected tests pass, including Compose semantics/action coverage, dark/light and 1.5x text-scale rendering, adaptive 1/2/3-column layout thresholds, 5,000-node/1,000-mutation/100-conflict Room workload ordering and bounded queries; debug APK installs and launches, force-stop/relaunch remains crash-free, UI hierarchy contains no credential material, TalkBack is enabled on the API 36 emulator, and a 1600x2560 large-window smoke completes without crash | A fully authenticated owner-server TalkBack/transfer stress flow requires a deterministic authenticated server fixture; host, Room, Compose, API 36 phone/large-window, accessibility-service, and secret/log audits executed with no host gate skipped |
+| P26 | COMPLETE | `619eae5` | `PENDING_COMMIT_SHA` | `feat(android): prepare production release path` | `SYNVEIL_ANDROID_P26_READY` | Clean `assembleDebug assembleRelease bundleRelease`, R8/resource shrinking, `test`, standalone `lint`, APK/AAB artifact validation, and 22 API 36 connected tests pass; signed release APK installs on API 36, cold-launches in 857 ms, force-stop/relaunch succeeds, release manifest is non-debuggable with `usesCleartextTraffic=false`, `allowBackup=false`, target SDK 36, reviewed merged permissions, and no credential material in the UI hierarchy or app-filtered logcat; external signing, versioning, CI, rollout/rollback, and BrowserSession boundaries are documented | Authenticated owner-server enrollment/transfer/conflict smoke still requires a deterministic fixture; release runtime used a disposable non-production test keystore, no signing material or generated artifact is committed, and no host gate was skipped |
+| P27 | NEXT | After P26 | — | — | `SYNVEIL_ANDROID_APP_COMPLETE` | Not started; waiting for P26 | None recorded |
 
 ## Durable Invariants
 
-- Exactly one unfinished milestone is `NEXT`: P26.
-- Every later milestone after P26 is `PENDING`; no later milestone is `IN PROGRESS`
+- Exactly one unfinished milestone is `NEXT`: P27.
+- Every later milestone after P27 is `PENDING`; no later milestone is `IN PROGRESS`
   or `COMPLETE`.
 - P1-P18A remain `COMPLETE` at the accepted checkpoint.
 - A completion SHA, focused commit subject, validation evidence, and clean

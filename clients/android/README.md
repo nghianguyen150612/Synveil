@@ -27,10 +27,11 @@ not claim a live production-server synchronization run.
 - `INTERNET` and `ACCESS_NETWORK_STATE` are the only normal runtime-independent
   permissions; network state is used only for bounded offline/cache messaging.
 - Samsung One UI 8.5 is a compatibility target, not a proprietary dependency.
-- Pre-release namespace and application ID are both `com.synveil.android`.
-
-Production publishing identity and signing are intentionally undecided. No
-signing material, credentials, or server secrets belong in this project.
+- Production application ID is `com.synveil.android`; debug builds use the
+  isolated `com.synveil.android.debug` ID and `-debug` version suffix.
+- Release identity, external signing, artifact inspection, rollout, and
+  rollback are documented in `clients/android/RELEASE.md`. No signing
+  material, credentials, or server secrets belong in this project.
 
 ## Layout and architecture
 
@@ -136,10 +137,16 @@ From this directory:
 ./gradlew test
 ./gradlew lint
 ./gradlew connectedDebugAndroidTest
+./scripts/validate-release-artifact.sh \
+  --apk=app/build/outputs/apk/release/app-release-unsigned.apk \
+  --aab=app/build/outputs/bundle/release/app-release.aab
 ```
 
-The debug APK is a generated local artifact and is not committed. No running
-Synveil server or secret environment variable is required.
+`assembleRelease` enables R8/resource shrinking and produces an unsigned
+artifact by default. External signing values are required for a distributable
+release; see `RELEASE.md`. Debug/release APKs, mapping files, and signing
+material are generated or private artifacts and are not committed. No running
+Synveil server or secret environment variable is required for host validation.
 
 ## Security and protocol boundary
 
@@ -298,10 +305,11 @@ creation, and reconcile the server-authoritative offset after ambiguous chunk
 responses. Staging is deleted only after validated completion. Room stores
 metadata and references, never file bytes or bearer credentials.
 
-## Unsupported features and next milestone
+## Unsupported features and release boundary
 
-Backups, automatic file-byte mirroring, text/binary merge, and production
-signing remain unsupported. The current server keeps conflict list/detail/manual
+Backups, automatic file-byte mirroring, and text/binary merge remain
+unsupported. External production signing is supported by the documented
+release build path. The current server keeps conflict list/detail/manual
 resolution routes BrowserSession-only; Android persists a safe local conflict
 summary and surfaces owner/web review required. It never fabricates a
 DeviceBearer conflict request or chooses a winner automatically.
