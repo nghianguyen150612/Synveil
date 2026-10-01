@@ -1,6 +1,8 @@
-use std::{fs, os::unix::fs::PermissionsExt, path::Path};
+use std::{fs, os::unix::fs::PermissionsExt, path::Path, sync::Mutex};
 use synveil_install_engine::{AppImageIntegration, AppImageIntegrationStatus};
 use tempfile::TempDir;
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 fn environment(root: &Path) {
     unsafe {
@@ -44,6 +46,7 @@ fn fixture() -> (
 
 #[test]
 fn portable_environment_has_zero_integration_mutations() {
+    let _env_guard = ENV_LOCK.lock().unwrap();
     let (root, engine, _, _) = fixture();
     assert_eq!(
         engine.inspect().unwrap(),
@@ -54,6 +57,7 @@ fn portable_environment_has_zero_integration_mutations() {
 
 #[test]
 fn install_is_safe_idempotent_and_never_enables_startup() {
+    let _env_guard = ENV_LOCK.lock().unwrap();
     let (_root, engine, app, icon) = fixture();
     let first = engine.install(&app, &icon).unwrap();
     let second = engine.install(&app, &icon).unwrap();
@@ -75,6 +79,7 @@ fn install_is_safe_idempotent_and_never_enables_startup() {
 
 #[test]
 fn stale_partial_relocation_repair_and_remove_preserve_data() {
+    let _env_guard = ENV_LOCK.lock().unwrap();
     let (root, engine, app, icon) = fixture();
     let first = engine.install(&app, &icon).unwrap();
     fs::remove_file(&app).unwrap();
