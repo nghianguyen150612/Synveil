@@ -22,7 +22,9 @@
 | APPIMAGE-21 | Builder/validator fail on missing binaries, metadata, AppRun, Qt/QML/plugin closure, tool failure, or absent output; temporary staging prevents partial publication. |
 | APPIMAGE-22 | Architecture gate precedes binary building and publication. |
 
-Final artifact hashes, ABI symbol floors, and pass/fail results come from the
-final PR-head hosted run. Static validation or an absent artifact is explicitly
-reported as `SKIPPED`, never as runtime PASS. Existing DEB/RPM workflow remains
-an independent required regression gate. P016–P020 remain pending.
+Qt 6.7.3 is pinned on the Ubuntu 22.04/glibc 2.35 host. The shared Linux release
+link policy removes the sole differing GNU build-id note at link time rather
+than rewriting output. Final desktop/AppImage hashes, ABI symbol floors, and
+pass/fail results still come from the final PR-head hosted run. Static
+validation or an absent artifact is `SKIPPED`, never runtime PASS. Existing
+DEB/RPM remains an independent gate.

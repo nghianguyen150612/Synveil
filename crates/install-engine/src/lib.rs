@@ -2,6 +2,7 @@
 //! Platform-neutral, in-memory installation lifecycle policy.
 
 mod adapter;
+mod appimage;
 mod engine;
 mod error_model;
 mod journal;
@@ -10,6 +11,7 @@ mod linux_package;
 mod model;
 
 pub use adapter::*;
+pub use appimage::*;
 pub use engine::*;
 pub use error_model::*;
 pub use journal::*;

@@ -17,6 +17,7 @@ OUTPUT_DIR="${REPO_ROOT}/target/packages"
 TOOL_DIR="${REPO_ROOT}/target/appimage-tools"
 DESKTOP_BINARY=""
 CLIENT_BINARY=""
+INTEGRATION_BINARY=""
 BUILD_ONLY=0
 
 usage() { cat <<'EOF'
@@ -57,12 +58,13 @@ LINUXDEPLOY=$(fetch_tool linuxdeploy-x86_64.AppImage "https://github.com/linuxde
 QT_PLUGIN=$(fetch_tool linuxdeploy-plugin-qt-x86_64.AppImage "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/${QT_PLUGIN_VERSION}/linuxdeploy-plugin-qt-x86_64.AppImage" "$QT_PLUGIN_SHA256")
 export LINUXDEPLOY_PLUGIN_QT="$QT_PLUGIN"
 
-if [[ -z $DESKTOP_BINARY || -z $CLIENT_BINARY ]]; then
+if [[ -z $DESKTOP_BINARY || -z $CLIENT_BINARY || -z $INTEGRATION_BINARY ]]; then
   synveil_prepare_reproducible_rust_build "$REPO_ROOT"
 fi
 if [[ -z $DESKTOP_BINARY ]]; then (cd "$REPO_ROOT" && cargo build --release --locked -p synveil-desktop); DESKTOP_BINARY="$REPO_ROOT/target/release/synveil-desktop"; fi
 if [[ -z $CLIENT_BINARY ]]; then (cd "$REPO_ROOT" && cargo build --release --locked -p synveil-client); CLIENT_BINARY="$REPO_ROOT/target/release/synveil-client"; fi
-for binary in "$DESKTOP_BINARY" "$CLIENT_BINARY"; do
+if [[ -z $INTEGRATION_BINARY ]]; then (cd "$REPO_ROOT" && cargo build --release --locked -p synveil-install-engine --bin synveil-appimage-integration); INTEGRATION_BINARY="$REPO_ROOT/target/release/synveil-appimage-integration"; fi
+for binary in "$DESKTOP_BINARY" "$CLIENT_BINARY" "$INTEGRATION_BINARY"; do
   [[ -f $binary && -x $binary ]] || { echo "[synveil-appimage] ERROR: production binary missing: $binary" >&2; exit 1; }
   synveil_assert_linux_release_binary "$binary" "$(basename "$binary")"
 done
@@ -74,10 +76,11 @@ build_one() {
   mkdir -p "$appdir/usr/bin"
   install -m0755 "$DESKTOP_BINARY" "$appdir/usr/bin/synveil-desktop"
   install -m0755 "$CLIENT_BINARY" "$appdir/usr/bin/synveil-client"
+  install -m0755 "$INTEGRATION_BINARY" "$appdir/usr/bin/synveil-appimage-integration"
   install -m0644 "$SCRIPT_DIR/appimage/synveil.desktop" "$appdir/synveil.desktop"
   install -m0644 "$REPO_ROOT/deploy/icons/hicolor/scalable/apps/synveil.svg" "$appdir/synveil.svg"
   QML_SOURCES_PATHS="$REPO_ROOT/crates/desktop/qml" "$LINUXDEPLOY" --appdir "$appdir" \
-    --executable "$appdir/usr/bin/synveil-desktop" --executable "$appdir/usr/bin/synveil-client" \
+    --executable "$appdir/usr/bin/synveil-desktop" --executable "$appdir/usr/bin/synveil-client" --executable "$appdir/usr/bin/synveil-appimage-integration" \
     --desktop-file "$appdir/synveil.desktop" --icon-file "$appdir/synveil.svg" --plugin qt
   install -m0755 "$SCRIPT_DIR/appimage/AppRun" "$appdir/AppRun"
   # Normalize all payload timestamps before filesystem creation.

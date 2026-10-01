@@ -36,7 +36,7 @@ def contains(root: Path, pattern: str) -> bool:
 
 
 def validate_appdir(appdir: Path) -> None:
-    required = ["AppRun", "synveil.desktop", "synveil.svg", "usr/bin/synveil-desktop", "usr/bin/synveil-client"]
+    required = ["AppRun", "synveil.desktop", "synveil.svg", "usr/bin/synveil-desktop", "usr/bin/synveil-client", "usr/bin/synveil-appimage-integration"]
     for relative in required:
         path = appdir / relative
         if not path.is_file():
