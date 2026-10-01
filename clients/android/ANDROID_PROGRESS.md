@@ -9,8 +9,8 @@ milestone at a time.
 - Accepted checkpoint: `18da4d20fd7cc55107e17c8b297cd9218c679750`
 - Branch: `android-app`
 - P1-P18A: `COMPLETE`
-- Current implementation state: P23 WorkManager synchronization and connectivity
-  policy is complete; P24 is the next implementation milestone.
+- Current implementation state: P24 Room migration, profile isolation, and
+  bounded maintenance is complete; P25 is the next implementation milestone.
 
 ## Milestone Ledger
 
@@ -39,16 +39,16 @@ milestone at a time.
 | P20 | COMPLETE | `034be60` | `00f21a7` | `feat(android): complete file-management and metadata UX` | `SYNVEIL_ANDROID_P20_READY` | `./gradlew test` and `./gradlew lint` pass after browser/restore/accessibility changes; `LibraryPresentationTest` passes; 11 API 36 connected tests pass after emulator package-install recovery; active and trashed nodes remain visible, trash is confirmation-gated, and SAF/transfer state messages are covered | Full owner-server browse/metadata smoke requires a deterministic authenticated server fixture; protocol, SAF, transfer, mutation, and connected Android gates executed where available |
 | P21 | COMPLETE | `00f21a7` | `8438882` | `feat(android): add offline-first connectivity recovery` | `SYNVEIL_ANDROID_P21_READY` | `./gradlew test` and `./gradlew lint` pass; `ConnectivityObserverTest` covers status presentation and offline-to-online transitions; 11 API 36 connected tests pass on API 36; library/browser cache-first paths show bounded offline state and explicit retry without changing TLS/origin/auth behavior | Airplane-mode UI with an authenticated owner server was not available in the local fixture; host cache/connectivity, protocol, and connected gates executed with no emulator gate suppressed |
 | P22 | COMPLETE | `8438882` | `acdd36d` | `feat(android): harden transfer lifecycle and storage safety` | `SYNVEIL_ANDROID_P22_READY` | `./gradlew test` and standalone `./gradlew lint` pass; transfer staging quota/free-space tests pass; 11 API 36 connected tests pass after manual install recovery; replace/upload paths retain bounded streaming, exact hashes, authoritative offsets, cleanup, and deterministic storage rejection messages | Full large-owner-server transfer and process-kill matrix requires an authenticated deterministic server fixture; host fault, staging, SAF, protocol, Keystore, and connected Android gates executed with no host gate skipped |
-| P23 | COMPLETE | `acdd36d` | `PENDING_COMMIT_SHA` | `feat(android): complete WorkManager synchronization policy` | `SYNVEIL_ANDROID_P23_READY` | `./gradlew test` passes; standalone `./gradlew lint` passes; 15 API 36 connected tests pass including WorkManager TestDriver constraints, duplicate enqueue, cancellation/profile isolation, secret-free input, and durable scheduler-state isolation; debug APK installs, launches, force-stops, relaunches, and exposes no credential material; scheduler outcomes persist/display success, retry, paused-auth, revoked, protocol, and rebaseline states with bounded automatic retries | Authenticated owner-server revoked-device/reconnect smoke requires a deterministic authenticated server fixture; no host gate was skipped and the available API 36 scheduler/runtime gates executed |
-| P24 | NEXT | After P23 | — | — | `SYNVEIL_ANDROID_P24_READY` | Not started; waiting for P23 | None recorded |
-| P25 | PENDING | After P24 | — | — | `SYNVEIL_ANDROID_P25_READY` | Not started; waiting for P24 | None recorded |
+| P23 | COMPLETE | `acdd36d` | `ad968c5` | `feat(android): complete WorkManager synchronization policy` | `SYNVEIL_ANDROID_P23_READY` | `./gradlew test` passes; standalone `./gradlew lint` passes; 15 API 36 connected tests pass including WorkManager TestDriver constraints, duplicate enqueue, cancellation/profile isolation, secret-free input, and durable scheduler-state isolation; debug APK installs, launches, force-stops, relaunches, and exposes no credential material; scheduler outcomes persist/display success, retry, paused-auth, revoked, protocol, and rebaseline states with bounded automatic retries | Authenticated owner-server revoked-device/reconnect smoke requires a deterministic authenticated server fixture; no host gate was skipped and the available API 36 scheduler/runtime gates executed |
+| P24 | COMPLETE | `ad968c5` | `PENDING_COMMIT_SHA` | `feat(android): harden Room migrations and cache maintenance` | `SYNVEIL_ANDROID_P24_READY` | `./gradlew test` and standalone `./gradlew lint` pass; 19 API 36 connected tests pass, including representative 1→2→3→4 migration coverage, cache-health schema creation, profile cleanup/isolation, expired staging/orphan pruning, stale-cache rebaseline fencing, and recoverable storage-failure classification; debug APK installs/upgrades, launches after force-stop, and shows no credential material | Authenticated owner-server re-enrollment and process-kill-during-cleanup smoke requires a deterministic authenticated server fixture; Room, host recovery classification, profile isolation, and API 36 gates executed with no host gate skipped |
+| P25 | NEXT | After P24 | — | — | `SYNVEIL_ANDROID_P25_READY` | Not started; waiting for P24 | None recorded |
 | P26 | PENDING | After P25 | — | — | `SYNVEIL_ANDROID_P26_READY` | Not started; waiting for P25 | None recorded |
 | P27 | PENDING | After P26 | — | — | `SYNVEIL_ANDROID_APP_COMPLETE` | Not started; waiting for P26 | None recorded |
 
 ## Durable Invariants
 
-- Exactly one unfinished milestone is `NEXT`: P24.
-- Every later milestone after P24 is `PENDING`; no later milestone is `IN PROGRESS`
+- Exactly one unfinished milestone is `NEXT`: P25.
+- Every later milestone after P25 is `PENDING`; no later milestone is `IN PROGRESS`
   or `COMPLETE`.
 - P1-P18A remain `COMPLETE` at the accepted checkpoint.
 - A completion SHA, focused commit subject, validation evidence, and clean

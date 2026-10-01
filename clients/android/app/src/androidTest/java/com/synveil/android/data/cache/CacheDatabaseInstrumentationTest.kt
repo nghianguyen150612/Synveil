@@ -16,6 +16,33 @@ import kotlinx.coroutines.flow.first
 @RunWith(AndroidJUnit4::class)
 class CacheDatabaseInstrumentationTest {
     @Test
+    fun migration1To2AddsExpiryColumnWithoutDroppingStagingRows() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "migration-1-2-${System.nanoTime()}.db"
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(name)
+                .callback(object : SupportSQLiteOpenHelper.Callback(1) {
+                    override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                        db.execSQL("CREATE TABLE rebaseline_staging (profileId TEXT NOT NULL, deviceId TEXT NOT NULL, libraryId TEXT NOT NULL, bootstrapId TEXT NOT NULL, generation TEXT NOT NULL, snapshotEpoch TEXT NOT NULL, snapshotResumeSequence TEXT NOT NULL, manifestItemCount TEXT NOT NULL, nextCursor TEXT, completionToken TEXT, receivedItemCount TEXT NOT NULL, state TEXT NOT NULL, startedAt TEXT NOT NULL, PRIMARY KEY(profileId, deviceId, libraryId))")
+                        db.execSQL("INSERT INTO rebaseline_staging VALUES ('profile-a', 'device-a', 'library-a', 'bootstrap-a', '1', '1', '0', '0', NULL, NULL, '0', 'REBASELINING', 'started')")
+                    }
+
+                    override fun onUpgrade(db: androidx.sqlite.db.SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+                })
+                .build(),
+        )
+        val database = helper.writableDatabase
+
+        SynveilCacheDatabase.MIGRATION_1_2.migrate(database)
+
+        assertEquals("bootstrap-a", database.query("SELECT bootstrapId FROM rebaseline_staging").use { it.moveToFirst(); it.getString(0) })
+        assertEquals(1, database.query("SELECT COUNT(*) FROM pragma_table_info('rebaseline_staging') WHERE name = 'expiresAt'").use { it.moveToFirst(); it.getInt(0) })
+        database.close()
+        context.deleteDatabase(name)
+    }
+
+    @Test
     fun migration2To3PreservesCanonicalRowsAndInitializesOutboundTables() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val name = "migration-${System.nanoTime()}.db"
@@ -56,6 +83,33 @@ class CacheDatabaseInstrumentationTest {
     }
 
     @Test
+    fun migration3To4AddsMaintenanceStateWithoutChangingExistingRows() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "migration-3-4-${System.nanoTime()}.db"
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(name)
+                .callback(object : SupportSQLiteOpenHelper.Callback(3) {
+                    override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                        db.execSQL("CREATE TABLE cached_libraries (profileId TEXT NOT NULL, libraryId TEXT NOT NULL, revision TEXT NOT NULL, name TEXT NOT NULL, rootNodeId TEXT NOT NULL, status TEXT NOT NULL, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL, lastObservedAt TEXT NOT NULL, PRIMARY KEY(profileId, libraryId))")
+                        db.execSQL("INSERT INTO cached_libraries VALUES ('profile-a', 'library-a', '3', 'Library', 'root', 'ACTIVE', 'created', 'updated', 'observed')")
+                    }
+
+                    override fun onUpgrade(db: androidx.sqlite.db.SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+                })
+                .build(),
+        )
+        val database = helper.writableDatabase
+
+        SynveilCacheDatabase.MIGRATION_3_4.migrate(database)
+
+        assertEquals(1, database.query("SELECT COUNT(*) FROM cached_libraries WHERE profileId = 'profile-a'").use { it.moveToFirst(); it.getInt(0) })
+        assertEquals(1, database.query("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'cache_health'").use { it.moveToFirst(); it.getInt(0) })
+        database.close()
+        context.deleteDatabase(name)
+    }
+
+    @Test
     fun cacheReopensAndPreservesProfileScopedState(): Unit = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val name = "test-cache-${System.nanoTime()}.db"
@@ -84,6 +138,38 @@ class CacheDatabaseInstrumentationTest {
         database.close()
         context.deleteDatabase(name)
         assertTrue(true)
+    }
+
+    @Test
+    fun clearProfileFencesEveryDurableScopeButLeavesOtherProfilesUntouched(): Unit = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "profile-cleanup-${System.nanoTime()}.db"
+        val database = Room.databaseBuilder(context, SynveilCacheDatabase::class.java, name).build()
+        val dao = database.cacheDao()
+        dao.upsertLibraries(listOf(
+            CachedLibraryEntity("profile-a", "library-a", "1", "A", "root", "ACTIVE", "created", "updated", "observed"),
+            CachedLibraryEntity("profile-b", "library-a", "1", "B", "root", "ACTIVE", "created", "updated", "observed"),
+        ))
+        dao.upsertNodes(listOf(
+            CachedNodeEntity("profile-a", "library-a", "node-a", null, null, "1", "a", "FILE", "ACTIVE", null, null, null, null, false, null, null),
+            CachedNodeEntity("profile-b", "library-a", "node-b", null, null, "1", "b", "FILE", "ACTIVE", null, null, null, null, false, null, null),
+        ))
+        dao.upsertSyncState(SyncStateEntity("profile-a", "device-a", "library-a", "1", "1", "1", "1", null, null, null, "READY", null, null))
+        dao.upsertSyncState(SyncStateEntity("profile-b", "device-b", "library-a", "1", "1", "1", "1", null, null, null, "READY", null, null))
+        dao.upsertPendingAck(PendingAckEntity("profile-a", "device-a", "library-a", "1", "1", "1", "1", "ack-a", "created"))
+        dao.upsertPendingAck(PendingAckEntity("profile-b", "device-b", "library-a", "1", "1", "1", "1", "ack-b", "created"))
+
+        dao.clearProfile("profile-a")
+
+        assertEquals(0, dao.libraries("profile-a").size)
+        assertEquals(0, dao.nodes("profile-a", "library-a").size)
+        assertEquals(null, dao.syncState("profile-a", "device-a", "library-a"))
+        assertEquals(null, dao.pendingAck("profile-a", "device-a", "library-a"))
+        assertEquals(1, dao.libraries("profile-b").size)
+        assertEquals(1, dao.nodes("profile-b", "library-a").size)
+        assertEquals("ack-b", dao.pendingAck("profile-b", "device-b", "library-a")?.ackToken)
+        database.close()
+        context.deleteDatabase(name)
     }
 
     @Test
@@ -122,6 +208,38 @@ class CacheDatabaseInstrumentationTest {
         assertEquals("OUTCOME_UNKNOWN", dao.mutation("profile-a", "device-a", "library-a", "open-pending")?.state)
         assertEquals(0, dao.contentOperations("profile-a", "device-a", "library-a").size)
         assertEquals(1, dao.observeOpenConflicts("profile-a", "device-a", "library-a").first().size)
+        database.close()
+        context.deleteDatabase(name)
+    }
+
+    @Test
+    fun maintenancePrunesExpiredStagingOrphansAndStaleCacheWithoutTouchingOtherProfiles(): Unit = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "maintenance-${System.nanoTime()}.db"
+        val database = Room.databaseBuilder(context, SynveilCacheDatabase::class.java, name).build()
+        val dao = database.cacheDao()
+        dao.upsertLibraries(listOf(
+            CachedLibraryEntity("profile-a", "library-a", "1", "Old", "root", "ACTIVE", "created", "updated", "2000-01-01T00:00:00Z"),
+            CachedLibraryEntity("profile-b", "library-a", "1", "Keep", "root", "ACTIVE", "created", "updated", "2026-10-01T00:00:00Z"),
+        ))
+        dao.upsertNodes(listOf(CachedNodeEntity("profile-a", "library-a", "node-a", null, null, "1", "old.txt", "FILE", "ACTIVE", null, null, null, null, false, null, null)))
+        dao.upsertStaging(RebaselineStagingEntity("profile-a", "device-a", "library-a", "bootstrap-a", "1", "1", "0", "0", null, null, "0", "REBASELINING", "started", "2000-01-01T00:00:00Z"))
+        dao.upsertStagingNodes(listOf(RebaselineNodeEntity("profile-a", "device-a", "library-a", "orphan-bootstrap", "orphan-node", null, "orphan", "FILE", "ACTIVE", "1", null, null, null)))
+        dao.upsertSyncState(SyncStateEntity("profile-a", "device-a", "library-a", "1", "1", "1", "1", null, null, null, "READY", null, null))
+
+        val report = CacheRepository(dao).runBoundedMaintenance(
+            nowMillis = System.currentTimeMillis(),
+            staleObservedBefore = "2020-01-01T00:00:00Z",
+            terminalBefore = 2_000L,
+            batchLimit = 500,
+        )
+
+        assertEquals(1, report.expiredStagingScopes)
+        assertEquals(1, report.orphanRebaselineNodes)
+        assertEquals(1, report.staleLibraries)
+        assertEquals(0, dao.nodes("profile-a", "library-a").size)
+        assertEquals("REBASELINE_REQUIRED", dao.syncState("profile-a", "device-a", "library-a")?.state)
+        assertEquals(1, dao.libraries("profile-b").size)
         database.close()
         context.deleteDatabase(name)
     }

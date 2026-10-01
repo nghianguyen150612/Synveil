@@ -14,6 +14,9 @@ import com.synveil.android.data.enrollment.CredentialLifecycle
 import com.synveil.android.data.session.DeviceSessionManager
 import com.synveil.android.data.cache.SynveilCacheDatabase
 import com.synveil.android.data.cache.CacheRepository
+import com.synveil.android.data.cache.CacheRecoveryState
+import com.synveil.android.data.cache.CacheRecoveryStateClassifier
+import com.synveil.android.data.cache.CacheRecoveryStateStore
 import com.synveil.android.data.connectivity.SystemConnectivityObserver
 import com.synveil.android.data.sync.SyncCoordinator
 import com.synveil.android.work.SyncWorkScheduler
@@ -31,14 +34,21 @@ class SynveilApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         applicationScope.launch {
-            val referenced = cacheRepository.allContentOperations().map { it.stagingPath }.toSet()
-            File(filesDir, "transfer-staging").listFiles().orEmpty().forEach { file ->
-                if (file.absolutePath !in referenced && System.currentTimeMillis() - file.lastModified() > 7L * 24 * 60 * 60 * 1000) file.delete()
+            try {
+                val referenced = cacheRepository.allContentOperations().map { it.stagingPath }.toSet()
+                File(filesDir, "transfer-staging").listFiles().orEmpty().forEach { file ->
+                    if (file.absolutePath !in referenced && System.currentTimeMillis() - file.lastModified() > 7L * 24 * 60 * 60 * 1000) file.delete()
+                }
+                cacheRepository.runBoundedMaintenance(
+                    staleObservedBefore = java.time.OffsetDateTime.now().minusDays(30).toString(),
+                    terminalBefore = System.currentTimeMillis() - 30L * 24 * 60 * 60 * 1000,
+                )
+                cacheRecoveryStateStore.record(CacheRecoveryState.READY)
+            } catch (error: Exception) {
+                cacheRecoveryStateStore.record(
+                    CacheRecoveryStateClassifier.classify(error, filesDir.usableSpace),
+                )
             }
-            cacheRepository.pruneTerminalOutboundState(
-                before = System.currentTimeMillis() - 30L * 24 * 60 * 60 * 1000,
-                limit = 500,
-            )
         }
     }
 
@@ -46,6 +56,7 @@ class SynveilApplication : Application() {
     val cacheRepository by lazy { CacheRepository(cacheDatabase.cacheDao()) }
     val syncSettingsStore by lazy { SyncSettingsStore(applicationContext) }
     val syncSchedulerStateStore by lazy { SyncSchedulerStateStore(applicationContext) }
+    val cacheRecoveryStateStore by lazy { CacheRecoveryStateStore(applicationContext) }
     val connectivityObserver by lazy { SystemConnectivityObserver(applicationContext) }
 
     private val enrollmentMetadataStore by lazy {

@@ -13,6 +13,7 @@ import com.synveil.android.data.node.NodeKind
 import com.synveil.android.data.node.NodeRevision
 import com.synveil.android.data.node.NodeState
 import java.time.OffsetDateTime
+import java.time.Instant
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -69,6 +70,23 @@ class CacheRepository(private val dao: CacheDao) {
         dao.deleteStagingScope(profileId, deviceId, libraryId.value)
     }
     suspend fun clearProfile(profileId: String) = dao.clearProfile(profileId)
+    suspend fun runBoundedMaintenance(
+        nowMillis: Long = System.currentTimeMillis(),
+        staleObservedBefore: String,
+        terminalBefore: Long,
+        batchLimit: Int = CacheMaintenancePolicy.DEFAULT_BATCH_LIMIT,
+    ): CacheMaintenanceReport {
+        val limit = CacheMaintenancePolicy.batchLimit(batchLimit)
+        val now = Instant.ofEpochMilli(nowMillis).toString()
+        val expired = dao.pruneExpiredRebaseline(now, limit)
+        val orphaned = dao.deleteOrphanRebaselineNodes()
+        val stale = dao.pruneStaleCache(staleObservedBefore, now, limit)
+        dao.pruneTerminalOutboundState(terminalBefore, limit)
+        return CacheMaintenanceReport(expired, orphaned, stale)
+    }
+    suspend fun recordHealth(state: CacheRecoveryState, now: Long = System.currentTimeMillis()) =
+        dao.upsertCacheHealth(CacheHealthEntity(state = state.name, updatedAt = now))
+    suspend fun health(): CacheHealthEntity? = dao.cacheHealth()
     suspend fun discardPendingAck(profileId: String, deviceId: String, libraryId: LibraryId) =
         dao.deletePendingAck(profileId, deviceId, libraryId.value)
     suspend fun applyFeedPage(nodes: List<Node>, deletedNodeIds: List<String>, state: SyncStateEntity, pendingAck: PendingAckEntity) =

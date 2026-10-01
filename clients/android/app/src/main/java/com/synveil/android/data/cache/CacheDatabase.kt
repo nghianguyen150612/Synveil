@@ -208,6 +208,18 @@ data class CachedConflictEntity(
     val lastObservedAt: Long,
 )
 
+@Entity(tableName = "cache_health")
+data class CacheHealthEntity(
+    @androidx.room.PrimaryKey val id: String = "global",
+    val state: String,
+    val updatedAt: Long,
+)
+
+data class StaleLibraryKey(
+    val profileId: String,
+    val libraryId: String,
+)
+
 @Dao
 interface CacheDao {
     @Query("SELECT * FROM cached_libraries WHERE profileId = :profileId ORDER BY name")
@@ -221,6 +233,9 @@ interface CacheDao {
 
     @Query("DELETE FROM cached_libraries WHERE profileId = :profileId")
     suspend fun deleteLibraries(profileId: String)
+
+    @Query("DELETE FROM cached_libraries WHERE profileId = :profileId AND libraryId = :libraryId")
+    suspend fun deleteLibrary(profileId: String, libraryId: String)
 
     @Query("SELECT * FROM cached_nodes WHERE profileId = :profileId AND libraryId = :libraryId AND ((:parentNodeId IS NULL AND parentNodeId IS NULL) OR parentNodeId = :parentNodeId) ORDER BY name")
     fun observeChildren(profileId: String, libraryId: String, parentNodeId: String?): Flow<List<CachedNodeEntity>>
@@ -358,6 +373,39 @@ interface CacheDao {
     @Query("DELETE FROM rebaseline_nodes WHERE profileId = :profileId")
     suspend fun deleteStagingNodesForProfile(profileId: String)
 
+    @Query("SELECT * FROM rebaseline_staging WHERE expiresAt IS NOT NULL AND expiresAt <= :expiresAt ORDER BY expiresAt LIMIT :limit")
+    suspend fun expiredStaging(expiresAt: String, limit: Int): List<RebaselineStagingEntity>
+
+    @Query("DELETE FROM rebaseline_nodes WHERE NOT EXISTS (SELECT 1 FROM rebaseline_staging staging WHERE staging.profileId = rebaseline_nodes.profileId AND staging.deviceId = rebaseline_nodes.deviceId AND staging.libraryId = rebaseline_nodes.libraryId AND staging.bootstrapId = rebaseline_nodes.bootstrapId)")
+    suspend fun deleteOrphanRebaselineNodes(): Int
+
+    @Query("SELECT profileId, libraryId FROM cached_libraries WHERE lastObservedAt < :beforeObservedAt ORDER BY lastObservedAt, profileId, libraryId LIMIT :limit")
+    suspend fun staleLibraries(beforeObservedAt: String, limit: Int): List<StaleLibraryKey>
+
+    @Query("UPDATE sync_states SET state = 'REBASELINE_REQUIRED', lastErrorCode = 'stale_cache_pruned', lastAttemptAt = :observedAt WHERE profileId = :profileId AND libraryId = :libraryId")
+    suspend fun markLibraryRebaselineRequired(profileId: String, libraryId: String, observedAt: String)
+
+    @Transaction
+    suspend fun pruneExpiredRebaseline(expiresAt: String, limit: Int): Int {
+        val expired = expiredStaging(expiresAt, limit)
+        expired.forEach { staging ->
+            deleteStagingNodes(staging.profileId, staging.deviceId, staging.libraryId, staging.bootstrapId)
+            deleteStagingScope(staging.profileId, staging.deviceId, staging.libraryId)
+        }
+        return expired.size
+    }
+
+    @Transaction
+    suspend fun pruneStaleCache(beforeObservedAt: String, observedAt: String, limit: Int): Int {
+        val stale = staleLibraries(beforeObservedAt, limit)
+        stale.forEach { library ->
+            markLibraryRebaselineRequired(library.profileId, library.libraryId, observedAt)
+            deleteNodes(library.profileId, library.libraryId)
+            deleteLibrary(library.profileId, library.libraryId)
+        }
+        return stale.size
+    }
+
     @Query("SELECT * FROM mutation_queue WHERE profileId = :profileId AND deviceId = :deviceId AND libraryId = :libraryId ORDER BY createdAt ASC, mutationId ASC")
     suspend fun mutations(profileId: String, deviceId: String, libraryId: String): List<MutationQueueEntity>
 
@@ -415,6 +463,12 @@ interface CacheDao {
     @Query("DELETE FROM cached_conflicts WHERE profileId = :profileId")
     suspend fun deleteConflictsForProfile(profileId: String)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertCacheHealth(value: CacheHealthEntity)
+
+    @Query("SELECT * FROM cache_health WHERE id = 'global'")
+    suspend fun cacheHealth(): CacheHealthEntity?
+
     @Query("DELETE FROM mutation_queue WHERE state IN ('APPLIED', 'FAILED_PERMANENT') AND createdAt < :before AND rowid IN (SELECT rowid FROM mutation_queue WHERE state IN ('APPLIED', 'FAILED_PERMANENT') AND createdAt < :before ORDER BY createdAt ASC LIMIT :limit)")
     suspend fun pruneTerminalMutations(before: Long, limit: Int)
 
@@ -450,8 +504,9 @@ interface CacheDao {
         MutationQueueEntity::class,
         ContentOperationEntity::class,
         CachedConflictEntity::class,
+        CacheHealthEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 abstract class SynveilCacheDatabase : RoomDatabase() {
@@ -462,7 +517,7 @@ abstract class SynveilCacheDatabase : RoomDatabase() {
             context,
             SynveilCacheDatabase::class.java,
             "synveil_cache.db",
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build()
 
         val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
@@ -479,6 +534,12 @@ abstract class SynveilCacheDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_content_operations_profileId_deviceId_libraryId_state_createdAt ON content_operations(profileId, deviceId, libraryId, state, createdAt)")
                 db.execSQL("CREATE TABLE IF NOT EXISTS cached_conflicts (profileId TEXT NOT NULL, deviceId TEXT NOT NULL, libraryId TEXT NOT NULL, conflictId TEXT NOT NULL, mutationId TEXT NOT NULL, mutationKind TEXT NOT NULL, resourceId TEXT NOT NULL, reason TEXT NOT NULL, lifecycle TEXT NOT NULL, createdAt TEXT NOT NULL, lastObservedAt INTEGER NOT NULL, PRIMARY KEY(profileId, deviceId, libraryId, conflictId))")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_cached_conflicts_profileId_deviceId_libraryId_lifecycle_createdAt ON cached_conflicts(profileId, deviceId, libraryId, lifecycle, createdAt)")
+            }
+        }
+
+        val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS cache_health (id TEXT NOT NULL, state TEXT NOT NULL, updatedAt INTEGER NOT NULL, PRIMARY KEY(id))")
             }
         }
     }
