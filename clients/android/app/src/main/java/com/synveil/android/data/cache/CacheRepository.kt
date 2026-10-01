@@ -91,6 +91,8 @@ class CacheRepository(private val dao: CacheDao) {
     suspend fun hasOutstandingDependency(profileId: String, deviceId: String, libraryId: LibraryId, resourceId: String, parentDependencyId: String?) =
         dao.hasOutstandingDependency(profileId, deviceId, libraryId.value, resourceId, parentDependencyId)
     suspend fun upsertContentOperation(value: ContentOperationEntity) = dao.upsertContentOperation(value)
+    suspend fun recordContentCompletion(profileId: String, libraryId: LibraryId, nodeId: String, versionId: String, revision: String, byteLength: String, sha256: String) =
+        dao.recordContentCompletion(profileId, libraryId.value, nodeId, versionId, revision, byteLength, sha256)
     suspend fun deleteContentOperation(profileId: String, deviceId: String, libraryId: LibraryId, operationId: String) = dao.deleteContentOperation(profileId, deviceId, libraryId.value, operationId)
     suspend fun contentOperations(profileId: String, deviceId: String, libraryId: LibraryId) =
         dao.contentOperations(profileId, deviceId, libraryId.value)
@@ -98,6 +100,7 @@ class CacheRepository(private val dao: CacheDao) {
     fun observeOpenConflicts(profileId: String, deviceId: String, libraryId: LibraryId) =
         dao.observeOpenConflicts(profileId, deviceId, libraryId.value)
     suspend fun upsertConflict(value: CachedConflictEntity) = dao.upsertConflict(value)
+    suspend fun pruneTerminalOutboundState(before: Long, limit: Int) = dao.pruneTerminalOutboundState(before, limit)
 
     private fun CachedNodeEntity.toDomain(): Node? {
         val node = NodeId.parse(nodeId) ?: return null

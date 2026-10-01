@@ -168,6 +168,8 @@ fun LibraryScreen(
             uiState.libraries.forEach { library ->
                 if (settings.backgroundEnabled) {
                     SyncWorkScheduler.enqueuePeriodic(context, profileId, library.id, settings.periodicMinutes, settings.networkPolicy, settings.batteryNotLow)
+                } else {
+                    SyncWorkScheduler.cancelPeriodic(context, profileId, library.id)
                 }
             }
         }

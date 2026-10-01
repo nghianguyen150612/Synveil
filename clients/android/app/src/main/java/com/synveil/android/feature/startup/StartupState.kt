@@ -22,7 +22,7 @@ data class StartupUiState(
         fun foundation(): StartupUiState = StartupUiState(
             identity = AppIdentity.development,
             statusMessage = "Native Android foundation ready",
-            unsupportedFeaturesMessage = "Device authentication, file browsing, and foreground transfers are available; sync, backups, replace-content editing, and background transfer remain future work.",
+            unsupportedFeaturesMessage = "Device authentication, file browsing, durable sync, metadata mutations, replace-content recovery, and background scheduling are available; conflict resolution remains owner/web review.",
             configurationState = StartupConfigurationState.NoServerConfigured,
         )
     }
@@ -65,7 +65,7 @@ fun startupUiStateFor(state: ProfileRepositoryState): StartupUiState {
     return StartupUiState(
         identity = AppIdentity.development,
         statusMessage = message,
-        unsupportedFeaturesMessage = "Device authentication, file browsing, and foreground transfers are available; sync, backups, replace-content editing, and background transfer remain future work.",
+        unsupportedFeaturesMessage = "Device authentication, file browsing, durable sync, metadata mutations, replace-content recovery, and background scheduling are available; conflict resolution remains owner/web review.",
         configurationState = configurationState,
     )
 }

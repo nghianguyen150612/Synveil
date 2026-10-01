@@ -44,3 +44,18 @@ optional battery-not-low constraints, exponential retry for transient failures,
 and a platform minimum periodic interval of 15 minutes. Scheduling is
 approximate. There is no always-running foreground daemon, automatic conflict
 resolution, arbitrary filesystem mirror, or silent revision rebasing.
+
+## Recovery verification
+
+The host test suite includes deterministic fault-point matrices for outbound
+mutation submission, replace-content staging/session/chunk/completion recovery,
+inbound page/ACK handling, and rebaseline staging/swap/completion. It also
+generates a multi-profile workload with 5,000 nodes per library, 1,000 queued
+mutations, 500 change events, and 100 conflict summaries while asserting stable
+queue ordering and one mutating critical section per scope.
+
+The Room 2-to-3 migration has on-device coverage from a representative legacy
+schema and verifies preservation of libraries, nodes, sync state, pending ACK,
+and rebaseline state while creating the new outbound tables. Host gates are
+independent of emulator availability. API 36 instrumentation and runtime smoke
+must be run separately and are not implied by a successful JVM build.

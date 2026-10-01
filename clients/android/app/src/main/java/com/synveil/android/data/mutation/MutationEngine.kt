@@ -19,13 +19,25 @@ enum class QueueRejection { MISSING_SYNC_BASE, INVALID_NAME, RESOURCE_BUSY, ALRE
 
 data class MutationDrainResult(val attempted: Int, val applied: Int, val conflicts: Int, val blocked: Int, val transientFailure: Boolean)
 
-class MutationEngine(
+fun interface MutationSubmitter {
+    fun submit(deviceId: String, libraryId: String, request: MutationRequest): MutationResult
+}
+
+class MutationEngine internal constructor(
     private val cache: CacheRepository,
-    private val transport: AuthenticatedSynveilTransport,
+    private val submitter: MutationSubmitter,
     private val profileId: String,
     private val deviceId: String,
     private val libraryId: LibraryId,
 ) {
+    constructor(
+        cache: CacheRepository,
+        transport: AuthenticatedSynveilTransport,
+        profileId: String,
+        deviceId: String,
+        libraryId: LibraryId,
+    ) : this(cache, MutationSubmitter(transport::submitMutation), profileId, deviceId, libraryId)
+
     private val mutex = Mutex()
 
     suspend fun enqueue(intent: MutationIntent): QueueResult {
@@ -76,7 +88,7 @@ class MutationEngine(
                 lastAttemptAt = System.currentTimeMillis(),
             )
             cache.updateMutation(submitting)
-            when (val result = transport.submitMutation(deviceId, libraryId.value, current.toRequest())) {
+            when (val result = submitter.submit(deviceId, libraryId.value, current.toRequest())) {
                 is MutationResult.Applied -> {
                     if (result.node.libraryId != libraryId.value || result.mutationId != current.mutationId || result.kind.name != current.kind) {
                         cache.updateMutation(submitting.copy(state = MutationState.FAILED_PERMANENT.name, lastErrorCategory = "invalid_mutation_result"))

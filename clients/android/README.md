@@ -5,7 +5,10 @@
 Prompts 5–8 add authenticated DeviceBearer library discovery, logical
 file/folder browsing, streaming download, SAF save/open/share, and foreground
 resumable file-creation uploads on top of the verified Prompt 4 enrollment
-vault. Synchronization and background transfer remain future milestones.
+vault. Prompts 9–18 add durable inbound synchronization, outbound metadata
+mutations, replace-content recovery, local conflict state, and WorkManager
+scheduling. This document describes implemented recovery boundaries and does
+not claim a live production-server synchronization run.
 
 ## Stack and targets
 
@@ -244,14 +247,28 @@ explicit profile/library scopes. Periodic work uses Android's minimum
 non-secret IDs are placed in WorkManager input; the worker resolves the
 profile-bound Keystore credential just in time and reuses the same bounded
 SyncEngine. Transient failures retry with WorkManager backoff, while permanent
-authentication, revocation, and protocol failures pause safely. There is no
-automatic file-byte mirroring, outbound mutation queue, conflict resolution,
-or always-running service.
+authentication, revocation, and protocol failures pause safely.
+
+Outbound metadata mutations are stored in Room with immutable UUIDv7 intent,
+base checkpoint, typed payload, and local integrity metadata. An ambiguous send
+becomes `OUTCOME_UNKNOWN` and later replays the same request; Android never
+silently changes a mutation's ID, base, or expected revision. APPLIED responses
+update canonical node metadata but never advance the inbound checkpoint; the
+generated journal event is still consumed by the feed.
+
+Replace-content operations stage SAF input in `filesDir/transfer-staging`,
+persist exact byte length and SHA-256, reuse one idempotency key for session
+creation, and reconcile the server-authoritative offset after ambiguous chunk
+responses. Staging is deleted only after validated completion. Room stores
+metadata and references, never file bytes or bearer credentials.
 
 ## Unsupported features and next milestone
 
-Backups, replace-content editing, outbound mutations, conflict resolution,
-automatic file-byte mirroring, and production signing remain unsupported.
+Backups, automatic file-byte mirroring, text/binary merge, and production
+signing remain unsupported. The current server keeps conflict list/detail/manual
+resolution routes BrowserSession-only; Android persists a safe local conflict
+summary and surfaces owner/web review required. It never fabricates a
+DeviceBearer conflict request or chooses a winner automatically.
 Prompt 4 includes JVM transport/lifecycle tests and a real AndroidKeyStore
 instrumentation test for encrypted persistence, recreation, scope fencing,
 malformed ciphertext, missing keys, and deletion. Runtime smoke testing covers
@@ -280,3 +297,19 @@ approximate. Background settings support connected or unmetered networks,
 The current server keeps conflict inspection/resolution BrowserSession-only;
 Android surfaces owner-review state and does not fake manual resolution or
 perform automatic conflict winners.
+
+## Hardening coverage
+
+The host suite contains deterministic fault-point matrices for mutation
+submission, replace-content staging/session/chunk/completion recovery, inbound
+ACK handling, rebaseline staging/swap/completion, and bidirectional
+interleavings. It also generates a multi-profile workload with 5,000 nodes per
+library, 1,000 queued mutations, 500 change events, and 100 conflict summaries
+while asserting stable queue ordering and one mutating critical section per
+scope.
+
+The Room 2-to-3 migration has on-device coverage from a representative legacy
+schema and verifies preservation of libraries, nodes, sync state, pending ACK,
+and rebaseline state while creating the outbound tables. Host gates are
+independent of emulator availability. API 36 instrumentation and runtime smoke
+must be run separately and are not implied by a successful JVM build.

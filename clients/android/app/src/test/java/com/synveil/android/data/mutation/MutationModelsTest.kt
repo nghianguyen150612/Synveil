@@ -6,7 +6,30 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+private const val TEST_NODE = "018bcfe5-687b-7001-8203-040506070801"
+private const val TEST_PARENT = "018bcfe5-687b-7001-8203-040506070802"
+
 class MutationModelsTest {
+    @Test
+    fun everyMutationKindSerializesOnlyItsTypedPayload() {
+        val intents = listOf(
+            MutationIntent.CreateDirectory(checkNotNull(com.synveil.android.data.library.NodeId.parse(TEST_PARENT)), "4", "new-folder"),
+            MutationIntent.RenameNode(checkNotNull(com.synveil.android.data.library.NodeId.parse(TEST_NODE)), "5", "renamed"),
+            MutationIntent.MoveNode(checkNotNull(com.synveil.android.data.library.NodeId.parse(TEST_NODE)), "5", checkNotNull(com.synveil.android.data.library.NodeId.parse(TEST_PARENT)), "6"),
+            MutationIntent.TrashNode(checkNotNull(com.synveil.android.data.library.NodeId.parse(TEST_NODE)), "5"),
+            MutationIntent.RestoreNode(checkNotNull(com.synveil.android.data.library.NodeId.parse(TEST_NODE)), "5", checkNotNull(com.synveil.android.data.library.NodeId.parse(TEST_PARENT)), "6"),
+        )
+
+        assertEquals(
+            setOf("parent_node_id", "expected_parent_revision", "name"),
+            intents[0].payload().keys,
+        )
+        assertEquals(setOf("node_id", "expected_revision", "new_name"), intents[1].payload().keys)
+        assertEquals(setOf("node_id", "expected_revision", "new_parent_node_id", "expected_new_parent_revision"), intents[2].payload().keys)
+        assertEquals(setOf("node_id", "expected_revision"), intents[3].payload().keys)
+        assertEquals(setOf("node_id", "expected_revision", "expected_parent_node_id", "expected_parent_revision"), intents[4].payload().keys)
+    }
+
     @Test
     fun uuidV7HasCanonicalVersionAndVariant() {
         val id = newUuidV7()

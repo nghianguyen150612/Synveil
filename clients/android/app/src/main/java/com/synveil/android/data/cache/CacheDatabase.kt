@@ -397,6 +397,9 @@ interface CacheDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertContentOperation(value: ContentOperationEntity)
 
+    @Query("UPDATE cached_nodes SET currentVersionId = :versionId, revision = :revision, byteLength = :byteLength, sha256 = :sha256 WHERE profileId = :profileId AND libraryId = :libraryId AND nodeId = :nodeId")
+    suspend fun recordContentCompletion(profileId: String, libraryId: String, nodeId: String, versionId: String, revision: String, byteLength: String, sha256: String)
+
     @Query("DELETE FROM content_operations WHERE profileId = :profileId AND deviceId = :deviceId AND libraryId = :libraryId AND operationId = :operationId")
     suspend fun deleteContentOperation(profileId: String, deviceId: String, libraryId: String, operationId: String)
 
@@ -412,11 +415,27 @@ interface CacheDao {
     @Query("DELETE FROM cached_conflicts WHERE profileId = :profileId")
     suspend fun deleteConflictsForProfile(profileId: String)
 
+    @Query("DELETE FROM mutation_queue WHERE state IN ('APPLIED', 'FAILED_PERMANENT') AND createdAt < :before AND rowid IN (SELECT rowid FROM mutation_queue WHERE state IN ('APPLIED', 'FAILED_PERMANENT') AND createdAt < :before ORDER BY createdAt ASC LIMIT :limit)")
+    suspend fun pruneTerminalMutations(before: Long, limit: Int)
+
+    @Query("DELETE FROM content_operations WHERE state IN ('COMMITTED', 'CANCELLED', 'FAILED') AND createdAt < :before AND rowid IN (SELECT rowid FROM content_operations WHERE state IN ('COMMITTED', 'CANCELLED', 'FAILED') AND createdAt < :before ORDER BY createdAt ASC LIMIT :limit)")
+    suspend fun pruneTerminalContentOperations(before: Long, limit: Int)
+
+    @Query("DELETE FROM cached_conflicts WHERE lifecycle != 'OPEN' AND lastObservedAt < :before")
+    suspend fun pruneResolvedConflicts(before: Long)
+
     @Transaction
     suspend fun clearOutboundForProfile(profileId: String) {
         deleteMutationsForProfile(profileId)
         deleteContentOperationsForProfile(profileId)
         deleteConflictsForProfile(profileId)
+    }
+
+    @Transaction
+    suspend fun pruneTerminalOutboundState(before: Long, limit: Int) {
+        pruneTerminalMutations(before, limit)
+        pruneTerminalContentOperations(before, limit)
+        pruneResolvedConflicts(before)
     }
 }
 

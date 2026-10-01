@@ -123,6 +123,7 @@ object TransferOperations {
                 is UploadResult.Completion -> {
                     if (completion.completion.nodeId != nodeId.value || completion.completion.bytes != bytes || completion.completion.sha256 != sha256) return@withContext TransferResult.Failed(protocolFailure())
                     cache.upsertContentOperation(ContentOperationEntity(profileId, deviceId, libraryId.value, operationId, nodeId.value, expectedRevision, staging.absolutePath, bytes, sha256, session.id, bytes, "COMMITTED", System.currentTimeMillis(), System.currentTimeMillis(), null))
+                    cache.recordContentCompletion(profileId, libraryId, nodeId.value, completion.completion.fileVersionId, completion.completion.nodeRevision, bytes.toString(), sha256)
                     staging.delete()
                     onProgress(TransferProgress.Completed)
                     TransferResult.Uploaded(completion.completion)
@@ -191,6 +192,7 @@ object TransferOperations {
                 is UploadResult.Completion -> {
                     if (completion.completion.nodeId != operation.nodeId || completion.completion.bytes != operation.byteLength || completion.completion.sha256 != operation.sha256) return@withContext TransferResult.Failed(protocolFailure())
                     cache.upsertContentOperation(operation.copy(uploadSessionId = session.id, serverOffset = operation.byteLength, state = "COMMITTED", lastAttemptAt = System.currentTimeMillis(), lastErrorCategory = null))
+                    cache.recordContentCompletion(operation.profileId, LibraryId.parse(operation.libraryId) ?: return@withContext TransferResult.Failed(protocolFailure()), operation.nodeId, completion.completion.fileVersionId, completion.completion.nodeRevision, operation.byteLength.toString(), operation.sha256)
                     staging.delete()
                     TransferResult.Uploaded(completion.completion)
                 }

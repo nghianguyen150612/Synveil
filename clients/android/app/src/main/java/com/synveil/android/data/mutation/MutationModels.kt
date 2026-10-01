@@ -127,6 +127,7 @@ internal object MutationWireParser {
         return try {
             val wire = json.decodeFromString<MutationEnvelope>(body.toString(Charsets.UTF_8))
             require(wire.meta.request_id.matches(Regex("^[A-Za-z0-9._~-]{8,128}$")))
+            require(requestId == null || requestId == wire.meta.request_id)
             val data = wire.data
             require(data.outcome == "APPLIED" && data.mutation_id == request.mutationId && data.kind == request.kind.name)
             require(data.journal_event_id.isNotEmpty() && data.journal_sequence.matches(Regex("^(0|[1-9][0-9]*)$")))

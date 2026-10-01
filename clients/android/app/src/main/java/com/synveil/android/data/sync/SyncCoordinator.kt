@@ -5,6 +5,7 @@ import com.synveil.android.data.cache.CacheRepository
 import com.synveil.android.data.enrollment.CredentialVaultFailure
 import com.synveil.android.data.enrollment.CredentialVaultException
 import com.synveil.android.data.enrollment.CredentialScope
+import com.synveil.android.data.enrollment.EnrollmentMetadata
 import com.synveil.android.data.enrollment.EnrollmentMetadataStore
 import com.synveil.android.data.enrollment.SecureCredentialVault
 import com.synveil.android.data.library.LibraryId
@@ -15,6 +16,16 @@ import com.synveil.android.data.transfer.ContentOperationEngine
 import com.synveil.android.data.profile.ProfileRepositoryState
 import com.synveil.android.data.profile.ServerProfileRepository
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.ConcurrentHashMap
+
+internal object SyncScopeLocks {
+    private val locks = ConcurrentHashMap<String, Mutex>()
+
+    fun forScope(profileId: String, deviceId: String, libraryId: LibraryId): Mutex =
+        locks.computeIfAbsent("$profileId\u0000$deviceId\u0000${libraryId.value}") { Mutex() }
+}
 
 class SyncCoordinator(
     private val profileRepository: ServerProfileRepository,
@@ -26,8 +37,18 @@ class SyncCoordinator(
     private val timeouts: TransportTimeouts = TransportTimeouts(),
 ) {
     suspend fun synchronize(profileId: String, libraryId: LibraryId): SyncOutcome {
-        val profile = profile(profileId) ?: return SyncOutcome(SyncOutcomeKind.AUTHENTICATION_REQUIRED)
         val metadata = metadataStore.active(profileId) ?: return SyncOutcome(SyncOutcomeKind.AUTHENTICATION_REQUIRED)
+        return SyncScopeLocks.forScope(profileId, metadata.deviceId, libraryId).withLock {
+            synchronizeLocked(profileId, libraryId, metadata)
+        }
+    }
+
+    private suspend fun synchronizeLocked(
+        profileId: String,
+        libraryId: LibraryId,
+        metadata: EnrollmentMetadata,
+    ): SyncOutcome {
+        val profile = profile(profileId) ?: return SyncOutcome(SyncOutcomeKind.AUTHENTICATION_REQUIRED)
         if (metadata.canonicalBaseUrl != profile.canonicalBaseUrl.value || metadata.transportPolicy != profile.transportPolicy.name) {
             return SyncOutcome(SyncOutcomeKind.AUTHENTICATION_REQUIRED)
         }

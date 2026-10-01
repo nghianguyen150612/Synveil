@@ -33,6 +33,10 @@ class SynveilApplication : Application() {
             File(filesDir, "transfer-staging").listFiles().orEmpty().forEach { file ->
                 if (file.absolutePath !in referenced && System.currentTimeMillis() - file.lastModified() > 7L * 24 * 60 * 60 * 1000) file.delete()
             }
+            cacheRepository.pruneTerminalOutboundState(
+                before = System.currentTimeMillis() - 30L * 24 * 60 * 60 * 1000,
+                limit = 500,
+            )
         }
     }
 

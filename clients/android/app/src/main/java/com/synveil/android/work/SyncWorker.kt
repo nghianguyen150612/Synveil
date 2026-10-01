@@ -60,6 +60,10 @@ object SyncWorkScheduler {
         WorkManager.getInstance(context).enqueueUniquePeriodicWork("synveil-periodic:$profileId:${libraryId.value}", ExistingPeriodicWorkPolicy.KEEP, request)
     }
 
+    fun cancelPeriodic(context: Context, profileId: String, libraryId: LibraryId) {
+        WorkManager.getInstance(context).cancelUniqueWork("synveil-periodic:$profileId:${libraryId.value}")
+    }
+
     fun cancelProfile(context: Context, profileId: String) {
         WorkManager.getInstance(context).cancelAllWorkByTag("synveil-profile:$profileId")
     }
