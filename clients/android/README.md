@@ -210,7 +210,16 @@ an interrupted exchange is shown as recovery required rather than retried.
 The browser loads one logical directory at a time through
 `GET /api/v1/libraries/{library_id}/nodes`, with strict node parsing, opaque
 cursor validation, and finite page/item budgets. Node names are logical
-metadata and are never interpreted as host filesystem paths.
+metadata and are never interpreted as host filesystem paths. Active and
+trashed logical nodes remain distinguishable so restore is available when the
+server exposes a trashed child. Trash is confirmation-gated and queued as a
+durable metadata mutation; the UI reports that the server has not changed
+until synchronization applies the immutable intent.
+
+Library and browser rows expose screen-reader descriptions, explicit refresh,
+root/up breadcrumbs, cached/offline banners, pending mutation counts, and
+actionable transfer/recovery messages. No UI action creates a browser-session
+conflict request or silently chooses a conflict winner.
 
 Current file content is streamed from `GET /api/v1/nodes/{node_id}/content`
 directly into a user-selected Storage Access Framework destination. Saved

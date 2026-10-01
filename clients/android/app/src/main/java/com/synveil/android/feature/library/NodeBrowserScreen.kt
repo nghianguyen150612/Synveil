@@ -31,6 +31,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -122,7 +124,7 @@ class NodeBrowserViewModel(
             if (result is com.synveil.android.data.transfer.TransferResult.Saved) {
                 mutableState.value = mutableState.value.copy(lastSavedUri = result.uri, lastSavedMime = "application/octet-stream")
             } else if (result is com.synveil.android.data.transfer.TransferResult.Failed) {
-                setMessage("Download failed: ${result.error.userMessage()}")
+                setMessage("Download failed: ${transportFailureMessage(result.error)}")
             }
         }
     }
@@ -149,7 +151,7 @@ class NodeBrowserViewModel(
                     mutableState.value = mutableState.value.copy(message = "Uploaded $name.")
                     refresh()
                 }
-                is com.synveil.android.data.transfer.TransferResult.Failed -> setMessage("Upload failed: ${result.error.userMessage()}")
+                is com.synveil.android.data.transfer.TransferResult.Failed -> setMessage("Upload failed: ${transportFailureMessage(result.error)}")
                 else -> Unit
             }
         }
@@ -167,7 +169,7 @@ class NodeBrowserViewModel(
             ) { progress -> mutableState.value = mutableState.value.copy(transfer = progress) }
             when (result) {
                 is com.synveil.android.data.transfer.TransferResult.Uploaded -> { setMessage("Content replacement committed; waiting for inbound sync."); refresh() }
-                is com.synveil.android.data.transfer.TransferResult.Failed -> setMessage("Replacement failed: ${result.error.userMessage()}")
+                is com.synveil.android.data.transfer.TransferResult.Failed -> setMessage("Replacement failed: ${transportFailureMessage(result.error)}")
                 else -> Unit
             }
         }
@@ -230,14 +232,14 @@ class NodeBrowserViewModel(
             updatePendingCount()
             val cached = profileId?.let {
                 withContext(Dispatchers.IO) { cache.observeChildren(it, libraryId, parent).first() }
-            }?.filter { it.state == com.synveil.android.data.node.NodeState.ACTIVE }.orEmpty()
+            }.orEmpty()
             if (cached.isNotEmpty()) {
                 mutableState.value = mutableState.value.copy(nodes = cached, showingCachedData = true)
             }
             val result = withContext(Dispatchers.IO) { sessionManager.listChildren(libraryId, parent) }
             mutableState.value = when (result) {
-                is NodeRepositoryResult.Loaded -> mutableState.value.copy(nodes = result.nodes.filter { it.state == com.synveil.android.data.node.NodeState.ACTIVE }, loading = false, showingCachedData = false)
-                is NodeRepositoryResult.Failed -> mutableState.value.copy(loading = false, message = if (cached.isNotEmpty()) "Offline — showing cached metadata. ${result.failure.userMessage()}" else result.failure.userMessage(), showingCachedData = cached.isNotEmpty())
+                is NodeRepositoryResult.Loaded -> mutableState.value.copy(nodes = result.nodes, loading = false, showingCachedData = false)
+                is NodeRepositoryResult.Failed -> mutableState.value.copy(loading = false, message = if (cached.isNotEmpty()) "Offline — showing cached metadata. ${nodeFailureMessage(result.failure)}" else nodeFailureMessage(result.failure), showingCachedData = cached.isNotEmpty())
             }
         }
     }
@@ -279,6 +281,7 @@ fun NodeBrowserScreen(
     val context = LocalContext.current
     var pendingDownload by remember { mutableStateOf<Node?>(null) }
     var renameNode by remember { mutableStateOf<Node?>(null) }
+    var trashNode by remember { mutableStateOf<Node?>(null) }
     var renameText by remember { mutableStateOf("") }
     var createFolder by remember { mutableStateOf(false) }
     var folderText by remember { mutableStateOf("") }
@@ -323,7 +326,7 @@ fun NodeBrowserScreen(
             if (!state.loading && state.nodes.isEmpty()) Text("This folder is empty.")
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(state.nodes, key = { it.nodeId.value }) { node ->
-                    NodeRow(node, onOpen = { viewModel.openDirectory(node) }, onRename = { renameNode = node; renameText = node.name }, onTrash = { viewModel.trash(node) }, onRestore = { viewModel.restore(node) }, onMove = { viewModel.moveToCurrentDirectory(node) }, onReplace = { pendingReplacement = node; replaceLauncher.launch(arrayOf("*/*")) }, onDownload = {
+                    NodeRow(node, onOpen = { viewModel.openDirectory(node) }, onRename = { renameNode = node; renameText = node.name }, onTrash = { trashNode = node }, onRestore = { viewModel.restore(node) }, onMove = { viewModel.moveToCurrentDirectory(node) }, onReplace = { pendingReplacement = node; replaceLauncher.launch(arrayOf("*/*")) }, onDownload = {
                         pendingDownload = node
                         saveLauncher.launch(TransferOperations.safeLogicalName(node.name))
                     })
@@ -336,7 +339,7 @@ fun NodeBrowserScreen(
                     TextButton(onClick = viewModel::clearSaved) { Text("Dismiss") }
                 }
             }
-            state.transfer?.let { progress -> Text(progress.label()) }
+            state.transfer?.let { progress -> Text(transferProgressLabel(progress)) }
             if (state.transfer is TransferProgress.Preparing ||
                 state.transfer is TransferProgress.Downloading ||
                 state.transfer is TransferProgress.Uploading ||
@@ -360,11 +363,24 @@ fun NodeBrowserScreen(
         confirmButton = { TextButton(onClick = { renameNode = null; viewModel.rename(node, renameText) }, enabled = renameText.trim().isNotEmpty()) { Text("Queue") } },
         dismissButton = { TextButton(onClick = { renameNode = null }) { Text("Cancel") } },
     ) }
+    trashNode?.let { node -> AlertDialog(
+        onDismissRequest = { trashNode = null },
+        title = { Text("Move to trash?") },
+        text = { Text("${node.name} will be queued for trash. The server has not changed until synchronization applies the mutation.") },
+        confirmButton = {
+            TextButton(onClick = { trashNode = null; viewModel.trash(node) }) { Text("Move to trash") }
+        },
+        dismissButton = { TextButton(onClick = { trashNode = null }) { Text("Cancel") } },
+    ) }
 }
 
 @Composable
 private fun NodeRow(node: Node, onOpen: () -> Unit, onRename: () -> Unit, onTrash: () -> Unit, onRestore: () -> Unit, onMove: () -> Unit, onReplace: () -> Unit, onDownload: () -> Unit) {
-    Card(Modifier.fillMaxWidth()) {
+    Card(
+        Modifier
+            .fillMaxWidth()
+            .semantics { contentDescription = "${node.name}, ${node.kind.name.lowercase()}, ${node.state.name.lowercase()}" },
+    ) {
         Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             Column(Modifier.weight(1f)) {
                 Text(node.name, style = MaterialTheme.typography.titleMedium)
@@ -378,26 +394,26 @@ private fun NodeRow(node: Node, onOpen: () -> Unit, onRename: () -> Unit, onTras
     }
 }
 
-private fun TransferProgress.label(): String = when (this) {
+internal fun transferProgressLabel(progress: TransferProgress): String = when (progress) {
     TransferProgress.Preparing -> "Preparing transfer…"
-    is TransferProgress.Downloading -> "Downloading $transferred${total?.let { "/$it" } ?: ""} bytes"
-    is TransferProgress.Uploading -> "Uploading $transferred/$total bytes"
+    is TransferProgress.Downloading -> "Downloading ${progress.transferred}${progress.total?.let { "/$it" } ?: ""} bytes"
+    is TransferProgress.Uploading -> "Uploading ${progress.transferred}/${progress.total} bytes"
     TransferProgress.Verifying -> "Verifying upload…"
     TransferProgress.Completed -> "Transfer complete"
-    is TransferProgress.Failed -> message
+    is TransferProgress.Failed -> progress.message
     TransferProgress.Cancelled -> "Transfer cancelled"
 }
 
-private fun NodeFailure.userMessage(): String = when (this) {
-    is NodeFailure.Transport -> error.userMessage()
+internal fun nodeFailureMessage(failure: NodeFailure): String = when (failure) {
+    is NodeFailure.Transport -> transportFailureMessage(failure.error)
     NodeFailure.ResourceLimit, NodeFailure.RepeatedCursor, NodeFailure.InvalidScope -> "The server returned an invalid directory page."
 }
 
-private fun com.synveil.android.data.network.SynveilTransportError.userMessage(): String = when (this) {
-    is com.synveil.android.data.network.SynveilTransportError.HttpError -> when (code) {
+private fun transportFailureMessage(error: com.synveil.android.data.network.SynveilTransportError): String = when (error) {
+    is com.synveil.android.data.network.SynveilTransportError.HttpError -> when (error.code) {
         "device_revoked" -> "This device was revoked."
         "authentication_failed" -> "Authentication is required."
-        else -> "The server rejected the request ($statusCode)."
+        else -> "The server rejected the request (${error.statusCode})."
     }
     com.synveil.android.data.network.SynveilTransportError.Timeout,
     com.synveil.android.data.network.SynveilTransportError.Offline,

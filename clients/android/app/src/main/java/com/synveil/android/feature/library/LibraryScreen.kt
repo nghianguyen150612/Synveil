@@ -124,9 +124,9 @@ class LibraryViewModel(
                 is LibraryRepositoryResult.Failed -> mutableState.value.copy(
                     isLoading = false,
                     message = if (mutableState.value.libraries.isNotEmpty()) {
-                        "Offline — showing cached libraries. ${failureMessage(result.failure)}"
+                        "Offline — showing cached libraries. ${libraryFailureMessage(result.failure)}"
                     } else {
-                        failureMessage(result.failure)
+                        libraryFailureMessage(result.failure)
                     },
                     showingCachedData = mutableState.value.libraries.isNotEmpty(),
                 )
@@ -252,7 +252,7 @@ private fun LibraryRow(library: Library, syncState: String?, onClick: () -> Unit
             Column {
                 Text(library.name, style = MaterialTheme.typography.titleMedium)
                 Text(library.status.name, style = MaterialTheme.typography.bodySmall)
-                Text(syncStateLabel(syncState), style = MaterialTheme.typography.bodySmall)
+                Text(librarySyncStateLabel(syncState), style = MaterialTheme.typography.bodySmall)
             }
             Column {
                 Text(library.updatedAt.toString(), style = MaterialTheme.typography.bodySmall)
@@ -262,7 +262,7 @@ private fun LibraryRow(library: Library, syncState: String?, onClick: () -> Unit
     }
 }
 
-private fun syncStateLabel(value: String?): String = when (value) {
+internal fun librarySyncStateLabel(value: String?): String = when (value) {
     null, "UNINITIALIZED" -> "Never synced"
     "READY" -> "Up to date"
     "SYNCING" -> "Syncing"
@@ -273,7 +273,7 @@ private fun syncStateLabel(value: String?): String = when (value) {
     else -> "Sync error"
 }
 
-private fun failureMessage(failure: LibraryFailure): String = when (failure) {
+internal fun libraryFailureMessage(failure: LibraryFailure): String = when (failure) {
     is LibraryFailure.Transport -> "Library request failed."
     LibraryFailure.NoActiveProfile -> "Configure an active server profile first."
     LibraryFailure.ResourceLimit -> "The library catalog exceeded the client safety limit."
