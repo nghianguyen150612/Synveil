@@ -171,9 +171,13 @@ removal, and opt-in background-client primitives. P017–P020 remain pending.
 
 ### P017 — Linux Quick Install Script
 
-Implement the supported installer script using `curl ... | sh` or an explicitly
-documented safer equivalent. Verify release identity and payload before
-privileged package changes.
+**Implemented (Prompt017 source complete; final-head hosted evidence required):**
+the [verified Linux quick install](LINUX_QUICK_INSTALL.md) and
+[Prompt017 evidence manifest](PROMPT017_MANIFEST.md) provide independently
+bootstrapped P011/P006 release authentication, exact DEB/RPM verification,
+private staging, explicit plans/consent, limited visible native-manager
+privilege, installed-state verification and idempotent reruns. Profiles remain
+explicit until P018; first-launch and broad clean-machine UX remain P019/P020.
 
 ### P018 — Linux Distro and Architecture Detection
 
