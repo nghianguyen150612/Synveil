@@ -1,0 +1,24 @@
+#!/bin/sh
+# Minimal, fail-closed AppImage entry point. Runtime state remains in XDG paths.
+set -eu
+
+APPDIR=${APPDIR:-"$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)"}
+for required in \
+    "$APPDIR/usr/bin/synveil-desktop" \
+    "$APPDIR/usr/bin/synveil-client" \
+    "$APPDIR/usr/lib" \
+    "$APPDIR/usr/plugins/platforms" \
+    "$APPDIR/usr/qml"; do
+    if [ ! -e "$required" ]; then
+        printf 'Synveil AppImage: required bundled runtime component missing: %s\n' "$required" >&2
+        exit 126
+    fi
+done
+
+# Deliberately replace, rather than append to, developer-controlled Qt paths.
+export LD_LIBRARY_PATH="$APPDIR/usr/lib"
+export QT_PLUGIN_PATH="$APPDIR/usr/plugins"
+export QML2_IMPORT_PATH="$APPDIR/usr/qml"
+export QML_IMPORT_PATH="$APPDIR/usr/qml"
+export SYNVEIL_PACKAGED_CLIENT="$APPDIR/usr/bin/synveil-client"
+exec "$APPDIR/usr/bin/synveil-desktop" "$@"
