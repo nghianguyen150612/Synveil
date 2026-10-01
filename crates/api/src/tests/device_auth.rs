@@ -423,6 +423,54 @@ async fn device_bearer_can_use_library_catalog_without_browser_csrf() {
 }
 
 #[tokio::test]
+async fn device_bearer_can_list_owned_library_children_without_csrf() {
+    let browser = Arc::new(TestAuthenticationBackend::new());
+    let file_backend = Arc::new(TestFileMetadataBackend::new(browser.user_id));
+    let library_id = file_backend.library_id();
+    let device_auth = Arc::new(TestDeviceAuth {
+        principal: DeviceCredentialPrincipal {
+            owner_user_id: browser.user_id,
+            device_id: DeviceId::new(),
+            credential_id: DeviceCredentialId::new(),
+        },
+        secret: DeviceCredentialSecret::from_bytes([0x74; 32]),
+        revoked: std::sync::atomic::AtomicBool::new(false),
+    });
+    let state = state(true)
+        .with_auth_backend(browser)
+        .with_device_auth_backend(device_auth.clone())
+        .with_file_metadata_backend(file_backend.clone());
+
+    let response = router(state.clone())
+        .oneshot(device_request(
+            Method::GET,
+            &format!("/api/v1/libraries/{library_id}/nodes?limit=100"),
+            Value::Null,
+            &device_auth.secret,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(response).await["data"].as_array().unwrap().len(),
+        0
+    );
+
+    device_auth.revoked.store(true, Ordering::SeqCst);
+    let response = router(state)
+        .oneshot(device_request(
+            Method::GET,
+            &format!("/api/v1/libraries/{library_id}/nodes"),
+            Value::Null,
+            &device_auth.secret,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(json_body(response).await["error"]["code"], "device_revoked");
+}
+
+#[tokio::test]
 async fn bearer_revocation_applies_to_every_inbound_route_and_parsing_is_bounded() {
     let (state, auth, device, library) = fixture();
     let scope = format!("/api/v1/devices/{device}/libraries/{library}");

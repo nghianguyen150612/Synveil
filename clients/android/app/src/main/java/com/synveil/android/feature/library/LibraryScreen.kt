@@ -1,0 +1,371 @@
+package com.synveil.android.feature.library
+
+import android.content.Context
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.synveil.android.data.library.Library
+import com.synveil.android.data.library.LibraryFailure
+import com.synveil.android.data.library.LibraryRepositoryResult
+import com.synveil.android.data.cache.CacheRepository
+import com.synveil.android.data.connectivity.ConnectivityObserver
+import com.synveil.android.data.connectivity.ConnectivityStatus
+import com.synveil.android.data.connectivity.UnknownConnectivityObserver
+import com.synveil.android.data.connectivity.connectivityStatusMessage
+import com.synveil.android.data.session.DeviceSessionManager
+import com.synveil.android.data.session.DeviceSessionState
+import com.synveil.android.data.settings.SyncSchedulerOutcome
+import com.synveil.android.data.settings.SyncSchedulerState
+import com.synveil.android.data.settings.SyncSchedulerStateStore
+import com.synveil.android.data.settings.SyncSettings
+import com.synveil.android.work.SyncWorkScheduler
+import com.synveil.android.SynveilApplication
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+data class LibraryUiState(
+    val session: DeviceSessionState = DeviceSessionState.NoProfile,
+    val libraries: List<Library> = emptyList(),
+    val isLoading: Boolean = false,
+    val message: String? = null,
+    val showingCachedData: Boolean = false,
+    val syncStates: Map<String, String> = emptyMap(),
+    val schedulerStates: Map<String, SyncSchedulerState> = emptyMap(),
+    val connectivity: ConnectivityStatus = ConnectivityStatus.UNKNOWN,
+)
+
+private fun DeviceSessionState.profileIdOrNull(): String? = when (this) {
+    is DeviceSessionState.ProfileAvailable -> profileId
+    is DeviceSessionState.NotEnrolled -> profileId
+    is DeviceSessionState.LoadingCredential -> profileId
+    is DeviceSessionState.Ready -> profileId
+    is DeviceSessionState.AuthenticationRequired -> profileId
+    is DeviceSessionState.DeviceRevoked -> profileId
+    is DeviceSessionState.ServerUnavailable -> profileId
+    is DeviceSessionState.TlsError -> profileId
+    is DeviceSessionState.SecureStoreUnavailable -> profileId
+    is DeviceSessionState.RecoveryRequired -> profileId
+    is DeviceSessionState.ProtocolError -> profileId
+    DeviceSessionState.NoProfile -> null
+}
+
+class LibraryViewModel(
+    private val sessionManager: DeviceSessionManager,
+    private val cache: CacheRepository,
+    private val connectivity: ConnectivityObserver = UnknownConnectivityObserver,
+    private val schedulerStateStore: SyncSchedulerStateStore? = null,
+) : ViewModel() {
+    private val mutableState = MutableStateFlow(LibraryUiState())
+    val uiState: StateFlow<LibraryUiState> = mutableState.asStateFlow()
+    private var cacheJob: Job? = null
+
+    init {
+        viewModelScope.launch {
+            connectivity.status.collect { status ->
+                mutableState.value = mutableState.value.copy(connectivity = status)
+            }
+        }
+        viewModelScope.launch {
+            sessionManager.state.collectLatest { session ->
+                mutableState.value = mutableState.value.copy(session = session)
+                cacheJob?.cancel()
+                val profileId = session.profileIdOrNull()
+                if (profileId != null) {
+                    cacheJob = launch {
+                        cache.observeLibraries(profileId).collect { libraries ->
+                            if (libraries.isNotEmpty()) {
+                                mutableState.value = mutableState.value.copy(
+                                    libraries = libraries,
+                                    showingCachedData = true,
+                                )
+                            }
+                        }
+                    }
+                    launch {
+                        cache.observeSyncStates(profileId).collect { states ->
+                            mutableState.value = mutableState.value.copy(
+                                syncStates = states.associate { it.libraryId to it.state },
+                            )
+                        }
+                    }
+                    schedulerStateStore?.let { store ->
+                        launch {
+                            store.observeForProfile(profileId).collect { states ->
+                                mutableState.value = mutableState.value.copy(
+                                    schedulerStates = states.associateBy { it.libraryId },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        refresh()
+    }
+
+    fun refresh() {
+        if (mutableState.value.isLoading) return
+        viewModelScope.launch {
+            if (mutableState.value.connectivity == ConnectivityStatus.OFFLINE) {
+                mutableState.value = mutableState.value.copy(
+                    message = "Offline — showing cached metadata. Reconnect and retry.",
+                    showingCachedData = mutableState.value.libraries.isNotEmpty(),
+                )
+                return@launch
+            }
+            mutableState.value = mutableState.value.copy(isLoading = true, message = null)
+            val result = withContext(Dispatchers.IO) { sessionManager.listLibraries() }
+            mutableState.value = when (result) {
+                is LibraryRepositoryResult.Loaded -> mutableState.value.copy(
+                    libraries = result.libraries,
+                    isLoading = false,
+                    message = if (result.libraries.isEmpty()) "No libraries are available." else null,
+                    showingCachedData = false,
+                )
+                is LibraryRepositoryResult.Failed -> mutableState.value.copy(
+                    isLoading = false,
+                    message = if (mutableState.value.libraries.isNotEmpty()) {
+                        "Offline — showing cached libraries. ${libraryFailureMessage(result.failure)}"
+                    } else {
+                        libraryFailureMessage(result.failure)
+                    },
+                    showingCachedData = mutableState.value.libraries.isNotEmpty(),
+                )
+            }
+        }
+    }
+
+    fun syncNow(context: Context, library: Library) {
+        val profileId = (mutableState.value.session as? DeviceSessionState.Ready)?.profileId
+            ?: (mutableState.value.session as? DeviceSessionState.ProfileAvailable)?.profileId
+            ?: return
+        SyncWorkScheduler.enqueueNow(context, profileId, library.id)
+        mutableState.value = mutableState.value.copy(message = "Sync queued for ${library.name}.")
+    }
+
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun LibraryScreen(
+    sessionManager: DeviceSessionManager,
+    cache: CacheRepository,
+    onBack: () -> Unit,
+    onOpenLibrary: (Library) -> Unit,
+    connectivityObserver: ConnectivityObserver = UnknownConnectivityObserver,
+    schedulerStateStore: SyncSchedulerStateStore? = null,
+    viewModel: LibraryViewModel = viewModel(
+        factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T =
+                LibraryViewModel(sessionManager, cache, connectivityObserver, schedulerStateStore) as T
+        },
+    ),
+) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val syncSettings by (context.applicationContext as SynveilApplication).syncSettingsStore.settings.collectAsStateWithLifecycle(initialValue = SyncSettings())
+    LaunchedEffect(uiState.session, uiState.libraries, syncSettings) {
+        val profileId = uiState.session.profileIdOrNull()
+        if (profileId != null) {
+            uiState.libraries.forEach { library ->
+                if (syncSettings.backgroundEnabled) {
+                    SyncWorkScheduler.enqueuePeriodic(context, profileId, library.id, syncSettings.periodicMinutes, syncSettings.networkPolicy, syncSettings.batteryNotLow)
+                } else {
+                    SyncWorkScheduler.cancelPeriodic(context, profileId, library.id)
+                }
+            }
+        }
+    }
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Libraries") },
+                navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
+                actions = {
+                    TextButton(onClick = viewModel::refresh, enabled = !uiState.isLoading) {
+                        Text("Refresh")
+                    }
+                },
+            )
+        },
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier.fillMaxSize().padding(paddingValues).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            SessionStatus(uiState.session)
+            ConnectivityStatusText(uiState.connectivity)
+            if (uiState.showingCachedData) {
+                Text("Offline — cached metadata", color = MaterialTheme.colorScheme.tertiary)
+            }
+            if (uiState.isLoading) CircularProgressIndicator()
+            uiState.message?.let {
+                Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+            }
+            if (!uiState.isLoading && uiState.message == "No libraries are available.") {
+                Text("The authenticated owner catalog is empty.")
+            } else {
+                BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(libraryColumnCount(maxWidth.value.toInt())),
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        items(uiState.libraries, key = { it.id.value }) { library ->
+                            LibraryRow(
+                                library,
+                                syncState = uiState.syncStates[library.id.value],
+                                schedulerState = uiState.schedulerStates[library.id.value],
+                                onClick = { onOpenLibrary(library) },
+                                onSync = { viewModel.syncNow(context, library) },
+                            )
+                        }
+                    }
+                }
+            }
+            Button(onClick = viewModel::refresh, enabled = !uiState.isLoading) {
+                Text("Load libraries")
+            }
+            Text(
+                "Open a library to browse its logical folders and files.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ConnectivityStatusText(status: ConnectivityStatus) {
+    Text(connectivityStatusMessage(status), style = MaterialTheme.typography.bodySmall)
+}
+
+@Composable
+private fun SessionStatus(state: DeviceSessionState) {
+    val message = when (state) {
+        DeviceSessionState.NoProfile -> "Configure a server profile first."
+        is DeviceSessionState.ProfileAvailable -> "Ready to check device enrollment for ${state.displayLabel}."
+        is DeviceSessionState.NotEnrolled -> "This profile is configured but this device is not enrolled."
+        is DeviceSessionState.LoadingCredential -> "Loading the secure device credential…"
+        is DeviceSessionState.Ready -> "Authenticated as the enrolled device."
+        is DeviceSessionState.AuthenticationRequired -> "The device credential was not accepted. Use the recovery workflow."
+        is DeviceSessionState.DeviceRevoked -> "This device credential was revoked by the server."
+        is DeviceSessionState.ServerUnavailable -> "The server is unavailable. Enrollment was not changed."
+        is DeviceSessionState.TlsError -> "TLS verification failed."
+        is DeviceSessionState.SecureStoreUnavailable -> "Secure credential storage is unavailable."
+        is DeviceSessionState.RecoveryRequired -> "Enrollment recovery is required before authenticated access."
+        is DeviceSessionState.ProtocolError -> "The server returned an invalid Synveil response."
+    }
+    Text(message, style = MaterialTheme.typography.bodyMedium)
+}
+
+@Composable
+private fun LibraryRow(library: Library, syncState: String?, schedulerState: SyncSchedulerState?, onClick: () -> Unit, onSync: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .semantics { contentDescription = "${library.name}, ${library.status.name.lowercase()}" },
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column {
+                Text(library.name, style = MaterialTheme.typography.titleMedium)
+                Text(library.status.name, style = MaterialTheme.typography.bodySmall)
+                Text(librarySyncStateLabel(syncState), style = MaterialTheme.typography.bodySmall)
+                Text(librarySchedulerStateLabel(schedulerState), style = MaterialTheme.typography.bodySmall)
+                librarySchedulerDetailLabel(schedulerState)?.let { detail ->
+                    Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Column {
+                Text(library.updatedAt.toString(), style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = onSync) { Text("Sync now") }
+            }
+        }
+    }
+}
+
+internal fun libraryColumnCount(widthDp: Int): Int = when {
+    widthDp >= 840 -> 3
+    widthDp >= 600 -> 2
+    else -> 1
+}
+
+internal fun librarySyncStateLabel(value: String?): String = when (value) {
+    null, "UNINITIALIZED" -> "Never synced"
+    "READY" -> "Up to date"
+    "SYNCING" -> "Syncing"
+    "REBASELINE_REQUIRED" -> "Rebaseline required"
+    "REBASELINING" -> "Rebaselining"
+    "PAUSED_AUTH" -> "Authentication required"
+    "ERROR_TRANSIENT" -> "Offline / retry pending"
+    else -> "Sync error"
+}
+
+internal fun librarySchedulerStateLabel(value: SyncSchedulerState?): String = when (value?.outcome) {
+    null, SyncSchedulerOutcome.SUCCESS -> "Background sync is up to date."
+    SyncSchedulerOutcome.RETRY -> "Background sync will retry."
+    SyncSchedulerOutcome.PAUSED_AUTH -> "Background sync is paused until authentication is recovered."
+    SyncSchedulerOutcome.REVOKED -> "This device was revoked; re-enrollment is required."
+    SyncSchedulerOutcome.PROTOCOL_ERROR -> "Background sync stopped because the server response was invalid."
+    SyncSchedulerOutcome.REBASELINE_REQUIRED -> "Background sync requires a safe rebaseline."
+}
+
+internal fun librarySchedulerDetailLabel(value: SyncSchedulerState?): String? = value?.let { state ->
+    buildList {
+        add("Last attempt: ${java.time.Instant.ofEpochMilli(state.lastAttemptAt)}")
+        state.lastSuccessAt?.let { add("Last success: ${java.time.Instant.ofEpochMilli(it)}") }
+        state.lastErrorCode?.let { add("Error: $it") }
+    }.joinToString(" · ")
+}
+
+internal fun libraryFailureMessage(failure: LibraryFailure): String = when (failure) {
+    is LibraryFailure.Transport -> "Library request failed."
+    LibraryFailure.NoActiveProfile -> "Configure an active server profile first."
+    LibraryFailure.ResourceLimit -> "The library catalog exceeded the client safety limit."
+    LibraryFailure.RepeatedCursor -> "The server returned an invalid pagination cursor."
+}

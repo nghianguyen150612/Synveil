@@ -21,5 +21,13 @@ coverage/
 .vscode/
 /.claude/settings.local.json
 
+# Android build and local configuration output.
+clients/android/.gradle/
+clients/android/local.properties
+clients/android/build/
+clients/android/app/build/
+*.jks
+*.keystore
+
 # CXX-Qt generates this IDE-only file with the local build directory.
 /crates/desktop/.qmlls.ini

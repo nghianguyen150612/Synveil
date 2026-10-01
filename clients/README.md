@@ -1,5 +1,13 @@
 # Synveil clients
 
-This directory reserves future device-client work. Client implementations are
-not part of the repository skeleton; they will consume the reviewed API and
-protocol contracts without receiving storage or database credentials.
+The native Android client now lives under `clients/android/`. Prompt 1 provides
+the Kotlin, Jetpack Compose, Material 3, Android 16, and One UI 8.5-compatible
+application foundation. Prompt 2 adds durable non-secret server-profile
+configuration, canonical origin validation, profile management UI, and verified
+unauthenticated health transport. It does not yet implement authentication,
+synchronization, uploads, backups, or file browsing.
+
+Client implementations must consume reviewed API and protocol contracts without
+direct access to PostgreSQL, the server filesystem, object-store paths, or
+private server credentials. See `clients/android/README.md` for the Android
+architecture, command-line gates, and current limitations.

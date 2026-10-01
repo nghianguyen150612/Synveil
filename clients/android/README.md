@@ -1,0 +1,359 @@
+# Synveil Android client
+
+## Status
+
+The Android client now includes lifecycle-safe onboarding from server profile
+creation through one-time device enrollment. Home and enrollment surfaces
+distinguish unconfigured, not-enrolled, recovery-required, authentication,
+revocation, secure-store, transport, and ready states without exposing
+credentials. Local forget is explicitly device-only, profile-scoped, and
+confirmable; ambiguous enrollment remains an owner/browser recovery boundary.
+
+Prompts 5–8 add authenticated DeviceBearer library discovery, logical
+file/folder browsing, streaming download, SAF save/open/share, and foreground
+resumable file-creation uploads on top of the verified Prompt 4 enrollment
+vault. Prompts 9–18 add durable inbound synchronization, outbound metadata
+mutations, replace-content recovery, local conflict state, and WorkManager
+scheduling. This document describes implemented recovery boundaries and does
+not claim a live production-server synchronization run.
+
+## Stack and targets
+
+- Kotlin with Gradle Kotlin DSL and one `app` module.
+- Jetpack Compose with Material 3, AndroidX lifecycle, and Navigation Compose.
+- AndroidX Preferences DataStore with a versioned kotlinx.serialization JSON
+  representation for small local application configuration.
+- `compileSdk = 36` and `targetSdk = 36` for the Android 16 baseline.
+- `INTERNET` and `ACCESS_NETWORK_STATE` are the only normal runtime-independent
+  permissions; network state is used only for bounded offline/cache messaging.
+- Samsung One UI 8.5 is a compatibility target, not a proprietary dependency.
+- Production application ID is `com.synveil.android`; debug builds use the
+  isolated `com.synveil.android.debug` ID and `-debug` version suffix.
+- Release identity, external signing, artifact inspection, rollout, and
+  rollback are documented in `clients/android/RELEASE.md`. No signing
+  material, credentials, or server secrets belong in this project.
+
+## Layout and architecture
+
+```text
+app/src/main/java/com/synveil/android/
+├── app/                 # Activity and navigation composition root
+├── core/model/          # Small app-facing value models
+├── core/ui/             # Theme and shared Compose UI foundation
+├── data/network/        # Profile-bound HTTP transport and auth protocol
+├── data/library/        # Strict library catalog wire/domain models
+├── data/node/           # Strict logical node models and child pagination
+├── data/transfer/       # Streaming download and resumable upload operations
+├── data/session/        # Profile-bound DeviceBearer session coordinator
+├── data/profile/        # DataStore-backed profile repository and schema
+└── feature/
+    ├── home/            # Startup/home surface
+    ├── profile/         # Profile list, editor, and lifecycle-safe ViewModels
+    └── startup/         # Lifecycle-safe presentation state and ViewModel
+```
+
+The intended dependency direction is Compose UI -> presentation state ->
+future domain/use-case boundaries -> repository -> data adapter. Compose code
+does not access DataStore directly and has no HTTP, credential, database,
+protocol serialization, or filesystem responsibilities.
+
+### Server profiles
+
+Each profile stores an opaque locally generated UUIDv7, a human-readable label,
+canonical server origin, transport policy, creation time, and a nullable future
+connection timestamp. Profile IDs are unrelated to hostnames, owners, Devices,
+or server database IDs and remain unchanged when a profile is edited. Changing
+the origin is an explicit origin reconfiguration and clears any future
+`lastConnectedAt` value.
+
+Production profiles require HTTPS. The only HTTP exception is the explicit
+`LOOPBACK_TEST_HTTP` policy enabled in debug builds for numeric `127.0.0.1` or
+`[::1]` origins. Hostnames such as `localhost`, LAN addresses, and `.local`
+names remain rejected. Origins cannot contain credentials, paths, queries,
+fragments, backslashes, or malformed ports. Release cleartext traffic is
+disabled; the debug manifest permits platform cleartext only so the transport
+can exercise its tightly bounded numeric-loopback policy.
+
+The DataStore representation is schema version 1 and contains only the active
+profile ID plus non-secret profile records. It contains no password, session,
+CSRF, enrollment token, bearer, API-key, or private-key fields. Corrupt or invalid
+persisted values fail closed as a typed configuration error rather than being
+silently repaired. Duplicate canonical origins and invalid active-profile
+references are rejected atomically.
+
+## Device enrollment and credential lifecycle
+
+Device enrollment is implemented for a configured server profile through
+`POST /api/v1/device-enrollment/exchange`. The enrollment token is accepted only
+when it matches `sve1_` followed by 64 lowercase hexadecimal characters. The
+exchange is once-only: OkHttp redirects and connection retries are disabled and
+the client never automatically retries a timeout, disconnect, response loss, or
+HTTP 503. An ambiguous result is surfaced as recovery required; the token is
+never persisted or replayed automatically.
+
+Before sending the exchange, the client preflights Android Keystore. The
+returned `svd1_` credential is strictly validated, encrypted with AES-256-GCM
+using an AES key that remains in Android Keystore, and stored with a fresh
+12-byte IV. The encrypted versioned envelope is authenticated with profile,
+origin, transport, owner, device, and credential scope. Only ciphertext, IV,
+key alias, and non-secret scope metadata are kept in Preferences DataStore; the
+plaintext bearer is never persisted, logged, included in navigation arguments,
+or exposed by `toString`.
+
+Enrollment finalization writes non-secret pending metadata, stores the secret,
+reads it back and verifies its scope, then commits active metadata and clears
+the pending marker. Recovery is evaluated when enrollment/authenticated
+functionality is opened; process startup does not decrypt every profile's
+credential merely to render Home.
+Origin changes and profile deletion fence local credentials before committing,
+and remain blocked if secure cleanup fails. “Forget on this device” removes the
+local credential only and does not claim server revocation. Server-side revoke
+and re-enrollment remain an owner/browser workflow requiring BrowserSession and
+CSRF; DeviceBearer is never used for those endpoints.
+
+`MainActivity` enables edge-to-edge and applies safe drawing insets rather than
+hardcoding system bar sizes. Navigation Compose owns the initial route and
+ordinary back-stack behavior; its AndroidX implementation remains compatible
+with modern predictive-back dispatch. The theme follows system light/dark mode,
+supports dynamic colors on supported Android versions, and uses standard Android
+resources so it remains portable across Android devices and One UI.
+
+## Prerequisites
+
+- JDK 21.
+- Android SDK Platform 36 and Build Tools 36.0.0.
+- A working Android SDK license setup.
+
+No Android Studio installation is required for the command-line build.
+
+## Build and test
+
+From this directory:
+
+```bash
+./gradlew --version
+./gradlew tasks
+./gradlew assembleDebug
+./gradlew test
+./gradlew lint
+./gradlew connectedDebugAndroidTest
+./scripts/validate-release-artifact.sh \
+  --apk=app/build/outputs/apk/release/app-release-unsigned.apk \
+  --aab=app/build/outputs/bundle/release/app-release.aab
+```
+
+`assembleRelease` enables R8/resource shrinking and produces an unsigned
+artifact by default. External signing values are required for a distributable
+release; see `RELEASE.md`. Debug/release APKs, mapping files, and signing
+material are generated or private artifacts and are not committed. No running
+Synveil server or secret environment variable is required for host validation.
+
+## Security and protocol boundary
+
+The Android client is an untrusted/semi-trusted client. It must use reviewed
+Synveil HTTP/API and authentication boundaries when those features are added.
+It must never connect directly to PostgreSQL, the server filesystem, object
+store paths, or private server credentials. `api/openapi.yaml` and normative
+Synveil documentation remain authoritative; this client must not invent a
+parallel protocol or duplicate server/domain business logic.
+
+The existing Rust `synveil-client` and `synveil-client-sync` crates implement
+desktop process/synchronization concerns and are not linked into Prompt 4.
+JNI, UniFFI, native Rust libraries, and C/C++ bridges require a later explicit
+portability and FFI decision.
+
+## HTTP transport
+
+`SynveilHttpTransport` is constructed from one validated `ServerProfile`; it
+does not accept arbitrary caller URLs. It uses OkHttp with redirects,
+connection retries, and cookies disabled. Requests use finite connect, read,
+write, and call timeouts, `Accept: application/json`, identity encoding, and a
+non-secret client user-agent. Release profiles are HTTPS-only and use standard
+Android TLS verification with no trust-all or certificate-error bypass. Debug
+numeric-loopback HTTP remains the only cleartext exception.
+
+Health response bodies are bounded to 64 KiB, require compatible JSON content
+types, and use strict kotlinx.serialization schemas. Valid `X-Request-Id`
+values are retained only as bounded diagnostics. The full server check calls
+`/health/live` before `/health/ready`; a valid readiness `503` is reported as
+alive-but-not-ready. A successful ready result is the only event that updates
+the profile's historical `lastConnectedAt` value. No current-online state is
+inferred from that timestamp.
+
+`AuthenticatedSynveilTransport` is created only by `DeviceSessionManager` after
+the active profile's non-secret enrollment metadata and Android Keystore vault
+record agree on profile, origin, transport, owner, Device, and credential
+scope. It sends exactly one `Authorization: Bearer svd1_...` header on
+profile-derived library, node, download, and upload-session requests. The bearer is never placed in a
+Compose state object, navigation argument, DataStore value, log, cookie, CSRF
+header, or process-wide OkHttp default. Kotlin/JVM strings cannot guarantee
+zeroization, so the implementation limits secret copies and lifetime instead
+of making a false zeroization claim.
+
+Library pages use a strict kotlinx.serialization schema, a 1 MiB response
+limit, a page size of 100, a 512-character opaque cursor bound, and finite
+budgets of 64 pages and 4096 accumulated libraries. Unknown fields, statuses,
+IDs, revisions, timestamps, names, and incoherent pagination fail closed.
+Authenticated error states distinguish authentication failure, device
+revocation, transient server unavailability, TLS failure, secure-store
+failure, recovery-required enrollment, and protocol incompatibility. A 401 or
+503 never deletes local enrollment and is never automatically retried or
+re-enrolled.
+
+The application-level device session means the currently usable enrolled
+profile context; it is not a browser login session. Browser cookies and CSRF
+are intentionally unsupported for DeviceBearer requests. The library and
+browser screens are foreground-only and use explicit refresh/actions. Child
+listing is an owner-scoped DeviceBearer read; mixed cookie and bearer
+authentication is rejected by the server.
+
+Enrollment input is held only in the active password field and a private
+ViewModel buffer while the exchange is in progress. It is cleared when a
+submission starts and is never part of public UI state, navigation arguments,
+saved state, logs, or diagnostics. Recreating the process re-reads only the
+profile-scoped non-secret enrollment metadata and Keystore-backed credential;
+an interrupted exchange is shown as recovery required rather than retried.
+
+## File browsing and transfers
+
+The browser loads one logical directory at a time through
+`GET /api/v1/libraries/{library_id}/nodes`, with strict node parsing, opaque
+cursor validation, and finite page/item budgets. Node names are logical
+metadata and are never interpreted as host filesystem paths. Active and
+trashed logical nodes remain distinguishable so restore is available when the
+server exposes a trashed child. Trash is confirmation-gated and queued as a
+durable metadata mutation; the UI reports that the server has not changed
+until synchronization applies the immutable intent.
+
+Library and browser rows expose screen-reader descriptions, explicit refresh,
+root/up breadcrumbs, cached/offline banners, pending mutation counts, and
+actionable transfer/recovery messages. No UI action creates a browser-session
+conflict request or silently chooses a conflict winner.
+
+Foreground library and browser refreshes observe Android connectivity without
+changing canonical-origin or TLS policy. Offline state never triggers an
+unbounded retry loop: cached metadata is shown immediately when available and
+the user explicitly retries after reconnecting. Connectivity diagnostics carry
+only the coarse `UNKNOWN`, `ONLINE`, or `OFFLINE` state and no profile secret,
+credential, cookie, or server response body.
+
+Current file content is streamed from `GET /api/v1/nodes/{node_id}/content`
+directly into a user-selected Storage Access Framework destination. Saved
+content is reopened and shared only as a `content://` URI with temporary read
+permission; no `file://` URI or broad storage permission is used.
+
+File-creation uploads use `ACTION_OPEN_DOCUMENT`, stage the selected stream in
+app-private `transfer-staging` storage to obtain exact size/hash and enable
+random access, then create one idempotent `CREATE_FILE` upload session and
+append 4 MiB raw chunks. Staging is bounded to 512 MiB with a 64 MiB free-space
+reserve; quota and low-storage failures are deterministic and do not send a
+request. The server's `Upload-Offset` is authoritative. After an ambiguous
+PATCH, the client reads session status and resumes from the confirmed offset;
+it never blindly replays a chunk. Transfer staging contains only bytes, while
+Room stores bounded operation metadata and verified hash/length/offset fields,
+never file bytes or bearer material. Transfers remain foreground/lifecycle-
+managed and are separate from metadata synchronization.
+
+## Durable metadata cache and synchronization
+
+The app uses a versioned Room database for non-secret logical metadata only:
+cached libraries and nodes, per-profile/device/library sync state, pending
+acknowledgments, rebaseline staging, and bounded diagnostics. It never stores a
+DeviceBearer, enrollment token, browser cookie, CSRF token, Keystore key, or
+physical storage path. The cache is profile-scoped and is cleared when a
+profile is removed or enrollment is forgotten.
+
+Foreground refreshes update Room transactionally, and the browser can show the
+last-known logical tree while offline with an explicit cached/offline label.
+Cached rows are a local projection, not authorization evidence or a claim that
+the server is current. File bytes are not stored in Room.
+
+Incremental inbound synchronization uses the authenticated DeviceBearer
+checkpoint, change feed, canonical node reads, and signed page acknowledgments.
+Each feed page is applied in one Room transaction before its exact opaque ACK
+token is sent. If the process stops after local application or an ACK response
+is lost, the same pending token is replayed on the next run. Invalid scopes,
+epochs, sequence ordering, revisions, enums, cursors, tokens, and response
+metadata fail closed.
+
+When retained history is unavailable, the sync engine uses the server's
+rebaseline protocol. Manifest pages are staged durably and validated for one
+bootstrap/generation/cut, item count, ordering, and terminal completion token.
+The active node projection is replaced atomically only after the complete
+manifest is present; server completion is then retried with the same token if
+its response is lost. Expired staging is fenced without deleting the previous
+active cache.
+
+WorkManager provides unique, connected-network one-time and periodic sync for
+explicit profile/library scopes. Periodic work uses Android's minimum
+15-minute interval and is best-effort under Doze and battery scheduling. Only
+non-secret IDs are placed in WorkManager input; the worker resolves the
+profile-bound Keystore credential just in time and reuses the same bounded
+SyncEngine. Transient failures retry with WorkManager backoff, while permanent
+authentication, revocation, and protocol failures pause safely.
+
+Outbound metadata mutations are stored in Room with immutable UUIDv7 intent,
+base checkpoint, typed payload, and local integrity metadata. An ambiguous send
+becomes `OUTCOME_UNKNOWN` and later replays the same request; Android never
+silently changes a mutation's ID, base, or expected revision. APPLIED responses
+update canonical node metadata but never advance the inbound checkpoint; the
+generated journal event is still consumed by the feed.
+
+Replace-content operations stage SAF input in `filesDir/transfer-staging`,
+persist exact byte length and SHA-256, reuse one idempotency key for session
+creation, and reconcile the server-authoritative offset after ambiguous chunk
+responses. Staging is deleted only after validated completion. Room stores
+metadata and references, never file bytes or bearer credentials.
+
+## Unsupported features and release boundary
+
+Backups, automatic file-byte mirroring, and text/binary merge remain
+unsupported. External production signing is supported by the documented
+release build path. The current server keeps conflict list/detail/manual
+resolution routes BrowserSession-only; Android persists a safe local conflict
+summary and surfaces owner/web review required. It never fabricates a
+DeviceBearer conflict request or chooses a winner automatically.
+Prompt 4 includes JVM transport/lifecycle tests and a real AndroidKeyStore
+instrumentation test for encrypted persistence, recreation, scope fencing,
+malformed ciphertext, missing keys, and deletion. Runtime smoke testing covers
+build/install/launch, enrollment navigation, secure token input, local
+malformed-token validation, authenticated library navigation, cached-state
+recreation, and transfer intent paths; no external production grant or real
+credential is used.
+
+## Bidirectional sync (P13–P18)
+
+The Android client now maintains a durable Room outbound mutation queue for
+`CREATE_DIRECTORY`, `RENAME_NODE`, `MOVE_NODE`, `TRASH_NODE`, and
+`RESTORE_NODE`. Queue entries retain immutable UUIDv7 intent, base checkpoint,
+optimistic revisions, and exact typed payloads. Offline changes are labeled
+Pending sync and are replayed with the same mutation ID after response loss;
+server conflicts are never silently overwritten.
+
+Replacing file content uses the Android SAF picker and app-private staged
+content with streaming byte counting and SHA-256 verification. Upload session
+offsets remain server authoritative and staged content is retained for recovery.
+
+Inbound and outbound work share the existing per-profile/device/library
+coordinator and unique WorkManager scope. Background execution is bounded and
+approximate. Background settings support connected or unmetered networks,
+15-minute-or-longer periodic timing, and optional battery-not-low constraints.
+The current server keeps conflict inspection/resolution BrowserSession-only;
+Android surfaces owner-review state and does not fake manual resolution or
+perform automatic conflict winners.
+
+## Hardening coverage
+
+The host suite contains deterministic fault-point matrices for mutation
+submission, replace-content staging/session/chunk/completion recovery, inbound
+ACK handling, rebaseline staging/swap/completion, and bidirectional
+interleavings. It also generates a multi-profile workload with 5,000 nodes per
+library, 1,000 queued mutations, 500 change events, and 100 conflict summaries
+while asserting stable queue ordering and one mutating critical section per
+scope.
+
+The Room 2-to-3 migration has on-device coverage from a representative legacy
+schema and verifies preservation of libraries, nodes, sync state, pending ACK,
+and rebaseline state while creating the outbound tables. Host gates are
+independent of emulator availability. API 36 instrumentation and runtime smoke
+must be run separately and are not implied by a successful JVM build.
