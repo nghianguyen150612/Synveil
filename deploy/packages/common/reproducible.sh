@@ -220,6 +220,12 @@ synveil_prepare_reproducible_rust_build() {
     # understand these flags and must not receive them.
     local host_toolchain=""
     host_toolchain="$(rustc -vV 2>/dev/null | sed -n 's/^host: //p' | head -n 1 || true)"
+    # GNU ld's build-id note was the only differing section in two otherwise
+    # identical desktop links. Do not post-process artifacts: disable that
+    # non-semantic note for every Linux release package at link time.
+    if [[ "$host_toolchain" == *"linux"* ]]; then
+        synveil_append_unique_build_flag RUSTFLAGS "-C link-arg=-Wl,--build-id=none"
+    fi
     if [[ "$host_toolchain" != *"msvc"* ]]; then
         # GCC/Clang use the last matching prefix map for an overlapping path.
         # Keep repository roots first and nested target directories afterward
@@ -336,10 +342,9 @@ synveil_assert_linux_release_binary() {
         printf '[synveil-artifact] ERROR: ELF header audit failed: %s\n' "$label" >&2
         return 1
     }
-    local build_id
-    build_id="$(synveil_artifact_build_id "$artifact")"
-    [[ "$build_id" =~ ^[0-9a-fA-F]+$ ]] || {
-        printf '[synveil-artifact] ERROR: ELF build ID is missing: %s\n' "$label" >&2
+    # Reproducible Linux release links deliberately omit GNU build-id notes.
+    [[ -z "$(synveil_artifact_build_id "$artifact")" ]] || {
+        printf '[synveil-artifact] ERROR: nondeterministic ELF build ID is present: %s\n' "$label" >&2
         return 1
     }
     if readelf -S "$artifact" 2>/dev/null | grep -Eq '[[:space:]]\.debug_[^[:space:]]*'; then

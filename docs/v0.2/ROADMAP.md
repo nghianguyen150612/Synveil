@@ -153,19 +153,21 @@ interaction and broader distribution qualification remain P020 and P018.
 
 ### P015 — AppImage Build Foundation
 
-**Implemented (Prompt015, subject to final-head hosted artifact evidence):** the
+**Implemented (Prompt015 source complete; final-head hosted evidence required):** the
 [AppImage build foundation](APPIMAGE_BUILD_FOUNDATION.md) and
 [Prompt015 evidence manifest](PROMPT015_MANIFEST.md) add a pinned, verified
 linuxdeploy/Qt deployment path, version-derived x86_64 artifact, fail-closed
 AppRun, real-artifact closure/manifest inspection, decontaminated QML smoke,
 and independent byte-rebuild gate without changing SecretStore, IPC, or XDG
-state ownership. Optional integration and broad platform qualification remain
-P016–P020.
+state ownership. Broad platform qualification remains P017–P020.
 
 ### P016 — AppImage Runtime Integration
 
-Define desktop integration, icons, safe writable state and background-client
-strategy for the portable AppImage lifecycle.
+**Implemented (Prompt016 source complete; final-head hosted evidence required):**
+the [AppImage runtime integration](APPIMAGE_RUNTIME_INTEGRATION.md) and
+[Prompt016 manifest](PROMPT016_MANIFEST.md) provide explicit current-user
+launcher/icon/state/unit lifecycle, typed stale inspection, relocation, repair,
+removal, and opt-in background-client primitives. P017–P020 remain pending.
 
 ### P017 — Linux Quick Install Script
 

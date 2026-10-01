@@ -11,7 +11,8 @@ creates the image, independently repeats the staging/image operation, and
 publishes only after byte comparison succeeds. Scheduled server maintenance
 is intentionally absent.
 
-The AppDir has `AppRun`, `synveil.desktop`, `synveil.svg`, the two executables
+The AppDir has `AppRun`, `synveil.desktop`, `synveil.svg`, the two product executables
+and the bounded integration helper
 under `usr/bin`, and the deployed libraries, Qt plugins, and QML modules under
 `usr`. Nothing in the image is a development artifact or host integration
 installer. `AppRun` replaces developer Qt search paths with image-local paths,
@@ -20,6 +21,13 @@ client path as `SYNVEIL_PACKAGED_CLIENT`, and then directly executes the
 desktop. It does not manage either process's lifecycle.
 
 ## Selected tooling and provenance
+
+The Ubuntu 22.04 hosted builder retains its glibc 2.35/compiler baseline while
+using the exact Qt 6.7.3 `linux_gcc_64` archive from Qt's official archive
+service through `install-qt-action` v4.3.0 pinned by full commit SHA. The
+action verifies archive metadata/checksums. qmake, rcc, qmlcachegen,
+qmlimportscanner, libraries, plugins, and QML modules therefore come from one
+toolchain; Ubuntu's incompatible Qt 6.2 tools are not installed.
 
 The builder uses linuxdeploy `1-alpha-20251107-1` and the linuxdeploy Qt plugin
 `1-alpha-20250213-1`. Their x86_64 AppImages are downloaded only over HTTPS
@@ -89,7 +97,8 @@ disposable XDG home with developer overrides removed and
 `QT_QPA_PLATFORM=offscreen`. The generated release manifest hashes the real
 artifact and lists only `synveil-desktop` and `synveil-client` as components.
 
-P016 retains optional desktop/icon registration, relocation and stale-entry
-handling, persistent background-client integration, and repair/removal. P017
+P016 supplies optional desktop/icon registration, relocation and stale-entry
+handling, persistent background-client integration, and repair/removal as
+documented in [AppImage runtime integration](APPIMAGE_RUNTIME_INTEGRATION.md). P017
 quick install, P018 distro detection/qualification, P019 friendly first-launch
 service behavior, and P020 broad clean-machine acceptance also remain pending.

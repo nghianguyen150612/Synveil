@@ -20,19 +20,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # Pinned action and exact official Qt archive; all Qt host tools and
+      # runtime libraries therefore come from one compatible toolchain.
+      - name: Install Qt 6.7.3 toolchain
+        uses: jurplel/install-qt-action@d325aaf2a8baeeda41ad0b5d39f84a6af9bcf005
+        with:
+          version: '6.7.3'
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          cache: true
       - name: Install conservative build/runtime dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y file shellcheck pkg-config libdbus-1-dev \
-            libfuse2 qt6-base-dev qt6-declarative-dev qt6-tools-dev-tools qt6-qpa-plugins \
-            qml6-module-qtqml qml6-module-qtqml-models qml6-module-qtqml-workerscript \
-            qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-dialogs \
-            qml6-module-qtquick-layouts qml6-module-qtquick-templates qml6-module-qtquick-window
+            libfuse2
       - name: Static contracts and shell checks
         run: |
           bash -n deploy/packages/build-appimage.sh scripts/validate-appimage-build.sh
           shellcheck -S warning deploy/packages/build-appimage.sh deploy/packages/appimage/AppRun scripts/validate-appimage-build.sh
           ./scripts/validate-appimage-build.sh
+          cargo test -p synveil-install-engine --test appimage_integration --locked
       - name: Build and independently reproduce AppImage
         run: ./deploy/packages/build-appimage.sh
       - name: Inspect exact artifact, manifest, and bundled runtime
@@ -46,6 +54,8 @@ jobs:
         run: |
           APPIMAGE="target/packages/Synveil-$(bash -c 'source deploy/packages/common/version.sh; synveil_cargo_version')-x86_64.AppImage"
           ./scripts/validate-appimage-build.sh --artifact "$APPIMAGE" --smoke
+      - name: Real AppImage current-user integration lifecycle
+        run: ./scripts/validate-appimage-runtime.sh "$(find target/packages -maxdepth 1 -name '*.AppImage' -print -quit)"
       - name: Record ABI symbol baseline
         run: |
           APPIMAGE=$(find target/packages -maxdepth 1 -name '*.AppImage' -print -quit)

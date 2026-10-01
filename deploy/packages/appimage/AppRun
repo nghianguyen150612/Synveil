@@ -6,6 +6,7 @@ APPDIR=${APPDIR:-"$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)"}
 for required in \
     "$APPDIR/usr/bin/synveil-desktop" \
     "$APPDIR/usr/bin/synveil-client" \
+    "$APPDIR/usr/bin/synveil-appimage-integration" \
     "$APPDIR/usr/lib" \
     "$APPDIR/usr/plugins/platforms" \
     "$APPDIR/usr/qml"; do
@@ -21,4 +22,25 @@ export QT_PLUGIN_PATH="$APPDIR/usr/plugins"
 export QML2_IMPORT_PATH="$APPDIR/usr/qml"
 export QML_IMPORT_PATH="$APPDIR/usr/qml"
 export SYNVEIL_PACKAGED_CLIENT="$APPDIR/usr/bin/synveil-client"
+export SYNVEIL_APPIMAGE_ICON="$APPDIR/synveil.svg"
+
+case "${1:-}" in
+  --synveil-client)
+    shift
+    exec "$APPDIR/usr/bin/synveil-client" "$@"
+    ;;
+  --synveil-integration-status|--synveil-integrate|--synveil-integration-repair|--synveil-integration-remove|--synveil-client-enable|--synveil-client-disable)
+    mode=$1
+    shift
+    case "$mode" in
+      --synveil-integration-status) action=status ;;
+      --synveil-integrate) action=install ;;
+      --synveil-integration-repair) action=repair ;;
+      --synveil-integration-remove) action=remove ;;
+      --synveil-client-enable) action=enable ;;
+      --synveil-client-disable) action=disable ;;
+    esac
+    exec "$APPDIR/usr/bin/synveil-appimage-integration" "$action" "$@"
+    ;;
+esac
 exec "$APPDIR/usr/bin/synveil-desktop" "$@"

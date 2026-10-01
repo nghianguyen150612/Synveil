@@ -2880,6 +2880,7 @@ name = "synveil-install-engine"
 version = "0.1.0"
 dependencies = [
  "fs2",
+ "nix",
  "serde",
  "serde_json",
  "sha2",
