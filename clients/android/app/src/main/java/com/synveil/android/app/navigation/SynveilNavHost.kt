@@ -23,6 +23,7 @@ import com.synveil.android.data.session.DeviceSessionManager
 import com.synveil.android.feature.library.LibraryScreen
 import com.synveil.android.feature.home.SyncSettingsScreen
 import com.synveil.android.data.settings.SyncSettingsStore
+import com.synveil.android.data.settings.SyncSchedulerStateStore
 import com.synveil.android.feature.library.NodeBrowserScreen
 import com.synveil.android.data.library.LibraryId
 import com.synveil.android.data.library.NodeId
@@ -45,6 +46,7 @@ fun SynveilNavHost(
     deviceSessionManager: DeviceSessionManager,
     cache: CacheRepository,
     syncSettingsStore: SyncSettingsStore,
+    syncSchedulerStateStore: SyncSchedulerStateStore,
     connectivityObserver: ConnectivityObserver,
     modifier: Modifier = Modifier,
 ) {
@@ -78,6 +80,7 @@ fun SynveilNavHost(
             LibraryScreen(
                 sessionManager = deviceSessionManager,
                 cache = cache,
+                schedulerStateStore = syncSchedulerStateStore,
                 connectivityObserver = connectivityObserver,
                 onBack = navController::popBackStack,
                 onOpenLibrary = { library ->

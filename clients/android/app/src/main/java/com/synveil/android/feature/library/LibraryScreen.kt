@@ -39,6 +39,10 @@ import com.synveil.android.data.connectivity.UnknownConnectivityObserver
 import com.synveil.android.data.connectivity.connectivityStatusMessage
 import com.synveil.android.data.session.DeviceSessionManager
 import com.synveil.android.data.session.DeviceSessionState
+import com.synveil.android.data.settings.SyncSchedulerOutcome
+import com.synveil.android.data.settings.SyncSchedulerState
+import com.synveil.android.data.settings.SyncSchedulerStateStore
+import com.synveil.android.data.settings.SyncSettings
 import com.synveil.android.work.SyncWorkScheduler
 import com.synveil.android.SynveilApplication
 import kotlinx.coroutines.Dispatchers
@@ -47,7 +51,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -58,6 +61,7 @@ data class LibraryUiState(
     val message: String? = null,
     val showingCachedData: Boolean = false,
     val syncStates: Map<String, String> = emptyMap(),
+    val schedulerStates: Map<String, SyncSchedulerState> = emptyMap(),
     val connectivity: ConnectivityStatus = ConnectivityStatus.UNKNOWN,
 )
 
@@ -80,6 +84,7 @@ class LibraryViewModel(
     private val sessionManager: DeviceSessionManager,
     private val cache: CacheRepository,
     private val connectivity: ConnectivityObserver = UnknownConnectivityObserver,
+    private val schedulerStateStore: SyncSchedulerStateStore? = null,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(LibraryUiState())
     val uiState: StateFlow<LibraryUiState> = mutableState.asStateFlow()
@@ -112,6 +117,15 @@ class LibraryViewModel(
                             mutableState.value = mutableState.value.copy(
                                 syncStates = states.associate { it.libraryId to it.state },
                             )
+                        }
+                    }
+                    schedulerStateStore?.let { store ->
+                        launch {
+                            store.observeForProfile(profileId).collect { states ->
+                                mutableState.value = mutableState.value.copy(
+                                    schedulerStates = states.associateBy { it.libraryId },
+                                )
+                            }
                         }
                     }
                 }
@@ -170,23 +184,24 @@ fun LibraryScreen(
     onBack: () -> Unit,
     onOpenLibrary: (Library) -> Unit,
     connectivityObserver: ConnectivityObserver = UnknownConnectivityObserver,
+    schedulerStateStore: SyncSchedulerStateStore? = null,
     viewModel: LibraryViewModel = viewModel(
         factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                LibraryViewModel(sessionManager, cache, connectivityObserver) as T
+                LibraryViewModel(sessionManager, cache, connectivityObserver, schedulerStateStore) as T
         },
     ),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
-    LaunchedEffect(uiState.session, uiState.libraries) {
+    val syncSettings by (context.applicationContext as SynveilApplication).syncSettingsStore.settings.collectAsStateWithLifecycle(initialValue = SyncSettings())
+    LaunchedEffect(uiState.session, uiState.libraries, syncSettings) {
         val profileId = uiState.session.profileIdOrNull()
         if (profileId != null) {
-            val settings = (context.applicationContext as SynveilApplication).syncSettingsStore.settings.first()
             uiState.libraries.forEach { library ->
-                if (settings.backgroundEnabled) {
-                    SyncWorkScheduler.enqueuePeriodic(context, profileId, library.id, settings.periodicMinutes, settings.networkPolicy, settings.batteryNotLow)
+                if (syncSettings.backgroundEnabled) {
+                    SyncWorkScheduler.enqueuePeriodic(context, profileId, library.id, syncSettings.periodicMinutes, syncSettings.networkPolicy, syncSettings.batteryNotLow)
                 } else {
                     SyncWorkScheduler.cancelPeriodic(context, profileId, library.id)
                 }
@@ -225,6 +240,7 @@ fun LibraryScreen(
                         LibraryRow(
                             library,
                             syncState = uiState.syncStates[library.id.value],
+                            schedulerState = uiState.schedulerStates[library.id.value],
                             onClick = { onOpenLibrary(library) },
                             onSync = { viewModel.syncNow(context, library) },
                         )
@@ -268,7 +284,7 @@ private fun SessionStatus(state: DeviceSessionState) {
 }
 
 @Composable
-private fun LibraryRow(library: Library, syncState: String?, onClick: () -> Unit, onSync: () -> Unit) {
+private fun LibraryRow(library: Library, syncState: String?, schedulerState: SyncSchedulerState?, onClick: () -> Unit, onSync: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -278,6 +294,10 @@ private fun LibraryRow(library: Library, syncState: String?, onClick: () -> Unit
                 Text(library.name, style = MaterialTheme.typography.titleMedium)
                 Text(library.status.name, style = MaterialTheme.typography.bodySmall)
                 Text(librarySyncStateLabel(syncState), style = MaterialTheme.typography.bodySmall)
+                Text(librarySchedulerStateLabel(schedulerState), style = MaterialTheme.typography.bodySmall)
+                librarySchedulerDetailLabel(schedulerState)?.let { detail ->
+                    Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
             Column {
                 Text(library.updatedAt.toString(), style = MaterialTheme.typography.bodySmall)
@@ -296,6 +316,23 @@ internal fun librarySyncStateLabel(value: String?): String = when (value) {
     "PAUSED_AUTH" -> "Authentication required"
     "ERROR_TRANSIENT" -> "Offline / retry pending"
     else -> "Sync error"
+}
+
+internal fun librarySchedulerStateLabel(value: SyncSchedulerState?): String = when (value?.outcome) {
+    null, SyncSchedulerOutcome.SUCCESS -> "Background sync is up to date."
+    SyncSchedulerOutcome.RETRY -> "Background sync will retry."
+    SyncSchedulerOutcome.PAUSED_AUTH -> "Background sync is paused until authentication is recovered."
+    SyncSchedulerOutcome.REVOKED -> "This device was revoked; re-enrollment is required."
+    SyncSchedulerOutcome.PROTOCOL_ERROR -> "Background sync stopped because the server response was invalid."
+    SyncSchedulerOutcome.REBASELINE_REQUIRED -> "Background sync requires a safe rebaseline."
+}
+
+internal fun librarySchedulerDetailLabel(value: SyncSchedulerState?): String? = value?.let { state ->
+    buildList {
+        add("Last attempt: ${java.time.Instant.ofEpochMilli(state.lastAttemptAt)}")
+        state.lastSuccessAt?.let { add("Last success: ${java.time.Instant.ofEpochMilli(it)}") }
+        state.lastErrorCode?.let { add("Error: $it") }
+    }.joinToString(" · ")
 }
 
 internal fun libraryFailureMessage(failure: LibraryFailure): String = when (failure) {

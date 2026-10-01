@@ -18,6 +18,7 @@ import com.synveil.android.data.connectivity.SystemConnectivityObserver
 import com.synveil.android.data.sync.SyncCoordinator
 import com.synveil.android.work.SyncWorkScheduler
 import com.synveil.android.data.settings.SyncSettingsStore
+import com.synveil.android.data.settings.SyncSchedulerStateStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -44,6 +45,7 @@ class SynveilApplication : Application() {
     val cacheDatabase by lazy { SynveilCacheDatabase.create(applicationContext) }
     val cacheRepository by lazy { CacheRepository(cacheDatabase.cacheDao()) }
     val syncSettingsStore by lazy { SyncSettingsStore(applicationContext) }
+    val syncSchedulerStateStore by lazy { SyncSchedulerStateStore(applicationContext) }
     val connectivityObserver by lazy { SystemConnectivityObserver(applicationContext) }
 
     private val enrollmentMetadataStore by lazy {
@@ -69,6 +71,7 @@ class SynveilApplication : Application() {
             onFenced = { profileId ->
                 cacheRepository.clearProfile(profileId)
                 SyncWorkScheduler.cancelProfile(this, profileId)
+                syncSchedulerStateStore.clearProfile(profileId)
             },
         )
     }
