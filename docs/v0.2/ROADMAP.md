@@ -171,14 +171,22 @@ removal, and opt-in background-client primitives. P017–P020 remain pending.
 
 ### P017 — Linux Quick Install Script
 
-Implement the supported installer script using `curl ... | sh` or an explicitly
-documented safer equivalent. Verify release identity and payload before
-privileged package changes.
+**Implemented (Prompt017 source complete; final-head hosted evidence required):**
+the [verified Linux quick install](LINUX_QUICK_INSTALL.md) and
+[Prompt017 evidence manifest](PROMPT017_MANIFEST.md) provide independently
+bootstrapped P011/P006 release authentication, exact DEB/RPM verification,
+private staging, explicit plans/consent, limited visible native-manager
+privilege, installed-state verification and idempotent reruns. P018 now resolves
+qualified profiles; first-launch and broad clean-machine UX remain P019/P020.
 
 ### P018 — Linux Distro and Architecture Detection
 
-Detect package family, architecture and version compatibility. Choose an
-artifact only when the environment is qualified; reject unsupported systems.
+**Implemented (Prompt018 source complete; final-head hosted evidence required):**
+the [Linux platform detector](LINUX_PLATFORM_DETECTION.md) and
+[Prompt018 manifest](PROMPT018_MANIFEST.md) safely parse bounded os-release
+data, apply an exact versioned Ubuntu 24.04/Fedora 42 x86_64 policy, validate
+native tooling, and auto-resolve the existing DEB/RPM profiles. Unsupported
+versions, derivatives and architectures fail before network access or mutation.
 
 ### P019 — Linux First Launch Integration
 

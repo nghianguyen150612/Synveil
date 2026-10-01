@@ -69,12 +69,21 @@ jobs:
           bash -n deploy/install/install.sh
           bash -n deploy/install/uninstall.sh
           bash -n deploy/install/common.sh
+          bash -n deploy/install/quick-install.sh
+          bash -n scripts/run-linux-quick-install-acceptance.sh
           shellcheck -S warning \
             deploy/packages/build.sh deploy/packages/build-windows.sh \
             deploy/packages/common/reproducible.sh \
             scripts/validate-release-artifacts.sh \
             scripts/verify-release-build-reproducibility.sh \
+            deploy/install/quick-install.sh scripts/run-linux-quick-install-acceptance.sh \
             deploy/packages/debian/postinst deploy/packages/debian/prerm deploy/packages/debian/postrm
+
+      - name: Prompt017 static and adversarial quick-install contracts
+        run: ./scripts/validate-linux-quick-install.sh
+
+      - name: Prompt018 platform policy and adversarial fixture matrix
+        run: ./scripts/validate-linux-platform-detection.sh
 
       - name: Prompt013 DEB UX source and CI ordering contract
         run: ./scripts/validate-debian-package-ux.sh
@@ -223,7 +232,7 @@ jobs:
   deb-native-ux:
     name: APT install, non-root launch, removal, and preservation
     needs: linux-packages
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
@@ -238,9 +247,11 @@ jobs:
           name: synveil-linux-packages
           path: target/packages
 
-      - name: Inspect and install exact DEB through APT
+      - name: Install exact DEB through authenticated quick install and verify rerun
         run: |
           set -euo pipefail
+          DETECTION="$(./deploy/install/quick-install.sh --detect-only)"
+          python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert (d["os_id"], d["version_id"], d["architecture"], d["profile"], d["artifact_type"], d["package_manager"]) == ("ubuntu", "24.04", "x86_64", "debian-x86_64", "deb", "APT")' "$DETECTION"
           DEB="$(find target/packages -maxdepth 1 -type f -name 'synveil_*_amd64.deb' -print -quit)"
           test -n "$DEB"
           python3 scripts/validate-debian-package-ux.py --deb "$DEB"
@@ -248,8 +259,8 @@ jobs:
             echo 'Synveil unexpectedly running before package installation' >&2
             exit 1
           fi
-          sudo apt-get update
-          sudo apt-get install -y "$PWD/$DEB"
+          VERSION="$(dpkg-deb --field "$DEB" Version | cut -d- -f1)"
+          ./scripts/run-linux-quick-install-acceptance.sh deb "$PWD/$DEB" "$VERSION"
           test -x /usr/bin/synveil-desktop
           test -x /usr/bin/synveil-client
           test -f /usr/share/applications/synveil.desktop
@@ -322,7 +333,7 @@ jobs:
       - name: Install Fedora acceptance tooling
         run: |
           set -euo pipefail
-          dnf install -y git findutils procps-ng shadow-utils util-linux
+          dnf install -y git findutils procps-ng shadow-utils util-linux sudo openssl python3
 
       - name: Check out exact package source
         uses: actions/checkout@v4
@@ -333,9 +344,11 @@ jobs:
           name: synveil-linux-packages
           path: target/packages
 
-      - name: DNF install exact RPM
+      - name: DNF install exact RPM through authenticated quick install and verify rerun
         run: |
           set -euo pipefail
+          DETECTION="$(./deploy/install/quick-install.sh --detect-only)"
+          python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert (d["os_id"], d["version_id"], d["architecture"], d["profile"], d["artifact_type"], d["package_manager"]) == ("fedora", "42", "x86_64", "fedora-x86_64", "rpm", "DNF")' "$DETECTION"
           RPM="$(find target/packages -maxdepth 1 -type f -name 'synveil-*.x86_64.rpm' -print -quit)"
           test -n "$RPM"
           python3 scripts/validate-rpm-package-ux.py --rpm "$RPM"
@@ -343,7 +356,13 @@ jobs:
             echo 'Synveil unexpectedly running before package installation' >&2
             exit 1
           fi
-          dnf install -y "$PWD/$RPM"
+          useradd --create-home --user-group synveil-installer
+          printf 'synveil-installer ALL=(root) NOPASSWD: /usr/bin/dnf\n' > /etc/sudoers.d/synveil-installer
+          chmod 0440 /etc/sudoers.d/synveil-installer
+          chown -R synveil-installer:synveil-installer "$PWD"
+          VERSION="$(rpm -qp --qf '%{VERSION}' "$RPM")"
+          runuser -u synveil-installer -- ./scripts/run-linux-quick-install-acceptance.sh \
+            rpm "$PWD/$RPM" "$VERSION"
           rpm -q synveil
           rpm -V synveil
           test -x /usr/bin/synveil-desktop

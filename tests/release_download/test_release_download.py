@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import copy, hashlib, importlib.util, io, json, sys, tempfile, unittest
+import urllib.error
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -172,5 +173,12 @@ class ReleaseDownloadTests(unittest.TestCase):
     def test_66_result_single_context(self):
         result=download.stage_artifact(io.BytesIO(self.payload),self.root,self.selection)
         self.assertEqual((self.pin,"0.1.0",COMMIT,self.artifact["id"],self.artifact["sha256"],len(self.payload)),(result["manifest_identity"]["sha256"],result["product_version"],result["source_commit"],result["artifact_id"],result["artifact_sha256"],result["artifact_size"]))
+    def test_67_transport_failure_is_typed(self):
+        class Failed(download.UrllibNoRedirectTransport):
+            def __init__(self):
+                class Broken:
+                    def open(*_args, **_kwargs): raise urllib.error.URLError("redacted")
+                self._opener=Broken()
+        self.error("NETWORK_ERROR",download.fetch_https,"https://release.example/x",self.policy.allowed_manifest_origins,20,transport=Failed())
 
 if __name__ == "__main__": unittest.main()

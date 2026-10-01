@@ -22,6 +22,7 @@ import release_manifest
 
 MAX_MANIFEST_BYTES = 1024 * 1024
 MAX_REDIRECTS = 5
+NETWORK_TIMEOUT_SECONDS = 30
 CHUNK_SIZE = 1024 * 1024
 AUTHENTICATED_STATES = {"AUTHENTICATED_PINNED_DIGEST", "AUTHENTICATED_SIGNATURE"}
 
@@ -94,9 +95,11 @@ class UrllibNoRedirectTransport(RawHttpsTransport):
 
     def request(self, request: urllib.request.Request):
         try:
-            return self._opener.open(request)
+            return self._opener.open(request, timeout=NETWORK_TIMEOUT_SECONDS)
         except urllib.error.HTTPError as error:
             return error
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            raise AcquisitionError("NETWORK_ERROR", "HTTPS request failed") from error
 
 
 def origin(url: str) -> str:
