@@ -4,10 +4,11 @@
 `clients/ios/` is the canonical home of the native Synveil iOS client (`v0.1`). It establishes a clean, production-grade Swift application layout adhering strictly to ADR-058 (`docs/adr/ADR-058-ios-v0.1-client-architecture.md`), `IOS_ARCHITECTURE.md`, and `IOS_VALIDATION_CI_ARCHITECTURE.md`.
 
 ## 2. Current Project Status
-- **Phase**: macOS CI Build Gate (Prompt008).
-- **Status**: Dedicated GitHub Actions workflow established (`.github/workflows/ios-build.yml`). Minimal native iOS Xcode project (`clients/ios/Synveil.xcodeproj`) and shared scheme established.
-- **CI Verification**: GitHub Actions run `37040470487` successfully built the `Synveil` scheme with Xcode 26.6 and the iOS Simulator 26.5 SDK using unsigned Simulator settings.
+- **Phase**: iOS Simulator Test Gate (Prompt009).
+- **Status**: Dedicated GitHub Actions build gate (`.github/workflows/ios-build.yml`) and Simulator test gate (`.github/workflows/ios-simulator-tests.yml`) established. Minimal native iOS Xcode project (`clients/ios/Synveil.xcodeproj`), unit test target (`SynveilTests`), and shared scheme established.
+- **CI Verification**: GitHub Actions run `37040470487` successfully built the `Synveil` scheme with Xcode 26.6 and the iOS Simulator 26.5 SDK using unsigned Simulator settings. Dedicated Simulator testing workflow executes `xcodebuild test` against an available booted Simulator destination.
 - **Application Target**: `Synveil` (Swift + SwiftUI, bundle identifier `com.synveil.ios`, deployment target iOS 17.0).
+- **Test Target**: `SynveilTests` (XCTest Unit Testing Bundle, bundle identifier `com.synveil.ios.tests`).
 - **Signing Policy**: Configured for unsigned Simulator builds (`CODE_SIGNING_ALLOWED=NO`, zero committed team IDs or provisioning profiles).
 
 ## 3. Canonical Directory Tree
@@ -42,6 +43,7 @@ clients/ios/
 │   ├── Assets.xcassets/               # AppIcon and AccentColor asset catalog
 │   └── README.md                      # Asset catalogs, String catalogs, Info.plist
 ├── Tests/                             # Test Suite Organization
+│   ├── SynveilTests/                  # Canonical unit test target source
 │   └── README.md                      # Unit, Integration, Architecture tests & Mocks
 └── Support/                           # Repository Scripts & Reference Configs
     └── README.md
@@ -49,7 +51,8 @@ clients/ios/
 
 ## 4. Command-Line Build & Continuous Integration Contract
 
-To build the native iOS project on macOS with Xcode tooling locally or in CI (`.github/workflows/ios-build.yml`):
+### 4.1 iOS Build Gate (`.github/workflows/ios-build.yml`)
+To build the native iOS project compilation target on macOS with Xcode tooling locally or in CI:
 
 ```bash
 xcodebuild \
@@ -60,6 +63,21 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO \
   -derivedDataPath "${RUNNER_TEMP:-/tmp}/SynveilDerivedData" \
   build
+```
+
+### 4.2 iOS Simulator Test Gate (`.github/workflows/ios-simulator-tests.yml`)
+To execute XCTest suites inside a booted iOS Simulator destination locally or in CI:
+
+```bash
+xcodebuild \
+  -project clients/ios/Synveil.xcodeproj \
+  -scheme Synveil \
+  -configuration Debug \
+  -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
+  CODE_SIGNING_ALLOWED=NO \
+  -derivedDataPath "${RUNNER_TEMP:-/tmp}/SynveilDerivedData" \
+  -resultBundlePath "${RUNNER_TEMP:-/tmp}/SynveilTests.xcresult" \
+  test
 ```
 
 ## 5. Directory Ownership & Responsibilities

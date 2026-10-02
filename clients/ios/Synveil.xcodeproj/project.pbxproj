@@ -10,17 +10,37 @@
 		A10000012C00000000000001 /* SynveilApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000001 /* SynveilApp.swift */; };
 		A10000012C00000000000002 /* BootstrapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000002 /* BootstrapView.swift */; };
 		A10000012C00000000000003 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000003 /* Assets.xcassets */; };
+		B10000012C00000000000001 /* SynveilBootstrapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000001 /* SynveilBootstrapTests.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		B60000012C00000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A60000012C00000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A50000012C00000000000001;
+			remoteInfo = Synveil;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		A20000012C00000000000001 /* SynveilApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/SynveilApp.swift; sourceTree = "<group>"; };
 		A20000012C00000000000002 /* BootstrapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/BootstrapView.swift; sourceTree = "<group>"; };
 		A20000012C00000000000003 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Resources/Assets.xcassets; sourceTree = "<group>"; };
 		A20000012C00000000000004 /* Synveil.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Synveil.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B20000012C00000000000001 /* SynveilBootstrapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SynveilBootstrapTests.swift; sourceTree = "<group>"; };
+		B20000012C00000000000002 /* SynveilTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SynveilTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		A30000012C00000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B30000012C00000000000001 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -35,6 +55,7 @@
 			children = (
 				A40000012C00000000000002 /* App */,
 				A40000012C00000000000003 /* Resources */,
+				B40000012C00000000000001 /* Tests */,
 				A40000012C00000000000004 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -60,8 +81,25 @@
 			isa = PBXGroup;
 			children = (
 				A20000012C00000000000004 /* Synveil.app */,
+				B20000012C00000000000002 /* SynveilTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		B40000012C00000000000001 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				B40000012C00000000000002 /* SynveilTests */,
+			);
+			name = Tests;
+			sourceTree = "<group>";
+		};
+		B40000012C00000000000002 /* SynveilTests */ = {
+			isa = PBXGroup;
+			children = (
+				B20000012C00000000000001 /* SynveilBootstrapTests.swift */,
+			);
+			name = SynveilTests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -84,6 +122,23 @@
 			productReference = A20000012C00000000000004 /* Synveil.app */;
 			productType = "com.apple.product-type.application";
 		};
+		B50000012C00000000000001 /* SynveilTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BA0000012C00000000000001 /* Build configuration list for PBXNativeTarget "SynveilTests" */;
+			buildPhases = (
+				B80000012C00000000000001 /* Sources */,
+				B30000012C00000000000001 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B70000012C00000000000001 /* PBXTargetDependency */,
+			);
+			name = SynveilTests;
+			productName = SynveilTests;
+			productReference = B20000012C00000000000002 /* SynveilTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -96,6 +151,10 @@
 				TargetAttributes = {
 					A50000012C00000000000001 = {
 						CreatedOnToolsVersion = 15.4;
+					};
+					B50000012C00000000000001 = {
+						CreatedOnToolsVersion = 15.4;
+						TestTargetID = A50000012C00000000000001;
 					};
 				};
 			};
@@ -113,6 +172,7 @@
 			projectRoot = "";
 			targets = (
 				A50000012C00000000000001 /* Synveil */,
+				B50000012C00000000000001 /* SynveilTests */,
 			);
 		};
 /* End PBXProject section */
@@ -138,7 +198,23 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B80000012C00000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B10000012C00000000000001 /* SynveilBootstrapTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B70000012C00000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A50000012C00000000000001 /* Synveil */;
+			targetProxy = B60000012C00000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		A90000012C00000000000001 /* Debug */ = {
@@ -309,6 +385,52 @@
 			};
 			name = Release;
 		};
+		B90000012C00000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.synveil.ios.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Synveil.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Synveil";
+			};
+			name = Debug;
+		};
+		B90000012C00000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.synveil.ios.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Synveil.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Synveil";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -326,6 +448,15 @@
 			buildConfigurations = (
 				A90000012C00000000000003 /* Debug */,
 				A90000012C00000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		BA0000012C00000000000001 /* Build configuration list for PBXNativeTarget "SynveilTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B90000012C00000000000001 /* Debug */,
+				B90000012C00000000000002 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

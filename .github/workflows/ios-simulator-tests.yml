@@ -1,0 +1,115 @@
+name: iOS Simulator Tests
+
+on:
+  push:
+    paths:
+      - "clients/ios/**"
+      - ".github/workflows/ios-simulator-tests.yml"
+  pull_request:
+    paths:
+      - "clients/ios/**"
+      - ".github/workflows/ios-simulator-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-simulator-tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Xcode Simulator Unit Tests
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Print environment diagnostics
+        run: |
+          echo "=== Host Environment ==="
+          sw_vers
+          echo ""
+          echo "=== Xcode Toolchain ==="
+          xcodebuild -version
+          echo ""
+          echo "=== Swift Compiler ==="
+          swift --version
+          echo ""
+          echo "=== iOS Simulator SDK ==="
+          xcrun --sdk iphonesimulator --show-sdk-version
+          echo ""
+          echo "=== Available Runtimes ==="
+          xcrun simctl list runtimes
+          echo ""
+          echo "=== Available Devices ==="
+          xcrun simctl list devices available
+
+      - name: Select and Boot iOS Simulator
+        run: |
+          python3 -c '
+          import json, subprocess, sys
+          out = subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "-j"])
+          data = json.loads(out)
+          devices = data.get("devices", {})
+          selected_udid = None
+          selected_name = None
+          selected_runtime = None
+          for runtime, dev_list in sorted(devices.items(), reverse=True):
+              if "iOS" not in runtime:
+                  continue
+              for dev in dev_list:
+                  if dev.get("isAvailable") and "iPhone" in dev.get("name", ""):
+                      selected_udid = dev.get("udid")
+                      selected_name = dev.get("name")
+                      selected_runtime = runtime
+                      break
+              if selected_udid:
+                  break
+          if not selected_udid:
+              print("::error::No available iPhone simulator found!", flush=True)
+              sys.exit(1)
+          print(f"Selected Simulator: {selected_name} ({selected_udid}) on {selected_runtime}")
+          with open(sys.argv[1], "a") as f:
+              f.write(f"SIMULATOR_UDID={selected_udid}\n")
+              f.write(f"SIMULATOR_NAME={selected_name}\n")
+              f.write(f"SIMULATOR_RUNTIME={selected_runtime}\n")
+          ' "$GITHUB_ENV"
+
+          echo "Booting simulator $SIMULATOR_UDID..."
+          xcrun simctl boot "$SIMULATOR_UDID" || true
+          xcrun simctl bootstatus "$SIMULATOR_UDID" -b
+
+      - name: Run Xcode Simulator Tests
+        run: |
+          xcodebuild \
+            -project clients/ios/Synveil.xcodeproj \
+            -scheme Synveil \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
+            CODE_SIGNING_ALLOWED=NO \
+            -derivedDataPath "$RUNNER_TEMP/SynveilDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/SynveilTests.xcresult" \
+            test
+
+      - name: Verify Test Result Bundle
+        if: always()
+        run: |
+          if [ -d "$RUNNER_TEMP/SynveilTests.xcresult" ]; then
+            echo "=== Result Bundle Verification ==="
+            ls -ld "$RUNNER_TEMP/SynveilTests.xcresult"
+            xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/SynveilTests.xcresult" 2>/dev/null || xcrun xcresulttool get --path "$RUNNER_TEMP/SynveilTests.xcresult" --format json 2>/dev/null || true
+          else
+            echo "::error::xcresult bundle not found at $RUNNER_TEMP/SynveilTests.xcresult"
+            exit 1
+          fi
+
+      - name: Upload Test Result Artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-simulator-test-results
+          path: ${{ runner.temp }}/SynveilTests.xcresult
+          retention-days: 7
