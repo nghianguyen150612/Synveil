@@ -182,7 +182,7 @@ synveil_prepare_reproducible_rust_build() {
     fi
 
     cargo_home="$(synveil_cargo_home || true)"
-    if [[ -n "$cargo_home" ]]; then
+    if [[ -n "$cargo_home" && -d "$cargo_home" ]]; then
         remap_flags+=("--remap-path-prefix=${cargo_home}=/usr/local/cargo")
     fi
 
@@ -234,9 +234,6 @@ synveil_prepare_reproducible_rust_build() {
         if [[ -n "$native_repo_root" && "$native_repo_root" != "$canonical_repo_root" ]]; then
             native_prefixes+=("$native_repo_root")
         fi
-        if [[ -n "$cargo_home" ]]; then
-            native_prefixes+=("$cargo_home")
-        fi
         if [[ "${canonical_repo_root}/target" != "$cargo_target_dir" ]]; then
             native_prefixes+=("${canonical_repo_root}/target")
         fi
@@ -250,9 +247,7 @@ synveil_prepare_reproducible_rust_build() {
         for flag_prefix in -ffile-prefix-map -fmacro-prefix-map -fdebug-prefix-map; do
             for prefix in "${native_prefixes[@]}"; do
                 flag="${flag_prefix}=${prefix}="
-                if [[ "$prefix" == "$cargo_home" ]]; then
-                    flag+="/usr/local/cargo"
-                elif [[ "$prefix" == "$canonical_repo_root" || "$prefix" == "$native_repo_root" ]]; then
+                if [[ "$prefix" == "$canonical_repo_root" || "$prefix" == "$native_repo_root" ]]; then
                     flag+="/usr/src/synveil"
                 else
                     flag+="/usr/src/synveil-target"
