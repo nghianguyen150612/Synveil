@@ -224,6 +224,19 @@ wait_for_ssh() {
     return 1
 }
 
+wait_for_guest_readiness() {
+    local port="$1" key="$2" deadline
+    deadline=$(( $(date +%s) + BOOT_TIMEOUT_SECONDS ))
+    while (( $(date +%s) < deadline )); do
+        if guest_exec "$port" "$key" readiness >/dev/null 2>&1; then
+            log "guest graphical provisioning is ready"
+            return 0
+        fi
+        sleep 5
+    done
+    return 1
+}
+
 guest_exec() {
     local port="$1" key="$2" command_name="$3"
     case "$command_name" in
@@ -338,7 +351,7 @@ main() {
             pid="$(start_vm "$disk" "$seed" "$monitor" "$serial" "$ssh_port")"
             write_vm_metadata "$name" "$pid" "$monitor" "$serial" "$ssh_port" "$key" "$disk"
             wait_for_ssh "$ssh_port" "$key"
-            timeout "$EXEC_TIMEOUT_SECONDS" "$0" guest-exec "$name" readiness
+            wait_for_guest_readiness "$ssh_port" "$key"
             ;;
         guest-exec)
             [[ $# -ge 3 && $# -le 4 ]] || fail "guest-exec NAME COMMAND [DEST]"
