@@ -2,18 +2,17 @@
   "schema_version": 1,
   "id": "INSTALL-JOURNEY-3",
   "title": "Fedora or qualified RPM graphical install and launch",
-  "journey": "Native RPM database owns installation; dependencies, launcher, icon and launch work; hooks do not silently enable startup.",
+  "journey": "Native RPM database owns installation; authorization is visible; dependencies resolve; menu entry/icon and launch work; hooks do not enable persistent sync. Other RPM-family distributions are detected but not qualified.",
   "platform": {
     "family": "fedora",
     "qualified_versions": [
-      "pending exact qualified version (P018/P020)"
+      "Fedora 42 x86_64 (P018 qualified; P020 native acceptance evidence pending)"
     ],
     "desktop_session": "required for graphical desktop journeys; otherwise not applicable",
-    "package_manager": "pending native family qualification",
-    "native_gui_package_handler": "pending qualified desktop handler",
+    "package_manager": "dnf",
+    "native_gui_package_handler": "plasma-discover",
     "applicable_families": [
-      "fedora",
-      "rpm_family"
+      "fedora"
     ]
   },
   "architecture": "x86_64",

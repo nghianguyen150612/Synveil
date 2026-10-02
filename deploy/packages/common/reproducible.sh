@@ -186,6 +186,20 @@ synveil_prepare_reproducible_rust_build() {
         remap_flags+=("--remap-path-prefix=${cargo_home}=/usr/local/cargo")
     fi
 
+    # RUSTUP_HOME holds the active toolchain. A CI runner installs rustup under
+    # the account home, so a checkout-owned remap alone still leaves
+    # "/home/<user>" reachable from any build input that consults the
+    # toolchain. Remap it to a stable prefix.
+    #
+    # This is defensive hygiene that broadens coverage; it is not a proven
+    # cause of any single observed leak. The rustup shim lives under CARGO_HOME,
+    # not RUSTUP_HOME, so the default must come from the environment or the
+    # account home rather than from the rustup binary path.
+    local rustup_home="${RUSTUP_HOME:-${HOME:-}/.rustup}"
+    if [[ -n "$rustup_home" && "$rustup_home" == /* && "$rustup_home" != "/" && -d "$rustup_home" ]]; then
+        remap_flags+=("--remap-path-prefix=${rustup_home}=/usr/local/rustup")
+    fi
+
     if [[ "${canonical_repo_root}/target" != "$cargo_target_dir" ]]; then
         remap_flags+=("--remap-path-prefix=${canonical_repo_root}/target=/usr/src/synveil-target")
     fi
@@ -295,14 +309,24 @@ synveil_artifact_build_id() {
         head -n 1
 }
 
+# The detection pattern below is the gate and must not be weakened: it only has
+# to answer "did a private or temporary build path reach this artifact".
+#
+# The reporting pattern is separate and deliberately greedy. Reporting with the
+# detection pattern alone is not actionable: the leading "/home/" alternative
+# matches minimally, so a leak under a checkout, a cargo home or a rustup home
+# all report the identical bare "/home/" marker. Extracting the whole trailing
+# path token names the actual origin so the fix does not have to be guessed.
 synveil_assert_no_private_paths() {
     local artifact="$1"
     local label="${2:-$artifact}"
     local pattern='(/home/|/Users/|/mnt/|\.cargo/registry|[A-Za-z]:[\\/][Uu]sers[\\/]|/tmp/synveil-[^[:space:]]*|/var/tmp/synveil-[^[:space:]]*|/usr/src/synveil/target/|target[\\/]x86_64-pc-windows-gnu[\\/]release[\\/]build)'
+    local context_pattern='(/home/[!-~]*|/Users/[!-~]*|/mnt/[!-~]*|\.cargo/registry[!-~]*|[A-Za-z]:[\\/][Uu]sers[\\/][!-~]*)'
     if LC_ALL=C grep -aEq "$pattern" "$artifact"; then
         printf '[synveil-artifact] ERROR: private or temporary build path found in %s\n' "$label" >&2
-        LC_ALL=C grep -aoE "$pattern" "$artifact" | sort -u | head -n 8 |
+        LC_ALL=C grep -aoE "$context_pattern" "$artifact" | LC_ALL=C sort -u | head -n 8 |
             sed 's/^/[synveil-artifact]   matched path marker: /' >&2 || true
+        printf '[synveil-artifact]   the full marker above identifies the leaking build input; rerun with the same remap policy to reproduce\n' >&2
         return 1
     fi
 }

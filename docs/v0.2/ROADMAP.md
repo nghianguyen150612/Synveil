@@ -202,7 +202,15 @@ Validate DEB, RPM, AppImage and script paths on disposable supported native
 environments, including launch, repair, upgrade, data-preserving uninstall and
 interruption recovery as applicable.
 
-Checkpoint: **V0.2 LINUX INSTALL EXPERIENCE READY**
+Status: **in progress (harness delivered, native evidence pending).** The
+acceptance executor, VM control plane and hosted matrix exist; the graphical
+journeys, real AppImage launch and VM power-cut interruption have not yet been
+run on a native machine. No OS image digest is pinned. See the
+[clean-machine acceptance](LINUX_CLEAN_MACHINE_ACCEPTANCE.md) record and the
+[Prompt020 manifest](PROMPT020_MANIFEST.md).
+
+Checkpoint: **V0.2 LINUX INSTALL EXPERIENCE READY** — *not reached.* The
+checkpoint is withheld until real hosted native evidence exists.
 
 ## PHASE D — WINDOWS SETUP EXPERIENCE (P021–028)
 

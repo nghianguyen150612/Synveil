@@ -1,0 +1,203 @@
+name: Linux clean-machine acceptance
+
+# Prompt020 / Phase C gate.
+#
+# This workflow is deliberately separate from Rust CI: booting real guests is
+# expensive and must not be paid for on every ordinary code push (P020 §58/§75).
+#
+# HONEST STATUS OF THIS WORKFLOW
+# ------------------------------
+# The `static-gate` and `artifacts` jobs execute for real today.
+#
+# The native VM matrix CANNOT yet produce acceptance evidence. Two things block
+# it, and neither is worked around here:
+#
+#   1. deploy/acceptance/images.lock pins no image digests, because no reviewer
+#      has authenticated them. linux-acceptance-vm.sh correctly refuses to
+#      download an unpinned image.
+#   2. The bounded graphical-automation driver (DEB/RPM authorization surface,
+#      application-menu launch, AT-SPI element lookup) is not implemented.
+#
+# Because of that, the native jobs report BLOCKED and `evidence-gate` FAILS.
+# That failure is the correct outcome. It must not be converted into a skip:
+# P020 §76 forbids silently skipping a required gate, and a green dashboard
+# here would assert native acceptance evidence that does not exist.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------
+  # Cheap, deterministic, and real. Runs on every change.
+  # ---------------------------------------------------------------------
+  static-gate:
+    name: Acceptance contract and adapter gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install shell lint
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Shell syntax and lint
+        run: |
+          bash -n scripts/linux-acceptance-vm.sh deploy/packages/common/reproducible.sh
+          shellcheck -S warning scripts/linux-acceptance-vm.sh
+
+      - name: P004 acceptance contract still holds
+        run: ./scripts/validate-install-acceptance.sh
+
+      - name: P020 Linux adapter self-tests
+        run: python3 scripts/linux_acceptance.py self-test
+
+      - name: Python compilation
+        run: python3 -m py_compile scripts/install_acceptance.py scripts/linux_acceptance.py
+
+      - name: Artifact path-leak diagnostics name the leaking input
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          # A leaked checkout path must report the whole path, not a bare "/home/".
+          printf 'x /home/runner/work/Synveil/Synveil/crates/desktop/qml/Main.qml y' > "$work/leaky"
+          if bash -c 'source deploy/packages/common/reproducible.sh;
+            synveil_assert_no_private_paths "$1" leaky' _ "$work/leaky" 2>"$work/err"; then
+            echo "::error::leaking artifact was not rejected"; exit 1
+          fi
+          grep -q 'crates/desktop/qml/Main.qml' "$work/err" \
+            || { echo "::error::diagnostic did not name the full leaking path"; cat "$work/err"; exit 1; }
+          echo "path-leak diagnostics name the full leaking input"
+
+  # ---------------------------------------------------------------------
+  # Build each artifact exactly once and publish it for the VM matrix.
+  # Rebuilding inside every guest would break artifact identity (P020 §50/§51).
+  # ---------------------------------------------------------------------
+  artifacts:
+    name: Build exact acceptance artifacts once
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: jurplel/install-qt-action@d325aaf2a8baeeda41ad0b5d39f84a6af9bcf005
+        with:
+          version: '6.7.3'
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+      - name: Build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y file shellcheck pkg-config libdbus-1-dev libfuse2
+      - name: Build DEB and RPM
+        run: ./deploy/packages/build.sh
+      - name: Build AppImage
+        run: ./deploy/packages/build-appimage.sh --build-only
+      - name: Record exact artifact identity
+        run: |
+          sha256sum target/packages/* >> target/packages/ACCEPTANCE-ARTIFACT-SHA256.txt
+          cat target/packages/ACCEPTANCE-ARTIFACT-SHA256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synveil-acceptance-artifacts
+          path: |
+            target/packages/*.deb
+            target/packages/*.rpm
+            target/packages/*.AppImage
+            target/packages/SYNVEIL-RELEASE-MANIFEST.json
+            target/packages/ACCEPTANCE-ARTIFACT-SHA256.txt
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------
+  # Native clean-machine matrix. Currently BLOCKED, truthfully.
+  # Ubuntu 24.04 and Fedora 42 x86_64 are the only qualified targets (§6/§13).
+  # ---------------------------------------------------------------------
+  native-clean-machine:
+    name: ${{ matrix.platform }} ${{ matrix.version }} clean-machine acceptance
+    needs: [static-gate, artifacts]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu
+            version: '24.04'
+            image: ubuntu-24.04-x86_64
+            scenarios: INSTALL-JOURNEY-2,INSTALL-JOURNEY-5,INSTALL-JOURNEY-6,INSTALL-JOURNEY-7
+          - platform: fedora
+            version: '42'
+            image: fedora-42-x86_64
+            scenarios: INSTALL-JOURNEY-3,INSTALL-JOURNEY-5,INSTALL-JOURNEY-6,INSTALL-JOURNEY-7
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: synveil-acceptance-artifacts
+          path: target/packages
+
+      - name: Verify downloaded artifacts against recorded digests
+        run: sha256sum --check --ignore-missing target/packages/ACCEPTANCE-ARTIFACT-SHA256.txt
+
+      - name: Report acceptance BLOCKED with a truthful reason
+        run: |
+          set -euo pipefail
+          mkdir -p acceptance-evidence
+          for scenario in {{ matrix.scenarios // ',' }}; do
+            python3 scripts/linux_acceptance.py run "$scenario" \
+              --manifest target/packages/SYNVEIL-RELEASE-MANIFEST.json \
+              --evidence native-clean-machine \
+              > "acceptance-evidence/${scenario}.json" || true
+          done
+          cat acceptance-evidence/*.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: acceptance-evidence-${{ matrix.platform }}-${{ matrix.version }}
+          path: acceptance-evidence/*.json
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------
+  # Aggregate gate. FAILS when required evidence is missing or not PASS.
+  # This job is the only thing allowed to speak for Phase C, and it refuses to
+  # speak unless the evidence exists (P020 §76).
+  # ---------------------------------------------------------------------
+  evidence-gate:
+    name: Phase C evidence gate
+    needs: [static-gate, artifacts, native-clean-machine]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assert required native acceptance evidence exists and passed
+        run: |
+          set -euo pipefail
+          missing=0
+          # A Phase C claim requires PASS records. BLOCKED is an honest
+          # non-result and must never be promoted to a checkpoint.
+          if [ -z "${NATIVE_EVIDENCE_PRESENT:-}" ]; then
+            echo "::error::No native clean-machine acceptance evidence was produced."
+            echo "::error::Phase C cannot be claimed. Graphical DEB/RPM journeys, real"
+            echo "::error::AppImage launch and VM power interruption are unproven."
+            missing=1
+          fi
+          if [ "$missing" -ne 0 ]; then
+            echo "SYNVEIL_LINUX_CLEAN_MACHINE_ACCEPTANCE_READY: NOT EMITTED"
+            echo "SYNVEIL_V0_2_LINUX_INSTALL_EXPERIENCE_READY: NOT EMITTED"
+            exit 1
+          fi

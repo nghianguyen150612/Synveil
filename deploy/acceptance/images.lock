@@ -1,0 +1,27 @@
+# P020 native clean-machine acceptance image lock.
+#
+# Every image used for normative Linux acceptance MUST be pinned here with a
+# reviewed SHA-256 digest. scripts/linux-acceptance-vm.sh refuses to download
+# any image that is not recorded below, so an unpinned or moving `latest` image
+# cannot silently become acceptance evidence.
+#
+# Format:  <image-name>  sha256:<64-hex-digest>
+#
+# HOW TO PIN A DIGEST (do this deliberately, never by guessing):
+#   1. Download the image over HTTPS from the official distribution location.
+#   2. Verify it against the distribution's published signed checksum file
+#      (Ubuntu: SHA256SUMS; Fedora: Fedora-Cloud-Base-*-CHECKSUM).
+#   3. Record the digest below and open a review that records which signed file
+#      it was authenticated against.
+#
+# The digests below are intentionally EMPTY. P020 has not yet run a real
+# native acceptance matrix, so no reviewer has authenticated these images, and
+# inventing a digest here would manufacture the exact trust evidence this
+# prompt forbids. Until they are filled in, `fetch-image` fails closed and the
+# affected acceptance journeys correctly report BLOCKED.
+#
+# Only these two platforms are qualified. Do not add Debian, Mint, Pop!_OS,
+# Rocky, AlmaLinux, CachyOS or Arch without separate native evidence.
+
+ubuntu-24.04-x86_64 sha256:UNPINNED
+fedora-42-x86_64    sha256:UNPINNED

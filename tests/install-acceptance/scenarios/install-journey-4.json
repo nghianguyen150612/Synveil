@@ -6,11 +6,12 @@
   "platform": {
     "family": "linux_generic",
     "qualified_versions": [
-      "pending exact qualified version (P018/P020)"
+      "Ubuntu 24.04 x86_64 (P018 qualified; P020 native acceptance evidence pending)",
+      "Fedora 42 x86_64 (P018 qualified; P020 native acceptance evidence pending)"
     ],
     "desktop_session": "required for graphical desktop journeys; otherwise not applicable",
-    "package_manager": "pending native family qualification",
-    "native_gui_package_handler": "pending qualified desktop handler",
+    "package_manager": "apt-get or dnf present but unused; the AppImage journey registers no native package",
+    "native_gui_package_handler": "none required; portable user-level launch",
     "applicable_families": [
       "linux_generic"
     ]
