@@ -86,6 +86,7 @@ build_one() {
   # linuxdeploy may regenerate AppRun while deploying the desktop entry. The
   # reviewed entry point is part of the product contract, so restore it after
   # deployment and validate the final AppDir before filesystem creation.
+  rm -f "$appdir/AppRun"
   install -m0755 "$SCRIPT_DIR/appimage/AppRun" "$appdir/AppRun"
   # Normalize all payload timestamps before filesystem creation.
   find "$appdir" -print0 | xargs -0 touch --no-dereference --date="@${SOURCE_DATE_EPOCH}"
