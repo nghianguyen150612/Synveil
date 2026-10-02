@@ -2869,6 +2869,7 @@ dependencies = [
  "cxx-qt-build",
  "cxx-qt-lib",
  "synveil-client",
+ "synveil-install-engine",
  "tokio",
  "url",
  "uuid",

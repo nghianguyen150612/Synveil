@@ -57,3 +57,5 @@ void native_tray_set_tooltip(NativeTray& tray, const QString& tooltip);
 
 bool native_desktop_settings_load_close_to_tray();
 bool native_desktop_settings_save_close_to_tray(bool enabled);
+int native_desktop_settings_load_startup_choice();
+bool native_desktop_settings_save_startup_choice(bool enabled);

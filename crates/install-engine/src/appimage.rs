@@ -196,6 +196,20 @@ impl AppImageIntegration {
         )
     }
 
+    /// Read the platform registration rather than trusting the metadata record.
+    pub fn startup_status(&self) -> Result<bool, AppImageIntegrationError> {
+        if self.inspect()? != AppImageIntegrationStatus::Healthy {
+            return Err(AppImageIntegrationError::InvalidRecord);
+        }
+        if !user_systemd_available() {
+            return Err(AppImageIntegrationError::UserSystemdUnavailable);
+        }
+        let status = Command::new("systemctl")
+            .args(["--user", "is-enabled", UNIT_NAME])
+            .status()?;
+        Ok(status.success())
+    }
+
     fn read_record(&self) -> Result<AppImageIntegrationRecord, AppImageIntegrationError> {
         let (_, _, path, _) = self.paths();
         let record: AppImageIntegrationRecord = serde_json::from_slice(&fs::read(path)?)

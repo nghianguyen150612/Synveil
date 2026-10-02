@@ -110,7 +110,10 @@ the package application. The application menu entry and icon are required.
 Hooks retain the existing non-starting policy: no unattended user-autostart
 enablement, server provisioning, database migration or credential creation.
 User-level preferences are offered in first-run setup where the package UI
-cannot collect them. Launch occurs as the signed-in user, never as root.
+cannot collect them. Launch occurs as the signed-in user, never as root. Prompt019 implements the bounded login-startup choice while separately
+ensuring current-session client availability; its focused result is
+`APPLICATION_LAUNCHED`, not completion of connection, authentication, library,
+or synchronization setup.
 
 ### Generic Linux AppImage
 

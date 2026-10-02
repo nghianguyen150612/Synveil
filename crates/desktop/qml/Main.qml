@@ -28,6 +28,63 @@ ApplicationWindow {
         onAccepted: bridge.setLibraryFolder(selectedFolder.toString())
     }
 
+    Popup {
+        id: startupChoicePopup
+        objectName: "startupChoicePopup"
+        anchors.centerIn: Overlay.overlay
+        width: Math.min(460, root.width - 48)
+        modal: false
+        closePolicy: Popup.NoAutoClose
+        visible: bridge.startup_choice_required
+        focus: visible
+        Accessible.name: qsTr("Choose whether Synveil starts when you sign in")
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 14
+
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("Keep Synveil ready")
+                font.pixelSize: 20
+                font.weight: Font.DemiBold
+            }
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("Synveil can start in the background at future sign-ins. This choice does not affect the current session.")
+                wrapMode: Text.WordWrap
+            }
+            CheckBox {
+                id: firstLaunchStartupCheckBox
+                Layout.fillWidth: true
+                text: qsTr("Start Synveil when I sign in")
+                checked: bridge.startup_choice_selected
+                enabled: bridge.startup_choice_available && !bridge.background_startup_busy
+                Accessible.name: qsTr("Start Synveil when I sign in")
+                Accessible.description: qsTr("Controls startup at future sign-ins only")
+            }
+            BusyIndicator {
+                running: bridge.background_startup_busy
+                visible: running
+                Accessible.name: qsTr("Saving startup choice")
+            }
+            Label {
+                Layout.fillWidth: true
+                visible: bridge.background_startup_feedback.length > 0
+                text: bridge.background_startup_feedback
+                wrapMode: Text.WordWrap
+                Accessible.name: text
+            }
+            Button {
+                Layout.alignment: Qt.AlignRight
+                text: qsTr("Continue")
+                enabled: bridge.startup_choice_available && !bridge.background_startup_busy
+                onClicked: bridge.confirmStartupChoice(firstLaunchStartupCheckBox.checked)
+                Accessible.name: qsTr("Continue with selected sign-in startup choice")
+            }
+        }
+    }
+
     property var ui_bridge: bridge
     property int liveTestPhase: bridge.live_test ? 0 : -1
     property int liveTestWaitTicks: 0
@@ -453,7 +510,7 @@ ApplicationWindow {
                         spacing: 9
 
                         Label {
-                            text: qsTr("Background sync at login")
+                            text: qsTr("Sign-in startup")
                             font.pixelSize: 15
                             font.weight: Font.DemiBold
                         }
@@ -467,11 +524,11 @@ ApplicationWindow {
 
                         CheckBox {
                             id: startupCheckBox
-                            text: qsTr("Start the background client when I sign in")
+                            text: qsTr("Start Synveil when I sign in")
                             checked: bridge.background_startup_state === qsTr("Enabled")
                             enabled: !bridge.background_startup_busy
                             onClicked: bridge.setBackgroundStartup(checked)
-                            Accessible.name: qsTr("Start the background client at login")
+                            Accessible.name: qsTr("Start Synveil when I sign in")
                         }
 
                         BusyIndicator {
