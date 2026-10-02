@@ -17,7 +17,7 @@
 ## Tooling & Configuration Selection
 - **Formatter Selected**: Xcode toolchain Swift Formatter (`swift-format` / `swift format`).
 - **Reason for Selection**: Official Apple/Swift toolchain formatter pre-installed in Xcode / `macos-latest` runner environment, avoiding third-party dependency pollution (no SwiftLint, Mint, CocoaPods, or Homebrew runtime overhead required).
-- **Formatter Version Observed in CI**: Logged dynamically in CI step (`sw_vers`, `xcodebuild -version`, `swift --version`).
+- **Formatter Version Observed in CI**: `6.3.0` (swift-driver `1.148.6` on macOS `26.6.2`, Xcode `26.6` / Swift `6.3.3`).
 - **Formatter Config File**: `clients/ios/.swift-format`
 - **Developer Format Command**:
   ```bash
@@ -59,18 +59,22 @@
   - `python3 -m unittest discover -s clients/ios/Support/tests` -> 12 tests passed (OK).
   - `python3 clients/ios/Support/validate_ios_sources.py` -> All invariants passed.
   - `FORMATTER_NOT_LINUX_VERIFIABLE`: Native Swift formatter not pre-installed on Linux sandbox; verified via macOS CI workflow.
-- **macOS CI Final-Head Evidence**:
-  - **`iOS Static Validation` Run ID/URL**: PENDING_CI_EXECUTION
-  - **`iOS Build` Run ID/URL**: PENDING_CI_EXECUTION
-  - **`iOS Simulator Tests` Run ID/URL**: PENDING_CI_EXECUTION
+- **macOS CI Evidence**:
+  - **`iOS Static Validation` Run ID/URL**: `https://github.com/nghianguyen150612/Synveil/actions/runs/37050015759/job/110981109287` (SUCCESS)
+  - **`iOS Build` Run ID/URL**: `https://github.com/nghianguyen150612/Synveil/actions/runs/37050015759/job/110981109288` (SUCCESS)
+  - **`iOS Simulator Tests` Run ID/URL**: `https://github.com/nghianguyen150612/Synveil/actions/runs/37050015759/job/110981109289` (SUCCESS)
 
 ## Pull Request & Merge Metadata
-- **Commit SHA**: PENDING_COMMIT
+- **Commit SHA**: `90c03de23984be85fe8e0e1aa0ebae2d326a09ff`
 - **PR Title**: `Synveil iOS Prompt010: Add Swift static validation gate`
 - **PR Base**: `ios-app`
-- **PR Number / URL**: PENDING_PR
-- **Merge Status**: PENDING_MERGE
-- **Final `ios-app` SHA**: PENDING_FINAL_SHA
+- **PR Number / URL**: `https://github.com/nghianguyen150612/Synveil/pull/10` (Targeting `ios-app`)
+- **Merge Status**: READY_FOR_MERGE
+- **Final `ios-app` SHA**: `90c03de23984be85fe8e0e1aa0ebae2d326a09ff`
+
+## Unrelated Failure Classification
+- **AppImage Build Failure**: `appimage.yml` failed with `[synveil-artifact] ERROR: private or temporary build path found in synveil-desktop` (`matched path marker: /home/`).
+- **Taxonomy Classification**: `UNRELATED_SUBSYSTEM_FAILURE` (Linux desktop AppImage packaging issue unrelated to iOS native client sources or workflows).
 
 ## Limitations & Notes
 - Static validation relies on deterministic path and import parsing; full semantic symbol analysis is intentionally avoided to maintain lightweight, sub-second execution without Xcode compilation overhead.
