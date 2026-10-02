@@ -162,11 +162,11 @@ runs.
 
 ## Not verified, and why
 
-The graphical-automation driver, the VM power-interruption driver and the
-quick-install trust journey are **not implemented**. Writing them blind, with
-no Qt toolchain, no virtualisation and a 180-second command ceiling in the
-authoring environment, would have produced plausible-looking infrastructure
-that could be mistaken for evidence.
+The VM control plane now performs real pinned-image acquisition, clean overlay
+creation, cloud-init provisioning, bounded SSH readiness, snapshot control and
+forced process power cuts. The reviewed guest GUI/package journey and
+quick-install trust driver are still not complete, so no native scenario is
+promoted to PASS from this implementation alone.
 
 The adapter reports `BLOCKED` with a specific reason for each unimplemented
 step rather than degrading to a pass.
@@ -183,10 +183,11 @@ step rather than degrading to a pass.
 2. The private-path scan was deliberately **not** weakened and `/home/` was not
    suppressed. If any second QML-adjacent absolute path exists, it will surface
    in the hosted run, which is the intended outcome.
-3. No OS image digest is pinned, and no image URL is recorded, so the native VM
-   matrix remains BLOCKED by construction.
-4. The graphical-automation, VM power-cut and quick-install trust drivers are
-   still unimplemented.
+3. Ubuntu 24.04 and Fedora 42 image URLs and SHA-256 values are now pinned in
+   `deploy/acceptance/images.lock` from their signed distribution checksum
+   metadata. This authenticates the guest inputs, not the acceptance result.
+4. The deterministic graphical package-manager automation, quick-install trust
+   journey and full scenario-to-guest result binding remain open.
 5. The PostgreSQL 17 `d.daticulocale` failure is untouched: it is a server
    schema issue outside Linux install scope.
 

@@ -244,6 +244,7 @@ synveil_prepare_reproducible_rust_build() {
     local remap_flags=()
     local native_repo_root=""
     local native_target_dir=""
+    local native_qt_root=""
 
     canonical_repo_root="$(cd "$repo_root" && pwd -P)"
     cargo_target_dir="${CARGO_TARGET_DIR:-${canonical_repo_root}/target}"
@@ -266,6 +267,15 @@ synveil_prepare_reproducible_rust_build() {
         native_target_dir="$(cygpath -m "$cargo_target_dir" 2>/dev/null)"
         if [[ -n "$native_repo_root" && "$native_repo_root" != "$canonical_repo_root" ]]; then
             remap_flags+=("--remap-path-prefix=${native_repo_root}=/usr/src/synveil")
+        fi
+    fi
+    if [[ -n "${QT_ROOT_DIR:-}" ]]; then
+        native_qt_root="${QT_ROOT_DIR}"
+        if command -v cygpath >/dev/null 2>&1 && [[ "$native_qt_root" =~ ^[A-Za-z]:[/\\] ]]; then
+            native_qt_root="$(cygpath -m "$native_qt_root" 2>/dev/null)"
+        fi
+        if [[ "$native_qt_root" != /* ]]; then
+            native_qt_root=""
         fi
     fi
 
@@ -346,11 +356,21 @@ synveil_prepare_reproducible_rust_build() {
             native_prefixes+=("${native_repo_root}/target")
         fi
         native_prefixes+=("$cargo_target_dir")
+        # install-qt-action places Qt below the runner checkout, and CXX-Qt
+        # compiles Qt headers into the desktop binary. The compiler's prefix
+        # maps must cover that external input as well as the repository; a
+        # repository-only map leaves __FILE__ strings such as
+        # /home/runner/work/Synveil/Qt/... in the release executable.
+        if [[ -n "$native_qt_root" ]]; then
+            native_prefixes+=("$native_qt_root")
+        fi
         for flag_prefix in -ffile-prefix-map -fmacro-prefix-map -fdebug-prefix-map; do
             for prefix in "${native_prefixes[@]}"; do
                 flag="${flag_prefix}=${prefix}="
                 if [[ "$prefix" == "$canonical_repo_root" || "$prefix" == "$native_repo_root" ]]; then
                     flag+="/usr/src/synveil"
+                elif [[ "$prefix" == "$native_qt_root" ]]; then
+                    flag+="/usr/local/qt"
                 else
                     flag+="/usr/src/synveil-target"
                 fi

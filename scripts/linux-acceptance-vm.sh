@@ -22,6 +22,7 @@ IMAGE_LOCK="${REPO_ROOT}/deploy/acceptance/images.lock"
 # Bounded by design. A hung VM must fail the job, not the runner.
 readonly BOOT_TIMEOUT_SECONDS="${BOOT_TIMEOUT_SECONDS:-300}"
 readonly EXEC_TIMEOUT_SECONDS="${EXEC_TIMEOUT_SECONDS:-180}"
+readonly VM_STATE_DIR="${SYNVEIL_VM_STATE_DIR:-${TMPDIR:-/tmp}/synveil-p020-vm}"
 
 log()  { printf '[linux-acceptance-vm] %s\n' "$*" >&2; }
 fail() { printf '[linux-acceptance-vm] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -90,26 +91,45 @@ fetch_image() {
 # generated per run, used only for the polkit authorization surface, never
 # written to a log line and never exported into the evidence bundle.
 write_cloud_init() {
-    local seed_dir="$1" password="$2"
+    local seed_dir="$1" password="$2" public_key="$3" platform="$4"
     mkdir -p "$seed_dir"
 
     # The password hash is computed here so the plaintext never reaches disk.
     local hash
     hash="$(python3 -c 'import crypt,sys; print(crypt.crypt(sys.argv[1], crypt.mksalt(crypt.METHOD_SHA512)))' "$password")"
 
+    local setup_script admin_group
+    case "$platform" in
+        ubuntu)
+            admin_group=sudo
+            setup_script='apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ubuntu-desktop-minimal gnome-software gnome-screenshot policykit-1 at-spi2-core xdotool dbus-x11 qemu-guest-agent && mkdir -p /etc/gdm3 && printf "[daemon]\\nAutomaticLoginEnable=true\\nAutomaticLogin=synveil-acceptance\\nWaylandEnable=false\\n" > /etc/gdm3/custom.conf && systemctl enable gdm3'
+            ;;
+        fedora)
+            admin_group=wheel
+            setup_script='dnf -y group install "Fedora Workstation" && dnf -y install gnome-software gnome-screenshot at-spi2-core xdotool dbus-x11 qemu-guest-agent && mkdir -p /etc/gdm && printf "[daemon]\\nAutomaticLoginEnable=True\\nAutomaticLogin=synveil-acceptance\\nWaylandEnable=false\\n" > /etc/gdm/custom.conf && systemctl enable gdm'
+            ;;
+        *)
+            fail "unsupported guest platform for cloud-init: ${platform}"
+            ;;
+    esac
+
     cat > "${seed_dir}/user-data" <<EOF
 #cloud-config
 users:
   - name: synveil-acceptance
-    groups: [sudo]
+    groups: [${admin_group}]
     shell: /bin/bash
-    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    sudo: "ALL=(ALL) ALL"
     lock_passwd: false
     passwd: "${hash}"
-    ssh_authorized_keys: []
+    ssh_authorized_keys:
+      - ${public_key}
 ssh_pwauth: false
 package_update: false
 runcmd:
+  - [ bash, -lc, ${setup_script@Q} ]
+  - [ bash, -lc, "mkdir -p /var/lib/synveil-acceptance && touch /var/lib/synveil-acceptance/desktop-ready" ]
+  - [ systemctl, set-default, graphical.target ]
   - [ systemctl, enable, --now, qemu-guest-agent ]
 EOF
 
@@ -119,15 +139,38 @@ local-hostname: synveil-p020
 EOF
 }
 
+write_vm_metadata() {
+    local name="$1" pid="$2" monitor="$3" serial="$4" ssh_port="$5" key="$6" disk="$7"
+    mkdir -p "$VM_STATE_DIR"
+    cat >"${VM_STATE_DIR}/${name}.env" <<EOF
+pid=${pid}
+monitor=${monitor}
+serial=${serial}
+ssh_port=${ssh_port}
+key=${key}
+disk=${disk}
+EOF
+}
+
+load_vm_metadata() {
+    local name="$1"
+    local metadata="${VM_STATE_DIR}/${name}.env"
+    [[ -f "$metadata" ]] || fail "VM metadata is absent: ${metadata}"
+    # This file is emitted by this script and contains only fixed path/value
+    # fields; scenario JSON never reaches this source/eval boundary.
+    # shellcheck disable=SC1090
+    source "$metadata"
+}
+
 make_seed_iso() {
     local seed_dir="$1" iso="$2"
-    require_tools genisoimage cloud-localds xorriso
     if command -v cloud-localds >/dev/null 2>&1; then
         cloud-localds "$iso" "${seed_dir}/user-data" "${seed_dir}/meta-data"
     elif command -v genisoimage >/dev/null 2>&1; then
         genisoimage -output "$iso" -volid cidata -joliet -rock \
             "${seed_dir}/user-data" "${seed_dir}/meta-data"
     else
+        require_tools xorriso
         xorriso -as mkisofs -output "$iso" -volid CIDATA -joliet -rock \
             "${seed_dir}/user-data" "${seed_dir}/meta-data"
     fi
@@ -149,7 +192,7 @@ accel_args() {
 }
 
 start_vm() {
-    local disk="$1" seed_iso="$2" monitor="$3" serial="$4"
+    local disk="$1" seed_iso="$2" monitor="$3" serial="$4" ssh_port="$5"
     local accel
     accel="$(accel_args)"
 
@@ -158,12 +201,54 @@ start_vm() {
         $accel -m 4096 -smp 2 \
         -drive "file=${disk},if=virtio,format=qcow2" \
         -drive "file=${seed_iso},if=virtio,format=raw,readonly=on" \
-        -netdev user,id=net0,hostfwd=tcp-:2222-:22 \
+        -netdev user,id=net0,hostfwd="127.0.0.1:${ssh_port}-:22" \
         -device virtio-net-pci,netdev=net0 \
         -qmp "unix:${monitor},server=on,wait=off" \
         -serial "file:${serial}" \
-        -display none -no-reboot &
+        -display none -vga virtio -no-reboot &
     printf '%s' "$!"
+}
+
+wait_for_ssh() {
+    local port="$1" key="$2" deadline
+    deadline=$(( $(date +%s) + BOOT_TIMEOUT_SECONDS ))
+    while (( $(date +%s) < deadline )); do
+        if ssh -i "$key" -o BatchMode=yes -o ConnectTimeout=5 \
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -p "$port" synveil-acceptance@127.0.0.1 true >/dev/null 2>&1; then
+            log "guest SSH is ready on port ${port}"
+            return 0
+        fi
+        sleep 2
+    done
+    return 1
+}
+
+guest_exec() {
+    local port="$1" key="$2" command_name="$3"
+    case "$command_name" in
+        readiness)
+            ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=no \
+                -o UserKnownHostsFile=/dev/null -p "$port" synveil-acceptance@127.0.0.1 \
+                'test -f /var/lib/synveil-acceptance/desktop-ready'
+            ;;
+        facts)
+            ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=no \
+                -o UserKnownHostsFile=/dev/null -p "$port" synveil-acceptance@127.0.0.1 \
+                'cat /etc/os-release; printf "ARCH=%s\\n" "$(uname -m)"; printf "KERNEL=%s\\n" "$(uname -r)"; printf "SESSION=%s\\n" "${XDG_SESSION_TYPE:-unknown}"'
+            ;;
+        screenshot)
+            local destination="$4"
+            ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=no \
+                -o UserKnownHostsFile=/dev/null -p "$port" synveil-acceptance@127.0.0.1 \
+                'DISPLAY=:0 gnome-screenshot -f /tmp/synveil-acceptance-failure.png'
+            scp -q -i "$key" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                -P "$port" synveil-acceptance@127.0.0.1:/tmp/synveil-acceptance-failure.png "$destination"
+            ;;
+        *)
+            fail "unsupported guest-control command: ${command_name}"
+            ;;
+    esac
 }
 
 # wait_for_boot polls the serial console for cloud-init completion within a
@@ -202,9 +287,11 @@ restore_snapshot() {
 # power_off is a real power cut, not a guest shutdown. A guest-initiated stop
 # would let the guest flush state and would not exercise recovery.
 power_cut() {
-    local monitor="$1"
-    qmp_cmd "$monitor" quit '{}'
-    log "VM power cut issued"
+    local name="$1"
+    load_vm_metadata "$name"
+    kill -KILL "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    log "VM power cut issued for ${name}"
 }
 
 usage() {
@@ -212,10 +299,15 @@ usage() {
 Usage: linux-acceptance-vm.sh <command> [args]
 
   fetch-image NAME URL DEST   Download and verify a pinned cloud image
-  boot NAME                  Boot a disposable guest and report readiness
-  power-cut                  Cut power to the running guest
+  prepare NAME IMAGE PLATFORM KEY DEST
+                            Create a clean overlay and cloud-init seed
+  boot NAME DISK SEED MONITOR SERIAL SSH_PORT KEY
+                            Boot and wait for the guest control plane
+  guest-exec NAME COMMAND [DEST]
+                            Run one fixed guest-control probe
+  power-cut NAME             Force-stop the VM process without guest shutdown
   snapshot TAG               Save a QEMU snapshot
-  restore TAG                Restore a QEMU snapshot
+  restore NAME TAG           Restore a QEMU snapshot
 
 Image digests must be recorded in deploy/acceptance/images.lock.
 EOF
@@ -225,10 +317,42 @@ main() {
     local command="${1:-}"
     case "$command" in
         fetch-image) [[ $# -eq 4 ]] || fail "fetch-image NAME URL DEST"; fetch_image "$2" "$3" "$4" ;;
-        boot)        [[ $# -eq 2 ]] || fail "boot NAME"; fail "boot must be invoked by the acceptance workflow with a prepared disk and seed" ;;
-        power-cut)   [[ $# -eq 2 ]] || fail "power-cut MONITOR"; power_cut "$2" ;;
-        snapshot)    [[ $# -eq 3 ]] || fail "snapshot MONITOR TAG"; snapshot "$2" "$3" ;;
-        restore)     [[ $# -eq 3 ]] || fail "restore MONITOR TAG"; restore_snapshot "$2" "$3" ;;
+        prepare)
+            [[ $# -eq 6 ]] || fail "prepare NAME IMAGE PLATFORM KEY DEST"
+            require_tools qemu-img python3
+            name="$2"; image="$3"; platform="$4"; key="$5"; destination="$6"
+            [[ -f "$image" ]] || fail "guest image is absent: ${image}"
+            mkdir -p "$destination"
+            qemu-img create -f qcow2 -F qcow2 -b "$image" "${destination}/${name}.qcow2" >/dev/null
+            password="${SYNVEIL_ACCEPTANCE_PASSWORD:-$(python3 -c 'import secrets; print(secrets.token_urlsafe(18))')}"
+            write_cloud_init "${destination}/seed" "$password" "$(cat "${key}.pub")" "$platform"
+            make_seed_iso "${destination}/seed" "${destination}/${name}-seed.iso"
+            printf '%s\n' "$password" >"${destination}/${name}.password"
+            chmod 600 "${destination}/${name}.password"
+            ;;
+        boot)
+            [[ $# -eq 8 ]] || fail "boot NAME DISK SEED MONITOR SERIAL SSH_PORT KEY"
+            require_tools qemu-system-x86_64 ssh
+            name="$2"; disk="$3"; seed="$4"; monitor="$5"; serial="$6"; ssh_port="$7"; key="$8"
+            mkdir -p "$(dirname "$monitor")" "$(dirname "$serial")"
+            pid="$(start_vm "$disk" "$seed" "$monitor" "$serial" "$ssh_port")"
+            write_vm_metadata "$name" "$pid" "$monitor" "$serial" "$ssh_port" "$key" "$disk"
+            wait_for_ssh "$ssh_port" "$key"
+            timeout "$EXEC_TIMEOUT_SECONDS" "$0" guest-exec "$name" readiness
+            ;;
+        guest-exec)
+            [[ $# -ge 3 && $# -le 4 ]] || fail "guest-exec NAME COMMAND [DEST]"
+            require_tools ssh scp timeout
+            load_vm_metadata "$2"
+            timeout "$EXEC_TIMEOUT_SECONDS" "$0" _guest-exec-loaded "$3" "${4:-}"
+            ;;
+        _guest-exec-loaded)
+            [[ $# -ge 2 && $# -le 3 ]] || fail "internal guest-control invocation"
+            guest_exec "$ssh_port" "$key" "$2" "${3:-}"
+            ;;
+        power-cut)   [[ $# -eq 2 ]] || fail "power-cut NAME"; power_cut "$2" ;;
+        snapshot)    [[ $# -eq 3 ]] || fail "snapshot NAME TAG"; load_vm_metadata "$2"; snapshot "$monitor" "$3" ;;
+        restore)     [[ $# -eq 3 ]] || fail "restore NAME TAG"; load_vm_metadata "$2"; restore_snapshot "$monitor" "$3" ;;
         --help|-h)   usage ;;
         *)           usage; fail "unknown command: ${command}" ;;
     esac

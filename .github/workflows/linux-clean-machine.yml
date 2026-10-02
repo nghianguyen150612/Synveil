@@ -9,14 +9,11 @@ name: Linux clean-machine acceptance
 # ------------------------------
 # The `static-gate` and `artifacts` jobs execute for real today.
 #
-# The native VM matrix CANNOT yet produce acceptance evidence. Two things block
-# it, and neither is worked around here:
-#
-#   1. deploy/acceptance/images.lock pins no image digests, because no reviewer
-#      has authenticated them. linux-acceptance-vm.sh correctly refuses to
-#      download an unpinned image.
-#   2. The bounded graphical-automation driver (DEB/RPM authorization surface,
-#      application-menu launch, AT-SPI element lookup) is not implemented.
+# The native VM matrix is fail-closed until every guest journey produces a
+# result-v1 PASS. The VM control plane now performs real image verification,
+# overlay creation, cloud-init provisioning, boot/readiness polling, snapshot
+# control and forced power cuts. Journey records remain non-PASS until the
+# reviewed guest GUI/package assertions are established.
 #
 # Because of that, the native jobs report BLOCKED and `evidence-gate` FAILS.
 # That failure is the correct outcome. It must not be converted into a skip:
@@ -123,7 +120,8 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------
-  # Native clean-machine matrix. Currently BLOCKED, truthfully.
+  # Native clean-machine matrix. A failed guest probe is evidence of a blocked
+  # or failed journey, never a skipped green check.
   # Ubuntu 24.04 and Fedora 42 x86_64 are the only qualified targets (§6/§13).
   # ---------------------------------------------------------------------
   native-clean-machine:
@@ -203,7 +201,30 @@ jobs:
             exit 1
           fi
 
-      - name: Report acceptance BLOCKED with a truthful reason
+      - name: Boot the disposable native guest and establish readiness
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/vm" "$RUNNER_TEMP/images"
+          ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/vm/id_ed25519"
+          scripts/linux-acceptance-vm.sh prepare \
+            "${{ matrix.image }}" \
+            "$RUNNER_TEMP/images/${{ matrix.image }}.qcow2" \
+            "${{ matrix.platform }}" \
+            "$RUNNER_TEMP/vm/id_ed25519" \
+            "$RUNNER_TEMP/vm"
+          scripts/linux-acceptance-vm.sh boot \
+            "${{ matrix.image }}" \
+            "$RUNNER_TEMP/vm/${{ matrix.image }}.qcow2" \
+            "$RUNNER_TEMP/vm/${{ matrix.image }}-seed.iso" \
+            "$RUNNER_TEMP/vm/${{ matrix.image }}.qmp" \
+            "$RUNNER_TEMP/vm/${{ matrix.image }}.serial" \
+            2222 \
+            "$RUNNER_TEMP/vm/id_ed25519"
+          scripts/linux-acceptance-vm.sh guest-exec \
+            "${{ matrix.image }}" facts | tee "acceptance-evidence/guest-facts.txt"
+          scripts/linux-acceptance-vm.sh snapshot "${{ matrix.image }}" clean
+
+      - name: Execute typed acceptance scenarios and preserve non-PASS evidence
         if: always()
         run: |
           set -euo pipefail
@@ -223,11 +244,21 @@ jobs:
           done
           cat acceptance-evidence/*.json
 
+      - name: Capture guest diagnostics and force restore boundary
+        if: always()
+        run: |
+          set +e
+          scripts/linux-acceptance-vm.sh guest-exec \
+            "${{ matrix.image }}" screenshot \
+            "acceptance-evidence/${{ matrix.image }}-failure.png"
+          scripts/linux-acceptance-vm.sh power-cut "${{ matrix.image }}"
+          set -e
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: acceptance-evidence-${{ matrix.platform }}-${{ matrix.version }}
-          path: acceptance-evidence/*.json
+          path: acceptance-evidence/
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------

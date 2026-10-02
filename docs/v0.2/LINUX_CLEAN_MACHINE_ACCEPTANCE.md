@@ -75,19 +75,19 @@ Statuses are current and truthful. Nothing below is claimed as accepted.
 
 | ID | Requirement | Status |
 | --- | --- | --- |
-| LINUX-CLEAN-1 | Ubuntu 24.04 x86_64 clean environment proven | BLOCKED — image digest unpinned |
-| LINUX-CLEAN-2 | Fedora 42 x86_64 clean environment proven | BLOCKED — image digest unpinned |
+| LINUX-CLEAN-1 | Ubuntu 24.04 x86_64 clean environment proven | BLOCKED — pinned image and VM control path exist; native result not yet PASS |
+| LINUX-CLEAN-2 | Fedora 42 x86_64 clean environment proven | BLOCKED — pinned image and VM control path exist; native result not yet PASS |
 | LINUX-CLEAN-3 | Exact DEB artifact identity recorded | BLOCKED — exact bytes are hashed by CI, but native consumption is pending |
-| LINUX-CLEAN-4 | Ubuntu graphical DEB install succeeds | BLOCKED — bounded GUI driver is not implemented |
-| LINUX-CLEAN-5 | DEB authorization is visible | BLOCKED — bounded GUI driver is not implemented |
-| LINUX-CLEAN-6 | DEB application-menu launch succeeds | BLOCKED — bounded GUI driver is not implemented |
+| LINUX-CLEAN-4 | Ubuntu graphical DEB install succeeds | BLOCKED — guest GUI/package assertions are not yet bound to result-v1 |
+| LINUX-CLEAN-5 | DEB authorization is visible | BLOCKED — guest GUI/package assertions are not yet bound to result-v1 |
+| LINUX-CLEAN-6 | DEB application-menu launch succeeds | BLOCKED — guest GUI/package assertions are not yet bound to result-v1 |
 | LINUX-CLEAN-7 | DEB first-launch requires no manual systemctl | BLOCKED — native first-launch evidence is pending |
-| LINUX-CLEAN-8 | Fedora graphical RPM install succeeds | BLOCKED — bounded GUI driver is not implemented |
-| LINUX-CLEAN-9 | RPM authorization is visible | BLOCKED — bounded GUI driver is not implemented |
-| LINUX-CLEAN-10 | RPM application-menu launch succeeds | BLOCKED — bounded GUI driver is not implemented |
+| LINUX-CLEAN-8 | Fedora graphical RPM install succeeds | BLOCKED — guest GUI/package assertions are not yet bound to result-v1 |
+| LINUX-CLEAN-9 | RPM authorization is visible | BLOCKED — guest GUI/package assertions are not yet bound to result-v1 |
+| LINUX-CLEAN-10 | RPM application-menu launch succeeds | BLOCKED — guest GUI/package assertions are not yet bound to result-v1 |
 | LINUX-CLEAN-11 | RPM first-launch requires no manual systemctl | BLOCKED — native first-launch evidence is pending |
-| LINUX-CLEAN-12 | Real AppImage launches on Ubuntu 24.04 | BLOCKED — pinned guest image and GUI driver are pending |
-| LINUX-CLEAN-13 | Real AppImage launches on Fedora 42 | BLOCKED — pinned guest image and GUI driver are pending |
+| LINUX-CLEAN-12 | Real AppImage launches on Ubuntu 24.04 | BLOCKED — native AppImage scenario is not yet PASS |
+| LINUX-CLEAN-13 | Real AppImage launches on Fedora 42 | BLOCKED — native AppImage scenario is not yet PASS |
 | LINUX-CLEAN-14 | AppImage requires no root | BLOCKED — native AppImage journey is pending |
 | LINUX-CLEAN-15 | AppImage no-terminal executable path proven | BLOCKED — file-manager property flow is not implemented |
 | LINUX-CLEAN-16 | Portable AppImage causes zero integration mutation | BLOCKED — native AppImage journey is pending |

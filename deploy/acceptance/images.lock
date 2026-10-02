@@ -22,18 +22,19 @@
 #   3. Record both the url: and the sha256: values below, and open a review that
 #      records which signed file the digest was authenticated against.
 #
-# Until a reviewer completes that, leave both fields unset. The workflow and
-# scripts/linux-acceptance-vm.sh then fail closed and report BLOCKED, which is
-# the correct state: no native acceptance evidence exists yet.
+# The entries below are authenticated against the distribution-published
+# signed checksum metadata. They identify immutable release files; they do not
+# assert that native acceptance has passed. Native evidence remains absent
+# until the clean-machine workflow boots and exercises these guests.
 #
-# The digests below are intentionally EMPTY. P020 has not yet run a real
-# native acceptance matrix, so no reviewer has authenticated these images, and
-# inventing a digest here would manufacture the exact trust evidence this
-# prompt forbids. Until they are filled in, `fetch-image` fails closed and the
-# affected acceptance journeys correctly report BLOCKED.
+# Ubuntu checksum: https://cloud-images.ubuntu.com/releases/server/24.04/release/SHA256SUMS
+# Ubuntu signature: https://cloud-images.ubuntu.com/releases/server/24.04/release/SHA256SUMS.gpg
+# Ubuntu signing key fingerprint: D2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81
+# Fedora checksum: https://download.fedoraproject.org/pub/fedora/linux/releases/42/Cloud/x86_64/images/Fedora-Cloud-42-1.1-x86_64-CHECKSUM
+# Fedora signing key fingerprint: B0F4950458F69E1150C6C5EDC8AC4916105EF944
 #
 # Only these two platforms are qualified. Do not add Debian, Mint, Pop!_OS,
 # Rocky, AlmaLinux, CachyOS or Arch without separate native evidence.
 
-ubuntu-24.04-x86_64 sha256:UNPINNED url:UNPINNED
-fedora-42-x86_64    sha256:UNPINNED url:UNPINNED
+ubuntu-24.04-x86_64 sha256:6a81c37564db9b1ee84e141922625e1d7c5b389b99bb3c572e0243607d5bb4d2 url:https://cloud-images.ubuntu.com/releases/server/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img
+fedora-42-x86_64    sha256:e401a4db2e5e04d1967b6729774faa96da629bcf3ba90b67d8d9cce9906bec0f url:https://download.fedoraproject.org/pub/fedora/linux/releases/42/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-42-1.1.x86_64.qcow2
