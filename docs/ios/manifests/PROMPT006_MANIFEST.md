@@ -102,6 +102,18 @@ clients/ios/
    - **Failure**: `Process completed with exit code 101` in `.github/workflows/postgres-17.yml`.
    - **Classification**: `UNRELATED_SUBSYSTEM_FAILURE` / `PRE_EXISTING_BASELINE_FAILURE`
    - **Analysis**: Unrelated server PostgreSQL 17 test suite failure. Prompt006 touches zero server or PostgreSQL database code.
+3. **Job**: `Native desktop UI (Windows Qt 6)` / `Check (windows-latest)` / `Test (windows-latest)`
+   - **Failure**: `cannot find unix in os` / `cannot find unistd in nix` compiling `synveil-install-engine` on Windows.
+   - **Classification**: `UNRELATED_SUBSYSTEM_FAILURE` / `PRE_EXISTING_BASELINE_FAILURE`
+   - **Analysis**: Pre-existing Windows compilation issue in non-mobile install engine crate. Zero Windows or install engine code was touched in Prompt006.
+4. **Job**: `Native desktop UI (Linux Qt 6)`
+   - **Failure**: Exit code 255 during QML type resolution in desktop UI suite.
+   - **Classification**: `UNRELATED_SUBSYSTEM_FAILURE` / `PRE_EXISTING_BASELINE_FAILURE`
+   - **Analysis**: Pre-existing Linux desktop CXX-Qt QML issue. Prompt006 touches zero CXX-Qt or desktop QML code.
+5. **Job**: `Test (macos-latest)`
+   - **Failure**: `UnsafeEndpoint` failure in desktop client control tests on macOS runners.
+   - **Classification**: `UNRELATED_SUBSYSTEM_FAILURE` / `PRE_EXISTING_BASELINE_FAILURE`
+   - **Analysis**: Pre-existing desktop client IPC control test issue on macOS runners. Prompt006 touches zero desktop IPC or Rust client code.
 
 ## Limitations & Deferrals
 - This prompt establishes repository structure and documentation only.
