@@ -1,18 +1,17 @@
 {
   "schema_version": 1,
   "id": "INSTALL-JOURNEY-2",
-  "title": "Debian or Ubuntu graphical DEB install and launch",
-  "journey": "Native package database owns installation; authorization is visible; dependencies resolve; menu entry/icon and launch work; hooks do not enable persistent sync.",
+  "title": "Ubuntu 24.04 graphical DEB install and launch",
+  "journey": "Native package database owns installation; authorization is visible; dependencies resolve; menu entry/icon and launch work; hooks do not enable persistent sync. Debian is detected but not qualified: it inherits the DEB format and APT without inheriting Ubuntu acceptance evidence.",
   "platform": {
-    "family": "debian",
+    "family": "ubuntu",
     "qualified_versions": [
-      "pending exact qualified version (P018/P020)"
+      "Ubuntu 24.04 x86_64 (P018 qualified; P020 native acceptance evidence pending)"
     ],
     "desktop_session": "required for graphical desktop journeys; otherwise not applicable",
-    "package_manager": "pending native family qualification",
-    "native_gui_package_handler": "pending qualified desktop handler",
+    "package_manager": "apt-get",
+    "native_gui_package_handler": "gnome-software",
     "applicable_families": [
-      "debian",
       "ubuntu"
     ]
   },
