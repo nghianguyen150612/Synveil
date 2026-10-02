@@ -263,7 +263,7 @@ jobs:
             qml6-module-qtqml qml6-module-qtqml-models \
             qml6-module-qtquick qml6-module-qtquick-controls \
             qml6-module-qtquick-layouts qml6-module-qtquick-window \
-            readelf file
+            binutils file
           sudo install -d -m 0777 /usr/src/synveil
 
       - name: Install Rust toolchain
