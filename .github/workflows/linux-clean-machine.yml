@@ -153,6 +153,13 @@ jobs:
           name: synveil-acceptance-artifacts
           path: target/packages
 
+      - name: Install bounded QEMU control-plane tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            qemu-system-x86 qemu-utils cloud-image-utils genisoimage xorriso \
+            openssh-client
+
       - name: Verify downloaded artifacts against recorded digests
         run: sha256sum --check --ignore-missing target/packages/ACCEPTANCE-ARTIFACT-SHA256.txt
 
