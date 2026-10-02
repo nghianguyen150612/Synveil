@@ -1,6 +1,33 @@
-use std::{env, path::PathBuf, process::ExitCode};
+//! AppImage integration helper, invoked by `deploy/packages/appimage/AppRun`.
+//!
+//! The command is Linux-only: the module it drives owns XDG surfaces, a systemd
+//! user unit and POSIX ownership checks. Cargo cannot express a
+//! target-conditional `[[bin]]`, and `build-appimage.sh` builds this binary by
+//! name on Linux, so the declaration remains unconditional and the body is
+//! gated instead.
+//!
+//! On a non-Linux target this helper performs no integration and exits
+//! non-zero. It deliberately does not report success: a portable
+//! non-Linux install has nothing to integrate, and a silent success would let
+//! packaging claim an AppImage registration that does not exist.
+
+use std::process::ExitCode;
+
+#[cfg(not(target_os = "linux"))]
+fn main() -> ExitCode {
+    eprintln!(
+        "synveil-appimage-integration: AppImage integration is Linux-only; \
+         this binary performs no integration on this platform"
+    );
+    ExitCode::from(2)
+}
+
+#[cfg(target_os = "linux")]
+use std::{env, path::PathBuf};
+#[cfg(target_os = "linux")]
 use synveil_install_engine::{AppImageIntegration, AppImageIntegrationError};
 
+#[cfg(target_os = "linux")]
 fn main() -> ExitCode {
     let mut args = env::args_os().skip(1);
     let command = args
@@ -42,6 +69,7 @@ fn main() -> ExitCode {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn fail(error: impl std::fmt::Debug) -> ExitCode {
     eprintln!("synveil-appimage-integration: {error:?}");
     ExitCode::FAILURE

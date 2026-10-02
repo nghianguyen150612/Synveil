@@ -8,6 +8,9 @@ on:
 permissions:
   contents: read
 
+env:
+  SYNVEIL_ENABLE_QMLCACHEGEN_WRAPPER: "1"
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -35,6 +38,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y file shellcheck pkg-config libdbus-1-dev \
             libfuse2
+          sudo install -d -m 0777 /usr/src/synveil
       - name: Static contracts and shell checks
         run: |
           bash -n deploy/packages/build-appimage.sh scripts/validate-appimage-build.sh

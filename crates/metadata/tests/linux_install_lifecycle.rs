@@ -21,6 +21,8 @@ use std::{
 
 use synveil_metadata::DatabaseConfig;
 
+mod common;
+
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -1441,58 +1443,22 @@ fn sysusers_tmpfiles_artifacts_match_authoritative_sources() {
         "tmpfiles must be byte-identical"
     );
 
-    // Validate sysusers dry-run if available
-    if Command::new("systemd-sysusers")
-        .arg("--help")
-        .output()
-        .is_ok()
-    {
-        let tmp_root = std::env::temp_dir().join(format!(
-            "synveil-sysusers-{}",
-            uuid::Uuid::now_v7().simple()
-        ));
-        fs::create_dir_all(&tmp_root).unwrap();
-        let src_path = root.join("usr/lib/sysusers.d/synveil.conf");
-        let out = Command::new("systemd-sysusers")
-            .arg("--dry-run")
-            .arg(format!("--root={}", tmp_root.display()))
-            .arg(src_path.to_string_lossy().to_string())
-            .output()
-            .unwrap();
-        let _ = fs::remove_dir_all(&tmp_root);
-        assert!(
-            out.status.success(),
-            "systemd-sysusers dry-run failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
+    // Validate the installed fragments with a version-compatible isolated
+    // strategy. `common::validate_*` uses `--dry-run` where systemd advertises
+    // it (>= 250) and a provably host-confined `--root` execution otherwise
+    // (249), where `--dry-run` does not exist. Product semantics are unchanged.
+    //
+    // Validate the *installed* copies, which are already asserted byte-identical
+    // to the authoritative sources above.
+    match common::validate_sysusers(&root.join("usr/lib/sysusers.d/synveil.conf")) {
+        None => eprintln!("systemd-sysusers unavailable; static checks cover"),
+        Some(Ok(())) => {}
+        Some(Err(error)) => panic!("{error}"),
     }
-    if Command::new("systemd-tmpfiles")
-        .arg("--help")
-        .output()
-        .is_ok()
-    {
-        let tmp_root = std::env::temp_dir().join(format!(
-            "synveil-tmpfiles-{}",
-            uuid::Uuid::now_v7().simple()
-        ));
-        fs::create_dir_all(&tmp_root).unwrap();
-        let src_path = root.join("usr/lib/tmpfiles.d/synveil.conf");
-        let out = Command::new("systemd-tmpfiles")
-            .arg("--dry-run")
-            .arg("--create")
-            .arg("--graceful")
-            .arg(format!("--root={}", tmp_root.display()))
-            .arg(src_path.to_string_lossy().to_string())
-            .output()
-            .unwrap();
-        let _ = fs::remove_dir_all(&tmp_root);
-        if !out.status.success() {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            // Unknown user in empty root is expected without sysusers applied; treat as pass if that's the only error
-            if !(stderr.contains("Unknown user") || stderr.contains("Failed to resolve user")) {
-                panic!("systemd-tmpfiles dry-run failed: {stderr}");
-            }
-        }
+    match common::validate_tmpfiles(&root.join("usr/lib/tmpfiles.d/synveil.conf")) {
+        None => eprintln!("systemd-tmpfiles unavailable; static checks cover"),
+        Some(Ok(())) => {}
+        Some(Err(error)) => panic!("{error}"),
     }
 
     let _ = fs::remove_dir_all(&root);

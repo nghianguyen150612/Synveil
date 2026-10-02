@@ -5,14 +5,26 @@
 # any image that is not recorded below, so an unpinned or moving `latest` image
 # cannot silently become acceptance evidence.
 #
-# Format:  <image-name>  sha256:<64-hex-digest>
+# Format:  <image-name>  sha256:<64-hex-digest>  url:<https-url>
 #
-# HOW TO PIN A DIGEST (do this deliberately, never by guessing):
-#   1. Download the image over HTTPS from the official distribution location.
-#   2. Verify it against the distribution's published signed checksum file
-#      (Ubuntu: SHA256SUMS; Fedora: Fedora-Cloud-Base-*-CHECKSUM).
-#   3. Record the digest below and open a review that records which signed file
-#      it was authenticated against.
+# The URL is the official distribution location only. It carries no
+# authenticity on its own; the digest is what makes the image trustworthy, and
+# an unpinned digest means the image must not be downloaded at all.
+#
+# HOW TO PIN AN IMAGE (do this deliberately, never by guessing):
+#   1. Confirm the exact image filename from the distribution's own directory
+#      listing. Do not infer it: Fedora, in particular, moves release images
+#      between active, archived and EOL trees, so a plausible-looking path can
+#      404 or, worse, resolve to a different build.
+#   2. Verify the image against the distribution's published signed checksum
+#      file (Ubuntu: SHA256SUMS + SHA256SUMS.gpg; Fedora: the matching
+#      *-CHECKSUM file).
+#   3. Record both the url: and the sha256: values below, and open a review that
+#      records which signed file the digest was authenticated against.
+#
+# Until a reviewer completes that, leave both fields unset. The workflow and
+# scripts/linux-acceptance-vm.sh then fail closed and report BLOCKED, which is
+# the correct state: no native acceptance evidence exists yet.
 #
 # The digests below are intentionally EMPTY. P020 has not yet run a real
 # native acceptance matrix, so no reviewer has authenticated these images, and
@@ -23,5 +35,5 @@
 # Only these two platforms are qualified. Do not add Debian, Mint, Pop!_OS,
 # Rocky, AlmaLinux, CachyOS or Arch without separate native evidence.
 
-ubuntu-24.04-x86_64 sha256:UNPINNED
-fedora-42-x86_64    sha256:UNPINNED
+ubuntu-24.04-x86_64 sha256:UNPINNED url:UNPINNED
+fedora-42-x86_64    sha256:UNPINNED url:UNPINNED

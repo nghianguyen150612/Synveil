@@ -201,7 +201,7 @@ def collect_host_facts() -> HostFacts:
         raise AdapterError("cannot read /etc/os-release") from exc
 
     os_id = fields.get("ID", "").lower()
-    version_id = fields.get("VERSION_ID", "").split(".")[0]
+    version_id = fields.get("VERSION_ID", "").strip()
     id_like = tuple(x.lower() for x in fields.get("ID_LIKE", "").split())
 
     machine = host_platform.machine().lower()
@@ -324,6 +324,7 @@ class ArtifactIdentity:
     architecture: str
     release_channel: str | None
     trust_status: str
+    manifest_sha256: str | None
 
     @classmethod
     def from_manifest(cls, manifest_path: Path, artifact_type: str) -> "ArtifactIdentity":
@@ -354,6 +355,7 @@ class ArtifactIdentity:
         if artifact.stat().st_size != entry["size_bytes"]:
             raise ArtifactMismatch(f"{entry['filename']} size mismatch against manifest")
 
+        manifest_digest = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
         return cls(
             filename=entry["filename"],
             sha256=actual,
@@ -365,6 +367,7 @@ class ArtifactIdentity:
             architecture=entry.get("architecture", ""),
             release_channel=document.get("channel"),
             trust_status=document.get("trust_status", "manifest-bound"),
+            manifest_sha256=manifest_digest,
         )
 
     def to_result(self) -> dict[str, Any]:
@@ -375,6 +378,14 @@ class ArtifactIdentity:
             "artifact_type": self.artifact_type,
             "filename": self.filename,
             "digest": self.sha256,
+            "sha256": self.sha256,
+            "size_bytes": self.size_bytes,
+            "manifest_identity": {
+                "product_version": self.product_version,
+                "source_commit": self.source_commit,
+                "release_channel": self.release_channel,
+                "manifest_sha256": self.manifest_sha256,
+            },
             "platform": self.platform,
             "architecture": self.architecture,
             "release_channel": self.release_channel,
@@ -405,12 +416,14 @@ class Adapter:
         self.dry_run = dry_run
         self.completed: list[str] = []
         self.diagnostics: list[str] = []
+        self.observations: dict[str, Any] = {}
 
     # -- handlers ---------------------------------------------------------
 
     def _h_obtain_artifact(self, step: dict[str, Any]) -> StepOutcome:
         # The artifact is bound and digest-verified before the run starts, so
         # this step asserts that binding rather than re-fetching anything.
+        self.observations["artifact_bound"] = True
         return StepOutcome(step["id"], step["action"], "completed", f"bound {self.identity.filename} sha256={self.identity.sha256[:16]}...")
 
     def _h_open_installer(self, step: dict[str, Any]) -> StepOutcome:
@@ -432,6 +445,14 @@ class Adapter:
     def _h_interrupt(self, step: dict[str, Any]) -> StepOutcome:
         return StepOutcome(step["id"], step["action"], "blocked", "VM power interruption is driven by the workflow control plane, not from inside the guest")
 
+    def _h_native_unimplemented(self, step: dict[str, Any]) -> StepOutcome:
+        return StepOutcome(
+            step["id"],
+            step["action"],
+            "blocked",
+            f"typed Linux acceptance action '{step['action']}' requires the native guest driver",
+        )
+
     def _h_generic_blocked(self, step: dict[str, Any]) -> StepOutcome:
         return StepOutcome(step["id"], step["action"], "blocked", "native adapter for this action is not provisioned in this runner")
 
@@ -440,7 +461,13 @@ class Adapter:
         "open_installer": "_h_open_installer",
         "install": "_h_install",
         "launch": "_h_launch",
+        "damage_package_owned_state": "_h_native_unimplemented",
+        "repair": "_h_native_unimplemented",
+        "uninstall": "_h_native_unimplemented",
         "interrupt_at_boundary": "_h_interrupt",
+        "rerun_and_reconcile": "_h_native_unimplemented",
+        "assertion_checkpoint": "_h_native_unimplemented",
+        "upgrade_from_source": "_h_native_unimplemented",
     }
 
     def dispatch(self, step: dict[str, Any]) -> StepOutcome:
@@ -457,7 +484,8 @@ class Adapter:
     def evaluate(self, assertions: list[dict[str, Any]]) -> list[dict[str, Any]]:
         results = []
         for assertion in assertions:
-            results.append({"assertion_id": assertion["id"], "result": "NOT_EVALUATED", "type": assertion["type"]})
+            result = "PASS" if self.observations.get(assertion["type"]) is True else "NOT_EVALUATED"
+            results.append({"assertion_id": assertion["id"], "result": result, "type": assertion["type"]})
         return results
 
 
@@ -492,6 +520,7 @@ def execute(scenario: dict[str, Any], source: Path, *, manifest: Path, artifact_
         identity_result = {
             "status": "unverified", "product_version": None, "source_commit": None,
             "artifact_type": artifact_type, "filename": None, "digest": None,
+            "sha256": None, "size_bytes": None, "manifest_identity": None,
             "platform": facts.family, "architecture": facts.architecture,
             "release_channel": None, "trust_status": "unverified",
         }
@@ -527,6 +556,12 @@ def execute(scenario: dict[str, Any], source: Path, *, manifest: Path, artifact_
                     blocked_reason = f"step {outcome.step_id} ({outcome.action}): {outcome.detail}"
                     break
             assertion_results = adapter.evaluate(scenario["assertions"])
+            if blocked_reason is None and len(completed) == len(scenario["steps"]):
+                if all(assertion["result"] == "PASS" for assertion in assertion_results):
+                    result = "PASS"
+                else:
+                    result = "BLOCKED"
+                    blocked_reason = "one or more typed assertions were not established by the native adapter"
             # A scenario is only PASS when every step completed and every
             # assertion was actually evaluated and held. Blocked steps block.
             evidence_class = evidence
@@ -535,6 +570,7 @@ def execute(scenario: dict[str, Any], source: Path, *, manifest: Path, artifact_
     return {
         "schema_version": RESULT_SCHEMA_VERSION,
         "scenario_id": scenario["id"],
+        "execution_class": scenario["execution_class"],
         "scenario_definition_digest": contract.definition_digest(scenario),
         "runner_version": RUNNER_VERSION,
         "start_time": start,
@@ -588,7 +624,7 @@ class AdapterTests(unittest.TestCase):
     def test_unknown_action_is_blocked_not_evaluated(self) -> None:
         adapter = Adapter(
             HostFacts("ubuntu", "24.04", (), "x86_64", "6.8", "wayland", "available", "apt-get", None),
-            ArtifactIdentity("a", "0" * 64, 1, "DEB", "0.1.0", None, "linux", "x86_64", None, "test"),
+            ArtifactIdentity("a", "0" * 64, 1, "DEB", "0.1.0", None, "linux", "x86_64", None, "test", None),
             evidence="native-clean-machine",
         )
         outcome = adapter.dispatch({"id": "S", "action": "rm -rf / ; echo pwned", "description": "x"})
@@ -603,14 +639,14 @@ class AdapterTests(unittest.TestCase):
         # Unknown actions resolve to blocked rather than raising.
         adapter = Adapter(
             HostFacts("ubuntu", "24.04", (), "x86_64", "6.8", "wayland", "available", "apt-get", None),
-            ArtifactIdentity("a", "0" * 64, 1, "DEB", "0.1.0", None, "linux", "x86_64", None, "test"),
+            ArtifactIdentity("a", "0" * 64, 1, "DEB", "0.1.0", None, "linux", "x86_64", None, "test", None),
             evidence="native-clean-machine",
         )
         self.assertEqual(adapter.dispatch({"id": "S", "action": "host_setup", "description": "x"}).status, "blocked")
 
     def test_graphical_action_blocks_without_session(self) -> None:
         facts = HostFacts("ubuntu", "24.04", (), "x86_64", "6.8", "tty", "unavailable", "apt-get", "/usr/bin/gnome-software")
-        adapter = Adapter(facts, ArtifactIdentity("a", "0" * 64, 1, "DEB", "0.1.0", None, "linux", "x86_64", None, "t"), evidence="e")
+        adapter = Adapter(facts, ArtifactIdentity("a", "0" * 64, 1, "DEB", "0.1.0", None, "linux", "x86_64", None, "t", None), evidence="e")
         outcome = adapter.dispatch({"id": "S", "action": "launch", "description": "x"})
         self.assertEqual(outcome.status, "blocked")
         self.assertIn("desktop session", outcome.detail)
@@ -631,6 +667,7 @@ class AdapterTests(unittest.TestCase):
             artifact_type="DEB",
             evidence="native-clean-machine",
         )
+        contract.validate_result_record(result)
         schema = contract.load_json(ROOT / "tests/install-acceptance/schema/result-v1.schema.json")
         self.assertTrue(set(schema["required"]) <= result.keys())
         self.assertIn(result["result"], {"PASS", "FAIL", "SKIPPED", "BLOCKED", "ERROR"})
@@ -677,10 +714,10 @@ class AdapterTests(unittest.TestCase):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["self-test", "run", "matrix"])
+    parser.add_argument("command", choices=["self-test", "run", "matrix", "validate-result"])
     parser.add_argument("scenario_id", nargs="?")
     parser.add_argument("--manifest", type=Path)
-    parser.add_argument("--artifact-type", default="DEB")
+    parser.add_argument("--artifact-type", default="AUTO")
     parser.add_argument("--evidence", default="native-clean-machine")
     args = parser.parse_args()
 
@@ -694,12 +731,35 @@ def main() -> int:
         print(json.dumps(sorted(items), indent=2))
         return 0
 
+    if args.command == "validate-result":
+        if not args.scenario_id:
+            print("validate-result requires a result JSON path", file=sys.stderr)
+            return 2
+        try:
+            result = json.loads(Path(args.scenario_id).read_text(encoding="utf-8"))
+            schema = contract.load_json(ROOT / "tests/install-acceptance/schema/result-v1.schema.json")
+            required = set(schema["required"])
+            if not required <= result.keys():
+                missing = sorted(required - result.keys())
+                raise ValueError(f"missing required result fields: {', '.join(missing)}")
+            if result.get("schema_version") != RESULT_SCHEMA_VERSION:
+                raise ValueError("unsupported result schema version")
+            if result.get("diagnostics_redacted") is not True:
+                raise ValueError("diagnostics_redacted must be true")
+            contract.validate_result_record(result)
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(f"invalid acceptance result: {exc}", file=sys.stderr)
+            return 1
+        print(f"valid acceptance result: {result.get('scenario_id')} ({result.get('result')})")
+        return 0
+
     if args.scenario_id not in items:
         print(f"unknown scenario id: {args.scenario_id}", file=sys.stderr)
         return 2
     path, scenario = items[args.scenario_id]
     manifest = args.manifest or (ROOT / "target/packages/SYNVEIL-RELEASE-MANIFEST.json")
-    record = execute(scenario, path, manifest=manifest, artifact_type=args.artifact_type, evidence=args.evidence)
+    artifact_type = scenario["artifact_requirements"]["artifact_type"] if args.artifact_type == "AUTO" else args.artifact_type
+    record = execute(scenario, path, manifest=manifest, artifact_type=artifact_type, evidence=args.evidence)
     print(json.dumps(record, sort_keys=True, indent=2))
     return 0 if record["result"] in {"PASS", "BLOCKED", "SKIPPED"} else 1
 

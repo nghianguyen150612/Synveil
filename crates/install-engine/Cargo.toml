@@ -10,7 +10,22 @@ fs2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+
+# `nix` only supplies getuid() to the AppImage ownership checks. It has no
+# Windows or macOS implementation, so it is declared for Linux targets only
+# instead of breaking the whole crate's cross-platform build.
+[target.'cfg(target_os = "linux")'.dependencies]
 nix.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+
+# The helper is invoked by deploy/packages/appimage/AppRun and built explicitly
+# by deploy/packages/build-appimage.sh, both of which are Linux-only. Cargo
+# cannot express a target-conditional [[bin]], so the declaration stays and the
+# source itself is gated: on non-Linux targets the helper compiles to an
+# explicit refusal that performs no integration, rather than being absent
+# (which would break the Linux build) or pretending to succeed.
+[[bin]]
+name = "synveil-appimage-integration"
+path = "src/bin/synveil-appimage-integration.rs"
