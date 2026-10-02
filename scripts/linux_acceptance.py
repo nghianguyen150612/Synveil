@@ -733,19 +733,22 @@ def execute(scenario: dict[str, Any], source: Path, *, manifest: Path, artifact_
             blocked_reason = redact("; ".join(report.findings))
         else:
             adapter = Adapter(facts, ArtifactIdentity.from_manifest(manifest, artifact_type), evidence=evidence, manifest_path=manifest)
+            result = "BLOCKED"
             for step in scenario["steps"]:
                 outcome = adapter.dispatch(step)
                 if outcome.status == "completed":
                     completed.append(outcome.step_id)
                 else:
                     blocked_reason = f"step {outcome.step_id} ({outcome.action}): {outcome.detail}"
+                    if outcome.status == "failed":
+                        result = "FAIL"
                     break
             assertion_results = adapter.evaluate(scenario["assertions"])
             if blocked_reason is None and len(completed) == len(scenario["steps"]):
                 if all(assertion["result"] == "PASS" for assertion in assertion_results):
                     result = "PASS"
                 else:
-                    result = "BLOCKED"
+                    result = "FAIL"
                     blocked_reason = "one or more typed assertions were not established by the native adapter"
             # A scenario is only PASS when every step completed and every
             # assertion was actually evaluated and held. Blocked steps block.
