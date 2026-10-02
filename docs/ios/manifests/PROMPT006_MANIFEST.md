@@ -94,10 +94,14 @@ clients/ios/
 - **PhotoKit Location for P056**: `clients/ios/Extensions/PhotoKit/`.
 
 ## Unrelated CI Check Failure Analysis
-- **Job**: `Build, reproduce, inspect, and smoke AppImage`
-- **Failure**: `[synveil-artifact] ERROR: private or temporary build path found in synveil-desktop` (`matched path marker: /home/`).
-- **Classification**: `UNRELATED_SUBSYSTEM_FAILURE` / `PRE_EXISTING_BASELINE_FAILURE`
-- **Analysis**: Pre-existing failure in Linux desktop AppImage artifact string inspection pipeline (`deploy/packages/common/reproducible.sh`). Prompt006 is strictly iOS repository structure and architectural documentation under `clients/ios/`. Zero Rust, CXX-Qt, or desktop packaging code was touched.
+1. **Job**: `Build, reproduce, inspect, and smoke AppImage`
+   - **Failure**: `[synveil-artifact] ERROR: private or temporary build path found in synveil-desktop` (`matched path marker: /home/`).
+   - **Classification**: `UNRELATED_SUBSYSTEM_FAILURE` / `PRE_EXISTING_BASELINE_FAILURE`
+   - **Analysis**: Pre-existing failure in Linux desktop AppImage artifact string inspection pipeline (`deploy/packages/common/reproducible.sh`). Prompt006 is strictly iOS repository structure and architectural documentation under `clients/ios/`. Zero Rust, CXX-Qt, or desktop packaging code was touched.
+2. **Job**: `PG17 live suites (scheduling, worker, cycle, lifecycle, stress)`
+   - **Failure**: `Process completed with exit code 101` in `.github/workflows/postgres-17.yml`.
+   - **Classification**: `UNRELATED_SUBSYSTEM_FAILURE` / `PRE_EXISTING_BASELINE_FAILURE`
+   - **Analysis**: Unrelated server PostgreSQL 17 test suite failure. Prompt006 touches zero server or PostgreSQL database code.
 
 ## Limitations & Deferrals
 - This prompt establishes repository structure and documentation only.
