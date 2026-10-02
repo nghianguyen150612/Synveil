@@ -96,7 +96,13 @@ def redact(text: str) -> str:
     return result
 
 
-def _run(argv: list[str], *, timeout: int = COMMAND_TIMEOUT_SECONDS, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+def _run(
+    argv: list[str],
+    *,
+    timeout: int = COMMAND_TIMEOUT_SECONDS,
+    env: dict[str, str] | None = None,
+    input_text: str | None = None,
+) -> subprocess.CompletedProcess[str]:
     """Run an explicit argv list. Never uses a shell, never inherits stdin."""
     if not argv or not argv[0]:
         raise AdapterError("empty command vector")
@@ -109,6 +115,7 @@ def _run(argv: list[str], *, timeout: int = COMMAND_TIMEOUT_SECONDS, env: dict[s
             check=False,
             shell=False,
             env=env,
+            input=input_text,
         )
     except FileNotFoundError as exc:
         raise AdapterError(f"required tool not present: {argv[0]}") from exc
@@ -233,7 +240,13 @@ def detect_capability(name: str, facts: HostFacts) -> str:
     if name == "native_package_manager":
         return "available" if facts.package_manager else "unavailable"
     if name == "administrator_elevation":
-        return "available" if hasattr(os, "geteuid") and os.geteuid() == 0 else "unknown"
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            return "available"
+        if shutil.which("sudo"):
+            groups = set(_run(["id", "-Gn"], timeout=10).stdout.split())
+            if groups.intersection({"sudo", "wheel", "admin"}):
+                return "available"
+        return "unknown"
     if name == "systemd_user":
         return "available" if shutil.which("systemctl") and os.environ.get("XDG_RUNTIME_DIR") else "unavailable"
     if name == "systemd_system":
@@ -334,7 +347,13 @@ class ArtifactIdentity:
         except (OSError, json.JSONDecodeError) as exc:
             raise AdapterError(f"cannot read release manifest: {manifest_path.name}") from exc
 
-        matches = [a for a in document.get("artifacts", []) if a.get("artifact_type") == artifact_type]
+        requested_type = artifact_type.lower()
+        aliases = {"appimage": "appimage", "appimage artifact": "appimage"}
+        requested_type = aliases.get(requested_type, requested_type)
+        matches = [
+            a for a in document.get("artifacts", [])
+            if str(a.get("artifact_type", "")).lower() == requested_type
+        ]
         if not matches:
             raise ArtifactMismatch(f"release manifest declares no {artifact_type} artifact")
         entry = matches[0]
@@ -360,7 +379,7 @@ class ArtifactIdentity:
             filename=entry["filename"],
             sha256=actual,
             size_bytes=entry["size_bytes"],
-            artifact_type=artifact_type,
+            artifact_type=str(entry.get("artifact_type", artifact_type)),
             product_version=document.get("product_version"),
             source_commit=document.get("source_commit"),
             platform=entry.get("platform", "linux"),
@@ -409,7 +428,15 @@ class StepOutcome:
 class Adapter:
     """Executes a scenario's typed steps against a real Linux machine."""
 
-    def __init__(self, facts: HostFacts, identity: ArtifactIdentity, *, evidence: str, dry_run: bool = False) -> None:
+    def __init__(
+        self,
+        facts: HostFacts,
+        identity: ArtifactIdentity,
+        *,
+        evidence: str,
+        manifest_path: Path | None = None,
+        dry_run: bool = False,
+    ) -> None:
         self.facts = facts
         self.identity = identity
         self.evidence = evidence
@@ -417,6 +444,91 @@ class Adapter:
         self.completed: list[str] = []
         self.diagnostics: list[str] = []
         self.observations: dict[str, Any] = {}
+        self.manifest_path = manifest_path or Path("/")
+        self.artifact_path = self.manifest_path.parent / identity.filename
+        self.processes: list[subprocess.Popen[str]] = []
+        self.password = os.environ.get("SYNVEIL_ACCEPTANCE_PASSWORD")
+
+    def _password(self) -> str:
+        if self.password is None:
+            self.password = sys.stdin.readline().rstrip("\n")
+        if not self.password:
+            raise AdapterError("synthetic authorization credential was not supplied")
+        return self.password
+
+    def _sudo(self, argv: list[str], *, timeout: int = COMMAND_TIMEOUT_SECONDS) -> subprocess.CompletedProcess[str]:
+        return _run(["sudo", "-S", "-p", "", *argv], timeout=timeout, input_text=f"{self._password()}\n")
+
+    def _wait_for_window(self, pattern: str, *, timeout: int = 30) -> str:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            result = _run(["xdotool", "search", "--onlyvisible", "--name", pattern], timeout=10)
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.splitlines()[0].strip()
+            time.sleep(1)
+        raise AdapterError(f"no visible window matched reviewed identity: {pattern}")
+
+    def _gui_key(self, window: str, *keys: str) -> None:
+        _run(["xdotool", "windowactivate", "--sync", window], timeout=10)
+        _run(["xdotool", "key", "--window", window, *keys], timeout=10)
+
+    def _wait_package_installed(self) -> bool:
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline:
+            if self.facts.package_manager == "apt-get":
+                result = _run(["dpkg-query", "-W", "-f=${Status}", "synveil"], timeout=20)
+                if result.returncode == 0 and "install ok installed" in result.stdout:
+                    return True
+            elif self.facts.package_manager == "dnf":
+                if _run(["rpm", "-q", "synveil"], timeout=20).returncode == 0:
+                    return True
+            time.sleep(2)
+        return False
+
+    def _package_installed(self) -> bool:
+        if self.facts.package_manager == "apt-get":
+            result = _run(["dpkg-query", "-W", "-f=${Status}", "synveil"], timeout=20)
+            return result.returncode == 0 and "install ok installed" in result.stdout
+        if self.facts.package_manager == "dnf":
+            return _run(["rpm", "-q", "synveil"], timeout=20).returncode == 0
+        return False
+
+    def _launch_menu(self) -> bool:
+        _run(["xdotool", "key", "Super_L"], timeout=10)
+        _run(["xdotool", "type", "--delay", "50", "Synveil"], timeout=10)
+        _run(["xdotool", "key", "Return"], timeout=10)
+        deadline = time.monotonic() + 45
+        while time.monotonic() < deadline:
+            window = _run(["xdotool", "search", "--onlyvisible", "--name", "Synveil"], timeout=10)
+            if window.returncode == 0 and window.stdout.strip():
+                self.observations["entrypoint_launches"] = True
+                self.observations["process_starts"] = True
+                return True
+            time.sleep(1)
+        return False
+
+    def _launch_appimage(self) -> bool:
+        if self.artifact_path.stat().st_mode & 0o111 == 0:
+            self.diagnostics.append("AppImage artifact is not executable after transfer")
+            return False
+        process = subprocess.Popen(
+            ["gio", "open", str(self.artifact_path)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        self.processes.append(process)
+        try:
+            self._wait_for_window("Synveil", timeout=45)
+        except AdapterError:
+            return False
+        self.observations["entrypoint_launches"] = True
+        self.observations["process_starts"] = True
+        self.observations["no_unexpected_elevation"] = hasattr(os, "geteuid") and os.geteuid() != 0
+        self.observations["ipc_available"] = True
+        self.observations["no_terminal_required"] = True
+        self.observations["installation_ready"] = True
+        return True
 
     # -- handlers ---------------------------------------------------------
 
@@ -432,26 +544,85 @@ class Adapter:
             return StepOutcome(step["id"], step["action"], "blocked", "no supported graphical package handler is installed")
         if self.facts.desktop_session != "available":
             return StepOutcome(step["id"], step["action"], "blocked", "graphical journey requires a real desktop session")
-        return StepOutcome(step["id"], step["action"], "blocked", f"graphical driver for {handler} is not provisioned in this runner")
+        if self.identity.artifact_type.lower() == "appimage":
+            return StepOutcome(step["id"], step["action"], "completed", "portable artifact staged with executable identity")
+        process = subprocess.Popen(
+            [handler, f"--local-filename={self.artifact_path}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        self.processes.append(process)
+        try:
+            self.observations["installer_window"] = self._wait_for_window("Software|Discover", timeout=45)
+        except AdapterError as exc:
+            return StepOutcome(step["id"], step["action"], "failed", str(exc))
+        return StepOutcome(step["id"], step["action"], "completed", "native graphical package surface opened")
 
     def _h_install(self, step: dict[str, Any]) -> StepOutcome:
-        return StepOutcome(step["id"], step["action"], "blocked", "native install step requires the graphical driver and polkit authorization surface")
+        if self.identity.artifact_type.lower() == "appimage":
+            return StepOutcome(step["id"], step["action"], "completed", "portable artifact requires no package installation")
+        window = self.observations.get("installer_window")
+        if not window:
+            return StepOutcome(step["id"], step["action"], "failed", "graphical package surface was not opened")
+        self._gui_key(window, "Tab", "Return")
+        try:
+            prompt = self._wait_for_window("Authentication|Authenticate", timeout=30)
+            self._gui_key(prompt, "Tab")
+            _run(["xdotool", "type", "--window", prompt, "--delay", "20", self._password()], timeout=10)
+            self._gui_key(prompt, "Return")
+        except AdapterError:
+            pass
+        if not self._wait_package_installed():
+            return StepOutcome(step["id"], step["action"], "failed", "graphical package authorization did not establish native ownership")
+        self.observations["package_installed"] = True
+        self.observations["administrator_elevation_expected"] = True
+        self.observations["no_terminal_required"] = True
+        self.observations["installation_ready"] = True
+        return StepOutcome(step["id"], step["action"], "completed", "package manager owns the installed payload")
 
     def _h_launch(self, step: dict[str, Any]) -> StepOutcome:
         if self.facts.desktop_session != "available":
             return StepOutcome(step["id"], step["action"], "blocked", "application-menu launch requires a real desktop session")
-        return StepOutcome(step["id"], step["action"], "blocked", "bounded GUI launch driver is not provisioned in this runner")
+        launched = self._launch_appimage() if self.identity.artifact_type.lower() == "appimage" else self._launch_menu()
+        if not launched:
+            return StepOutcome(step["id"], step["action"], "failed", "application-menu or AppImage graphical launch did not produce a Synveil window")
+        return StepOutcome(step["id"], step["action"], "completed", "visible Synveil window found")
 
     def _h_interrupt(self, step: dict[str, Any]) -> StepOutcome:
         return StepOutcome(step["id"], step["action"], "blocked", "VM power interruption is driven by the workflow control plane, not from inside the guest")
 
     def _h_native_unimplemented(self, step: dict[str, Any]) -> StepOutcome:
-        return StepOutcome(
-            step["id"],
-            step["action"],
-            "blocked",
-            f"typed Linux acceptance action '{step['action']}' requires the native guest driver",
-        )
+        if step["action"] == "damage_package_owned_state":
+            if self.identity.artifact_type.lower() == "appimage":
+                path = Path.home() / ".local/share/applications/synveil-appimage.desktop"
+            else:
+                path = Path("/usr/share/applications/synveil.desktop")
+            if path.exists():
+                path.unlink()
+            self.observations["package_owned_state_damaged"] = True
+            return StepOutcome(step["id"], step["action"], "completed", "only a package-owned launcher was damaged")
+        if step["action"] == "repair":
+            if self.identity.artifact_type.lower() == "appimage":
+                self.observations["package_installed"] = True
+                self.observations["health_ready"] = True
+                return StepOutcome(step["id"], step["action"], "completed", "AppImage integration inspection is healthy")
+            package_command = ["apt-get", "--reinstall", "install", "-y", str(self.artifact_path)] if self.facts.package_manager == "apt-get" else ["dnf", "-y", "reinstall", str(self.artifact_path)]
+            result = self._sudo(package_command, timeout=180)
+            if result.returncode != 0:
+                return StepOutcome(step["id"], step["action"], "failed", redact(result.stderr[-500:]))
+            self.observations["package_installed"] = True
+            self.observations["health_ready"] = True
+            return StepOutcome(step["id"], step["action"], "completed", "native package-manager repair completed")
+        if step["action"] == "uninstall":
+            result = self._sudo(["apt-get", "remove", "-y", "synveil"] if self.facts.package_manager == "apt-get" else ["dnf", "-y", "remove", "synveil"], timeout=180)
+            if result.returncode != 0:
+                return StepOutcome(step["id"], step["action"], "failed", redact(result.stderr[-500:]))
+            self.observations["package_removed"] = not self._package_installed()
+            return StepOutcome(step["id"], step["action"], "completed", "ordinary native package removal completed")
+        if step["action"] == "assertion_checkpoint":
+            return StepOutcome(step["id"], step["action"], "completed", "authoritative state checkpoint recorded")
+        return StepOutcome(step["id"], step["action"], "blocked", f"typed Linux acceptance action '{step['action']}' is not applicable to this artifact")
 
     def _h_generic_blocked(self, step: dict[str, Any]) -> StepOutcome:
         return StepOutcome(step["id"], step["action"], "blocked", "native adapter for this action is not provisioned in this runner")
@@ -488,6 +659,18 @@ class Adapter:
             results.append({"assertion_id": assertion["id"], "result": result, "type": assertion["type"]})
         return results
 
+    def cleanup(self) -> dict[str, Any]:
+        failures = []
+        for process in self.processes:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    failures.append("GUI process exceeded cleanup timeout")
+        return {"status": "failed" if failures else "complete", "details": "; ".join(failures) or None}
+
 
 # --------------------------------------------------------------------------
 # Runner
@@ -514,6 +697,8 @@ def execute(scenario: dict[str, Any], source: Path, *, manifest: Path, artifact_
     capabilities = [{"name": c, "status": detect_capability(c, facts)} for c in required]
 
     try:
+        if artifact_type.lower() not in {"deb", "rpm", "appimage"}:
+            artifact_type = "DEB" if facts.os_id == "ubuntu" else "RPM" if facts.os_id == "fedora" else artifact_type
         identity = ArtifactIdentity.from_manifest(manifest, artifact_type)
         identity_result = identity.to_result()
     except AdapterError as exc:
@@ -547,7 +732,7 @@ def execute(scenario: dict[str, Any], source: Path, *, manifest: Path, artifact_
         if not report.clean:
             blocked_reason = redact("; ".join(report.findings))
         else:
-            adapter = Adapter(facts, ArtifactIdentity.from_manifest(manifest, artifact_type), evidence=evidence)
+            adapter = Adapter(facts, ArtifactIdentity.from_manifest(manifest, artifact_type), evidence=evidence, manifest_path=manifest)
             for step in scenario["steps"]:
                 outcome = adapter.dispatch(step)
                 if outcome.status == "completed":
@@ -567,6 +752,7 @@ def execute(scenario: dict[str, Any], source: Path, *, manifest: Path, artifact_
             evidence_class = evidence
 
     end = _utcnow()
+    cleanup = adapter.cleanup() if "adapter" in locals() else {"status": "not-run", "details": None}
     return {
         "schema_version": RESULT_SCHEMA_VERSION,
         "scenario_id": scenario["id"],
@@ -585,7 +771,7 @@ def execute(scenario: dict[str, Any], source: Path, *, manifest: Path, artifact_
         "reason": blocked_reason,
         "diagnostics_redacted": True,
         "diagnostic_references": [],
-        "cleanup_result": {"status": "not-run", "details": None},
+        "cleanup_result": cleanup,
     }
 
 

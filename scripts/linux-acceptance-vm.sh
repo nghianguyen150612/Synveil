@@ -102,11 +102,11 @@ write_cloud_init() {
     case "$platform" in
         ubuntu)
             admin_group=sudo
-            setup_script='apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ubuntu-desktop-minimal gnome-software gnome-screenshot policykit-1 at-spi2-core xdotool dbus-x11 qemu-guest-agent && mkdir -p /etc/gdm3 && printf "[daemon]\\nAutomaticLoginEnable=true\\nAutomaticLogin=synveil-acceptance\\nWaylandEnable=false\\n" > /etc/gdm3/custom.conf && systemctl enable gdm3'
+            setup_script='apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ubuntu-desktop-minimal gnome-software gnome-screenshot policykit-1 at-spi2-core xdotool dbus-x11 libsecret-tools qemu-guest-agent && mkdir -p /etc/gdm3 && printf "[daemon]\\nAutomaticLoginEnable=true\\nAutomaticLogin=synveil-acceptance\\nWaylandEnable=false\\n" > /etc/gdm3/custom.conf && systemctl enable gdm3'
             ;;
         fedora)
             admin_group=wheel
-            setup_script='dnf -y group install "Fedora Workstation" && dnf -y install gnome-software gnome-screenshot at-spi2-core xdotool dbus-x11 qemu-guest-agent && mkdir -p /etc/gdm && printf "[daemon]\\nAutomaticLoginEnable=True\\nAutomaticLogin=synveil-acceptance\\nWaylandEnable=false\\n" > /etc/gdm/custom.conf && systemctl enable gdm'
+            setup_script='dnf -y group install "Fedora Workstation" && dnf -y install gnome-software gnome-screenshot at-spi2-core xdotool dbus-x11 libsecret qemu-guest-agent && mkdir -p /etc/gdm && printf "[daemon]\\nAutomaticLoginEnable=True\\nAutomaticLogin=synveil-acceptance\\nWaylandEnable=false\\n" > /etc/gdm/custom.conf && systemctl enable gdm'
             ;;
         *)
             fail "unsupported guest platform for cloud-init: ${platform}"
@@ -258,10 +258,47 @@ guest_exec() {
             scp -q -i "$key" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                 -P "$port" synveil-acceptance@127.0.0.1:/tmp/synveil-acceptance-failure.png "$destination"
             ;;
+        run-scenario)
+            local scenario="$4" artifact_type="$5" evidence="$6"
+            case "$scenario" in
+                INSTALL-JOURNEY-[2-8]|FIRST-RUN-[1-2]|UPGRADE-TEMPLATE-1) ;;
+                *) fail "scenario is not in the reviewed acceptance vocabulary: ${scenario}" ;;
+            esac
+            case "$artifact_type" in
+                AUTO|DEB|RPM|appimage|APPIMAGE) ;;
+                *) fail "artifact type is not in the reviewed acceptance vocabulary: ${artifact_type}" ;;
+            esac
+            case "$evidence" in
+                native-clean-machine|interruption-power-cycle) ;;
+                *) fail "evidence class is not in the reviewed acceptance vocabulary: ${evidence}" ;;
+            esac
+            ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=no \
+                -o UserKnownHostsFile=/dev/null -p "$port" synveil-acceptance@127.0.0.1 \
+                "DISPLAY=:0 XDG_SESSION_TYPE=x11 XDG_RUNTIME_DIR=/run/user/\$(id -u) DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/\$(id -u)/bus python3 /home/synveil-acceptance/p020/scripts/linux_acceptance.py run ${scenario@Q} --manifest /home/synveil-acceptance/p020/target/packages/SYNVEIL-RELEASE-MANIFEST.json --artifact-type ${artifact_type@Q} --evidence ${evidence@Q}"
+            ;;
         *)
             fail "unsupported guest-control command: ${command_name}"
             ;;
     esac
+}
+
+stage_acceptance() {
+    local name="$1" root="$2"
+    load_vm_metadata "$name"
+    [[ -d "$root/scripts" && -d "$root/tests/install-acceptance" && -d "$root/target/packages" ]] ||
+        fail "acceptance staging root is incomplete: ${root}"
+    ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null -p "$ssh_port" synveil-acceptance@127.0.0.1 \
+        'mkdir -p /home/synveil-acceptance/p020/scripts /home/synveil-acceptance/p020/tests /home/synveil-acceptance/p020/target/packages'
+    scp -q -r -i "$key" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -P "$ssh_port" "$root/scripts/linux_acceptance.py" "$root/scripts/install_acceptance.py" \
+        synveil-acceptance@127.0.0.1:/home/synveil-acceptance/p020/scripts/
+    scp -q -r -i "$key" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -P "$ssh_port" "$root/tests/install-acceptance" \
+        synveil-acceptance@127.0.0.1:/home/synveil-acceptance/p020/tests/
+    scp -q -r -i "$key" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -P "$ssh_port" "$root/target/packages"/* \
+        synveil-acceptance@127.0.0.1:/home/synveil-acceptance/p020/target/packages/
 }
 
 # wait_for_boot polls the serial console for cloud-init completion within a
@@ -316,8 +353,9 @@ Usage: linux-acceptance-vm.sh <command> [args]
                             Create a clean overlay and cloud-init seed
   boot NAME DISK SEED MONITOR SERIAL SSH_PORT KEY
                             Boot and wait for the guest control plane
-  guest-exec NAME COMMAND [DEST]
-                            Run one fixed guest-control probe
+  guest-exec NAME COMMAND [ARGS]
+                            Run one fixed guest-control probe or scenario
+  stage NAME REPO_ROOT      Stage reviewed acceptance files and artifacts
   power-cut NAME             Force-stop the VM process without guest shutdown
   snapshot TAG               Save a QEMU snapshot
   restore NAME TAG           Restore a QEMU snapshot
@@ -354,15 +392,16 @@ main() {
             wait_for_guest_readiness "$ssh_port" "$key"
             ;;
         guest-exec)
-            [[ $# -ge 3 && $# -le 4 ]] || fail "guest-exec NAME COMMAND [DEST]"
+            [[ $# -ge 3 && $# -le 7 ]] || fail "guest-exec NAME COMMAND [ARGS]"
             require_tools ssh scp timeout
             load_vm_metadata "$2"
-            timeout "$EXEC_TIMEOUT_SECONDS" "$0" _guest-exec-loaded "$3" "${4:-}"
+            timeout "$EXEC_TIMEOUT_SECONDS" "$0" _guest-exec-loaded "$3" "${4:-}" "${5:-}" "${6:-}" "${7:-}"
             ;;
         _guest-exec-loaded)
-            [[ $# -ge 2 && $# -le 3 ]] || fail "internal guest-control invocation"
-            guest_exec "$ssh_port" "$key" "$2" "${3:-}"
+            [[ $# -ge 2 && $# -le 6 ]] || fail "internal guest-control invocation"
+            guest_exec "$ssh_port" "$key" "$2" "${3:-}" "${4:-}" "${5:-}" "${6:-}"
             ;;
+        stage)       [[ $# -eq 3 ]] || fail "stage NAME REPO_ROOT"; require_tools ssh scp; stage_acceptance "$2" "$3" ;;
         power-cut)   [[ $# -eq 2 ]] || fail "power-cut NAME"; power_cut "$2" ;;
         snapshot)    [[ $# -eq 3 ]] || fail "snapshot NAME TAG"; load_vm_metadata "$2"; snapshot "$monitor" "$3" ;;
         restore)     [[ $# -eq 3 ]] || fail "restore NAME TAG"; load_vm_metadata "$2"; restore_snapshot "$monitor" "$3" ;;

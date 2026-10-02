@@ -233,6 +233,7 @@ jobs:
           scripts/linux-acceptance-vm.sh guest-exec \
             "${{ matrix.image }}" facts | tee "acceptance-evidence/guest-facts.txt"
           scripts/linux-acceptance-vm.sh snapshot "${{ matrix.image }}" clean
+          scripts/linux-acceptance-vm.sh stage "${{ matrix.image }}" "$GITHUB_WORKSPACE"
 
       - name: Execute typed acceptance scenarios and preserve non-PASS evidence
         if: always()
@@ -241,12 +242,12 @@ jobs:
           mkdir -p acceptance-evidence
           for scenario in ${{ join(matrix.scenarios, ' ') }}; do
             set +e
-            python3 scripts/linux_acceptance.py run "$scenario" \
-              --manifest target/packages/SYNVEIL-RELEASE-MANIFEST.json \
-              --artifact-type AUTO \
-              --evidence native-clean-machine \
+            password="$(cat "$RUNNER_TEMP/vm/${{ matrix.image }}.password")"
+            printf '%s\n' "$password" | scripts/linux-acceptance-vm.sh guest-exec \
+              "${{ matrix.image }}" run-scenario "$scenario" AUTO native-clean-machine \
               > "acceptance-evidence/${scenario}.json"
             status=$?
+            unset password
             set -e
             if [ "$status" -ne 0 ]; then
               echo "native acceptance adapter returned $status for $scenario; preserving its result record"
