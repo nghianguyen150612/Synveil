@@ -599,7 +599,12 @@ class Adapter:
             else:
                 path = Path("/usr/share/applications/synveil.desktop")
             if path.exists():
-                path.unlink()
+                if path.is_absolute() and str(path).startswith("/usr/"):
+                    result = self._sudo(["rm", "--", str(path)], timeout=30)
+                    if result.returncode != 0:
+                        return StepOutcome(step["id"], step["action"], "failed", redact(result.stderr[-500:]))
+                else:
+                    path.unlink()
             self.observations["package_owned_state_damaged"] = True
             return StepOutcome(step["id"], step["action"], "completed", "only a package-owned launcher was damaged")
         if step["action"] == "repair":
