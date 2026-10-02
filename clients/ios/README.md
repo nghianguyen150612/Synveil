@@ -4,8 +4,9 @@
 `clients/ios/` is the canonical home of the native Synveil iOS client (`v0.1`). It establishes a clean, production-grade Swift application layout adhering strictly to ADR-058 (`docs/adr/ADR-058-ios-v0.1-client-architecture.md`), `IOS_ARCHITECTURE.md`, and `IOS_VALIDATION_CI_ARCHITECTURE.md`.
 
 ## 2. Current Project Status
-- **Phase**: Xcode Project Bootstrap (Prompt007).
-- **Status**: Minimal native iOS Xcode project (`clients/ios/Synveil.xcodeproj`) and shared scheme established.
+- **Phase**: macOS CI Build Gate (Prompt008).
+- **Status**: Dedicated GitHub Actions workflow established (`.github/workflows/ios-build.yml`). Minimal native iOS Xcode project (`clients/ios/Synveil.xcodeproj`) and shared scheme established.
+- **CI Verification**: GitHub Actions run `37040470487` successfully built the `Synveil` scheme with Xcode 26.6 and the iOS Simulator 26.5 SDK using unsigned Simulator settings.
 - **Application Target**: `Synveil` (Swift + SwiftUI, bundle identifier `com.synveil.ios`, deployment target iOS 17.0).
 - **Signing Policy**: Configured for unsigned Simulator builds (`CODE_SIGNING_ALLOWED=NO`, zero committed team IDs or provisioning profiles).
 
@@ -46,9 +47,9 @@ clients/ios/
     └── README.md
 ```
 
-## 4. Command-Line Build Contract
+## 4. Command-Line Build & Continuous Integration Contract
 
-To build the native iOS project on macOS with Xcode tooling:
+To build the native iOS project on macOS with Xcode tooling locally or in CI (`.github/workflows/ios-build.yml`):
 
 ```bash
 xcodebuild \
@@ -57,6 +58,7 @@ xcodebuild \
   -configuration Debug \
   -sdk iphonesimulator \
   CODE_SIGNING_ALLOWED=NO \
+  -derivedDataPath "${RUNNER_TEMP:-/tmp}/SynveilDerivedData" \
   build
 ```
 
