@@ -84,6 +84,15 @@
 
 ---
 
+## Unrelated CI Check Run Failures
+
+* **Job**: `Build, reproduce, inspect, and smoke AppImage`
+* **Status / Error**: Failed with `[synveil-artifact] ERROR: private or temporary build path found in synveil-desktop` (`matched path marker: /home/`).
+* **Root Cause Classification**: Pre-existing / Unrelated build script failure in the Linux desktop AppImage packaging pipeline (`deploy/packages/common/reproducible.sh`), triggered because GitHub Actions runner workspace paths (`/home/runner/...`) are embedded in the `synveil-desktop` binary string inspection.
+* **Prompt Scope Handling**: Prompt002 is documentation-only for iOS platform mapping. Zero Rust, CXX-Qt, or desktop packaging code was touched. Per Prompt002 instructions (item 16/17), unrelated historical CI failures are recorded without modifying unrelated desktop/packaging codebase logic.
+
+---
+
 ## Limitations
 
 * **Apple Platform Runtime Verification**: Apple platform claims regarding Keychain Services, BackgroundTasks framework (`BGAppRefreshTask`), and `URLSession` background transfers are derived from official Apple documentation and architectural specification; runtime validation requires macOS CI and physical iOS device execution in later prompts.
