@@ -5,10 +5,10 @@
 - **Goal**: Create a minimal native iOS unit test target (`SynveilTests`), XCTest bootstrap test, shared scheme test action, and dedicated GitHub Actions Simulator testing workflow.
 - **Starting Integration Branch**: `ios-app`
 - **Starting SHA**: `10cb665e01c3e267b7014112855636e67699b6a7`
-- **Work Branch**: `ios/p009-simulator-test-gate`
-- **PR**: Pending
+- **Work Branch**: `ios/p009-simulator-test-gate-9541723401815715091`
+- **PR**: #33 — https://github.com/nghianguyen150612/Synveil/pull/33
 - **PR Target**: `ios-app`
-- **Merge Status**: Pending
+- **Merge Status**: Pending final PR head merge
 
 ## Authoritative Inputs Inspected
 - `clients/ios/Synveil.xcodeproj/project.pbxproj`
@@ -60,7 +60,7 @@
 2. Search available runtimes for iOS simulator runtimes sorted in reverse order.
 3. Select the first available iPhone simulator device UDID.
 4. Export `SIMULATOR_UDID`, `SIMULATOR_NAME`, and `SIMULATOR_RUNTIME` to `$GITHUB_ENV`.
-5. Issue `xcrun simctl boot "$SIMULATOR_UDID"` and wait for readiness with `xcrun simctl bootstatus "$SIMULATOR_UDID" -b`.
+5. Issue `xcrun simctl boot "$SIMULATOR_UDID"` in a subsequent step and wait for readiness with `xcrun simctl bootstatus "$SIMULATOR_UDID" -b`.
 
 ## Exact Test Command
 ```bash
@@ -88,19 +88,24 @@ xcodebuild \
 - `cargo test -p synveil-core -p synveil-object-store`: passed cleanly.
 - `git diff --check`: clean.
 
-## macOS CI Execution Evidence (To be populated after GitHub Actions run)
-- **iOS Build Run**: Pending
-- **iOS Simulator Tests Run**: Pending
-- **Selected Simulator Model**: Pending
-- **Selected Simulator Runtime**: Pending
-- **Selected Simulator UDID**: Pending
-- **Xcode Version**: Pending
-- **Swift Version**: Pending
-- **iOS Simulator SDK Version**: Pending
-- **Executed / Passed Tests Count**: Pending
+## macOS CI Execution Evidence
+- **iOS Build Run**: `37044011853` — https://github.com/nghianguyen150612/Synveil/actions/runs/37044011853 (SUCCESS)
+- **iOS Simulator Tests Run**: `37044012073` — https://github.com/nghianguyen150612/Synveil/actions/runs/37044012073 (SUCCESS)
+- **Job ID**: `110960808114` (`Xcode Simulator Unit Tests`)
+- **Host OS**: macOS `26.6.2` (build `25G83`)
+- **Runner Image**: `macos-26-arm64` (version `20260907.0351.1`)
+- **Xcode Version**: Xcode `26.6` (build `17F113`)
+- **Swift Version**: Apple Swift `6.3.3` (`swiftlang-6.3.3.1.3 clang-2100.1.1.101`)
+- **iOS Simulator SDK Version**: `26.5`
+- **Selected Simulator Model**: `iPhone 17 Pro`
+- **Selected Simulator Runtime**: `com.apple.CoreSimulator.SimRuntime.iOS-26-5`
+- **Selected Simulator UDID**: `22452A91-4697-4369-8812-53ADB77EB73B`
+- **Executed / Passed Tests Count**: 1 test executed, 1 passed (`SynveilBootstrapTests/testBootstrapViewCanBeInstantiated`).
+- **Result Bundle Path**: `$RUNNER_TEMP/SynveilTests.xcresult`
+- **Artifact Name**: `ios-simulator-test-results` (uploaded successfully).
 
 ## Unrelated CI Classifications
-- Non-iOS workflows remain classified under P005 taxonomy as `PRE_EXISTING_BASELINE_FAILURE` or `UNRELATED_SUBSYSTEM_FAILURE`.
+- Non-iOS workflow failures (e.g. `package-linux-appimage.yml`) are classified under P005 taxonomy as `UNRELATED_SUBSYSTEM_FAILURE` and do not affect native iOS validation.
 
 ## Scope / Limitations
 - Prompt009 establishes unit test infrastructure and one bootstrap test.
