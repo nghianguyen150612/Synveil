@@ -145,6 +145,8 @@ pub struct IsolatedRoot {
 
 impl IsolatedRoot {
     pub fn new(prefix: &str) -> Self {
+        let uid = current_identity("-u");
+        let gid = current_identity("-g");
         let path = std::env::temp_dir().join(format!(
             "synveil-{prefix}-{}",
             uuid::Uuid::now_v7().simple()
@@ -152,11 +154,16 @@ impl IsolatedRoot {
         fs::create_dir_all(path.join("etc")).expect("create isolated root");
         fs::write(
             path.join("etc/passwd"),
-            "root:x:0:0:root:/root:/bin/sh\nsynveil:x:999:999:Synveil service account:/var/lib/synveil:/usr/sbin/nologin\n",
+            format!(
+                "root:x:0:0:root:/root:/bin/sh\nsynveil:{uid}:{uid}:{gid}:Synveil service account:/var/lib/synveil:/usr/sbin/nologin\n"
+            ),
         )
         .expect("seed isolated passwd");
-        fs::write(path.join("etc/group"), "root:x:0:\nsynveil:x:999:\n")
-            .expect("seed isolated group");
+        fs::write(
+            path.join("etc/group"),
+            format!("root:x:0:\nsynveil:x:{gid}:\n"),
+        )
+        .expect("seed isolated group");
         fs::create_dir_all(path.join("var/lib")).expect("create isolated var/lib");
         Self { path }
     }
@@ -164,6 +171,18 @@ impl IsolatedRoot {
     pub fn path(&self) -> &Path {
         &self.path
     }
+}
+
+fn current_identity(flag: &str) -> u32 {
+    let output = Command::new("id")
+        .arg(flag)
+        .output()
+        .expect("query current test identity");
+    assert!(output.status.success(), "id {flag} failed");
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .expect("parse current test identity")
 }
 
 impl Drop for IsolatedRoot {
