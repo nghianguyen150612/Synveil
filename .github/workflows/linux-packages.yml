@@ -259,12 +259,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             pkg-config libdbus-1-dev \
-            qt6-base-dev qt6-declarative-dev qt6-tools-dev-tools \
-            qml6-module-qtqml qml6-module-qtqml-models \
-            qml6-module-qtquick qml6-module-qtquick-controls \
-            qml6-module-qtquick-layouts qml6-module-qtquick-window \
             binutils file
           sudo install -d -m 0777 /usr/src/synveil
+
+      - name: Install the pinned Qt toolchain under test
+        uses: jurplel/install-qt-action@d325aaf2a8baeeda41ad0b5d39f84a6af9bcf005
+        with:
+          version: '6.7.3'
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

@@ -5,6 +5,8 @@ import QtQuick.Layouts
 import QtQuick.Window
 import com.synveil.desktop 1.0
 
+pragma ComponentBehavior: Bound
+
 ApplicationWindow {
     id: root
     objectName: "synveilMainWindow"
