@@ -6,9 +6,10 @@
 - **Starting Integration Branch**: `ios-app`
 - **Starting SHA**: `10cb665e01c3e267b7014112855636e67699b6a7`
 - **Work Branch**: `ios/p009-simulator-test-gate-9541723401815715091`
+- **Final PR Commit SHA**: `8ee93e3870cc376b5d9bc3235b2e3ccbfeb548f0`
 - **PR**: #33 — https://github.com/nghianguyen150612/Synveil/pull/33
 - **PR Target**: `ios-app`
-- **Merge Status**: Pending final PR head merge
+- **Merge Status**: Open / Ready for merge into `ios-app`
 
 ## Authoritative Inputs Inspected
 - `clients/ios/Synveil.xcodeproj/project.pbxproj`
@@ -88,10 +89,10 @@ xcodebuild \
 - `cargo test -p synveil-core -p synveil-object-store`: passed cleanly.
 - `git diff --check`: clean.
 
-## macOS CI Execution Evidence
-- **iOS Build Run**: `37044011853` — https://github.com/nghianguyen150612/Synveil/actions/runs/37044011853 (SUCCESS)
-- **iOS Simulator Tests Run**: `37044012073` — https://github.com/nghianguyen150612/Synveil/actions/runs/37044012073 (SUCCESS)
-- **Job ID**: `110960808114` (`Xcode Simulator Unit Tests`)
+## macOS CI Execution Evidence (Final PR Head Commit 8ee93e3)
+- **iOS Build Run**: `37045273114` — https://github.com/nghianguyen150612/Synveil/actions/runs/37045273114 (**SUCCESS**)
+- **iOS Simulator Tests Run**: `37045273015` — https://github.com/nghianguyen150612/Synveil/actions/runs/37045273015 (**SUCCESS**)
+- **Job ID**: `110965032549` (`Xcode Simulator Unit Tests`)
 - **Host OS**: macOS `26.6.2` (build `25G83`)
 - **Runner Image**: `macos-26-arm64` (version `20260907.0351.1`)
 - **Xcode Version**: Xcode `26.6` (build `17F113`)
