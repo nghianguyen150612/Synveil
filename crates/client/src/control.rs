@@ -3296,6 +3296,7 @@ fn ensure_secure_control_directory(
     } else {
         fs::create_dir(path).map_err(|_| DesktopControlServerError::RuntimeDirectoryUnavailable)?;
     }
+    #[cfg(target_os = "linux")]
     nix::sys::stat::fchmodat(
         None,
         path,
@@ -3303,6 +3304,11 @@ fn ensure_secure_control_directory(
         nix::sys::stat::FchmodatFlags::NoFollowSymlink,
     )
     .map_err(|_| DesktopControlServerError::InsecureRuntimeDirectory)?;
+    #[cfg(not(target_os = "linux"))]
+    {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+            .map_err(|_| DesktopControlServerError::InsecureRuntimeDirectory)?;
+    }
     let metadata = fs::symlink_metadata(path)
         .map_err(|_| DesktopControlServerError::InsecureRuntimeDirectory)?;
     if metadata.file_type().is_symlink()
