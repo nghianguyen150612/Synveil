@@ -73,6 +73,37 @@ xcodebuild \
 - **Simulator Validation (`SIMULATOR_VERIFIABLE`)**: Deferred to P009.
 - **Physical-Device Validation (`PHYSICAL_DEVICE_ONLY`)**: Deferred per controlled evidence matrix.
 
+## CI Failure Classifications
+1. **Job**: `Build, reproduce, inspect, and smoke AppImage` (`appimage.yml`)
+   - **Failure**: `[synveil-artifact] ERROR: private or temporary build path found in synveil-desktop` (`matched path marker: /home/`)
+   - **Classification**: `UNRELATED_SUBSYSTEM_FAILURE` / `PRE_EXISTING_BASELINE_FAILURE`
+   - **Analysis**: Pre-existing failure in Linux desktop AppImage binary path inspection script (`scripts/validate-appimage-build.py`). Prompt007 modifies zero Rust, desktop CXX-Qt, or AppImage packaging code under `crates/desktop` or `deploy/`. All Prompt007 changes are isolated to `clients/ios/` and `docs/ios/`.
+
+2. **Job**: `Native desktop UI (Windows Qt 6)` (`ci.yml`)
+   - **Failure**: `cannot find unix in os` / `cannot find unistd in nix` in `crates/install-engine/src/appimage.rs`
+   - **Classification**: `UNRELATED_SUBSYSTEM_FAILURE` / `PRE_EXISTING_BASELINE_FAILURE`
+   - **Analysis**: Pre-existing Windows compilation issue in non-mobile install engine crate (`synveil-install-engine`). Prompt007 touches zero Rust or Windows install engine code.
+
+3. **Job**: `Native desktop UI (Linux Qt 6)` (`ci.yml`)
+   - **Failure**: Exit code 255 during QML type resolution in desktop UI suite
+   - **Classification**: `UNRELATED_SUBSYSTEM_FAILURE` / `PRE_EXISTING_BASELINE_FAILURE`
+   - **Analysis**: Pre-existing Linux desktop CXX-Qt QML type resolution issue. Prompt007 touches zero CXX-Qt or desktop code.
+
+4. **Job**: `Check (windows-latest)` / `Test (windows-latest)` (`ci.yml`)
+   - **Failure**: `cannot find unix in os` / `cannot find unistd in nix` compiling `synveil-install-engine`
+   - **Classification**: `UNRELATED_SUBSYSTEM_FAILURE` / `PRE_EXISTING_BASELINE_FAILURE`
+   - **Analysis**: Pre-existing Windows compilation issue in non-mobile install engine crate. Prompt007 touches zero Rust or install engine code.
+
+5. **Job**: `Test (ubuntu-latest)` (`ci.yml`)
+   - **Failure**: `systemd-tmpfiles dry-run failed: unrecognized option '--dry-run'` in `sysusers_tmpfiles_artifacts_match_authoritative_sources`
+   - **Classification**: `UNRELATED_SUBSYSTEM_FAILURE` / `PRE_EXISTING_BASELINE_FAILURE`
+   - **Analysis**: Pre-existing Linux systemd tmpfiles test failure on Ubuntu 24.04 runners. Prompt007 touches zero Linux installer or metadata code.
+
+6. **Job**: `Test (macos-latest)` (`ci.yml`)
+   - **Failure**: `UnsafeEndpoint` failure in desktop client control tests
+   - **Classification**: `UNRELATED_SUBSYSTEM_FAILURE` / `PRE_EXISTING_BASELINE_FAILURE`
+   - **Analysis**: Pre-existing desktop client IPC control test issue on macOS runners. Prompt007 touches zero desktop IPC or Rust client code.
+
 ## Non-Implementation Confirmations
 - **Zero Rust FFI Integration**: No C headers, bridging headers, XCFrameworks, or Rust FFI adapters were introduced (deferred to P013+).
 - **Zero Feature Architecture**: No onboarding, auth, navigation shell, transfers, persistence, or network services were implemented (deferred to P021+).
