@@ -6,6 +6,7 @@
 ## 2. Current Project Status
 - **Phase**: macOS CI Build Gate (Prompt008).
 - **Status**: Dedicated GitHub Actions workflow established (`.github/workflows/ios-build.yml`). Minimal native iOS Xcode project (`clients/ios/Synveil.xcodeproj`) and shared scheme established.
+- **CI Verification**: GitHub Actions run `37040470487` successfully built the `Synveil` scheme with Xcode 26.6 and the iOS Simulator 26.5 SDK using unsigned Simulator settings.
 - **Application Target**: `Synveil` (Swift + SwiftUI, bundle identifier `com.synveil.ios`, deployment target iOS 17.0).
 - **Signing Policy**: Configured for unsigned Simulator builds (`CODE_SIGNING_ALLOWED=NO`, zero committed team IDs or provisioning profiles).
 
