@@ -9,14 +9,11 @@ name: Linux clean-machine acceptance
 # ------------------------------
 # The `static-gate` and `artifacts` jobs execute for real today.
 #
-# The native VM matrix CANNOT yet produce acceptance evidence. Two things block
-# it, and neither is worked around here:
-#
-#   1. deploy/acceptance/images.lock pins no image digests, because no reviewer
-#      has authenticated them. linux-acceptance-vm.sh correctly refuses to
-#      download an unpinned image.
-#   2. The bounded graphical-automation driver (DEB/RPM authorization surface,
-#      application-menu launch, AT-SPI element lookup) is not implemented.
+# The native VM matrix is fail-closed until every guest journey produces a
+# result-v1 PASS. The VM control plane now performs real image verification,
+# overlay creation, cloud-init provisioning, boot/readiness polling, snapshot
+# control and forced power cuts. Journey records remain non-PASS until the
+# reviewed guest GUI/package assertions are established.
 #
 # Because of that, the native jobs report BLOCKED and `evidence-gate` FAILS.
 # That failure is the correct outcome. It must not be converted into a skip:
@@ -29,6 +26,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -86,6 +84,8 @@ jobs:
     name: Build exact acceptance artifacts once
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      SYNVEIL_ENABLE_QMLCACHEGEN_WRAPPER: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -99,10 +99,20 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y file shellcheck pkg-config libdbus-1-dev libfuse2
+          sudo install -d -m 0777 /usr/src/synveil
       - name: Build DEB and RPM
         run: ./deploy/packages/build.sh
       - name: Build AppImage
-        run: ./deploy/packages/build-appimage.sh --build-only
+        run: |
+          set -euo pipefail
+          mv target/packages/SYNVEIL-RELEASE-MANIFEST.json target/packages/SYNVEIL-NATIVE-RELEASE-MANIFEST.json
+          ./deploy/packages/build-appimage.sh --build-only
+          mv target/packages/SYNVEIL-RELEASE-MANIFEST.json target/packages/SYNVEIL-APPIMAGE-RELEASE-MANIFEST.json
+          python3 scripts/release_manifest.py merge \
+            --output target/packages/SYNVEIL-RELEASE-MANIFEST.json \
+            target/packages/SYNVEIL-NATIVE-RELEASE-MANIFEST.json \
+            target/packages/SYNVEIL-APPIMAGE-RELEASE-MANIFEST.json
+          rm -f target/packages/SYNVEIL-NATIVE-RELEASE-MANIFEST.json target/packages/SYNVEIL-APPIMAGE-RELEASE-MANIFEST.json
       - name: Record exact artifact identity
         run: |
           sha256sum target/packages/* >> target/packages/ACCEPTANCE-ARTIFACT-SHA256.txt
@@ -119,7 +129,8 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------
-  # Native clean-machine matrix. Currently BLOCKED, truthfully.
+  # Native clean-machine matrix. A failed guest probe is evidence of a blocked
+  # or failed journey, never a skipped green check.
   # Ubuntu 24.04 and Fedora 42 x86_64 are the only qualified targets (§6/§13).
   # ---------------------------------------------------------------------
   native-clean-machine:
@@ -128,6 +139,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    env:
+      BOOT_TIMEOUT_SECONDS: 900
+      EXEC_TIMEOUT_SECONDS: 300
     strategy:
       fail-fast: false
       matrix:
@@ -135,11 +149,11 @@ jobs:
           - platform: ubuntu
             version: '24.04'
             image: ubuntu-24.04-x86_64
-            scenarios: INSTALL-JOURNEY-2,INSTALL-JOURNEY-5,INSTALL-JOURNEY-6,INSTALL-JOURNEY-7
+            scenarios: [INSTALL-JOURNEY-2, INSTALL-JOURNEY-4, INSTALL-JOURNEY-5, INSTALL-JOURNEY-6, INSTALL-JOURNEY-7, INSTALL-JOURNEY-8]
           - platform: fedora
             version: '42'
             image: fedora-42-x86_64
-            scenarios: INSTALL-JOURNEY-3,INSTALL-JOURNEY-5,INSTALL-JOURNEY-6,INSTALL-JOURNEY-7
+            scenarios: [INSTALL-JOURNEY-3, INSTALL-JOURNEY-4, INSTALL-JOURNEY-5, INSTALL-JOURNEY-6, INSTALL-JOURNEY-7, INSTALL-JOURNEY-8]
     steps:
       - uses: actions/checkout@v4
 
@@ -148,26 +162,149 @@ jobs:
           name: synveil-acceptance-artifacts
           path: target/packages
 
+      - name: Install bounded QEMU control-plane tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            qemu-system-x86 qemu-utils cloud-image-utils genisoimage xorriso \
+            openssh-client socat
+
       - name: Verify downloaded artifacts against recorded digests
         run: sha256sum --check --ignore-missing target/packages/ACCEPTANCE-ARTIFACT-SHA256.txt
 
-      - name: Report acceptance BLOCKED with a truthful reason
+      - name: Acquire the pinned guest image through the VM control plane
+        # This is the real entry point to the native matrix. It refuses to
+        # download an image whose digest is not recorded in
+        # deploy/acceptance/images.lock, so the job reports the exact blocker
+        # instead of quietly running against a moving `latest` image.
+        #
+        # Both the URL and the digest come from the lock file, which is the
+        # single place a reviewer records and authenticates them. Nothing about
+        # the image is guessed here.
         run: |
           set -euo pipefail
           mkdir -p acceptance-evidence
-          for scenario in {{ matrix.scenarios // ',' }}; do
-            python3 scripts/linux_acceptance.py run "$scenario" \
-              --manifest target/packages/SYNVEIL-RELEASE-MANIFEST.json \
-              --evidence native-clean-machine \
-              > "acceptance-evidence/${scenario}.json" || true
+          lock=deploy/acceptance/images.lock
+          digest="$(awk -v name='${{ matrix.image }}' \
+            '$1 == name { for (i = 2; i <= NF; i++) if ($i ~ /^sha256:/) { print $i; exit } }' \
+            "$lock")"
+          url="$(awk -v name='${{ matrix.image }}' \
+            '$1 == name { for (i = 2; i <= NF; i++) if ($i ~ /^url:/) { sub(/^url:/, "", $i); print $i; exit } }' \
+            "$lock")"
+          {
+            echo "image=${{ matrix.image }}"
+            echo "recorded_digest=${digest:-<none>}"
+            echo "recorded_url=${url:-<none>}"
+          } | tee "acceptance-evidence/image-${{ matrix.image }}.lock-report.txt"
+
+          if [[ -z "$digest" || "$digest" == "sha256:UNPINNED" \
+                || -z "$url" || "$url" == "UNPINNED" ]]; then
+            echo "::warning::No authenticated image is recorded in $lock for" \
+              "${{ matrix.image }}. Native acceptance for ${{ matrix.platform }}" \
+              "${{ matrix.version }} is BLOCKED and no native PASS evidence exists."
+            exit 1
+          fi
+
+          set +e
+          scripts/linux-acceptance-vm.sh fetch-image \
+            "${{ matrix.image }}" "$url" \
+            "$RUNNER_TEMP/images/${{ matrix.image }}.qcow2" \
+            2>&1 | tee "acceptance-evidence/image-${{ matrix.image }}.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "image acquisition exit status: $status"
+          if [[ $status -ne 0 ]]; then
+            echo "::warning::Guest image could not be acquired. Native acceptance for" \
+              "${{ matrix.platform }} ${{ matrix.version }} is therefore BLOCKED, and no" \
+              "native PASS evidence can be produced for this matrix entry."
+            exit 1
+          fi
+
+      - name: Boot the disposable native guest and establish readiness
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/vm" "$RUNNER_TEMP/images"
+          ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/vm/id_ed25519"
+          scripts/linux-acceptance-vm.sh prepare \
+            "${{ matrix.image }}" \
+            "$RUNNER_TEMP/images/${{ matrix.image }}.qcow2" \
+            "${{ matrix.platform }}" \
+            "$RUNNER_TEMP/vm/id_ed25519" \
+            "$RUNNER_TEMP/vm"
+          scripts/linux-acceptance-vm.sh boot \
+            "${{ matrix.image }}" \
+            "$RUNNER_TEMP/vm/${{ matrix.image }}.qcow2" \
+            "$RUNNER_TEMP/vm/${{ matrix.image }}-seed.iso" \
+            "$RUNNER_TEMP/vm/${{ matrix.image }}.qmp" \
+            "$RUNNER_TEMP/vm/${{ matrix.image }}.serial" \
+            2222 \
+            "$RUNNER_TEMP/vm/id_ed25519"
+          scripts/linux-acceptance-vm.sh guest-exec \
+            "${{ matrix.image }}" facts | tee "acceptance-evidence/guest-facts.txt"
+          scripts/linux-acceptance-vm.sh snapshot "${{ matrix.image }}" clean
+          scripts/linux-acceptance-vm.sh stage "${{ matrix.image }}" "$GITHUB_WORKSPACE"
+
+      - name: Execute typed acceptance scenarios and preserve non-PASS evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p acceptance-evidence
+          password="$(cat "$RUNNER_TEMP/vm/${{ matrix.image }}.password")"
+          setup_scenario="INSTALL-JOURNEY-2"
+          if [[ "${{ matrix.platform }}" == fedora ]]; then setup_scenario="INSTALL-JOURNEY-3"; fi
+          set +e
+          printf '%s\n' "$password" | scripts/linux-acceptance-vm.sh guest-exec \
+            "${{ matrix.image }}" run-scenario "$setup_scenario" AUTO native-clean-machine \
+            > "acceptance-evidence/setup-${setup_scenario}.json"
+          setup_status=$?
+          set -e
+          if [[ "$setup_status" -eq 0 ]] && grep -q '"result": "PASS"' "acceptance-evidence/setup-${setup_scenario}.json"; then
+            scripts/linux-acceptance-vm.sh snapshot "${{ matrix.image }}" installed
+          else
+            echo "package baseline setup did not PASS; repair/uninstall remain blocked truthfully"
+          fi
+          for scenario in ${{ join(matrix.scenarios, ' ') }}; do
+            case "$scenario" in
+              INSTALL-JOURNEY-6|INSTALL-JOURNEY-7)
+                if [[ "$setup_status" -eq 0 ]] && grep -q '"result": "PASS"' "acceptance-evidence/setup-${setup_scenario}.json"; then
+                  scripts/linux-acceptance-vm.sh restore "${{ matrix.image }}" installed
+                  scripts/linux-acceptance-vm.sh guest-exec "${{ matrix.image }}" readiness
+                fi
+                ;;
+              *)
+                scripts/linux-acceptance-vm.sh restore "${{ matrix.image }}" clean
+                scripts/linux-acceptance-vm.sh guest-exec "${{ matrix.image }}" readiness
+                scripts/linux-acceptance-vm.sh stage "${{ matrix.image }}" "$GITHUB_WORKSPACE"
+                ;;
+            esac
+            set +e
+            printf '%s\n' "$password" | scripts/linux-acceptance-vm.sh guest-exec \
+              "${{ matrix.image }}" run-scenario "$scenario" AUTO native-clean-machine \
+              > "acceptance-evidence/${scenario}.json"
+            status=$?
+            unset password
+            set -e
+            if [ "$status" -ne 0 ]; then
+              echo "native acceptance adapter returned $status for $scenario; preserving its result record"
+            fi
           done
           cat acceptance-evidence/*.json
+
+      - name: Capture guest diagnostics and force restore boundary
+        if: always()
+        run: |
+          set +e
+          scripts/linux-acceptance-vm.sh guest-exec \
+            "${{ matrix.image }}" screenshot \
+            "acceptance-evidence/${{ matrix.image }}-failure.png"
+          scripts/linux-acceptance-vm.sh power-cut "${{ matrix.image }}"
+          set -e
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: acceptance-evidence-${{ matrix.platform }}-${{ matrix.version }}
-          path: acceptance-evidence/*.json
+          path: acceptance-evidence/
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------
@@ -178,26 +315,42 @@ jobs:
   evidence-gate:
     name: Phase C evidence gate
     needs: [static-gate, artifacts, native-clean-machine]
-    if: always()
+    if: always() && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
+      - name: Download native evidence bundles
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: acceptance-evidence-*
+          path: acceptance-evidence
+          merge-multiple: true
+
       - name: Assert required native acceptance evidence exists and passed
         run: |
           set -euo pipefail
-          missing=0
-          # A Phase C claim requires PASS records. BLOCKED is an honest
-          # non-result and must never be promoted to a checkpoint.
-          if [ -z "${NATIVE_EVIDENCE_PRESENT:-}" ]; then
+          mapfile -t records < <(find acceptance-evidence -type f -name '*.json' -print 2>/dev/null | sort)
+          if [ "${#records[@]}" -eq 0 ]; then
             echo "::error::No native clean-machine acceptance evidence was produced."
-            echo "::error::Phase C cannot be claimed. Graphical DEB/RPM journeys, real"
-            echo "::error::AppImage launch and VM power interruption are unproven."
-            missing=1
-          fi
-          if [ "$missing" -ne 0 ]; then
+            echo "::error::Phase C cannot be claimed without result-v1 records."
             echo "SYNVEIL_LINUX_CLEAN_MACHINE_ACCEPTANCE_READY: NOT EMITTED"
             echo "SYNVEIL_V0_2_LINUX_INSTALL_EXPERIENCE_READY: NOT EMITTED"
             exit 1
           fi
+          failed=0
+          for record in "${records[@]}"; do
+            python3 scripts/linux_acceptance.py validate-result "$record" || failed=1
+            if ! grep -q '"result": "PASS"' "$record"; then
+              echo "::error::required native evidence is not PASS: $record"
+              failed=1
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "SYNVEIL_LINUX_CLEAN_MACHINE_ACCEPTANCE_READY: NOT EMITTED"
+            echo "SYNVEIL_V0_2_LINUX_INSTALL_EXPERIENCE_READY: NOT EMITTED"
+            exit 1
+          fi
+          echo "all native result-v1 records passed"

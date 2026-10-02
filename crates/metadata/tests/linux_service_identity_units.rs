@@ -9,6 +9,8 @@
 
 use std::{fs, path::PathBuf, process::Command};
 
+mod common;
+
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -252,45 +254,21 @@ fn sysusers_syntax_is_valid_and_dry_run_passes() {
         "sysusers GECOS must describe Synveil service account"
     );
 
-    // Try systemd-sysusers dry-run validation in isolated root.
-    let has_sysusers = Command::new("systemd-sysusers")
-        .arg("--help")
-        .output()
-        .is_ok();
-    if !has_sysusers {
-        eprintln!(
-            "systemd-sysusers not available; static checks already passed (limitation honestly reported)"
-        );
-        return;
+    // Validate with a version-compatible isolated strategy. `--dry-run` does
+    // not exist before systemd 250, so on systemd 249 (Ubuntu 22.04, Fedora 37)
+    // the helper falls back to a `--root`-confined real run that is proven not
+    // to touch the host. See common/mod.rs.
+    match common::validate_sysusers(&path) {
+        None => {
+            eprintln!(
+                "systemd-sysusers not available; static checks already passed (limitation honestly reported)"
+            );
+        }
+        Some(Ok(())) => {
+            eprintln!("systemd-sysusers isolated validation PASS");
+        }
+        Some(Err(error)) => panic!("{error}\ncontent:\n{content}"),
     }
-
-    // Create isolated empty root.
-    let tmp_root = std::env::temp_dir().join(format!(
-        "synveil-sysusers-{}",
-        uuid::Uuid::now_v7().simple()
-    ));
-    fs::create_dir_all(&tmp_root).unwrap();
-    // systemd-sysusers --dry-run --root=<tmp> <file>
-    // The file argument must be absolute or it will search default dirs. Pass absolute path.
-    let out = Command::new("systemd-sysusers")
-        .arg("--dry-run")
-        .arg(format!("--root={}", tmp_root.display()))
-        .arg(path.to_string_lossy().to_string())
-        .output()
-        .expect("spawn systemd-sysusers");
-
-    // Cleanup temp root.
-    let _ = fs::remove_dir_all(&tmp_root);
-
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        panic!(
-            "systemd-sysusers --dry-run failed (static syntax invalid):\nstdout: {stdout}\nstderr: {stderr}\ncontent:\n{content}"
-        );
-    }
-    // Also test --cat-config after installing to expected location via --root --inline? We tested file directly.
-    eprintln!("systemd-sysusers dry-run PASS");
 }
 
 // ---------------------------------------------------------------------------
@@ -692,49 +670,20 @@ fn tmpfiles_syntax_is_valid_and_dry_run_passes() {
         "tmpfiles must have 'd /var/lib/synveil 0750 ...' line"
     );
 
-    let has_tmpfiles = Command::new("systemd-tmpfiles")
-        .arg("--help")
-        .output()
-        .is_ok();
-    if !has_tmpfiles {
-        eprintln!("systemd-tmpfiles not available; static checks already passed");
-        return;
-    }
-    let tmp_root = std::env::temp_dir().join(format!(
-        "synveil-tmpfiles-{}",
-        uuid::Uuid::now_v7().simple()
-    ));
-    fs::create_dir_all(&tmp_root).unwrap();
-    // Use --dry-run --create --root=<tmp> --prefix=/var/lib/synveil would be more targeted,
-    // but we test generic --cat-config style: try to validate file syntax without mutating host.
-    // Approach: systemd-tmpfiles --dry-run --create --root=<tmp> <file> (file as positional)
-    // Use --graceful to allow unknown user in empty root (sysusers not yet applied there)
-    // and isolate syntax validation from user-resolution.
-    let out = Command::new("systemd-tmpfiles")
-        .arg("--dry-run")
-        .arg("--create")
-        .arg("--graceful")
-        .arg(format!("--root={}", tmp_root.display()))
-        .arg(path.to_string_lossy().to_string())
-        .output()
-        .expect("spawn systemd-tmpfiles");
-    let _ = fs::remove_dir_all(&tmp_root);
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        // If failure is solely due to unknown user (expected in empty root without --graceful fallback),
-        // treat as static PASS with honest limitation report.
-        if stderr.contains("Unknown user") || stderr.contains("Failed to resolve user") {
-            eprintln!(
-                "systemd-tmpfiles dry-run reported unknown user synveil in empty root (expected without sysusers applied); static syntax is valid — documenting limitation honestly; stderr: {stderr}"
-            );
-            return;
+    // Version-compatible isolated validation. On systemd 249 neither
+    // `--dry-run` nor `--graceful` exists; the helper instead performs a real
+    // `--root`-confined run with a seeded account database, proving the
+    // declared directory is created with mode 0750 inside the isolated root and
+    // that no host path is touched.
+    match common::validate_tmpfiles(&path) {
+        None => {
+            eprintln!("systemd-tmpfiles not available; static checks already passed");
         }
-        panic!(
-            "systemd-tmpfiles --dry-run --create failed:\nstdout: {stdout}\nstderr: {stderr}\ncontent:\n{content}"
-        );
+        Some(Ok(())) => {
+            eprintln!("systemd-tmpfiles isolated validation PASS");
+        }
+        Some(Err(error)) => panic!("{error}\ncontent:\n{content}"),
     }
-    eprintln!("systemd-tmpfiles dry-run PASS");
 }
 
 #[test]

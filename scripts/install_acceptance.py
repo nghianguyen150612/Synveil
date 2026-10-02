@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import platform as host_platform
+import re
 import shutil
 import sys
 import unittest
@@ -153,6 +154,41 @@ def validate_schema_documents() -> None:
     require(result_schema.get("properties", {}).get("result", {}).get("enum") == ["PASS", "FAIL", "SKIPPED", "BLOCKED", "ERROR"], "result schema must retain the finite result states")
 
 
+def validate_result_record(record: Any) -> None:
+    """Validate the finite, secret-free result-v1 record without third-party code."""
+    require(isinstance(record, dict), "result record must be an object")
+    required = {
+        "schema_version", "scenario_id", "execution_class", "scenario_definition_digest",
+        "runner_version", "start_time", "end_time", "platform_facts", "capability_results",
+        "artifact_identity", "result", "completed_steps", "assertion_results",
+        "evidence_classification", "reason", "diagnostics_redacted", "diagnostic_references",
+        "cleanup_result",
+    }
+    require(required <= record.keys(), f"result record is missing fields: {sorted(required - record.keys())}")
+    require(record["schema_version"] == 1, "result schema version is unsupported")
+    require(isinstance(record["scenario_definition_digest"], str) and re.fullmatch(r"[0-9a-f]{64}", record["scenario_definition_digest"]), "invalid scenario definition digest")
+    require(record["result"] in {"PASS", "FAIL", "SKIPPED", "BLOCKED", "ERROR"}, "invalid result state")
+    require(record["evidence_classification"] in EVIDENCE, "invalid evidence classification")
+    require(record["diagnostics_redacted"] is True, "diagnostics must be redacted")
+    require(isinstance(record["platform_facts"], dict), "platform_facts must be an object")
+    require(isinstance(record["capability_results"], list), "capability_results must be an array")
+    for capability in record["capability_results"]:
+        require(isinstance(capability, dict) and capability.get("status") in {"available", "unavailable", "unknown"}, "invalid capability result")
+    artifact = record["artifact_identity"]
+    require(isinstance(artifact, dict), "artifact_identity must be an object")
+    artifact_required = {"status", "product_version", "source_commit", "artifact_type", "filename", "digest", "sha256", "size_bytes", "manifest_identity", "platform", "architecture", "release_channel", "trust_status"}
+    require(artifact_required <= artifact.keys(), f"artifact identity is missing fields: {sorted(artifact_required - artifact.keys())}")
+    if artifact["sha256"] is not None:
+        require(isinstance(artifact["sha256"], str) and re.fullmatch(r"[0-9a-f]{64}", artifact["sha256"]), "invalid artifact sha256")
+        require(artifact["digest"] == artifact["sha256"], "digest and sha256 must agree")
+    if artifact["size_bytes"] is not None:
+        require(isinstance(artifact["size_bytes"], int) and artifact["size_bytes"] >= 0, "invalid artifact size")
+    require(isinstance(record["completed_steps"], list) and isinstance(record["assertion_results"], list), "step/assertion results must be arrays")
+    require(isinstance(record["diagnostic_references"], list), "diagnostic_references must be an array")
+    cleanup = record["cleanup_result"]
+    require(isinstance(cleanup, dict) and cleanup.get("status") in {"not-run", "complete", "incomplete", "failed"}, "invalid cleanup result")
+
+
 def definition_digest(item: dict[str, Any]) -> str:
     raw = json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(raw).hexdigest()
@@ -244,7 +280,9 @@ def blocked_result(item: dict[str, Any]) -> dict[str, Any]:
     if result == "BLOCKED" and any(x["status"] in {"unavailable", "unknown"} for x in capabilities):
         reason += " One or more required capabilities are unavailable or unknown."
     timestamp = datetime.now(timezone.utc).isoformat()
-    return {"schema_version": 1, "scenario_id": item["id"], "scenario_definition_digest": definition_digest(item), "runner_version": RUNNER_VERSION, "start_time": timestamp, "end_time": timestamp, "platform_facts": facts, "capability_results": capabilities, "artifact_identity": {"status": "unavailable", "product_version": None, "source_commit": None, "artifact_type": item["artifact_requirements"]["artifact_type"], "filename": None, "digest": None, "platform": facts["family"], "architecture": facts["architecture"], "release_channel": None, "trust_status": "unknown"}, "result": result, "completed_steps": [], "assertion_results": [], "evidence_classification": "contract-valid", "reason": reason, "diagnostics_redacted": True, "diagnostic_references": [], "cleanup_result": {"status": "not-run", "details": None}}
+    record = {"schema_version": 1, "scenario_id": item["id"], "execution_class": item["execution_class"], "scenario_definition_digest": definition_digest(item), "runner_version": RUNNER_VERSION, "start_time": timestamp, "end_time": timestamp, "platform_facts": facts, "capability_results": capabilities, "artifact_identity": {"status": "unavailable", "product_version": None, "source_commit": None, "artifact_type": item["artifact_requirements"]["artifact_type"], "filename": None, "digest": None, "sha256": None, "size_bytes": None, "manifest_identity": None, "platform": facts["family"], "architecture": facts["architecture"], "release_channel": None, "trust_status": "unknown"}, "result": result, "completed_steps": [], "assertion_results": [], "evidence_classification": "contract-valid", "reason": reason, "diagnostics_redacted": True, "diagnostic_references": [], "cleanup_result": {"status": "not-run", "details": None}}
+    validate_result_record(record)
+    return record
 
 
 class ContractTests(unittest.TestCase):

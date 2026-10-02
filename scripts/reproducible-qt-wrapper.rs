@@ -1,7 +1,33 @@
-//! Host-side qmake/rcc wrappers used by the release artifact builder.
+//! Host-side qmake/rcc/qmlcachegen wrappers used by the release artifact
+//! builder.
 //!
 //! CXX-Qt clears the environment before invoking Qt build tools. The selected
 //! paths and epoch are therefore embedded when this small wrapper is compiled.
+//!
+//! # Why qmlcachegen is wrapped
+//!
+//! `qt-build-utils` (the QML build layer under CXX-Qt) invokes qmlcachegen
+//! with the *canonicalized absolute* path of each QML source file:
+//!
+//! ```text
+//! qmlcachegen -i <qmldir> --resource <qrc> --resource-path /qt/qml/... \
+//!            -o <out.cpp> /abs/path/to/checkout/crates/desktop/qml/Main.qml
+//! ```
+//!
+//! qmlcachegen records that input path in the generated C++ as the compiled
+//! unit's source file. The result is a literal absolute checkout path inside
+//! `synveil-desktop`, which is what the private-path scan rejects.
+//!
+//! No path-remap flag can fix this: `--remap-path-prefix` and
+//! `-ffile-prefix-map` rewrite compiler path tokens, not string literals that
+//! a code generator has already written into a .cpp file.
+//!
+//! This wrapper therefore makes the generator *see* a stable canonical source
+//! path: the QML input is staged under a fixed, checkout-independent prefix
+//! (default `/usr/src/synveil`, matching the Rust/C++ remap prefix already used
+//! by `reproducible.sh`), and the generator is pointed at that copy. The staged
+//! bytes and mtime are identical on every host, so the generated C++ is
+//! identical too. The checkout's real QML sources are never modified.
 
 #[cfg(not(windows))]
 use std::fs::File;
@@ -14,8 +40,13 @@ use std::{
 
 const REAL_QMAKE: &str = env!("SYNVEIL_REAL_QMAKE");
 const REAL_RCC: &str = env!("SYNVEIL_REAL_RCC");
+const REAL_QMLCACHEGEN: &str = env!("SYNVEIL_REAL_QMLCACHEGEN");
 const QT_WRAPPER_DIR: &str = env!("SYNVEIL_QT_WRAPPER_DIR");
 const SOURCE_DATE_EPOCH: &str = env!("SYNVEIL_SOURCE_DATE_EPOCH");
+/// Absolute checkout root whose QML sources get a canonical stand-in.
+const QML_SOURCE_ROOT: &str = env!("SYNVEIL_QML_SOURCE_ROOT");
+/// Stable, checkout-independent prefix that replaces `QML_SOURCE_ROOT`.
+const QML_CANONICAL_ROOT: &str = env!("SYNVEIL_QML_CANONICAL_ROOT");
 
 fn main() {
     let program = env::current_exe()
@@ -28,6 +59,7 @@ fn main() {
     let result = match program.as_str() {
         "qmake" => run_qmake(),
         "rcc" => run_rcc(),
+        "qmlcachegen" => run_qmlcachegen(),
         _ => Err(format!("unsupported Qt wrapper invocation name: {program}")),
     };
 
@@ -88,6 +120,84 @@ fn run_real_rcc(args: Vec<std::ffi::OsString>) -> Result<ExitStatus, String> {
         .args(args)
         .status()
         .map_err(|error| format!("could not run rcc at {REAL_RCC}: {error}"))
+}
+
+/// Intercept qmlcachegen and give the QML source a canonical, checkout-
+/// independent path.
+///
+/// Only arguments that are real files under the checkout root are rewritten.
+/// Everything else -- `-i`, `--resource`, `--resource-path`, `-o`, and the
+/// flags themselves -- is forwarded untouched, so Qt's own import and
+/// resource resolution is unaffected and no generated `qmldir` or `qrc`
+/// reference is invalidated.
+fn run_qmlcachegen() -> Result<ExitStatus, String> {
+    let args = env::args_os().skip(1).collect::<Vec<_>>();
+    let rewritten = args
+        .iter()
+        .map(|argument| canonicalize_qml_input(argument))
+        .collect::<Result<Vec<_>, String>>()?;
+    Command::new(REAL_QMLCACHEGEN)
+        .args(rewritten)
+        .status()
+        .map_err(|error| format!("could not run qmlcachegen at {REAL_QMLCACHEGEN}: {error}"))
+}
+
+/// Map a checkout-relative QML source to its canonical stand-in.
+///
+/// Returns the original argument unchanged when it is not a QML source inside
+/// the checkout, so this can be applied to every argument safely.
+fn canonicalize_qml_input(argument: &std::ffi::OsStr) -> Result<std::ffi::OsString, String> {
+    let path = PathBuf::from(argument);
+    if !path.is_absolute() || !path.is_file() {
+        return Ok(argument.to_owned());
+    }
+    let Ok(relative) = path.strip_prefix(QML_SOURCE_ROOT) else {
+        return Ok(argument.to_owned());
+    };
+    // Only QML inputs carry the leak; leave anything else alone.
+    if !path
+        .extension()
+        .is_some_and(|extension| extension == "qml")
+    {
+        return Ok(argument.to_owned());
+    }
+
+    let canonical = Path::new(QML_CANONICAL_ROOT).join(relative);
+    stage_canonical_qml_source(&path, &canonical)?;
+    Ok(canonical.into_os_string())
+}
+
+/// Materialise the canonical copy of a QML source with a normalized mtime.
+///
+/// The copy is byte-identical to the original; only the path and mtime differ,
+/// and both are fixed. The original file is never touched.
+fn stage_canonical_qml_source(source: &Path, canonical: &Path) -> Result<(), String> {
+    let parent = canonical
+        .parent()
+        .ok_or_else(|| format!("canonical QML path has no parent: {}", canonical.display()))?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
+    fs::copy(source, canonical).map_err(|error| {
+        format!(
+            "could not stage canonical QML source {} -> {}: {error}",
+            source.display(),
+            canonical.display()
+        )
+    })?;
+
+    let epoch = SOURCE_DATE_EPOCH
+        .parse::<u64>()
+        .map_err(|error| format!("invalid SOURCE_DATE_EPOCH {SOURCE_DATE_EPOCH:?}: {error}"))?;
+    let modified = SystemTime::UNIX_EPOCH
+        .checked_add(Duration::from_secs(epoch))
+        .ok_or_else(|| format!("SOURCE_DATE_EPOCH is outside the supported range: {epoch}"))?;
+    set_modified_time(canonical, modified).map_err(|error| {
+        format!(
+            "could not normalize mtime for {}: {error}",
+            canonical.display()
+        )
+    })?;
+    Ok(())
 }
 
 fn is_qml_module_resource_collection(contents: &str) -> bool {

@@ -14,6 +14,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  SYNVEIL_ENABLE_QMLCACHEGEN_WRAPPER: "1"
 
 jobs:
   linux-packages:
@@ -40,6 +41,7 @@ jobs:
             qml6-module-qtqml qml6-module-qtqml-models qml6-module-qtqml-workerscript \
             qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-dialogs \
             qml6-module-qtquick-layouts qml6-module-qtquick-templates qml6-module-qtquick-window
+          sudo install -d -m 0777 /usr/src/synveil
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -63,6 +65,8 @@ jobs:
           bash -n scripts/validate-release-manifest.sh
           bash -n scripts/validate-rpm-package-ux.sh
           bash -n scripts/verify-release-build-reproducibility.sh
+          bash -n scripts/diagnose-desktop-reproducibility.sh
+          bash -n scripts/linux-acceptance-vm.sh
           sh -n deploy/packages/debian/postinst
           sh -n deploy/packages/debian/prerm
           sh -n deploy/packages/debian/postrm
@@ -76,6 +80,7 @@ jobs:
             deploy/packages/common/reproducible.sh \
             scripts/validate-release-artifacts.sh \
             scripts/verify-release-build-reproducibility.sh \
+            scripts/diagnose-desktop-reproducibility.sh \
             deploy/install/quick-install.sh scripts/run-linux-quick-install-acceptance.sh \
             deploy/packages/debian/postinst deploy/packages/debian/prerm deploy/packages/debian/postrm
 
@@ -190,6 +195,11 @@ jobs:
           cargo test -p synveil-metadata --test linux_sandbox_hardening_units -- --nocapture
           cargo test -p synveil-metadata --test scheduled_maintenance_lifecycle_units -- --nocapture
 
+      - name: P020 isolated sysusers/tmpfiles validation
+        run: |
+          set -euo pipefail
+          cargo test -p synveil-metadata --test systemd_isolated_fragments --locked -- --nocapture
+
       - name: Prompt 79 adversarial deployment units
         run: |
           set -euo pipefail
@@ -228,6 +238,163 @@ jobs:
           else
             echo "no package artifacts present (build step failed; see earlier steps)"
           fi
+
+  desktop-qt-reproducibility:
+    name: Desktop Qt reproducibility with generated-input diagnosis
+    # Hosted CI is the authoritative environment for Qt/reproducibility
+    # validation. The desktop shell cannot be built in a sandbox without Qt 6,
+    # so no local run may be cited as evidence for this gate.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install native Qt and packaging toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config libdbus-1-dev \
+            binutils file
+          sudo install -d -m 0777 /usr/src/synveil
+
+      - name: Install the pinned Qt toolchain under test
+        uses: jurplel/install-qt-action@d325aaf2a8baeeda41ad0b5d39f84a6af9bcf005
+        with:
+          version: '6.7.3'
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Record the QML toolchain under test
+        run: |
+          set -euo pipefail
+          {
+            echo "qmake=$(command -v qmake6 || command -v qmake || echo unavailable)"
+            if command -v qmake6 >/dev/null 2>&1; then
+              qmake6 -query QT_VERSION
+              qmake6 -query QT_HOST_LIBEXECS
+            elif command -v qmake >/dev/null 2>&1; then
+              qmake -query QT_VERSION
+              qmake -query QT_HOST_LIBEXECS
+            else
+              echo "qmake=unavailable"
+            fi
+            echo "rustc=$(rustc -V)"
+          } | tee qt-toolchain.txt
+
+      - name: Build two independent release trees and gate byte-identity
+        env:
+          # Retain both trees so the diagnosis below can run on a passing build
+          # as well as a failing one.
+          SYNVEIL_REPRO_KEEP_BUILD_TREES: "1"
+        run: scripts/verify-release-build-reproducibility.sh
+
+      - name: Compare generated QML/C++ inputs and binary sections
+        # Runs unconditionally. A green gate can still hide a checkout-dependent
+        # generated input, and this comparison is what proves otherwise.
+        if: always()
+        run: |
+          set -euo pipefail
+          mapfile -t trees < <(
+            find target -maxdepth 1 -type d -name 'synveil-repro-build-*' | LC_ALL=C sort
+          )
+          if [[ ${#trees[@]} -ne 2 ]]; then
+            echo "expected exactly two retained build trees, found ${#trees[@]}" >&2
+            printf '%s\n' "${trees[@]:-none}" >&2
+            exit 1
+          fi
+          scripts/diagnose-desktop-reproducibility.sh \
+            "${trees[0]}" "${trees[1]}" target/synveil-repro-diagnosis
+
+      - name: Show every absolute path embedded in the generated QML output
+        # The root cause under investigation is an absolute QML source path in
+        # generated C++. This prints what is actually there, so a hosted run
+        # records the current state instead of only its pass/fail verdict.
+        if: always()
+        run: |
+          set -euo pipefail
+          report=target/synveil-repro-diagnosis/qml-absolute-paths.txt
+          mkdir -p "$(dirname "$report")"
+          : > "$report"
+          mapfile -t trees < <(
+            find target -maxdepth 1 -type d -name 'synveil-repro-build-*' | LC_ALL=C sort
+          )
+          for tree in "${trees[@]:-}"; do
+            [[ -d "$tree" ]] || continue
+            while IFS= read -r file; do
+              grep -aoE '(/usr/src/synveil|/home/[!-~]{0,120}|/tmp/[!-~]{0,120})' "$file" 2>/dev/null |
+                sort -u | while read -r marker; do
+                  printf '%s :: %s\n' "${file#"$tree"/}" "$marker" >> "$report"
+                done
+            done < <(
+              find "$tree" -path '*qmlcachegen*' -type f \( -name '*.cpp' -o -name '*.h' \) 2>/dev/null |
+                LC_ALL=C sort
+            )
+          done
+          echo "--- absolute paths found in generated qmlcachegen output ---"
+          if [[ -s "$report" ]]; then
+            cat "$report"
+          else
+            echo "(none: generated QML C++ carries no absolute path)"
+          fi
+
+      - name: Upload desktop reproducibility diagnosis
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synveil-desktop-repro-diagnosis
+          path: |
+            target/synveil-repro-diagnosis/
+            qt-toolchain.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Remove retained build trees
+        if: always()
+        run: rm -rf target/synveil-repro-build-*
+
+  systemd-249-compat:
+    name: sysusers/tmpfiles validation on systemd 249
+    # Ubuntu 22.04 ships systemd 249, which has no --dry-run and no --graceful.
+    # Running the fragment validation here proves the version-compatible
+    # isolated strategy actually works on that systemd rather than only on the
+    # newer runners the rest of CI uses.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Report the systemd version under test
+        run: |
+          set -euo pipefail
+          systemd-tmpfiles --version | head -n 1
+          if systemd-tmpfiles --help 2>&1 | grep -q -- '--dry-run'; then
+            echo 'unexpected: this image advertises --dry-run; the 249 path would be untested' >&2
+          else
+            echo 'confirmed: --dry-run is absent, so the isolated --root path is exercised'
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate shipped fragments and lifecycle regressions
+        run: |
+          set -euo pipefail
+          cargo test -p synveil-metadata --test systemd_isolated_fragments --locked -- --nocapture
+          cargo test -p synveil-metadata --test linux_service_identity_units --locked -- --nocapture
+          cargo test -p synveil-metadata --test linux_install_lifecycle --locked -- --nocapture
 
   deb-native-ux:
     name: APT install, non-root launch, removal, and preservation

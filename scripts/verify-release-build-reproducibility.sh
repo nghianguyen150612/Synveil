@@ -40,7 +40,33 @@ snapshot_dir="$(mktemp -d "${TMPDIR:-/tmp}/synveil-repro-snapshot.XXXXXX")"
 mkdir -p "${REPO_ROOT}/target"
 first_target_dir="$(mktemp -d "${REPO_ROOT}/target/synveil-repro-build-a.XXXXXX")"
 second_target_dir="$(mktemp -d "${REPO_ROOT}/target/synveil-repro-build-b.XXXXXX")"
-trap 'rm -rf -- "$snapshot_dir" "$first_target_dir" "$second_target_dir"' EXIT
+diagnosis_dir="${REPO_ROOT}/target/synveil-repro-diagnosis"
+mismatch_marker="${snapshot_dir}/mismatch"
+# Hosted CI sets SYNVEIL_REPRO_KEEP_BUILD_TREES=1 so the differential diagnosis
+# can run after this script exits, including on a *passing* build. A green run
+# that still carries a path-dependent generated input is exactly the case that
+# a mismatch-only diagnosis would miss.
+keep_build_trees="${SYNVEIL_REPRO_KEEP_BUILD_TREES:-0}"
+cleanup() {
+    local status=$?
+    # When the byte-identity gate fails, name the exact generated input and
+    # section that diverged before the build trees are removed. The diagnosis
+    # never changes the verdict; the gate has already failed.
+    if [[ -f "$mismatch_marker" ]]; then
+        printf '[synveil-artifact] reproducibility gate failed; running desktop differential diagnosis\n' >&2
+        bash "${REPO_ROOT}/scripts/diagnose-desktop-reproducibility.sh" \
+            "$first_target_dir" "$second_target_dir" "$diagnosis_dir" || true
+    fi
+    rm -rf -- "$snapshot_dir"
+    if [[ "$keep_build_trees" == 1 ]]; then
+        printf '[synveil-artifact] build trees retained for post-run diagnosis:\n  %s\n  %s\n' \
+            "$first_target_dir" "$second_target_dir"
+    else
+        rm -rf -- "$first_target_dir" "$second_target_dir"
+    fi
+    return $status
+}
+trap cleanup EXIT
 
 # Each side starts from an empty Cargo target root and independently receives
 # the same source-date policy and compiler flags. This avoids treating an old
@@ -77,8 +103,11 @@ build_release_set() (
         if [[ "$label" == build-a ]]; then
             cp -- "$binary" "$snapshot_dir/${name}${suffix}"
         else
-            synveil_require_identical_artifacts \
-                "$snapshot_dir/${name}${suffix}" "$binary" "$name $label"
+            if ! synveil_require_identical_artifacts \
+                "$snapshot_dir/${name}${suffix}" "$binary" "$name $label"; then
+                : > "$mismatch_marker"
+                return 1
+            fi
         fi
     done
 )

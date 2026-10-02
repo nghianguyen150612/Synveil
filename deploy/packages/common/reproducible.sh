@@ -22,6 +22,37 @@ synveil_cargo_home() {
     fi
 }
 
+# Ensure a directory exists and is writable by this build user, so the QML
+# canonical source root can be materialised before the generator reads it.
+#
+# This fails loudly rather than falling back to a checkout- or temp-dependent
+# location: the canonical root is embedded verbatim in the release binary, so
+# an unusable root is a reproducibility failure, not something to work around.
+synveil_ensure_writable_root() {
+    local root="$1"
+    [[ -n "$root" ]] || {
+        printf '[synveil-artifact] ERROR: canonical QML source root must not be empty\n' >&2
+        return 1
+    }
+    if [[ -d "$root" && -w "$root" ]]; then
+        return 0
+    fi
+    if [[ -e "$root" && ! -d "$root" ]]; then
+        printf '[synveil-artifact] ERROR: canonical QML source root exists but is not a directory: %s\n' "$root" >&2
+        return 1
+    fi
+    if ! mkdir -p "$root" 2>/dev/null; then
+        printf '[synveil-artifact] ERROR: cannot create the canonical QML source root %s\n' "$root" >&2
+        printf '[synveil-artifact]   this path is embedded verbatim in release binaries, so it must be a stable, writable location\n' >&2
+        printf '[synveil-artifact]   set SYNVEIL_QML_CANONICAL_ROOT to a writable absolute path, or pre-create this directory\n' >&2
+        return 1
+    fi
+    if [[ ! -w "$root" ]]; then
+        printf '[synveil-artifact] ERROR: canonical QML source root is not writable: %s\n' "$root" >&2
+        return 1
+    fi
+}
+
 synveil_append_unique_build_flag() {
     local variable_name="$1"
     local flag="$2"
@@ -47,6 +78,8 @@ synveil_prepare_reproducible_qt_tools() {
     local host_toolchain="$3"
     local real_qmake="${QMAKE:-}"
     local real_rcc=""
+    local real_qmlcachegen=""
+    local enable_qmlcachegen_wrapper="${SYNVEIL_ENABLE_QMLCACHEGEN_WRAPPER:-0}"
     local query
     local query_dir
     local candidate
@@ -111,12 +144,53 @@ synveil_prepare_reproducible_qt_tools() {
     # Let the actual desktop build report its normal missing-Qt diagnostic.
     [[ -n "$real_rcc" ]] || return 0
 
+    # qmlcachegen is the tool that embeds the absolute QML source path into
+    # generated C++ as the compiled unit's source file. It is resolved through
+    # the same `qmake -query` tool directories that already redirect rcc, so
+    # intercepting it costs one more copy of the wrapper binary in the same
+    # directory. When absent, the desktop build still fails with its own clear
+    # diagnostic and nothing is silently skipped.
+    if [[ "$enable_qmlcachegen_wrapper" == 1 ]]; then
+        for query in \
+            "QT_HOST_LIBEXECS/get" \
+            "QT_HOST_LIBEXECS" \
+            "QT_HOST_BINS/get" \
+            "QT_HOST_BINS" \
+            "QT_INSTALL_LIBEXECS/get" \
+            "QT_INSTALL_LIBEXECS" \
+            "QT_INSTALL_BINS/get" \
+            "QT_INSTALL_BINS"; do
+            query_dir="$("$real_qmake" -query "$query" 2>/dev/null | head -n 1 || true)"
+            [[ -n "$query_dir" ]] || continue
+            if command -v cygpath >/dev/null 2>&1; then
+                query_dir="$(cygpath -u "$query_dir" 2>/dev/null || printf '%s' "$query_dir")"
+            fi
+            candidate="${query_dir%/}/qmlcachegen${wrapper_suffix}"
+            if [[ -x "$candidate" ]]; then
+                real_qmlcachegen="$candidate"
+                break
+            fi
+        done
+    fi
+
+    # The canonical QML source prefix is embedded verbatim into the release
+    # binary, so it must be checkout-independent and must not look like a
+    # private path. It matches the Rust/C++ remap prefix already in force.
+    local qml_canonical_root="${SYNVEIL_QML_CANONICAL_ROOT:-/usr/src/synveil}"
+    if [[ -n "$real_qmlcachegen" ]]; then
+        synveil_ensure_writable_root "$qml_canonical_root" || return 1
+    fi
+
     qmake_identity="$(cksum < "$real_qmake" | awk '{print $1 ":" $2}')"
     rcc_identity="$(cksum < "$real_rcc" | awk '{print $1 ":" $2}')"
     wrapper_source_identity="$(cksum < "${repo_root}/scripts/reproducible-qt-wrapper.rs" | awk '{print $1 ":" $2}')"
-    wrapper_key="$(printf '%s\n%s\n%s\n%s\n%s\n%s\n' \
+    # Reproducible-build cache key: every input that can change the compiled
+    # wrapper's behaviour participates, so a changed tool or policy is never
+    # silently reused from a previous build.
+    wrapper_key="$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
         "$real_qmake" "$qmake_identity" "$real_rcc" "$rcc_identity" \
-        "$wrapper_source_identity" "$source_date_epoch" |
+        "$real_qmlcachegen" "$wrapper_source_identity" "$source_date_epoch" \
+        "$qml_canonical_root" |
         cksum | awk '{print $1}')"
     wrapper_dir="${cargo_target_dir}/synveil-reproducible-qt-tools/${wrapper_key}"
     mkdir -p "$wrapper_dir"
@@ -133,12 +207,26 @@ synveil_prepare_reproducible_qt_tools() {
     fi
     SYNVEIL_REAL_QMAKE="$qmake_for_wrapper" \
         SYNVEIL_REAL_RCC="$rcc_for_wrapper" \
+        SYNVEIL_REAL_QMLCACHEGEN="$real_qmlcachegen" \
         SYNVEIL_QT_WRAPPER_DIR="$wrapper_dir_for_wrapper" \
         SYNVEIL_SOURCE_DATE_EPOCH="$source_date_epoch" \
+        SYNVEIL_QML_SOURCE_ROOT="$repo_root" \
+        SYNVEIL_QML_CANONICAL_ROOT="$qml_canonical_root" \
         rustc --edition=2021 "${repo_root}/scripts/reproducible-qt-wrapper.rs" -o "$wrapper_binary"
     cp "$wrapper_binary" "${wrapper_dir}/qmake${wrapper_suffix}"
     cp "$wrapper_binary" "${wrapper_dir}/rcc${wrapper_suffix}"
+    # Installing the wrapper under the qmlcachegen name makes CXX-Qt's
+    # qmake-query tool lookup resolve to it, so the QML source path handed to
+    # the generator is the canonical one. Skipped when qmlcachegen is absent;
+    # the desktop build then fails with its own diagnostic instead of quietly
+    # producing a binary that embeds the checkout path.
+    if [[ -n "$real_qmlcachegen" ]]; then
+        cp "$wrapper_binary" "${wrapper_dir}/qmlcachegen${wrapper_suffix}"
+    fi
     chmod +x "${wrapper_dir}/qmake${wrapper_suffix}" "${wrapper_dir}/rcc${wrapper_suffix}"
+    if [[ -n "$real_qmlcachegen" ]]; then
+        chmod +x "${wrapper_dir}/qmlcachegen${wrapper_suffix}"
+    fi
     export QMAKE="$qmake_export_path"
 }
 
@@ -156,6 +244,7 @@ synveil_prepare_reproducible_rust_build() {
     local remap_flags=()
     local native_repo_root=""
     local native_target_dir=""
+    local native_qt_root=""
 
     canonical_repo_root="$(cd "$repo_root" && pwd -P)"
     cargo_target_dir="${CARGO_TARGET_DIR:-${canonical_repo_root}/target}"
@@ -178,6 +267,15 @@ synveil_prepare_reproducible_rust_build() {
         native_target_dir="$(cygpath -m "$cargo_target_dir" 2>/dev/null)"
         if [[ -n "$native_repo_root" && "$native_repo_root" != "$canonical_repo_root" ]]; then
             remap_flags+=("--remap-path-prefix=${native_repo_root}=/usr/src/synveil")
+        fi
+    fi
+    if [[ -n "${QT_ROOT_DIR:-}" ]]; then
+        native_qt_root="${QT_ROOT_DIR}"
+        if command -v cygpath >/dev/null 2>&1 && [[ "$native_qt_root" =~ ^[A-Za-z]:[/\\] ]]; then
+            native_qt_root="$(cygpath -m "$native_qt_root" 2>/dev/null)"
+        fi
+        if [[ "$native_qt_root" != /* ]]; then
+            native_qt_root=""
         fi
     fi
 
@@ -258,11 +356,21 @@ synveil_prepare_reproducible_rust_build() {
             native_prefixes+=("${native_repo_root}/target")
         fi
         native_prefixes+=("$cargo_target_dir")
+        # install-qt-action places Qt below the runner checkout, and CXX-Qt
+        # compiles Qt headers into the desktop binary. The compiler's prefix
+        # maps must cover that external input as well as the repository; a
+        # repository-only map leaves __FILE__ strings such as
+        # /home/runner/work/Synveil/Qt/... in the release executable.
+        if [[ -n "$native_qt_root" ]]; then
+            native_prefixes+=("$native_qt_root")
+        fi
         for flag_prefix in -ffile-prefix-map -fmacro-prefix-map -fdebug-prefix-map; do
             for prefix in "${native_prefixes[@]}"; do
                 flag="${flag_prefix}=${prefix}="
                 if [[ "$prefix" == "$canonical_repo_root" || "$prefix" == "$native_repo_root" ]]; then
                     flag+="/usr/src/synveil"
+                elif [[ "$prefix" == "$native_qt_root" ]]; then
+                    flag+="/usr/local/qt"
                 else
                     flag+="/usr/src/synveil-target"
                 fi

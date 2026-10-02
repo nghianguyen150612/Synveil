@@ -1,3 +1,12 @@
+//! AppImage integration behaviour.
+//!
+//! Linux-only by construction: it drives the AppImage module, which is
+//! cfg-gated to `target_os = "linux"` in the crate root. On other targets this
+//! file compiles to no tests rather than asserting a non-Linux substitute
+//! behaviour that does not exist.
+
+#![cfg(target_os = "linux")]
+
 use std::{fs, os::unix::fs::PermissionsExt, path::Path, sync::Mutex};
 use synveil_install_engine::{AppImageIntegration, AppImageIntegrationStatus};
 use tempfile::TempDir;

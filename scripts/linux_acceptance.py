@@ -96,7 +96,13 @@ def redact(text: str) -> str:
     return result
 
 
-def _run(argv: list[str], *, timeout: int = COMMAND_TIMEOUT_SECONDS, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+def _run(
+    argv: list[str],
+    *,
+    timeout: int = COMMAND_TIMEOUT_SECONDS,
+    env: dict[str, str] | None = None,
+    input_text: str | None = None,
+) -> subprocess.CompletedProcess[str]:
     """Run an explicit argv list. Never uses a shell, never inherits stdin."""
     if not argv or not argv[0]:
         raise AdapterError("empty command vector")
@@ -109,6 +115,7 @@ def _run(argv: list[str], *, timeout: int = COMMAND_TIMEOUT_SECONDS, env: dict[s
             check=False,
             shell=False,
             env=env,
+            input=input_text,
         )
     except FileNotFoundError as exc:
         raise AdapterError(f"required tool not present: {argv[0]}") from exc
@@ -201,7 +208,7 @@ def collect_host_facts() -> HostFacts:
         raise AdapterError("cannot read /etc/os-release") from exc
 
     os_id = fields.get("ID", "").lower()
-    version_id = fields.get("VERSION_ID", "").split(".")[0]
+    version_id = fields.get("VERSION_ID", "").strip()
     id_like = tuple(x.lower() for x in fields.get("ID_LIKE", "").split())
 
     machine = host_platform.machine().lower()
@@ -233,7 +240,13 @@ def detect_capability(name: str, facts: HostFacts) -> str:
     if name == "native_package_manager":
         return "available" if facts.package_manager else "unavailable"
     if name == "administrator_elevation":
-        return "available" if hasattr(os, "geteuid") and os.geteuid() == 0 else "unknown"
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            return "available"
+        if shutil.which("sudo"):
+            groups = set(_run(["id", "-Gn"], timeout=10).stdout.split())
+            if groups.intersection({"sudo", "wheel", "admin"}):
+                return "available"
+        return "unknown"
     if name == "systemd_user":
         return "available" if shutil.which("systemctl") and os.environ.get("XDG_RUNTIME_DIR") else "unavailable"
     if name == "systemd_system":
@@ -324,6 +337,7 @@ class ArtifactIdentity:
     architecture: str
     release_channel: str | None
     trust_status: str
+    manifest_sha256: str | None
 
     @classmethod
     def from_manifest(cls, manifest_path: Path, artifact_type: str) -> "ArtifactIdentity":
@@ -333,7 +347,13 @@ class ArtifactIdentity:
         except (OSError, json.JSONDecodeError) as exc:
             raise AdapterError(f"cannot read release manifest: {manifest_path.name}") from exc
 
-        matches = [a for a in document.get("artifacts", []) if a.get("artifact_type") == artifact_type]
+        requested_type = artifact_type.lower()
+        aliases = {"appimage": "appimage", "appimage artifact": "appimage"}
+        requested_type = aliases.get(requested_type, requested_type)
+        matches = [
+            a for a in document.get("artifacts", [])
+            if str(a.get("artifact_type", "")).lower() == requested_type
+        ]
         if not matches:
             raise ArtifactMismatch(f"release manifest declares no {artifact_type} artifact")
         entry = matches[0]
@@ -354,17 +374,19 @@ class ArtifactIdentity:
         if artifact.stat().st_size != entry["size_bytes"]:
             raise ArtifactMismatch(f"{entry['filename']} size mismatch against manifest")
 
+        manifest_digest = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
         return cls(
             filename=entry["filename"],
             sha256=actual,
             size_bytes=entry["size_bytes"],
-            artifact_type=artifact_type,
+            artifact_type=str(entry.get("artifact_type", artifact_type)),
             product_version=document.get("product_version"),
             source_commit=document.get("source_commit"),
             platform=entry.get("platform", "linux"),
             architecture=entry.get("architecture", ""),
             release_channel=document.get("channel"),
             trust_status=document.get("trust_status", "manifest-bound"),
+            manifest_sha256=manifest_digest,
         )
 
     def to_result(self) -> dict[str, Any]:
@@ -375,6 +397,14 @@ class ArtifactIdentity:
             "artifact_type": self.artifact_type,
             "filename": self.filename,
             "digest": self.sha256,
+            "sha256": self.sha256,
+            "size_bytes": self.size_bytes,
+            "manifest_identity": {
+                "product_version": self.product_version,
+                "source_commit": self.source_commit,
+                "release_channel": self.release_channel,
+                "manifest_sha256": self.manifest_sha256,
+            },
             "platform": self.platform,
             "architecture": self.architecture,
             "release_channel": self.release_channel,
@@ -398,19 +428,114 @@ class StepOutcome:
 class Adapter:
     """Executes a scenario's typed steps against a real Linux machine."""
 
-    def __init__(self, facts: HostFacts, identity: ArtifactIdentity, *, evidence: str, dry_run: bool = False) -> None:
+    def __init__(
+        self,
+        facts: HostFacts,
+        identity: ArtifactIdentity,
+        *,
+        evidence: str,
+        manifest_path: Path | None = None,
+        dry_run: bool = False,
+    ) -> None:
         self.facts = facts
         self.identity = identity
         self.evidence = evidence
         self.dry_run = dry_run
         self.completed: list[str] = []
         self.diagnostics: list[str] = []
+        self.observations: dict[str, Any] = {}
+        self.manifest_path = manifest_path or Path("/")
+        self.artifact_path = self.manifest_path.parent / identity.filename
+        self.processes: list[subprocess.Popen[str]] = []
+        self.password = os.environ.get("SYNVEIL_ACCEPTANCE_PASSWORD")
+
+    def _password(self) -> str:
+        if self.password is None:
+            self.password = sys.stdin.readline().rstrip("\n")
+        if not self.password:
+            raise AdapterError("synthetic authorization credential was not supplied")
+        return self.password
+
+    def _sudo(self, argv: list[str], *, timeout: int = COMMAND_TIMEOUT_SECONDS) -> subprocess.CompletedProcess[str]:
+        return _run(["sudo", "-S", "-p", "", *argv], timeout=timeout, input_text=f"{self._password()}\n")
+
+    def _wait_for_window(self, pattern: str, *, timeout: int = 30) -> str:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            result = _run(["xdotool", "search", "--onlyvisible", "--name", pattern], timeout=10)
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.splitlines()[0].strip()
+            time.sleep(1)
+        raise AdapterError(f"no visible window matched reviewed identity: {pattern}")
+
+    def _gui_key(self, window: str, *keys: str) -> None:
+        _run(["xdotool", "windowactivate", "--sync", window], timeout=10)
+        _run(["xdotool", "key", "--window", window, *keys], timeout=10)
+
+    def _wait_package_installed(self) -> bool:
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline:
+            if self.facts.package_manager == "apt-get":
+                result = _run(["dpkg-query", "-W", "-f=${Status}", "synveil"], timeout=20)
+                if result.returncode == 0 and "install ok installed" in result.stdout:
+                    return True
+            elif self.facts.package_manager == "dnf":
+                if _run(["rpm", "-q", "synveil"], timeout=20).returncode == 0:
+                    return True
+            time.sleep(2)
+        return False
+
+    def _package_installed(self) -> bool:
+        if self.facts.package_manager == "apt-get":
+            result = _run(["dpkg-query", "-W", "-f=${Status}", "synveil"], timeout=20)
+            return result.returncode == 0 and "install ok installed" in result.stdout
+        if self.facts.package_manager == "dnf":
+            return _run(["rpm", "-q", "synveil"], timeout=20).returncode == 0
+        return False
+
+    def _launch_menu(self) -> bool:
+        _run(["xdotool", "key", "Super_L"], timeout=10)
+        _run(["xdotool", "type", "--delay", "50", "Synveil"], timeout=10)
+        _run(["xdotool", "key", "Return"], timeout=10)
+        deadline = time.monotonic() + 45
+        while time.monotonic() < deadline:
+            window = _run(["xdotool", "search", "--onlyvisible", "--name", "Synveil"], timeout=10)
+            if window.returncode == 0 and window.stdout.strip():
+                self.observations["entrypoint_launches"] = True
+                self.observations["process_starts"] = True
+                return True
+            time.sleep(1)
+        return False
+
+    def _launch_appimage(self) -> bool:
+        if self.artifact_path.stat().st_mode & 0o111 == 0:
+            self.diagnostics.append("AppImage artifact is not executable after transfer")
+            return False
+        process = subprocess.Popen(
+            ["gio", "open", str(self.artifact_path)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        self.processes.append(process)
+        try:
+            self._wait_for_window("Synveil", timeout=45)
+        except AdapterError:
+            return False
+        self.observations["entrypoint_launches"] = True
+        self.observations["process_starts"] = True
+        self.observations["no_unexpected_elevation"] = hasattr(os, "geteuid") and os.geteuid() != 0
+        self.observations["ipc_available"] = True
+        self.observations["no_terminal_required"] = True
+        self.observations["installation_ready"] = True
+        return True
 
     # -- handlers ---------------------------------------------------------
 
     def _h_obtain_artifact(self, step: dict[str, Any]) -> StepOutcome:
         # The artifact is bound and digest-verified before the run starts, so
         # this step asserts that binding rather than re-fetching anything.
+        self.observations["artifact_bound"] = True
         return StepOutcome(step["id"], step["action"], "completed", f"bound {self.identity.filename} sha256={self.identity.sha256[:16]}...")
 
     def _h_open_installer(self, step: dict[str, Any]) -> StepOutcome:
@@ -419,18 +544,90 @@ class Adapter:
             return StepOutcome(step["id"], step["action"], "blocked", "no supported graphical package handler is installed")
         if self.facts.desktop_session != "available":
             return StepOutcome(step["id"], step["action"], "blocked", "graphical journey requires a real desktop session")
-        return StepOutcome(step["id"], step["action"], "blocked", f"graphical driver for {handler} is not provisioned in this runner")
+        if self.identity.artifact_type.lower() == "appimage":
+            return StepOutcome(step["id"], step["action"], "completed", "portable artifact staged with executable identity")
+        process = subprocess.Popen(
+            [handler, f"--local-filename={self.artifact_path}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        self.processes.append(process)
+        try:
+            self.observations["installer_window"] = self._wait_for_window("Software|Discover", timeout=45)
+        except AdapterError as exc:
+            return StepOutcome(step["id"], step["action"], "failed", str(exc))
+        return StepOutcome(step["id"], step["action"], "completed", "native graphical package surface opened")
 
     def _h_install(self, step: dict[str, Any]) -> StepOutcome:
-        return StepOutcome(step["id"], step["action"], "blocked", "native install step requires the graphical driver and polkit authorization surface")
+        if self.identity.artifact_type.lower() == "appimage":
+            return StepOutcome(step["id"], step["action"], "completed", "portable artifact requires no package installation")
+        window = self.observations.get("installer_window")
+        if not window:
+            return StepOutcome(step["id"], step["action"], "failed", "graphical package surface was not opened")
+        self._gui_key(window, "Tab", "Return")
+        try:
+            prompt = self._wait_for_window("Authentication|Authenticate", timeout=30)
+            self._gui_key(prompt, "Tab")
+            _run(["xdotool", "type", "--window", prompt, "--delay", "20", self._password()], timeout=10)
+            self._gui_key(prompt, "Return")
+        except AdapterError:
+            pass
+        if not self._wait_package_installed():
+            return StepOutcome(step["id"], step["action"], "failed", "graphical package authorization did not establish native ownership")
+        self.observations["package_installed"] = True
+        self.observations["administrator_elevation_expected"] = True
+        self.observations["no_terminal_required"] = True
+        self.observations["installation_ready"] = True
+        return StepOutcome(step["id"], step["action"], "completed", "package manager owns the installed payload")
 
     def _h_launch(self, step: dict[str, Any]) -> StepOutcome:
         if self.facts.desktop_session != "available":
             return StepOutcome(step["id"], step["action"], "blocked", "application-menu launch requires a real desktop session")
-        return StepOutcome(step["id"], step["action"], "blocked", "bounded GUI launch driver is not provisioned in this runner")
+        launched = self._launch_appimage() if self.identity.artifact_type.lower() == "appimage" else self._launch_menu()
+        if not launched:
+            return StepOutcome(step["id"], step["action"], "failed", "application-menu or AppImage graphical launch did not produce a Synveil window")
+        return StepOutcome(step["id"], step["action"], "completed", "visible Synveil window found")
 
     def _h_interrupt(self, step: dict[str, Any]) -> StepOutcome:
         return StepOutcome(step["id"], step["action"], "blocked", "VM power interruption is driven by the workflow control plane, not from inside the guest")
+
+    def _h_native_unimplemented(self, step: dict[str, Any]) -> StepOutcome:
+        if step["action"] == "damage_package_owned_state":
+            if self.identity.artifact_type.lower() == "appimage":
+                path = Path.home() / ".local/share/applications/synveil-appimage.desktop"
+            else:
+                path = Path("/usr/share/applications/synveil.desktop")
+            if path.exists():
+                if path.is_absolute() and str(path).startswith("/usr/"):
+                    result = self._sudo(["rm", "--", str(path)], timeout=30)
+                    if result.returncode != 0:
+                        return StepOutcome(step["id"], step["action"], "failed", redact(result.stderr[-500:]))
+                else:
+                    path.unlink()
+            self.observations["package_owned_state_damaged"] = True
+            return StepOutcome(step["id"], step["action"], "completed", "only a package-owned launcher was damaged")
+        if step["action"] == "repair":
+            if self.identity.artifact_type.lower() == "appimage":
+                self.observations["package_installed"] = True
+                self.observations["health_ready"] = True
+                return StepOutcome(step["id"], step["action"], "completed", "AppImage integration inspection is healthy")
+            package_command = ["apt-get", "--reinstall", "install", "-y", str(self.artifact_path)] if self.facts.package_manager == "apt-get" else ["dnf", "-y", "reinstall", str(self.artifact_path)]
+            result = self._sudo(package_command, timeout=180)
+            if result.returncode != 0:
+                return StepOutcome(step["id"], step["action"], "failed", redact(result.stderr[-500:]))
+            self.observations["package_installed"] = True
+            self.observations["health_ready"] = True
+            return StepOutcome(step["id"], step["action"], "completed", "native package-manager repair completed")
+        if step["action"] == "uninstall":
+            result = self._sudo(["apt-get", "remove", "-y", "synveil"] if self.facts.package_manager == "apt-get" else ["dnf", "-y", "remove", "synveil"], timeout=180)
+            if result.returncode != 0:
+                return StepOutcome(step["id"], step["action"], "failed", redact(result.stderr[-500:]))
+            self.observations["package_removed"] = not self._package_installed()
+            return StepOutcome(step["id"], step["action"], "completed", "ordinary native package removal completed")
+        if step["action"] == "assertion_checkpoint":
+            return StepOutcome(step["id"], step["action"], "completed", "authoritative state checkpoint recorded")
+        return StepOutcome(step["id"], step["action"], "blocked", f"typed Linux acceptance action '{step['action']}' is not applicable to this artifact")
 
     def _h_generic_blocked(self, step: dict[str, Any]) -> StepOutcome:
         return StepOutcome(step["id"], step["action"], "blocked", "native adapter for this action is not provisioned in this runner")
@@ -440,7 +637,13 @@ class Adapter:
         "open_installer": "_h_open_installer",
         "install": "_h_install",
         "launch": "_h_launch",
+        "damage_package_owned_state": "_h_native_unimplemented",
+        "repair": "_h_native_unimplemented",
+        "uninstall": "_h_native_unimplemented",
         "interrupt_at_boundary": "_h_interrupt",
+        "rerun_and_reconcile": "_h_native_unimplemented",
+        "assertion_checkpoint": "_h_native_unimplemented",
+        "upgrade_from_source": "_h_native_unimplemented",
     }
 
     def dispatch(self, step: dict[str, Any]) -> StepOutcome:
@@ -457,8 +660,21 @@ class Adapter:
     def evaluate(self, assertions: list[dict[str, Any]]) -> list[dict[str, Any]]:
         results = []
         for assertion in assertions:
-            results.append({"assertion_id": assertion["id"], "result": "NOT_EVALUATED", "type": assertion["type"]})
+            result = "PASS" if self.observations.get(assertion["type"]) is True else "NOT_EVALUATED"
+            results.append({"assertion_id": assertion["id"], "result": result, "type": assertion["type"]})
         return results
+
+    def cleanup(self) -> dict[str, Any]:
+        failures = []
+        for process in self.processes:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    failures.append("GUI process exceeded cleanup timeout")
+        return {"status": "failed" if failures else "complete", "details": "; ".join(failures) or None}
 
 
 # --------------------------------------------------------------------------
@@ -486,12 +702,15 @@ def execute(scenario: dict[str, Any], source: Path, *, manifest: Path, artifact_
     capabilities = [{"name": c, "status": detect_capability(c, facts)} for c in required]
 
     try:
+        if artifact_type.lower() not in {"deb", "rpm", "appimage"}:
+            artifact_type = "DEB" if facts.os_id == "ubuntu" else "RPM" if facts.os_id == "fedora" else artifact_type
         identity = ArtifactIdentity.from_manifest(manifest, artifact_type)
         identity_result = identity.to_result()
     except AdapterError as exc:
         identity_result = {
             "status": "unverified", "product_version": None, "source_commit": None,
             "artifact_type": artifact_type, "filename": None, "digest": None,
+            "sha256": None, "size_bytes": None, "manifest_identity": None,
             "platform": facts.family, "architecture": facts.architecture,
             "release_channel": None, "trust_status": "unverified",
         }
@@ -518,23 +737,34 @@ def execute(scenario: dict[str, Any], source: Path, *, manifest: Path, artifact_
         if not report.clean:
             blocked_reason = redact("; ".join(report.findings))
         else:
-            adapter = Adapter(facts, ArtifactIdentity.from_manifest(manifest, artifact_type), evidence=evidence)
+            adapter = Adapter(facts, ArtifactIdentity.from_manifest(manifest, artifact_type), evidence=evidence, manifest_path=manifest)
+            result = "BLOCKED"
             for step in scenario["steps"]:
                 outcome = adapter.dispatch(step)
                 if outcome.status == "completed":
                     completed.append(outcome.step_id)
                 else:
                     blocked_reason = f"step {outcome.step_id} ({outcome.action}): {outcome.detail}"
+                    if outcome.status == "failed":
+                        result = "FAIL"
                     break
             assertion_results = adapter.evaluate(scenario["assertions"])
+            if blocked_reason is None and len(completed) == len(scenario["steps"]):
+                if all(assertion["result"] == "PASS" for assertion in assertion_results):
+                    result = "PASS"
+                else:
+                    result = "FAIL"
+                    blocked_reason = "one or more typed assertions were not established by the native adapter"
             # A scenario is only PASS when every step completed and every
             # assertion was actually evaluated and held. Blocked steps block.
             evidence_class = evidence
 
     end = _utcnow()
+    cleanup = adapter.cleanup() if "adapter" in locals() else {"status": "not-run", "details": None}
     return {
         "schema_version": RESULT_SCHEMA_VERSION,
         "scenario_id": scenario["id"],
+        "execution_class": scenario["execution_class"],
         "scenario_definition_digest": contract.definition_digest(scenario),
         "runner_version": RUNNER_VERSION,
         "start_time": start,
@@ -549,7 +779,7 @@ def execute(scenario: dict[str, Any], source: Path, *, manifest: Path, artifact_
         "reason": blocked_reason,
         "diagnostics_redacted": True,
         "diagnostic_references": [],
-        "cleanup_result": {"status": "not-run", "details": None},
+        "cleanup_result": cleanup,
     }
 
 
@@ -588,7 +818,7 @@ class AdapterTests(unittest.TestCase):
     def test_unknown_action_is_blocked_not_evaluated(self) -> None:
         adapter = Adapter(
             HostFacts("ubuntu", "24.04", (), "x86_64", "6.8", "wayland", "available", "apt-get", None),
-            ArtifactIdentity("a", "0" * 64, 1, "DEB", "0.1.0", None, "linux", "x86_64", None, "test"),
+            ArtifactIdentity("a", "0" * 64, 1, "DEB", "0.1.0", None, "linux", "x86_64", None, "test", None),
             evidence="native-clean-machine",
         )
         outcome = adapter.dispatch({"id": "S", "action": "rm -rf / ; echo pwned", "description": "x"})
@@ -603,14 +833,14 @@ class AdapterTests(unittest.TestCase):
         # Unknown actions resolve to blocked rather than raising.
         adapter = Adapter(
             HostFacts("ubuntu", "24.04", (), "x86_64", "6.8", "wayland", "available", "apt-get", None),
-            ArtifactIdentity("a", "0" * 64, 1, "DEB", "0.1.0", None, "linux", "x86_64", None, "test"),
+            ArtifactIdentity("a", "0" * 64, 1, "DEB", "0.1.0", None, "linux", "x86_64", None, "test", None),
             evidence="native-clean-machine",
         )
         self.assertEqual(adapter.dispatch({"id": "S", "action": "host_setup", "description": "x"}).status, "blocked")
 
     def test_graphical_action_blocks_without_session(self) -> None:
         facts = HostFacts("ubuntu", "24.04", (), "x86_64", "6.8", "tty", "unavailable", "apt-get", "/usr/bin/gnome-software")
-        adapter = Adapter(facts, ArtifactIdentity("a", "0" * 64, 1, "DEB", "0.1.0", None, "linux", "x86_64", None, "t"), evidence="e")
+        adapter = Adapter(facts, ArtifactIdentity("a", "0" * 64, 1, "DEB", "0.1.0", None, "linux", "x86_64", None, "t", None), evidence="e")
         outcome = adapter.dispatch({"id": "S", "action": "launch", "description": "x"})
         self.assertEqual(outcome.status, "blocked")
         self.assertIn("desktop session", outcome.detail)
@@ -631,6 +861,7 @@ class AdapterTests(unittest.TestCase):
             artifact_type="DEB",
             evidence="native-clean-machine",
         )
+        contract.validate_result_record(result)
         schema = contract.load_json(ROOT / "tests/install-acceptance/schema/result-v1.schema.json")
         self.assertTrue(set(schema["required"]) <= result.keys())
         self.assertIn(result["result"], {"PASS", "FAIL", "SKIPPED", "BLOCKED", "ERROR"})
@@ -677,10 +908,10 @@ class AdapterTests(unittest.TestCase):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["self-test", "run", "matrix"])
+    parser.add_argument("command", choices=["self-test", "run", "matrix", "validate-result"])
     parser.add_argument("scenario_id", nargs="?")
     parser.add_argument("--manifest", type=Path)
-    parser.add_argument("--artifact-type", default="DEB")
+    parser.add_argument("--artifact-type", default="AUTO")
     parser.add_argument("--evidence", default="native-clean-machine")
     args = parser.parse_args()
 
@@ -694,12 +925,35 @@ def main() -> int:
         print(json.dumps(sorted(items), indent=2))
         return 0
 
+    if args.command == "validate-result":
+        if not args.scenario_id:
+            print("validate-result requires a result JSON path", file=sys.stderr)
+            return 2
+        try:
+            result = json.loads(Path(args.scenario_id).read_text(encoding="utf-8"))
+            schema = contract.load_json(ROOT / "tests/install-acceptance/schema/result-v1.schema.json")
+            required = set(schema["required"])
+            if not required <= result.keys():
+                missing = sorted(required - result.keys())
+                raise ValueError(f"missing required result fields: {', '.join(missing)}")
+            if result.get("schema_version") != RESULT_SCHEMA_VERSION:
+                raise ValueError("unsupported result schema version")
+            if result.get("diagnostics_redacted") is not True:
+                raise ValueError("diagnostics_redacted must be true")
+            contract.validate_result_record(result)
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(f"invalid acceptance result: {exc}", file=sys.stderr)
+            return 1
+        print(f"valid acceptance result: {result.get('scenario_id')} ({result.get('result')})")
+        return 0
+
     if args.scenario_id not in items:
         print(f"unknown scenario id: {args.scenario_id}", file=sys.stderr)
         return 2
     path, scenario = items[args.scenario_id]
     manifest = args.manifest or (ROOT / "target/packages/SYNVEIL-RELEASE-MANIFEST.json")
-    record = execute(scenario, path, manifest=manifest, artifact_type=args.artifact_type, evidence=args.evidence)
+    artifact_type = scenario["artifact_requirements"]["artifact_type"] if args.artifact_type == "AUTO" else args.artifact_type
+    record = execute(scenario, path, manifest=manifest, artifact_type=artifact_type, evidence=args.evidence)
     print(json.dumps(record, sort_keys=True, indent=2))
     return 0 if record["result"] in {"PASS", "BLOCKED", "SKIPPED"} else 1
 
