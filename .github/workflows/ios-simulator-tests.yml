@@ -47,7 +47,7 @@ jobs:
           echo "=== Available Devices ==="
           xcrun simctl list devices available
 
-      - name: Select and Boot iOS Simulator
+      - name: Select iOS Simulator
         run: |
           python3 -c '
           import json, subprocess, sys
@@ -78,7 +78,9 @@ jobs:
               f.write(f"SIMULATOR_RUNTIME={selected_runtime}\n")
           ' "$GITHUB_ENV"
 
-          echo "Booting simulator $SIMULATOR_UDID..."
+      - name: Boot iOS Simulator
+        run: |
+          echo "Booting simulator $SIMULATOR_NAME ($SIMULATOR_UDID)..."
           xcrun simctl boot "$SIMULATOR_UDID" || true
           xcrun simctl bootstatus "$SIMULATOR_UDID" -b
 
