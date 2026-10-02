@@ -1,11 +1,10 @@
 # Verified Linux quick install
 
 Prompt017 provides one terminal entry point, `deploy/install/quick-install.sh`,
-for qualified Debian/Ubuntu x86_64 (`debian-x86_64`) and Fedora x86_64
-(`fedora-x86_64`). The profile is mandatory. The installer validates that the
-host agrees with it, but never detects or selects a profile, package family,
-distribution version, or architecture automatically. That resolver belongs to
-P018. There is no AppImage fallback.
+for exactly qualified Ubuntu 24.04 x86_64 (`debian-x86_64`) and Fedora 42
+x86_64 (`fedora-x86_64`). P018 automatically detects and qualifies the host;
+Debian and derivative distributions are not implicitly supported. There is no
+AppImage fallback. See [Linux platform detection](LINUX_PLATFORM_DETECTION.md).
 
 ## Authenticate the installer before running it
 
@@ -18,6 +17,7 @@ signature for the installer bundle. The safe command *template* is:
 
 ```text
 download deploy/install/quick-install.sh, scripts/linux_quick_install.py,
+         scripts/linux_platform_detection.py,
          scripts/release_channel.py, scripts/release_download.py and
          scripts/release_manifest.py to a reviewed directory
 verify the bundle against a digest/signature obtained from the trusted
@@ -36,17 +36,18 @@ below are reviewed local inputs, never values copied out of the remote channel:
 
 ```bash
 ./deploy/install/quick-install.sh \
-  --platform-profile=debian-x86_64 \
   --channel-url=https://RELEASE_ORIGIN/SYNVEIL-RELEASE-CHANNEL.json \
   --trusted-origin=https://RELEASE_ORIGIN \
   --trusted-channel-sha256=REVIEWED_LOWERCASE_SHA256 \
   --minimum-channel-generation=REVIEWED_MINIMUM_GENERATION
 ```
 
-Use `fedora-x86_64` only on qualified Fedora. `--yes` is an explicit automation
-consent option; without it, an interactive confirmation follows the printed
-plan. There is no insecure, skip-verification, force-lock, automatic-profile,
-or destructive-purge option.
+The optional `--platform-profile` is an assertion only and must agree with the
+automatically qualified host. `--detect-only` emits side-effect-free JSON and
+exits before release acquisition. `--yes` is an explicit automation consent
+option; without it, an interactive confirmation follows the printed plan.
+There is no insecure, skip-verification, force-lock, qualification-bypass, or
+destructive-purge option.
 
 The trust chain is:
 
@@ -117,7 +118,8 @@ user to inspection/reconciliation.
 
 ## Hosted acceptance boundary
 
-`linux-packages.yml` builds exact reproducible artifacts. Its Ubuntu job creates
+`linux-packages.yml` builds exact reproducible artifacts. Its pinned Ubuntu
+24.04 job creates
 a synthetic loopback TLS release, trusts only its generated test CA, runs the
 installer as the runner through APT, verifies a same-version no-op, launch
 assets/no autostart, and native removal/preservation. Its pinned `fedora:42`

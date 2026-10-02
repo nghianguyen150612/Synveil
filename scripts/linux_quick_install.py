@@ -7,7 +7,6 @@ import argparse
 import hashlib
 import json
 import os
-import platform
 import shutil
 import subprocess
 import sys
@@ -18,6 +17,7 @@ from urllib.parse import urljoin
 
 import release_channel
 import release_download
+import linux_platform_detection
 
 EXIT_USAGE = 2
 EXIT_UNSUPPORTED = 10
@@ -43,12 +43,11 @@ class Profile:
     name: str
     artifact_type: str
     manager: str
-    distro_ids: frozenset[str]
 
 
 PROFILES = {
-    "debian-x86_64": Profile("debian-x86_64", "deb", "APT", frozenset({"debian", "ubuntu"})),
-    "fedora-x86_64": Profile("fedora-x86_64", "rpm", "DNF", frozenset({"fedora"})),
+    "debian-x86_64": Profile("debian-x86_64", "deb", "APT"),
+    "fedora-x86_64": Profile("fedora-x86_64", "rpm", "DNF"),
 }
 REQUIRED_PATHS = (
     "/usr/bin/synveil-desktop",
@@ -59,28 +58,24 @@ REQUIRED_PATHS = (
 )
 
 
-def resolve_profile(name: str, *, machine: str | None = None, os_release: Path = Path("/etc/os-release")) -> Profile:
-    """Validate an explicit profile; never choose one from the host."""
-    if name not in PROFILES:
-        raise QuickInstallError("UnsupportedPlatform", "The explicit platform profile is unsupported.",
-                                "Choose one of: debian-x86_64, fedora-x86_64.", EXIT_UNSUPPORTED)
-    if (machine or platform.machine()).lower() not in {"x86_64", "amd64"}:
-        raise QuickInstallError("UnsupportedPlatform", "The requested profile requires x86_64.",
-                                "Use this installer only on a qualified x86_64 host.", EXIT_UNSUPPORTED)
-    ids: set[str] = set()
-    try:
-        for line in os_release.read_text(encoding="utf-8").splitlines():
-            key, separator, value = line.partition("=")
-            if separator and key in {"ID", "ID_LIKE"}:
-                ids.update(value.strip().strip('"').lower().split())
-    except OSError as error:
-        raise QuickInstallError("UnsupportedPlatform", "The host distribution could not be verified.",
-                                "Run on the distribution named by the explicit profile.", EXIT_UNSUPPORTED) from error
-    profile = PROFILES[name]
-    if not ids.intersection(profile.distro_ids):
-        raise QuickInstallError("UnsupportedPlatform", "The host does not match the explicit platform profile.",
-                                "Select the correct qualified profile; no fallback was attempted.", EXIT_UNSUPPORTED)
-    return profile
+def resolve_profile(asserted_name: str | None, detection: linux_platform_detection.DetectionResult) -> Profile:
+    """Resolve a qualified detection; an explicit profile is only an assertion."""
+    if detection.qualification_status != "QUALIFIED" or detection.profile not in PROFILES:
+        if detection.qualification_status == "UNSUPPORTED_ARCHITECTURE":
+            message = (f"Synveil detected architecture {detection.architecture}; "
+                       "the v0.2 Linux installer currently qualifies x86_64 only.")
+        elif detection.os_id and detection.version_id:
+            message = (f"Synveil detected {detection.os_id} {detection.version_id} on "
+                       f"{detection.architecture}, but this exact environment is not qualified.")
+        else:
+            message = "Synveil could not safely identify this Linux environment."
+        raise QuickInstallError(detection.qualification_status, message,
+                                f"Qualification stopped safely ({detection.reason_code}).", EXIT_UNSUPPORTED)
+    if asserted_name is not None and asserted_name != detection.profile:
+        raise QuickInstallError("UnsupportedPlatform", "The asserted platform profile does not match the qualified host.",
+                                "Remove the assertion or use the matching profile; it cannot override host truth.",
+                                EXIT_UNSUPPORTED)
+    return PROFILES[detection.profile]
 
 
 class NativeManager:
@@ -187,25 +182,38 @@ def acquire(args: argparse.Namespace, profile: Profile, staging: Path) -> dict:
 
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
-    result.add_argument("--platform-profile", required=True, choices=sorted(PROFILES))
-    result.add_argument("--channel-url", required=True)
-    result.add_argument("--trusted-channel-sha256", required=True)
-    result.add_argument("--trusted-origin", action="append", required=True)
-    result.add_argument("--minimum-channel-generation", type=int, required=True)
+    result.add_argument("--platform-profile", choices=sorted(PROFILES),
+                        help="optional assertion; never overrides detected host qualification")
+    result.add_argument("--detect-only", action="store_true",
+                        help="print deterministic host qualification JSON and perform no other action")
+    result.add_argument("--channel-url")
+    result.add_argument("--trusted-channel-sha256")
+    result.add_argument("--trusted-origin", action="append")
+    result.add_argument("--minimum-channel-generation", type=int)
     result.add_argument("--yes", action="store_true", help="consent noninteractively after the plan is displayed")
     return result
 
 
-def run(argv: list[str] | None = None, *, manager_factory=NativeManager) -> int:
-    args = parser().parse_args(argv)
+def run(argv: list[str] | None = None, *, manager_factory=NativeManager,
+        detector=linux_platform_detection.detect) -> int:
+    argument_parser = parser()
+    args = argument_parser.parse_args(argv)
     staging: Path | None = None
     mutation_started = False
     preserve_staging = False
     try:
+        detection = detector()
+        if args.detect_only:
+            print(detection.to_json())
+            return 0 if detection.qualification_status == "QUALIFIED" else EXIT_UNSUPPORTED
+        missing = [name for name in ("channel_url", "trusted_channel_sha256", "trusted_origin",
+                                      "minimum_channel_generation") if getattr(args, name) is None]
+        if missing:
+            argument_parser.error("installation requires trusted release arguments: " + ", ".join(missing))
+        profile = resolve_profile(args.platform_profile, detection)
         if os.geteuid() == 0:
             raise QuickInstallError("AuthorizationRequired", "The whole installer must not run as root.",
                                     "Run as your ordinary user; sudo is requested only for installation.", EXIT_AUTHORIZATION)
-        profile = resolve_profile(args.platform_profile)
         base = os.environ.get("XDG_RUNTIME_DIR")
         if base and Path(base).is_dir() and Path(base).stat().st_uid == os.getuid():
             staging = Path(tempfile.mkdtemp(prefix="synveil-install-", dir=base))

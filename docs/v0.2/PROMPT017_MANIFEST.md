@@ -8,7 +8,8 @@ The canonical shell frontend delegates to the standard-library Python
 orchestrator. The latter imports P011 `release_channel.py` and P006
 `release_download.py`; it does not create a weaker downloader. P017 adds no
 PostgreSQL/SQLite migration, sync protocol, server bootstrap, product tag,
-automatic P018 resolver, P019 launch UX, or P020 broad qualification.
+P019 launch UX, or P020 broad qualification. P018 now supplies the automatic
+qualified resolver before this unchanged acquisition and installation path.
 
 P015/P016 review found no new source regression in the inherited tree. The
 AppImage workflow retains Ubuntu 22.04, Qt 6.7.3, independent desktop/AppImage
@@ -31,7 +32,7 @@ manifest does not turn local/static evidence into a hosted claim.
 | 21 | unit and both hosted paths require `ALREADY_INSTALLED_VERIFIED` without second transaction |
 | 22–23 | typed busy/unknown handling never deletes locks or blindly replays |
 | 24 | existing native removal jobs verify admin, application, user and external durable state |
-| 25–26 | closed explicit enum and unit rejection; no automatic profile option exists |
+| 25–26 | closed profile enum; P018 auto-resolution or matching explicit assertion cannot bypass qualification |
 | 27–28 | existing reproducible DEB/RPM validators and native hosted jobs remain required |
 | 29 | unchanged P015/P016 AppImage workflow remains a required final-head gate |
 

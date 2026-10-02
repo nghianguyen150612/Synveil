@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "targets": [
+    {
+      "id": "ubuntu-24.04-x86_64",
+      "os_id": "ubuntu",
+      "version_id": "24.04",
+      "architecture": "x86_64",
+      "profile": "debian-x86_64",
+      "artifact_type": "deb",
+      "package_manager": "APT",
+      "required_commands": ["apt-get", "dpkg-query"]
+    },
+    {
+      "id": "fedora-42-x86_64",
+      "os_id": "fedora",
+      "version_id": "42",
+      "architecture": "x86_64",
+      "profile": "fedora-x86_64",
+      "artifact_type": "rpm",
+      "package_manager": "DNF",
+      "required_commands": ["dnf", "rpm"]
+    }
+  ]
+}
