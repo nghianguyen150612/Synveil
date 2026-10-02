@@ -3829,6 +3829,7 @@ mod tests {
         assert!(projected.is_char_boundary(projected.len()));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn invalid_auth_input_is_rejected_before_host_access() {
         let root = std::env::temp_dir().join(format!("sv96-auth-invalid-{}", uuid::Uuid::now_v7()));
