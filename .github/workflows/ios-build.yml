@@ -1,0 +1,56 @@
+name: iOS Build
+
+on:
+  push:
+    paths:
+      - "clients/ios/**"
+      - ".github/workflows/ios-build.yml"
+  pull_request:
+    paths:
+      - "clients/ios/**"
+      - ".github/workflows/ios-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Xcode Simulator Build
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Print environment diagnostics
+        run: |
+          echo "=== Host Environment ==="
+          sw_vers
+          echo ""
+          echo "=== Xcode Toolchain ==="
+          xcodebuild -version
+          echo ""
+          echo "=== Swift Compiler ==="
+          swift --version
+          echo ""
+          echo "=== iOS Simulator SDK ==="
+          xcrun --sdk iphonesimulator --show-sdk-version
+          echo ""
+          echo "=== Available Xcode Installations ==="
+          ls -ld /Applications/Xcode*.app 2>/dev/null || true
+
+      - name: Build Xcode Project
+        run: |
+          xcodebuild \
+            -project clients/ios/Synveil.xcodeproj \
+            -scheme Synveil \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            CODE_SIGNING_ALLOWED=NO \
+            -derivedDataPath "$RUNNER_TEMP/SynveilDerivedData" \
+            build
