@@ -318,8 +318,27 @@ wait_for_boot() {
 
 qmp_cmd() {
     local monitor="$1"; shift
-    printf '{"execute":"%s","arguments":%s}\n' "$1" "${2:-\{\}}" |
-        timeout 15 socat - "UNIX-CONNECT:${monitor}" >/dev/null 2>&1 || true
+    local execute="$1" arguments="${2:-{}}"
+    python3 - "$monitor" "$execute" "$arguments" <<'PY'
+import json
+import socket
+import sys
+
+monitor, execute, arguments = sys.argv[1:]
+request = {"execute": execute, "arguments": json.loads(arguments)}
+with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as channel:
+    channel.settimeout(15)
+    channel.connect(monitor)
+    greeting = channel.recv(65536)
+    if not greeting:
+        raise SystemExit("QMP did not provide its greeting")
+    channel.sendall(b'{"execute":"qmp_capabilities"}\r\n')
+    channel.recv(65536)
+    channel.sendall((json.dumps(request) + "\r\n").encode())
+    response = channel.recv(65536)
+    if b'"error"' in response:
+        raise SystemExit(response.decode(errors="replace"))
+PY
 }
 
 snapshot() {

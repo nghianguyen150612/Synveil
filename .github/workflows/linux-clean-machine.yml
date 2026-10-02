@@ -249,9 +249,35 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p acceptance-evidence
+          password="$(cat "$RUNNER_TEMP/vm/${{ matrix.image }}.password")"
+          setup_scenario="INSTALL-JOURNEY-2"
+          if [[ "${{ matrix.platform }}" == fedora ]]; then setup_scenario="INSTALL-JOURNEY-3"; fi
+          set +e
+          printf '%s\n' "$password" | scripts/linux-acceptance-vm.sh guest-exec \
+            "${{ matrix.image }}" run-scenario "$setup_scenario" AUTO native-clean-machine \
+            > "acceptance-evidence/setup-${setup_scenario}.json"
+          setup_status=$?
+          set -e
+          if [[ "$setup_status" -eq 0 ]] && grep -q '"result": "PASS"' "acceptance-evidence/setup-${setup_scenario}.json"; then
+            scripts/linux-acceptance-vm.sh snapshot "${{ matrix.image }}" installed
+          else
+            echo "package baseline setup did not PASS; repair/uninstall remain blocked truthfully"
+          fi
           for scenario in ${{ join(matrix.scenarios, ' ') }}; do
+            case "$scenario" in
+              INSTALL-JOURNEY-6|INSTALL-JOURNEY-7)
+                if [[ "$setup_status" -eq 0 ]] && grep -q '"result": "PASS"' "acceptance-evidence/setup-${setup_scenario}.json"; then
+                  scripts/linux-acceptance-vm.sh restore "${{ matrix.image }}" installed
+                  scripts/linux-acceptance-vm.sh guest-exec "${{ matrix.image }}" readiness
+                fi
+                ;;
+              *)
+                scripts/linux-acceptance-vm.sh restore "${{ matrix.image }}" clean
+                scripts/linux-acceptance-vm.sh guest-exec "${{ matrix.image }}" readiness
+                scripts/linux-acceptance-vm.sh stage "${{ matrix.image }}" "$GITHUB_WORKSPACE"
+                ;;
+            esac
             set +e
-            password="$(cat "$RUNNER_TEMP/vm/${{ matrix.image }}.password")"
             printf '%s\n' "$password" | scripts/linux-acceptance-vm.sh guest-exec \
               "${{ matrix.image }}" run-scenario "$scenario" AUTO native-clean-machine \
               > "acceptance-evidence/${scenario}.json"
