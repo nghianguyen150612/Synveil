@@ -130,6 +130,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    env:
+      BOOT_TIMEOUT_SECONDS: 900
+      EXEC_TIMEOUT_SECONDS: 300
     strategy:
       fail-fast: false
       matrix:
