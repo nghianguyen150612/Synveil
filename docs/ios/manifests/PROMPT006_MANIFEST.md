@@ -93,6 +93,12 @@ clients/ios/
 - **File Provider Location for P053**: `clients/ios/Extensions/FileProvider/`.
 - **PhotoKit Location for P056**: `clients/ios/Extensions/PhotoKit/`.
 
+## Unrelated CI Check Failure Analysis
+- **Job**: `Build, reproduce, inspect, and smoke AppImage`
+- **Failure**: `[synveil-artifact] ERROR: private or temporary build path found in synveil-desktop` (`matched path marker: /home/`).
+- **Classification**: `UNRELATED_SUBSYSTEM_FAILURE` / `PRE_EXISTING_BASELINE_FAILURE`
+- **Analysis**: Pre-existing failure in Linux desktop AppImage artifact string inspection pipeline (`deploy/packages/common/reproducible.sh`). Prompt006 is strictly iOS repository structure and architectural documentation under `clients/ios/`. Zero Rust, CXX-Qt, or desktop packaging code was touched.
+
 ## Limitations & Deferrals
 - This prompt establishes repository structure and documentation only.
 - Xcode project bootstrap, Swift source compilation, FFI bridging, and CI workflow creation are deferred to downstream prompts P007–P016.
