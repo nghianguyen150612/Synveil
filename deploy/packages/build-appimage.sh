@@ -83,6 +83,10 @@ build_one() {
   QML_SOURCES_PATHS="$REPO_ROOT/crates/desktop/qml" "$LINUXDEPLOY" --appdir "$appdir" \
     --executable "$appdir/usr/bin/synveil-desktop" --executable "$appdir/usr/bin/synveil-client" --executable "$appdir/usr/bin/synveil-appimage-integration" \
     --desktop-file "$appdir/synveil.desktop" --icon-file "$appdir/synveil.svg" --plugin qt
+  # linuxdeploy may regenerate AppRun while deploying the desktop entry. The
+  # reviewed entry point is part of the product contract, so restore it after
+  # deployment and validate the final AppDir before filesystem creation.
+  install -m0755 "$SCRIPT_DIR/appimage/AppRun" "$appdir/AppRun"
   # Normalize all payload timestamps before filesystem creation.
   find "$appdir" -print0 | xargs -0 touch --no-dereference --date="@${SOURCE_DATE_EPOCH}"
   (cd "$WORK/$label" && OUTPUT="$destination" "$LINUXDEPLOY" --appdir "$appdir" --output appimage)
