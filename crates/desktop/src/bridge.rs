@@ -15,6 +15,8 @@ use synveil_client::{
     DesktopControllerConflictAction, DesktopControllerConflictResolutionRequest, LibraryId,
     ServerProfileId,
 };
+#[cfg(target_os = "linux")]
+use synveil_install_engine::{AppImageIntegration, AppImageIntegrationStatus};
 use tokio::runtime::{Builder, Handle, Runtime};
 use zeroize::Zeroizing;
 
@@ -59,6 +61,8 @@ pub mod ffi {
         fn native_tray_set_tooltip(tray: Pin<&mut NativeTray>, tooltip: &QString);
         fn native_desktop_settings_load_close_to_tray() -> bool;
         fn native_desktop_settings_save_close_to_tray(enabled: bool) -> bool;
+        fn native_desktop_settings_load_startup_choice() -> i32;
+        fn native_desktop_settings_save_startup_choice(enabled: bool) -> bool;
     }
 
     unsafe extern "RustQt" {
@@ -129,6 +133,9 @@ pub mod ffi {
         #[qproperty(QString, background_startup_state)]
         #[qproperty(bool, background_startup_busy)]
         #[qproperty(QString, background_startup_feedback)]
+        #[qproperty(bool, startup_choice_required)]
+        #[qproperty(bool, startup_choice_selected)]
+        #[qproperty(bool, startup_choice_available)]
         #[qproperty(bool, close_to_tray)]
         #[qproperty(QString, close_to_tray_feedback)]
         #[qproperty(bool, auth_in_flight)]
@@ -200,6 +207,10 @@ pub mod ffi {
         #[cxx_name = "setBackgroundStartup"]
         #[qinvokable]
         fn set_background_startup(self: Pin<&mut Self>, enabled: bool);
+
+        #[cxx_name = "confirmStartupChoice"]
+        #[qinvokable]
+        fn confirm_startup_choice(self: Pin<&mut Self>, enabled: bool);
 
         #[cxx_name = "setCloseToTray"]
         #[qinvokable]
@@ -330,6 +341,9 @@ pub struct DesktopUiBridgeRust {
     pub(crate) background_startup_state: QString,
     pub(crate) background_startup_busy: bool,
     pub(crate) background_startup_feedback: QString,
+    pub(crate) startup_choice_required: bool,
+    pub(crate) startup_choice_selected: bool,
+    pub(crate) startup_choice_available: bool,
     pub(crate) close_to_tray: bool,
     pub(crate) close_to_tray_feedback: QString,
     pub(crate) auth_in_flight: bool,
@@ -392,6 +406,7 @@ impl Default for DesktopUiBridgeRust {
             .build()
             .ok();
 
+        let startup_choice = ffi::native_desktop_settings_load_startup_choice();
         let mut presented = UiSnapshot::default();
         if !profile_ready {
             presented.connection_code = "profile_unavailable";
@@ -475,6 +490,9 @@ impl Default for DesktopUiBridgeRust {
             background_startup_state: QString::from("Unknown"),
             background_startup_busy: false,
             background_startup_feedback: QString::default(),
+            startup_choice_required: startup_choice < 0,
+            startup_choice_selected: startup_choice != 0,
+            startup_choice_available: true,
             close_to_tray: true,
             close_to_tray_feedback: QString::default(),
             auth_in_flight: false,
@@ -601,7 +619,7 @@ impl ffi::DesktopUiBridge {
                     .as_mut()
                     .set_launch_label(QString::from(launch_label));
             });
-            let startup = launch_manager.autostart_status().await;
+            let startup = startup_status(&launch_manager).await;
             let (startup_state, startup_feedback) = autostart_presentation(startup);
             let _ = dispatcher.qt_thread.queue(move |mut object| {
                 object
@@ -722,6 +740,10 @@ impl ffi::DesktopUiBridge {
     }
 
     fn set_background_startup(self: Pin<&mut Self>, enabled: bool) {
+        request_background_startup(self, enabled);
+    }
+
+    fn confirm_startup_choice(self: Pin<&mut Self>, enabled: bool) {
         request_background_startup(self, enabled);
     }
 
@@ -1812,13 +1834,17 @@ fn request_background_startup(mut object: Pin<&mut ffi::DesktopUiBridge>, enable
         .set_background_startup_feedback(QString::from("Updating startup preference…"));
     let qt_thread = object.as_ref().get_ref().qt_thread();
     runtime.spawn(async move {
-        let (state, feedback) = loop {
-            let operation = if target {
-                manager.enable_autostart().await
+        let (state, feedback, verified) = loop {
+            let operation = apply_startup_choice(&manager, target).await;
+            let authoritative = startup_status(&manager).await;
+            let verified = if target {
+                matches!(&authoritative, Ok(AutostartState::Enabled))
             } else {
-                manager.disable_autostart().await
+                // Declining startup is safe even when no registration backend
+                // exists: the only state that disproves the choice is Enabled.
+                !matches!(&authoritative, Ok(AutostartState::Enabled))
             };
-            let presentation = match manager.autostart_status().await {
+            let presentation = match authoritative {
                 Ok(state) => autostart_presentation(Ok(state)),
                 Err(_) => autostart_presentation(operation),
             };
@@ -1828,7 +1854,7 @@ fn request_background_startup(mut object: Pin<&mut ffi::DesktopUiBridge>, enable
                 generation = latest_generation;
                 continue;
             }
-            break presentation;
+            break (presentation.0, presentation.1, verified);
         };
         gate.release();
         let _ = qt_thread.queue(move |mut object| {
@@ -1843,8 +1869,94 @@ fn request_background_startup(mut object: Pin<&mut ffi::DesktopUiBridge>, enable
             object
                 .as_mut()
                 .set_background_startup_feedback(QString::from(feedback));
+            if verified && ffi::native_desktop_settings_save_startup_choice(target) {
+                object.as_mut().set_startup_choice_required(false);
+                object.as_mut().set_startup_choice_selected(target);
+            }
         });
     });
+}
+
+async fn startup_status(
+    manager: &BackgroundClientManager,
+) -> Result<AutostartState, BackgroundLaunchError> {
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("APPIMAGE").is_some() {
+        return tokio::task::spawn_blocking(appimage_startup_status)
+            .await
+            .unwrap_or(Err(BackgroundLaunchError::Failed));
+    }
+    manager.autostart_status().await
+}
+
+async fn apply_startup_choice(
+    manager: &BackgroundClientManager,
+    enabled: bool,
+) -> Result<AutostartState, BackgroundLaunchError> {
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("APPIMAGE").is_some() {
+        return tokio::task::spawn_blocking(move || appimage_set_startup(enabled))
+            .await
+            .unwrap_or(Err(BackgroundLaunchError::Failed));
+    }
+    if enabled {
+        manager.enable_autostart().await
+    } else {
+        manager.disable_autostart().await
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn appimage_startup_status() -> Result<AutostartState, BackgroundLaunchError> {
+    let integration = AppImageIntegration::from_environment()
+        .map_err(|_| BackgroundLaunchError::SupervisorUnavailable)?;
+    match integration
+        .inspect()
+        .map_err(|_| BackgroundLaunchError::Failed)?
+    {
+        AppImageIntegrationStatus::NotIntegrated => Ok(AutostartState::Disabled),
+        AppImageIntegrationStatus::Healthy => integration
+            .startup_status()
+            .map(|enabled| {
+                if enabled {
+                    AutostartState::Enabled
+                } else {
+                    AutostartState::Disabled
+                }
+            })
+            .map_err(|_| BackgroundLaunchError::SupervisorUnavailable),
+        _ => Err(BackgroundLaunchError::LaunchDenied),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn appimage_set_startup(enabled: bool) -> Result<AutostartState, BackgroundLaunchError> {
+    let integration = AppImageIntegration::from_environment()
+        .map_err(|_| BackgroundLaunchError::SupervisorUnavailable)?;
+    let status = integration
+        .inspect()
+        .map_err(|_| BackgroundLaunchError::Failed)?;
+    if !enabled && status == AppImageIntegrationStatus::NotIntegrated {
+        return Ok(AutostartState::Disabled);
+    }
+    if enabled && status == AppImageIntegrationStatus::NotIntegrated {
+        let artifact = std::env::var_os("APPIMAGE")
+            .map(std::path::PathBuf::from)
+            .ok_or(BackgroundLaunchError::LaunchDenied)?;
+        let icon = std::env::var_os("APPDIR")
+            .map(std::path::PathBuf::from)
+            .map(|path| path.join("usr/share/icons/hicolor/scalable/apps/synveil.svg"))
+            .ok_or(BackgroundLaunchError::LaunchDenied)?;
+        integration
+            .install(&artifact, &icon)
+            .map_err(|_| BackgroundLaunchError::LaunchDenied)?;
+    } else if status != AppImageIntegrationStatus::Healthy {
+        return Err(BackgroundLaunchError::LaunchDenied);
+    }
+    integration
+        .set_startup(enabled)
+        .map_err(|_| BackgroundLaunchError::SupervisorUnavailable)?;
+    appimage_startup_status()
 }
 
 fn request_profile_configuration(

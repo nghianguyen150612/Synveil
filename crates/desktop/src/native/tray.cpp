@@ -132,3 +132,27 @@ bool native_desktop_settings_save_close_to_tray(bool enabled) {
     settings.sync();
     return settings.status() == QSettings::NoError;
 }
+
+int native_desktop_settings_load_startup_choice() {
+    QSettings settings;
+    if (settings.value(QStringLiteral("startupChoiceVersion"), 0).toInt() != 1) {
+        return -1;
+    }
+    const auto choice = settings.value(QStringLiteral("startupChoice")).toString();
+    if (choice == QStringLiteral("enabled")) {
+        return 1;
+    }
+    if (choice == QStringLiteral("disabled")) {
+        return 0;
+    }
+    return -1;
+}
+
+bool native_desktop_settings_save_startup_choice(bool enabled) {
+    QSettings settings;
+    settings.setValue(QStringLiteral("startupChoiceVersion"), 1);
+    settings.setValue(QStringLiteral("startupChoice"),
+                      enabled ? QStringLiteral("enabled") : QStringLiteral("disabled"));
+    settings.sync();
+    return settings.status() == QSettings::NoError;
+}

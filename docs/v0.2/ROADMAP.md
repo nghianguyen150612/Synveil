@@ -191,7 +191,10 @@ versions, derivatives and architectures fail before network access or mutation.
 ### P019 — Linux First Launch Integration
 
 Deliver Install → Open Synveil without requiring ordinary users to enter
-manual systemd commands. Preserve explicit autostart choices.
+manual systemd commands. Preserve explicit autostart choices. Implemented by the
+focused [first-launch integration](LINUX_FIRST_LAUNCH_INTEGRATION.md), with the
+source evidence map in the [Prompt019 manifest](PROMPT019_MANIFEST.md); final-head
+hosted acceptance remains required.
 
 ### P020 — Linux Clean-Machine Acceptance
 
