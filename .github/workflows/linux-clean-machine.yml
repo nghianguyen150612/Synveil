@@ -103,7 +103,16 @@ jobs:
       - name: Build DEB and RPM
         run: ./deploy/packages/build.sh
       - name: Build AppImage
-        run: ./deploy/packages/build-appimage.sh --build-only
+        run: |
+          set -euo pipefail
+          mv target/packages/SYNVEIL-RELEASE-MANIFEST.json target/packages/SYNVEIL-NATIVE-RELEASE-MANIFEST.json
+          ./deploy/packages/build-appimage.sh --build-only
+          mv target/packages/SYNVEIL-RELEASE-MANIFEST.json target/packages/SYNVEIL-APPIMAGE-RELEASE-MANIFEST.json
+          python3 scripts/release_manifest.py merge \
+            --output target/packages/SYNVEIL-RELEASE-MANIFEST.json \
+            target/packages/SYNVEIL-NATIVE-RELEASE-MANIFEST.json \
+            target/packages/SYNVEIL-APPIMAGE-RELEASE-MANIFEST.json
+          rm -f target/packages/SYNVEIL-NATIVE-RELEASE-MANIFEST.json target/packages/SYNVEIL-APPIMAGE-RELEASE-MANIFEST.json
       - name: Record exact artifact identity
         run: |
           sha256sum target/packages/* >> target/packages/ACCEPTANCE-ARTIFACT-SHA256.txt
