@@ -66,13 +66,16 @@ class QuickInstallTests(unittest.TestCase):
     def execute(self, *, evidence=None):
         release = self.evidence if evidence is None else evidence
         output, error = io.StringIO(), io.StringIO()
-        with mock.patch.object(quick, "resolve_profile", return_value=quick.PROFILES["debian-x86_64"]), \
-             mock.patch.object(quick, "acquire", return_value=release), \
+        detected = quick.linux_platform_detection.DetectionResult(
+            os_id="ubuntu", version_id="24.04", architecture="x86_64", qualification_status="QUALIFIED",
+            target_id="ubuntu-24.04-x86_64", profile="debian-x86_64", artifact_type="deb",
+            package_manager="APT", reason_code="qualified_exact_policy_match")
+        with mock.patch.object(quick, "acquire", return_value=release), \
              mock.patch.object(quick.tempfile, "mkdtemp", return_value=str(self.root / "stage")), \
              mock.patch.object(quick.os, "chmod"), mock.patch.object(quick.os, "geteuid", return_value=1000), \
              mock.patch.object(quick.shutil, "rmtree"), contextlib.redirect_stdout(output), contextlib.redirect_stderr(error):
             Path(self.root / "stage").mkdir(exist_ok=True)
-            status = quick.run(self.argv, manager_factory=FakeManager)
+            status = quick.run(self.argv, manager_factory=FakeManager, detector=lambda: detected)
         return status, output.getvalue(), error.getvalue()
 
     def test_exact_verified_package_precedes_apt(self):
@@ -109,22 +112,47 @@ class QuickInstallTests(unittest.TestCase):
         self.assertEqual(quick.EXIT_VERIFICATION, status)
         self.assertIn("VerificationFailed", error)
 
-    def test_unknown_profile_rejected_without_detection(self):
+    def test_explicit_profile_cannot_override_detection(self):
+        detected = quick.linux_platform_detection.DetectionResult(
+            os_id="fedora", version_id="42", architecture="x86_64", qualification_status="QUALIFIED",
+            target_id="fedora-42-x86_64", profile="fedora-x86_64", artifact_type="rpm",
+            package_manager="DNF", reason_code="qualified_exact_policy_match")
         with self.assertRaises(quick.QuickInstallError) as caught:
-            quick.resolve_profile("automatic")
+            quick.resolve_profile("debian-x86_64", detected)
         self.assertEqual("UnsupportedPlatform", caught.exception.category)
 
-    def test_profile_verifies_distro(self):
-        os_release = self.root / "os-release"
-        os_release.write_text('ID="fedora"\n', encoding="utf-8")
-        with self.assertRaises(quick.QuickInstallError):
-            quick.resolve_profile("debian-x86_64", machine="x86_64", os_release=os_release)
-        self.assertEqual("fedora-x86_64", quick.resolve_profile("fedora-x86_64", machine="x86_64", os_release=os_release).name)
+    def test_unsupported_detection_precedes_acquisition(self):
+        detected = quick.linux_platform_detection.DetectionResult(
+            os_id="linuxmint", version_id="22", architecture="x86_64",
+            qualification_status="DETECTED_UNSUPPORTED", reason_code="distribution_not_qualified")
+        with mock.patch.object(quick.os, "geteuid", return_value=1000), \
+             mock.patch.object(quick, "acquire") as acquire, contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(quick.EXIT_UNSUPPORTED,
+                             quick.run(self.argv, manager_factory=FakeManager, detector=lambda: detected))
+        acquire.assert_not_called()
+
+    def test_detect_only_has_no_acquisition_or_mutation(self):
+        detected = quick.linux_platform_detection.DetectionResult(
+            os_id="ubuntu", version_id="24.04", architecture="x86_64", qualification_status="QUALIFIED",
+            target_id="ubuntu-24.04-x86_64", profile="debian-x86_64", artifact_type="deb",
+            package_manager="APT", reason_code="qualified_exact_policy_match")
+        output = io.StringIO()
+        with mock.patch.object(quick, "acquire") as acquire, contextlib.redirect_stdout(output):
+            self.assertEqual(0, quick.run(["--detect-only"], manager_factory=FakeManager,
+                                          detector=lambda: detected))
+        acquire.assert_not_called()
+        self.assertEqual([], FakeManager.install_calls)
+        self.assertEqual("QUALIFIED", json.loads(output.getvalue())["qualification_status"])
 
     def test_root_whole_script_rejected_before_acquisition(self):
         with mock.patch.object(quick.os, "geteuid", return_value=0), mock.patch.dict(os.environ, {}, clear=True), \
              mock.patch.object(quick, "acquire") as acquire, contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(quick.EXIT_AUTHORIZATION, quick.run(self.argv, manager_factory=FakeManager))
+            detected = quick.linux_platform_detection.DetectionResult(
+                os_id="ubuntu", version_id="24.04", architecture="x86_64", qualification_status="QUALIFIED",
+                target_id="ubuntu-24.04-x86_64", profile="debian-x86_64", artifact_type="deb",
+                package_manager="APT", reason_code="qualified_exact_policy_match")
+            self.assertEqual(quick.EXIT_AUTHORIZATION,
+                             quick.run(self.argv, manager_factory=FakeManager, detector=lambda: detected))
         acquire.assert_not_called()
 
     def test_plan_does_not_handle_passwords(self):
