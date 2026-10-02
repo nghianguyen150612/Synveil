@@ -4,16 +4,22 @@
 `clients/ios/` is the canonical home of the native Synveil iOS client (`v0.1`). It establishes a clean, production-grade Swift application layout adhering strictly to ADR-058 (`docs/adr/ADR-058-ios-v0.1-client-architecture.md`), `IOS_ARCHITECTURE.md`, and `IOS_VALIDATION_CI_ARCHITECTURE.md`.
 
 ## 2. Current Project Status
-- **Phase**: Repository Foundation (Prompt006).
-- **Status**: Directory structure and architectural boundary documentation established.
-- **Xcode Project Bootstrap**: Reserved for Prompt007 (`clients/ios/Synveil.xcodeproj`). Zero `.xcodeproj` or Swift source files exist in Prompt006.
+- **Phase**: Xcode Project Bootstrap (Prompt007).
+- **Status**: Minimal native iOS Xcode project (`clients/ios/Synveil.xcodeproj`) and shared scheme established.
+- **Application Target**: `Synveil` (Swift + SwiftUI, bundle identifier `com.synveil.ios`, deployment target iOS 17.0).
+- **Signing Policy**: Configured for unsigned Simulator builds (`CODE_SIGNING_ALLOWED=NO`, zero committed team IDs or provisioning profiles).
 
 ## 3. Canonical Directory Tree
 
 ```text
 clients/ios/
 ├── README.md                          # Client layout & architecture specification
+├── Synveil.xcodeproj/                 # Native Xcode project & shared scheme
+│   ├── project.pbxproj
+│   └── xcshareddata/xcschemes/Synveil.xcscheme
 ├── App/                               # Application entry point & composition root
+│   ├── SynveilApp.swift               # @main App entry point
+│   ├── BootstrapView.swift            # Minimal bootstrap root view
 │   └── README.md
 ├── Features/                          # SwiftUI Presentation Layer
 │   └── README.md                      # Onboarding, Auth, FileBrowser, Transfers, Settings
@@ -32,6 +38,7 @@ clients/ios/
 ├── Extensions/                        # Deferred Apple Platform Extensions
 │   └── README.md                      # FileProvider (P053) & PhotoKit (P056) reservations
 ├── Resources/                         # Application Resources & Asset Catalogs
+│   ├── Assets.xcassets/               # AppIcon and AccentColor asset catalog
 │   └── README.md                      # Asset catalogs, String catalogs, Info.plist
 ├── Tests/                             # Test Suite Organization
 │   └── README.md                      # Unit, Integration, Architecture tests & Mocks
@@ -39,7 +46,21 @@ clients/ios/
     └── README.md
 ```
 
-## 4. Directory Ownership & Responsibilities
+## 4. Command-Line Build Contract
+
+To build the native iOS project on macOS with Xcode tooling:
+
+```bash
+xcodebuild \
+  -project clients/ios/Synveil.xcodeproj \
+  -scheme Synveil \
+  -configuration Debug \
+  -sdk iphonesimulator \
+  CODE_SIGNING_ALLOWED=NO \
+  build
+```
+
+## 5. Directory Ownership & Responsibilities
 
 | Directory | Future Ownership & Responsibilities |
 |---|---|
@@ -53,7 +74,7 @@ clients/ios/
 | `Tests/` | Unit test suites, service integration tests with in-memory SQLite/URLProtocol mocks, architecture boundary tests, test doubles (`Mocks/`). |
 | `Support/` | Build support scripts, repository static checks, and reference configurations. |
 
-## 5. Allowed Dependency Direction
+## 6. Allowed Dependency Direction
 
 The architecture enforces strict unidirectional dependency flow down to pure domain entities and abstract service interfaces:
 
@@ -79,7 +100,7 @@ The architecture enforces strict unidirectional dependency flow down to pure dom
 │                   Infrastructure                    │
 │   Network │ Persistence │ Security │ Files │        │
 │   Transfers │ RustBridge                            │
-└─────────────────────────────────────────────────────┘
+└──────────────────────────┴──────────────────────────┘
 ```
 
 More explicitly:
@@ -88,19 +109,11 @@ More explicitly:
 - `Infrastructure` implementations depend on `Domain` protocols and entities.
 - `Domain` has **zero external dependencies** (depends only on Swift `Foundation`).
 
-## 6. Prohibited Dependencies
+## 7. Prohibited Dependencies
 - **SwiftUI / UIKit in Domain or Infrastructure**: Domain and Infrastructure layers MUST NOT import `SwiftUI` or `UIKit`.
 - **System Framework Leaks in Domain**: Domain MUST NOT import `URLSession`, `Security.framework` (Keychain), or `SQLite`/`GRDB`.
 - **Direct Infrastructure Calls in UI**: SwiftUI views MUST NOT invoke raw `URLSession` network calls, raw Keychain operations, raw SQLite queries, or C-FFI Rust functions.
 - **Circular Layer Dependencies**: Layers must never depend on higher layers.
-
-## 7. Reserved Locations for Future Increments
-- **Xcode Project Location (P007)**: `clients/ios/Synveil.xcodeproj` (inside `clients/ios/`, not at repository root).
-- **Test Organization (P007–P009)**: `clients/ios/Tests/` (contains `UnitTests/`, `IntegrationTests/`, `ArchitectureTests/`, `Mocks/`).
-- **Application Resources**: `clients/ios/Resources/` (`Assets.xcassets`, `Localizable.xcstrings`).
-- **Rust Bridge Boundary (P013–P016)**: `clients/ios/Infrastructure/RustBridge/` (Swift wrapper around C-static library `synveil_ios_core`).
-- **File Provider Extension (P053–P055)**: `clients/ios/Extensions/FileProvider/` (separate Apple OS extension process sharing App Group `group.com.synveil.ios`).
-- **PhotoKit Extension (P056–P058)**: `clients/ios/Extensions/PhotoKit/`.
 
 ## 8. Build, Secret, and Artifact Policies
 
@@ -132,24 +145,3 @@ The following security artifacts are strictly forbidden from source control:
 4. **INVARIANT-04**: Domain code does not know about concrete UI, network, Keychain, or SQLite technologies.
 5. **INVARIANT-05**: Transfer success is reported ONLY upon authoritative server 200/201 acknowledgment or local verification.
 6. **INVARIANT-06**: Client code MUST NOT attempt automated conflict resolution or issue DeviceBearer conflict resolution API calls (`ADR-032`).
-
-## 10. Source Ownership Examples
-
-| Task / Entity | Canonical Destination |
-|---|---|
-| Server profile domain entity | `Domain/Entities/ServerProfile.swift` |
-| Session startup orchestration | `Application/Session/SessionController.swift` |
-| Server profile onboarding screen | `Features/Onboarding/ProfileOnboardingView.swift` |
-| URLSession HTTP transport | `Infrastructure/Network/URLSessionHTTPTransport.swift` |
-| Keychain credential vault | `Infrastructure/Security/KeychainVault.swift` |
-| Durable SQLite cache store | `Infrastructure/Persistence/GRDBCacheStore.swift` |
-| Resumable transfer engine | `Infrastructure/Transfers/TransferEngine.swift` |
-| Swift Rust Bridge wrapper | `Infrastructure/RustBridge/SwiftRustBridgeAdapter.swift` |
-| Mock HTTP transport test double | `Tests/Mocks/MockHTTPTransport.swift` |
-
-## 11. Repository Convention Audit
-
-The `clients/ios/` layout is designed specifically for Swift and Xcode maintainability while aligning with Synveil monorepo conventions:
-- **vs. `clients/android/`**: Android uses a single Gradle module (`app/src/main/java/com/synveil/android/`) with Jetpack Compose. iOS uses standard Swift architectural layering (`App/`, `Features/`, `Application/`, `Domain/`, `Infrastructure/`) tailored for SwiftUI and Xcode targets without copying Android-specific Kotlin DSL or Room structures.
-- **vs. Shared Rust Crates (`crates/`)**: Shared Rust crates (`synveil-core`, `synveil-client-sync`) are compiled into a minimal C-static library (`synveil_ios_core`). iOS consumes them via `Infrastructure/RustBridge/` without embedding Tokio or SQLx runtimes into Swift.
-- **vs. Desktop / Web Shells**: Desktop Qt and Web React trees use desktop IPC sockets and web bundlers. iOS avoids process IPC and desktop daemons, operating fully within the mobile sandbox using Apple system APIs.
