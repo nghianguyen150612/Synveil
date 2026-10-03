@@ -4,13 +4,39 @@
 `clients/ios/` is the canonical home of the native Synveil iOS client (`v0.1`). It establishes a clean, production-grade Swift application layout adhering strictly to ADR-058 (`docs/adr/ADR-058-ios-v0.1-client-architecture.md`), `IOS_ARCHITECTURE.md`, and `IOS_VALIDATION_CI_ARCHITECTURE.md`.
 
 ## 2. Current Project Status
-- **Phase**: Swift Formatting & Static Validation Gate (Prompt010).
+- **Phase**: Configuration, Server URL & Safe Defaults (Prompt011).
 - **Status**: Dedicated GitHub Actions static validation gate (`.github/workflows/ios-static-validation.yml`), build gate (`.github/workflows/ios-build.yml`), and Simulator test gate (`.github/workflows/ios-simulator-tests.yml`) established.
 - **Application Target**: `Synveil` (Swift + SwiftUI, bundle identifier `com.synveil.ios`, deployment target iOS 17.0).
 - **Test Target**: `SynveilTests` (XCTest Unit Testing Bundle, bundle identifier `com.synveil.ios.tests`).
 - **Signing Policy**: Configured for unsigned Simulator builds (`CODE_SIGNING_ALLOWED=NO`, zero committed team IDs or provisioning profiles).
 
-## 3. Canonical Directory Tree
+## 3. Configuration & Server Endpoint Architecture (Prompt011)
+
+### 3.1 Non-Secret Configuration Ownership
+Configuration answers what non-secret parameters the app starts with, distinct from persisted user server profiles or authenticated sessions.
+- **`ServerEndpoint`** (`Domain/Configuration/ServerEndpoint.swift`): Pure immutable value object representing normalized server base endpoints.
+- **`AppEnvironment`** (`Application/Configuration/AppEnvironment.swift`): Application execution environment (`.production`, `.development`, `.testing`).
+- **`AppConfiguration`** (`Application/Configuration/AppConfiguration.swift`): App composition configuration holding `environment` and optional `serverEndpoint`.
+
+### 3.2 Endpoint Validation & Normalization Rules
+`ServerEndpoint(validating: rawString)` enforces strict safety rules using `URLComponents`:
+- **Allowed Schemes**: `https` (preferred/production) and `http` (local development/home-LAN self-hosting).
+- **Rejected Inputs**: Empty/whitespace inputs, missing schemes, unsupported schemes (`ftp`, `file`), missing hosts, userinfo credentials (`user:pass@`), query parameters (`?key=val`), and fragments (`#anchor`).
+- **Deterministic Normalization**: Trims surrounding whitespace, lowercases scheme/host, normalizes trailing slashes (preserves root `/` or subpath without trailing slash).
+
+### 3.3 Safe Production Defaults
+- In production builds, `AppConfiguration.serverEndpoint` defaults strictly to `nil` (unconfigured server).
+- `localhost` and `127.0.0.1` are **never** used as production defaults.
+- Developers can pass non-secret process environment variables (`SYNVEIL_SERVER_URL` and `SYNVEIL_APP_ENV`) during local testing without mutating global state.
+
+### 3.4 Secret Boundary Policy
+- Configuration is strictly **non-secret**.
+- No bearer tokens (`svd1_`), enrollment tokens (`sve1_`), passwords, private keys, or personal server URLs are permitted in configuration, source code, or `.xcconfig` files.
+
+### 3.5 Test Configuration Injection
+Tests construct explicit `AppConfiguration` value instances or inject mock environment dictionaries into `AppConfiguration.load(processEnvironment:)` without mutating process-wide state.
+
+## 4. Canonical Directory Tree
 
 ```text
 clients/ios/
@@ -26,8 +52,10 @@ clients/ios/
 ├── Features/                          # SwiftUI Presentation Layer
 │   └── README.md                      # Onboarding, Auth, FileBrowser, Transfers, Settings
 ├── Application/                       # Application Orchestration & Use-Cases
+│   ├── Configuration/                 # AppEnvironment, AppConfiguration
 │   └── README.md                      # AppOrchestrator, SessionController, SyncCoordinator
 ├── Domain/                            # Pure Swift Domain Entities & Service Protocols
+│   ├── Configuration/                 # ServerEndpoint, EndpointValidationError
 │   └── README.md                      # ServerProfile, LogicalNode, TransferJob, DomainError
 ├── Infrastructure/                    # Concrete Platform & System Implementations
 │   ├── README.md
@@ -51,9 +79,9 @@ clients/ios/
     └── README.md
 ```
 
-## 4. Command-Line Build & Continuous Integration Contract
+## 5. Command-Line Build & Continuous Integration Contract
 
-### 4.1 iOS Static Validation Gate (`.github/workflows/ios-static-validation.yml`)
+### 5.1 iOS Static Validation Gate (`.github/workflows/ios-static-validation.yml`)
 Enforces formatting consistency and repository/architectural invariants:
 
 ```bash
@@ -70,7 +98,7 @@ python3 -m unittest discover -s clients/ios/Support/tests
 python3 clients/ios/Support/validate_ios_sources.py
 ```
 
-### 4.2 iOS Build Gate (`.github/workflows/ios-build.yml`)
+### 5.2 iOS Build Gate (`.github/workflows/ios-build.yml`)
 To build the native iOS project compilation target on macOS with Xcode tooling locally or in CI:
 
 ```bash
@@ -84,7 +112,7 @@ xcodebuild \
   build
 ```
 
-### 4.3 iOS Simulator Test Gate (`.github/workflows/ios-simulator-tests.yml`)
+### 5.3 iOS Simulator Test Gate (`.github/workflows/ios-simulator-tests.yml`)
 To execute XCTest suites inside a booted iOS Simulator destination locally or in CI:
 
 ```bash
@@ -99,7 +127,7 @@ xcodebuild \
   test
 ```
 
-## 5. Directory Ownership & Responsibilities
+## 6. Directory Ownership & Responsibilities
 
 | Directory | Future Ownership & Responsibilities |
 |---|---|
@@ -113,7 +141,7 @@ xcodebuild \
 | `Tests/` | Unit test suites, service integration tests with in-memory SQLite/URLProtocol mocks, architecture boundary tests, test doubles (`Mocks/`). |
 | `Support/` | Build support scripts, static source validator (`validate_ios_sources.py`), and reference configurations. |
 
-## 6. Allowed Dependency Direction
+## 7. Allowed Dependency Direction
 
 The architecture enforces strict unidirectional dependency flow down to pure domain entities and abstract service interfaces:
 
@@ -148,15 +176,15 @@ More explicitly:
 - `Infrastructure` implementations depend on `Domain` protocols and entities.
 - `Domain` has **zero external dependencies** (depends only on Swift `Foundation`).
 
-## 7. Prohibited Dependencies
+## 8. Prohibited Dependencies
 - **SwiftUI / UIKit in Domain or Infrastructure**: Domain and Infrastructure layers MUST NOT import `SwiftUI` or `UIKit`.
 - **System Framework Leaks in Domain**: Domain MUST NOT import `URLSession`, `Security.framework` (Keychain), or `SQLite`/`GRDB`.
 - **Direct Infrastructure Calls in UI**: SwiftUI views MUST NOT invoke raw `URLSession` network calls, raw Keychain operations, raw SQLite queries, or C-FFI Rust functions.
 - **Circular Layer Dependencies**: Layers must never depend on higher layers.
 
-## 8. Build, Secret, and Artifact Policies
+## 9. Build, Secret, and Artifact Policies
 
-### 8.1 Temporary Build Outputs (Untracked)
+### 9.1 Temporary Build Outputs (Untracked)
 The following local outputs must NEVER enter source control:
 - Xcode `DerivedData/` and `build/` directories.
 - Xcode workspace user state (`*.xcodeproj/xcuserdata/`, `*.xcworkspace`).
@@ -164,7 +192,7 @@ The following local outputs must NEVER enter source control:
 - Temporary XCFrameworks or Rust static libraries (`*.a`, `*.xcframework`).
 - Local Rust build targets specific to iOS (`target/aarch64-apple-ios/`, `target/x86_64-apple-ios/`).
 
-### 8.2 Secret and Signing Policy
+### 9.2 Secret and Signing Policy
 The following security artifacts are strictly forbidden from source control:
 - Apple provisioning profiles (`*.mobileprovision`, `*.provisionprofile`).
 - Certificate private keys, `.p12` files, `.cer` files, `.pem` keys.
@@ -172,12 +200,12 @@ The following security artifacts are strictly forbidden from source control:
 - Real device bearer tokens (`svd1_`), enrollment tokens (`sve1_`), or user passwords.
 - Personal server credentials or private TLS keys.
 
-### 8.3 Generated Code Policy
+### 9.3 Generated Code Policy
 - Generated Swift/C bridge bindings (from UniFFI or C-FFI generators) will live in `clients/ios/Infrastructure/RustBridge/` once established in Phase C (P013–P016).
 - Hand-editing generated bridge bindings is forbidden.
 - Temporary build outputs remain untracked in `.gitignore`.
 
-## 9. Architecture Invariants
+## 10. Architecture Invariants
 1. **INVARIANT-01**: Bearer tokens (`svd1_`) reside strictly in `Security.framework` Keychain Services (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`) and memory HTTP request header compositors. They MUST NEVER be stored in `UserDefaults`, SQLite, application logs, or SwiftUI view models.
 2. **INVARIANT-02**: The Transfer Engine is an application-level infrastructure service decoupled from SwiftUI view lifetimes. Navigating away from a view or backgrounding the app MUST NOT terminate active transfers.
 3. **INVARIANT-03**: SwiftUI views do not directly invoke raw network transport, Keychain, SQLite, or C-FFI Rust functions. Views interact solely through ViewModels and Application coordinators.

@@ -10,7 +10,13 @@
 		A10000012C00000000000001 /* SynveilApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000001 /* SynveilApp.swift */; };
 		A10000012C00000000000002 /* BootstrapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000002 /* BootstrapView.swift */; };
 		A10000012C00000000000003 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000003 /* Assets.xcassets */; };
+		A10000012C00000000000011 /* EndpointValidationError.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000011 /* EndpointValidationError.swift */; };
+		A10000012C00000000000012 /* ServerEndpoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000012 /* ServerEndpoint.swift */; };
+		A10000012C00000000000013 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000013 /* AppEnvironment.swift */; };
+		A10000012C00000000000014 /* AppConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000014 /* AppConfiguration.swift */; };
 		B10000012C00000000000001 /* SynveilBootstrapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000001 /* SynveilBootstrapTests.swift */; };
+		B10000012C00000000000011 /* ServerEndpointTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000011 /* ServerEndpointTests.swift */; };
+		B10000012C00000000000012 /* AppConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000012 /* AppConfigurationTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -28,7 +34,13 @@
 		A20000012C00000000000002 /* BootstrapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/BootstrapView.swift; sourceTree = "<group>"; };
 		A20000012C00000000000003 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Resources/Assets.xcassets; sourceTree = "<group>"; };
 		A20000012C00000000000004 /* Synveil.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Synveil.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000012C00000000000011 /* EndpointValidationError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Configuration/EndpointValidationError.swift; sourceTree = "<group>"; };
+		A20000012C00000000000012 /* ServerEndpoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Configuration/ServerEndpoint.swift; sourceTree = "<group>"; };
+		A20000012C00000000000013 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Configuration/AppEnvironment.swift; sourceTree = "<group>"; };
+		A20000012C00000000000014 /* AppConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Configuration/AppConfiguration.swift; sourceTree = "<group>"; };
 		B20000012C00000000000001 /* SynveilBootstrapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SynveilBootstrapTests.swift; sourceTree = "<group>"; };
+		B20000012C00000000000011 /* ServerEndpointTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/ServerEndpointTests.swift; sourceTree = "<group>"; };
+		B20000012C00000000000012 /* AppConfigurationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/AppConfigurationTests.swift; sourceTree = "<group>"; };
 		B20000012C00000000000002 /* SynveilTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SynveilTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -54,6 +66,8 @@
 			isa = PBXGroup;
 			children = (
 				A40000012C00000000000002 /* App */,
+				A40000012C00000000000011 /* Domain */,
+				A40000012C00000000000012 /* Application */,
 				A40000012C00000000000003 /* Resources */,
 				B40000012C00000000000001 /* Tests */,
 				A40000012C00000000000004 /* Products */,
@@ -67,6 +81,24 @@
 				A20000012C00000000000002 /* BootstrapView.swift */,
 			);
 			name = App;
+			sourceTree = "<group>";
+		};
+		A40000012C00000000000011 /* Domain */ = {
+			isa = PBXGroup;
+			children = (
+				A20000012C00000000000011 /* EndpointValidationError.swift */,
+				A20000012C00000000000012 /* ServerEndpoint.swift */,
+			);
+			name = Domain;
+			sourceTree = "<group>";
+		};
+		A40000012C00000000000012 /* Application */ = {
+			isa = PBXGroup;
+			children = (
+				A20000012C00000000000013 /* AppEnvironment.swift */,
+				A20000012C00000000000014 /* AppConfiguration.swift */,
+			);
+			name = Application;
 			sourceTree = "<group>";
 		};
 		A40000012C00000000000003 /* Resources */ = {
@@ -98,6 +130,8 @@
 			isa = PBXGroup;
 			children = (
 				B20000012C00000000000001 /* SynveilBootstrapTests.swift */,
+				B20000012C00000000000011 /* ServerEndpointTests.swift */,
+				B20000012C00000000000012 /* AppConfigurationTests.swift */,
 			);
 			name = SynveilTests;
 			sourceTree = "<group>";
@@ -195,6 +229,10 @@
 			files = (
 				A10000012C00000000000001 /* SynveilApp.swift in Sources */,
 				A10000012C00000000000002 /* BootstrapView.swift in Sources */,
+				A10000012C00000000000011 /* EndpointValidationError.swift in Sources */,
+				A10000012C00000000000012 /* ServerEndpoint.swift in Sources */,
+				A10000012C00000000000013 /* AppEnvironment.swift in Sources */,
+				A10000012C00000000000014 /* AppConfiguration.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -203,6 +241,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				B10000012C00000000000001 /* SynveilBootstrapTests.swift in Sources */,
+				B10000012C00000000000011 /* ServerEndpointTests.swift in Sources */,
+				B10000012C00000000000012 /* AppConfigurationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
