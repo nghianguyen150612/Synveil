@@ -88,6 +88,9 @@ done
 echo "DOC-UNIT-8: checking the Prompt029 server setup product contract"
 python3 scripts/validate-server-setup-contract.py || failures=$((failures + 1))
 
+echo "DOC-UNIT-9: checking the Prompt030 server dependency strategy"
+python3 scripts/validate-server-dependency-strategy.py || failures=$((failures + 1))
+
 if [[ "$failures" -ne 0 ]]; then
     echo "documentation validation failed: $failures issue(s)" >&2
     exit 1

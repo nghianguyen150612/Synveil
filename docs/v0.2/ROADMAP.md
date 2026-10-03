@@ -308,9 +308,14 @@ Connect to existing Synveil
 
 ### P030 — Server Dependency Strategy
 
-Decide supported automatic database/runtime provisioning without exposing
-PostgreSQL complexity to ordinary users. Preserve PostgreSQL as the canonical
-server metadata authority.
+**Complete (Prompt030 strategy):** Personal/Home uses a Synveil-managed private
+PostgreSQL 17 dependency with runtime and durable database ownership separated;
+Advanced/Server retains explicit external PostgreSQL. Dependency acquisition,
+version/update policy, platform qualification, preservation boundaries, and
+P031–P036 handoffs are locked by the
+[server dependency strategy](SERVER_DEPENDENCY_STRATEGY.md) and
+[ADR-060](../adr/ADR-060-v0.2-managed-postgresql-dependency-strategy.md). No
+PostgreSQL provisioning or service implementation is claimed.
 
 ### P031 — Managed Server Configuration
 
@@ -451,7 +456,7 @@ prompt ownership above. They do not move or merge prompts.
 | Release signing, bootstrap-script trust and key rotation | Release, Security | P005 defines manifest; P006 closes integrity and trust before downloaded payloads are executed; P017 consumes the Linux script boundary; P043 hardens it. |
 | Shared engine, durable journal, repair and typed error boundaries | Distribution, Desktop, Security | P007 defines engine; P008 interruption journal; P009 lifecycle; P010 error categories. Their phase-B checkpoint is P011. |
 | Windows installer technology and update/repair strategy | Distribution, Desktop, Security | P021 selects technology; P022–027 implement the installer lifecycle; P028 supplies native evidence. |
-| Managed PostgreSQL distribution (`OD-PLAT-001`, proposed ADR-019) | Database, Release, Security, Product | P029 defines setup modes; P030 decides provisioning before implementation; preserve PostgreSQL and do not add SQLite as a production server authority. |
+| Managed PostgreSQL distribution (`OD-PLAT-001`, ADR-060) | Database, Release, Security, Product | **Closed by P030:** private managed PG17 for Personal/Home; explicit external PG17 for Advanced; runtime and database data remain separate. P031–P036 implement and qualify it. |
 | Host supervisor/elevation (`OD-PLAT-002`) | Platform, Release, Security | P030 decides dependency strategy; P033 closes service privilege/supervision before server service implementation. Existing desktop client supervision remains under ADR-041. |
 | Offered access modes (`OD-PLAT-003`, proposed ADR-020) | Networking, Security, Product | P029 defines product choices; P034 closes offered reachability before new remote-access mechanisms. No silent public exposure or mandatory proprietary relay. |
 | Supported upgrade sources and rollback/restore limits | Database, Client, Release | P009 defines lifecycle; P027 applies it on Windows; P043/P044 harden it; P047 validates supported sources and coordinated restore before P048. |
