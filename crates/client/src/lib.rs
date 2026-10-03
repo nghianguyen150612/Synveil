@@ -16,7 +16,8 @@ mod process;
 
 pub use config::{
     DEFAULT_DESKTOP_CLIENT_CONFIG_FILE, DEFAULT_DESKTOP_CLIENT_SYNC_STATE_FILE,
-    DesktopClientConfig, DesktopClientConfigError, DesktopClientLibrary, DesktopSyncPauseStore,
+    DEFAULT_STARTUP_PREFERENCE_FILE, DesktopClientConfig, DesktopClientConfigError,
+    DesktopClientLibrary, DesktopSyncPauseStore, StartupPreference, StartupPreferenceStore,
 };
 pub use control::{
     ControlAttentionItem, ControlAttentionItemKind, ControlAttentionLibrarySummary,
@@ -100,6 +101,10 @@ pub async fn run_desktop_client(
 pub fn main_entry() -> ExitCode {
     init_logging();
     let platform: Arc<dyn PlatformRuntime> = Arc::from(synveil_platform::current());
+    let arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    if !arguments.is_empty() {
+        return startup_command_entry(platform, &arguments);
+    }
     let config = match DesktopClientConfig::from_platform(platform.as_ref()) {
         Ok(config) => config,
         Err(error) => {
@@ -123,6 +128,67 @@ pub fn main_entry() -> ExitCode {
             error!(error = %error, "desktop process terminated with a bootstrap/runtime failure");
             ExitCode::from(DESKTOP_CLIENT_RUNTIME_EXIT_CODE)
         }
+    }
+}
+
+/// Bounded installer/lifecycle handoff. This accepts no task name, profile,
+/// executable, XML, URL, credential, or arbitrary path.
+fn startup_command_entry(platform: Arc<dyn PlatformRuntime>, arguments: &[String]) -> ExitCode {
+    let preference = match arguments {
+        [command, value] if command == "--startup-preference" && value == "enabled" => {
+            Some(StartupPreference::Enabled)
+        }
+        [command, value] if command == "--startup-preference" && value == "disabled" => {
+            Some(StartupPreference::Disabled)
+        }
+        [command] if command == "--cleanup-startup-integration" => None,
+        _ => return ExitCode::from(DESKTOP_CLIENT_CONFIG_EXIT_CODE),
+    };
+    let profile = match DesktopClientConfig::existing_profile_id(platform.as_ref()) {
+        Ok(profile) => profile,
+        Err(_) => return ExitCode::from(DESKTOP_CLIENT_CONFIG_EXIT_CODE),
+    };
+    if let Some(preference) = preference {
+        let store = match StartupPreferenceStore::for_platform(platform.as_ref()) {
+            Ok(store) => store,
+            Err(_) => return ExitCode::from(DESKTOP_CLIENT_CONFIG_EXIT_CODE),
+        };
+        if store.persist(preference).is_err() {
+            return ExitCode::from(DESKTOP_CLIENT_CONFIG_EXIT_CODE);
+        }
+        let Some(profile) = profile else {
+            return ExitCode::SUCCESS;
+        };
+        return reconcile_startup(profile, preference);
+    }
+    let Some(profile) = profile else {
+        return ExitCode::SUCCESS;
+    };
+    reconcile_startup(profile, StartupPreference::Disabled)
+}
+
+fn reconcile_startup(profile: ServerProfileId, preference: StartupPreference) -> ExitCode {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(_) => return ExitCode::from(DESKTOP_CLIENT_RUNTIME_EXIT_CODE),
+    };
+    let manager = BackgroundClientManager::for_profile(profile);
+    let result = runtime.block_on(async {
+        if preference.enabled() {
+            manager.enable_autostart().await
+        } else {
+            manager.disable_autostart().await
+        }
+    });
+    match result {
+        Ok(AutostartState::Enabled) if preference.enabled() => ExitCode::SUCCESS,
+        Ok(AutostartState::Disabled | AutostartState::NotInstalled) if !preference.enabled() => {
+            ExitCode::SUCCESS
+        }
+        _ => ExitCode::from(DESKTOP_CLIENT_RUNTIME_EXIT_CODE),
     }
 }
 

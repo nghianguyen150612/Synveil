@@ -707,7 +707,8 @@ impl BackgroundLaunchBackend for NativeBackgroundLaunchBackend {
         #[cfg(target_os = "windows")]
         {
             return match self.windows_task_state() {
-                WindowsTaskState::Registered => BackgroundClientAvailability::SupervisorInactive,
+                WindowsTaskState::Authoritative => BackgroundClientAvailability::SupervisorInactive,
+                WindowsTaskState::Stale => BackgroundClientAvailability::UnsafeState,
                 WindowsTaskState::Absent => BackgroundClientAvailability::Absent,
                 WindowsTaskState::Unavailable => {
                     BackgroundClientAvailability::SupervisorUnavailable
@@ -735,11 +736,13 @@ impl BackgroundLaunchBackend for NativeBackgroundLaunchBackend {
         #[cfg(target_os = "windows")]
         {
             return match self.windows_task_state() {
-                WindowsTaskState::Registered => {
+                WindowsTaskState::Authoritative => {
                     windows_task_action(self.profile_id, WindowsTaskAction::Run)
                         .map(|()| BackgroundStartMode::Supervised)
                 }
-                WindowsTaskState::Absent | WindowsTaskState::Unavailable => self.direct_start(),
+                WindowsTaskState::Absent
+                | WindowsTaskState::Stale
+                | WindowsTaskState::Unavailable => self.direct_start(),
             };
         }
 
@@ -763,7 +766,8 @@ impl BackgroundLaunchBackend for NativeBackgroundLaunchBackend {
         #[cfg(target_os = "windows")]
         {
             return Ok(match self.windows_task_state() {
-                WindowsTaskState::Registered => AutostartState::Enabled,
+                WindowsTaskState::Authoritative => AutostartState::Enabled,
+                WindowsTaskState::Stale => AutostartState::Disabled,
                 WindowsTaskState::Absent => AutostartState::Disabled,
                 WindowsTaskState::Unavailable => AutostartState::Unavailable,
             });
@@ -789,12 +793,17 @@ impl BackgroundLaunchBackend for NativeBackgroundLaunchBackend {
         #[cfg(target_os = "windows")]
         {
             return match self.windows_task_state() {
-                WindowsTaskState::Registered | WindowsTaskState::Absent => {
+                WindowsTaskState::Authoritative
+                | WindowsTaskState::Stale
+                | WindowsTaskState::Absent => {
                     // Replace this same profile task on explicit enable so
                     // an upgraded or relocated payload refreshes its action.
                     let definition = native_windows_task_definition(self.profile_id)?;
                     windows_register_task(&definition)?;
-                    Ok(AutostartState::Enabled)
+                    match self.windows_task_state() {
+                        WindowsTaskState::Authoritative => Ok(AutostartState::Enabled),
+                        _ => Err(BackgroundLaunchError::UnsafeState),
+                    }
                 }
                 WindowsTaskState::Unavailable => Err(BackgroundLaunchError::SupervisorUnavailable),
             };
@@ -822,9 +831,12 @@ impl BackgroundLaunchBackend for NativeBackgroundLaunchBackend {
             return match self.windows_task_state() {
                 WindowsTaskState::Absent => Ok(AutostartState::Disabled),
                 WindowsTaskState::Unavailable => Ok(AutostartState::Unavailable),
-                WindowsTaskState::Registered => {
+                WindowsTaskState::Authoritative | WindowsTaskState::Stale => {
                     windows_task_action(self.profile_id, WindowsTaskAction::Delete)?;
-                    Ok(AutostartState::Disabled)
+                    match self.windows_task_state() {
+                        WindowsTaskState::Absent => Ok(AutostartState::Disabled),
+                        _ => Err(BackgroundLaunchError::UnsafeState),
+                    }
                 }
             };
         }
@@ -848,11 +860,12 @@ impl BackgroundLaunchBackend for NativeBackgroundLaunchBackend {
         #[cfg(target_os = "windows")]
         {
             return match self.windows_task_state() {
-                WindowsTaskState::Registered => {
+                WindowsTaskState::Authoritative => {
                     windows_task_action(self.profile_id, WindowsTaskAction::Run)
                         .map(|()| BackgroundStartMode::Supervised)
                 }
                 WindowsTaskState::Absent => Err(BackgroundLaunchError::NotInstalled),
+                WindowsTaskState::Stale => Err(BackgroundLaunchError::UnsafeState),
                 WindowsTaskState::Unavailable => Err(BackgroundLaunchError::SupervisorUnavailable),
             };
         }
@@ -876,7 +889,7 @@ impl BackgroundLaunchBackend for NativeBackgroundLaunchBackend {
         #[cfg(target_os = "windows")]
         {
             return match self.windows_task_state() {
-                WindowsTaskState::Registered => {
+                WindowsTaskState::Authoritative | WindowsTaskState::Stale => {
                     // Task Scheduler /End forcibly terminates the process.
                     // Use the profile-bound transport so the client follows
                     // the same bounded host shutdown path as Linux signals.
@@ -1155,7 +1168,8 @@ fn xml_escape(value: &str) -> String {
 #[cfg(target_os = "windows")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum WindowsTaskState {
-    Registered,
+    Authoritative,
+    Stale,
     Absent,
     Unavailable,
 }
@@ -1190,20 +1204,140 @@ fn schtasks_command(args: &[String]) -> Result<std::process::Output, BackgroundL
 
 #[cfg(target_os = "windows")]
 fn windows_task_state(profile_id: ServerProfileId) -> WindowsTaskState {
+    let expected = match native_windows_task_definition(profile_id) {
+        Ok(expected) => expected,
+        Err(_) => return WindowsTaskState::Unavailable,
+    };
     let task_name = windows_task_name(profile_id);
     let args = vec![
         "/Query".to_string(),
         "/TN".to_string(),
         task_name,
-        "/FO".to_string(),
-        "LIST".to_string(),
-        "/NH".to_string(),
+        "/XML".to_string(),
     ];
-    match schtasks_command(&args) {
-        Ok(output) if output.status.success() => WindowsTaskState::Registered,
+    let mut child = match Command::new(schtasks_path())
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => return WindowsTaskState::Unavailable,
+    };
+    let mut bytes = Vec::new();
+    let read = child.stdout.take().is_some_and(|stdout| {
+        use std::io::Read;
+        let mut limited = stdout.take(64 * 1024 + 1);
+        limited.read_to_end(&mut bytes).is_ok()
+    });
+    if !read || bytes.len() > 64 * 1024 {
+        let _ = child.kill();
+        let _ = child.wait();
+        return WindowsTaskState::Stale;
+    }
+    match child.wait() {
+        Ok(status) if status.success() => {
+            let Some(xml) = decode_task_xml(&bytes) else {
+                return WindowsTaskState::Stale;
+            };
+            if windows_task_xml_is_authoritative(&xml, &expected) {
+                WindowsTaskState::Authoritative
+            } else {
+                WindowsTaskState::Stale
+            }
+        }
         Ok(_) => WindowsTaskState::Absent,
         Err(_) => WindowsTaskState::Unavailable,
     }
+}
+
+#[cfg(any(windows, test))]
+fn decode_task_xml(bytes: &[u8]) -> Option<String> {
+    if let Some(payload) = bytes.strip_prefix(&[0xff, 0xfe]) {
+        if payload.len() % 2 != 0 {
+            return None;
+        }
+        let words = payload
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>();
+        String::from_utf16(&words).ok()
+    } else if let Some(payload) = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]) {
+        String::from_utf8(payload.to_vec()).ok()
+    } else {
+        String::from_utf8(bytes.to_vec()).ok()
+    }
+}
+
+#[cfg(any(windows, test))]
+fn windows_task_xml_is_authoritative(xml: &str, expected: &WindowsTaskDefinition) -> bool {
+    use quick_xml::{Reader, events::Event};
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+    let mut current = None::<String>;
+    let mut values: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    let mut logon_triggers = 0;
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(element)) => {
+                let name = String::from_utf8_lossy(element.local_name().as_ref()).into_owned();
+                if name == "Arguments" || name == "Password" || name == "BootTrigger" {
+                    return false;
+                }
+                if name == "LogonTrigger" {
+                    logon_triggers += 1;
+                }
+                current = Some(name);
+            }
+            Ok(Event::Empty(element)) => {
+                let name = String::from_utf8_lossy(element.local_name().as_ref()).into_owned();
+                if name == "Arguments" || name == "Password" || name.ends_with("Trigger") {
+                    return false;
+                }
+            }
+            Ok(Event::Text(text)) => {
+                let Some(name) = current.as_ref() else {
+                    continue;
+                };
+                let Ok(decoded) = text.decode() else {
+                    return false;
+                };
+                let Ok(value) = quick_xml::escape::unescape(&decoded) else {
+                    return false;
+                };
+                values
+                    .entry(name.clone())
+                    .or_default()
+                    .push(value.into_owned());
+            }
+            Ok(Event::End(_)) => current = None,
+            Ok(Event::Eof) => break,
+            Ok(Event::DocType(_)) | Err(_) => return false,
+            _ => {}
+        }
+    }
+    let exact = |tag: &str, expected_values: &[&str]| {
+        values.get(tag).is_some_and(|actual| {
+            actual
+                .iter()
+                .map(String::as_str)
+                .eq(expected_values.iter().copied())
+        })
+    };
+    let executable = expected.executable().to_string_lossy();
+    let working = expected
+        .executable()
+        .parent()
+        .unwrap_or(Path::new(""))
+        .to_string_lossy();
+    logon_triggers == 1
+        && exact("UserId", &[expected.principal(), expected.principal()])
+        && exact("LogonType", &["InteractiveToken"])
+        && exact("RunLevel", &["LeastPrivilege"])
+        && exact("Command", &[&executable])
+        && exact("WorkingDirectory", &[&working])
+        && exact("MultipleInstancesPolicy", &["IgnoreNew"])
 }
 
 #[cfg(target_os = "windows")]
@@ -1288,9 +1422,15 @@ fn windows_register_task(definition: &WindowsTaskDefinition) -> Result<(), Backg
         .write(true)
         .open(&temporary)
         .map_err(|_| BackgroundLaunchError::Failed)?;
-    file.write_all(definition.to_xml().as_bytes())
-        .map_err(|_| BackgroundLaunchError::Failed)?;
-    file.sync_all().map_err(|_| BackgroundLaunchError::Failed)?;
+    if file
+        .write_all(definition.to_xml().as_bytes())
+        .and_then(|()| file.sync_all())
+        .is_err()
+    {
+        drop(file);
+        let _ = fs::remove_file(&temporary);
+        return Err(BackgroundLaunchError::Failed);
+    }
     drop(file);
 
     let args = vec![
@@ -1764,6 +1904,17 @@ mod tests {
         let definition =
             WindowsTaskDefinition::new(profile, &client, "CURRENT_USER").expect("task definition");
         let xml = definition.to_xml();
+        assert_eq!(
+            decode_task_xml(xml.as_bytes()).as_deref(),
+            Some(xml.as_str())
+        );
+        let utf16 = xml
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>();
+        let mut utf16_bom = vec![0xff, 0xfe];
+        utf16_bom.extend(utf16);
+        assert_eq!(decode_task_xml(&utf16_bom).as_deref(), Some(xml.as_str()));
         assert_eq!(definition.task_name(), windows_task_name(profile));
         assert!(xml.contains("<LogonTrigger>"));
         // The triggerBaseType sequence precedes the logon-specific UserId.
@@ -1775,6 +1926,16 @@ mod tests {
         assert!(!xml.contains("/RU"));
         assert!(!xml.contains("DATABASE_URL"));
         assert!(!definition.task_name().contains("CURRENT_USER"));
+        assert!(windows_task_xml_is_authoritative(&xml, &definition));
+        for stale in [
+            xml.replace("synveil-client.exe", "other.exe"),
+            xml.replace("CURRENT_USER", "OTHER_USER"),
+            xml.replace("LeastPrivilege", "HighestAvailable"),
+            xml.replace("<LogonTrigger>", "<BootTrigger>"),
+            xml.replace("</Exec>", "<Arguments>--unsafe</Arguments></Exec>"),
+        ] {
+            assert!(!windows_task_xml_is_authoritative(&stale, &definition));
+        }
         let escaped = WindowsTaskDefinition::new(profile, &client, "User & <name>")
             .expect("XML principal")
             .to_xml();

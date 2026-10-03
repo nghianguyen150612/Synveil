@@ -13,7 +13,7 @@ use synveil_client::{
     AutostartState, BackgroundClientManager, BackgroundLaunchError, BackgroundLaunchResult,
     DesktopController, DesktopControllerCommandResult, DesktopControllerConfig,
     DesktopControllerConflictAction, DesktopControllerConflictResolutionRequest, LibraryId,
-    ServerProfileId,
+    ServerProfileId, StartupPreference, StartupPreferenceStore,
 };
 #[cfg(target_os = "linux")]
 use synveil_install_engine::{AppImageIntegration, AppImageIntegrationStatus};
@@ -61,8 +61,6 @@ pub mod ffi {
         fn native_tray_set_tooltip(tray: Pin<&mut NativeTray>, tooltip: &QString);
         fn native_desktop_settings_load_close_to_tray() -> bool;
         fn native_desktop_settings_save_close_to_tray(enabled: bool) -> bool;
-        fn native_desktop_settings_load_startup_choice() -> i32;
-        fn native_desktop_settings_save_startup_choice(enabled: bool) -> bool;
     }
 
     unsafe extern "RustQt" {
@@ -406,7 +404,11 @@ impl Default for DesktopUiBridgeRust {
             .build()
             .ok();
 
-        let startup_choice = ffi::native_desktop_settings_load_startup_choice();
+        let startup_choice = StartupPreferenceStore::current()
+            .and_then(|store| store.load())
+            .ok()
+            .flatten()
+            .map_or(-1, |choice| if choice.enabled() { 1 } else { 0 });
         let mut presented = UiSnapshot::default();
         if !profile_ready {
             presented.connection_code = "profile_unavailable";
@@ -619,6 +621,13 @@ impl ffi::DesktopUiBridge {
                     .as_mut()
                     .set_launch_label(QString::from(launch_label));
             });
+            // A durable installer choice is reconciled only now, after the
+            // desktop has loaded its authoritative durable profile.
+            if let Ok(Some(preference)) =
+                StartupPreferenceStore::current().and_then(|store| store.load())
+            {
+                let _ = apply_startup_choice(&launch_manager, preference.enabled()).await;
+            }
             let startup = startup_status(&launch_manager).await;
             let (startup_state, startup_feedback) = autostart_presentation(startup);
             let _ = dispatcher.qt_thread.queue(move |mut object| {
@@ -1835,7 +1844,19 @@ fn request_background_startup(mut object: Pin<&mut ffi::DesktopUiBridge>, enable
     let qt_thread = object.as_ref().get_ref().qt_thread();
     runtime.spawn(async move {
         let (state, feedback, verified) = loop {
-            let operation = apply_startup_choice(&manager, target).await;
+            let preference = if target {
+                StartupPreference::Enabled
+            } else {
+                StartupPreference::Disabled
+            };
+            let recorded = StartupPreferenceStore::current()
+                .and_then(|store| store.persist(preference))
+                .is_ok();
+            let operation = if recorded {
+                apply_startup_choice(&manager, target).await
+            } else {
+                Err(BackgroundLaunchError::Failed)
+            };
             let authoritative = startup_status(&manager).await;
             let verified = if target {
                 matches!(&authoritative, Ok(AutostartState::Enabled))
@@ -1869,7 +1890,7 @@ fn request_background_startup(mut object: Pin<&mut ffi::DesktopUiBridge>, enable
             object
                 .as_mut()
                 .set_background_startup_feedback(QString::from(feedback));
-            if verified && ffi::native_desktop_settings_save_startup_choice(target) {
+            if verified {
                 object.as_mut().set_startup_choice_required(false);
                 object.as_mut().set_startup_choice_selected(target);
             }

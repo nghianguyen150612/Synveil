@@ -261,8 +261,12 @@ reinstall, state-preservation, and cleanup evidence. P026–P028 remain pending.
 
 ### P026 — Windows Startup Integration
 
-Provide the friendly choice **Start Synveil when I sign in**, backed by the
-existing least-privilege current-user Task Scheduler implementation.
+**Implemented (source/static complete; final-head hosted native evidence pending):**
+the [Windows startup integration](WINDOWS_STARTUP_INTEGRATION.md) and
+[Prompt026 manifest](PROMPT026_MANIFEST.md) connect the installer and Settings
+to one durable client-owned preference and the existing verified, least-
+privilege, profile-scoped Task Scheduler authority. P027/P028 lifecycle and
+native acceptance remain pending.
 
 ### P027 — Windows Repair / Upgrade / Uninstall
 
