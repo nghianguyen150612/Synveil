@@ -20,6 +20,10 @@ ArchitecturesInstallIn64BitMode=x64
 OutputDir={#SynveilOutputDir}
 OutputBaseFilename=SynveilSetup
 LicenseFile={#SynveilPayloadDir}\LICENSE
+DisableWelcomePage=no
+DisableDirPage=yes
+DisableProgramGroupPage=yes
+DisableReadyPage=yes
 Compression=lzma2/max
 SolidCompression=yes
 SetupLogging=yes
@@ -32,23 +36,29 @@ CloseApplications=yes
 
 [Files]
 #include GeneratedDir + "\\files.iss"
+Source: "{#SynveilPayloadDir}\NOTICE"; Flags: dontcopy
 
 [Icons]
 Name: "{userprograms}\Synveil"; Filename: "{app}\synveil-desktop.exe"; WorkingDir: "{app}"
-
-[Run]
-Filename: "{app}\synveil-desktop.exe"; Description: "Launch Synveil"; Flags: nowait postinstall skipifsilent; Check: LaunchRequested
+Name: "{userdesktop}\Synveil"; Filename: "{app}\synveil-desktop.exe"; WorkingDir: "{app}"; Check: ShouldCreateDesktopIcon
 
 [Code]
 var
-  LaunchOpt: Boolean;
+  { P026 consumes this reviewed state boundary; P023 performs no startup mutation. }
+  StartupRequested: Boolean;
+  DesktopIconRequested: Boolean;
+  LaunchRequested: Boolean;
+  StartupCheck: TNewCheckBox;
+  DesktopIconCheck: TNewCheckBox;
+  LaunchCheck: TNewCheckBox;
+  NoticeButton: TNewButton;
 
 function ParseBooleanOption(const Name: String; const DefaultValue: Boolean): Boolean;
 var
   Value: String;
 begin
-  Value := ExpandConstant('{param:' + Name + '|}');
-  if Value = '' then begin
+  Value := ExpandConstant('{param:' + Name + '|__MISSING__}');
+  if Value = '__MISSING__' then begin
     Result := DefaultValue;
     exit;
   end;
@@ -64,17 +74,96 @@ begin
 end;
 
 function InitializeSetup(): Boolean;
+var
+  FreshInstall: Boolean;
 begin
-  { STARTUP is reserved for P026 and is intentionally non-mutating. }
-  if ParseBooleanOption('STARTUP', False) then
-    RaiseException('/STARTUP=1 is not supported by this installer skeleton');
-  if ParseBooleanOption('DESKTOPICON', False) then
-    RaiseException('/DESKTOPICON=1 is deferred to P023');
-  LaunchOpt := ParseBooleanOption('LAUNCH', False);
+  { Silent defaults fail closed. Interactive fresh-install defaults opt in. }
+  FreshInstall := not DirExists(ExpandConstant('{app}'));
+  StartupRequested := ParseBooleanOption('STARTUP', (not WizardSilent) and FreshInstall);
+  DesktopIconRequested := ParseBooleanOption('DESKTOPICON', (not WizardSilent) and
+    (FreshInstall or FileExists(ExpandConstant('{userdesktop}\Synveil.lnk'))));
+  LaunchRequested := ParseBooleanOption('LAUNCH', not WizardSilent);
   Result := True;
 end;
 
-function LaunchRequested(): Boolean;
+procedure OpenNotice(Sender: TObject);
+var
+  ErrorCode: Integer;
 begin
-  Result := LaunchOpt;
+  ExtractTemporaryFile('NOTICE');
+  if not ShellExec('open', ExpandConstant('{tmp}\NOTICE'), '', '', SW_SHOWNORMAL, ewNoWait, ErrorCode) then
+    MsgBox('Third-party notices could not be opened.', mbError, MB_OK);
+end;
+
+procedure InitializeWizard();
+begin
+  WizardForm.WelcomeLabel1.Caption := 'Install Synveil';
+  WizardForm.WelcomeLabel2.Caption := 'Synveil will be installed for your Windows account.';
+  WizardForm.LicenseLabel1.Caption := 'Review the MIT License, then choose how Synveil should work on this Windows account.';
+  WizardForm.LicenseMemo.Height := ScaleY(100);
+  WizardForm.LicenseAcceptedRadio.Top := ScaleY(151);
+  WizardForm.LicenseNotAcceptedRadio.Top := ScaleY(174);
+
+  StartupCheck := TNewCheckBox.Create(WizardForm);
+  StartupCheck.Name := 'StartupRequestedCheckBox';
+  StartupCheck.Parent := WizardForm.LicensePage;
+  StartupCheck.SetBounds(ScaleX(0), ScaleY(202), WizardForm.LicensePage.ClientWidth, ScaleY(22));
+  StartupCheck.Caption := 'Start Synveil when I sign in';
+  StartupCheck.Checked := StartupRequested;
+  StartupCheck.TabOrder := 3;
+
+  DesktopIconCheck := TNewCheckBox.Create(WizardForm);
+  DesktopIconCheck.Name := 'DesktopIconRequestedCheckBox';
+  DesktopIconCheck.Parent := WizardForm.LicensePage;
+  DesktopIconCheck.SetBounds(ScaleX(0), ScaleY(226), WizardForm.LicensePage.ClientWidth, ScaleY(22));
+  DesktopIconCheck.Caption := 'Create a desktop shortcut';
+  DesktopIconCheck.Checked := DesktopIconRequested;
+  DesktopIconCheck.TabOrder := 4;
+
+  LaunchCheck := TNewCheckBox.Create(WizardForm);
+  LaunchCheck.Name := 'LaunchRequestedCheckBox';
+  LaunchCheck.Parent := WizardForm.LicensePage;
+  LaunchCheck.SetBounds(ScaleX(0), ScaleY(250), ScaleX(260), ScaleY(22));
+  LaunchCheck.Caption := 'Open Synveil after installation';
+  LaunchCheck.Checked := LaunchRequested;
+  LaunchCheck.TabOrder := 5;
+
+  NoticeButton := TNewButton.Create(WizardForm);
+  NoticeButton.Name := 'ThirdPartyNoticeButton';
+  NoticeButton.Parent := WizardForm.LicensePage;
+  NoticeButton.SetBounds(WizardForm.LicensePage.ClientWidth - ScaleX(155), ScaleY(248), ScaleX(155), ScaleY(25));
+  NoticeButton.Caption := 'Third-party &notices';
+  NoticeButton.OnClick := @OpenNotice;
+  NoticeButton.TabOrder := 6;
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  if CurPageID = wpLicense then begin
+    StartupRequested := StartupCheck.Checked;
+    DesktopIconRequested := DesktopIconCheck.Checked;
+    LaunchRequested := LaunchCheck.Checked;
+  end;
+  Result := True;
+end;
+
+procedure CurInstallProgressChanged(CurProgress, MaxProgress: Integer);
+begin
+  WizardForm.StatusLabel.Caption := 'Installing Synveil...';
+end;
+
+function ShouldCreateDesktopIcon(): Boolean;
+begin
+  Result := DesktopIconRequested;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
+begin
+  if (CurStep = ssPostInstall) and LaunchRequested and (not WizardSilent) then begin
+    if not Exec(ExpandConstant('{app}\synveil-desktop.exe'), '', ExpandConstant('{app}'),
+      SW_SHOWNORMAL, ewNoWait, ResultCode) then
+      MsgBox('Synveil was installed, but could not be opened. You can open it from the Start menu.', mbError, MB_OK);
+  end;
 end;

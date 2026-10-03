@@ -70,6 +70,12 @@ tools root using Microsoft `FileVersionInfo` plus its PE signature and AMD64
 machine type. Help/banner output is not an authority. This retains rejection
 of Git/MSYS `link.exe` while avoiding localization and tool exit-code coupling.
 
+Run `37098846470` then passed authenticated linker selection and failed in the
+runtime build because plain `RUSTFLAGS` crossed Git Bash/MSYS with native paths
+containing drive colons and spaces. Prompt023 replaces that lossy boundary with
+Cargo's encoded argument transport and passes the same remaps to direct rustc
+as discrete array elements. Final-head hosted evidence remains pending.
+
 Reproducibility design is a strict byte comparison across two independent
 compiler invocations with unchanged runtime and generated-input paths. Its
 status is **pending hosted Windows execution**, not PASS. The Inno 6 Setup

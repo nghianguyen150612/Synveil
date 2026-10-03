@@ -58,7 +58,10 @@ jobs:
           Write-Host "Version: $($identity.FileVersion)"
           Write-Host "SHA-256: $((Get-FileHash -LiteralPath $linker -Algorithm SHA256).Hash.ToLowerInvariant())"
       - name: Validate reviewed installer sources
-        run: python scripts/validate-windows-installer.py
+        shell: bash
+        run: |
+          python scripts/validate-windows-installer.py
+          ./scripts/test-windows-rustflags.sh
       - name: Build runtime payload
         shell: bash
         run: |
@@ -102,6 +105,8 @@ jobs:
           $process = Start-Process $setup -Wait -PassThru -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/STARTUP=0','/DESKTOPICON=0','/LAUNCH=0',('/LOG=' + $installLog))
           if ($process.ExitCode -ne 0) { throw "INSTALL_SMOKE_FAILURE: installer exit $($process.ExitCode)" }
           $root = Join-Path $env:LOCALAPPDATA 'Programs/Synveil'
+          $desktopShortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Synveil.lnk'
+          if (Test-Path $desktopShortcut) { throw 'INSTALL_SMOKE_FAILURE: /DESKTOPICON=0 created a shortcut' }
           foreach ($file in @('synveil-desktop.exe','synveil-client.exe','qt.conf','LICENSE','NOTICE','platforms/qwindows.dll')) { if (!(Test-Path (Join-Path $root $file))) { throw "INSTALL_SMOKE_FAILURE: missing $file" } }
           $shortcut = Join-Path $env:APPDATA 'Microsoft/Windows/Start Menu/Programs/Synveil.lnk'
           if (!(Test-Path $shortcut)) { throw 'INSTALL_SMOKE_FAILURE: Start Menu shortcut missing' }
@@ -118,11 +123,17 @@ jobs:
           if (Test-Path $root) { throw 'UNINSTALL_SMOKE_FAILURE: package root remains' }
           if (Test-Path $shortcut) { throw 'UNINSTALL_SMOKE_FAILURE: shortcut remains' }
           if (!(Test-Path $sentinel)) { throw 'UNINSTALL_SMOKE_FAILURE: external state sentinel was removed' }
+          $process = Start-Process $setup -Wait -PassThru -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/STARTUP=0','/DESKTOPICON=1','/LAUNCH=0',('/LOG=' + $installLog))
+          if ($process.ExitCode -ne 0 -or !(Test-Path $desktopShortcut)) { throw 'INSTALL_SMOKE_FAILURE: /DESKTOPICON=1 did not create the current-user shortcut' }
+          $entry = Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' | ForEach-Object { Get-ItemProperty $_.PSPath } | Where-Object { $_.PSChildName -eq '{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1' }
+          $process = Start-Process $entry.UninstallString.Trim('"') -Wait -PassThru -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG=' + $uninstallLog))
+          if ($process.ExitCode -ne 0 -or (Test-Path $desktopShortcut)) { throw 'UNINSTALL_SMOKE_FAILURE: selected desktop shortcut was not removed' }
+          if (!(Test-Path $sentinel)) { throw 'UNINSTALL_SMOKE_FAILURE: external state sentinel was removed after option test' }
       - name: Upload installer and bounded smoke logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-installer-p022
+          name: windows-installer-p023
           if-no-files-found: error
           retention-days: 7
           path: |
