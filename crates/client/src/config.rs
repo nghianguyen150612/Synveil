@@ -33,6 +33,122 @@ pub const DEFAULT_DESKTOP_CLIENT_CONFIG_FILE: &str = "client.conf";
 /// the words `running` or `paused`.
 pub const DEFAULT_DESKTOP_CLIENT_SYNC_STATE_FILE: &str = "sync-state.conf";
 
+/// Durable, non-secret owner of the user's login-startup choice.
+pub const DEFAULT_STARTUP_PREFERENCE_FILE: &str = "startup-preference.conf";
+
+/// Explicit startup intent. Absence is represented by `None` when loading;
+/// malformed input is an error and can never silently enable startup.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StartupPreference {
+    Enabled,
+    Disabled,
+}
+
+impl StartupPreference {
+    pub fn parse(value: &str) -> Result<Self, DesktopClientConfigError> {
+        match value.trim_end_matches(['\r', '\n']) {
+            "version=1\nstate=enabled" => Ok(Self::Enabled),
+            "version=1\nstate=disabled" => Ok(Self::Disabled),
+            _ => Err(DesktopClientConfigError::ConfigurationMalformed),
+        }
+    }
+
+    #[must_use]
+    pub const fn enabled(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
+}
+
+pub struct StartupPreferenceStore {
+    path: PathBuf,
+}
+
+impl StartupPreferenceStore {
+    pub fn current() -> Result<Self, DesktopClientConfigError> {
+        Self::for_platform(synveil_platform::current().as_ref())
+    }
+    pub fn for_platform(platform: &dyn PlatformRuntime) -> Result<Self, DesktopClientConfigError> {
+        let paths = platform
+            .resolve_paths()
+            .map_err(|_| DesktopClientConfigError::PlatformPaths)?;
+        Ok(Self {
+            path: paths
+                .config_dir()
+                .as_path()
+                .join(DEFAULT_STARTUP_PREFERENCE_FILE),
+        })
+    }
+
+    #[must_use]
+    pub fn from_path(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+
+    pub fn load(&self) -> Result<Option<StartupPreference>, DesktopClientConfigError> {
+        let bytes = match fs::read(&self.path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err(DesktopClientConfigError::ConfigurationUnreadable),
+        };
+        if bytes.len() > 64 {
+            return Err(DesktopClientConfigError::ConfigurationMalformed);
+        }
+        let text = std::str::from_utf8(&bytes)
+            .map_err(|_| DesktopClientConfigError::ConfigurationMalformed)?;
+        StartupPreference::parse(text).map(Some)
+    }
+
+    /// Atomically acknowledge an explicit choice only after its bytes are durable.
+    pub fn persist(&self, preference: StartupPreference) -> Result<(), DesktopClientConfigError> {
+        let parent = self
+            .path
+            .parent()
+            .ok_or(DesktopClientConfigError::ConfigurationWriteFailed)?;
+        fs::create_dir_all(parent)
+            .map_err(|_| DesktopClientConfigError::ConfigurationWriteFailed)?;
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        let temporary = parent.join(format!(
+            ".{DEFAULT_STARTUP_PREFERENCE_FILE}.tmp-{}-{nonce}",
+            std::process::id()
+        ));
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|_| DesktopClientConfigError::ConfigurationWriteFailed)?;
+        let state = if preference.enabled() {
+            "enabled"
+        } else {
+            "disabled"
+        };
+        if write!(file, "version=1\nstate={state}\n")
+            .and_then(|()| file.sync_all())
+            .is_err()
+        {
+            let _ = fs::remove_file(&temporary);
+            return Err(DesktopClientConfigError::ConfigurationWriteFailed);
+        }
+        drop(file);
+        #[cfg(windows)]
+        if self.path.exists() {
+            fs::remove_file(&self.path)
+                .map_err(|_| DesktopClientConfigError::ConfigurationWriteFailed)?;
+        }
+        if fs::rename(&temporary, &self.path).is_err() {
+            let _ = fs::remove_file(&temporary);
+            return Err(DesktopClientConfigError::ConfigurationWriteFailed);
+        }
+        #[cfg(unix)]
+        if let Ok(directory) = fs::File::open(parent) {
+            let _ = directory.sync_all();
+        }
+        Ok(())
+    }
+}
+
 /// Durable process-owned storage for the global user sync pause state.
 ///
 /// This is intentionally a tiny non-secret file beside the existing client
@@ -248,6 +364,25 @@ impl DesktopClientConfig {
         let platform: std::sync::Arc<dyn PlatformRuntime> =
             std::sync::Arc::from(synveil_platform::current());
         ensure_profile_id_from_platform(platform.as_ref())
+    }
+
+    /// Read an already durable profile identity without creating first-run
+    /// state. Installer startup handoff uses this to avoid inventing a profile.
+    pub fn existing_profile_id(
+        platform: &dyn PlatformRuntime,
+    ) -> Result<Option<ServerProfileId>, DesktopClientConfigError> {
+        let path = config_path(platform)?;
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err(DesktopClientConfigError::ConfigurationUnreadable),
+        };
+        if bytes.len() > MAX_CONFIG_BYTES {
+            return Err(DesktopClientConfigError::ConfigurationTooLarge);
+        }
+        let text = std::str::from_utf8(&bytes)
+            .map_err(|_| DesktopClientConfigError::ConfigurationMalformed)?;
+        Self::parse_profile_id(text).map(Some)
     }
 
     /// Read only the profile identity from the canonical process manifest.
@@ -1089,5 +1224,31 @@ mod tests {
             Err(DesktopClientConfigError::SyncStateMalformed)
         ));
         fs::remove_dir_all(directory).expect("test state cleanup");
+    }
+
+    #[test]
+    fn startup_preference_is_explicit_durable_and_malformed_fails_safe() {
+        let directory = std::env::temp_dir().join(format!(
+            "synveil-startup-preference-{}-{}",
+            std::process::id(),
+            ServerProfileId::new()
+        ));
+        let path = directory.join(DEFAULT_STARTUP_PREFERENCE_FILE);
+        let store = StartupPreferenceStore::from_path(&path);
+        assert_eq!(store.load().unwrap(), None);
+        store.persist(StartupPreference::Disabled).unwrap();
+        assert_eq!(store.load().unwrap(), Some(StartupPreference::Disabled));
+        store.persist(StartupPreference::Enabled).unwrap();
+        assert_eq!(store.load().unwrap(), Some(StartupPreference::Enabled));
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "version=1\nstate=enabled\n"
+        );
+        fs::write(&path, "version=1\nstate=maybe\n").unwrap();
+        assert!(matches!(
+            store.load(),
+            Err(DesktopClientConfigError::ConfigurationMalformed)
+        ));
+        fs::remove_dir_all(directory).unwrap();
     }
 }

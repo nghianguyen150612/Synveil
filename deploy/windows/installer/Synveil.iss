@@ -46,6 +46,8 @@ Name: "{userdesktop}\Synveil"; Filename: "{app}\synveil-desktop.exe"; WorkingDir
 var
   { P026 consumes this reviewed state boundary; P023 performs no startup mutation. }
   StartupRequested: Boolean;
+  StartupChoiceExplicit: Boolean;
+  FreshInstall: Boolean;
   DesktopIconRequested: Boolean;
   LaunchRequested: Boolean;
   StartupCheck: TNewCheckBox;
@@ -75,10 +77,14 @@ end;
 
 function InitializeSetup(): Boolean;
 var
-  FreshInstall: Boolean;
+  StartupValue: String;
 begin
   { Silent defaults fail closed. Interactive fresh-install defaults opt in. }
   FreshInstall := not DirExists(ExpandConstant('{app}'));
+  StartupValue := ExpandConstant('{param:STARTUP|__MISSING__}');
+  StartupChoiceExplicit := StartupValue <> '__MISSING__';
+  if WizardSilent and (not StartupChoiceExplicit) then
+    RaiseException('Silent installation requires /STARTUP=0 or /STARTUP=1');
   StartupRequested := ParseBooleanOption('STARTUP', (not WizardSilent) and FreshInstall);
   DesktopIconRequested := ParseBooleanOption('DESKTOPICON', (not WizardSilent) and
     (FreshInstall or FileExists(ExpandConstant('{userdesktop}\Synveil.lnk'))));
@@ -160,7 +166,18 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
+  StartupState: String;
 begin
+  if (CurStep = ssPostInstall) and (FreshInstall or StartupChoiceExplicit) then begin
+    if StartupRequested then
+      StartupState := 'enabled'
+    else
+      StartupState := 'disabled';
+    if (not Exec(ExpandConstant('{app}\synveil-client.exe'),
+      '--startup-preference ' + StartupState, ExpandConstant('{app}'),
+      SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
+      RaiseException('Synveil could not save the sign-in startup preference. Try again from Settings.');
+  end;
   if (CurStep = ssPostInstall) and LaunchRequested and (not WizardSilent) then begin
     if not Exec(ExpandConstant('{app}\synveil-desktop.exe'), '', ExpandConstant('{app}'),
       SW_SHOWNORMAL, ewNoWait, ResultCode) then

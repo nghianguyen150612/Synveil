@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Network-free P022-P024 installer source, UI, and runtime-contract validator."""
+"""Network-free P022-P026 installer, runtime, and startup-contract validator."""
 
 from __future__ import annotations
 
@@ -19,6 +19,10 @@ PACKAGE = ROOT / "deploy/packages/build-windows.sh"
 INSTALLED_RUNTIME_TEST = ROOT / "scripts/test-windows-installed-runtime.ps1"
 PER_USER_TEST = ROOT / "scripts/test-windows-per-user-installation.ps1"
 PER_USER_INVOKER = ROOT / "scripts/invoke-windows-standard-user-test.ps1"
+CLIENT_LAUNCH = ROOT / "crates/client/src/launch.rs"
+CLIENT_CONFIG = ROOT / "crates/client/src/config.rs"
+CLIENT_LIB = ROOT / "crates/client/src/lib.rs"
+DESKTOP_BRIDGE = ROOT / "crates/desktop/src/bridge.rs"
 REPRODUCIBLE = ROOT / "deploy/packages/common/reproducible.sh"
 APP_ID = "{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}"
 
@@ -78,6 +82,10 @@ def main() -> int:
     installed_test = INSTALLED_RUNTIME_TEST.read_text(encoding="utf-8")
     per_user_test = PER_USER_TEST.read_text(encoding="utf-8")
     per_user_invoker = PER_USER_INVOKER.read_text(encoding="utf-8")
+    launch = CLIENT_LAUNCH.read_text(encoding="utf-8")
+    config = CLIENT_CONFIG.read_text(encoding="utf-8")
+    client_lib = CLIENT_LIB.read_text(encoding="utf-8")
+    desktop_bridge = DESKTOP_BRIDGE.read_text(encoding="utf-8")
     lower = iss.lower()
     require(f"AppId={{{APP_ID}" in iss, "stable AppId")
     require("DefaultDirName={localappdata}\\Programs\\Synveil" in iss, "per-user path")
@@ -97,6 +105,9 @@ def main() -> int:
     require("[Run]" not in iss and iss.count("Exec(ExpandConstant('{app}\\synveil-desktop.exe')") == 1, "single absolute launch authority")
     require("LaunchRequested and (not WizardSilent)" in iss, "silent mode cannot launch")
     require("P026" in iss and "StartupRequested" in iss, "P026 startup handoff boundary")
+    require("--startup-preference " in iss and "synveil-client.exe" in iss and "ewWaitUntilTerminated" in iss,
+            "bounded installed-client startup handoff")
+    require("Silent installation requires /STARTUP=0 or /STARTUP=1" in iss, "silent startup choice required")
     for forbidden in ("schtasks", "currentversion\\run", "programdata", "{commonprograms}", "create service"):
         require(forbidden not in lower, f"forbidden installer authority: {forbidden}")
     for forbidden in ("privilegesrequired=admin", "privilegesrequired=poweruser", "requireadministrator", "highestavailable", "runas", "{autopf}", "{pf}"):
@@ -133,6 +144,18 @@ def main() -> int:
         require(evidence in per_user_invoker, f"P025 disposable-account harness: {evidence}")
     for evidence in ("Inspect compiled Setup execution level", "requestedExecutionLevel", "asInvoker", "invoke-windows-standard-user-test.ps1", "windows-per-user-evidence"):
         require(evidence in workflow, f"P025 hosted workflow evidence: {evidence}")
+    for evidence in (r"\Synveil\BackgroundClient\profile-", "InteractiveToken", "LeastPrivilege", "<LogonTrigger>",
+                     "MultipleInstancesPolicy>IgnoreNew", "windows_task_xml_is_authoritative", "UnsafeState",
+                     "System32", "schtasks.exe", "create_new(true)", "file.sync_all()"):
+        require(evidence in launch, f"P026 Task Scheduler authority: {evidence}")
+    for forbidden in ("cmd.exe", "powershell.exe", "CurrentVersion\\Run"):
+        require(forbidden.lower() not in launch.lower(), f"P026 forbidden startup mechanism: {forbidden}")
+    for evidence in ("StartupPreference", "startup-preference.conf", "version=1", "state=enabled", "state=disabled"):
+        require(evidence in config, f"P026 durable typed preference: {evidence}")
+    for evidence in ("--startup-preference", "--cleanup-startup-integration", "existing_profile_id", "enable_autostart", "disable_autostart"):
+        require(evidence in client_lib, f"P026 bounded runtime handoff: {evidence}")
+    require("StartupPreferenceStore::current" in desktop_bridge and "apply_startup_choice" in desktop_bridge,
+            "installer and Settings share startup preference authority")
     with tempfile.TemporaryDirectory() as directory:
         sample = Path(directory) / "sample"; sample.write_bytes(b"locked")
         verify_digest(sample, hashlib.sha256(b"locked").hexdigest())
