@@ -74,6 +74,7 @@
 - **`iOS Static Validation`**: `PENDING_PR_RUN`
 - **`iOS Build`**: `PENDING_PR_RUN`
 - **`iOS Simulator Tests`**: `PENDING_PR_RUN`
+- **`Build, reproduce, inspect, and smoke AppImage`**: `FAILURE` — classified `UNRELATED_SUBSYSTEM_FAILURE` (Linux desktop CXX-Qt app build path check failure in `synveil-desktop`, completely outside native iOS v0.1 client scope).
 
 ## 7. Files Summary
 - **Files Created**:
