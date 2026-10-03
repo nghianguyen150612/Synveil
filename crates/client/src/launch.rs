@@ -1586,8 +1586,16 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("synveil-launch-path-{}", ServerProfileId::new()));
         fs::create_dir_all(&root).expect("path root");
-        let desktop = root.join(SYNVEIL_DESKTOP_EXECUTABLE);
-        let client = root.join(SYNVEIL_CLIENT_EXECUTABLE);
+        let desktop = root.join(if cfg!(windows) {
+            "synveil-desktop.exe"
+        } else {
+            SYNVEIL_DESKTOP_EXECUTABLE
+        });
+        let client = root.join(if cfg!(windows) {
+            "synveil-client.exe"
+        } else {
+            SYNVEIL_CLIENT_EXECUTABLE
+        });
         fs::write(&desktop, b"desktop").expect("desktop fixture");
         fs::write(&client, b"client").expect("client fixture");
         #[cfg(unix)]
