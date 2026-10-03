@@ -2889,6 +2889,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "synveil-ios-ffi"
+version = "0.1.0"
+dependencies = [
+ "synveil-core",
+]
+
+[[package]]
 name = "synveil-metadata"
 version = "0.1.0"
 dependencies = [
