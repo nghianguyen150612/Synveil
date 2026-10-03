@@ -4,8 +4,8 @@
 `clients/ios/` is the canonical home of the native Synveil iOS client (`v0.1`). It establishes a clean, production-grade Swift application layout adhering strictly to ADR-058 (`docs/adr/ADR-058-ios-v0.1-client-architecture.md`), `IOS_ARCHITECTURE.md`, and `IOS_VALIDATION_CI_ARCHITECTURE.md`.
 
 ## 2. Current Project Status
-- **Phase**: Rust↔Swift FFI Strategy Contract (Prompt013).
-- **Status**: Dedicated GitHub Actions static validation gate (`.github/workflows/ios-static-validation.yml`), build gate (`.github/workflows/ios-build.yml`), and Simulator test gate (`.github/workflows/ios-simulator-tests.yml`) established.
+- **Phase**: Rust Apple Artifact CI (Prompt015).
+- **Status**: Dedicated GitHub Actions static validation gate (`.github/workflows/ios-static-validation.yml`), build gate (`.github/workflows/ios-build.yml`), Simulator test gate (`.github/workflows/ios-simulator-tests.yml`), and Rust Apple artifact gate (`.github/workflows/ios-rust-apple-build.yml`) established.
 - **Application Target**: `Synveil` (Swift + SwiftUI, bundle identifier `com.synveil.ios`, deployment target iOS 17.0).
 - **Test Target**: `SynveilTests` (XCTest Unit Testing Bundle, bundle identifier `com.synveil.ios.tests`).
 - **Signing Policy**: Configured for unsigned Simulator builds (`CODE_SIGNING_ALLOWED=NO`, zero committed team IDs or provisioning profiles).
@@ -127,6 +127,15 @@ xcodebuild \
   -derivedDataPath "${RUNNER_TEMP:-/tmp}/SynveilDerivedData" \
   -resultBundlePath "${RUNNER_TEMP:-/tmp}/SynveilTests.xcresult" \
   test
+```
+
+### 5.4 iOS Rust Apple Build & Artifact Pipeline (`.github/workflows/ios-rust-apple-build.yml`)
+Builds release Apple Rust static library archives for physical device (`aarch64-apple-ios`) and simulators (`aarch64-apple-ios-sim`, `x86_64-apple-ios`), creates universal simulator static library with `lipo`, stages release artifacts to `target/ios-rust-artifacts/` with `manifest.json` (schema v1) and `SHA256SUMS`, validates bundle integrity, and uploads GitHub Actions artifact `synveil-ios-rust-staticlibs`:
+
+```bash
+./scripts/check-ios-rust.sh
+./scripts/build-ios-rust-artifacts.sh
+python3 scripts/validate_ios_rust_artifact.py
 ```
 
 ## 6. Directory Ownership & Responsibilities
