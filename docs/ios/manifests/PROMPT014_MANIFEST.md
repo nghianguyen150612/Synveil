@@ -5,13 +5,17 @@
 * **Prompt Title**: `Minimal Rust iOS FFI Crate & Apple Target Compilation`
 * **Authoritative Integration Branch**: `ios-app`
 * **Starting Integration Baseline SHA**: `e8d3e24515d0525d5a1f82380f4ae7533ec1ed01`
-* **Work Branch**: `ios/p014-rust-apple-target`
+* **Work Branch**: `ios/p014-rust-apple-target-7320063833712373245`
+* **Validated Implementation Head**: `4792bd6236b279fbda5babc9e7815fdaae5531f7`
+* **PR**: #49 — https://github.com/nghianguyen150612/Synveil/pull/49
 * **Target PR Base**: `ios-app`
 
 ---
 
 ## 2. Rust Workspace & Toolchain Diagnostics
-* **Rust Toolchain Channel**: `stable` (`rustc 1.94.0`)
+* **Rust Toolchain Channel**: `stable`
+* **Local/Jules Host Rust**: `rustc 1.94.0`
+* **macOS CI Rust**: `rustc 1.98.1 (48a229cea 2026-09-01)`, `rustup 1.29.0 (2026-03-05)`
 * **Cargo Resolver**: `3`
 * **Workspace Edition**: `2024`
 * **Workspace Version**: `0.1.0`
@@ -88,7 +92,7 @@
 ## 7. CI Workflow Integration
 * **CI Workflow File**: `.github/workflows/ios-rust-apple-build.yml`
 * **CI Job Name**: `Rust Apple Target Build`
-* **CI Runner Environment**: `macos-latest`
+* **CI Runner Environment**: `macos-latest` resolved to `macos-26-arm64`, macOS `26.6.2` (`25G83`), Xcode `26.6` (`17F113`)
 * **Target Build Script**: `scripts/check-ios-rust.sh`
 
 ---
@@ -115,6 +119,14 @@
 * **Host Cargo Clippy**: `cargo clippy -p synveil-ios-ffi --all-targets --locked -- -D warnings` -> PASS
 * **iOS Source Validation**: `python3 clients/ios/Support/validate_ios_sources.py` -> PASS
 * **Apple Rust Target Verification Script**: `./scripts/check-ios-rust.sh` -> PASS
+* **Validated implementation-head `iOS Rust Apple Build`**: run `37126331532`, job `111212234622` — SUCCESS
+  * `aarch64-apple-ios` — `cargo check` + `cargo build` SUCCESS; produced `target/aarch64-apple-ios/debug/libsynveil_ios_ffi.a`
+  * `aarch64-apple-ios-sim` — `cargo check` + `cargo build` SUCCESS; produced `target/aarch64-apple-ios-sim/debug/libsynveil_ios_ffi.a`
+  * `x86_64-apple-ios` — `cargo check` + `cargo build` SUCCESS; produced `target/x86_64-apple-ios/debug/libsynveil_ios_ffi.a`
+* **Validated implementation-head `iOS Static Validation`**: run `37126331510` — SUCCESS
+* **Validated implementation-head `iOS Build`**: run `37126331509` — SUCCESS
+* **Validated implementation-head `iOS Simulator Tests`**: run `37126331552` — SUCCESS
+* **Evidence-only manifest correction**: this commit changes only `docs/ios/manifests/PROMPT014_MANIFEST.md`; because the PR as a whole includes Apple-Rust workflow/crate paths, GitHub may rerun the required gates. If rerun, the resulting final PR head must again pass all required native iOS and Rust Apple gates before merge.
 
 ---
 
@@ -122,3 +134,12 @@
 * **Linux AppImage Job (`Build, reproduce, inspect, and smoke AppImage`)**:
   * **Status**: Failed with `[synveil-artifact] ERROR: private or temporary build path found in synveil-desktop`.
   * **Classification**: `UNRELATED_SUBSYSTEM_FAILURE` — Desktop AppImage build failure is an existing desktop packaging issue on Linux runners and unrelated to native iOS Rust FFI crate (`synveil-ios-ffi`) compilation.
+
+
+---
+
+## 11. Merge Status
+* **PR**: #49 — https://github.com/nghianguyen150612/Synveil/pull/49
+* **PR Base**: `ios-app`
+* **Merge Status**: READY_FOR_FINAL_HEAD_VERIFICATION
+* **Final `ios-app` SHA**: PENDING_MERGE
