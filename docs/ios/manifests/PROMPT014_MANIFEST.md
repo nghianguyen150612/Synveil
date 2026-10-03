@@ -115,3 +115,10 @@
 * **Host Cargo Clippy**: `cargo clippy -p synveil-ios-ffi --all-targets --locked -- -D warnings` -> PASS
 * **iOS Source Validation**: `python3 clients/ios/Support/validate_ios_sources.py` -> PASS
 * **Apple Rust Target Verification Script**: `./scripts/check-ios-rust.sh` -> PASS
+
+---
+
+## 10. Unrelated Subsystem Failures
+* **Linux AppImage Job (`Build, reproduce, inspect, and smoke AppImage`)**:
+  * **Status**: Failed with `[synveil-artifact] ERROR: private or temporary build path found in synveil-desktop`.
+  * **Classification**: `UNRELATED_SUBSYSTEM_FAILURE` — Desktop AppImage build failure is an existing desktop packaging issue on Linux runners and unrelated to native iOS Rust FFI crate (`synveil-ios-ffi`) compilation.
