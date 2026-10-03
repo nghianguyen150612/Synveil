@@ -8,6 +8,7 @@ from clients.ios.Support.validate_ios_sources import (
     check_path_and_filename_invariants,
     check_file_content_invariants,
     parse_swift_imports,
+    strip_comments_and_strings,
 )
 
 
@@ -22,6 +23,19 @@ class TestValidateIOSSources(unittest.TestCase):
         """
         imports = parse_swift_imports(content)
         self.assertEqual(imports, {"Foundation", "SwiftUI", "Security"})
+
+    def test_strip_comments_and_strings(self):
+        content = """
+        // URLSession.shared should be stripped
+        /* URLSessionTask multi-line */
+        let msg = "URLSession is safe in strings"
+        let session = URLSession.shared
+        """
+        stripped = strip_comments_and_strings(content)
+        self.assertNotIn("// URLSession.shared", stripped)
+        self.assertNotIn("URLSessionTask multi-line", stripped)
+        self.assertNotIn("URLSession is safe in strings", stripped)
+        self.assertIn("URLSession.shared", stripped)
 
     def test_path_and_filename_invariants_allowed(self):
         rel_path = "clients/ios/Domain/ServerProfile.swift"
@@ -70,6 +84,41 @@ class TestValidateIOSSources(unittest.TestCase):
         self.assertTrue(
             any("directly imports forbidden infrastructure module(s): ['Security']" in v for v in violations)
         )
+
+    def test_forbidden_network_symbol_usage_rejected_in_upper_layers(self):
+        # Features layer rejects URLSession
+        rel_feature = "clients/ios/Features/Onboarding/OnboardingView.swift"
+        content_feature = "import SwiftUI\n\nlet session = URLSession.shared"
+        violations_feature = check_file_content_invariants(rel_feature, content_feature)
+        self.assertTrue(any("directly uses prohibited networking symbol(s)" in v for v in violations_feature))
+
+        # Application layer rejects URLSession
+        rel_app = "clients/ios/Application/Sync/SyncCoordinator.swift"
+        content_app = "import Foundation\n\nlet task: URLSessionDataTask"
+        violations_app = check_file_content_invariants(rel_app, content_app)
+        self.assertTrue(any("directly uses prohibited networking symbol(s)" in v for v in violations_app))
+
+        # Domain layer rejects URLSession
+        rel_domain = "clients/ios/Domain/Services/Service.swift"
+        content_domain = "import Foundation\n\nfunc fetch(s: URLSession)"
+        violations_domain = check_file_content_invariants(rel_domain, content_domain)
+        self.assertTrue(any("directly uses prohibited networking symbol(s)" in v for v in violations_domain))
+
+    def test_forbidden_network_symbol_allowed_in_infrastructure_and_comments(self):
+        # Allowed in Infrastructure/Network
+        rel_infra = "clients/ios/Infrastructure/Network/URLSessionHTTPTransport.swift"
+        content_infra = "import Foundation\n\nlet session = URLSession.shared"
+        self.assertEqual(check_file_content_invariants(rel_infra, content_infra), [])
+
+        # Allowed in comments or string literals in Application
+        rel_app_doc = "clients/ios/Application/Configuration/AppOrchestrator.swift"
+        content_app_doc = 'import Foundation\n\n// Concrete implementation uses URLSession\nlet desc = "URLSession transport"'
+        self.assertEqual(check_file_content_invariants(rel_app_doc, content_app_doc), [])
+
+    def test_transport_protocol_abstraction_allowed_in_upper_layers(self):
+        rel_app = "clients/ios/Application/Configuration/AppOrchestrator.swift"
+        content_app = "import Foundation\n\nstruct AppOrchestrator {\n  let transport: HTTPTransportProtocol\n}"
+        self.assertEqual(check_file_content_invariants(rel_app, content_app), [])
 
     def test_rust_ffi_boundary(self):
         # Allowed in RustBridge

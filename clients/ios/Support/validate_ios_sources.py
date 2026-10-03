@@ -39,6 +39,32 @@ FEATURES_FORBIDDEN_IMPORTS = {"Security", "GRDB", "SQLite3", "SQLite"}
 # Known raw FFI module names (can be expanded in Phase C / P013+)
 RAW_FFI_MODULES = {"synveil_core_ffi", "SynveilCoreFFI", "CBridge"}
 
+# Prohibited platform symbols in upper layers (Domain, Application, Features)
+FORBIDDEN_NETWORK_SYMBOLS = {
+    "URLSession",
+    "URLSessionTask",
+    "URLSessionConfiguration",
+    "URLSessionDataTask",
+    "URLSessionUploadTask",
+    "URLSessionDownloadTask",
+    "HTTPURLResponse",
+    "URLSessionDelegate",
+}
+
+FORBIDDEN_KEYCHAIN_SYMBOLS = {
+    "SecItemAdd",
+    "SecItemCopyMatching",
+    "SecItemUpdate",
+    "SecItemDelete",
+}
+
+FORBIDDEN_SQLITE_SYMBOLS = {
+    "sqlite3_open",
+    "sqlite3_exec",
+    "DatabaseQueue",
+    "DatabasePool",
+}
+
 # Prohibited file extensions / patterns for secrets and build artifacts
 FORBIDDEN_FILE_EXTENSIONS = {
     ".p12",
@@ -122,6 +148,19 @@ def parse_swift_imports(content):
     return imports
 
 
+def strip_comments_and_strings(content):
+    """Strips comments and string literals from Swift source code to prevent false positives."""
+    # Strip multi-line comments /* ... */
+    content = re.sub(r"/\*.*?\*/", "", content, flags=re.DOTALL)
+    # Strip single-line comments // ...
+    content = re.sub(r"//.*$", "", content, flags=re.MULTILINE)
+    # Strip multi-line string literals """..."""
+    content = re.sub(r'""".*?"""', '""', content, flags=re.DOTALL)
+    # Strip single-line string literals "..."
+    content = re.sub(r'"(?:\\.|[^"\\])*"', '""', content)
+    return content
+
+
 def check_file_content_invariants(rel_path_str, content):
     """Checks source file contents for path leakage, conflict markers, and architecture rules."""
     violations = []
@@ -161,6 +200,7 @@ def check_file_content_invariants(rel_path_str, content):
     # 3. Architecture & Layer dependency rules for Swift files
     if ext == ".swift" and rel_path_str.startswith("clients/ios/"):
         imports = parse_swift_imports(content)
+        stripped_code = strip_comments_and_strings(content)
         parts = path_obj.parts  # e.g. ('clients', 'ios', 'Domain', ...)
 
         if len(parts) > 2:
@@ -199,6 +239,38 @@ def check_file_content_invariants(rel_path_str, content):
                 if ffi_found:
                     violations.append(
                         f"Features file '{rel_path_str}' directly imports raw FFI module(s): {sorted(list(ffi_found))}"
+                    )
+
+            # Symbol usage rules for upper layers (Domain, Application, Features)
+            if layer in {"Domain", "Application", "Features"}:
+                net_symbols = [
+                    s
+                    for s in FORBIDDEN_NETWORK_SYMBOLS
+                    if re.search(r"\b" + re.escape(s) + r"\b", stripped_code)
+                ]
+                if net_symbols:
+                    violations.append(
+                        f"{layer} file '{rel_path_str}' directly uses prohibited networking symbol(s): {sorted(net_symbols)}"
+                    )
+
+                keychain_symbols = [
+                    s
+                    for s in FORBIDDEN_KEYCHAIN_SYMBOLS
+                    if re.search(r"\b" + re.escape(s) + r"\b", stripped_code)
+                ]
+                if keychain_symbols:
+                    violations.append(
+                        f"{layer} file '{rel_path_str}' directly uses prohibited Keychain symbol(s): {sorted(keychain_symbols)}"
+                    )
+
+                sqlite_symbols = [
+                    s
+                    for s in FORBIDDEN_SQLITE_SYMBOLS
+                    if re.search(r"\b" + re.escape(s) + r"\b", stripped_code)
+                ]
+                if sqlite_symbols:
+                    violations.append(
+                        f"{layer} file '{rel_path_str}' directly uses prohibited SQLite/GRDB symbol(s): {sorted(sqlite_symbols)}"
                     )
 
             # Raw FFI boundary reservation across all layers outside Infrastructure/RustBridge

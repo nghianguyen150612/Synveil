@@ -4,7 +4,7 @@
 `clients/ios/` is the canonical home of the native Synveil iOS client (`v0.1`). It establishes a clean, production-grade Swift application layout adhering strictly to ADR-058 (`docs/adr/ADR-058-ios-v0.1-client-architecture.md`), `IOS_ARCHITECTURE.md`, and `IOS_VALIDATION_CI_ARCHITECTURE.md`.
 
 ## 2. Current Project Status
-- **Phase**: Configuration, Server URL & Safe Defaults (Prompt011).
+- **Phase**: Dependency Boundaries & Service Protocols (Prompt012).
 - **Status**: Dedicated GitHub Actions static validation gate (`.github/workflows/ios-static-validation.yml`), build gate (`.github/workflows/ios-build.yml`), and Simulator test gate (`.github/workflows/ios-simulator-tests.yml`) established.
 - **Application Target**: `Synveil` (Swift + SwiftUI, bundle identifier `com.synveil.ios`, deployment target iOS 17.0).
 - **Test Target**: `SynveilTests` (XCTest Unit Testing Bundle, bundle identifier `com.synveil.ios.tests`).
@@ -56,6 +56,8 @@ clients/ios/
 │   └── README.md                      # AppOrchestrator, SessionController, SyncCoordinator
 ├── Domain/                            # Pure Swift Domain Entities & Service Protocols
 │   ├── Configuration/                 # ServerEndpoint, EndpointValidationError
+│   ├── Services/                      # Service Protocols & Value Models
+│   │   └── Transport/                 # HTTPTransportProtocol, HTTPTransportRequest/Response
 │   └── README.md                      # ServerProfile, LogicalNode, TransferJob, DomainError
 ├── Infrastructure/                    # Concrete Platform & System Implementations
 │   ├── README.md
@@ -212,3 +214,28 @@ The following security artifacts are strictly forbidden from source control:
 4. **INVARIANT-04**: Domain code does not know about concrete UI, network, Keychain, or SQLite technologies.
 5. **INVARIANT-05**: Transfer success is reported ONLY upon authoritative server 200/201 acknowledgment or local verification.
 6. **INVARIANT-06**: Client code MUST NOT attempt automated conflict resolution or issue DeviceBearer conflict resolution API calls (`ADR-032`).
+
+## 11. Dependency Boundaries & Service Protocols (Prompt012)
+
+### 11.1 Transport Contract Ownership
+- **`HTTPTransportProtocol`** (`Domain/Services/Transport/HTTPTransportProtocol.swift`): Pure Swift async `Sendable` service protocol representing network transport capabilities.
+- **`HTTPTransportRequest`** (`Domain/Services/Transport/HTTPTransportRequest.swift`): Immutable value type holding request `url`, `method`, `headers`, and `body`.
+- **`HTTPTransportResponse`** (`Domain/Services/Transport/HTTPTransportResponse.swift`): Immutable value type holding response `statusCode`, `headers`, and `body`.
+- **`HTTPMethod`** (`Domain/Services/Transport/HTTPMethod.swift`): Typed enum for standard HTTP verbs (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`).
+
+### 11.2 No Raw URLSession Above Infrastructure
+- `Features`, `Application`, and `Domain` layers MUST depend on `HTTPTransportProtocol` instead of Apple concrete networking.
+- Direct symbol usage of `URLSession`, `URLSessionTask`, `URLSessionConfiguration`, `HTTPURLResponse`, or URLSession delegate types is prohibited in `Features/`, `Application/`, and `Domain/`.
+- Concrete Apple networking implementations reside strictly under `Infrastructure/Network/`.
+
+### 11.3 Rust Bridge Ownership & Deferral Policy
+- **Sole FFI Boundary**: `Infrastructure/RustBridge/` is the only approved location for importing raw Rust C-FFI bindings or C headers.
+- **Protocol Deferral Decision**: The callable `RustBridgeProtocol` method surface is explicitly deferred until P013–P016 when real Swift ↔ Rust FFI signatures, ABI type mappings, and memory ownership are established. Synthetic, fake, or empty marker protocols are forbidden.
+
+### 11.4 Composition Root Policy
+- `App/` serves as the future composition root for instantiating and injecting service implementations.
+- No-op production implementations or unused container classes are avoided prior to feature requirements.
+
+### 11.5 Test Double Strategy
+- Unit test suites in `SynveilTests` use deterministic in-memory fakes (e.g., `StubHTTPTransport`) conforming to `HTTPTransportProtocol`.
+- Tests perform zero real network I/O and require no booted local server or Internet connection.
