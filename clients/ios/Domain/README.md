@@ -6,7 +6,12 @@ The `Domain` directory contains platform-independent Swift domain entities, valu
 ### Key Domain Concepts
 - **Entities & Value Objects**: `ServerProfile`, `DeviceSession`, `Library`, `LogicalNode`, `MutationIntent`, `TransferJob`, `SyncCheckpoint`.
 - **Domain Error Taxonomy**: `DomainError` and safe user-presentable error mappings.
-- **Service Protocol Boundaries**: `HTTPTransportProtocol`, `CredentialVaultProtocol`, `LocalCacheStoreProtocol`, `TransferEngineProtocol`, `ConnectivityObserverProtocol`, `RustBridgeProtocol`.
+- **Service Protocol Boundaries**:
+  - `HTTPTransportProtocol` (`Domain/Services/Transport/`): Abstract HTTP networking transport contract (`HTTPMethod`, `HTTPTransportRequest`, `HTTPTransportResponse`).
+  - `CredentialVaultProtocol` (reserved for auth prompts P024–P027).
+  - `LocalCacheStoreProtocol` (reserved for local persistence P038+).
+  - `TransferEngineProtocol` (reserved for transfer engine P028–P035).
+  - `RustBridgeProtocol`: Intentionally deferred until P013/P016 when real Swift ↔ Rust FFI signatures and bindings are established.
 
 ## Dependency Rules
 - **Allowed Dependencies**: Swift Standard Library & `Foundation` (`URL`, `UUID`, `Date`, `Data`).

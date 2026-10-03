@@ -14,9 +14,14 @@
 		A10000012C00000000000012 /* ServerEndpoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000012 /* ServerEndpoint.swift */; };
 		A10000012C00000000000013 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000013 /* AppEnvironment.swift */; };
 		A10000012C00000000000014 /* AppConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000014 /* AppConfiguration.swift */; };
+		A10000012C00000000000015 /* HTTPMethod.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000015 /* HTTPMethod.swift */; };
+		A10000012C00000000000016 /* HTTPTransportRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000016 /* HTTPTransportRequest.swift */; };
+		A10000012C00000000000017 /* HTTPTransportResponse.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000017 /* HTTPTransportResponse.swift */; };
+		A10000012C00000000000018 /* HTTPTransportProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000018 /* HTTPTransportProtocol.swift */; };
 		B10000012C00000000000001 /* SynveilBootstrapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000001 /* SynveilBootstrapTests.swift */; };
 		B10000012C00000000000011 /* ServerEndpointTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000011 /* ServerEndpointTests.swift */; };
 		B10000012C00000000000012 /* AppConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000012 /* AppConfigurationTests.swift */; };
+		B10000012C00000000000013 /* HTTPTransportContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000013 /* HTTPTransportContractTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -38,9 +43,14 @@
 		A20000012C00000000000012 /* ServerEndpoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Configuration/ServerEndpoint.swift; sourceTree = "<group>"; };
 		A20000012C00000000000013 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Configuration/AppEnvironment.swift; sourceTree = "<group>"; };
 		A20000012C00000000000014 /* AppConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Configuration/AppConfiguration.swift; sourceTree = "<group>"; };
+		A20000012C00000000000015 /* HTTPMethod.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Transport/HTTPMethod.swift; sourceTree = "<group>"; };
+		A20000012C00000000000016 /* HTTPTransportRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Transport/HTTPTransportRequest.swift; sourceTree = "<group>"; };
+		A20000012C00000000000017 /* HTTPTransportResponse.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Transport/HTTPTransportResponse.swift; sourceTree = "<group>"; };
+		A20000012C00000000000018 /* HTTPTransportProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Transport/HTTPTransportProtocol.swift; sourceTree = "<group>"; };
 		B20000012C00000000000001 /* SynveilBootstrapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SynveilBootstrapTests.swift; sourceTree = "<group>"; };
 		B20000012C00000000000011 /* ServerEndpointTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/ServerEndpointTests.swift; sourceTree = "<group>"; };
 		B20000012C00000000000012 /* AppConfigurationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/AppConfigurationTests.swift; sourceTree = "<group>"; };
+		B20000012C00000000000013 /* HTTPTransportContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/HTTPTransportContractTests.swift; sourceTree = "<group>"; };
 		B20000012C00000000000002 /* SynveilTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SynveilTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -88,8 +98,28 @@
 			children = (
 				A20000012C00000000000011 /* EndpointValidationError.swift */,
 				A20000012C00000000000012 /* ServerEndpoint.swift */,
+				A40000012C00000000000013 /* Services */,
 			);
 			name = Domain;
+			sourceTree = "<group>";
+		};
+		A40000012C00000000000013 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				A40000012C00000000000014 /* Transport */,
+			);
+			name = Services;
+			sourceTree = "<group>";
+		};
+		A40000012C00000000000014 /* Transport */ = {
+			isa = PBXGroup;
+			children = (
+				A20000012C00000000000015 /* HTTPMethod.swift */,
+				A20000012C00000000000016 /* HTTPTransportRequest.swift */,
+				A20000012C00000000000017 /* HTTPTransportResponse.swift */,
+				A20000012C00000000000018 /* HTTPTransportProtocol.swift */,
+			);
+			name = Transport;
 			sourceTree = "<group>";
 		};
 		A40000012C00000000000012 /* Application */ = {
@@ -132,6 +162,7 @@
 				B20000012C00000000000001 /* SynveilBootstrapTests.swift */,
 				B20000012C00000000000011 /* ServerEndpointTests.swift */,
 				B20000012C00000000000012 /* AppConfigurationTests.swift */,
+				B20000012C00000000000013 /* HTTPTransportContractTests.swift */,
 			);
 			name = SynveilTests;
 			sourceTree = "<group>";
@@ -166,7 +197,7 @@
 			buildRules = (
 			);
 			dependencies = (
-				B70000012C00000000000001 /* PBXTargetDependency */,
+				B70000012C00000000000001 /* PBXTargetDependency */;
 			);
 			name = SynveilTests;
 			productName = SynveilTests;
@@ -233,6 +264,10 @@
 				A10000012C00000000000012 /* ServerEndpoint.swift in Sources */,
 				A10000012C00000000000013 /* AppEnvironment.swift in Sources */,
 				A10000012C00000000000014 /* AppConfiguration.swift in Sources */,
+				A10000012C00000000000015 /* HTTPMethod.swift in Sources */,
+				A10000012C00000000000016 /* HTTPTransportRequest.swift in Sources */,
+				A10000012C00000000000017 /* HTTPTransportResponse.swift in Sources */,
+				A10000012C00000000000018 /* HTTPTransportProtocol.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -243,6 +278,7 @@
 				B10000012C00000000000001 /* SynveilBootstrapTests.swift in Sources */,
 				B10000012C00000000000011 /* ServerEndpointTests.swift in Sources */,
 				B10000012C00000000000012 /* AppConfigurationTests.swift in Sources */,
+				B10000012C00000000000013 /* HTTPTransportContractTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
