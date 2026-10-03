@@ -4,7 +4,7 @@
 `clients/ios/` is the canonical home of the native Synveil iOS client (`v0.1`). It establishes a clean, production-grade Swift application layout adhering strictly to ADR-058 (`docs/adr/ADR-058-ios-v0.1-client-architecture.md`), `IOS_ARCHITECTURE.md`, and `IOS_VALIDATION_CI_ARCHITECTURE.md`.
 
 ## 2. Current Project Status
-- **Phase**: Dependency Boundaries & Service Protocols (Prompt012).
+- **Phase**: Rust↔Swift FFI Strategy Contract (Prompt013).
 - **Status**: Dedicated GitHub Actions static validation gate (`.github/workflows/ios-static-validation.yml`), build gate (`.github/workflows/ios-build.yml`), and Simulator test gate (`.github/workflows/ios-simulator-tests.yml`) established.
 - **Application Target**: `Synveil` (Swift + SwiftUI, bundle identifier `com.synveil.ios`, deployment target iOS 17.0).
 - **Test Target**: `SynveilTests` (XCTest Unit Testing Bundle, bundle identifier `com.synveil.ios.tests`).
@@ -203,7 +203,7 @@ The following security artifacts are strictly forbidden from source control:
 - Personal server credentials or private TLS keys.
 
 ### 9.3 Generated Code Policy
-- Generated Swift/C bridge bindings (from UniFFI or C-FFI generators) will live in `clients/ios/Infrastructure/RustBridge/` once established in Phase C (P013–P016).
+- Generated Swift/C bridge bindings (from C-ABI header generators like cbindgen) will live in `clients/ios/Infrastructure/RustBridge/` once established in Phase C (P013–P016).
 - Hand-editing generated bridge bindings is forbidden.
 - Temporary build outputs remain untracked in `.gitignore`.
 
@@ -239,3 +239,17 @@ The following security artifacts are strictly forbidden from source control:
 ### 11.5 Test Double Strategy
 - Unit test suites in `SynveilTests` use deterministic in-memory fakes (e.g., `StubHTTPTransport`) conforming to `HTTPTransportProtocol`.
 - Tests perform zero real network I/O and require no booted local server or Internet connection.
+
+## 12. Authoritative Rust↔Swift FFI Strategy Contract (Prompt013)
+
+### 12.1 Authoritative Specification
+The Rust↔Swift FFI strategy contract is fully documented in:
+
+`docs/ios/IOS_RUST_SWIFT_FFI_CONTRACT.md`
+
+### 12.2 Key Strategy Decisions
+- **Selected Technology**: Explicit stable C ABI exposed by a dedicated thin Rust bridge crate (`crates/ios-ffi/`, package `synveil-ios-ffi`, building `staticlib`).
+- **UniFFI Status**: UniFFI was evaluated and classified as `EVALUATED_NOT_SELECTED_FOR_IOS_V0_1`.
+- **Swift C++ Interop Prohibition**: Swift C++ interop, Qt, and CXX-Qt are strictly prohibited for iOS v0.1.
+- **Header Generation**: Header management recommended via `CBINDGEN_RECOMMENDED_FOR_P014_P015`.
+- **Zero FFI Implementation in P013**: P013 establishes the contract only. Implementation belongs strictly to P014–P020.
