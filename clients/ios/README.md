@@ -4,9 +4,8 @@
 `clients/ios/` is the canonical home of the native Synveil iOS client (`v0.1`). It establishes a clean, production-grade Swift application layout adhering strictly to ADR-058 (`docs/adr/ADR-058-ios-v0.1-client-architecture.md`), `IOS_ARCHITECTURE.md`, and `IOS_VALIDATION_CI_ARCHITECTURE.md`.
 
 ## 2. Current Project Status
-- **Phase**: iOS Simulator Test Gate (Prompt009).
-- **Status**: Dedicated GitHub Actions build gate (`.github/workflows/ios-build.yml`) and Simulator test gate (`.github/workflows/ios-simulator-tests.yml`) established. Minimal native iOS Xcode project (`clients/ios/Synveil.xcodeproj`), unit test target (`SynveilTests`), and shared scheme established.
-- **CI Verification**: GitHub Actions run `37040470487` successfully built the `Synveil` scheme with Xcode 26.6 and the iOS Simulator 26.5 SDK using unsigned Simulator settings. Dedicated Simulator testing workflow executes `xcodebuild test` against an available booted Simulator destination.
+- **Phase**: Swift Formatting & Static Validation Gate (Prompt010).
+- **Status**: Dedicated GitHub Actions static validation gate (`.github/workflows/ios-static-validation.yml`), build gate (`.github/workflows/ios-build.yml`), and Simulator test gate (`.github/workflows/ios-simulator-tests.yml`) established.
 - **Application Target**: `Synveil` (Swift + SwiftUI, bundle identifier `com.synveil.ios`, deployment target iOS 17.0).
 - **Test Target**: `SynveilTests` (XCTest Unit Testing Bundle, bundle identifier `com.synveil.ios.tests`).
 - **Signing Policy**: Configured for unsigned Simulator builds (`CODE_SIGNING_ALLOWED=NO`, zero committed team IDs or provisioning profiles).
@@ -16,6 +15,7 @@
 ```text
 clients/ios/
 ├── README.md                          # Client layout & architecture specification
+├── .swift-format                      # Canonical Swift formatter rules configuration
 ├── Synveil.xcodeproj/                 # Native Xcode project & shared scheme
 │   ├── project.pbxproj
 │   └── xcshareddata/xcschemes/Synveil.xcscheme
@@ -46,12 +46,31 @@ clients/ios/
 │   ├── SynveilTests/                  # Canonical unit test target source
 │   └── README.md                      # Unit, Integration, Architecture tests & Mocks
 └── Support/                           # Repository Scripts & Reference Configs
+    ├── validate_ios_sources.py        # Static source & architecture validator
+    ├── tests/                         # Validator unit self-tests
     └── README.md
 ```
 
 ## 4. Command-Line Build & Continuous Integration Contract
 
-### 4.1 iOS Build Gate (`.github/workflows/ios-build.yml`)
+### 4.1 iOS Static Validation Gate (`.github/workflows/ios-static-validation.yml`)
+Enforces formatting consistency and repository/architectural invariants:
+
+```bash
+# Developer formatting command (in-place source formatting)
+swift format --recursive --in-place clients/ios
+# or: swift-format format --recursive --in-place clients/ios
+
+# Non-mutating CI formatting check
+swift format lint --recursive --strict clients/ios
+# or: swift-format lint --recursive --strict clients/ios
+
+# Execute static source validator and self-tests
+python3 -m unittest discover -s clients/ios/Support/tests
+python3 clients/ios/Support/validate_ios_sources.py
+```
+
+### 4.2 iOS Build Gate (`.github/workflows/ios-build.yml`)
 To build the native iOS project compilation target on macOS with Xcode tooling locally or in CI:
 
 ```bash
@@ -65,7 +84,7 @@ xcodebuild \
   build
 ```
 
-### 4.2 iOS Simulator Test Gate (`.github/workflows/ios-simulator-tests.yml`)
+### 4.3 iOS Simulator Test Gate (`.github/workflows/ios-simulator-tests.yml`)
 To execute XCTest suites inside a booted iOS Simulator destination locally or in CI:
 
 ```bash
@@ -92,7 +111,7 @@ xcodebuild \
 | `Extensions/` | Platform extensions reservation: `FileProvider/` (`NSFileProviderExtension` in P053) and `PhotoKit/` camera roll sync (in P056). |
 | `Resources/` | Asset catalogs (`Assets.xcassets`), String localizations (`Localizable.xcstrings`), privacy usage keys (`Info.plist`). |
 | `Tests/` | Unit test suites, service integration tests with in-memory SQLite/URLProtocol mocks, architecture boundary tests, test doubles (`Mocks/`). |
-| `Support/` | Build support scripts, repository static checks, and reference configurations. |
+| `Support/` | Build support scripts, static source validator (`validate_ios_sources.py`), and reference configurations. |
 
 ## 6. Allowed Dependency Direction
 

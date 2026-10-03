@@ -1,0 +1,69 @@
+name: iOS Static Validation
+
+on:
+  push:
+    paths:
+      - "clients/ios/**"
+      - ".github/workflows/ios-static-validation.yml"
+  pull_request:
+    paths:
+      - "clients/ios/**"
+      - ".github/workflows/ios-static-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-static-validation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: iOS Static & Swift Format Validation
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Print environment diagnostics
+        run: |
+          echo "=== Host Environment ==="
+          sw_vers
+          echo ""
+          echo "=== Xcode Toolchain ==="
+          xcodebuild -version
+          echo ""
+          echo "=== Swift Compiler ==="
+          swift --version
+          echo ""
+          echo "=== Formatter Diagnostics ==="
+          if command -v swift-format >/dev/null 2>&1; then
+            swift-format --version || true
+          elif swift format --help >/dev/null 2>&1; then
+            swift format --version || true
+          else
+            echo "::warning:: Neither swift-format nor swift format is available in PATH"
+          fi
+
+      - name: Verify Swift Source Formatting
+        run: |
+          if command -v swift-format >/dev/null 2>&1; then
+            echo "Running swift-format lint..."
+            swift-format lint --recursive --strict clients/ios
+          elif swift format --help >/dev/null 2>&1; then
+            echo "Running swift format lint..."
+            swift format lint --recursive --strict clients/ios
+          else
+            echo "::error:: No official Swift formatter found on runner."
+            exit 1
+          fi
+
+      - name: Run Static Validator Self-Tests
+        run: |
+          python3 -m unittest discover -s clients/ios/Support/tests
+
+      - name: Run Synveil iOS Static Source Validator
+        run: |
+          python3 clients/ios/Support/validate_ios_sources.py
