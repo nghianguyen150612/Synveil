@@ -62,6 +62,14 @@ direct `rustc` invocation, fixing the common lookup defect without changing
 PATH, renaming Git tools, or disabling reproducibility policy. Hosted evidence
 for the corrective commit remains pending and is not represented as PASS.
 
+Follow-up run `37098171079` proved the explicit Visual Studio path and version
+identity checks but exposed a brittle final check: localized `link.exe /?`
+output and its exit status were incorrectly treated as authentication. The
+gate now authenticates a regular non-reparse-point file beneath the active
+tools root using Microsoft `FileVersionInfo` plus its PE signature and AMD64
+machine type. Help/banner output is not an authority. This retains rejection
+of Git/MSYS `link.exe` while avoiding localization and tool exit-code coupling.
+
 Reproducibility design is a strict byte comparison across two independent
 compiler invocations with unchanged runtime and generated-input paths. Its
 status is **pending hosted Windows execution**, not PASS. The Inno 6 Setup

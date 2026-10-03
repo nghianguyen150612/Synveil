@@ -90,7 +90,9 @@ def main() -> int:
     require("Get-FileHash" in build and "-cne $Lock.sha256" in build, "digest before execution")
     require("windows-x86_64-installer" in build and '"windows_installer"' in build and '"SynveilSetup.exe"' in build and '"primary_installer"' in build, "artifact manifest entry")
     require("windows-latest" in workflow and "/VERYSILENT" in workflow and "state-sentinel" in workflow, "native smoke contract")
-    require("VCToolsInstallDir" in workflow and "CompanyName" in workflow and "Microsoft \\(R\\).* Linker" in workflow, "authenticated MSVC linker selection")
+    require("VCToolsInstallDir" in workflow and "CompanyName" in workflow and "OriginalFilename" in workflow, "authenticated MSVC linker selection")
+    require("LinkType" in workflow and "0x00004550" in workflow and "0x8664" in workflow, "regular AMD64 PE linker identity")
+    require("$banner" not in workflow and "& $linker '/?'" not in workflow, "linker identity does not depend on localized help output")
     require("CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" in reproducible and 'rustc "${rustc_linker_args[@]}"' in reproducible, "direct rustc uses selected MSVC linker")
     with tempfile.TemporaryDirectory() as directory:
         sample = Path(directory) / "sample"; sample.write_bytes(b"locked")
