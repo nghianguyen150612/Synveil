@@ -3,6 +3,7 @@ param(
     [string]$OutputDirectory = "target/windows-installer",
     [string]$RuntimeStagingDirectory,
     [string]$InnoToolchainDirectory,
+    [ValidateSet('1.0.0','1.1.0')][string]$LifecycleFixtureVersion,
     [switch]$Diagnostics
 )
 
@@ -118,6 +119,14 @@ $generated = Join-Path $target 'windows-installer-generated'; Remove-Item $gener
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('synveil-inno-' + [guid]::NewGuid().ToString('N')); New-Item $temp -ItemType Directory | Out-Null
 try {
     $version = Get-WorkspaceVersion (Join-Path $repo 'Cargo.toml')
+    # P027-only native lifecycle fixtures never modify Cargo.toml, create tags,
+    # or enter the production release manifest. Numeric versions are required
+    # by Inno Setup and deliberately constrained to this closed test pair.
+    if ($LifecycleFixtureVersion) {
+        if (!$env:CI) { Fail "PAYLOAD_IDENTITY_FAILURE" "lifecycle fixture versions are CI-only" }
+        $parts = $LifecycleFixtureVersion.Split('.')
+        $version = @{ Product=$LifecycleFixtureVersion; Windows="$($parts[0]).$($parts[1]).$($parts[2]).0" }
+    }
     if ($RuntimeStagingDirectory) {
         $stage = Full-RepoPath $RuntimeStagingDirectory $repo
     } else {
@@ -125,8 +134,9 @@ try {
         Invoke-Checked 'bash' @((Join-Path $repo 'deploy/packages/build-windows.sh'),('--staging-dir=' + $stage)) "PAYLOAD_BUILD_FAILURE"
     }
     Read-Payload $stage $generated
+    $manifestHash = (Get-FileHash -LiteralPath (Join-Path $stage 'SYNVEIL-MANIFEST.txt') -Algorithm SHA256).Hash.ToLowerInvariant()
     $escapedStage = $stage.Replace('"','""'); $escapedOutput = $output.Replace('"','""')
-    $defines = @('#define SynveilVersion "' + $version.Product + '"','#define SynveilWindowsVersion "' + $version.Windows + '"','#define SynveilSourceRevision "' + $revision + '"','#define SynveilPayloadDir "' + $escapedStage + '"','#define SynveilOutputDir "' + $escapedOutput + '"')
+    $defines = @('#define SynveilVersion "' + $version.Product + '"','#define SynveilWindowsVersion "' + $version.Windows + '"','#define SynveilSourceRevision "' + $revision + '"','#define SynveilManifestSha256 "' + $manifestHash + '"','#define SynveilPayloadDir "' + $escapedStage + '"','#define SynveilOutputDir "' + $escapedOutput + '"')
     [IO.File]::WriteAllLines((Join-Path $generated 'version.iss'), $defines, [Text.UTF8Encoding]::new($false))
     $escapedGenerated = $generated.Replace('"','""')
     $sourceScript = (Join-Path $repo 'deploy/windows/installer/Synveil.iss').Replace('"','""')
@@ -142,7 +152,9 @@ try {
     $ascii = [Text.Encoding]::ASCII.GetString($bytes); $utf16 = [Text.Encoding]::Unicode.GetString($bytes)
     foreach ($marker in @('BEGIN PRIVATE KEY','ghp_','github_pat_')) { if ($ascii.Contains($marker) -or $utf16.Contains($marker)) { Fail "INSTALLER_VERIFY_FAILURE" "secret-like marker in output" } }
     if ($ascii.Contains($repo) -or $utf16.Contains($repo)) { Fail "INSTALLER_VERIFY_FAILURE" "private source path leaked into Setup" }
-    Invoke-Checked 'python' @((Join-Path $repo 'scripts/release_manifest.py'),'create','--artifact-root',$output,'--product-version',$version.Product,'--source-commit',$revision,'--output',(Join-Path $output 'SYNVEIL-RELEASE-MANIFEST.json'),'--artifact','{"id":"windows-x86_64-installer","artifact_type":"windows_installer","filename":"SynveilSetup.exe","platform":"windows","architecture":"x86_64","role":"primary_installer","components":["synveil-desktop","synveil-client"]}') "INSTALLER_VERIFY_FAILURE"
-    Invoke-Checked 'python' @((Join-Path $repo 'scripts/release_manifest.py'),'validate','--artifact-root',$output,(Join-Path $output 'SYNVEIL-RELEASE-MANIFEST.json')) "INSTALLER_VERIFY_FAILURE"
+    if (!$LifecycleFixtureVersion) {
+        Invoke-Checked 'python' @((Join-Path $repo 'scripts/release_manifest.py'),'create','--artifact-root',$output,'--product-version',$version.Product,'--source-commit',$revision,'--output',(Join-Path $output 'SYNVEIL-RELEASE-MANIFEST.json'),'--artifact','{"id":"windows-x86_64-installer","artifact_type":"windows_installer","filename":"SynveilSetup.exe","platform":"windows","architecture":"x86_64","role":"primary_installer","components":["synveil-desktop","synveil-client"]}') "INSTALLER_VERIFY_FAILURE"
+        Invoke-Checked 'python' @((Join-Path $repo 'scripts/release_manifest.py'),'validate','--artifact-root',$output,(Join-Path $output 'SYNVEIL-RELEASE-MANIFEST.json')) "INSTALLER_VERIFY_FAILURE"
+    }
     $hash=(Get-FileHash $setup -Algorithm SHA256).Hash.ToLowerInvariant(); Write-Host "SynveilSetup.exe size=$((Get-Item $setup).Length) sha256=$hash source=$revision"
 } finally { Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue }

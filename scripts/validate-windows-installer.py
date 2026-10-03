@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Network-free P022-P026 installer, runtime, and startup-contract validator."""
+"""Network-free P022-P027 installer, runtime, startup, and lifecycle validator."""
 
 from __future__ import annotations
 
@@ -19,6 +19,8 @@ PACKAGE = ROOT / "deploy/packages/build-windows.sh"
 INSTALLED_RUNTIME_TEST = ROOT / "scripts/test-windows-installed-runtime.ps1"
 PER_USER_TEST = ROOT / "scripts/test-windows-per-user-installation.ps1"
 PER_USER_INVOKER = ROOT / "scripts/invoke-windows-standard-user-test.ps1"
+LIFECYCLE_TEST = ROOT / "scripts/test-windows-installer-lifecycle.ps1"
+LIFECYCLE_MODEL = ROOT / "scripts/windows_lifecycle.py"
 CLIENT_LAUNCH = ROOT / "crates/client/src/launch.rs"
 CLIENT_CONFIG = ROOT / "crates/client/src/config.rs"
 CLIENT_LIB = ROOT / "crates/client/src/lib.rs"
@@ -82,6 +84,8 @@ def main() -> int:
     installed_test = INSTALLED_RUNTIME_TEST.read_text(encoding="utf-8")
     per_user_test = PER_USER_TEST.read_text(encoding="utf-8")
     per_user_invoker = PER_USER_INVOKER.read_text(encoding="utf-8")
+    lifecycle_test = LIFECYCLE_TEST.read_text(encoding="utf-8")
+    lifecycle_model = LIFECYCLE_MODEL.read_text(encoding="utf-8")
     launch = CLIENT_LAUNCH.read_text(encoding="utf-8")
     config = CLIENT_CONFIG.read_text(encoding="utf-8")
     client_lib = CLIENT_LIB.read_text(encoding="utf-8")
@@ -156,6 +160,25 @@ def main() -> int:
         require(evidence in client_lib, f"P026 bounded runtime handoff: {evidence}")
     require("StartupPreferenceStore::current" in desktop_bridge and "apply_startup_choice" in desktop_bridge,
             "installer and Settings share startup preference authority")
+    for evidence in ("/REPAIR accepts only 1", "RepairMode and FreshInstall", "CompareStrictVersion",
+                     "Downgrade is not supported", "Silent same-version Setup requires /REPAIR=1",
+                     "LoadTrustedPreviousManifest", "SynveilManifestSha256", "GetSHA256OfFile",
+                     "RemoveProvenObsoleteFiles", "FileAttributeReparsePoint",
+                     "--cleanup-startup-integration", "CurUninstallStepChanged"):
+        require(evidence in iss, f"P027 installer lifecycle contract: {evidence}")
+    require("DelTree(" not in iss and "{localappdata}\\Synveil" not in iss, "ordinary uninstall cannot recursively remove state")
+    for evidence in ("Get-RegisteredUninstaller", "QuietUninstallString", "user-note.txt", "Snapshot-State",
+                     "p027-obsolete-owned.txt", "downgrade-fixture", "reinstall-production",
+                     "startup_preference_preserved", "authorized_scope"):
+        require(evidence in lifecycle_test, f"P027 native lifecycle evidence: {evidence}")
+    require("unins000.exe" not in lifecycle_test.lower(), "registered uninstaller must not be hard-coded")
+    for evidence in ("PURGE_CLASSES", 'frozenset({"APPLICATION_CONFIG"})', "confirmed",
+                     "USER_LIBRARY", "CREDENTIAL_STATE", "SERVER_DATABASE"):
+        require(evidence in lifecycle_model, f"P027 separate bounded purge model: {evidence}")
+    require("LifecycleFixtureVersion" in build and "if (!$env:CI)" in build and "if (!$LifecycleFixtureVersion)" in build,
+            "test-only fixture cannot alter production version/release manifest")
+    require("Build isolated lifecycle Setup fixtures" in workflow and "OlderFixtureSetup" in workflow,
+            "hosted standard-user lifecycle execution")
     with tempfile.TemporaryDirectory() as directory:
         sample = Path(directory) / "sample"; sample.write_bytes(b"locked")
         verify_digest(sample, hashlib.sha256(b"locked").hexdigest())

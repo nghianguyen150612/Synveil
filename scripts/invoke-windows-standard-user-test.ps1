@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory=$true)][string]$Setup,
-    [Parameter(Mandatory=$true)][string]$EvidenceDirectory
+    [Parameter(Mandatory=$true)][string]$EvidenceDirectory,
+    [string]$OlderFixtureSetup,
+    [string]$NewerFixtureSetup
 )
 
 $ErrorActionPreference = 'Stop'
@@ -33,6 +35,19 @@ try {
     if (!$process.WaitForExit(300000)) { $process.Kill(); throw 'STANDARD_USER_TEST_FAILURE: child exceeded five-minute bound' }
     if ($process.ExitCode -ne 0) { throw "STANDARD_USER_TEST_FAILURE: child exit $($process.ExitCode); see bounded logs" }
     Copy-Item -LiteralPath $childEvidence -Destination $evidence
+    if ($OlderFixtureSetup -and $NewerFixtureSetup) {
+        $lifecycleScript = Join-Path $PSScriptRoot 'test-windows-installer-lifecycle.ps1'
+        $lifecycleEvidence = Join-Path $env:SystemDrive "Users\$user\AppData\Local\Synveil\installer\windows-lifecycle-evidence.json"
+        $lifecycleArgs = @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$lifecycleScript,
+            '-Setup',([IO.Path]::GetFullPath($Setup)),'-OlderFixtureSetup',([IO.Path]::GetFullPath($OlderFixtureSetup)),
+            '-NewerFixtureSetup',([IO.Path]::GetFullPath($NewerFixtureSetup)),'-RepositoryRoot',([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))),
+            '-EvidencePath',$lifecycleEvidence)
+        $lifecycle = Start-Process (Get-Command pwsh).Source -Credential $credential -LoadUserProfile -ArgumentList $lifecycleArgs `
+            -RedirectStandardOutput (Join-Path $EvidenceDirectory 'lifecycle.stdout.log') -RedirectStandardError (Join-Path $EvidenceDirectory 'lifecycle.stderr.log') -PassThru
+        if (!$lifecycle.WaitForExit(600000)) { $lifecycle.Kill(); throw 'STANDARD_USER_TEST_FAILURE: lifecycle child exceeded ten-minute bound' }
+        if ($lifecycle.ExitCode -ne 0) { throw "STANDARD_USER_TEST_FAILURE: lifecycle child exit $($lifecycle.ExitCode); see bounded logs" }
+        Copy-Item -LiteralPath $lifecycleEvidence -Destination (Join-Path $EvidenceDirectory 'windows-lifecycle-evidence.json')
+    }
 } finally {
     $childLogs = Join-Path $env:SystemDrive "Users\$user\AppData\Local\Synveil\installer"
     if (Test-Path $childLogs -PathType Container) {
