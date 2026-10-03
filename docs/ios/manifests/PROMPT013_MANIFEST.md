@@ -85,6 +85,7 @@
   - `Web quality`: `FAILURE` — classified `UNRELATED_SUBSYSTEM_FAILURE` (React web frontend Vitest test failure in `RestoreWorkflowPage.test.tsx`, completely outside native iOS v0.1 client scope).
   - `PG17 live suites (scheduling, worker, cycle, lifecycle, stress)`: `FAILURE` — classified `UNRELATED_SUBSYSTEM_FAILURE` (PostgreSQL 17 server maintenance integration suite failure, completely outside native iOS v0.1 client scope).
   - `Build and validate DEB + RPM (unsigned CI artifacts)`: `FAILURE` — classified `UNRELATED_SUBSYSTEM_FAILURE` (Linux desktop DEB/RPM packaging reproducibility failure in `synveil-desktop`, completely outside native iOS v0.1 client scope).
+  - `Xcode Simulator Unit Tests`: `FAILURE` — classified `TRANSIENT_FLAKY_ENVIRONMENT_FAILURE` (GitHub Actions `macos-latest` runner Xcode simulator daemon crash / timeout (`Status=4294967295`, `exit code 70: Unable to find a device matching the provided destination specifier`). The simulator device `22452A91-4697-4369-8812-53ADB77EB73B` crashed during CoreSimulator data migration/boot before `xcodebuild` could attach).
 
 ## 7. Files Summary
 - **Files Created**:
