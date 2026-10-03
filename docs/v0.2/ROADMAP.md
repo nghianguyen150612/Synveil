@@ -226,7 +226,11 @@ P028 remains the native acceptance owner.
 
 ### P022 — SynveilSetup.exe Skeleton
 
-Create the real Windows installer executable project and build path.
+**Implemented (Prompt022 source complete; final-head hosted evidence required):**
+the [Windows installer skeleton](WINDOWS_INSTALLER_SKELETON.md) and
+[Prompt022 manifest](PROMPT022_MANIFEST.md) provide a locked Inno Setup 6.7.3
+project, closed runtime inventory, deterministic build/manifest path, and a
+focused current-user native install/uninstall smoke. P023–P028 remain pending.
 
 ### P023 — Windows Installer UI
 

@@ -53,7 +53,7 @@ technology or installation scope is selected here.
 | RPM | yes | `deploy/packages/build.sh` |
 | Windows portable ZIP | yes | `deploy/packages/build-windows.sh` |
 | AppImage | yes | no (P015) |
-| Windows installer | yes | no (P022; technology choice remains P021) |
+| Windows installer | yes | `scripts/build-windows-installer.ps1` |
 
 Schema support never fabricates an artifact. Production creation reads a real,
 regular, non-symlink file under the declared artifact root and derives its size

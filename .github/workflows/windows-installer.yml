@@ -1,0 +1,100 @@
+name: Windows installer
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  installer-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.8.3
+          arch: win64_msvc2022_64
+          cache: true
+      - name: Validate reviewed installer sources
+        run: python scripts/validate-windows-installer.py
+      - name: Build runtime payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          source deploy/packages/common/reproducible.sh
+          synveil_prepare_reproducible_rust_build "$PWD"
+          cargo build --release --locked -p synveil-desktop -p synveil-client
+          ./deploy/packages/build-windows.sh \
+            --desktop-binary=target/release/synveil-desktop.exe \
+            --client-binary=target/release/synveil-client.exe \
+            --output-dir=target/windows-packages \
+            --staging-dir=target/windows-installer-runtime
+      - name: Build installer twice and require reproducibility
+        shell: pwsh
+        run: |
+          ./scripts/build-windows-installer.ps1 -RuntimeStagingDirectory target/windows-installer-runtime
+          Copy-Item target/windows-installer/SynveilSetup.exe target/windows-installer-build-a.exe
+          Copy-Item target/windows-installer-generated/payload-inventory.json target/payload-inventory-a.json
+          Copy-Item target/windows-installer-generated/files.iss target/files-a.iss
+          Copy-Item target/windows-installer-generated/version.iss target/version-a.iss
+          Copy-Item target/windows-installer-generated/build.iss target/build-a.iss
+          ./scripts/build-windows-installer.ps1 -RuntimeStagingDirectory target/windows-installer-runtime
+          foreach ($pair in @(
+            @('target/windows-installer-build-a.exe','target/windows-installer/SynveilSetup.exe'),
+            @('target/payload-inventory-a.json','target/windows-installer-generated/payload-inventory.json'),
+            @('target/files-a.iss','target/windows-installer-generated/files.iss'),
+            @('target/version-a.iss','target/windows-installer-generated/version.iss'),
+            @('target/build-a.iss','target/windows-installer-generated/build.iss'))) {
+            if ((Get-FileHash $pair[0]).Hash -cne (Get-FileHash $pair[1]).Hash) { throw "non-reproducible installer input/output: $($pair[1])" }
+          }
+      - name: Silent current-user install and uninstall smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = (Resolve-Path target/windows-installer/SynveilSetup.exe).Path
+          $installLog = Join-Path $env:RUNNER_TEMP 'synveil-install.log'
+          $uninstallLog = Join-Path $env:RUNNER_TEMP 'synveil-uninstall.log'
+          $sentinel = Join-Path $env:LOCALAPPDATA 'Synveil/state-sentinel/p022.txt'
+          New-Item (Split-Path $sentinel) -ItemType Directory -Force | Out-Null
+          Set-Content $sentinel 'P022 synthetic non-secret state sentinel'
+          $process = Start-Process $setup -Wait -PassThru -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/STARTUP=0','/DESKTOPICON=0','/LAUNCH=0',('/LOG=' + $installLog))
+          if ($process.ExitCode -ne 0) { throw "INSTALL_SMOKE_FAILURE: installer exit $($process.ExitCode)" }
+          $root = Join-Path $env:LOCALAPPDATA 'Programs/Synveil'
+          foreach ($file in @('synveil-desktop.exe','synveil-client.exe','qt.conf','LICENSE','NOTICE','platforms/qwindows.dll')) { if (!(Test-Path (Join-Path $root $file))) { throw "INSTALL_SMOKE_FAILURE: missing $file" } }
+          $shortcut = Join-Path $env:APPDATA 'Microsoft/Windows/Start Menu/Programs/Synveil.lnk'
+          if (!(Test-Path $shortcut)) { throw 'INSTALL_SMOKE_FAILURE: Start Menu shortcut missing' }
+          $expectedVersion = (Get-Content target/windows-installer/SYNVEIL-RELEASE-MANIFEST.json -Raw | ConvertFrom-Json).product_version
+          $entries = @(Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' | ForEach-Object { Get-ItemProperty $_.PSPath } | Where-Object { $_.PSChildName -eq '{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1' -and $_.DisplayName -eq 'Synveil' -and $_.DisplayVersion -eq $expectedVersion -and $_.InstallLocation.TrimEnd('\') -eq $root.TrimEnd('\') })
+          if ($entries.Count -ne 1 -or !(Test-Path $entries[0].UninstallString.Trim('"'))) { throw 'INSTALL_SMOKE_FAILURE: unique HKCU uninstall registration missing' }
+          $env:QT_QPA_PLATFORM = 'offscreen'
+          $probe = Start-Process (Join-Path $root 'synveil-desktop.exe') -ArgumentList '--qml-smoke-test' -PassThru
+          if (!$probe.WaitForExit(15000)) { $probe.Kill(); throw 'INSTALL_SMOKE_FAILURE: installed desktop probe timed out' }
+          if ($probe.ExitCode -ne 0) { throw "INSTALL_SMOKE_FAILURE: desktop probe exit $($probe.ExitCode)" }
+          $uninstaller = $entries[0].UninstallString.Trim('"')
+          $process = Start-Process $uninstaller -Wait -PassThru -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG=' + $uninstallLog))
+          if ($process.ExitCode -ne 0) { throw "UNINSTALL_SMOKE_FAILURE: uninstaller exit $($process.ExitCode)" }
+          if (Test-Path $root) { throw 'UNINSTALL_SMOKE_FAILURE: package root remains' }
+          if (Test-Path $shortcut) { throw 'UNINSTALL_SMOKE_FAILURE: shortcut remains' }
+          if (!(Test-Path $sentinel)) { throw 'UNINSTALL_SMOKE_FAILURE: external state sentinel was removed' }
+      - name: Upload installer and bounded smoke logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-p022
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            target/windows-installer/SynveilSetup.exe
+            target/windows-installer/SYNVEIL-RELEASE-MANIFEST.json
+            ${{ runner.temp }}/synveil-install.log
+            ${{ runner.temp }}/synveil-uninstall.log
