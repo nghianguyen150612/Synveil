@@ -11,6 +11,7 @@ members = [
     "crates/client",
     "crates/desktop",
     "crates/install-engine",
+    "crates/ios-ffi",
 ]
 resolver = "3"
 

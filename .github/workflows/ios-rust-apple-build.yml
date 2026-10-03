@@ -1,0 +1,55 @@
+name: iOS Rust Apple Build
+
+on:
+  push:
+    paths:
+      - "crates/ios-ffi/**"
+      - "crates/core/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "scripts/check-ios-rust.sh"
+      - ".github/workflows/ios-rust-apple-build.yml"
+  pull_request:
+    paths:
+      - "crates/ios-ffi/**"
+      - "crates/core/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "scripts/check-ios-rust.sh"
+      - ".github/workflows/ios-rust-apple-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-rust-apple-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-apple-build:
+    name: Rust Apple Target Build
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Print environment diagnostics
+        run: |
+          echo "=== macOS Environment ==="
+          sw_vers
+          echo ""
+          echo "=== Xcode Version ==="
+          xcodebuild -version
+          echo ""
+          echo "=== Rust Diagnostic Info ==="
+          rustc --version
+          rustup --version
+
+      - name: Run iOS Rust Apple Target Verification Script
+        run: |
+          chmod +x scripts/check-ios-rust.sh
+          ./scripts/check-ios-rust.sh

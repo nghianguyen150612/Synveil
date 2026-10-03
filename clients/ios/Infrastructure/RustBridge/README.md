@@ -14,9 +14,22 @@ The authoritative Rust↔Swift FFI strategy for Synveil iOS v0.1 is defined in:
 - **FFI Boundary Ownership**: All raw C-FFI exports and generated binding modules are restricted strictly to `Infrastructure/RustBridge/`. No upper layer (`Domain`, `Application`, `Features`) may import or invoke raw C ABI symbols.
 - **Callable Protocol Deferral**: To avoid inventing fake or synthetic Swift methods (or creating an empty marker protocol without runtime semantics), the callable `RustBridgeProtocol` Swift method contract remains deferred until P016/P020 when real compiled FFI signatures, ABI type mappings, memory ownership, and error encoding are available.
 
+### P014 Status & Apple Target Proven Compilation
+- **Dedicated Crate Established**: `crates/ios-ffi/` (`synveil-ios-ffi`).
+- **Artifact Type**: `staticlib` (`libsynveil_ios_ffi.a`) + `rlib` for host testing.
+- **Minimal Closure**: Depends exclusively on platform-neutral `synveil-core`. Prohibited desktop, server, async runtime, database, and keyring dependencies are verified absent.
+- **Proven Apple Targets**:
+  - `aarch64-apple-ios` (Physical iPhone device) -> SUCCESS
+  - `aarch64-apple-ios-sim` (Apple Silicon Simulator) -> SUCCESS
+  - `x86_64-apple-ios` (Intel Simulator) -> SUCCESS
+- **C ABI & Swift Linking Status**:
+  - No C ABI functions exported yet (`extern "C"` / `#[no_mangle]` deferred to P016).
+  - No C headers (`synveil_ios_ffi.h`) or `cbindgen` invocation yet.
+  - No Swift or Xcode linker linking configured yet (deferred to P015/P016).
+
 ### P014–P020 Prompt Sequencing
-1. **P014**: Minimal Rust bridge crate (`crates/ios-ffi/`, package `synveil-ios-ffi`, `staticlib`).
-2. **P015**: Rust Apple artifact CI workflow (`libsynveil_ios_ffi.a`).
+1. **P014**: Minimal Rust bridge crate (`crates/ios-ffi/`, package `synveil-ios-ffi`, `staticlib`) & Apple compile proof. [COMPLETE]
+2. **P015**: Rust Apple artifact CI workflow & packaging (`libsynveil_ios_ffi.a`).
 3. **P016**: First trivial Swift↔Rust call (`synveil_ffi_abi_version()`).
 4. **P017**: FFI error model & panic firewall (`std::panic::catch_unwind`).
 5. **P018**: Memory ownership & buffer release safety (`synveil_ffi_buffer_release`).
@@ -31,7 +44,7 @@ The authoritative Rust↔Swift FFI strategy for Synveil iOS v0.1 is defined in:
 - Memory ownership management (calling explicit Rust release functions for C-buffers returned by Rust).
 
 ## Future Artifacts Boundary
-- Generated C headers (`synveil_ios_ffi.h`) and C-ABI export bindings will live here when introduced in P014–P016.
+- Generated C headers (`synveil_ios_ffi.h`) and C-ABI export bindings will live here when introduced in P016.
 - Hand-editing generated bridge files is prohibited.
 - Local Rust build outputs (`target/`) must remain untracked and outside source control.
 
