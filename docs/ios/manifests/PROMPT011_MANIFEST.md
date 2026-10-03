@@ -5,7 +5,7 @@
 - **Goal**: Establish the production-quality configuration model for the native Synveil iOS client (`v0.1`), providing strongly typed server base endpoint validation (`ServerEndpoint`), safe non-secret application configuration (`AppConfiguration`), test injection capabilities, and safe production defaults (`nil` server endpoint).
 - **Starting Integration Branch**: `ios-app`
 - **Starting SHA**: `a36be638337a7c8c75b9effc598e63cd0ea315d0`
-- **Actual Work Branch**: `ios/p011-configuration`
+- **Actual Work Branch**: `ios/p011-configuration-15200694015697220485`
 - **Authoritative Files Inspected**:
   - `clients/ios/README.md`
   - `clients/ios/App/SynveilApp.swift`
@@ -41,7 +41,7 @@
   - Surrounding whitespace trimmed.
   - Scheme and host lowercased.
   - Explicit non-default ports preserved (`:8443`).
-  - Path normalized: trailing slash removed for subpaths (e.g. `/api/v1/` -> `/api/v1`), single root slash preserved (`/`).
+  - Path normalized: root path normalized to `/` (e.g. `https://example.com` -> `https://example.com/`), trailing slashes on explicit subpaths removed (e.g. `/api/v1/` -> `/api/v1`).
 - **HTTP / HTTPS Policy**:
   - HTTPS is preferred for production transports.
   - HTTP is permitted for local development, home-LAN, or self-hosted testing servers.
@@ -82,17 +82,19 @@
   - `python3 -m unittest discover -s clients/ios/Support/tests` -> SUCCESS (12 validator self-tests passed)
   - Secret scan & path leakage checks -> PASSED
 
-## 5. CI Gate Status (To be populated on final PR head)
-- **`iOS Static Validation`**: PENDING_PR
-- **`iOS Build`**: PENDING_PR
-- **`iOS Simulator Tests`**: PENDING_PR
-- **Unrelated CI Failures / Classifications**: None.
+## 5. CI Gate Status
+- **`iOS Static Validation`**: SUCCESS
+- **`iOS Build`**: SUCCESS
+- **`iOS Simulator Tests`**: SUCCESS
+- **Unrelated CI Failures / Classifications**:
+  - `Build, reproduce, inspect, and smoke AppImage` -> `UNRELATED_SUBSYSTEM_FAILURE` (Linux/Desktop AppImage build path check).
+  - `Check (windows-latest)` -> `UNRELATED_SUBSYSTEM_FAILURE` (Windows Rust `synveil-install-engine` Unix module compilation).
+  - `Native desktop UI (Linux Qt 6)` -> `UNRELATED_SUBSYSTEM_FAILURE` (Linux QML desktop UI test).
+  - `Test (ubuntu-latest)` -> `UNRELATED_SUBSYSTEM_FAILURE` (Linux `systemd-tmpfiles` option deprecation in metadata test).
 - **PR Metadata**:
-  - Commit SHA: PENDING_COMMIT
-  - PR Number / URL: PENDING_PR
+  - Commit SHA: `930d64202ec0248e2cdb10df93c30ccdc8f5c051`
   - PR Base: `ios-app`
-  - Merge Status: PENDING_MERGE
-  - Final `ios-app` SHA: PENDING_FINAL_SHA
+  - Merge Status: Submitted to branch `ios/p011-configuration-15200694015697220485` for integration into `ios-app`
 
 ## 6. Limitations & Deferred Scope
 - P011 establishes configuration value models and endpoint validation only; it does NOT introduce network connections, URLSession transport, or server reachability checks (deferred to P023).
