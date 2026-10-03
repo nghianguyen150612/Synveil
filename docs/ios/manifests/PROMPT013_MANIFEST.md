@@ -82,6 +82,7 @@
   - `Test (macos-latest)`: `FAILURE` — classified `UNRELATED_SUBSYSTEM_FAILURE` (macOS Rust desktop client test failure in `synveil-client::control::tests`, completely outside native iOS v0.1 client scope).
   - `Test (windows-latest)`: `FAILURE` — classified `UNRELATED_SUBSYSTEM_FAILURE` (Windows Rust installer engine test failure in `synveil-install-engine`, completely outside native iOS v0.1 client scope).
   - `Test (ubuntu-latest)`: `FAILURE` — classified `UNRELATED_SUBSYSTEM_FAILURE` (Linux systemd tmpfiles test failure in `synveil-metadata`, completely outside native iOS v0.1 client scope).
+  - `Web quality`: `FAILURE` — classified `UNRELATED_SUBSYSTEM_FAILURE` (React web frontend Vitest test failure in `RestoreWorkflowPage.test.tsx`, completely outside native iOS v0.1 client scope).
 
 ## 7. Files Summary
 - **Files Created**:
