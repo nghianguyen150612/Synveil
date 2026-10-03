@@ -25,6 +25,29 @@ jobs:
           version: 6.8.3
           arch: win64_msvc2022_64
           cache: true
+      - name: Select and authenticate the MSVC linker
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:VCToolsInstallDir)) {
+            throw 'MSVC_LINKER_SELECTION_FAILURE: VCToolsInstallDir was not exported by the developer environment'
+          }
+          $linker = [IO.Path]::GetFullPath((Join-Path $env:VCToolsInstallDir 'bin\Hostx64\x64\link.exe'))
+          $toolsRoot = [IO.Path]::GetFullPath($env:VCToolsInstallDir).TrimEnd('\') + '\'
+          if (!$linker.StartsWith($toolsRoot, [StringComparison]::OrdinalIgnoreCase) -or !(Test-Path -LiteralPath $linker -PathType Leaf)) {
+            throw 'MSVC_LINKER_SELECTION_FAILURE: the selected linker is outside the active Visual C++ tools root or missing'
+          }
+          $identity = [Diagnostics.FileVersionInfo]::GetVersionInfo($linker)
+          if ($identity.CompanyName -notmatch '^Microsoft Corporation$' -or $identity.OriginalFilename -notmatch '^LINK\.EXE$') {
+            throw "MSVC_LINKER_SELECTION_FAILURE: unexpected linker identity company='$($identity.CompanyName)' original='$($identity.OriginalFilename)'"
+          }
+          $banner = (& $linker '/?' 2>&1 | Out-String)
+          if ($LASTEXITCODE -ne 0 -or $banner -notmatch 'Microsoft \(R\).* Linker') {
+            throw 'MSVC_LINKER_SELECTION_FAILURE: selected executable did not produce the Microsoft linker banner'
+          }
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Authenticated MSVC linker: $linker"
+          Write-Host "Version: $($identity.FileVersion)"
       - name: Validate reviewed installer sources
         run: python scripts/validate-windows-installer.py
       - name: Build runtime payload

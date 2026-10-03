@@ -15,6 +15,7 @@ LOCK = ROOT / "deploy/windows/installer/toolchain.lock"
 ISS = ROOT / "deploy/windows/installer/Synveil.iss"
 BUILD = ROOT / "scripts/build-windows-installer.ps1"
 WORKFLOW = ROOT / ".github/workflows/windows-installer.yml"
+REPRODUCIBLE = ROOT / "deploy/packages/common/reproducible.sh"
 APP_ID = "{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}"
 
 
@@ -68,6 +69,7 @@ def main() -> int:
     iss = ISS.read_text(encoding="utf-8")
     build = BUILD.read_text(encoding="utf-8")
     workflow = WORKFLOW.read_text(encoding="utf-8")
+    reproducible = REPRODUCIBLE.read_text(encoding="utf-8")
     require(f"AppId={{{APP_ID}" in iss, "stable AppId")
     require("DefaultDirName={localappdata}\\Programs\\Synveil" in iss, "per-user path")
     require("PrivilegesRequired=lowest" in iss and "PrivilegesRequiredOverridesAllowed=none" in iss, "no elevation override")
@@ -88,6 +90,8 @@ def main() -> int:
     require("Get-FileHash" in build and "-cne $Lock.sha256" in build, "digest before execution")
     require("windows-x86_64-installer" in build and '"windows_installer"' in build and '"SynveilSetup.exe"' in build and '"primary_installer"' in build, "artifact manifest entry")
     require("windows-latest" in workflow and "/VERYSILENT" in workflow and "state-sentinel" in workflow, "native smoke contract")
+    require("VCToolsInstallDir" in workflow and "CompanyName" in workflow and "Microsoft \\(R\\).* Linker" in workflow, "authenticated MSVC linker selection")
+    require("CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" in reproducible and 'rustc "${rustc_linker_args[@]}"' in reproducible, "direct rustc uses selected MSVC linker")
     with tempfile.TemporaryDirectory() as directory:
         sample = Path(directory) / "sample"; sample.write_bytes(b"locked")
         verify_digest(sample, hashlib.sha256(b"locked").hexdigest())

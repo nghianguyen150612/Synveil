@@ -47,10 +47,20 @@ has no native Windows/Inno execution, so it cannot compile or run Setup locally.
 At implementation time, the public Actions API reported the final P021/main
 head workflows as queued with no conclusions. This is classified
 `ENVIRONMENT_LIMITATION`; no P021-owned regression or hosted PASS is inferred.
-The focused P022 `windows-latest` result is **pending until this branch is
-pushed**. Native runtime build, tool acquisition, compiler output, silent
+The focused P022 `windows-latest` result is **not yet passing**. Native runtime
+build, tool acquisition, compiler output, silent
 install/uninstall, HKCU/Start Menu checks, installed smoke, sentinel
 preservation, and Setup byte reproducibility are therefore **not yet claimed**.
+
+PR #38 run `37091896780` subsequently failed in `Build runtime payload` before
+Inno Setup: Git Bash resolved its `/usr/bin/link.exe` instead of the linker from
+the selected Visual Studio developer environment. The follow-up binds Cargo's
+`x86_64-pc-windows-msvc` linker to the active `VCToolsInstallDir` path after
+checking Microsoft version metadata and the executable's Microsoft linker
+banner. The shared reproducible Qt helper passes that same explicit path to its
+direct `rustc` invocation, fixing the common lookup defect without changing
+PATH, renaming Git tools, or disabling reproducibility policy. Hosted evidence
+for the corrective commit remains pending and is not represented as PASS.
 
 Reproducibility design is a strict byte comparison across two independent
 compiler invocations with unchanged runtime and generated-input paths. Its
