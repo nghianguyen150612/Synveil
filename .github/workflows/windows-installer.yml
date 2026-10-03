@@ -121,12 +121,39 @@ jobs:
             throw 'SETUP_MANIFEST_FAILURE: compiled Setup does not request asInvoker'
           }
           Copy-Item $manifest target/windows-installer/SynveilSetup.manifest.xml
+      - name: Build isolated lifecycle Setup fixtures
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function New-FixtureStage([string]$Path, [string]$Version, [switch]$Obsolete) {
+            Remove-Item $Path -Recurse -Force -ErrorAction SilentlyContinue
+            Copy-Item target/windows-installer-runtime $Path -Recurse
+            $manifest = Join-Path $Path 'SYNVEIL-MANIFEST.txt'
+            $lines = [Collections.Generic.List[string]](Get-Content -LiteralPath $manifest)
+            $versionLine = $lines.FindIndex({ param($line) $line.StartsWith('version=') })
+            if ($versionLine -lt 0) { throw 'LIFECYCLE_FIXTURE_FAILURE: manifest version missing' }
+            $lines[$versionLine] = "version=$Version"
+            if ($Obsolete) {
+              $owned = Join-Path $Path 'p027-obsolete-owned.txt'
+              [IO.File]::WriteAllText($owned, 'P027 obsolete package fixture', [Text.UTF8Encoding]::new($false))
+              $marker = $lines.IndexOf('files=sha256 size path')
+              $hash = (Get-FileHash $owned -Algorithm SHA256).Hash.ToLowerInvariant()
+              $lines.Insert($marker + 1, "$hash $((Get-Item $owned).Length) p027-obsolete-owned.txt")
+            }
+            [IO.File]::WriteAllLines($manifest, $lines, [Text.UTF8Encoding]::new($false))
+          }
+          New-FixtureStage target/p027-runtime-old '1.0.0' -Obsolete
+          New-FixtureStage target/p027-runtime-new '1.1.0'
+          ./scripts/build-windows-installer.ps1 -RuntimeStagingDirectory target/p027-runtime-old -OutputDirectory target/p027-fixture-old -LifecycleFixtureVersion 1.0.0
+          ./scripts/build-windows-installer.ps1 -RuntimeStagingDirectory target/p027-runtime-new -OutputDirectory target/p027-fixture-new -LifecycleFixtureVersion 1.1.0
       - name: Qualify installation as a disposable standard user
         shell: pwsh
         run: |
           ./scripts/invoke-windows-standard-user-test.ps1 `
             -Setup target/windows-installer/SynveilSetup.exe `
-            -EvidenceDirectory target/windows-per-user-evidence
+            -EvidenceDirectory target/windows-per-user-evidence `
+            -OlderFixtureSetup target/p027-fixture-old/SynveilSetup.exe `
+            -NewerFixtureSetup target/p027-fixture-new/SynveilSetup.exe
       - name: Upload installer and bounded acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4

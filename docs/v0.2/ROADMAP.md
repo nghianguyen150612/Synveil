@@ -270,9 +270,13 @@ native acceptance remain pending.
 
 ### P027 — Windows Repair / Upgrade / Uninstall
 
-Preserve Synveil state while repairing or replacing package-owned files. Keep
-ordinary uninstall data-preserving and provide a separate explicit destructive
-data-removal choice only under its own reviewed contract.
+**Implemented (source/static complete; hosted native evidence pending):** the
+[Windows lifecycle contract](WINDOWS_LIFECYCLE.md) and
+[Prompt027 manifest](PROMPT027_MANIFEST.md) implement exact same-version repair,
+compatible fixture upgrade, pre-mutation downgrade rejection, trusted-manifest
+obsolete-file cleanup, startup reconciliation, data-preserving registered
+uninstall, reinstall, and a separate bounded purge policy. Final native
+lifecycle evidence and Windows readiness remain P028 work.
 
 ### P028 — Windows Native Acceptance CI
 
