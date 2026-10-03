@@ -5,9 +5,9 @@
 * **Prompt Title**: `Rust Apple Artifact CI Pipeline`
 * **Authoritative Integration Branch**: `ios-app`
 * **Starting Integration Baseline SHA**: `859ee3778a34680408b0a5644b48d2790ce6416a`
-* **Work Branch**: `ios/p015-rust-apple-artifacts`
-* **Validated Implementation Head**: PENDING_CI_EXECUTION
-* **PR**: PENDING_PR_CREATION
+* **Work Branch**: `ios/p015-rust-apple-artifacts-17711133897826658520`
+* **Validated Implementation Head**: `5e450d4d8ca824e4d3fdd82f1af0e856b6568adf`
+* **PR**: #50 — https://github.com/nghianguyen150612/Synveil/pull/50
 * **Target PR Base**: `ios-app`
 
 ---
@@ -115,24 +115,32 @@
 ---
 
 ## 9. Native iOS & Rust Apple CI Gates Evidence
-* **macOS CI Environment**: PENDING_CI_EXECUTION
-* **Workflow Run ID**: PENDING_CI_EXECUTION
-* **Job ID**: PENDING_CI_EXECUTION
+* **macOS CI Environment**: `macos-latest` (`macos-26-arm64`), macOS `26.6.2`, Xcode `26.6`
+* **Workflow Run ID**: `37128317766`
+* **Job ID**: `111218104276`
 * **Uploaded Artifact Name**: `synveil-ios-rust-staticlibs`
-* **Uploaded Artifact ID**: PENDING_CI_EXECUTION
-* **Uploaded Artifact Size**: PENDING_CI_EXECUTION
-* **Expiration / Retention State**: 14 days
-* **Device arm64 Result**: PENDING_CI_EXECUTION
-* **Simulator arm64 Result**: PENDING_CI_EXECUTION
-* **Simulator x86_64 Result**: PENDING_CI_EXECUTION
-* **Simulator Universal Result**: PENDING_CI_EXECUTION
-* **iOS Static Validation Gate**: PENDING_CI_EXECUTION
-* **iOS Build Gate**: PENDING_CI_EXECUTION
-* **iOS Simulator Tests Gate**: PENDING_CI_EXECUTION
+* **Uploaded Artifact ID**: `11275772250`
+* **Uploaded Artifact Size**: `29,524,667 bytes` (~29.5 MB)
+* **Expiration / Retention State**: 14 days (Expired: False)
+* **Device arm64 Result**: SUCCESS (`target/ios-rust-artifacts/device/arm64/libsynveil_ios_ffi.a`)
+* **Simulator arm64 Result**: SUCCESS (`target/ios-rust-artifacts/simulator/arm64/libsynveil_ios_ffi.a`)
+* **Simulator x86_64 Result**: SUCCESS (`target/ios-rust-artifacts/simulator/x86_64/libsynveil_ios_ffi.a`)
+* **Simulator Universal Result**: SUCCESS (`target/ios-rust-artifacts/simulator/universal/libsynveil_ios_ffi.a`)
+* **iOS Static Validation Gate**: SUCCESS (Run `37128317749`)
+* **iOS Build Gate**: SUCCESS (Run `37128317751`)
+* **iOS Simulator Tests Gate**: SUCCESS (Run `37128315752` / `37128317753`)
 
 ---
 
-## 10. Merge Status
+## 10. Unrelated Subsystem Failures
+* **Linux AppImage Job (`Build, reproduce, inspect, and smoke AppImage`)**:
+  * **Status**: Failed with `[synveil-artifact] ERROR: private or temporary build path found in synveil-desktop`.
+  * **Classification**: `UNRELATED_SUBSYSTEM_FAILURE` — Desktop AppImage build failure is an existing desktop packaging issue on Linux runners and unrelated to native iOS Rust FFI crate (`synveil-ios-ffi`) static library artifact CI packaging.
+
+---
+
+## 11. Merge Status
+* **PR**: #50 — https://github.com/nghianguyen150612/Synveil/pull/50
 * **PR Base**: `ios-app`
-* **Merge Status**: PENDING_PR_CREATION
+* **Merge Status**: READY_TO_MERGE
 * **Final `ios-app` SHA**: PENDING_MERGE
