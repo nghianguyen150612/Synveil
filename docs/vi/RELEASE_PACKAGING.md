@@ -22,6 +22,7 @@ Artifact production:
 | Linux x86_64 | `deploy/packages/build.sh --format=deb` | `synveil_<version>_amd64.deb` | khai báo Qt 6/systemd/DBus của distro; không đóng server/database daemon |
 | Linux x86_64 | `deploy/packages/build.sh --format=rpm` | `synveil-<version>-1.x86_64.rpm` | khai báo Qt 6/systemd/DBus của distro; không đóng server/database daemon |
 | Windows x86_64 | `deploy/packages/build-windows.sh` | `synveil-<version>-windows-x86_64.zip` | closure Qt/QML/plugin/C++ self-contained và `qt.conf`; ZIP unsigned portable, không phải installer |
+| Windows x86_64 | `scripts/build-windows-installer.ps1` | `SynveilSetup.exe` | installer per-user Inno Setup 6.7.3 dùng đúng runtime staging đã validate của ZIP portable |
 
 Payload Linux được assemble qua `deploy/install/MANIFEST` duy nhất. Nó gồm ba
 executable sibling root-owned `/usr/bin/synveil-scheduled-maintenance-once`,
@@ -37,6 +38,13 @@ version, platform, path tương đối, size và SHA-256 rồi được validate
 archive. ZIP không chứa service, đăng ký scheduled task, elevation, password
 hay machine-wide autostart. Client manager đang chạy mới có thể explicit tạo
 Task Scheduler current-user theo desktop contract Windows.
+
+`SynveilSetup.exe` cài cùng closure đóng đó vào
+`%LOCALAPPDATA%\Programs\Synveil`; nó không giải nén ZIP và không duy trì danh
+sách Qt thứ hai. Manifest đã cài cho phép kiểm tra đầy đủ size/SHA-256, còn
+metadata uninstall do Inno sở hữu được tách riêng. Quá trình cài đặt không tải
+runtime prerequisite và máy đích không cần Qt SDK, Visual Studio hay cấu hình
+PATH/QML.
 
 ## Lệnh build
 
@@ -195,8 +203,8 @@ install/upgrade/uninstall/purge disposable. Native Windows gate gồm
 portable startup trên host Windows. Cross-build Linux không phải bằng chứng
 native Windows execution.
 
-Scope release này chưa gồm signing, publish repository, full guided Windows
-installer, auto-update, rollback package set partial và packaging macOS/iOS/
+Scope release này chưa gồm signing, publish repository, qualification
+repair/upgrade Windows đầy đủ, auto-update, rollback package set partial và packaging macOS/iOS/
 Android. PostgreSQL integration vẫn là environment gate khi
 `SYNVEIL_TEST_DATABASE_URL` unset; không được báo limitation này như product
 hay package failure.

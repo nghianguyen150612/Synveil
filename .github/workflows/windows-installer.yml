@@ -74,6 +74,23 @@ jobs:
             --client-binary=target/release/synveil-client.exe \
             --output-dir=target/windows-packages \
             --staging-dir=target/windows-installer-runtime
+          test "$(find target/windows-packages -maxdepth 1 -name 'synveil-*-windows-x86_64.zip' -type f | wc -l)" -eq 1
+      - name: Exercise negative runtime closure cases
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Expect-Rejected([string]$Name, [scriptblock]$Mutation) {
+            $fixture = Join-Path $env:RUNNER_TEMP ("synveil-negative-" + $Name)
+            Remove-Item $fixture -Recurse -Force -ErrorAction SilentlyContinue
+            Copy-Item target/windows-installer-runtime $fixture -Recurse
+            & $Mutation $fixture
+            & pwsh -NoProfile -File ./scripts/build-windows-installer.ps1 -RuntimeStagingDirectory $fixture 2>$null
+            if ($LASTEXITCODE -eq 0) { throw "NEGATIVE_RUNTIME_FAILURE: $Name fixture was accepted" }
+          }
+          Expect-Rejected 'missing-qwindows' { param($p) Remove-Item (Join-Path $p 'platforms/qwindows.dll') }
+          Expect-Rejected 'corrupt-dll' { param($p) Add-Content -LiteralPath (Join-Path $p 'platforms/qwindows.dll') -Value 'corrupt' }
+          Expect-Rejected 'unexpected-dll' { param($p) Copy-Item (Join-Path $p 'platforms/qwindows.dll') (Join-Path $p 'unexpected.dll') }
+          Expect-Rejected 'developer-file' { param($p) Set-Content -LiteralPath (Join-Path $p 'leaked.lib') -Value 'not-runtime' }
       - name: Build installer twice and require reproducibility
         shell: pwsh
         run: |
@@ -108,15 +125,31 @@ jobs:
           $desktopShortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Synveil.lnk'
           if (Test-Path $desktopShortcut) { throw 'INSTALL_SMOKE_FAILURE: /DESKTOPICON=0 created a shortcut' }
           foreach ($file in @('synveil-desktop.exe','synveil-client.exe','qt.conf','LICENSE','NOTICE','platforms/qwindows.dll')) { if (!(Test-Path (Join-Path $root $file))) { throw "INSTALL_SMOKE_FAILURE: missing $file" } }
+          ./scripts/test-windows-installed-runtime.ps1 -RuntimeRoot $root -Manifest (Join-Path $root 'SYNVEIL-MANIFEST.txt')
           $shortcut = Join-Path $env:APPDATA 'Microsoft/Windows/Start Menu/Programs/Synveil.lnk'
           if (!(Test-Path $shortcut)) { throw 'INSTALL_SMOKE_FAILURE: Start Menu shortcut missing' }
           $expectedVersion = (Get-Content target/windows-installer/SYNVEIL-RELEASE-MANIFEST.json -Raw | ConvertFrom-Json).product_version
           $entries = @(Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' | ForEach-Object { Get-ItemProperty $_.PSPath } | Where-Object { $_.PSChildName -eq '{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1' -and $_.DisplayName -eq 'Synveil' -and $_.DisplayVersion -eq $expectedVersion -and $_.InstallLocation.TrimEnd('\') -eq $root.TrimEnd('\') })
           if ($entries.Count -ne 1 -or !(Test-Path $entries[0].UninstallString.Trim('"'))) { throw 'INSTALL_SMOKE_FAILURE: unique HKCU uninstall registration missing' }
+          foreach ($name in @('QT_ROOT_DIR','QT_PLUGIN_PATH','QML2_IMPORT_PATH','QML_IMPORT_PATH')) { Remove-Item "Env:$name" -ErrorAction SilentlyContinue }
           $env:QT_QPA_PLATFORM = 'offscreen'
-          $probe = Start-Process (Join-Path $root 'synveil-desktop.exe') -ArgumentList '--qml-smoke-test' -PassThru
+          $env:QT_DEBUG_PLUGINS = '1'
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem;$env:SystemRoot\System32\WindowsPowerShell\v1.0"
+          $runtimeDiagnostics = Join-Path $env:RUNNER_TEMP 'synveil-runtime-smoke.log'
+          $runtimeStdout = Join-Path $env:RUNNER_TEMP 'synveil-runtime-smoke.stdout.log'
+          $unrelatedCwd = Join-Path $env:RUNNER_TEMP 'synveil-unrelated-cwd'
+          New-Item $unrelatedCwd -ItemType Directory -Force | Out-Null
+          $probe = Start-Process (Join-Path $root 'synveil-desktop.exe') -WorkingDirectory $unrelatedCwd -ArgumentList '--qml-smoke-test' -RedirectStandardOutput $runtimeStdout -RedirectStandardError $runtimeDiagnostics -PassThru
           if (!$probe.WaitForExit(15000)) { $probe.Kill(); throw 'INSTALL_SMOKE_FAILURE: installed desktop probe timed out' }
           if ($probe.ExitCode -ne 0) { throw "INSTALL_SMOKE_FAILURE: desktop probe exit $($probe.ExitCode)" }
+          $diagnosticText = Get-Content $runtimeDiagnostics -Raw
+          if ($diagnosticText -match [regex]::Escape($env:RUNNER_WORKSPACE) -or $diagnosticText -match 'hostedtoolcache.*Qt') { throw 'INSTALL_SMOKE_FAILURE: desktop resolved a build-tree/SDK runtime path' }
+          $env:QT_DEBUG_PLUGINS = '0'
+          $clientLog = Join-Path $env:RUNNER_TEMP 'synveil-client-smoke.log'
+          $clientStdout = Join-Path $env:RUNNER_TEMP 'synveil-client-smoke.stdout.log'
+          $clientProbe = Start-Process (Join-Path $root 'synveil-client.exe') -WorkingDirectory $unrelatedCwd -RedirectStandardOutput $clientStdout -RedirectStandardError $clientLog -PassThru
+          if (!$clientProbe.WaitForExit(15000)) { $clientProbe.Kill(); throw 'INSTALL_SMOKE_FAILURE: installed client bounded configuration probe timed out' }
+          if ($clientProbe.ExitCode -ne 78) { throw "INSTALL_SMOKE_FAILURE: client configuration probe expected safe no-config exit 78, got $($clientProbe.ExitCode)" }
           $uninstaller = $entries[0].UninstallString.Trim('"')
           $process = Start-Process $uninstaller -Wait -PassThru -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG=' + $uninstallLog))
           if ($process.ExitCode -ne 0) { throw "UNINSTALL_SMOKE_FAILURE: uninstaller exit $($process.ExitCode)" }
@@ -133,7 +166,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-installer-p023
+          name: windows-installer-p024
           if-no-files-found: error
           retention-days: 7
           path: |
@@ -141,3 +174,7 @@ jobs:
             target/windows-installer/SYNVEIL-RELEASE-MANIFEST.json
             ${{ runner.temp }}/synveil-install.log
             ${{ runner.temp }}/synveil-uninstall.log
+            ${{ runner.temp }}/synveil-runtime-smoke.log
+            ${{ runner.temp }}/synveil-runtime-smoke.stdout.log
+            ${{ runner.temp }}/synveil-client-smoke.log
+            ${{ runner.temp }}/synveil-client-smoke.stdout.log

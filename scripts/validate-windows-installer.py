@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Network-free P022/P023 installer source and UI-contract validator."""
+"""Network-free P022-P024 installer source, UI, and runtime-contract validator."""
 
 from __future__ import annotations
 
@@ -15,6 +15,8 @@ LOCK = ROOT / "deploy/windows/installer/toolchain.lock"
 ISS = ROOT / "deploy/windows/installer/Synveil.iss"
 BUILD = ROOT / "scripts/build-windows-installer.ps1"
 WORKFLOW = ROOT / ".github/workflows/windows-installer.yml"
+PACKAGE = ROOT / "deploy/packages/build-windows.sh"
+INSTALLED_RUNTIME_TEST = ROOT / "scripts/test-windows-installed-runtime.ps1"
 REPRODUCIBLE = ROOT / "deploy/packages/common/reproducible.sh"
 APP_ID = "{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}"
 
@@ -70,6 +72,8 @@ def main() -> int:
     build = BUILD.read_text(encoding="utf-8")
     workflow = WORKFLOW.read_text(encoding="utf-8")
     reproducible = REPRODUCIBLE.read_text(encoding="utf-8")
+    package = PACKAGE.read_text(encoding="utf-8")
+    installed_test = INSTALLED_RUNTIME_TEST.read_text(encoding="utf-8")
     lower = iss.lower()
     require(f"AppId={{{APP_ID}" in iss, "stable AppId")
     require("DefaultDirName={localappdata}\\Programs\\Synveil" in iss, "per-user path")
@@ -92,6 +96,7 @@ def main() -> int:
     for forbidden in ("schtasks", "currentversion\\run", "programdata", "{commonprograms}", "create service"):
         require(forbidden not in lower, f"forbidden installer authority: {forbidden}")
     require('source: "*"' not in lower, "broad wildcard")
+    require('#include GeneratedDir + "\\\\files.iss"' in iss, "installer files derive from closed generated inventory")
     for option in ("STARTUP", "DESKTOPICON", "LAUNCH"):
         require(f"ParseBooleanOption('{option}'" in iss, f"silent option parser: {option}")
     require("accepts only 0 or 1" in iss, "malformed silent option rejection")
@@ -103,12 +108,18 @@ def main() -> int:
     require("Get-FileHash" in build and "-cne $Lock.sha256" in build, "digest before execution")
     require("windows-x86_64-installer" in build and '"windows_installer"' in build and '"SynveilSetup.exe"' in build and '"primary_installer"' in build, "artifact manifest entry")
     require("windows-latest" in workflow and "/VERYSILENT" in workflow and "state-sentinel" in workflow, "native smoke contract")
+    for evidence in ("test-windows-installed-runtime.ps1", "QT_PLUGIN_PATH", "QML2_IMPORT_PATH", "synveil-unrelated-cwd", "ExitCode -ne 78", "missing-qwindows", "corrupt-dll", "unexpected-dll", "developer-file"):
+        require(evidence in workflow, f"P024 hosted runtime evidence: {evidence}")
     require("VCToolsInstallDir" in workflow and "CompanyName" in workflow and "OriginalFilename" in workflow, "authenticated MSVC linker selection")
     require("LinkType" in workflow and "0x00004550" in workflow and "0x8664" in workflow, "regular AMD64 PE linker identity")
     require("$banner" not in workflow and "& $linker '/?'" not in workflow, "linker identity does not depend on localized help output")
     require("CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" in reproducible and '"${rustc_linker_args[@]}"' in reproducible, "direct rustc uses selected MSVC linker")
     require("CARGO_ENCODED_RUSTFLAGS" in reproducible and "$'\\x1f'" in reproducible, "lossless Cargo flag transport")
     require('rustc "${SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS[@]}" "${rustc_linker_args[@]}"' in reproducible, "direct rustc receives discrete remaps")
+    for runtime_rule in ("--compiler-runtime", "--qmldir", "platforms/qwindows.dll", "QmlImports=qml", "Qml2Imports=qml", "is_system_dll", "missing non-system import", "development directory leaked", 'rm -rf -- "$STAGING_DIR"'):
+        require(runtime_rule in package, f"authoritative runtime rule: {runtime_rule}")
+    for required in ("SYNVEIL-MANIFEST.txt", "unmanifested package file", "0x8664", "platforms/qwindows.dll"):
+        require(required in installed_test, f"installed runtime verification: {required}")
     with tempfile.TemporaryDirectory() as directory:
         sample = Path(directory) / "sample"; sample.write_bytes(b"locked")
         verify_digest(sample, hashlib.sha256(b"locked").hexdigest())

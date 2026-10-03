@@ -280,7 +280,8 @@ else
     # qmldir metadata, and plugin DLLs, never headers/import libraries.
     for module in \
         QtCore QtNetwork QtQml QtQml/Models QtQml/WorkerScript \
-        QtQuick QtQuick/Controls QtQuick/Layouts QtQuick/Templates QtQuick/Window; do
+        QtQuick QtQuick/Controls QtQuick/Dialogs QtQuick/Layouts \
+        QtQuick/Templates QtQuick/Window; do
         if [[ ! -d "${qt_qml}/${module}" ]]; then
             printf '[synveil-windows-package] ERROR: required QML module missing: %s\n' "${module}" >&2
             exit 1
@@ -299,6 +300,7 @@ cat > "${STAGE_ROOT}/qt.conf" <<'EOF'
 [Paths]
 Prefix=.
 Plugins=.
+QmlImports=qml
 Qml2Imports=qml
 EOF
 
@@ -407,6 +409,10 @@ if find "$STAGE_ROOT" -type f \( -name '*.a' -o -name '*.lib' -o -name '*.prl' -
     printf '[synveil-windows-package] ERROR: development artifact leaked into ZIP\n' >&2
     exit 1
 fi
+if find "$STAGE_ROOT" -type d \( -iname include -o -iname mkspecs -o -iname cmake -o -iname pkgconfig -o -iname examples -o -iname tests \) -print -quit | grep -q .; then
+    printf '[synveil-windows-package] ERROR: development directory leaked into ZIP\n' >&2
+    exit 1
+fi
 for text_file in "${STAGE_ROOT}/LICENSE" "${STAGE_ROOT}/NOTICE" "${STAGE_ROOT}/qt.conf"; do
     if grep -nE '/(mnt|tmp|home)/|[A-Za-z]:[\\/]Users[\\/].*\\.cargo|/usr/(include|lib)' "$text_file" >/dev/null 2>&1; then
         printf '[synveil-windows-package] ERROR: development path in package metadata: %s\n' "$text_file" >&2
@@ -428,6 +434,17 @@ write_package_manifest() {
         printf 'source_date_epoch=%s\n' "$SOURCE_DATE_EPOCH"
         printf 'rustc=%s\n' "$(synveil_toolchain_value rustc)"
         printf 'cargo=%s\n' "$(synveil_toolchain_value cargo)"
+        if [[ "$native_windows" -eq 1 ]]; then
+            printf 'qt=%s\n' "$(qmake -query QT_VERSION 2>/dev/null || printf unknown)"
+            printf 'qt_architecture=x86_64-msvc\n'
+            printf 'windeployqt=%s\n' "$($WINDEPLOYQT --version 2>&1 | tr -d '\r' | head -n 1)"
+            printf 'msvc=%s\n' "${VCToolsVersion:-unknown}"
+        else
+            printf 'qt=%s\n' "$("${QT_PREFIX}/bin/qmake" -query QT_VERSION 2>/dev/null || printf unknown)"
+            printf 'qt_architecture=x86_64-cross\n'
+            printf 'windeployqt=not-used-cross-build\n'
+            printf 'msvc=not-used-cross-build\n'
+        fi
         printf 'files=sha256 size path\n'
         while IFS= read -r relative; do
             relative="${relative#./}"
