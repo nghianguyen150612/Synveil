@@ -91,23 +91,27 @@ final class ServerEndpointTests: XCTestCase {
     }
 
     func testRejectUserinfoCredentials() {
-        XCTAssertThrowsError(try ServerEndpoint(validating: "https://user:password@example.com")) { error in
+        let credentialURL = "https://user:password@example.com"
+        XCTAssertThrowsError(try ServerEndpoint(validating: credentialURL)) { error in
             XCTAssertEqual(error as? EndpointValidationError, .userinfoNotAllowed)
         }
 
-        XCTAssertThrowsError(try ServerEndpoint(validating: "https://user@example.com")) { error in
+        let userOnlyURL = "https://user@example.com"
+        XCTAssertThrowsError(try ServerEndpoint(validating: userOnlyURL)) { error in
             XCTAssertEqual(error as? EndpointValidationError, .userinfoNotAllowed)
         }
     }
 
     func testRejectQueryParameters() {
-        XCTAssertThrowsError(try ServerEndpoint(validating: "https://example.com/?token=secret")) { error in
+        let queryURL = "https://example.com/?token=secret"
+        XCTAssertThrowsError(try ServerEndpoint(validating: queryURL)) { error in
             XCTAssertEqual(error as? EndpointValidationError, .queryNotAllowed)
         }
     }
 
     func testRejectURLFragments() {
-        XCTAssertThrowsError(try ServerEndpoint(validating: "https://example.com/#section")) { error in
+        let fragmentURL = "https://example.com/#section"
+        XCTAssertThrowsError(try ServerEndpoint(validating: fragmentURL)) { error in
             XCTAssertEqual(error as? EndpointValidationError, .fragmentNotAllowed)
         }
     }

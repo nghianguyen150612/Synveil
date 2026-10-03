@@ -7,7 +7,10 @@ final class AppConfigurationTests: XCTestCase {
     func testSafeProductionDefaultIsUnconfigured() {
         let config = AppConfiguration()
         XCTAssertEqual(config.environment, .production)
-        XCTAssertNil(config.serverEndpoint, "Production configuration must default to nil serverEndpoint")
+        XCTAssertNil(
+            config.serverEndpoint,
+            "Production configuration must default to nil serverEndpoint"
+        )
     }
 
     func testExplicitConfigurationInjection() throws {
@@ -45,7 +48,10 @@ final class AppConfigurationTests: XCTestCase {
 
         let config = AppConfiguration.load(processEnvironment: invalidEnv)
         XCTAssertEqual(config.environment, .production)
-        XCTAssertNil(config.serverEndpoint, "Malformed process environment URL must fail safely and yield nil")
+        XCTAssertNil(
+            config.serverEndpoint,
+            "Malformed process environment URL must fail safely and yield nil"
+        )
     }
 
     func testValueSemanticsEquality() throws {

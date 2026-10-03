@@ -18,11 +18,15 @@ public enum EndpointValidationError: Error, Equatable, Sendable, LocalizedError 
         case .invalidURL:
             return "The provided server endpoint is not a valid URL."
         case .unsupportedScheme(let scheme):
-            return "Unsupported URL scheme '\(scheme)'. Synveil server endpoints require 'https' or 'http'."
+            return
+                "Unsupported URL scheme '\(scheme)'. "
+                + "Synveil server endpoints require 'https' or 'http'."
         case .missingHost:
             return "Server endpoint URL is missing a host component."
         case .userinfoNotAllowed:
-            return "Server endpoint URL must not contain username or password userinfo credentials."
+            return
+                "Server endpoint URL must not contain "
+                + "username or password userinfo credentials."
         case .queryNotAllowed:
             return "Server endpoint URL must not contain query parameters."
         case .fragmentNotAllowed:
