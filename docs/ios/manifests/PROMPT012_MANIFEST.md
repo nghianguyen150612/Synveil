@@ -5,9 +5,9 @@
 - **Goal**: Establish the minimum stable Swift service-contract layer and dependency inversion boundaries for the native Synveil iOS client (`v0.1`), focusing on HTTP transport abstraction, raw Rust FFI boundary restriction, and static boundary enforcement.
 - **Starting Integration Branch**: `ios-app`
 - **Starting SHA**: `342ab8ef6ab4c743252bc523b8feaa2ade5068c7`
-- **Actual Work Branch**: `ios/p012-dependency-boundaries`
-- **Validated Implementation Head**: PENDING_COMMIT
-- **PR**: PENDING_PR
+- **Actual Work Branch**: `ios/p012-dependency-boundaries-3720636280902373748`
+- **Validated Implementation Head**: `0ce94904790c29f839f041050f6c0f8cfb752d8e`
+- **PR**: #39 — https://github.com/nghianguyen150612/Synveil/pull/39
 - **PR Base**: `ios-app`
 - **Authoritative Files Inspected**:
   - `clients/ios/README.md`
@@ -63,10 +63,15 @@
   - `swift format lint --recursive --strict clients/ios` -> SUCCESS.
   - `python3 -m unittest discover -s clients/ios/Support/tests` -> SUCCESS (16 validator self-tests).
   - `python3 clients/ios/Support/validate_ios_sources.py` -> SUCCESS.
-- **Final-Head CI Runs**:
-  - `iOS Static Validation` -> PENDING_CI
-  - `iOS Build` -> PENDING_CI
-  - `iOS Simulator Tests` -> PENDING_CI
+- **Validated implementation-head CI runs (`0ce94904790c29f839f041050f6c0f8cfb752d8e`)**:
+  - `iOS Static Validation` — run `37100990887` — SUCCESS
+  - `iOS Build` — run `37100990948` — SUCCESS
+  - `iOS Simulator Tests` — run `37100990924` — SUCCESS
+  - `Linux AppImage` — failure, classified `UNRELATED_SUBSYSTEM_FAILURE`
+  - `PostgreSQL 17 scheduled-maintenance` — failure, classified outside native iOS scope
+  - `Rust CI` — failure, classified outside native iOS P012 scope unless inspection proves otherwise
+  - `Linux native packages (DEB + RPM)` — failure, classified outside native iOS scope
+- **Evidence-only manifest correction**: this commit updates only `docs/ios/manifests/PROMPT012_MANIFEST.md`; if GitHub re-runs PR workflows due to the overall PR diff, the three native iOS gates must pass again on the resulting final PR head before merge.
 
 ## 6. Files Summary
 - **Files Created**:
@@ -92,6 +97,6 @@
 - No network I/O is performed in production or test suites.
 
 ## 8. Merge Status
-- **PR**: PENDING_PR
-- **Merge Status**: PENDING_MERGE
+- **PR**: #39 — https://github.com/nghianguyen150612/Synveil/pull/39
+- **Merge Status**: READY_FOR_FINAL_HEAD_VERIFICATION
 - **Final `ios-app` SHA**: PENDING_MERGE
