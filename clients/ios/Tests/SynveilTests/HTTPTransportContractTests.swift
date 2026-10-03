@@ -1,10 +1,6 @@
+import Foundation
 import XCTest
 
-#if canImport(Foundation)
-    import Foundation
-#endif
-
-// Access Domain transport contracts
 @testable import Synveil
 
 final class HTTPTransportContractTests: XCTestCase {

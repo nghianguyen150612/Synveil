@@ -98,28 +98,12 @@
 			children = (
 				A20000012C00000000000011 /* EndpointValidationError.swift */,
 				A20000012C00000000000012 /* ServerEndpoint.swift */,
-				A40000012C00000000000013 /* Services */,
-			);
-			name = Domain;
-			sourceTree = "<group>";
-		};
-		A40000012C00000000000013 /* Services */ = {
-			isa = PBXGroup;
-			children = (
-				A40000012C00000000000014 /* Transport */,
-			);
-			name = Services;
-			sourceTree = "<group>";
-		};
-		A40000012C00000000000014 /* Transport */ = {
-			isa = PBXGroup;
-			children = (
 				A20000012C00000000000015 /* HTTPMethod.swift */,
 				A20000012C00000000000016 /* HTTPTransportRequest.swift */,
 				A20000012C00000000000017 /* HTTPTransportResponse.swift */,
 				A20000012C00000000000018 /* HTTPTransportProtocol.swift */,
 			);
-			name = Transport;
+			name = Domain;
 			sourceTree = "<group>";
 		};
 		A40000012C00000000000012 /* Application */ = {
@@ -197,7 +181,7 @@
 			buildRules = (
 			);
 			dependencies = (
-				B70000012C00000000000001 /* PBXTargetDependency */;
+				B70000012C00000000000001 /* PBXTargetDependency */,
 			);
 			name = SynveilTests;
 			productName = SynveilTests;
