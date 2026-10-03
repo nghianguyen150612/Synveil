@@ -103,9 +103,11 @@ def main() -> int:
         if not (ROOT / relative).is_file():
             fail(f"static contract file missing: {relative}")
     builder = (ROOT / "deploy/packages/build-appimage.sh").read_text()
-    for token in ("synveil_cargo_version", "SOURCE_DATE_EPOCH", "x86_64", "sha256sum --check", "cmp -s"):
+    for token in ("synveil_cargo_version", "SOURCE_DATE_EPOCH", "x86_64", "sha256sum --check", "cmp -s", "--custom-apprun"):
         if token not in builder:
             fail(f"static builder contract missing: {token}")
+    if builder.count("--custom-apprun") < 2:
+        fail("static builder contract must preserve the reviewed AppRun during deployment and output")
     print("APPIMAGE static/source contract: PASS")
     if args.appdir:
         validate_appdir(args.appdir.resolve()); print("AppDir inspection: PASS")

@@ -268,6 +268,7 @@ pub fn validate_tmpfiles(fragment: &Path) -> Option<Result<(), String>> {
                     strategy.describe()
                 )));
             }
+            #[cfg(unix)]
             let mode = {
                 use std::os::unix::fs::PermissionsExt;
                 fs::metadata(&created)
@@ -276,6 +277,7 @@ pub fn validate_tmpfiles(fragment: &Path) -> Option<Result<(), String>> {
                     .mode()
                     & 0o777
             };
+            #[cfg(unix)]
             if mode != 0o750 {
                 return Some(Err(format!(
                     "systemd-tmpfiles created /var/lib/synveil with mode {:o}, \

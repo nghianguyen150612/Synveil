@@ -82,15 +82,15 @@ build_one() {
   install -m0755 "$SCRIPT_DIR/appimage/AppRun" "$appdir/AppRun"
   QML_SOURCES_PATHS="$REPO_ROOT/crates/desktop/qml" "$LINUXDEPLOY" --appdir "$appdir" \
     --executable "$appdir/usr/bin/synveil-desktop" --executable "$appdir/usr/bin/synveil-client" --executable "$appdir/usr/bin/synveil-appimage-integration" \
-    --desktop-file "$appdir/synveil.desktop" --icon-file "$appdir/synveil.svg" --plugin qt
-  # linuxdeploy may regenerate AppRun while deploying the desktop entry. The
-  # reviewed entry point is part of the product contract, so restore it after
-  # deployment and validate the final AppDir before filesystem creation.
-  rm -f "$appdir/AppRun"
-  install -m0755 "$SCRIPT_DIR/appimage/AppRun" "$appdir/AppRun"
+    --desktop-file "$appdir/synveil.desktop" --icon-file "$appdir/synveil.svg" \
+    --custom-apprun "$SCRIPT_DIR/appimage/AppRun" --plugin qt
+  # Pass the reviewed entry point to the output invocation too. linuxdeploy
+  # processes the AppDir again while creating the filesystem and otherwise
+  # replaces AppRun after the first deployment pass.
   # Normalize all payload timestamps before filesystem creation.
   find "$appdir" -print0 | xargs -0 touch --no-dereference --date="@${SOURCE_DATE_EPOCH}"
-  (cd "$WORK/$label" && OUTPUT="$destination" "$LINUXDEPLOY" --appdir "$appdir" --output appimage)
+  (cd "$WORK/$label" && OUTPUT="$destination" "$LINUXDEPLOY" --appdir "$appdir" \
+    --custom-apprun "$SCRIPT_DIR/appimage/AppRun" --output appimage)
   [[ -s $destination ]] || { echo '[synveil-appimage] ERROR: AppImage tool produced no artifact' >&2; exit 1; }
   python3 "$REPO_ROOT/scripts/validate-appimage-build.py" --appdir "$appdir"
 }
