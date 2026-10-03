@@ -17,6 +17,8 @@ BUILD = ROOT / "scripts/build-windows-installer.ps1"
 WORKFLOW = ROOT / ".github/workflows/windows-installer.yml"
 PACKAGE = ROOT / "deploy/packages/build-windows.sh"
 INSTALLED_RUNTIME_TEST = ROOT / "scripts/test-windows-installed-runtime.ps1"
+PER_USER_TEST = ROOT / "scripts/test-windows-per-user-installation.ps1"
+PER_USER_INVOKER = ROOT / "scripts/invoke-windows-standard-user-test.ps1"
 REPRODUCIBLE = ROOT / "deploy/packages/common/reproducible.sh"
 APP_ID = "{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}"
 
@@ -74,6 +76,8 @@ def main() -> int:
     reproducible = REPRODUCIBLE.read_text(encoding="utf-8")
     package = PACKAGE.read_text(encoding="utf-8")
     installed_test = INSTALLED_RUNTIME_TEST.read_text(encoding="utf-8")
+    per_user_test = PER_USER_TEST.read_text(encoding="utf-8")
+    per_user_invoker = PER_USER_INVOKER.read_text(encoding="utf-8")
     lower = iss.lower()
     require(f"AppId={{{APP_ID}" in iss, "stable AppId")
     require("DefaultDirName={localappdata}\\Programs\\Synveil" in iss, "per-user path")
@@ -95,6 +99,9 @@ def main() -> int:
     require("P026" in iss and "StartupRequested" in iss, "P026 startup handoff boundary")
     for forbidden in ("schtasks", "currentversion\\run", "programdata", "{commonprograms}", "create service"):
         require(forbidden not in lower, f"forbidden installer authority: {forbidden}")
+    for forbidden in ("privilegesrequired=admin", "privilegesrequired=poweruser", "requireadministrator", "highestavailable", "runas", "{autopf}", "{pf}"):
+        require(forbidden not in lower, f"forbidden per-machine/elevation authority: {forbidden}")
+    require("http://" not in lower and "https://" not in lower, "no install-time network authority")
     require('source: "*"' not in lower, "broad wildcard")
     require('#include GeneratedDir + "\\\\files.iss"' in iss, "installer files derive from closed generated inventory")
     for option in ("STARTUP", "DESKTOPICON", "LAUNCH"):
@@ -107,9 +114,9 @@ def main() -> int:
         require(unsafe not in build, f"unsafe PowerShell primitive: {unsafe}")
     require("Get-FileHash" in build and "-cne $Lock.sha256" in build, "digest before execution")
     require("windows-x86_64-installer" in build and '"windows_installer"' in build and '"SynveilSetup.exe"' in build and '"primary_installer"' in build, "artifact manifest entry")
-    require("windows-latest" in workflow and "/VERYSILENT" in workflow and "state-sentinel" in workflow, "native smoke contract")
-    for evidence in ("test-windows-installed-runtime.ps1", "QT_PLUGIN_PATH", "QML2_IMPORT_PATH", "synveil-unrelated-cwd", "ExitCode -ne 78", "missing-qwindows", "corrupt-dll", "unexpected-dll", "developer-file"):
-        require(evidence in workflow, f"P024 hosted runtime evidence: {evidence}")
+    require("windows-latest" in workflow and "/VERYSILENT" in per_user_test and "state-sentinel" in per_user_test, "native smoke contract")
+    for evidence in ("test-windows-installed-runtime.ps1", "QT_PLUGIN_PATH", "QML2_IMPORT_PATH", "unrelatedCwd", "client probe", "missing-qwindows", "corrupt-dll", "unexpected-dll", "developer-file"):
+        require(evidence in workflow or evidence in per_user_test, f"P024 hosted runtime evidence: {evidence}")
     require("VCToolsInstallDir" in workflow and "CompanyName" in workflow and "OriginalFilename" in workflow, "authenticated MSVC linker selection")
     require("LinkType" in workflow and "0x00004550" in workflow and "0x8664" in workflow, "regular AMD64 PE linker identity")
     require("$banner" not in workflow and "& $linker '/?'" not in workflow, "linker identity does not depend on localized help output")
@@ -120,6 +127,12 @@ def main() -> int:
         require(runtime_rule in package, f"authoritative runtime rule: {runtime_rule}")
     for required in ("SYNVEIL-MANIFEST.txt", "unmanifested package file", "0x8664", "platforms/qwindows.dll"):
         require(required in installed_test, f"installed runtime verification: {required}")
+    for evidence in ("synthetic_standard_user", "administrator_member", "installer_elevated", "integrity_sid", "RegistryView]::Registry64", "RegistryView]::Registry32", "machine PATH changed", "Synveil service created", "Synveil scheduled task created", "PER_USER_ACL_FAILURE", "second uninstaller", "state_preservation"):
+        require(evidence in per_user_test, f"P025 per-user evidence: {evidence}")
+    for evidence in ("SetPassword", "-Credential", "-LoadUserProfile", "WaitForExit(300000)", ".Delete('user'", "Remove-CimInstance", "::add-mask::"):
+        require(evidence in per_user_invoker, f"P025 disposable-account harness: {evidence}")
+    for evidence in ("Inspect compiled Setup execution level", "requestedExecutionLevel", "asInvoker", "invoke-windows-standard-user-test.ps1", "windows-per-user-evidence"):
+        require(evidence in workflow, f"P025 hosted workflow evidence: {evidence}")
     with tempfile.TemporaryDirectory() as directory:
         sample = Path(directory) / "sample"; sample.write_bytes(b"locked")
         verify_digest(sample, hashlib.sha256(b"locked").hexdigest())

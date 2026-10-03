@@ -252,8 +252,12 @@ P024–P028 remain pending.
 
 ### P025 — Windows Per-User Installation
 
-Support normal per-user installation without administrator access where
-feasible; justify and disclose any privileged operation.
+**Implemented (source/static complete; hosted native evidence pending):** the
+[Windows per-user installation contract](WINDOWS_PER_USER_INSTALLATION.md) and
+[Prompt025 manifest](PROMPT025_MANIFEST.md) add a disposable genuine-standard-
+user harness, compiled Setup execution-level inspection, bounded token,
+HKCU/HKLM, shortcut, PATH/service/task, ACL, installed-runtime, uninstall,
+reinstall, state-preservation, and cleanup evidence. P026–P028 remain pending.
 
 ### P026 — Windows Startup Integration
 
