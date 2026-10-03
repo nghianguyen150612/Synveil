@@ -80,7 +80,7 @@ Tier 6: Signed Distribution & Archive      (SIGNING_REQUIRED)
 - **Execution**: `xcodebuild test` using mock dependencies on macOS CI.
 
 ### Tier 3 — Swift / Rust & Network Integration (`MACOS_CI_VERIFIABLE`)
-- **Focus**: Swift ↔ Rust C-FFI / UniFFI boundary integration, memory allocation/deallocation balance across FFI, async Swift wrappers, `URLSession` communication against mock/local HTTP servers (`httptest` or Swift-native mock server), TLS custom trust evaluation, and transfer resume mechanics.
+- **Focus**: Swift ↔ Rust explicit C ABI boundary integration (`synveil-ios-ffi`), memory allocation/deallocation balance across FFI, async Swift wrappers, `URLSession` communication against mock/local HTTP servers (`httptest` or Swift-native mock server), TLS custom trust evaluation, and transfer resume mechanics.
 - **Execution**: Swift SPM / Xcode integration test target on macOS CI.
 
 ### Tier 4 — Simulator Tests (`SIMULATOR_VERIFIABLE`)
@@ -125,7 +125,7 @@ To keep iOS validation clean, reliable, and independent of desktop/server noise,
 
 4. **FFI Integration Workflow (`ios-ffi-tests.yml` — Evolution in P016–P020)**:
    - Triggers: FFI header changes or Rust bridge modifications.
-   - Actions: Generate UniFFI/C-FFI Swift bindings, compile combined Swift + Rust static archive, run Swift integration unit tests verifying memory safety, string/byte buffer conversion, panic safety, and async concurrency rules.
+   - Actions: Verify C headers (generated via `cbindgen`), compile Rust static library (`synveil-ios-ffi`), run Swift integration unit tests verifying memory safety, string/byte buffer conversion, panic safety, and async concurrency rules.
 
 5. **Release Validation Workflow (`ios-release-validation.yml` — Evolution in P059–P060)**:
    - Triggers: Release tags or manual `workflow_dispatch`.
@@ -235,7 +235,7 @@ To ensure CI security and avoid fragile configuration:
 Shared Rust code provides pure domain rules and cross-platform sync algorithms.
 
 ```text
-Host Linux Unit Tests  ---> Apple Target Compiles  ---> FFI C-Header / UniFFI  ---> Swift Consumer Tests
+Host Linux Unit Tests  ---> Apple Target Compiles  ---> FFI C-Header (cbindgen)---> Swift Consumer Tests
 (`cargo test` - Tier 1)   (`cargo check` - Tier 1)   (Binding Check - Tier 2)     (`xcodebuild` - Tier 3)
 ```
 
@@ -245,7 +245,7 @@ Host Linux Unit Tests  ---> Apple Target Compiles  ---> FFI C-Header / UniFFI  -
 2. **Apple-Target Compilation**:
    - Validates that Rust crates build cleanly against `aarch64-apple-ios` and `aarch64-apple-ios-sim` targets without relying on C libraries missing on iOS.
 3. **FFI Layer Testing**:
-   - Validates C ABI compatibility, `extern "C"` functions, UniFFI interface definition language (IDL) files, and panic handling (`std::panic::catch_unwind`).
+   - Validates C ABI compatibility, `extern "C"` functions in `synveil-ios-ffi`, generated C headers (`cbindgen`), and panic handling (`std::panic::catch_unwind`).
 4. **Swift Consumer Tests**:
    - Swift imports compiled Rust static library (`libsynveil_ffi.a` or `.xcframework`) and executes Swift unit tests exercising the wrapper structs.
 

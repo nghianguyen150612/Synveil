@@ -65,9 +65,10 @@ The Synveil iOS architecture is designed around six primary goals:
 │  Transfer Engine Protocol             │                 │
 │  Connectivity Observer Protocol       │                 ▼
 └───────────────────┬───────────────────┘ ┌───────────────────────────────┐
-                    │                     │    STABLE FFI BOUNDARY        │
-                    ▼                     │  C-FFI / UniFFI C-ABI Exports │
-┌───────────────────────────────────────┐ └───────────────┬───────────────┘
+                    │                     │    STABLE C ABI BOUNDARY      │
+                    ▼                     │ Explicit C Exports (synveil-  │
+┌───────────────────────────────────────┐ │ ios-ffi static library)       │
+│     INFRASTRUCTURE IMPLEMENTATIONS    │ └───────────────┬───────────────┘
 │     INFRASTRUCTURE IMPLEMENTATIONS    │                 │
 │  URLSession Transport (HTTP/TLS)      │                 ▼
 │  Keychain Vault (Security.framework)  │ ┌───────────────────────────────┐
@@ -397,10 +398,10 @@ Swift Application / Service Layer
 Swift RustBridge Adapter (Type-safe async Swift wrappers)
           │
           ▼
-Stable C-FFI / UniFFI Boundary (`extern "C"` ABI functions)
+Stable C ABI Boundary (`synveil-ios-ffi` `extern "C"` functions)
           │
           ▼
-iOS Rust Facade (`synveil_ios_core` C-static library)
+iOS Rust Facade (`synveil-ios-ffi` static library)
           │
           ▼
   ┌───────┴───────────────────────┐
