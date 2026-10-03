@@ -195,7 +195,10 @@ it rejects headers, import libraries, static archives, Linux libraries, and
 developer paths. `llvm-readobj`/`dumpbin` import auditing requires every
 non-system PE dependency to be present in the ZIP. The ZIP is portable and
 package-relative; it does not rely on the repository, Cargo target, `/tmp`, or
-a developer Qt installation at runtime. It is not an installer.
+a developer Qt installation at runtime. The ZIP remains the portable artifact
+rather than an installer. The same validated staging identity is now consumed
+directly by `SynveilSetup.exe`; users do not need to download or extract the
+ZIP before a normal per-user installation.
 
 ## Validation and limitations
 

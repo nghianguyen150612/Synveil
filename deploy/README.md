@@ -346,3 +346,7 @@ Vietnamese counterpart. Native Windows and real package installation are
 environment-gated on a suitable runner; a Linux cross-build is not native
 Windows evidence. Signing, repository publication, full guided installer,
 auto-update, and macOS/iOS/Android packaging remain out of scope.
+
+## Windows desktop runtime and installer (P024)
+
+`packages/build-windows.sh` is the only Windows runtime-closure producer. On native Windows it runs `windeployqt` against the release desktop, audits AMD64 PE imports and development leakage, writes the closed `SYNVEIL-MANIFEST.txt`, and safely replaces an optional staging export. Both the portable ZIP and `scripts/build-windows-installer.ps1` consume that identity; the installer never uses a second Qt list or extracts the ZIP. See `docs/v0.2/WINDOWS_RUNTIME_DEPLOYMENT.md` for native smoke, state, and deferred lifecycle boundaries.

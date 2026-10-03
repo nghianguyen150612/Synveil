@@ -186,7 +186,9 @@ và chỉ copy closure runtime/QML đã nêu; script reject header, import libra
 static archive, Linux library và developer path. PE import audit bằng
 `llvm-readobj`/`dumpbin` yêu cầu mọi non-system dependency có trong ZIP. ZIP
 portable độc lập repository, Cargo target, `/tmp` và Qt cài trên developer.
-Đây chưa phải installer.
+ZIP vẫn là artifact portable chứ không phải installer. Cùng staging identity
+đã validate hiện được `SynveilSetup.exe` consume trực tiếp; người dùng không
+cần tải hay giải nén ZIP trước khi cài đặt per-user thông thường.
 
 ## Validation và giới hạn
 

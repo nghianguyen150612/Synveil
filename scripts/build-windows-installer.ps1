@@ -101,6 +101,11 @@ function Read-Payload([string]$Stage, [string]$Generated) {
         $source = (Join-Path $Stage $entry.Path).Replace('"','""'); $dest = [IO.Path]::GetDirectoryName($entry.Path).Replace('\','/')
         if ($dest) { 'Source: "' + $source + '"; DestDir: "{app}/' + $dest + '"; Flags: ignoreversion' } else { 'Source: "' + $source + '"; DestDir: "{app}"; Flags: ignoreversion' }
     }
+    # The closed inventory is itself shared by the portable archive and the
+    # installed product. It intentionally does not hash itself; every payload
+    # byte that it binds is verified before this line is generated.
+    $manifestSource = $manifest.Replace('"','""')
+    $lines += 'Source: "' + $manifestSource + '"; DestDir: "{app}"; Flags: ignoreversion'
     [IO.File]::WriteAllLines((Join-Path $Generated 'files.iss'), $lines, [Text.UTF8Encoding]::new($false))
 }
 

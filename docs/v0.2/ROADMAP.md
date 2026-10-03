@@ -248,8 +248,7 @@ P024–P028 remain pending.
 
 ### P024 — Windows Runtime Deployment
 
-Install desktop, client and Qt runtime correctly without requiring manual ZIP
-extraction.
+**Implemented (source/static complete; final-head hosted native evidence pending):** one audited `windeployqt` staging closure now feeds both the portable ZIP and manifest-derived installer payload. Full installed hash verification, isolated installed desktop/client probes, negative closure fixtures, and runtime provenance are defined in [Windows runtime deployment](WINDOWS_RUNTIME_DEPLOYMENT.md) and the [Prompt024 manifest](PROMPT024_MANIFEST.md). P025–P028 remain pending.
 
 ### P025 — Windows Per-User Installation
 

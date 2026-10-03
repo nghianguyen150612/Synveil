@@ -23,6 +23,7 @@ The production outputs are:
 | Linux x86_64 | `deploy/packages/build.sh --format=deb` | `synveil_<version>_amd64.deb` | distro Qt 6/systemd/DBus dependencies declared; no server/database daemon bundled |
 | Linux x86_64 | `deploy/packages/build.sh --format=rpm` | `synveil-<version>-1.x86_64.rpm` | distro Qt 6/systemd/DBus dependencies declared; no server/database daemon bundled |
 | Windows x86_64 | `deploy/packages/build-windows.sh` | `synveil-<version>-windows-x86_64.zip` | self-contained Qt/QML/plugin/C++ runtime closure and `qt.conf`; unsigned portable ZIP, not an installer |
+| Windows x86_64 | `scripts/build-windows-installer.ps1` | `SynveilSetup.exe` | per-user Inno Setup 6.7.3 installer consuming the exact validated portable runtime staging identity |
 
 The Linux package payload is assembled through the single authoritative
 `deploy/install/MANIFEST`. It includes the root-owned siblings
@@ -41,6 +42,13 @@ No service, scheduled task registration, admin elevation, password, or
 machine-wide autostart is included in the ZIP. The running client manager may
 explicitly create a current-user Task Scheduler registration according to the
 Windows desktop contract.
+
+`SynveilSetup.exe` installs that same closed runtime under
+`%LOCALAPPDATA%\Programs\Synveil`; it does not extract the ZIP or maintain a
+second Qt list. The installed manifest permits complete size/SHA-256 checking,
+while Inno-owned uninstall metadata remains separate. Installation downloads
+no runtime prerequisite and does not require Qt, Visual Studio, or PATH/QML
+configuration on the target account.
 
 ## Build commands
 
@@ -218,7 +226,7 @@ startup on a Windows host. A Linux cross-build is not evidence of native
 Windows execution.
 
 This release slice intentionally leaves package signing, repository
-publication, a full guided Windows installer, auto-update, rollback of a
+publication, full Windows repair/upgrade qualification, auto-update, rollback of a
 partially installed package set, and native macOS/iOS/Android packaging to a
 later release-engineering scope. PostgreSQL integration tests remain an
 environment gate when `SYNVEIL_TEST_DATABASE_URL` is unset; that limitation
