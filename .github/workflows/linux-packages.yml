@@ -330,10 +330,14 @@ jobs:
           for tree in "${trees[@]:-}"; do
             [[ -d "$tree" ]] || continue
             while IFS= read -r file; do
-              grep -aoE '(/usr/src/synveil|/home/[!-~]{0,120}|/tmp/[!-~]{0,120})' "$file" 2>/dev/null |
-                sort -u | while read -r marker; do
+              if matches="$(grep -aoE '(/usr/src/synveil|/home/[!-~]{0,120}|/tmp/[!-~]{0,120})' "$file" 2>/dev/null)"; then
+                while read -r marker; do
                   printf '%s :: %s\n' "${file#"$tree"/}" "$marker" >> "$report"
-                done || true
+                done < <(printf '%s\n' "$matches" | sort -u)
+              elif [[ $? -ne 1 ]]; then
+                echo "failed to inspect generated QML source: $file" >&2
+                exit 1
+              fi
             done < <(
               find "$tree" -path '*qmlcachegen*' -type f \( -name '*.cpp' -o -name '*.h' \) 2>/dev/null |
                 LC_ALL=C sort
