@@ -5,9 +5,9 @@
 - **Goal**: Define the authoritative Rust↔Swift FFI strategy contract for Synveil iOS v0.1 prior to building any Apple Rust binary artifacts.
 - **Starting Integration Branch**: `ios-app`
 - **Starting SHA**: `d29828af138cfb5e26c49444135f987e54623d2e`
-- **Actual Work Branch**: `ios/p013-ffi-strategy-contract`
-- **Validated Implementation Head**: `PENDING_COMMIT`
-- **PR**: `PENDING_PR`
+- **Actual Work Branch**: `ios/p013-ffi-strategy-contract-16066648221557444765`
+- **Validated Implementation Head**: `bdd4932bceaf8ca1d3053949fb038eb58ade57b5`
+- **PR**: #45 — https://github.com/nghianguyen150612/Synveil/pull/45
 - **PR Base**: `ios-app`
 - **Authoritative Files Inspected**:
   - `docs/ios/IOS_SHARED_CORE_REUSE_AUDIT.md`
@@ -71,9 +71,10 @@
 - **FFI Artifact Absence Check**: Confirmed zero `.a`, `.dylib`, `.framework`, `.xcframework`, `.h`, generated bindings, or Rust FFI code added in P013.
 
 ## 6. GitHub Actions CI Evidence
-- **`iOS Static Validation`**: `PENDING_PR_RUN`
-- **`iOS Build`**: `PENDING_PR_RUN`
-- **`iOS Simulator Tests`**: `PENDING_PR_RUN`
+- **Validated implementation-head `iOS Static Validation`**: run `37112615710` — SUCCESS
+- **Validated implementation-head `iOS Build`**: run `37112615705` — SUCCESS
+- **Validated implementation-head `iOS Simulator Tests`**: run `37112615708` — SUCCESS
+- **Evidence-only manifest correction**: this commit changes only `docs/ios/manifests/PROMPT013_MANIFEST.md`; because the PR as a whole touches `clients/ios/**`, GitHub may re-run the three native iOS workflows. If it does, all three must pass again on the resulting final PR head before merge.
 - **Unrelated Subsystem Failures Classified**:
   - `Build, reproduce, inspect, and smoke AppImage`: `FAILURE` — classified `UNRELATED_SUBSYSTEM_FAILURE` (Linux desktop CXX-Qt app build path check failure in `synveil-desktop`, completely outside native iOS v0.1 client scope).
   - `Native desktop UI (Windows Qt 6)`: `FAILURE` — classified `UNRELATED_SUBSYSTEM_FAILURE` (Windows Qt 6 CXX-Qt desktop app build failure in `crates/install-engine/src/appimage.rs`, completely outside native iOS v0.1 client scope).
@@ -102,6 +103,6 @@
 - Rust Apple compilation, static library creation, cbindgen, and FFI bridging will be implemented in P014–P020.
 
 ## 9. Merge Status
-- **PR**: `PENDING_PR`
-- **Merge Status**: PENDING_CI_AND_MERGE
+- **PR**: #45 — https://github.com/nghianguyen150612/Synveil/pull/45
+- **Merge Status**: READY_FOR_FINAL_HEAD_VERIFICATION
 - **Final `ios-app` SHA**: PENDING_MERGE
