@@ -76,6 +76,8 @@ một tệp để trạng thái và hệ quả không bị lệch giữa hai b�
 | [055](ADR-055-v0.2-installer-error-and-diagnostics-model.md) | v0.2 installer error and diagnostics model | Accepted — Prompt010 contract |
 | [056](ADR-056-v0.2-release-channel-and-version-selection.md) | v0.2 release channel and version selection | Accepted — Prompt011 contract |
 | [057](ADR-057-v0.2-linux-package-integration-reconciliation.md) | v0.2 Linux package integration reconciliation | Accepted — Prompt012 contract |
+| [058](ADR-058-windows-installer-technology.md) | Windows installer technology | Accepted — Prompt021 |
+| [059](ADR-059-guided-server-setup-product-contract.md) | Guided server setup product contract / Hợp đồng sản phẩm thiết lập máy chủ có hướng dẫn | Accepted — Prompt029 |
 
 ## Process / Quy trình
 

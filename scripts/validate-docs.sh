@@ -85,6 +85,9 @@ for required_path in \
     rg -Fq "\`$required_path\`" "$freeze_record" 2>/dev/null || failures=$((failures + 1))
 done
 
+echo "DOC-UNIT-8: checking the Prompt029 server setup product contract"
+python3 scripts/validate-server-setup-contract.py || failures=$((failures + 1))
+
 if [[ "$failures" -ne 0 ]]; then
     echo "documentation validation failed: $failures issue(s)" >&2
     exit 1

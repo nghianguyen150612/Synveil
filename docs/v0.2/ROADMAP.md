@@ -296,7 +296,9 @@ Checkpoint: **WITHHELD — V0.2 WINDOWS INSTALL EXPERIENCE NOT YET READY**
 
 ### P029 — Server Setup Product Contract
 
-Define normal and Advanced server setup. The primary product choice is:
+**Complete (Prompt029 contract):** the [guided server setup product contract](SERVER_SETUP_PRODUCT_CONTRACT.md), [ADR-059](../adr/ADR-059-guided-server-setup-product-contract.md), and [Prompt029 manifest](PROMPT029_MANIFEST.md) lock Host-vs-Connect semantics, Personal/Home and Advanced/Server profiles, server-bootstrap ownership, preservation rules, readiness semantics, and the P030–P036 implementation boundaries. No PostgreSQL provisioning, service, storage, network, or admin-bootstrap implementation is claimed. Phase-D native acceptance remains pending and the P028 checkpoint remains withheld.
+
+The primary product choice is:
 
 ```text
 Host Synveil on this device
