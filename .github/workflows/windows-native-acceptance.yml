@@ -1,0 +1,113 @@
+name: Windows native acceptance
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CANDIDATE_NAME: windows-p028-candidate
+
+jobs:
+  build-windows-candidate:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.8.3
+          arch: win64_msvc2022_64
+          cache: true
+      - name: Validate checkpoint wiring
+        shell: bash
+        run: |
+          python3 scripts/validate-windows-installer.py
+          python3 scripts/validate-windows-native-acceptance.py
+          ./scripts/validate-install-acceptance.sh
+      - name: Build runtime once
+        shell: bash
+        run: |
+          set -euo pipefail
+          source deploy/packages/common/reproducible.sh
+          synveil_prepare_reproducible_rust_build "$PWD"
+          cargo build --release --locked -p synveil-desktop -p synveil-client
+          ./deploy/packages/build-windows.sh --desktop-binary=target/release/synveil-desktop.exe --client-binary=target/release/synveil-client.exe --output-dir=target/windows-packages --staging-dir=target/windows-installer-runtime
+      - name: Build exact candidate twice
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./scripts/build-windows-installer.ps1 -RuntimeStagingDirectory target/windows-installer-runtime
+          Copy-Item target/windows-installer/SynveilSetup.exe target/SynveilSetup.first.exe
+          ./scripts/build-windows-installer.ps1 -RuntimeStagingDirectory target/windows-installer-runtime
+          if ((Get-FileHash target/SynveilSetup.first.exe).Hash -cne (Get-FileHash target/windows-installer/SynveilSetup.exe).Hash) { throw 'P028_REPRODUCIBILITY_FAILURE' }
+      - name: Inspect and identify exact candidate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = Resolve-Path target/windows-installer/SynveilSetup.exe
+          $manifest = Join-Path $env:RUNNER_TEMP 'SynveilSetup.manifest.xml'
+          & mt.exe "-inputresource:$setup;#1" "-out:$manifest"
+          if ($LASTEXITCODE -ne 0 -or (Get-Content $manifest -Raw) -notmatch 'requestedExecutionLevel\s+level=["'']asInvoker["'']') { throw 'P028_EXECUTION_LEVEL_FAILURE' }
+          Copy-Item $manifest target/windows-installer/SynveilSetup.manifest.xml
+          $os = Get-CimInstance Win32_OperatingSystem
+          $cargo = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
+          $version = ($cargo.packages | Where-Object name -eq 'synveil-desktop').version
+          if ([string]::IsNullOrWhiteSpace($version)) { throw 'P028_PRODUCT_VERSION_FAILURE' }
+          $identity = [ordered]@{schema_version=1;source_commit=$env:GITHUB_SHA;product_version=$version;filename='SynveilSetup.exe';size_bytes=(Get-Item $setup).Length;sha256=(Get-FileHash $setup -Algorithm SHA256).Hash.ToLowerInvariant();release_manifest_sha256=(Get-FileHash target/windows-installer/SYNVEIL-RELEASE-MANIFEST.json -Algorithm SHA256).Hash.ToLowerInvariant();inno_setup_version='6.7.3';qt_version='6.8.3';msvc_tools=$env:VCToolsVersion;windows_caption=$os.Caption;windows_version=$os.Version;windows_build=$os.BuildNumber;architecture=$env:PROCESSOR_ARCHITECTURE}
+          $identity | ConvertTo-Json | Set-Content target/windows-installer/p028-candidate.json -Encoding utf8
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.CANDIDATE_NAME }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            target/windows-installer/SynveilSetup.exe
+            target/windows-installer/SYNVEIL-RELEASE-MANIFEST.json
+            target/windows-installer/SynveilSetup.manifest.xml
+            target/windows-installer/p028-candidate.json
+            target/p027-fixture-*/SynveilSetup.exe
+
+  standard-user-native:
+    needs: build-windows-candidate
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.CANDIDATE_NAME }}
+          path: candidate
+      - name: Authenticate transferred candidate
+        shell: pwsh
+        run: |
+          $identity = Get-Content candidate/target/windows-installer/p028-candidate.json -Raw | ConvertFrom-Json
+          $actual = (Get-FileHash candidate/target/windows-installer/SynveilSetup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -cne $identity.sha256 -or $identity.source_commit -cne $env:GITHUB_SHA) { throw 'P028_CANDIDATE_IDENTITY_FAILURE' }
+      - name: Native standard-user product acceptance
+        shell: pwsh
+        run: |
+          ./scripts/invoke-windows-standard-user-test.ps1 -Setup candidate/target/windows-installer/SynveilSetup.exe -EvidenceDirectory target/windows-native-evidence
+      - name: Record required unavailable surfaces honestly
+        shell: pwsh
+        run: |
+          New-Item target/windows-native-evidence -ItemType Directory -Force | Out-Null
+          @{schema_version=1;result='BLOCKED';reason='GitHub-hosted Windows runners do not provide a qualified interactive desktop or genuine new-logon session; named-pipe end-to-end acceptance is not yet wired.';interactive_gui='BLOCKED';real_logon='BLOCKED';named_pipe='BLOCKED';diagnostics_redacted=$true;cleanup_result=@{status='complete';details='standard-user harness cleanup completed'}} | ConvertTo-Json -Depth 4 | Set-Content target/windows-native-evidence/p028-blockers.json
+          throw 'BLOCKED_BY_ENVIRONMENT: required P028 GUI/logon evidence unavailable and named-pipe gate pending'
+      - name: Upload bounded native evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-p028-native-evidence
+          retention-days: 14
+          if-no-files-found: warn
+          path: target/windows-native-evidence
