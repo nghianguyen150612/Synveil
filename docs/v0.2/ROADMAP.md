@@ -280,11 +280,17 @@ lifecycle evidence and Windows readiness remain P028 work.
 
 ### P028 — Windows Native Acceptance CI
 
+Status: **In progress — native evidence pending / BLOCKED_BY_ENVIRONMENT**.
+
 Run the installer on native Windows CI, launch the actual installed app, and
 validate named-pipe and Task Scheduler behavior. Cross-build evidence alone
-does not pass this gate.
+does not pass this gate. The dedicated fail-closed workflow and current
+evidence limitations are documented in
+[Windows native acceptance](WINDOWS_NATIVE_ACCEPTANCE.md) and the
+[Prompt028 manifest](PROMPT028_MANIFEST.md). Genuine interactive Setup and
+real-logon evidence remain required; the checkpoint is not complete.
 
-Checkpoint: **V0.2 WINDOWS INSTALL EXPERIENCE READY**
+Checkpoint: **WITHHELD — V0.2 WINDOWS INSTALL EXPERIENCE NOT YET READY**
 
 ## PHASE E — GUIDED SERVER SETUP (P029–036)
 
