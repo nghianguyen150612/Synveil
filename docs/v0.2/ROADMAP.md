@@ -205,7 +205,8 @@ interruption recovery as applicable.
 Status: **in progress (harness delivered, native evidence pending).** The
 acceptance executor, VM control plane and hosted matrix exist; the graphical
 journeys, real AppImage launch and VM power-cut interruption have not yet been
-run on a native machine. No OS image digest is pinned. See the
+run on a native machine. Image inputs are pinned, but that does not constitute
+execution evidence. See the
 [clean-machine acceptance](LINUX_CLEAN_MACHINE_ACCEPTANCE.md) record and the
 [Prompt020 manifest](PROMPT020_MANIFEST.md).
 
@@ -216,8 +217,12 @@ checkpoint is withheld until real hosted native evidence exists.
 
 ### P021 — Windows Installer Technology Decision
 
-Choose and lock installer technology based on current architecture,
-maintainability, per-user installation and unattended-test support.
+**Complete (Prompt021 decision):** [Inno Setup 6.7.3 is locked](WINDOWS_INSTALLER_TECHNOLOGY_DECISION.md)
+for a per-user, non-elevating x86_64 `SynveilSetup.exe`, with stable lifecycle,
+ownership, Task Scheduler and unattended-CI boundaries in
+[ADR-058](../adr/ADR-058-windows-installer-technology.md) and the
+[Prompt021 manifest](PROMPT021_MANIFEST.md). P022 creates the installer;
+P028 remains the native acceptance owner.
 
 ### P022 — SynveilSetup.exe Skeleton
 
