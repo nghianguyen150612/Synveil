@@ -85,9 +85,11 @@ public struct ServerEndpoint: Equatable, Hashable, Sendable, CustomStringConvert
             throw EndpointValidationError.fragmentNotAllowed
         }
 
-        // Path normalization
+        // Path normalization: root path is "/", subpaths have trailing slash trimmed (e.g. "/api/v1")
         var normalizedPath = components.path
-        if normalizedPath.hasSuffix("/") && normalizedPath.count > 1 {
+        if normalizedPath.isEmpty {
+            normalizedPath = "/"
+        } else if normalizedPath.hasSuffix("/") && normalizedPath.count > 1 {
             normalizedPath = String(normalizedPath.dropLast())
         }
 
