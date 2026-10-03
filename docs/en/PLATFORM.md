@@ -227,12 +227,12 @@ specified by ADR-002. Personal / Home Mode does not replace it with SQLite
 merely to simplify packaging and does not ask ordinary users to install roles,
 create databases, set `DATABASE_URL`, or run SQL.
 
-A future managed database deployment may provision a private PostgreSQL
-distribution or supported system service, initialize a protected data
-directory, create least-privilege roles, apply migrations, start/stop and
-monitor the service, create coordinated backups, verify upgrades, and recover
-after a crash. The database remains inside the same security and backup model
-as an advanced external PostgreSQL deployment.
+ADR-060 selects a Synveil-managed private PostgreSQL 17 runtime for Personal /
+Home. It is acquired only by the explicit Host flow, is isolated from arbitrary
+system PostgreSQL, and requires neither Docker nor a pre-existing database.
+Advanced / Server retains explicit external operator-managed PostgreSQL 17.
+Both profiles retain the same schema and migrations. This is a target contract,
+not evidence that guided provisioning is implemented.
 
 The managed database adapter must separate:
 
@@ -532,20 +532,20 @@ packaging plans into implemented installers.
 
 ## Open decisions
 
-### OPEN DECISION OD-PLAT-001: managed PostgreSQL distribution
+### ACCEPTED DECISION OD-PLAT-001: managed PostgreSQL distribution
 
 - **Owner:** Database, Release, Security, Product
-- **Needed by:** Personal / Home Mode implementation and first native installer
-- **Options:** bundled/private PostgreSQL distribution; system-managed
-  PostgreSQL dependency; separately packaged Synveil-managed service;
-  administrator-installed external PostgreSQL only
-- **Recommendation:** provide a Synveil-managed private/system service path for
-  supported Personal / Home platforms while retaining external PostgreSQL in
-  Advanced / Server Mode. Do not expose a database-choice wizard to ordinary
-  users.
-- **Decision evidence:** Windows/macOS/Linux packaging, security boundaries,
-  upgrade compatibility, database backup/restore, data-directory lifecycle,
-  uninstall, resource footprint, and support cost.
+- **Decision:** [ADR-060](../adr/ADR-060-v0.2-managed-postgresql-dependency-strategy.md)
+  selects a distinct Synveil-managed private PostgreSQL 17 dependency for
+  Personal / Home and explicit external operator-managed PostgreSQL 17 for
+  Advanced / Server. Runtime ownership is separate from durable database data;
+  neither desktop uninstall nor server-software removal deletes that data.
+- **Initial capability:** Ubuntu 24.04 and Fedora 42 x86_64 are implementation
+  targets pending P036. Windows, macOS, and other architectures are
+  `NOT_YET_QUALIFIED` for managed Personal/Home Host; client support is separate.
+- **Boundary:** no ordinary database-choice wizard, arbitrary system PostgreSQL
+  reuse, Docker requirement, public database listener, or normal-user
+  `DATABASE_URL`. P031–P036 implement and qualify the accepted strategy.
 
 ### OPEN DECISION OD-PLAT-002: native service supervisor boundary
 

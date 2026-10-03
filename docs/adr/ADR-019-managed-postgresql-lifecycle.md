@@ -4,6 +4,12 @@
 - Date / Ngày: 2026-08-22
 - Owners / Chủ sở hữu: Database, Release, Security, Product
 
+> **Superseded by ADR-060 / Được thay thế bởi ADR-060.** The unresolved
+> PostgreSQL distribution decision is accepted in
+> [ADR-060](ADR-060-v0.2-managed-postgresql-dependency-strategy.md). This file
+> remains the historical proposal. / Quyết định distribution chưa đóng đã được
+> chấp thuận trong ADR-060; tệp này được giữ làm đề xuất lịch sử.
+
 ## Context (English)
 
 PostgreSQL remains the correct metadata and transactional authority under
@@ -23,8 +29,9 @@ Server Mode continues to accept external operator-managed PostgreSQL.
 
 The adapter must not put database administration in the domain core, expose
 database credentials to the normal UI, or imply that uninstall deletes data.
-The exact provisioning/distribution choice remains the `OPEN DECISION`
-OD-PLAT-001 in `PLATFORM.md`.
+At the time of this historical proposal, the exact provisioning/distribution
+choice remained `OPEN DECISION` OD-PLAT-001 in `PLATFORM.md`; ADR-060 has since
+closed it.
 
 ## Bối cảnh (Tiếng Việt)
 

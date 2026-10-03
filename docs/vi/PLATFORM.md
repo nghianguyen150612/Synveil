@@ -225,11 +225,12 @@ ADR-002. Personal / Home Mode không thay bằng SQLite chỉ để package dễ
 không yêu cầu user thường tự cài role, tạo database, đặt `DATABASE_URL` hay
 chạy SQL.
 
-Managed database deployment tương lai có thể provision PostgreSQL private hoặc
-system service được hỗ trợ, khởi tạo data directory được bảo vệ, tạo role
-least-privilege, apply migration, start/stop/monitor service, tạo backup phối
-hợp, verify upgrade và recover sau crash. Database vẫn nằm trong cùng security
-và backup model với PostgreSQL external ở Advanced / Server Mode.
+ADR-060 chọn runtime PostgreSQL 17 private do Synveil quản lý cho Personal /
+Home. Dependency chỉ được lấy trong luồng Host rõ ràng, cô lập khỏi PostgreSQL
+system tùy ý và không cần Docker hay database có sẵn. Advanced / Server giữ
+PostgreSQL 17 external do operator quản lý. Hai profile dùng cùng schema và
+migration. Đây là contract mục tiêu, không phải bằng chứng đã triển khai
+provisioning có hướng dẫn.
 
 Managed database adapter phải tách:
 
@@ -507,18 +508,20 @@ implementation.
 
 ## Open decisions
 
-### OPEN DECISION OD-PLAT-001: distribution PostgreSQL managed
+### ACCEPTED DECISION OD-PLAT-001: distribution PostgreSQL managed
 
 - **Owner:** Database, Release, Security, Product
-- **Needed by:** implementation Personal / Home Mode và native installer đầu tiên
-- **Options:** PostgreSQL bundled/private; PostgreSQL do system quản lý;
-  Synveil-managed service package riêng; chỉ external PostgreSQL do admin cài
-- **Recommendation:** có đường private/system service do Synveil quản lý cho
-  Personal / Home platform được hỗ trợ, đồng thời giữ external PostgreSQL ở
-  Advanced / Server. Không hiện database-choice wizard cho user thường.
-- **Decision evidence:** packaging Windows/macOS/Linux, security boundary,
-  upgrade compatibility, database backup/restore, data-directory lifecycle,
-  uninstall, resource footprint và support cost.
+- **Quyết định:** [ADR-060](../adr/ADR-060-v0.2-managed-postgresql-dependency-strategy.md)
+  chọn dependency PostgreSQL 17 private riêng do Synveil quản lý cho Personal /
+  Home và PostgreSQL 17 external do operator quản lý cho Advanced / Server.
+  Ownership runtime tách khỏi data database bền vững; gỡ desktop hoặc software
+  server không xóa data đó.
+- **Capability ban đầu:** Ubuntu 24.04 và Fedora 42 x86_64 là implementation
+  target chờ P036. Windows, macOS và architecture khác là
+  `NOT_YET_QUALIFIED` cho managed Personal/Home Host; client support tách biệt.
+- **Ranh giới:** không có database-choice wizard thường, không tái sử dụng
+  PostgreSQL system tùy ý, không bắt Docker, không public listener database và
+  không đưa `DATABASE_URL` cho user thường. P031–P036 triển khai/qualify.
 
 ### OPEN DECISION OD-PLAT-002: ranh giới native service supervisor
 

@@ -78,6 +78,7 @@ một tệp để trạng thái và hệ quả không bị lệch giữa hai b�
 | [057](ADR-057-v0.2-linux-package-integration-reconciliation.md) | v0.2 Linux package integration reconciliation | Accepted — Prompt012 contract |
 | [058](ADR-058-windows-installer-technology.md) | Windows installer technology | Accepted — Prompt021 |
 | [059](ADR-059-guided-server-setup-product-contract.md) | Guided server setup product contract / Hợp đồng sản phẩm thiết lập máy chủ có hướng dẫn | Accepted — Prompt029 |
+| [060](ADR-060-v0.2-managed-postgresql-dependency-strategy.md) | v0.2 managed PostgreSQL dependency strategy / Chiến lược dependency PostgreSQL managed v0.2 | Accepted — Prompt030 |
 
 ## Process / Quy trình
 
