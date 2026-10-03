@@ -74,7 +74,14 @@
 - **`iOS Static Validation`**: `PENDING_PR_RUN`
 - **`iOS Build`**: `PENDING_PR_RUN`
 - **`iOS Simulator Tests`**: `PENDING_PR_RUN`
-- **`Build, reproduce, inspect, and smoke AppImage`**: `FAILURE` — classified `UNRELATED_SUBSYSTEM_FAILURE` (Linux desktop CXX-Qt app build path check failure in `synveil-desktop`, completely outside native iOS v0.1 client scope).
+- **Unrelated Subsystem Failures Classified**:
+  - `Build, reproduce, inspect, and smoke AppImage`: `FAILURE` — classified `UNRELATED_SUBSYSTEM_FAILURE` (Linux desktop CXX-Qt app build path check failure in `synveil-desktop`, completely outside native iOS v0.1 client scope).
+  - `Native desktop UI (Windows Qt 6)`: `FAILURE` — classified `UNRELATED_SUBSYSTEM_FAILURE` (Windows Qt 6 CXX-Qt desktop app build failure in `crates/install-engine/src/appimage.rs`, completely outside native iOS v0.1 client scope).
+  - `Native desktop UI (Linux Qt 6)`: `FAILURE` — classified `UNRELATED_SUBSYSTEM_FAILURE` (Linux Qt 6 CXX-Qt desktop app job failure, completely outside native iOS v0.1 client scope).
+  - `Check (windows-latest)`: `FAILURE` — classified `UNRELATED_SUBSYSTEM_FAILURE` (Windows Rust workspace build failure in `crates/install-engine/src/appimage.rs`, completely outside native iOS v0.1 client scope).
+  - `Test (macos-latest)`: `FAILURE` — classified `UNRELATED_SUBSYSTEM_FAILURE` (macOS Rust desktop client test failure in `synveil-client::control::tests`, completely outside native iOS v0.1 client scope).
+  - `Test (windows-latest)`: `FAILURE` — classified `UNRELATED_SUBSYSTEM_FAILURE` (Windows Rust installer engine test failure in `synveil-install-engine`, completely outside native iOS v0.1 client scope).
+  - `Test (ubuntu-latest)`: `FAILURE` — classified `UNRELATED_SUBSYSTEM_FAILURE` (Linux systemd tmpfiles test failure in `synveil-metadata`, completely outside native iOS v0.1 client scope).
 
 ## 7. Files Summary
 - **Files Created**:
