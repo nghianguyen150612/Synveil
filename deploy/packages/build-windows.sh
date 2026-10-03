@@ -21,6 +21,7 @@ source "${SCRIPT_DIR}/common/version.sh"
 source "${SCRIPT_DIR}/common/reproducible.sh"
 
 OUTPUT_DIR="${REPO_ROOT}/target/windows-packages"
+STAGING_DIR=""
 CARGO_TARGET_DIR="${REPO_ROOT}/target"
 export CARGO_TARGET_DIR
 DESKTOP_BINARY=""
@@ -32,6 +33,7 @@ READOBJ="${SYNVEIL_LLVM_READOBJ:-}"
 usage() {
     cat >&2 <<'EOF'
 Usage: build-windows.sh [--output-dir=DIR] [--desktop-binary=PATH]
+                        [--staging-dir=DIR]
                         [--client-binary=PATH] [--qt-prefix=DIR]
                         [--windeployqt=PATH] [--llvm-readobj=PATH]
 
@@ -40,6 +42,8 @@ Build a self-contained, unsigned x86_64 Windows Synveil desktop ZIP.
 Options:
   --output-dir=DIR       Output directory (default: target/windows-packages).
                          It must not be / or contain a .. path component.
+  --staging-dir=DIR      Export the exact validated runtime closure to DIR for
+                         a trusted downstream producer such as the installer.
   --desktop-binary=PATH  Existing synveil-desktop.exe. If omitted, build the
                          release native Windows Qt target in the current tree.
   --client-binary=PATH   Existing sibling synveil-client.exe. If omitted,
@@ -66,6 +70,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --desktop-binary=*)
             DESKTOP_BINARY="${1#--desktop-binary=}"
+            shift
+            ;;
+        --staging-dir=*)
+            STAGING_DIR="${1#--staging-dir=}"
             shift
             ;;
         --client-binary=*)
@@ -494,6 +502,23 @@ synveil_assert_no_secret_markers "${STAGE_ROOT}/${MANIFEST_NAME}" "$MANIFEST_NAM
 if grep -nE '/(mnt|tmp|home)/|[A-Za-z]:[\\/]Users[\\/].*\\.cargo|/usr/(include|lib)' "${STAGE_ROOT}/${MANIFEST_NAME}" >/dev/null 2>&1; then
     printf '[synveil-windows-package] ERROR: development path in package manifest\n' >&2
     exit 1
+fi
+
+# Export only after the closed inventory has been written and validated.  The
+# destination is replaced rather than overlaid so stale files cannot enter a
+# downstream installer inventory.
+if [[ -n "$STAGING_DIR" ]]; then
+    if [[ "$STAGING_DIR" != /* ]]; then
+        STAGING_DIR="${REPO_ROOT}/${STAGING_DIR}"
+    fi
+    case "/${STAGING_DIR#/}/" in
+        */../*) printf '[synveil-windows-package] ERROR: staging path contains ..: %s\n' "$STAGING_DIR" >&2; exit 1 ;;
+    esac
+    [[ "$STAGING_DIR" != "/" ]] || { printf '[synveil-windows-package] ERROR: refusing staging directory /\n' >&2; exit 1; }
+    rm -rf -- "$STAGING_DIR"
+    mkdir -p -- "$STAGING_DIR"
+    cp -a "${STAGE_ROOT}/." "$STAGING_DIR/"
+    log "validated runtime staging exported: $STAGING_DIR"
 fi
 
 if ! command -v zip >/dev/null 2>&1; then

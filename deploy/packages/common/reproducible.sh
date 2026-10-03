@@ -95,6 +95,7 @@ synveil_prepare_reproducible_qt_tools() {
     local rcc_for_wrapper
     local wrapper_dir_for_wrapper
     local qmake_export_path
+    local -a rustc_linker_args=()
 
     if [[ -z "$real_qmake" ]]; then
         real_qmake="$(command -v qmake6 || command -v qmake || true)"
@@ -205,6 +206,12 @@ synveil_prepare_reproducible_qt_tools() {
         wrapper_dir_for_wrapper="$(cygpath -m "$wrapper_dir_for_wrapper" 2>/dev/null || printf '%s' "$wrapper_dir_for_wrapper")"
         qmake_export_path="${wrapper_dir_for_wrapper}/qmake${wrapper_suffix}"
     fi
+    # Cargo's explicit target linker is also authoritative for this direct
+    # host-rustc invocation. Git Bash prepends /usr/bin, where a different
+    # `link.exe` lives, so an unqualified MSVC linker lookup is unsafe.
+    if [[ "$host_toolchain" == "x86_64-pc-windows-msvc" && -n "${CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER:-}" ]]; then
+        rustc_linker_args=(-C "linker=${CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER}")
+    fi
     SYNVEIL_REAL_QMAKE="$qmake_for_wrapper" \
         SYNVEIL_REAL_RCC="$rcc_for_wrapper" \
         SYNVEIL_REAL_QMLCACHEGEN="$real_qmlcachegen" \
@@ -212,7 +219,7 @@ synveil_prepare_reproducible_qt_tools() {
         SYNVEIL_SOURCE_DATE_EPOCH="$source_date_epoch" \
         SYNVEIL_QML_SOURCE_ROOT="$repo_root" \
         SYNVEIL_QML_CANONICAL_ROOT="$qml_canonical_root" \
-        rustc --edition=2021 "${repo_root}/scripts/reproducible-qt-wrapper.rs" -o "$wrapper_binary"
+        rustc "${rustc_linker_args[@]}" --edition=2021 "${repo_root}/scripts/reproducible-qt-wrapper.rs" -o "$wrapper_binary"
     cp "$wrapper_binary" "${wrapper_dir}/qmake${wrapper_suffix}"
     cp "$wrapper_binary" "${wrapper_dir}/rcc${wrapper_suffix}"
     # Installing the wrapper under the qmlcachegen name makes CXX-Qt's
