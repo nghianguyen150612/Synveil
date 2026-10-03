@@ -67,6 +67,28 @@ synveil_append_unique_build_flag() {
     fi
 }
 
+# Cargo's encoded transport is the only lossless way to pass flags containing
+# Windows drive separators, backslashes, and spaces through an MSYS process.
+# A unit-separator is Cargo's documented argument delimiter; unlike RUSTFLAGS,
+# neither Bash word splitting nor MSYS path rewriting can turn one remap into
+# several rustc arguments.
+synveil_export_encoded_rustflags() {
+    local encoded=""
+    local flag
+    for flag in "$@"; do
+        [[ "$flag" != *$'\x1f'* ]] || {
+            printf '[synveil-artifact] ERROR: Rust flag contains the encoded argument delimiter\n' >&2
+            return 1
+        }
+        if [[ -n "$encoded" ]]; then
+            encoded+=$'\x1f'
+        fi
+        encoded+="$flag"
+    done
+    export CARGO_ENCODED_RUSTFLAGS="$encoded"
+    unset RUSTFLAGS
+}
+
 # CXX-Qt's QML-module build asks Qt's rcc tool to embed a generated qmldir and
 # the QML source files. rcc records their filesystem mtimes in generated C++.
 # Use a build-host wrapper that copies those QML resources under OUT_DIR and
@@ -219,7 +241,7 @@ synveil_prepare_reproducible_qt_tools() {
         SYNVEIL_SOURCE_DATE_EPOCH="$source_date_epoch" \
         SYNVEIL_QML_SOURCE_ROOT="$repo_root" \
         SYNVEIL_QML_CANONICAL_ROOT="$qml_canonical_root" \
-        rustc "${rustc_linker_args[@]}" --edition=2021 "${repo_root}/scripts/reproducible-qt-wrapper.rs" -o "$wrapper_binary"
+        rustc "${SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS[@]}" "${rustc_linker_args[@]}" --edition=2021 "${repo_root}/scripts/reproducible-qt-wrapper.rs" -o "$wrapper_binary"
     cp "$wrapper_binary" "${wrapper_dir}/qmake${wrapper_suffix}"
     cp "$wrapper_binary" "${wrapper_dir}/rcc${wrapper_suffix}"
     # Installing the wrapper under the qmlcachegen name makes CXX-Qt's
@@ -247,6 +269,7 @@ synveil_prepare_reproducible_rust_build() {
     local cargo_target_dir
     local cargo_home
     local existing_flags="${RUSTFLAGS:-}"
+    local -a rust_flags=()
     local flag
     local remap_flags=()
     local native_repo_root=""
@@ -316,16 +339,23 @@ synveil_prepare_reproducible_rust_build() {
     fi
     remap_flags+=("--remap-path-prefix=${cargo_target_dir}=/usr/src/synveil-target")
 
+    if [[ -n "${CARGO_ENCODED_RUSTFLAGS:-}" ]]; then
+        printf '[synveil-artifact] ERROR: set either RUSTFLAGS or CARGO_ENCODED_RUSTFLAGS, not both; release builders own encoded transport\n' >&2
+        return 1
+    fi
+    # Preserve conventional caller flags. Callers needing an argument that
+    # itself contains whitespace must pass it through a dedicated build input;
+    # release path remaps below are always appended as array elements.
+    if [[ -n "$existing_flags" ]]; then
+        read -r -a rust_flags <<< "$existing_flags"
+    fi
     for flag in "${remap_flags[@]}"; do
-        if [[ "$existing_flags" != *"$flag"* ]]; then
-            if [[ -n "$existing_flags" ]]; then
-                existing_flags+=" "
-            fi
-            existing_flags+="$flag"
+        if [[ ! " ${rust_flags[*]} " == *" $flag "* ]]; then
+            rust_flags+=("$flag")
         fi
     done
-
-    export RUSTFLAGS="$existing_flags"
+    SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS=("${rust_flags[@]}")
+    synveil_export_encoded_rustflags "${rust_flags[@]}"
     export CARGO_INCREMENTAL=0
     # Qt's QML AOT compiler uses QHash-backed data structures. Its default
     # per-process hash seed can change generated C++ and release bytes across
@@ -343,7 +373,9 @@ synveil_prepare_reproducible_rust_build() {
     # identical desktop links. Do not post-process artifacts: disable that
     # non-semantic note for every Linux release package at link time.
     if [[ "$host_toolchain" == *"linux"* ]]; then
-        synveil_append_unique_build_flag RUSTFLAGS "-C link-arg=-Wl,--build-id=none"
+        rust_flags+=("-C" "link-arg=-Wl,--build-id=none")
+        SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS=("${rust_flags[@]}")
+        synveil_export_encoded_rustflags "${rust_flags[@]}"
     fi
     if [[ "$host_toolchain" != *"msvc"* ]]; then
         # GCC/Clang use the last matching prefix map for an overlapping path.
@@ -388,13 +420,6 @@ synveil_prepare_reproducible_rust_build() {
             synveil_append_unique_build_flag CFLAGS "$flag"
             synveil_append_unique_build_flag CXXFLAGS "$flag"
         done
-    fi
-    # Avoid silently dropping an encoded caller flag. RUSTFLAGS is the
-    # supported input for the builders; an encoded-only invocation is rejected
-    # instead of producing an artifact with an unknown compiler configuration.
-    if [[ -n "${CARGO_ENCODED_RUSTFLAGS:-}" ]]; then
-        printf '[synveil-artifact] ERROR: CARGO_ENCODED_RUSTFLAGS is not supported by the reproducible release builder; use RUSTFLAGS instead\n' >&2
-        return 1
     fi
     synveil_prepare_reproducible_qt_tools "$canonical_repo_root" "$cargo_target_dir" "$host_toolchain"
 }

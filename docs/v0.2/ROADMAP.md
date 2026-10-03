@@ -234,11 +234,17 @@ focused current-user native install/uninstall smoke. P023–P028 remain pending.
 
 ### P023 — Windows Installer UI
 
-Implement the concise native flow:
+**Implemented (Prompt023 source complete; hosted evidence pending):** the
+[Windows installer UI](WINDOWS_INSTALLER_UI.md) and
+[Prompt023 manifest](PROMPT023_MANIFEST.md) implement the concise native flow:
 
 ```text
 Welcome → Terms/options → Install → Finish
 ```
+
+The combined MIT terms/options page owns independent startup, desktop shortcut,
+and post-install launch state. Startup persistence remains strictly P026-owned;
+P024–P028 remain pending.
 
 ### P024 — Windows Runtime Deployment
 

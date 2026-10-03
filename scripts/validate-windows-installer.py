@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Network-free P022 installer source and security-contract validator."""
+"""Network-free P022/P023 installer source and UI-contract validator."""
 
 from __future__ import annotations
 
@@ -70,13 +70,26 @@ def main() -> int:
     build = BUILD.read_text(encoding="utf-8")
     workflow = WORKFLOW.read_text(encoding="utf-8")
     reproducible = REPRODUCIBLE.read_text(encoding="utf-8")
+    lower = iss.lower()
     require(f"AppId={{{APP_ID}" in iss, "stable AppId")
     require("DefaultDirName={localappdata}\\Programs\\Synveil" in iss, "per-user path")
     require("PrivilegesRequired=lowest" in iss and "PrivilegesRequiredOverridesAllowed=none" in iss, "no elevation override")
     require("ArchitecturesAllowed=x64" in iss and "ArchitecturesInstallIn64BitMode=x64" in iss, "x86_64 constraint")
     require('Filename: "{app}\\synveil-desktop.exe"' in iss, "absolute installed shortcut target")
-    lower = iss.lower()
-    for forbidden in ("schtasks", "currentversion\\run", "programdata", "{commonprograms}", "service"):
+    for directive in ("DisableWelcomePage=no", "DisableDirPage=yes", "DisableProgramGroupPage=yes", "DisableReadyPage=yes"):
+        require(directive in iss, f"four-page topology directive: {directive}")
+    require("LicenseFile={#SynveilPayloadDir}\\LICENSE" in iss, "repository license page")
+    for control in ("StartupRequestedCheckBox", "DesktopIconRequestedCheckBox", "LaunchRequestedCheckBox"):
+        require(control in iss, f"stable native option control: {control}")
+    for state in ("StartupRequested", "DesktopIconRequested", "LaunchRequested"):
+        require(state in iss, f"distinct option state: {state}")
+    require("not WizardSilent" in iss, "interactive selected and silent fail-closed defaults")
+    require('Name: "{userdesktop}\\Synveil"' in iss and "Check: ShouldCreateDesktopIcon" in iss, "conditional current-user desktop shortcut")
+    require("{commondesktop}" not in lower, "no common desktop shortcut")
+    require("[Run]" not in iss and iss.count("Exec(ExpandConstant('{app}\\synveil-desktop.exe')") == 1, "single absolute launch authority")
+    require("LaunchRequested and (not WizardSilent)" in iss, "silent mode cannot launch")
+    require("P026" in iss and "StartupRequested" in iss, "P026 startup handoff boundary")
+    for forbidden in ("schtasks", "currentversion\\run", "programdata", "{commonprograms}", "create service"):
         require(forbidden not in lower, f"forbidden installer authority: {forbidden}")
     require('source: "*"' not in lower, "broad wildcard")
     for option in ("STARTUP", "DESKTOPICON", "LAUNCH"):
@@ -93,7 +106,9 @@ def main() -> int:
     require("VCToolsInstallDir" in workflow and "CompanyName" in workflow and "OriginalFilename" in workflow, "authenticated MSVC linker selection")
     require("LinkType" in workflow and "0x00004550" in workflow and "0x8664" in workflow, "regular AMD64 PE linker identity")
     require("$banner" not in workflow and "& $linker '/?'" not in workflow, "linker identity does not depend on localized help output")
-    require("CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" in reproducible and 'rustc "${rustc_linker_args[@]}"' in reproducible, "direct rustc uses selected MSVC linker")
+    require("CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" in reproducible and '"${rustc_linker_args[@]}"' in reproducible, "direct rustc uses selected MSVC linker")
+    require("CARGO_ENCODED_RUSTFLAGS" in reproducible and "$'\\x1f'" in reproducible, "lossless Cargo flag transport")
+    require('rustc "${SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS[@]}" "${rustc_linker_args[@]}"' in reproducible, "direct rustc receives discrete remaps")
     with tempfile.TemporaryDirectory() as directory:
         sample = Path(directory) / "sample"; sample.write_bytes(b"locked")
         verify_digest(sample, hashlib.sha256(b"locked").hexdigest())
