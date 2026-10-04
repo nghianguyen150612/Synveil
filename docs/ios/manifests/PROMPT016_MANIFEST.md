@@ -84,7 +84,10 @@ returning `1` (`SYNVEIL_FFI_ABI_VERSION`).
 - `git diff --check`: PASSED
 
 ## Required macOS CI Workflow Gates
-- `iOS Rust Apple Build`: Pending CI run on PR
-- `iOS Static Validation`: Pending CI run on PR
-- `iOS Build`: Pending CI run on PR
-- `iOS Simulator Tests`: Pending CI run on PR
+- `iOS Rust Apple Build`: SUCCESS
+- `iOS Static Validation`: SUCCESS
+- `iOS Build`: SUCCESS
+- `iOS Simulator Tests`: SUCCESS
+
+## Unrelated CI Classifications
+- `Build, reproduce, inspect, and smoke AppImage`: Failed with `[synveil-artifact] ERROR: private or temporary build path found in synveil-desktop` (`matched path marker: /home/`). Pre-existing desktop build issue on `ios-app` branch unrelated to iOS Swift/Rust bridge work.
