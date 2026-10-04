@@ -83,6 +83,7 @@ một tệp để trạng thái và hệ quả không bị lệch giữa hai b�
 | [062](ADR-062-v0.2-managed-server-storage-location.md) | v0.2 managed server storage location / Vị trí storage server managed v0.2 | Accepted — Prompt032 |
 | [063](ADR-063-v0.2-managed-server-services.md) | v0.2 managed server services | Accepted — Prompt033 |
 | [064](ADR-064-v0.2-server-network-reachability.md) | v0.2 server network reachability | Accepted — Prompt034 |
+| [065](ADR-065-v0.2-managed-first-admin-bootstrap.md) | v0.2 managed first-admin bootstrap | Accepted — Prompt035 |
 
 ## Process / Quy trình
 

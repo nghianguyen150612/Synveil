@@ -551,8 +551,7 @@ paths:
         response contains no setup secret, password, database detail, or
         administrator identity and is always marked no-store. The route is
         intentionally bounded and has no distributed rate limiter in this
-        phase; deployments must keep first-run exposure on a trusted/private
-        or correctly terminated TLS network.
+        phase. Managed Host edges may expose this secret-free status.
       security: []
       responses:
         '200':
@@ -581,9 +580,12 @@ paths:
         bootstrap service. The request is strict, bounded JSON using the
         canonical login, login_key, and password fields. Browser requests are
         checked for same-origin provenance when Origin or Sec-Fetch-Site is
-        present. No setup-secret field is part of the accepted contract, so
-        deployment/network exposure is an explicit first-run trust assumption
-        until a later installer or secret-gate contract is reviewed.
+        present. In a managed Personal/Home Host this mutation is reachable
+        only through the backend loopback endpoint; every Synveil-owned HTTPS
+        edge returns a non-information-leaking 404 before proxying it. An
+        AdvancedExternalHttps deployment has an operator-owned proxy and keeps
+        the legacy contract, so that operator owns first-run exposure. No
+        setup-secret field is part of the accepted contract.
 
         A successful response reports setup_required=false and contains no
         password, verifier, session credential, or administrator record. This

@@ -14,6 +14,16 @@ use crate::{
 
 const DUMMY_PASSWORD: &str = "synveil-authentication-dummy-password";
 
+/// Product-facing state for the managed first-owner orchestration boundary.
+/// PostgreSQL remains authoritative; this type is deliberately not persisted.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AdminBootstrapStatus {
+    AdminBootstrapRequired,
+    AdminBootstrapComplete,
+    AdminBootstrapNeedsRepair,
+    InfrastructureUnavailable,
+}
+
 /// Authentication application boundary for password credentials, one-time
 /// setup, and transport-neutral browser sessions. HTTP sessions, cookies, and
 /// login transport remain deliberately absent.
@@ -84,6 +94,17 @@ impl<'pool> AuthenticationService<'pool> {
         }
     }
 
+    /// Inspect the PostgreSQL authority without turning an inconsistent or
+    /// unreachable database into a fresh-setup signal.
+    pub async fn inspect_admin_bootstrap(&self) -> AdminBootstrapStatus {
+        match self.repository.bootstrap_state().await {
+            Ok(BootstrapState::Open) => AdminBootstrapStatus::AdminBootstrapRequired,
+            Ok(BootstrapState::Closed) => AdminBootstrapStatus::AdminBootstrapComplete,
+            Ok(BootstrapState::Inconsistent) => AdminBootstrapStatus::AdminBootstrapNeedsRepair,
+            Err(_) => AdminBootstrapStatus::InfrastructureUnavailable,
+        }
+    }
+
     /// Create the one and only first administrator through the repository's
     /// locked PostgreSQL transaction.
     pub async fn create_first_admin(
@@ -124,6 +145,22 @@ impl<'pool> AuthenticationService<'pool> {
             BootstrapAttempt::AlreadyClosed => Err(AuthError::BootstrapClosed),
             BootstrapAttempt::Inconsistent => Err(AuthError::BootstrapStateInvalid),
         }
+    }
+
+    /// Perform the explicit post-creation login required by managed setup and
+    /// prove that the resulting active principal owns instance-admin authority.
+    /// The returned credential follows the normal session boundary and must
+    /// never be logged by an orchestration adapter.
+    pub async fn verify_first_admin_login(
+        &self,
+        login: LoginIdentifier,
+        password: PlaintextPassword,
+    ) -> Result<AuthenticatedSession, AuthError> {
+        let session = self.authenticate(login, password).await?;
+        if !session.principal().is_instance_admin() {
+            return Err(AuthError::InvalidCredentials);
+        }
+        Ok(session)
     }
 
     /// Authenticate a login identifier and password using the server clock.

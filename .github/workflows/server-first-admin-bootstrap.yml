@@ -1,0 +1,48 @@
+name: Prompt035 server first-admin bootstrap
+
+on:
+  pull_request:
+    paths:
+      - 'crates/auth/**'
+      - 'crates/metadata/src/auth.rs'
+      - 'crates/api/**'
+      - 'crates/server-network/**'
+      - 'api/openapi.yaml'
+      - 'scripts/validate-server-first-admin-bootstrap.py'
+      - 'docs/v0.2/SERVER_FIRST_ADMIN_BOOTSTRAP.md'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: synveil-test
+          POSTGRES_DB: synveil_bootstrap_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d synveil_bootstrap_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      SYNVEIL_TEST_DATABASE_URL: postgres://postgres:synveil-test@127.0.0.1:5432/synveil_bootstrap_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Auth unit tests
+        run: cargo test -p synveil-auth --lib --locked
+      - name: API bootstrap tests
+        run: cargo test -p synveil-api --lib bootstrap --locked
+      - name: Managed edge blocking
+        run: cargo test -p synveil-server-network every_synveil_managed_edge_blocks_bootstrap_mutation_before_proxying --locked
+      - name: Live PostgreSQL 17 bootstrap race
+        run: cargo test -p synveil-auth --test postgres postgres_authentication_bootstrap_is_atomic_and_race_safe --locked -- --ignored --exact
+      - name: Response-loss and restart behavior
+        run: cargo test -p synveil-auth --test postgres postgres_authentication_bootstrap_is_atomic_and_race_safe --locked -- --ignored --exact
+      - name: Static validator
+        run: python3 scripts/validate-server-first-admin-bootstrap.py

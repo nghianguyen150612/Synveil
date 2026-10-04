@@ -6,6 +6,13 @@ Target release: `v0.2.0`. Development starts from released v0.1.0 at
 
 The north star is:
 
+**Implemented (Prompt035):** managed Host first-admin bootstrap reuses the
+existing PostgreSQL-authoritative, transactionally race-safe authentication
+boundary; managed client-facing edges cannot claim the first owner, bootstrap
+closure survives restart/repair/reinstall, response-loss recovery is explicit,
+and successful creation is followed by normal authentication. P036 still owns
+the complete guided Host journey and final readiness checkpoint.
+
 **Implemented (Prompt034):** managed Host networking keeps the Synveil API and
 PostgreSQL private, adds explicit local/LAN/approved external reachability
 modes, HTTPS edge and canonical-origin configuration, bounded TLS trust and
