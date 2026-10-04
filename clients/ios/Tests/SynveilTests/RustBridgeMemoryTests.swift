@@ -6,7 +6,8 @@ final class RustBridgeMemoryTests: XCTestCase {
 
     func testSHA256ParseSuccess() throws {
         let adapter = try RustBridgeAdapter()
-        let canonical = "sha256:abababababababababababababababababababababababababababababababab"
+        let canonical =
+            "sha256:abababababababababababababababababababababababababababababababab"
 
         let digest = try adapter.parseSHA256(canonical)
 
@@ -20,12 +21,16 @@ final class RustBridgeMemoryTests: XCTestCase {
 
         let canonical = try adapter.formatSHA256(digest)
 
-        XCTAssertEqual(canonical, "sha256:abababababababababababababababababababababababababababababababab")
+        XCTAssertEqual(
+            canonical,
+            "sha256:abababababababababababababababababababababababababababababababab"
+        )
     }
 
     func testSHA256RoundTrip() throws {
         let adapter = try RustBridgeAdapter()
-        let original = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        let original =
+            "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
         let digest = try adapter.parseSHA256(original)
         let formatted = try adapter.formatSHA256(digest)
@@ -67,7 +72,8 @@ final class RustBridgeMemoryTests: XCTestCase {
 
     func testPostReleaseSwiftDataOwnership() throws {
         let adapter = try RustBridgeAdapter()
-        let canonical = "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+        let canonical =
+            "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
 
         let digest = try adapter.parseSHA256(canonical)
         let formatted = try adapter.formatSHA256(digest)
@@ -83,7 +89,8 @@ final class RustBridgeMemoryTests: XCTestCase {
 
     func testRepeatedLifecycleSimulatorIterations() throws {
         let adapter = try RustBridgeAdapter()
-        let canonical = "sha256:11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff"
+        let canonical =
+            "sha256:11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff"
 
         for _ in 0..<1_000 {
             let digest = try adapter.parseSHA256(canonical)

@@ -57,15 +57,16 @@ public struct RustBridgeAdapter: Sendable {
         try RustBridgeError.checkStatus(rawStatus)
 
         // Validate returned buffer shape
-        let isCanonicalZero = (rawBuffer.data == nil && rawBuffer.len == 0 && rawBuffer.capacity == 0)
+        let isZero =
+            rawBuffer.data == nil && rawBuffer.len == 0 && rawBuffer.capacity == 0
 
-        if isCanonicalZero {
+        if isZero {
             return Data()
         }
 
-        guard let dataPtr = rawBuffer.data,
-              rawBuffer.len > 0,
-              rawBuffer.capacity >= rawBuffer.len else {
+        guard let dataPtr = rawBuffer.data, rawBuffer.len > 0,
+            rawBuffer.capacity >= rawBuffer.len
+        else {
             // Buffer shape invalid despite status success
             _ = synveil_ffi_buffer_release(&rawBuffer)
             throw RustBridgeError.internalError
@@ -90,11 +91,12 @@ public struct RustBridgeAdapter: Sendable {
     /// Parses a canonical SHA-256 string (e.g. `sha256:<64 hex chars>`) using real Rust shared core
     /// and returns the 32-byte raw digest as Swift `Data`.
     public func parseSHA256(_ canonical: String) throws -> Data {
-        var utf8Bytes = Array(canonical.utf8)
+        let utf8Bytes = Array(canonical.utf8)
         return try parseSHA256UTF8Bytes(utf8Bytes)
     }
 
-    /// Internal Infrastructure test seam allowing raw byte inputs (including invalid UTF-8) to be passed to `synveil_ffi_sha256_parse`.
+    /// Internal Infrastructure test seam allowing raw byte inputs (including invalid UTF-8)
+    /// to be passed to `synveil_ffi_sha256_parse`.
     func parseSHA256UTF8Bytes(_ bytes: [UInt8]) throws -> Data {
         try consumeRustBuffer { outBufferPtr in
             if bytes.isEmpty {
