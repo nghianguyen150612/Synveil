@@ -5,7 +5,10 @@
 - **Goal**: Establish the authoritative async and concurrency boundary between Swift and Rust for Synveil iOS v0.1.
 - **Starting Branch**: `ios-app`
 - **Starting SHA**: `993426a3d37b809751d415037628e568917c27ea`
-- **Actual Work Branch**: `ios/p019-ffi-concurrency`
+- **Actual Work Branch**: `ios/p019-ffi-concurrency-10648333304781646700`
+- **Validated Implementation Head**: `76bcc43cad616ec3c724da0ed731f85c56c99d16`
+- **PR**: #60 — https://github.com/nghianguyen150612/Synveil/pull/60
+- **PR Base**: `ios-app`
 - **Authoritative Inputs Inspected**:
   - `docs/ios/IOS_RUST_SWIFT_FFI_CONTRACT.md`
   - `docs/ios/manifests/PROMPT018_MANIFEST.md`
@@ -107,3 +110,36 @@
 - `./scripts/generate-ios-rust-header.sh --check` (SUCCESS)
 - `bash -n scripts/*.sh`
 - `git diff --check`
+
+
+---
+
+## 9. Implementation-Head CI & Runtime Evidence
+Validated implementation head: `76bcc43cad616ec3c724da0ed731f85c56c99d16`.
+
+- **iOS Rust Apple Build**: run `37187929647` — SUCCESS
+  - Job: `111393780566` — `Rust Apple Target Build`
+  - Artifact: `synveil-ios-rust-staticlibs`
+  - Artifact ID: `11297852616`
+  - Size: `31,827,073` bytes
+  - Expired: false
+  - Expires: `2026-10-18T08:26:59Z`
+- **iOS Static Validation**: run `37187929640` — SUCCESS
+- **iOS Build**: run `37187929638` — SUCCESS
+- **iOS Simulator Tests**: run `37187929609` — SUCCESS
+  - Job: `111393834044`
+  - Simulator: iPhone 17 Pro
+  - Runtime: iOS Simulator 26.5
+  - Architecture: arm64
+  - Full suite: 48 tests, 0 failures
+  - `RustBridgeConcurrencyTests`: 7 tests, 0 failures
+  - MainActor escape, real MainActor bridge call, 32-task × 100-cycle stress, concurrent error isolation, cooperative cancellation, post-cancellation bridge health, and async error propagation all passed.
+
+## 10. Evidence Discipline
+This is the final manifest metadata correction for Prompt019. If this documentation-only commit retriggers CI, final-head run/artifact evidence will be recorded in the PR discussion rather than by another manifest commit.
+
+## 11. PR / Merge State
+- **PR**: #60 — https://github.com/nghianguyen150612/Synveil/pull/60
+- **PR Base**: `ios-app`
+- **Merge State at this manifest commit**: awaiting final-head verification
+- **Final `ios-app` SHA**: assigned by GitHub at squash merge and recorded in PR merge metadata
