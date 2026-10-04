@@ -56,7 +56,8 @@ final class RustBridgeProtocolTests: XCTestCase {
         let isValidBearer = try await bridge.validateDeviceBearerToken(validBearer)
         XCTAssertTrue(isValidBearer)
 
-        let parsedData = try await bridge.parseSHA256("sha256:" + String(repeating: "ab", count: 32))
+        let hexStr = String(repeating: "ab", count: 32)
+        let parsedData = try await bridge.parseSHA256("sha256:" + hexStr)
         XCTAssertEqual(parsedData.count, 32)
 
         let formatted = try await bridge.formatSHA256(Data(repeating: 0xAB, count: 32))
@@ -81,7 +82,8 @@ final class RustBridgeProtocolTests: XCTestCase {
         let isValidBearer = try await bridge.validateDeviceBearerToken(validBearer)
         XCTAssertTrue(isValidBearer)
 
-        let isCrossPurposeBearerInvalid = try await bridge.validateDeviceBearerToken(validEnrollment)
+        let isCrossPurposeBearerInvalid = try await bridge
+            .validateDeviceBearerToken(validEnrollment)
         XCTAssertFalse(isCrossPurposeBearerInvalid)
 
         // 3. ID Validation (LibraryId & NodeId)

@@ -154,7 +154,8 @@ public struct RustBridgeAdapter: Sendable {
                 return synveil_ffi_enrollment_secret_validate(nil, 0, outValidPtr)
             } else {
                 return bytes.withUnsafeBufferPointer { bufPtr in
-                    synveil_ffi_enrollment_secret_validate(bufPtr.baseAddress, bufPtr.count, outValidPtr)
+                    synveil_ffi_enrollment_secret_validate(
+                        bufPtr.baseAddress, bufPtr.count, outValidPtr)
                 }
             }
         }
@@ -173,7 +174,8 @@ public struct RustBridgeAdapter: Sendable {
                 return synveil_ffi_device_credential_validate(nil, 0, outValidPtr)
             } else {
                 return bytes.withUnsafeBufferPointer { bufPtr in
-                    synveil_ffi_device_credential_validate(bufPtr.baseAddress, bufPtr.count, outValidPtr)
+                    synveil_ffi_device_credential_validate(
+                        bufPtr.baseAddress, bufPtr.count, outValidPtr)
                 }
             }
         }
