@@ -150,7 +150,7 @@ ABI version remains `1`. Exact 10 exported C ABI symbols preserved.
 `cargo fmt`, `cargo check`, `cargo test`, `cargo clippy`, `validate_ios_sources.py`, Python unittest suites all PASSED cleanly.
 
 ## 38. Final Implementation Commit
-`d8064fc4eb9c14f95280fd8af2031cc641df8d3e` (merge-review hardened executable head).
+`ab8d92863657202a1c3151bde68d10eb9865e327` (merge-review hardened executable head).
 
 ## 39. PR Number / URL
 PR #64 — https://github.com/nghianguyen150612/Synveil/pull/64
