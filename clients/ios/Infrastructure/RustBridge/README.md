@@ -12,6 +12,18 @@ The `clients/ios/Infrastructure/RustBridge/` directory contains the sole Swift i
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────┐
+│       Infrastructure / RustBridgeAsyncAdapter           │
+│           (parseSHA256, formatSHA256 async)             │
+└────────────────────────────┬────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────┐
+│           Infrastructure / RustBridgeExecutor           │
+│        (Task.detached worker, cancellation checks)      │
+└────────────────────────────┬────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────┐
 │           Infrastructure / RustBridgeAdapter            │
 │  (consumeRustBuffer, parseSHA256, formatSHA256, etc.)   │
 └────────────────────────────┬────────────────────────────┘
@@ -33,6 +45,8 @@ The `clients/ios/Infrastructure/RustBridge/` directory contains the sole Swift i
 1. **Raw C Module Containment**: Raw C FFI module symbols (`SynveilRustFFI`) are restricted strictly to `Infrastructure/RustBridge/`.
 2. **Pointer Confinement**: Raw pointers (`UnsafeMutablePointer`, `SynveilFfiBuffer`) never escape `RustBridgeAdapter`. All upper layers interact purely with native Swift value types (`Data`, `String`).
 3. **Copy-Before-Release**: `RustBridgeAdapter` copies Rust output bytes into Swift `Data` before calling `synveil_ffi_buffer_release` to guarantee memory safety.
+4. **Swift-Owned Concurrency**: Concurrency is managed entirely by Swift (`SWIFT_OWNS_CONCURRENCY = TRUE`). Rust contains no async runtime (`RUST_ASYNC_RUNTIME = NONE`) and no callback C ABI (`CALLBACK_ABI = NONE`).
+5. **MainActor Isolation Safety**: Application and UI callers invoke `RustBridgeAsyncAdapter` asynchronously. Bounded synchronous Rust calls are scheduled off inherited `@MainActor` context via encapsulated `RustBridgeExecutor` (`Task.detached`).
 
 ---
 
@@ -63,7 +77,20 @@ The `clients/ios/Infrastructure/RustBridge/` directory contains the sole Swift i
 
 ---
 
-## 4. Testing Evidence
+## 4. Swift Concurrency & Cancellation Model
+
+### 4.1 Synchronous vs Async Roles
+- **`RustBridgeAdapter`**: Low-level synchronous Infrastructure primitive performing C ABI calls and managing memory cleanup.
+- **`RustBridgeExecutor`**: Encapsulated enum running synchronous work on a `Task.detached` worker to escape inherited actor context (`@MainActor`). Private worker handles are never exposed.
+- **`RustBridgeAsyncAdapter`**: Swift-facing `Sendable` async boundary providing `parseSHA256` and `formatSHA256`.
+
+### 4.2 Cooperative Cancellation Policy
+- Cancellation is checked before scheduling worker, inside detached worker before calling FFI, and after worker completion before publishing results.
+- **No Mid-FFI Interrupt**: In-flight synchronous Rust calls run to completion, ensuring all Rust-owned buffers are freed normally before `CancellationError` is thrown to the caller.
+
+---
+
+## 5. Testing Evidence
 
 Memory safety and lifecycle contracts are verified via:
 1. **Rust Unit Tests** (`crates/ios-ffi/src/lib.rs`):

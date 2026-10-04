@@ -633,4 +633,63 @@ mod tests {
         assert_eq!(status, SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED);
         assert!(out_buf.is_canonical_empty());
     }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn test_concurrent_multi_thread_stateless_reentrancy() {
+        let threads: Vec<_> = (0..8)
+            .map(|thread_idx| {
+                std::thread::spawn(move || {
+                    let hex_byte = format!("{:02x}", (thread_idx + 1) * 16);
+                    let hex_64 = hex_byte.repeat(32);
+                    let canonical_str = format!("sha256:{hex_64}");
+
+                    for _ in 0..250 {
+                        let mut digest_buf = SynveilFfiBuffer::CANONICAL_EMPTY;
+                        let parse_status = synveil_ffi_sha256_parse(
+                            canonical_str.as_ptr(),
+                            canonical_str.len(),
+                            &mut digest_buf,
+                        );
+                        assert_eq!(parse_status, SYNVEIL_FFI_STATUS_SUCCESS);
+                        assert!(!digest_buf.data.is_null());
+                        assert_eq!(digest_buf.len, 32);
+
+                        let mut format_buf = SynveilFfiBuffer::CANONICAL_EMPTY;
+                        let format_status = synveil_ffi_sha256_format(
+                            digest_buf.data,
+                            digest_buf.len,
+                            &mut format_buf,
+                        );
+                        assert_eq!(format_status, SYNVEIL_FFI_STATUS_SUCCESS);
+                        assert!(!format_buf.data.is_null());
+                        assert_eq!(format_buf.len, 71);
+
+                        // SAFETY: format_buf was verified non-null and valid.
+                        let formatted_slice =
+                            unsafe { std::slice::from_raw_parts(format_buf.data, format_buf.len) };
+                        let formatted_str =
+                            std::str::from_utf8(formatted_slice).expect("valid utf-8");
+                        assert_eq!(formatted_str, canonical_str);
+
+                        assert_eq!(
+                            synveil_ffi_buffer_release(&mut digest_buf),
+                            SYNVEIL_FFI_STATUS_SUCCESS
+                        );
+                        assert!(digest_buf.is_canonical_empty());
+
+                        assert_eq!(
+                            synveil_ffi_buffer_release(&mut format_buf),
+                            SYNVEIL_FFI_STATUS_SUCCESS
+                        );
+                        assert!(format_buf.is_canonical_empty());
+                    }
+                })
+            })
+            .collect();
+
+        for handle in threads {
+            handle.join().expect("thread completed successfully");
+        }
+    }
 }

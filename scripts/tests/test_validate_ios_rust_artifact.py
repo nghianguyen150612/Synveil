@@ -50,6 +50,10 @@ class TestValidateIosRustArtifact(unittest.TestCase):
             ],
             "ffi_status_model": "P017_STABLE_UINT32",
             "ffi_memory_model": "P018_RUST_OWNED_BUFFER",
+            "ffi_concurrency_model": "P019_SWIFT_MANAGED_SYNC_RUST",
+            "rust_async_runtime": "NONE",
+            "callback_abi": "NONE",
+            "cancellation_model": "P019_SWIFT_COOPERATIVE_NO_MID_FFI_INTERRUPT",
             "cbindgen_status": "ACTIVE_P017",
             "header_status": "GENERATED_CBINDGEN_P017",
             "variants": [
@@ -104,6 +108,10 @@ class TestValidateIosRustArtifact(unittest.TestCase):
             ],
             "ffi_status_model": "P017_STABLE_UINT32",
             "ffi_memory_model": "P018_RUST_OWNED_BUFFER",
+            "ffi_concurrency_model": "P019_SWIFT_MANAGED_SYNC_RUST",
+            "rust_async_runtime": "NONE",
+            "callback_abi": "NONE",
+            "cancellation_model": "P019_SWIFT_COOPERATIVE_NO_MID_FFI_INTERRUPT",
             "header_status": "GENERATED_CBINDGEN_P017",
             "variants": [{"relative_path": "device/arm64/libsynveil_ios_ffi.a", "size_bytes": 9}],
         }
@@ -138,6 +146,41 @@ class TestValidateIosRustArtifact(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             validate_artifact_bundle(self.test_dir)
         self.assertIn("c_abi_export_status", str(ctx.exception))
+
+    def test_invalid_concurrency_metadata_fails(self):
+        hdr_bytes = b"/* header */\ntypedef struct SynveilFfiBuffer { int x; } SynveilFfiBuffer;\nuint32_t synveil_ffi_buffer_release(struct SynveilFfiBuffer *b);\nuint32_t synveil_ffi_sha256_parse();\nuint32_t synveil_ffi_sha256_format();\n"
+        self._create_mock_file("device/arm64/libsynveil_ios_ffi.a", b"dev_arm64")
+        self._create_mock_file("simulator/arm64/libsynveil_ios_ffi.a", b"sim_arm64")
+        self._create_mock_file("include/synveil_ios_ffi.h", hdr_bytes)
+
+        manifest = {
+            "schema_version": 1,
+            "package_name": "synveil-ios-ffi",
+            "artifact_profile": "release",
+            "c_abi_export_status": "MEMORY_MODEL_P018",
+            "c_abi_exports": [
+                "synveil_ffi_abi_version",
+                "synveil_ffi_buffer_release",
+                "synveil_ffi_sha256_format",
+                "synveil_ffi_sha256_parse",
+                "synveil_ffi_validate_abi_version",
+            ],
+            "ffi_status_model": "P017_STABLE_UINT32",
+            "ffi_memory_model": "P018_RUST_OWNED_BUFFER",
+            "ffi_concurrency_model": "P019_SWIFT_MANAGED_SYNC_RUST",
+            "rust_async_runtime": "TOKIO",
+            "callback_abi": "NONE",
+            "cancellation_model": "P019_SWIFT_COOPERATIVE_NO_MID_FFI_INTERRUPT",
+            "header_status": "GENERATED_CBINDGEN_P017",
+            "variants": [{"relative_path": "device/arm64/libsynveil_ios_ffi.a", "size_bytes": 9}],
+        }
+        import json
+        self._create_mock_file("manifest.json", json.dumps(manifest).encode("utf-8"))
+        self._create_mock_file("SHA256SUMS", b"dummy SHA256SUMS")
+
+        with self.assertRaises(ValueError) as ctx:
+            validate_artifact_bundle(self.test_dir)
+        self.assertIn("rust_async_runtime", str(ctx.exception))
 
 
 if __name__ == "__main__":
