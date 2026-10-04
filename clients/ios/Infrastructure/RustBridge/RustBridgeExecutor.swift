@@ -6,11 +6,13 @@ import Foundation
 /// # Concurrency & Cancellation Policy
 /// - Uses an encapsulated `Task.detached` worker to escape caller actor context.
 /// - Task handle remains private and is never exposed to upper layers.
-/// - Checks cancellation before scheduling, inside the detached task, and after awaiting completion.
+/// - Checks cancellation before scheduling, inside worker task, and after awaiting completion.
 /// - On cancellation, cancels the worker task. In-flight synchronous Rust calls run to completion,
-///   ensure all Rust-owned buffers are freed, and return a result which is discarded in favor of `CancellationError`.
+///   ensure all Rust-owned buffers are freed, and return a result which is discarded in favor
+///   of `CancellationError`.
 internal enum RustBridgeExecutor {
-    /// Executes a bounded synchronous Rust bridge operation on a detached worker task off inherited actor context.
+    /// Executes a bounded synchronous Rust bridge operation on a detached worker task
+    /// off inherited actor context.
     ///
     /// - Parameters:
     ///   - priority: Optional task priority; defaults to `Task.currentPriority` if `nil`.

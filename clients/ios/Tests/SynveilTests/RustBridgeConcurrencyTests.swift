@@ -85,7 +85,7 @@ final class RustBridgeConcurrencyTests: XCTestCase {
                             return false
                         }
                     } else {
-                        let hex64 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                        let hex64 = String(repeating: "0123456789abcdef", count: 4)
                         let canonical = "sha256:\(hex64)"
                         let digest = try await adapter.parseSHA256(canonical)
                         XCTAssertEqual(digest.count, 32)
