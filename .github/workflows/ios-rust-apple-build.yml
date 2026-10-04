@@ -9,6 +9,8 @@ on:
       - "Cargo.lock"
       - "rust-toolchain.toml"
       - "scripts/check-ios-rust.sh"
+      - "scripts/build-ios-rust-artifacts.sh"
+      - "scripts/validate_ios_rust_artifact.py"
       - ".github/workflows/ios-rust-apple-build.yml"
   pull_request:
     paths:
@@ -18,6 +20,8 @@ on:
       - "Cargo.lock"
       - "rust-toolchain.toml"
       - "scripts/check-ios-rust.sh"
+      - "scripts/build-ios-rust-artifacts.sh"
+      - "scripts/validate_ios_rust_artifact.py"
       - ".github/workflows/ios-rust-apple-build.yml"
   workflow_dispatch:
 
@@ -53,3 +57,26 @@ jobs:
         run: |
           chmod +x scripts/check-ios-rust.sh
           ./scripts/check-ios-rust.sh
+
+      - name: Build & Stage iOS Rust Apple Release Artifacts
+        run: |
+          chmod +x scripts/build-ios-rust-artifacts.sh
+          ./scripts/build-ios-rust-artifacts.sh
+
+      - name: Validate Staged Artifact Bundle Integrity
+        run: |
+          chmod +x scripts/validate_ios_rust_artifact.py
+          python3 scripts/validate_ios_rust_artifact.py --staging-dir target/ios-rust-artifacts
+
+      - name: List Staged Files Before Upload
+        run: |
+          echo "=== Staged Artifact Root Contents ==="
+          ls -laR target/ios-rust-artifacts
+
+      - name: Upload Rust Apple Static Libraries Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: synveil-ios-rust-staticlibs
+          path: target/ios-rust-artifacts/
+          if-no-files-found: error
+          retention-days: 14

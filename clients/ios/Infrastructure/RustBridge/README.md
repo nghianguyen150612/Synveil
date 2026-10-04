@@ -14,22 +14,41 @@ The authoritative Rust↔Swift FFI strategy for Synveil iOS v0.1 is defined in:
 - **FFI Boundary Ownership**: All raw C-FFI exports and generated binding modules are restricted strictly to `Infrastructure/RustBridge/`. No upper layer (`Domain`, `Application`, `Features`) may import or invoke raw C ABI symbols.
 - **Callable Protocol Deferral**: To avoid inventing fake or synthetic Swift methods (or creating an empty marker protocol without runtime semantics), the callable `RustBridgeProtocol` Swift method contract remains deferred until P016/P020 when real compiled FFI signatures, ABI type mappings, memory ownership, and error encoding are available.
 
-### P014 Status & Apple Target Proven Compilation
-- **Dedicated Crate Established**: `crates/ios-ffi/` (`synveil-ios-ffi`).
-- **Artifact Type**: `staticlib` (`libsynveil_ios_ffi.a`) + `rlib` for host testing.
-- **Minimal Closure**: Depends exclusively on platform-neutral `synveil-core`. Prohibited desktop, server, async runtime, database, and keyring dependencies are verified absent.
-- **Proven Apple Targets**:
-  - `aarch64-apple-ios` (Physical iPhone device) -> SUCCESS
-  - `aarch64-apple-ios-sim` (Apple Silicon Simulator) -> SUCCESS
-  - `x86_64-apple-ios` (Intel Simulator) -> SUCCESS
-- **C ABI & Swift Linking Status**:
-  - No C ABI functions exported yet (`extern "C"` / `#[no_mangle]` deferred to P016).
-  - No C headers (`synveil_ios_ffi.h`) or `cbindgen` invocation yet.
-  - No Swift or Xcode linker linking configured yet (deferred to P015/P016).
+### P015 Status & CI Artifact Pipeline
+- **Dedicated CI Artifact Workflow**: `.github/workflows/ios-rust-apple-build.yml`
+- **Artifact Build Script**: `scripts/build-ios-rust-artifacts.sh`
+- **Artifact Validator**: `scripts/validate_ios_rust_artifact.py`
+- **Published GitHub Actions Artifact**: `synveil-ios-rust-staticlibs`
+- **Supported Target Architectures**:
+  - Device: `aarch64-apple-ios` (`device/arm64/libsynveil_ios_ffi.a`)
+  - Simulator Apple Silicon: `aarch64-apple-ios-sim` (`simulator/arm64/libsynveil_ios_ffi.a`)
+  - Simulator Intel: `x86_64-apple-ios` (`simulator/x86_64/libsynveil_ios_ffi.a`)
+  - Simulator Universal: `lipo` combined `arm64` + `x86_64` (`simulator/universal/libsynveil_ios_ffi.a`)
+- **Deterministic Staging Layout**:
+  ```text
+  target/ios-rust-artifacts/
+  ├── device/
+  │   └── arm64/
+  │       └── libsynveil_ios_ffi.a
+  ├── simulator/
+  │   ├── arm64/
+  │   │   └── libsynveil_ios_ffi.a
+  │   ├── x86_64/
+  │   │   └── libsynveil_ios_ffi.a
+  │   └── universal/
+  │       └── libsynveil_ios_ffi.a
+  ├── manifest.json
+  └── SHA256SUMS
+  ```
+- **Integrity & Schema**: `manifest.json` schema v1 + `SHA256SUMS` with verified SHA-256 digests and zero private path leakage.
+- **C ABI & Header Status in P015**:
+  - No C ABI functions exported yet (`synveil_ffi_*` symbols verified absent; deferred to P016).
+  - No C headers (`synveil_ios_ffi.h`) or `cbindgen` invocation yet (deferred to P016).
+  - No Swift or Xcode linker linking configured yet (P016 owns first Swift↔Rust call).
 
 ### P014–P020 Prompt Sequencing
 1. **P014**: Minimal Rust bridge crate (`crates/ios-ffi/`, package `synveil-ios-ffi`, `staticlib`) & Apple compile proof. [COMPLETE]
-2. **P015**: Rust Apple artifact CI workflow & packaging (`libsynveil_ios_ffi.a`).
+2. **P015**: Rust Apple artifact CI workflow & packaging (`libsynveil_ios_ffi.a`). [COMPLETE]
 3. **P016**: First trivial Swift↔Rust call (`synveil_ffi_abi_version()`).
 4. **P017**: FFI error model & panic firewall (`std::panic::catch_unwind`).
 5. **P018**: Memory ownership & buffer release safety (`synveil_ffi_buffer_release`).
