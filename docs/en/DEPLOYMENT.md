@@ -2037,3 +2037,11 @@ credential source is selected. Mixing both sources fails closed.
 
 See [Managed Server Configuration](../v0.2/MANAGED_SERVER_CONFIGURATION.md)
 for schema, ownership, reconciliation, repair, and P032–P036 boundaries.
+## Managed Host reachability (v0.2 foundation)
+
+Managed Personal/Home deployment keeps the API at `127.0.0.1:3000` and
+PostgreSQL private. Off-host access is available only through an explicitly
+selected HTTPS edge mode: this device, a reviewed private-LAN address, or an
+operator-owned external HTTPS origin. Synveil does not silently bind wildcard
+addresses, open router ports, or require a proprietary relay. See
+[SERVER_NETWORK_REACHABILITY](../v0.2/SERVER_NETWORK_REACHABILITY.md).

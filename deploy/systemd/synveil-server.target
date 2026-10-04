@@ -1,6 +1,6 @@
 [Unit]
 Description=Synveil hosted server
-Wants=synveil-api.service synveil-worker.service
+Wants=synveil-api.service synveil-worker.service synveil-edge.service
 
 [Install]
 WantedBy=multi-user.target

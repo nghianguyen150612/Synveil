@@ -7,6 +7,7 @@ members = [
     "crates/server-config",
     "crates/server-storage",
     "crates/server-service",
+    "crates/server-network",
     "crates/object-store",
     "crates/storage",
     "crates/api",
@@ -40,6 +41,7 @@ synveil-platform = { path = "crates/platform" }
 synveil-metadata = { path = "crates/metadata" }
 synveil-server-config = { path = "crates/server-config" }
 synveil-server-storage = { path = "crates/server-storage" }
+synveil-server-network = { path = "crates/server-network" }
 synveil-object-store = { path = "crates/object-store" }
 synveil-storage = { path = "crates/storage" }
 synveil-client-sync = { path = "crates/client-sync" }

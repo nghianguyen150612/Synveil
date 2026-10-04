@@ -1,0 +1,36 @@
+name: Prompt034 server network reachability
+
+on:
+  pull_request:
+    paths:
+      - 'crates/server-config/**'
+      - 'crates/server-network/**'
+      - 'crates/api/src/bin/synveil-api.rs'
+      - 'deploy/server-network/**'
+      - 'deploy/systemd/synveil-edge.service'
+      - 'scripts/validate-server-network-reachability.py'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  network-contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
+      - name: Network state, candidate, origin and reconciliation domain
+        run: cargo test -p synveil-server-config -p synveil-server-network --locked
+      - name: Managed API loopback and canonical-origin integration
+        run: cargo check -p synveil-api --bin synveil-api --locked
+      - name: Static exposure, TLS trust and PostgreSQL invariants
+        run: python3 scripts/validate-server-network-reachability.py
+      - name: Edge systemd hardening syntax (fixture is not production Caddy)
+        run: |
+          sudo mkdir -p /opt/synveil/edge/current
+          printf '#!/bin/sh\n' | sudo tee /opt/synveil/edge/current/caddy >/dev/null
+          sudo chmod 0755 /opt/synveil/edge/current/caddy
+          systemd-analyze verify deploy/systemd/synveil-edge.service
