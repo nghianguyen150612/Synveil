@@ -20,6 +20,7 @@ cxx-qt.workspace = true
 cxx-qt-lib.workspace = true
 synveil-client.workspace = true
 synveil-install-engine = { path = "../install-engine" }
+synveil-server-bootstrap = { path = "../server-bootstrap" }
 tokio.workspace = true
 url.workspace = true
 zeroize.workspace = true

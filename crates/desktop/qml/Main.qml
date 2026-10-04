@@ -36,6 +36,7 @@ ApplicationWindow {
         modal: false
         closePolicy: Popup.NoAutoClose
         visible: bridge.startup_choice_required
+                 && bridge.welcome_destination === "existing_client"
         focus: visible
         Accessible.name: qsTr("Choose whether Synveil starts when you sign in")
 
@@ -298,6 +299,8 @@ ApplicationWindow {
     }
 
     header: ToolBar {
+        visible: bridge.welcome_destination === "existing_client"
+                 || bridge.welcome_destination === "connect_setup"
         contentHeight: 84
         ColumnLayout {
             anchors.fill: parent
@@ -609,7 +612,100 @@ ApplicationWindow {
         }
     }
 
+    Pane {
+        id: welcomePage
+        objectName: "welcomePage"
+        anchors.fill: parent
+        visible: bridge.welcome_destination === "welcome"
+        padding: 36
+
+        ColumnLayout {
+            anchors.centerIn: parent
+            width: Math.min(680, welcomePage.availableWidth)
+            spacing: 18
+
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("Welcome to Synveil")
+                font.pixelSize: 30
+                font.weight: Font.DemiBold
+                horizontalAlignment: Text.AlignHCenter
+            }
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("Choose how you want to get started.")
+                horizontalAlignment: Text.AlignHCenter
+            }
+            Button {
+                id: hostSynveilButton
+                objectName: "hostSynveilButton"
+                Layout.fillWidth: true
+                Layout.minimumHeight: 94
+                enabled: !bridge.welcome_action_busy
+                text: qsTr("Host Synveil\nStore your Synveil data on this device and make it available to your devices.")
+                Accessible.name: qsTr("Host Synveil")
+                Accessible.description: qsTr("Store your Synveil data on this device and make it available to your devices. %1").arg(bridge.host_feedback)
+                KeyNavigation.tab: connectToSynveilButton
+                onClicked: bridge.chooseHost()
+                onVisibleChanged: {
+                    if (visible && enabled && bridge.host_available) {
+                        forceActiveFocus(Qt.TabFocusReason)
+                    }
+                }
+            }
+            Label {
+                Layout.fillWidth: true
+                visible: !bridge.host_available
+                text: bridge.host_feedback
+                wrapMode: Text.WordWrap
+                Accessible.name: text
+            }
+            Button {
+                id: connectToSynveilButton
+                objectName: "connectToSynveilButton"
+                Layout.fillWidth: true
+                Layout.minimumHeight: 94
+                enabled: !bridge.welcome_action_busy
+                text: qsTr("Connect to Synveil\nUse a Synveil server that is already set up.")
+                Accessible.name: qsTr("Connect to Synveil")
+                Accessible.description: qsTr("Use a Synveil server that is already set up.")
+                onClicked: bridge.chooseConnect()
+                onVisibleChanged: {
+                    if (visible && enabled && !bridge.host_available) {
+                        forceActiveFocus(Qt.TabFocusReason)
+                    }
+                }
+            }
+        }
+    }
+
+    Pane {
+        anchors.fill: parent
+        visible: bridge.welcome_destination === "initializing"
+        BusyIndicator { anchors.centerIn: parent; running: parent.visible; Accessible.name: qsTr("Starting Synveil") }
+        Label { anchors.horizontalCenter: parent.horizontalCenter; anchors.top: parent.verticalCenter; anchors.topMargin: 42; text: qsTr("Starting Synveil…") }
+    }
+
+    Pane {
+        id: hostSetupPage
+        objectName: "hostSetupPage"
+        anchors.fill: parent
+        visible: bridge.welcome_destination === "host_setup"
+        ColumnLayout {
+            anchors.centerIn: parent
+            width: Math.min(560, hostSetupPage.availableWidth)
+            spacing: 16
+            Label { Layout.fillWidth: true; text: qsTr("Host Synveil"); font.pixelSize: 28; font.weight: Font.DemiBold }
+            Label { Layout.fillWidth: true; text: bridge.host_feedback; wrapMode: Text.WordWrap; Accessible.name: text }
+            Button { objectName: "welcomeBackButton"; text: qsTr("Back"); onClicked: bridge.showWelcome(); Accessible.name: qsTr("Back to Welcome") }
+        }
+    }
+
     RowLayout {
+        id: mainContent
+        objectName: bridge.welcome_destination === "connect_setup" ? "connectSetupPage" : "mainContent"
+        visible: bridge.welcome_destination === "existing_client"
+                 || bridge.welcome_destination === "connect_setup"
         anchors.fill: parent
         anchors.margins: 18
         anchors.topMargin: 18
@@ -1053,6 +1149,16 @@ ApplicationWindow {
                             anchors.fill: parent
                             anchors.margins: 14
                             spacing: 8
+
+                            Button {
+                                objectName: "welcomeBackButton"
+                                visible: bridge.welcome_destination === "connect_setup"
+                                         && !bridge.profile_configured
+                                         && !bridge.configuration_busy
+                                text: qsTr("Back")
+                                onClicked: bridge.showWelcome()
+                                Accessible.name: qsTr("Back to Welcome")
+                            }
 
                             Label {
                                 text: bridge.profile_configured
