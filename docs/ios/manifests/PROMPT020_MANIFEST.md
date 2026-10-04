@@ -6,7 +6,7 @@
 - **Starting Branch**: `ios-app`
 - **Starting SHA**: `e6c379f7172da83e469a14af35ada754e0167d12`
 - **Work Branch**: `ios/p020-shared-model-mapping-10343842740365488705`
-- **Validated Executable Head**: `374684e884b5b04713c4201ce23751dac84c634c`
+- **Validated Executable Head**: `36d55f00c44ed2a04f0757f508365690bcc7aeb1`
 - **PR**: #63 — https://github.com/nghianguyen150612/Synveil/pull/63
 - **PR Base**: `ios-app`
 
@@ -84,6 +84,7 @@ Before final merge verification, the P020 test matrix was hardened without chang
 - Added malformed and nil NodeId rejection coverage.
 - Added exact multibyte 1024-byte LogicalName acceptance coverage.
 - Added matching Simulator protocol-existential coverage for token wrong-length / uppercase / non-hex cases, LibraryId and NodeId malformed cases, NodeId nil, and exact multibyte 1024-byte LogicalName behavior.
+- Corrected XCTest async assertions so every `await` completes before entering `XCTAssert*` autoclosures; this fixes the Xcode test-target compile failure discovered during final merge review.
 
 ## 11. Evidence Discipline
 This is the final Prompt020 manifest correction. Final-head workflow run IDs, artifact metadata, Simulator totals, and merge evidence will be recorded in the PR discussion after CI completes. No further evidence-only manifest commit should be created.
