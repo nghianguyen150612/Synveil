@@ -82,9 +82,8 @@ final class RustBridgeProtocolTests: XCTestCase {
         let isValidBearer = try await bridge.validateDeviceBearerToken(validBearer)
         XCTAssertTrue(isValidBearer)
 
-        let isCrossPurposeBearerInvalid = try await bridge
-            .validateDeviceBearerToken(validEnrollment)
-        XCTAssertFalse(isCrossPurposeBearerInvalid)
+        let isCrossPurposeValid = try await bridge.validateDeviceBearerToken(validEnrollment)
+        XCTAssertFalse(isCrossPurposeValid)
 
         // 3. ID Validation (LibraryId & NodeId)
         let validUUIDv7 = "018f9b9f-5c21-722e-8b1a-9f4a0b2c3d4e"
