@@ -14,15 +14,30 @@ public struct RustBridgeAdapter: Sendable {
     /// Actual C ABI version reported by the linked Rust static library.
     public let abiVersion: UInt32
 
-    /// Initializes the adapter and verifies C ABI version compatibility.
+    /// Initializes the adapter and verifies C ABI version compatibility against `expectedABIVersion`.
     public init() throws {
+        try self.init(expectedABIVersion: Self.expectedABIVersion)
+    }
+
+    /// Internal initializer allowing expected ABI version injection for ABI compatibility testing.
+    init(expectedABIVersion: UInt32) throws {
         let actual = synveil_ffi_abi_version()
-        guard actual == Self.expectedABIVersion else {
+        guard actual != 0 else {
             throw RustBridgeCompatibilityError.unsupportedABIVersion(
-                expected: Self.expectedABIVersion,
+                expected: expectedABIVersion,
+                actual: 0
+            )
+        }
+
+        let rawStatus = synveil_ffi_validate_abi_version(expectedABIVersion)
+        if rawStatus == SYNVEIL_FFI_STATUS_UNSUPPORTED_ABI_VERSION {
+            throw RustBridgeCompatibilityError.unsupportedABIVersion(
+                expected: expectedABIVersion,
                 actual: actual
             )
         }
+
+        try RustBridgeError.checkStatus(rawStatus)
         self.abiVersion = actual
     }
 }

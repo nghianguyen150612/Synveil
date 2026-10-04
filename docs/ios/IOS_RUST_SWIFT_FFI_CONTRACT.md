@@ -40,7 +40,7 @@ For Synveil iOS v0.1, the authoritative bridge strategy is:
                              ▼
 ┌─────────────────────────────────────────────────────────┐
 │           Swift Domain / Application Layer              │
-└─────────────────────────────────────────────────────────┘
+└────────────────────────────┬────────────────────────────┘
 ```
 
 ### 2.2 Evaluated Alternative: UniFFI
@@ -124,8 +124,8 @@ uint8_t
 ```
 Inputs containing values `> 1` MUST be rejected by Rust bridge validation with an invalid argument error.
 
-### 4.4 ABI-Visible Enums
-All ABI-visible enums MUST use explicit C integer representations:
+### 4.4 ABI-Visible Enums & Status Table
+All ABI-visible status returns MUST use explicit `uint32_t` integer representations matching `SynveilFfiStatus`:
 ```rust
 #[repr(u32)]
 pub enum SynveilFfiStatus {
@@ -136,6 +136,7 @@ pub enum SynveilFfiStatus {
     DomainError = 4,
     InternalError = 5,
     PanicEncountered = 6,
+    UnsupportedAbiVersion = 7,
 }
 ```
 Swift code MUST map unknown discriminants to an `.unknown(uint32_t)` error case rather than trapping.
@@ -147,17 +148,18 @@ All exported C symbols MUST use the mandatory prefix:
 
 Examples:
 * `synveil_ffi_abi_version`
-* `synveil_ffi_buffer_release`
+* `synveil_ffi_validate_abi_version`
 
 Generic symbol names (e.g., `free`, `parse`, `hash`, `version`) are strictly prohibited to prevent link-time collisions in Xcode binaries.
 
 ### 4.6 ABI Versioning
 * **Initial Version**: `1`
 * **Version Query Signature**: `synveil_ffi_abi_version() -> uint32_t`
+* **Version Validation Signature**: `synveil_ffi_validate_abi_version(expected: uint32_t) -> uint32_t`
 * **Policy**:
   * Compatible additive function additions keep ABI version `1`.
   * Breaking parameter, layout, or ownership changes require incrementing the ABI version.
-  * Swift adapter MUST query and verify `synveil_ffi_abi_version() == 1` upon initialization.
+  * Swift adapter MUST query and verify `synveil_ffi_validate_abi_version(1) == 0` upon initialization.
 
 ---
 
@@ -218,7 +220,7 @@ Every `SynveilFfiBuffer` allocated by Rust MUST be freed by calling `synveil_ffi
 ## 7. Part F — Error Transport Strategy
 
 ### 7.1 Status Envelope Pattern
-All fallible FFI functions MUST return an explicit status code as the function return value, returning data payloads via out-parameters:
+All fallible FFI functions MUST return an explicit status code (`uint32_t`) as the function return value, returning data payloads via out-parameters:
 
 ```c
 // Conceptual C ABI function signature
@@ -244,24 +246,22 @@ uint32_t synveil_ffi_compute_sha256(
 > **INVARIANT**: Absolutely no Rust panic may unwind across the C FFI boundary into foreign Swift stack frames. Unwinding across FFI causes undefined behavior / process termination.
 
 ### 8.2 Mandatory Panic Firewall
-Every exported FFI entrypoint MUST wrap its body inside `std::panic::catch_unwind`:
+Every exported FFI entrypoint MUST wrap its body inside `ffi_status_boundary` (`std::panic::catch_unwind`):
 
 ```rust
-// Conceptual pattern for P014+
-#[no_mangle]
-pub extern "C" fn synveil_ffi_example_func(...) -> u32 {
-    let result = std::panic::catch_unwind(|| {
-        // Core FFI logic
-    });
-
-    match result {
-        Ok(status) => status,
+pub fn ffi_status_boundary<F>(operation: F) -> u32
+where
+    F: FnOnce() -> Result<(), SynveilFfiStatus> + UnwindSafe,
+{
+    match std::panic::catch_unwind(operation) {
+        Ok(Ok(())) => SYNVEIL_FFI_STATUS_SUCCESS,
+        Ok(Err(status)) => status as u32,
         Err(_) => SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED,
     }
 }
 ```
 
-Uncaught panics convert cleanly into `SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED`.
+Uncaught panics convert cleanly into `SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED` (6). Panic message strings are not returned to foreign frames.
 
 ---
 
@@ -407,9 +407,9 @@ The following MUST NOT cross FFI:
 * **Artifact Choice**: `Rust static library` (`staticlib` -> `libsynveil_ios_ffi.a`). `cdylib` is prohibited for iOS app embedding.
 * **Build Verification Status**:
 
-`APPLE_BUILD_NOT_YET_VERIFIED_P013`
+`APPLE_BUILD_VERIFIED_P014_P015`
 
-* **Target Apple Architecture Triples (to be verified in P014/P015)**:
+* **Target Apple Architecture Triples**:
   * `aarch64-apple-ios` (Physical iPhone device)
   * `aarch64-apple-ios-sim` (Apple Silicon Simulator)
   * `x86_64-apple-ios` (Intel Simulator, if supported by toolchain)
@@ -449,13 +449,15 @@ The following MUST NOT cross FFI:
 | **Domain Validation** | Yes | `SYNVEIL_FFI_STATUS_DOMAIN_ERROR` | Throws `RustBridgeError.domainError` | P017 / P020 |
 | **Uncaught Rust Panic**| Yes (Firewalled)| `SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED` | Throws `RustBridgeError.panicEncountered` | P017 |
 | **Memory Allocation** | Yes | `SYNVEIL_FFI_STATUS_INTERNAL_ERROR` | Throws `RustBridgeError.internalError` | P017 / P018 |
+| **Unsupported ABI** | Yes | `SYNVEIL_FFI_STATUS_UNSUPPORTED_ABI_VERSION` | Throws `RustBridgeCompatibilityError.unsupportedABIVersion` | P017 |
 
 ### 20.4 Threading Matrix Table
 
 | Operation Category | Execution Model | MainActor Allowed? | Thread-Safe Expectation | Verifying Prompt |
 |---|---|---|---|---|
 | **ABI Version Query** | Synchronous | Yes (Trivial) | Fully Reentrant | P016 |
-| **UUIDv7 Generation** | Synchronous | No (Dispatch Off-Main) | Fully Reentrant | P016 |
+| **ABI Validation Query**| Synchronous | Yes (Trivial) | Fully Reentrant | P017 |
+| **UUIDv7 Generation** | Synchronous | No (Dispatch Off-Main) | Fully Reentrant | P016 / P018 |
 | **SHA-256 Hashing** | Synchronous | No (Dispatch Off-Main) | Fully Reentrant | P016 / P018 |
 | **Token Format Parsing**| Synchronous | No (Dispatch Off-Main) | Fully Reentrant | P020 |
 | **Sync Feed Evaluation**| Synchronous | No (Dispatch Off-Main) | Fully Reentrant | P020 |

@@ -39,10 +39,11 @@ class TestValidateIosRustArtifact(unittest.TestCase):
             "rust_toolchain_version": "rustc 1.94.0",
             "cargo_version": "cargo 1.94.0",
             "source_commit_sha": "abc1234",
-            "c_abi_export_status": "ABI_VERSION_ONLY_P016",
-            "c_abi_exports": ["synveil_ffi_abi_version"],
-            "cbindgen_status": "ACTIVE_P016",
-            "header_status": "GENERATED_CBINDGEN_P016",
+            "c_abi_export_status": "STATUS_MODEL_P017",
+            "c_abi_exports": ["synveil_ffi_abi_version", "synveil_ffi_validate_abi_version"],
+            "ffi_status_model": "P017_STABLE_UINT32",
+            "cbindgen_status": "ACTIVE_P017",
+            "header_status": "GENERATED_CBINDGEN_P017",
             "variants": [
                 {
                     "relative_path": "device/arm64/libsynveil_ios_ffi.a",
@@ -83,9 +84,10 @@ class TestValidateIosRustArtifact(unittest.TestCase):
             "schema_version": 1,
             "package_name": "synveil-ios-ffi",
             "artifact_profile": "release",
-            "c_abi_export_status": "ABI_VERSION_ONLY_P016",
-            "c_abi_exports": ["synveil_ffi_abi_version"],
-            "header_status": "GENERATED_CBINDGEN_P016",
+            "c_abi_export_status": "STATUS_MODEL_P017",
+            "c_abi_exports": ["synveil_ffi_abi_version", "synveil_ffi_validate_abi_version"],
+            "ffi_status_model": "P017_STABLE_UINT32",
+            "header_status": "GENERATED_CBINDGEN_P017",
             "variants": [{"relative_path": "device/arm64/libsynveil_ios_ffi.a", "size_bytes": 9}],
         }
         import json

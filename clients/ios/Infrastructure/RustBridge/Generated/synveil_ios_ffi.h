@@ -20,6 +20,46 @@
 #define SYNVEIL_FFI_ABI_VERSION 1
 
 /**
+ * Stable FFI status code: Success (0).
+ */
+#define SYNVEIL_FFI_STATUS_SUCCESS 0
+
+/**
+ * Stable FFI status code: Invalid Argument (1).
+ */
+#define SYNVEIL_FFI_STATUS_INVALID_ARGUMENT 1
+
+/**
+ * Stable FFI status code: Invalid UTF-8 Input (2).
+ */
+#define SYNVEIL_FFI_STATUS_INVALID_UTF8 2
+
+/**
+ * Stable FFI status code: Buffer Too Small (3).
+ */
+#define SYNVEIL_FFI_STATUS_BUFFER_TOO_SMALL 3
+
+/**
+ * Stable FFI status code: Domain Error (4).
+ */
+#define SYNVEIL_FFI_STATUS_DOMAIN_ERROR 4
+
+/**
+ * Stable FFI status code: Internal Error (5).
+ */
+#define SYNVEIL_FFI_STATUS_INTERNAL_ERROR 5
+
+/**
+ * Stable FFI status code: Panic Encountered (6).
+ */
+#define SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED 6
+
+/**
+ * Stable FFI status code: Unsupported ABI Version (7).
+ */
+#define SYNVEIL_FFI_STATUS_UNSUPPORTED_ABI_VERSION 7
+
+/**
  * Returns the supported C ABI version for `synveil-ios-ffi`.
  *
  * # ABI Guarantees
@@ -30,5 +70,16 @@
  * - Catches any internal panic and returns `0` (invalid ABI version) on unwind.
  */
 uint32_t synveil_ffi_abi_version(void);
+
+/**
+ * Validates the expected C ABI version against the compiled bridge ABI version.
+ *
+ * # Returns
+ * - `SYNVEIL_FFI_STATUS_SUCCESS` (0) if `expected_version` matches current ABI version (1).
+ * - `SYNVEIL_FFI_STATUS_INVALID_ARGUMENT` (1) if `expected_version` is 0.
+ * - `SYNVEIL_FFI_STATUS_UNSUPPORTED_ABI_VERSION` (7) if `expected_version` is non-zero and unsupported.
+ * - `SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED` (6) if an internal panic occurs.
+ */
+uint32_t synveil_ffi_validate_abi_version(uint32_t expected_version);
 
 #endif  /* SYNVEIL_IOS_FFI_H */
