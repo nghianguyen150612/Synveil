@@ -9,7 +9,9 @@
 //! infrastructure adapters (`clients/ios/Infrastructure/RustBridge`).
 
 use std::panic::UnwindSafe;
-use synveil_core::Sha256Digest;
+use synveil_core::{
+    DeviceCredentialSecret, EnrollmentSecret, LibraryId, LogicalName, NodeId, Sha256Digest,
+};
 
 /// Canonical ABI version exposed across the Swift ↔ Rust C ABI boundary.
 pub const SYNVEIL_FFI_ABI_VERSION: u32 = 1;
@@ -152,6 +154,43 @@ where
     }
 }
 
+/// Helper that wraps a boolean validation operation across the C ABI boundary.
+///
+/// # Invariants & Safety
+/// - Verifies `out_valid` is non-null before dereferencing. Returns `INVALID_ARGUMENT` if null.
+/// - Initializes `*out_valid = 0` prior to evaluating `operation`.
+/// - Executes `operation` inside `std::panic::catch_unwind`.
+/// - On success (`Ok(valid)`): writes `1` if `valid` is true, `0` if `valid` is false, and returns `SUCCESS`.
+/// - On status error (`Err(status)`): `*out_valid` remains `0` and returns status code.
+/// - On panic: `*out_valid` remains `0` and returns `PANIC_ENCOUNTERED`.
+#[allow(unsafe_code)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub fn ffi_bool_validation_boundary<F>(out_valid: *mut u8, operation: F) -> u32
+where
+    F: FnOnce() -> Result<bool, SynveilFfiStatus> + UnwindSafe,
+{
+    if out_valid.is_null() {
+        return SYNVEIL_FFI_STATUS_INVALID_ARGUMENT;
+    }
+
+    // SAFETY: out_valid was checked non-null above.
+    unsafe {
+        out_valid.write(0);
+    }
+
+    match std::panic::catch_unwind(operation) {
+        Ok(Ok(is_valid)) => {
+            // SAFETY: out_valid was checked non-null above.
+            unsafe {
+                out_valid.write(if is_valid { 1 } else { 0 });
+            }
+            SYNVEIL_FFI_STATUS_SUCCESS
+        }
+        Ok(Err(status)) => status as u32,
+        Err(_) => SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED,
+    }
+}
+
 /// Returns the supported C ABI version for `synveil-ios-ffi`.
 ///
 /// # ABI Guarantees
@@ -235,6 +274,126 @@ pub extern "C" fn synveil_ffi_buffer_release(buffer: *mut SynveilFfiBuffer) -> u
         // _vec is dropped at end of scope.
 
         Ok(())
+    })
+}
+
+/// Validates whether a borrowed string token matches the canonical enrollment secret format (`sve1_<64 lowercase hex>`).
+///
+/// # Returns
+/// - `SYNVEIL_FFI_STATUS_SUCCESS` (0) with `*out_valid = 1` if valid, or `*out_valid = 0` if domain-invalid.
+/// - `SYNVEIL_FFI_STATUS_INVALID_ARGUMENT` (1) if `out_valid` is null or `input_ptr` is null with `input_len > 0`.
+/// - `SYNVEIL_FFI_STATUS_INVALID_UTF8` (2) if `input_ptr` contains invalid UTF-8 bytes.
+/// - `SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED` (6) if an internal panic occurs.
+#[allow(unsafe_code)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[unsafe(no_mangle)]
+pub extern "C" fn synveil_ffi_enrollment_secret_validate(
+    input_ptr: *const u8,
+    input_len: usize,
+    out_valid: *mut u8,
+) -> u32 {
+    ffi_bool_validation_boundary(out_valid, || {
+        // SAFETY: input_ptr and input_len are validated by borrowed_slice.
+        let input_bytes = unsafe { borrowed_slice(input_ptr, input_len)? };
+        let input_str =
+            std::str::from_utf8(input_bytes).map_err(|_| SynveilFfiStatus::InvalidUtf8)?;
+        Ok(EnrollmentSecret::parse(input_str).is_ok())
+    })
+}
+
+/// Validates whether a borrowed string token matches the canonical device credential format (`svd1_<64 lowercase hex>`).
+///
+/// # Returns
+/// - `SYNVEIL_FFI_STATUS_SUCCESS` (0) with `*out_valid = 1` if valid, or `*out_valid = 0` if domain-invalid.
+/// - `SYNVEIL_FFI_STATUS_INVALID_ARGUMENT` (1) if `out_valid` is null or `input_ptr` is null with `input_len > 0`.
+/// - `SYNVEIL_FFI_STATUS_INVALID_UTF8` (2) if `input_ptr` contains invalid UTF-8 bytes.
+/// - `SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED` (6) if an internal panic occurs.
+#[allow(unsafe_code)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[unsafe(no_mangle)]
+pub extern "C" fn synveil_ffi_device_credential_validate(
+    input_ptr: *const u8,
+    input_len: usize,
+    out_valid: *mut u8,
+) -> u32 {
+    ffi_bool_validation_boundary(out_valid, || {
+        // SAFETY: input_ptr and input_len are validated by borrowed_slice.
+        let input_bytes = unsafe { borrowed_slice(input_ptr, input_len)? };
+        let input_str =
+            std::str::from_utf8(input_bytes).map_err(|_| SynveilFfiStatus::InvalidUtf8)?;
+        Ok(DeviceCredentialSecret::parse(input_str).is_ok())
+    })
+}
+
+/// Validates whether a borrowed string representation matches a canonical lowercase hyphenated UUIDv7 LibraryId.
+///
+/// # Returns
+/// - `SYNVEIL_FFI_STATUS_SUCCESS` (0) with `*out_valid = 1` if valid, or `*out_valid = 0` if domain-invalid.
+/// - `SYNVEIL_FFI_STATUS_INVALID_ARGUMENT` (1) if `out_valid` is null or `input_ptr` is null with `input_len > 0`.
+/// - `SYNVEIL_FFI_STATUS_INVALID_UTF8` (2) if `input_ptr` contains invalid UTF-8 bytes.
+/// - `SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED` (6) if an internal panic occurs.
+#[allow(unsafe_code)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[unsafe(no_mangle)]
+pub extern "C" fn synveil_ffi_library_id_validate(
+    input_ptr: *const u8,
+    input_len: usize,
+    out_valid: *mut u8,
+) -> u32 {
+    ffi_bool_validation_boundary(out_valid, || {
+        // SAFETY: input_ptr and input_len are validated by borrowed_slice.
+        let input_bytes = unsafe { borrowed_slice(input_ptr, input_len)? };
+        let input_str =
+            std::str::from_utf8(input_bytes).map_err(|_| SynveilFfiStatus::InvalidUtf8)?;
+        Ok(LibraryId::parse_str(input_str).is_ok())
+    })
+}
+
+/// Validates whether a borrowed string representation matches a canonical lowercase hyphenated UUIDv7 NodeId.
+///
+/// # Returns
+/// - `SYNVEIL_FFI_STATUS_SUCCESS` (0) with `*out_valid = 1` if valid, or `*out_valid = 0` if domain-invalid.
+/// - `SYNVEIL_FFI_STATUS_INVALID_ARGUMENT` (1) if `out_valid` is null or `input_ptr` is null with `input_len > 0`.
+/// - `SYNVEIL_FFI_STATUS_INVALID_UTF8` (2) if `input_ptr` contains invalid UTF-8 bytes.
+/// - `SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED` (6) if an internal panic occurs.
+#[allow(unsafe_code)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[unsafe(no_mangle)]
+pub extern "C" fn synveil_ffi_node_id_validate(
+    input_ptr: *const u8,
+    input_len: usize,
+    out_valid: *mut u8,
+) -> u32 {
+    ffi_bool_validation_boundary(out_valid, || {
+        // SAFETY: input_ptr and input_len are validated by borrowed_slice.
+        let input_bytes = unsafe { borrowed_slice(input_ptr, input_len)? };
+        let input_str =
+            std::str::from_utf8(input_bytes).map_err(|_| SynveilFfiStatus::InvalidUtf8)?;
+        Ok(NodeId::parse_str(input_str).is_ok())
+    })
+}
+
+/// Validates whether a borrowed UTF-8 string is a valid non-empty LogicalName (<= 1024 UTF-8 bytes).
+///
+/// # Returns
+/// - `SYNVEIL_FFI_STATUS_SUCCESS` (0) with `*out_valid = 1` if valid, or `*out_valid = 0` if domain-invalid.
+/// - `SYNVEIL_FFI_STATUS_INVALID_ARGUMENT` (1) if `out_valid` is null or `input_ptr` is null with `input_len > 0`.
+/// - `SYNVEIL_FFI_STATUS_INVALID_UTF8` (2) if `input_ptr` contains invalid UTF-8 bytes.
+/// - `SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED` (6) if an internal panic occurs.
+#[allow(unsafe_code)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[unsafe(no_mangle)]
+pub extern "C" fn synveil_ffi_logical_name_validate(
+    input_ptr: *const u8,
+    input_len: usize,
+    out_valid: *mut u8,
+) -> u32 {
+    ffi_bool_validation_boundary(out_valid, || {
+        // SAFETY: input_ptr and input_len are validated by borrowed_slice.
+        let input_bytes = unsafe { borrowed_slice(input_ptr, input_len)? };
+        let input_str =
+            std::str::from_utf8(input_bytes).map_err(|_| SynveilFfiStatus::InvalidUtf8)?;
+        Ok(LogicalName::new(input_str).is_ok())
     })
 }
 
@@ -400,6 +559,217 @@ mod tests {
     fn test_synveil_core_linkage() {
         let empty_hash = Sha256Digest::from_bytes([0u8; 32]);
         assert_eq!(empty_hash.as_bytes().len(), 32);
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn test_ffi_bool_validation_boundary_semantics() {
+        let mut valid_out = 0xFFu8;
+
+        // 1. Null out pointer returns INVALID_ARGUMENT
+        let status = ffi_bool_validation_boundary(std::ptr::null_mut(), || Ok(true));
+        assert_eq!(status, SYNVEIL_FFI_STATUS_INVALID_ARGUMENT);
+
+        // 2. Success true writes 1
+        let status = ffi_bool_validation_boundary(&mut valid_out, || Ok(true));
+        assert_eq!(status, SYNVEIL_FFI_STATUS_SUCCESS);
+        assert_eq!(valid_out, 1);
+
+        // 3. Success false writes 0
+        let status = ffi_bool_validation_boundary(&mut valid_out, || Ok(false));
+        assert_eq!(status, SYNVEIL_FFI_STATUS_SUCCESS);
+        assert_eq!(valid_out, 0);
+
+        // 4. Status error leaves valid_out as 0
+        valid_out = 0xFF;
+        let status =
+            ffi_bool_validation_boundary(&mut valid_out, || Err(SynveilFfiStatus::InvalidUtf8));
+        assert_eq!(status, SYNVEIL_FFI_STATUS_INVALID_UTF8);
+        assert_eq!(valid_out, 0);
+
+        // 5. Panic leaves valid_out as 0 and returns PANIC_ENCOUNTERED
+        valid_out = 0xFF;
+        let status =
+            ffi_bool_validation_boundary(&mut valid_out, || panic!("bool boundary test panic"));
+        assert_eq!(status, SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED);
+        assert_eq!(valid_out, 0);
+    }
+
+    #[test]
+    fn test_enrollment_and_device_credential_validators() {
+        let valid_sve = format!("sve1_{}", "a1".repeat(32));
+        let valid_svd = format!("svd1_{}", "b2".repeat(32));
+        let mut valid = 0xFFu8;
+
+        // Valid enrollment token
+        let res =
+            synveil_ffi_enrollment_secret_validate(valid_sve.as_ptr(), valid_sve.len(), &mut valid);
+        assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
+        assert_eq!(valid, 1);
+
+        // Valid device credential token passed to enrollment validator -> valid = 0
+        let res =
+            synveil_ffi_enrollment_secret_validate(valid_svd.as_ptr(), valid_svd.len(), &mut valid);
+        assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
+        assert_eq!(valid, 0);
+
+        // Valid device credential token
+        let res =
+            synveil_ffi_device_credential_validate(valid_svd.as_ptr(), valid_svd.len(), &mut valid);
+        assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
+        assert_eq!(valid, 1);
+
+        // Valid enrollment token passed to device credential validator -> valid = 0
+        let res =
+            synveil_ffi_device_credential_validate(valid_sve.as_ptr(), valid_sve.len(), &mut valid);
+        assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
+        assert_eq!(valid, 0);
+
+        // Invalid forms: uppercase, wrong length, non-hex
+        let uppercase = valid_sve.to_ascii_uppercase();
+        let res =
+            synveil_ffi_enrollment_secret_validate(uppercase.as_ptr(), uppercase.len(), &mut valid);
+        assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
+        assert_eq!(valid, 0);
+
+        let wrong_len = format!("{valid_sve}a");
+        let res =
+            synveil_ffi_enrollment_secret_validate(wrong_len.as_ptr(), wrong_len.len(), &mut valid);
+        assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
+        assert_eq!(valid, 0);
+
+        // Invalid UTF-8
+        let bad_utf8 = [0xFF, 0xFE, 0xFD];
+        let res =
+            synveil_ffi_enrollment_secret_validate(bad_utf8.as_ptr(), bad_utf8.len(), &mut valid);
+        assert_eq!(res, SYNVEIL_FFI_STATUS_INVALID_UTF8);
+        assert_eq!(valid, 0);
+
+        // Null out pointer
+        let res = synveil_ffi_enrollment_secret_validate(
+            valid_sve.as_ptr(),
+            valid_sve.len(),
+            std::ptr::null_mut(),
+        );
+        assert_eq!(res, SYNVEIL_FFI_STATUS_INVALID_ARGUMENT);
+    }
+
+    #[test]
+    fn test_library_and_node_id_validators() {
+        let valid_v7 = LibraryId::new().to_string();
+        let mut valid = 0xFFu8;
+
+        // Valid LibraryId
+        let res = synveil_ffi_library_id_validate(valid_v7.as_ptr(), valid_v7.len(), &mut valid);
+        assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
+        assert_eq!(valid, 1);
+
+        // Valid NodeId
+        let res = synveil_ffi_node_id_validate(valid_v7.as_ptr(), valid_v7.len(), &mut valid);
+        assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
+        assert_eq!(valid, 1);
+
+        // Uppercase UUID -> valid = 0
+        let uppercase = valid_v7.to_ascii_uppercase();
+        let res = synveil_ffi_library_id_validate(uppercase.as_ptr(), uppercase.len(), &mut valid);
+        assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
+        assert_eq!(valid, 0);
+
+        // Unhyphenated UUID -> valid = 0
+        let unhyphenated = valid_v7.replace('-', "");
+        let res =
+            synveil_ffi_library_id_validate(unhyphenated.as_ptr(), unhyphenated.len(), &mut valid);
+        assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
+        assert_eq!(valid, 0);
+
+        // UUIDv4 (not v7) -> valid = 0
+        let v4_str = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11";
+        let res = synveil_ffi_library_id_validate(v4_str.as_ptr(), v4_str.len(), &mut valid);
+        assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
+        assert_eq!(valid, 0);
+
+        // Malformed text -> valid = 0
+        let malformed = "not-a-uuid";
+        let res = synveil_ffi_library_id_validate(malformed.as_ptr(), malformed.len(), &mut valid);
+        assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
+        assert_eq!(valid, 0);
+
+        // Null out pointer -> INVALID_ARGUMENT
+        let res = synveil_ffi_library_id_validate(
+            valid_v7.as_ptr(),
+            valid_v7.len(),
+            std::ptr::null_mut(),
+        );
+        assert_eq!(res, SYNVEIL_FFI_STATUS_INVALID_ARGUMENT);
+    }
+
+    #[test]
+    fn test_logical_name_validator() {
+        let mut valid = 0xFFu8;
+
+        // Valid name
+        let name = "hello.txt";
+        let res = synveil_ffi_logical_name_validate(name.as_ptr(), name.len(), &mut valid);
+        assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
+        assert_eq!(valid, 1);
+
+        // Slash preserving ("A/B")
+        let slash_name = "A/B";
+        let res =
+            synveil_ffi_logical_name_validate(slash_name.as_ptr(), slash_name.len(), &mut valid);
+        assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
+        assert_eq!(valid, 1);
+
+        // Multibyte Unicode name
+        let unicode_name = "synveil_🚀_document.pdf";
+        let res = synveil_ffi_logical_name_validate(
+            unicode_name.as_ptr(),
+            unicode_name.len(),
+            &mut valid,
+        );
+        assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
+        assert_eq!(valid, 1);
+
+        // Empty string -> valid = 0
+        let empty = "";
+        let res = synveil_ffi_logical_name_validate(empty.as_ptr(), empty.len(), &mut valid);
+        assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
+        assert_eq!(valid, 0);
+
+        // Exactly 1024 UTF-8 bytes -> valid = 1
+        let max_bytes = "a".repeat(1024);
+        let res =
+            synveil_ffi_logical_name_validate(max_bytes.as_ptr(), max_bytes.len(), &mut valid);
+        assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
+        assert_eq!(valid, 1);
+
+        // 1025 UTF-8 bytes -> valid = 0
+        let max_plus_one = "a".repeat(1025);
+        let res = synveil_ffi_logical_name_validate(
+            max_plus_one.as_ptr(),
+            max_plus_one.len(),
+            &mut valid,
+        );
+        assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
+        assert_eq!(valid, 0);
+
+        // Multibyte boundary test (1023 'a's + 4-byte emoji = 1027 bytes -> valid = 0)
+        let mut unicode_over = "a".repeat(1023);
+        unicode_over.push('🚀'); // '🚀' is 4 UTF-8 bytes (total 1027 bytes)
+        assert_eq!(unicode_over.len(), 1027);
+        let res = synveil_ffi_logical_name_validate(
+            unicode_over.as_ptr(),
+            unicode_over.len(),
+            &mut valid,
+        );
+        assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
+        assert_eq!(valid, 0);
+
+        // Invalid UTF-8
+        let bad_utf8 = [0xFF, 0xFE];
+        let res = synveil_ffi_logical_name_validate(bad_utf8.as_ptr(), bad_utf8.len(), &mut valid);
+        assert_eq!(res, SYNVEIL_FFI_STATUS_INVALID_UTF8);
+        assert_eq!(valid, 0);
     }
 
     #[test]

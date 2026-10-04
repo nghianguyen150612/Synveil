@@ -289,7 +289,14 @@ def check_file_content_invariants(rel_path_str, content):
             if not is_rust_bridge and not is_test:
                 if re.search(r"\bRustBridgeAdapter\b", stripped_code):
                     violations.append(
-                        f"Production file '{rel_path_str}' directly uses synchronous primitive 'RustBridgeAdapter' outside Infrastructure/RustBridge. Upper layers must use 'RustBridgeAsyncAdapter'."
+                        f"Production file '{rel_path_str}' directly uses synchronous primitive 'RustBridgeAdapter' outside Infrastructure/RustBridge. Upper layers must use 'RustBridgeAsyncAdapter' or 'RustBridgeProtocol'."
+                    )
+
+            # Direct concrete RustBridgeAsyncAdapter prohibition in Application, Domain, and Features layers
+            if layer in {"Application", "Domain", "Features"}:
+                if re.search(r"\bRustBridgeAsyncAdapter\b", stripped_code):
+                    violations.append(
+                        f"{layer} file '{rel_path_str}' directly uses concrete 'RustBridgeAsyncAdapter'. Must depend on 'RustBridgeProtocol' abstraction instead."
                     )
 
     return violations

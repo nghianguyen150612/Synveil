@@ -20,7 +20,7 @@ class TestValidateIosRustArtifact(unittest.TestCase):
             f.write(content)
 
     def test_valid_bundle_without_x86_64(self):
-        hdr_bytes = b"/* header */\ntypedef struct SynveilFfiBuffer { int x; } SynveilFfiBuffer;\nuint32_t synveil_ffi_buffer_release(struct SynveilFfiBuffer *b);\nuint32_t synveil_ffi_sha256_parse();\nuint32_t synveil_ffi_sha256_format();\n"
+        hdr_bytes = b"/* header */\ntypedef struct SynveilFfiBuffer { int x; } SynveilFfiBuffer;\nuint32_t synveil_ffi_buffer_release(struct SynveilFfiBuffer *b);\nuint32_t synveil_ffi_enrollment_secret_validate();\nuint32_t synveil_ffi_device_credential_validate();\nuint32_t synveil_ffi_library_id_validate();\nuint32_t synveil_ffi_node_id_validate();\nuint32_t synveil_ffi_logical_name_validate();\nuint32_t synveil_ffi_sha256_parse();\nuint32_t synveil_ffi_sha256_format();\n"
         self._create_mock_file("device/arm64/libsynveil_ios_ffi.a", b"dev_arm64")
         self._create_mock_file("simulator/arm64/libsynveil_ios_ffi.a", b"sim_arm64")
         self._create_mock_file("include/synveil_ios_ffi.h", hdr_bytes)
@@ -40,10 +40,15 @@ class TestValidateIosRustArtifact(unittest.TestCase):
             "rust_toolchain_version": "rustc 1.94.0",
             "cargo_version": "cargo 1.94.0",
             "source_commit_sha": "abc1234",
-            "c_abi_export_status": "MEMORY_MODEL_P018",
+            "c_abi_export_status": "MODEL_MAPPING_P020",
             "c_abi_exports": [
                 "synveil_ffi_abi_version",
                 "synveil_ffi_buffer_release",
+                "synveil_ffi_device_credential_validate",
+                "synveil_ffi_enrollment_secret_validate",
+                "synveil_ffi_library_id_validate",
+                "synveil_ffi_logical_name_validate",
+                "synveil_ffi_node_id_validate",
                 "synveil_ffi_sha256_format",
                 "synveil_ffi_sha256_parse",
                 "synveil_ffi_validate_abi_version",
@@ -51,6 +56,8 @@ class TestValidateIosRustArtifact(unittest.TestCase):
             "ffi_status_model": "P017_STABLE_UINT32",
             "ffi_memory_model": "P018_RUST_OWNED_BUFFER",
             "ffi_concurrency_model": "P019_SWIFT_MANAGED_SYNC_RUST",
+            "ffi_model_mapping": "P020_AUTH_FILE_PRIMITIVES",
+            "rust_bridge_protocol": "P020_APPLICATION_SERVICE_BOUNDARY",
             "rust_async_runtime": "NONE",
             "callback_abi": "NONE",
             "cancellation_model": "P019_SWIFT_COOPERATIVE_NO_MID_FFI_INTERRUPT",
@@ -88,7 +95,7 @@ class TestValidateIosRustArtifact(unittest.TestCase):
         validate_artifact_bundle(self.test_dir)
 
     def test_unexpected_file_fails(self):
-        hdr_bytes = b"/* header */\ntypedef struct SynveilFfiBuffer { int x; } SynveilFfiBuffer;\nuint32_t synveil_ffi_buffer_release(struct SynveilFfiBuffer *b);\nuint32_t synveil_ffi_sha256_parse();\nuint32_t synveil_ffi_sha256_format();\n"
+        hdr_bytes = b"/* header */\ntypedef struct SynveilFfiBuffer { int x; } SynveilFfiBuffer;\nuint32_t synveil_ffi_buffer_release(struct SynveilFfiBuffer *b);\nuint32_t synveil_ffi_enrollment_secret_validate();\nuint32_t synveil_ffi_device_credential_validate();\nuint32_t synveil_ffi_library_id_validate();\nuint32_t synveil_ffi_node_id_validate();\nuint32_t synveil_ffi_logical_name_validate();\nuint32_t synveil_ffi_sha256_parse();\nuint32_t synveil_ffi_sha256_format();\n"
         self._create_mock_file("device/arm64/libsynveil_ios_ffi.a", b"dev_arm64")
         self._create_mock_file("simulator/arm64/libsynveil_ios_ffi.a", b"sim_arm64")
         self._create_mock_file("include/synveil_ios_ffi.h", hdr_bytes)
@@ -98,10 +105,15 @@ class TestValidateIosRustArtifact(unittest.TestCase):
             "schema_version": 1,
             "package_name": "synveil-ios-ffi",
             "artifact_profile": "release",
-            "c_abi_export_status": "MEMORY_MODEL_P018",
+            "c_abi_export_status": "MODEL_MAPPING_P020",
             "c_abi_exports": [
                 "synveil_ffi_abi_version",
                 "synveil_ffi_buffer_release",
+                "synveil_ffi_device_credential_validate",
+                "synveil_ffi_enrollment_secret_validate",
+                "synveil_ffi_library_id_validate",
+                "synveil_ffi_logical_name_validate",
+                "synveil_ffi_node_id_validate",
                 "synveil_ffi_sha256_format",
                 "synveil_ffi_sha256_parse",
                 "synveil_ffi_validate_abi_version",
@@ -109,6 +121,8 @@ class TestValidateIosRustArtifact(unittest.TestCase):
             "ffi_status_model": "P017_STABLE_UINT32",
             "ffi_memory_model": "P018_RUST_OWNED_BUFFER",
             "ffi_concurrency_model": "P019_SWIFT_MANAGED_SYNC_RUST",
+            "ffi_model_mapping": "P020_AUTH_FILE_PRIMITIVES",
+            "rust_bridge_protocol": "P020_APPLICATION_SERVICE_BOUNDARY",
             "rust_async_runtime": "NONE",
             "callback_abi": "NONE",
             "cancellation_model": "P019_SWIFT_COOPERATIVE_NO_MID_FFI_INTERRUPT",
@@ -148,7 +162,7 @@ class TestValidateIosRustArtifact(unittest.TestCase):
         self.assertIn("c_abi_export_status", str(ctx.exception))
 
     def test_invalid_concurrency_metadata_fails(self):
-        hdr_bytes = b"/* header */\ntypedef struct SynveilFfiBuffer { int x; } SynveilFfiBuffer;\nuint32_t synveil_ffi_buffer_release(struct SynveilFfiBuffer *b);\nuint32_t synveil_ffi_sha256_parse();\nuint32_t synveil_ffi_sha256_format();\n"
+        hdr_bytes = b"/* header */\ntypedef struct SynveilFfiBuffer { int x; } SynveilFfiBuffer;\nuint32_t synveil_ffi_buffer_release(struct SynveilFfiBuffer *b);\nuint32_t synveil_ffi_enrollment_secret_validate();\nuint32_t synveil_ffi_device_credential_validate();\nuint32_t synveil_ffi_library_id_validate();\nuint32_t synveil_ffi_node_id_validate();\nuint32_t synveil_ffi_logical_name_validate();\nuint32_t synveil_ffi_sha256_parse();\nuint32_t synveil_ffi_sha256_format();\n"
         self._create_mock_file("device/arm64/libsynveil_ios_ffi.a", b"dev_arm64")
         self._create_mock_file("simulator/arm64/libsynveil_ios_ffi.a", b"sim_arm64")
         self._create_mock_file("include/synveil_ios_ffi.h", hdr_bytes)
@@ -157,10 +171,15 @@ class TestValidateIosRustArtifact(unittest.TestCase):
             "schema_version": 1,
             "package_name": "synveil-ios-ffi",
             "artifact_profile": "release",
-            "c_abi_export_status": "MEMORY_MODEL_P018",
+            "c_abi_export_status": "MODEL_MAPPING_P020",
             "c_abi_exports": [
                 "synveil_ffi_abi_version",
                 "synveil_ffi_buffer_release",
+                "synveil_ffi_device_credential_validate",
+                "synveil_ffi_enrollment_secret_validate",
+                "synveil_ffi_library_id_validate",
+                "synveil_ffi_logical_name_validate",
+                "synveil_ffi_node_id_validate",
                 "synveil_ffi_sha256_format",
                 "synveil_ffi_sha256_parse",
                 "synveil_ffi_validate_abi_version",
@@ -168,6 +187,8 @@ class TestValidateIosRustArtifact(unittest.TestCase):
             "ffi_status_model": "P017_STABLE_UINT32",
             "ffi_memory_model": "P018_RUST_OWNED_BUFFER",
             "ffi_concurrency_model": "P019_SWIFT_MANAGED_SYNC_RUST",
+            "ffi_model_mapping": "P020_AUTH_FILE_PRIMITIVES",
+            "rust_bridge_protocol": "P020_APPLICATION_SERVICE_BOUNDARY",
             "rust_async_runtime": "TOKIO",
             "callback_abi": "NONE",
             "cancellation_model": "P019_SWIFT_COOPERATIVE_NO_MID_FFI_INTERRUPT",
