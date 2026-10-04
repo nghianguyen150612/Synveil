@@ -85,7 +85,8 @@ final class RustBridgeConcurrencyTests: XCTestCase {
                             return false
                         }
                     } else {
-                        let canonical = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                        let hex64 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                        let canonical = "sha256:\(hex64)"
                         let digest = try await adapter.parseSHA256(canonical)
                         XCTAssertEqual(digest.count, 32)
                         let formatted = try await adapter.formatSHA256(digest)
@@ -134,7 +135,7 @@ final class RustBridgeConcurrencyTests: XCTestCase {
         }
 
         // Allow worker to start and enter sleep
-        try await Task.sleep(nanoseconds: 10_000_000) // 10ms
+        try await Task.sleep(nanoseconds: 10_000_000)  // 10ms
         inFlightTask.cancel()
 
         do {
