@@ -33,6 +33,10 @@ jobs:
       SYNVEIL_TEST_DATABASE_URL: postgres://postgres:synveil-test@127.0.0.1:5432/synveil_bootstrap_test
     steps:
       - uses: actions/checkout@v4
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
       - uses: dtolnay/rust-toolchain@stable
       - name: Auth unit tests
         run: cargo test -p synveil-auth --lib --locked
