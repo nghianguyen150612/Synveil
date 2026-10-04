@@ -2943,6 +2943,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "synveil-server-bootstrap"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "sha2",
+ "synveil-server-config",
+ "synveil-server-network",
+ "synveil-server-service",
+ "synveil-server-storage",
+]
+
+[[package]]
 name = "synveil-server-config"
 version = "0.1.0"
 dependencies = [
