@@ -7,7 +7,19 @@ no_includes = false
 sys_includes = ["stdint.h", "stdbool.h"]
 
 [export]
-include = ["synveil_ffi_abi_version", "SYNVEIL_FFI_ABI_VERSION"]
+include = [
+    "synveil_ffi_abi_version",
+    "synveil_ffi_validate_abi_version",
+    "SYNVEIL_FFI_ABI_VERSION",
+    "SYNVEIL_FFI_STATUS_SUCCESS",
+    "SYNVEIL_FFI_STATUS_INVALID_ARGUMENT",
+    "SYNVEIL_FFI_STATUS_INVALID_UTF8",
+    "SYNVEIL_FFI_STATUS_BUFFER_TOO_SMALL",
+    "SYNVEIL_FFI_STATUS_DOMAIN_ERROR",
+    "SYNVEIL_FFI_STATUS_INTERNAL_ERROR",
+    "SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED",
+    "SYNVEIL_FFI_STATUS_UNSUPPORTED_ABI_VERSION"
+]
 
 [fn]
 rename_args = "None"

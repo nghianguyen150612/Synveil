@@ -185,7 +185,7 @@ fi
 echo ""
 echo "=== Step 6: Symbol Export Inspection ==="
 if command -v nm >/dev/null 2>&1 || command -v strings >/dev/null 2>&1; then
-    echo "Inspecting symbols for approved C ABI export synveil_ffi_abi_version..."
+    echo "Inspecting symbols for approved C ABI exports..."
     SYMBOLS=""
     if command -v nm >/dev/null 2>&1; then
         SYMBOLS="$(nm -g "${STAGING_DIR}/device/arm64/libsynveil_ios_ffi.a" 2>/dev/null || true)"
@@ -198,19 +198,21 @@ if command -v nm >/dev/null 2>&1 || command -v strings >/dev/null 2>&1; then
     FFI_SYMBOLS="$(echo "${SYMBOLS}" | grep "synveil_ffi_" | awk '{print $NF}' | sed 's/^_//' | sort -u || true)"
 
     if [ -z "${FFI_SYMBOLS}" ]; then
-        echo "ERROR: Required C ABI symbol 'synveil_ffi_abi_version' was NOT found!" >&2
+        echo "ERROR: Required C ABI symbols were NOT found!" >&2
         exit 1
     fi
 
-    EXPECTED_SYMBOLS="synveil_ffi_abi_version"
+    EXPECTED_SYMBOLS="$(printf "synveil_ffi_abi_version\nsynveil_ffi_validate_abi_version")"
     if [ "${FFI_SYMBOLS}" != "${EXPECTED_SYMBOLS}" ]; then
         echo "ERROR: Unexpected C ABI symbols found in static library!" >&2
         echo "Found symbols:" >&2
         echo "${FFI_SYMBOLS}" >&2
-        echo "Expected exact set: '${EXPECTED_SYMBOLS}'" >&2
+        echo "Expected exact set:" >&2
+        echo "${EXPECTED_SYMBOLS}" >&2
         exit 1
     fi
-    echo "Symbol inspection passed! Found exact approved symbol: synveil_ffi_abi_version"
+    echo "Symbol inspection passed! Found exact approved symbols:"
+    echo "${FFI_SYMBOLS}"
 else
     echo "Notice: nm tool not present on host; skipping nm symbol inspection."
 fi
@@ -274,13 +276,15 @@ manifest = {
     "rust_toolchain_version": rustc_ver,
     "cargo_version": cargo_ver,
     "source_commit_sha": commit_sha,
-    "c_abi_export_status": "ABI_VERSION_ONLY_P016",
+    "c_abi_export_status": "STATUS_MODEL_P017",
     "c_abi_exports": [
-        "synveil_ffi_abi_version"
+        "synveil_ffi_abi_version",
+        "synveil_ffi_validate_abi_version"
     ],
-    "cbindgen_status": "ACTIVE_P016",
-    "header_status": "GENERATED_CBINDGEN_P016",
-    "xcframework_status": "XCFRAMEWORK_NOT_REQUIRED_P016",
+    "ffi_status_model": "P017_STABLE_UINT32",
+    "cbindgen_status": "ACTIVE_P017",
+    "header_status": "GENERATED_CBINDGEN_P017",
+    "xcframework_status": "XCFRAMEWORK_NOT_REQUIRED_P017",
     "variants": variants
 }
 

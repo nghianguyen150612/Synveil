@@ -82,19 +82,25 @@ def validate_artifact_bundle(staging_dir: str) -> None:
             f"Invalid artifact_profile: expected 'release', got {manifest.get('artifact_profile')}"
         )
 
-    if manifest.get("c_abi_export_status") != "ABI_VERSION_ONLY_P016":
+    if manifest.get("c_abi_export_status") != "STATUS_MODEL_P017":
         raise ValueError(
-            f"Invalid c_abi_export_status: expected 'ABI_VERSION_ONLY_P016', got {manifest.get('c_abi_export_status')}"
+            f"Invalid c_abi_export_status: expected 'STATUS_MODEL_P017', got {manifest.get('c_abi_export_status')}"
         )
 
-    if manifest.get("c_abi_exports") != ["synveil_ffi_abi_version"]:
+    expected_exports = ["synveil_ffi_abi_version", "synveil_ffi_validate_abi_version"]
+    if manifest.get("c_abi_exports") != expected_exports:
         raise ValueError(
-            f"Invalid c_abi_exports: expected ['synveil_ffi_abi_version'], got {manifest.get('c_abi_exports')}"
+            f"Invalid c_abi_exports: expected {expected_exports}, got {manifest.get('c_abi_exports')}"
         )
 
-    if manifest.get("header_status") != "GENERATED_CBINDGEN_P016":
+    if manifest.get("ffi_status_model") != "P017_STABLE_UINT32":
         raise ValueError(
-            f"Invalid header_status: expected 'GENERATED_CBINDGEN_P016', got {manifest.get('header_status')}"
+            f"Invalid ffi_status_model: expected 'P017_STABLE_UINT32', got {manifest.get('ffi_status_model')}"
+        )
+
+    if manifest.get("header_status") != "GENERATED_CBINDGEN_P017":
+        raise ValueError(
+            f"Invalid header_status: expected 'GENERATED_CBINDGEN_P017', got {manifest.get('header_status')}"
         )
 
     variants = manifest.get("variants")
