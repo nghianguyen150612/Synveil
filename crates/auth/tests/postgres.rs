@@ -40,7 +40,7 @@ fn test_password_config() -> PasswordHasherConfig {
 async fn postgres_authentication_bootstrap_is_atomic_and_race_safe() {
     let url = std::env::var("SYNVEIL_TEST_DATABASE_URL")
         .expect("SYNVEIL_TEST_DATABASE_URL must identify a disposable test database");
-    let config = DatabaseConfig::from_url(url).expect("test URL must use PostgreSQL");
+    let config = DatabaseConfig::from_url(&url).expect("test URL must use PostgreSQL");
     let primary = DatabasePool::connect(&config)
         .await
         .expect("primary test connection must succeed");
@@ -97,28 +97,39 @@ async fn postgres_authentication_bootstrap_is_atomic_and_race_safe() {
             BootstrapState::Open
         );
 
-        let secondary = DatabasePool::connect(&config)
-            .await
-            .expect("secondary test connection must succeed");
-        let secondary_auth = AuthenticationService::new(&secondary, password_config);
-        let (first, second) = tokio::join!(
-            primary_auth.create_first_admin(
-                login("admin-a"),
-                PlaintextPassword::new("alpha password").unwrap(),
-                observed_at,
-            ),
-            secondary_auth.create_first_admin(
-                login("admin-b"),
-                PlaintextPassword::new("bravo password").unwrap(),
-                observed_at,
-            ),
+        let mut contenders = tokio::task::JoinSet::new();
+        for index in 0..12 {
+            let contender_url = url.clone();
+            contenders.spawn(async move {
+                let contender_config = DatabaseConfig::from_url(contender_url)
+                    .expect("contender URL must use PostgreSQL");
+                let contender_pool = DatabasePool::connect(&contender_config)
+                    .await
+                    .expect("contender connection must succeed");
+                AuthenticationService::new(&contender_pool, password_config)
+                    .create_first_admin(
+                        login(&format!("admin-{index}")),
+                        PlaintextPassword::new(format!("contender password {index}"))
+                            .expect("test password is valid"),
+                        observed_at,
+                    )
+                    .await
+            });
+        }
+        let mut outcomes = Vec::new();
+        while let Some(outcome) = contenders.join_next().await {
+            outcomes.push(outcome.expect("contender task must not panic"));
+        }
+        let mut winners = outcomes.iter().filter_map(|result| result.as_ref().ok());
+        let winner = (*winners.next().expect("one contender must win")).clone();
+        assert!(winners.next().is_none(), "only one contender may win");
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|result| matches!(result, Err(AuthError::BootstrapClosed)))
+                .count(),
+            11
         );
-
-        let winner = match (first, second) {
-            (Ok(user), Err(AuthError::BootstrapClosed))
-            | (Err(AuthError::BootstrapClosed), Ok(user)) => user,
-            other => panic!("expected exactly one bootstrap winner, got {other:?}"),
-        };
         assert!(winner.is_instance_admin());
         assert_eq!(
             primary_auth.bootstrap_state().await.unwrap(),
@@ -130,14 +141,15 @@ async fn postgres_authentication_bootstrap_is_atomic_and_race_safe() {
             .await
             .unwrap()
             .expect("winner credential must exist");
-        let winner_password = if winner.login().value() == "admin-a" {
-            "alpha password"
-        } else {
-            "bravo password"
-        };
+        let winner_index = winner
+            .login()
+            .value()
+            .strip_prefix("admin-")
+            .expect("winner login has contender prefix");
+        let winner_password = format!("contender password {winner_index}");
         assert_eq!(
             primary_auth
-                .verify_password(&stored, &PlaintextPassword::new(winner_password).unwrap())
+                .verify_password(&stored, &PlaintextPassword::new(&winner_password).unwrap())
                 .unwrap(),
             PasswordVerification::Verified {
                 needs_rehash: false
@@ -155,6 +167,17 @@ async fn postgres_authentication_bootstrap_is_atomic_and_race_safe() {
             Err(AuthError::BootstrapClosed)
         );
 
+        // Model a committed POST whose HTTP response was lost: authoritative
+        // inspection is Closed, no replay occurs, and the originally entered
+        // credential completes the explicit-login/admin proof.
+        let verified = primary_auth
+            .verify_first_admin_login(
+                winner.login().clone(),
+                PlaintextPassword::new(&winner_password).unwrap(),
+            )
+            .await
+            .expect("original first-owner credential must explicitly authenticate");
+        assert!(verified.principal().is_instance_admin());
         winner
     };
 

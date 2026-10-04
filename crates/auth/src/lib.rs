@@ -26,7 +26,7 @@ pub use passwords::{
     DEFAULT_PASSWORD_TIME_COST, MAX_PASSWORD_BYTES, PasswordError, PasswordHasherConfig,
     PasswordParameters, PasswordVerification, PlaintextPassword, StoredPasswordHash,
 };
-pub use service::AuthenticationService;
+pub use service::{AdminBootstrapStatus, AuthenticationService};
 pub use sessions::{
     AuthenticatedSession, BrowserSession, SESSION_TOKEN_BYTES, SessionCredential, SessionExpiry,
     SessionExpiryError, SessionId, SessionIdError, SessionPrincipal, SessionToken,

@@ -61,7 +61,7 @@
     {
       "id": "STEP-03",
       "action": "create_first_admin",
-      "description": "Create the first administrator through the product flow."
+      "description": "Create exactly one owner through the PostgreSQL-authoritative local product flow, then explicitly authenticate; Prompt036 still owns whole-journey acceptance."
     },
     {
       "id": "STEP-04",
