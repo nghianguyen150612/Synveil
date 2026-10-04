@@ -1,0 +1,84 @@
+name: Server self-host acceptance
+
+on:
+  pull_request:
+    paths:
+      - "crates/server-bootstrap/**"
+      - "crates/server-config/**"
+      - "crates/server-storage/**"
+      - "crates/server-service/**"
+      - "crates/server-network/**"
+      - "crates/auth/**"
+      - "crates/api/**"
+      - "deploy/**"
+      - "docs/v0.2/**"
+      - "scripts/validate-end-to-end-self-host.py"
+      - ".github/workflows/server-self-host-acceptance.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract-and-source:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - run: python3 scripts/validate-end-to-end-self-host.py
+      - run: cargo fmt --all -- --check
+      - run: cargo test -p synveil-server-bootstrap --locked
+      - run: cargo clippy -p synveil-server-bootstrap --all-targets --locked --no-deps -- -D warnings
+
+  artifact-identity:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require production PG17, server, desktop, and edge inventories
+        run: |
+          test -f acceptance/p036/production-artifacts.json
+          python3 - <<'PY'
+          import json
+          p=json.load(open('acceptance/p036/production-artifacts.json'))
+          for name in ('desktop','server','postgresql17','edge'):
+              a=p[name]
+              for key in ('version','source_revision','platform','architecture','sha256','provenance','license'):
+                  assert a[key], (name,key)
+          PY
+
+  ubuntu-host:
+    runs-on: [self-hosted, linux, x64, synveil-ubuntu-24.04-p036]
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/run-p036-native-acceptance.sh ubuntu-24.04
+
+  fedora-host:
+    runs-on: [self-hosted, linux, x64, synveil-fedora-42-p036]
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/run-p036-native-acceptance.sh fedora-42
+
+  interruption-recovery:
+    runs-on: [self-hosted, linux, x64, synveil-p036-vm-control]
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/run-p036-power-interruption.sh
+
+  guided-self-hosting-gate:
+    if: always()
+    needs: [contract-and-source, artifact-identity, ubuntu-host, fedora-host, interruption-recovery]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every Phase-E result
+        env:
+          SOURCE: ${{ needs.contract-and-source.result }}
+          ARTIFACTS: ${{ needs.artifact-identity.result }}
+          UBUNTU: ${{ needs.ubuntu-host.result }}
+          FEDORA: ${{ needs.fedora-host.result }}
+          INTERRUPTION: ${{ needs.interruption-recovery.result }}
+        run: |
+          for result in "$SOURCE" "$ARTIFACTS" "$UBUNTU" "$FEDORA" "$INTERRUPTION"; do
+            test "$result" = success
+          done

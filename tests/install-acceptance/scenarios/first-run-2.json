@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "FIRST-RUN-2",
   "title": "Host guided setup, administrator setup and first library",
-  "journey": "Local provisioning is under test; verify server readiness and first library without requiring ordinary users to configure PostgreSQL, DATABASE_URL, service units or reverse proxy; leave undecided implementation choices open.",
+  "journey": "Choose Host on an explicitly supported device, inspect preflight, choose qualified server storage and reachability, review bounded effects, prepare managed PostgreSQL 17 and Synveil services, create exactly one owner through the machine-local bootstrap boundary, explicitly authenticate, and report Server Ready only after full reinspection. No terminal is part of the ordinary journey.",
   "platform": {
     "family": "linux_generic",
     "qualified_versions": [
@@ -66,7 +66,7 @@
     {
       "id": "STEP-04",
       "action": "choose_library",
-      "description": "Choose or create the authorized library."
+      "description": "Verify the initial server-side logical Library/root created atomically with the owner; local synchronized-folder selection remains P040-owned."
     }
   ],
   "assertions": [
@@ -78,12 +78,12 @@
     {
       "id": "ASSERT-02",
       "type": "library_ready",
-      "description": "The first library is ready after administrator setup."
+      "description": "The initial server-side logical Library/root is coherent after administrator setup; this does not claim the P040 local sync-folder wizard."
     },
     {
       "id": "ASSERT-03",
       "type": "no_terminal_required",
-      "description": "Ordinary Host flow does not require manual PostgreSQL, DATABASE_URL, unit-file or reverse-proxy configuration."
+      "description": "Ordinary Host flow does not require terminal commands or manual PostgreSQL, DATABASE_URL, unit-file, reverse-proxy, certificate or firewall configuration."
     }
   ],
   "preservation_assertions": [
