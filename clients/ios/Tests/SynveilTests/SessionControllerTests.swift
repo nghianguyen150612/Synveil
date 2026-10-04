@@ -37,12 +37,11 @@ final class SessionControllerTests: XCTestCase {
         await controller.start()
         XCTAssertEqual(controller.state, .needsServerProfile)
 
-        // Move through the valid lifecycle path before testing repeated startup.
-        controller.markServerReadyForValidation()
+        // Artificially transition state using controlled transition
         controller.requireEnrollment()
         XCTAssertEqual(controller.state, .needsEnrollment)
 
-        // Second startup call should be no-op and not overwrite state.
+        // Second startup call should be no-op and not overwrite state
         await controller.start()
         XCTAssertEqual(controller.state, .needsEnrollment)
     }

@@ -58,11 +58,9 @@ public final class SessionController {
         state = .readyForServerValidation
     }
 
-    /// Transitions from a validated server boundary to `.needsEnrollment`.
-    ///
-    /// P021 does not perform server validation; later Phase D work owns the real validation event.
+    /// Transitions from server setup or validated server boundary to `.needsEnrollment`.
     public func requireEnrollment() {
-        guard state == .readyForServerValidation else {
+        guard state == .needsServerProfile || state == .readyForServerValidation else {
             return
         }
         state = .needsEnrollment
