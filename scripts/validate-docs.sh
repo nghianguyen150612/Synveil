@@ -100,6 +100,9 @@ python3 scripts/validate-server-storage-location.py || failures=$((failures + 1)
 echo "DOC-UNIT-12: checking the Prompt033 server service installation"
 python3 scripts/validate-server-service-installation.py || failures=$((failures + 1))
 
+echo "DOC-UNIT-13: checking the Prompt034 server network reachability"
+python3 scripts/validate-server-network-reachability.py || failures=$((failures + 1))
+
 if [[ "$failures" -ne 0 ]]; then
     echo "documentation validation failed: $failures issue(s)" >&2
     exit 1

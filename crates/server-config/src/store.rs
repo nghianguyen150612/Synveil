@@ -581,10 +581,10 @@ impl ServerConfigStore {
     pub fn update_network_local_private(
         &self,
         expected: ConfigFingerprint,
-        bind_address: String,
+        network: NetworkConfiguration,
     ) -> Result<ServerConfig, ConfigStoreError> {
         let mut config = self.current_for_update(expected)?;
-        config.network = NetworkConfiguration::LocalPrivate { bind_address };
+        config.network = network;
         config.generation = config
             .generation
             .checked_add(1)

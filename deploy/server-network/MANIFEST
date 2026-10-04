@@ -1,0 +1,7 @@
+# SERVER_NETWORK_INTEGRATION; independent of desktop and durable server data.
+# source destination mode owner group lifecycle
+EDGE_RUNTIME /opt/synveil/edge/RUNTIME_ID/caddy 0755 root root REPLACEABLE_PENDING_QUALIFICATION
+deploy/systemd/synveil-edge.service /usr/lib/systemd/system/synveil-edge.service 0644 root root INTEGRATION
+deploy/sysusers.d/synveil-edge.conf /usr/lib/sysusers.d/synveil-edge.conf 0644 root root INTEGRATION
+# /etc/synveil/network and public certificates are PRESERVED integration state.
+# network-ca-key and network-tls-key are SERVER_SECRET and never package files.

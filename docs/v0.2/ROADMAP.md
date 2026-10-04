@@ -6,12 +6,12 @@ Target release: `v0.2.0`. Development starts from released v0.1.0 at
 
 The north star is:
 
-**Implemented (Prompt033):** the initial Linux managed Host service foundation
-installs and supervises a separate server runtime, private PostgreSQL 17,
-canonical migration gate, API and worker under restricted system identities
-with protected credential delivery, boot persistence, resumable lifecycle,
-health verification and data-preserving repair/removal. P034–P036 still own
-reachability, first-admin bootstrap and end-to-end guided Host acceptance.
+**Implemented (Prompt034):** managed Host networking keeps the Synveil API and
+PostgreSQL private, adds explicit local/LAN/approved external reachability
+modes, HTTPS edge and canonical-origin configuration, bounded TLS trust and
+firewall ownership, durable network integration identity, and safe repair,
+without silent public exposure or a mandatory proprietary relay. P035 still
+owns first-admin bootstrap and P036 owns end-to-end guided Host acceptance.
 
 > Clean machine → installed Synveil → usable first-run experience → syncing files, with no terminal required for normal users.
 
