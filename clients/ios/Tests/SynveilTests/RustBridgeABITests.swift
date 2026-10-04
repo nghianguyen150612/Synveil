@@ -20,7 +20,10 @@ final class RustBridgeABITests: XCTestCase {
 
     func testRustBridgeUnsupportedABIVersionFromRealRust() {
         XCTAssertThrowsError(try RustBridgeAdapter(expectedABIVersion: 2)) { error in
-            guard case .unsupportedABIVersion(let expected, let actual) = error as? RustBridgeCompatibilityError else {
+            guard
+                case .unsupportedABIVersion(let expected, let actual) =
+                    error as? RustBridgeCompatibilityError
+            else {
                 XCTFail("Expected RustBridgeCompatibilityError.unsupportedABIVersion, got \(error)")
                 return
             }
