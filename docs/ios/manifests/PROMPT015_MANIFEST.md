@@ -6,7 +6,7 @@
 * **Authoritative Integration Branch**: `ios-app`
 * **Starting Integration Baseline SHA**: `859ee3778a34680408b0a5644b48d2790ce6416a`
 * **Work Branch**: `ios/p015-rust-apple-artifacts-17711133897826658520`
-* **Validated Implementation Head**: `5e450d4d8ca824e4d3fdd82f1af0e856b6568adf`
+* **Validated Implementation Head**: `e36a8471a84d17e22924aa6bf611132cb591b97d`
 * **PR**: #50 — https://github.com/nghianguyen150612/Synveil/pull/50
 * **Target PR Base**: `ios-app`
 
@@ -116,19 +116,19 @@
 
 ## 9. Native iOS & Rust Apple CI Gates Evidence
 * **macOS CI Environment**: `macos-latest` (`macos-26-arm64`), macOS `26.6.2`, Xcode `26.6`
-* **Workflow Run ID**: `37128317766`
-* **Job ID**: `111218104276`
+* **Final-Head Workflow Run ID**: `37128961107`
+* **Final-Head Job ID**: `111220020218`
 * **Uploaded Artifact Name**: `synveil-ios-rust-staticlibs`
-* **Uploaded Artifact ID**: `11275772250`
-* **Uploaded Artifact Size**: `29,524,667 bytes` (~29.5 MB)
-* **Expiration / Retention State**: 14 days (Expired: False)
+* **Uploaded Artifact ID**: `11276341434`
+* **Uploaded Artifact Size**: `29,524,669 bytes` (~29.5 MB)
+* **Expiration / Retention State**: 14 days; expired: false; expires at `2026-10-17T14:16:40Z`
 * **Device arm64 Result**: SUCCESS (`target/ios-rust-artifacts/device/arm64/libsynveil_ios_ffi.a`)
 * **Simulator arm64 Result**: SUCCESS (`target/ios-rust-artifacts/simulator/arm64/libsynveil_ios_ffi.a`)
 * **Simulator x86_64 Result**: SUCCESS (`target/ios-rust-artifacts/simulator/x86_64/libsynveil_ios_ffi.a`)
 * **Simulator Universal Result**: SUCCESS (`target/ios-rust-artifacts/simulator/universal/libsynveil_ios_ffi.a`)
-* **iOS Static Validation Gate**: SUCCESS (Run `37128317749`)
-* **iOS Build Gate**: SUCCESS (Run `37128317751`)
-* **iOS Simulator Tests Gate**: SUCCESS (Run `37128315752` / `37128317753`)
+* **Final-Head iOS Static Validation Gate**: SUCCESS (Run `37128961047`)
+* **Final-Head iOS Build Gate**: SUCCESS (Run `37128961033`)
+* **Final-Head iOS Simulator Tests Gate**: SUCCESS (Run `37128961041`)
 
 ---
 
@@ -142,5 +142,15 @@
 ## 11. Merge Status
 * **PR**: #50 — https://github.com/nghianguyen150612/Synveil/pull/50
 * **PR Base**: `ios-app`
-* **Merge Status**: READY_TO_MERGE
+* **Merge Status**: READY_FOR_FINAL_HEAD_VERIFICATION
 * **Final `ios-app` SHA**: PENDING_MERGE
+
+
+### Final-head artifact verification
+* Final-head run `37128961107` / job `111220020218` completed SUCCESS.
+* Final-head uploaded artifact `11276341434` named `synveil-ios-rust-staticlibs`, size `29,524,669` bytes, expired: false.
+* Architecture verification: device arm64 = arm64; simulator arm64 = arm64; simulator x86_64 = x86_64; simulator universal = x86_64 + arm64.
+* Symbol inspection: no intentional `synveil_ffi_*` exports exist before P016.
+* SHA256SUMS verification: all staged libraries plus manifest verified successfully.
+* Closed staged file set: exactly six files — four static libraries, `manifest.json`, and `SHA256SUMS`.
+* Evidence-only manifest correction may retrigger PR workflows because the PR as a whole changes Apple-Rust workflow paths. If rerun, all four required gates must pass on the resulting final PR head before merge.
