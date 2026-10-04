@@ -44,3 +44,13 @@ pub struct SynveilFfiBuffer {
 6. **Release Idempotence**: `synveil_ffi_buffer_release` immediately zeroes the caller's struct before dropping memory, making repeated release calls on the same zeroed struct safe.
 7. **Copied Live Struct Prohibition**: Physically copying a live `SynveilFfiBuffer` and releasing both copies is strictly prohibited.
 8. **Generic Zeroization Policy**: Buffer memory is freed via the default Rust allocator. Generic release does not guarantee cryptographic zeroization (`GENERIC_BUFFER_RELEASE_DOES_NOT_GUARANTEE_SECRET_ZEROIZATION`).
+
+---
+
+## 4. Concurrency & Thread-Safety Contract
+
+1. **RUST_ASYNC_RUNTIME = NONE**: `synveil-ios-ffi` contains no Rust async runtime (no Tokio, async-std, Reqwest, or futures). All FFI exports remain synchronous.
+2. **CALLBACK_ABI = NONE**: No function-pointer callbacks, continuations, or task handles cross the FFI boundary (`CALLBACK_ABI_NOT_SELECTED_FOR_IOS_V0_1`).
+3. **Stateless Reentrancy**: All FFI functions are reentrant, stateless, and safe for simultaneous calls from multiple caller threads.
+4. **No Global State**: The bridge maintains no global mutable state, mutexes, thread-local contexts, or global error strings.
+5. **Caller Thread Independence**: Functions operate strictly on arguments passed in and local stack/heap allocations.

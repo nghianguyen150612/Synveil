@@ -277,11 +277,19 @@ def check_file_content_invariants(rel_path_str, content):
             is_rust_bridge = (
                 len(parts) >= 4 and layer == "Infrastructure" and parts[3] == "RustBridge"
             )
+            is_test = layer == "Tests"
             if not is_rust_bridge:
                 ffi_found = imports.intersection(RAW_FFI_MODULES)
                 if ffi_found:
                     violations.append(
                         f"File '{rel_path_str}' imports raw FFI module(s) {sorted(list(ffi_found))} outside Infrastructure/RustBridge"
+                    )
+
+            # Direct synchronous RustBridgeAdapter prohibition in upper production layers (App, Domain, Application, Features)
+            if not is_rust_bridge and not is_test:
+                if re.search(r"\bRustBridgeAdapter\b", stripped_code):
+                    violations.append(
+                        f"Production file '{rel_path_str}' directly uses synchronous primitive 'RustBridgeAdapter' outside Infrastructure/RustBridge. Upper layers must use 'RustBridgeAsyncAdapter'."
                     )
 
     return violations

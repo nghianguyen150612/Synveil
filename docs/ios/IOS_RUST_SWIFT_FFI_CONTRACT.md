@@ -309,27 +309,46 @@ If stateful Rust handles are introduced in future phases:
 ### 12.1 Synchronous Core Boundary
 The v0.1 shared core logic exposed over FFI is synchronous, deterministic domain calculation.
 
-### 12.2 Prohibited Async Exports
-The FFI boundary MUST NEVER export:
-* Rust `Future` traits or Tokio tasks
-* Tokio runtime handles
-* Raw C function pointers / Swift continuations stored in Rust memory (before P019)
-
-### 12.3 Thread Execution Rules
+### 12.2 Prohibited Async Exports & Architecture Decision (P019)
+For Synveil iOS v0.1:
 ```text
-Swift UI (@MainActor)
-        │
-        │ Dispatches async Task / Actor
-        ▼
-Swift Background Thread (Cooperative Pool)
-        │
-        │ Direct synchronous FFI call
-        ▼
-synveil-ios-ffi (C ABI)
+RUST_ASYNC_RUNTIME = NONE
+CALLBACK_ABI = NONE
+CALLBACK_ABI_NOT_SELECTED_FOR_IOS_V0_1
+SWIFT_OWNS_CONCURRENCY = TRUE
 ```
 
-* Raw FFI calls MUST NOT execute directly on `@MainActor`.
-* Swift adapter handles offlining FFI calls to background cooperative threads.
+The FFI boundary MUST NEVER export:
+* Rust `Future` traits, Tokio tasks, async-std, smol, or Reqwest
+* Tokio runtime handles or global executor state
+* Callback registries, C function-pointer callback APIs, or Swift continuations stored in Rust memory
+* Polling APIs, task handles, or cancellation tokens across the FFI boundary
+
+### 12.3 Authoritative Concurrency Model (P019)
+```text
+Swift UI / Application
+        │
+        │ async/await
+        ▼
+Swift async Rust bridge (RustBridgeAsyncAdapter)
+        │
+        │ Swift-managed worker task (RustBridgeExecutor)
+        ▼
+non-MainActor cooperative executor (Task.detached worker)
+        │
+        │ bounded synchronous C call
+        ▼
+synveil-ios-ffi
+        │
+        ▼
+shared Rust core
+```
+
+* **MainActor Isolation Safety**: Application and UI callers invoke `RustBridgeAsyncAdapter` asynchronously. Raw synchronous FFI calls never execute inline on `@MainActor` and are scheduled off inherited actor context via encapsulated `RustBridgeExecutor` (`Task.detached`).
+* **Cooperative Cancellation Policy**:
+  * `SWIFT_COOPERATIVE_CANCELLATION` with `NO_MID_FFI_INTERRUPT`.
+  * Cancellation is checked before worker scheduling, inside the detached task before invoking synchronous FFI, and after worker completion.
+  * In-flight synchronous Rust calls run to completion, ensuring all Rust-owned buffers are freed normally before `CancellationError` is published to the caller.
 
 ---
 
@@ -487,5 +506,5 @@ P020 (Model Map) ◄── P019 (Async Bound) ◄── P018 (Mem Safety) ◄─
 | **P016** | **First Trivial FFI Call** | Implement `synveil_ffi_abi_version()`. Link static library in Xcode. Execute trivial Swift→Rust call in unit test. |
 | **P017** | **FFI Error Model & Panic Firewall**| Implement status envelope, error codes, and `catch_unwind` panic firewall. |
 | **P018** | **Memory Ownership & Safety** | Implement `SynveilFfiBuffer` allocation/release functions, SHA-256 parse/format capabilities, Swift `consumeRustBuffer` copy-before-release lifecycle, failure path zeroing, and repeated lifecycle stress tests. |
-| **P019** | **Async & Concurrency Boundary** | Enforce background thread dispatch policy for FFI calls. Verify non-blocking MainActor execution. |
+| **P019** | **Async & Concurrency Boundary** | Establish Swift-owned async concurrency boundary (`RustBridgeExecutor` using encapsulated `Task.detached`, `RustBridgeAsyncAdapter`), MainActor isolation safety, cooperative cancellation without mid-FFI interrupt, multi-thread Rust stress proof, and Simulator concurrency/cancellation test suite. |
 | **P020** | **Shared Model Mapping** | Implement token parsing, hash calculation, and sync feed evaluation FFI signatures. Introduce Swift `RustBridgeProtocol`. |

@@ -155,6 +155,38 @@ class TestValidateIOSSources(unittest.TestCase):
         content_comment = '// SynveilRustFFI module is restricted to RustBridge\nlet doc = "SynveilRustFFI import"'
         self.assertEqual(check_file_content_invariants(rel_comment, content_comment), [])
 
+    def test_sync_rust_bridge_adapter_prohibition_in_upper_layers(self):
+        # Prohibited in App layer
+        rel_app = "clients/ios/App/SynveilApp.swift"
+        content_app = "import SwiftUI\n\nlet syncAdapter = try RustBridgeAdapter()"
+        violations_app = check_file_content_invariants(rel_app, content_app)
+        self.assertTrue(
+            any("directly uses synchronous primitive 'RustBridgeAdapter'" in v for v in violations_app)
+        )
+
+        # Prohibited in Domain layer
+        rel_domain = "clients/ios/Domain/Services/SHA256Service.swift"
+        content_domain = "import Foundation\n\nfunc parse(a: RustBridgeAdapter)"
+        violations_domain = check_file_content_invariants(rel_domain, content_domain)
+        self.assertTrue(
+            any("directly uses synchronous primitive 'RustBridgeAdapter'" in v for v in violations_domain)
+        )
+
+        # Allowed in Tests layer
+        rel_test = "clients/ios/Tests/SynveilTests/RustBridgeABITests.swift"
+        content_test = "import XCTest\n@testable import Synveil\n\nlet adapter = try RustBridgeAdapter()"
+        self.assertEqual(check_file_content_invariants(rel_test, content_test), [])
+
+        # Allowed in Infrastructure/RustBridge
+        rel_bridge = "clients/ios/Infrastructure/RustBridge/RustBridgeAsyncAdapter.swift"
+        content_bridge = "import Foundation\n\nprivate let syncAdapter: RustBridgeAdapter"
+        self.assertEqual(check_file_content_invariants(rel_bridge, content_bridge), [])
+
+        # RustBridgeAsyncAdapter is not falsely rejected in upper layers
+        rel_app_async = "clients/ios/App/SynveilApp.swift"
+        content_app_async = "import SwiftUI\n\nlet asyncAdapter = try await RustBridgeAsyncAdapter()"
+        self.assertEqual(check_file_content_invariants(rel_app_async, content_app_async), [])
+
     def test_conflict_markers(self):
         rel_path = "clients/ios/App/SynveilApp.swift"
         content = "<<<<<<< HEAD\nimport SwiftUI\n=======\nimport UIKit\n>>>>>>> branch"

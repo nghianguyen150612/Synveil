@@ -109,6 +109,26 @@ def validate_artifact_bundle(staging_dir: str) -> None:
             f"Invalid ffi_memory_model: expected 'P018_RUST_OWNED_BUFFER', got {manifest.get('ffi_memory_model')}"
         )
 
+    if manifest.get("ffi_concurrency_model") != "P019_SWIFT_MANAGED_SYNC_RUST":
+        raise ValueError(
+            f"Invalid ffi_concurrency_model: expected 'P019_SWIFT_MANAGED_SYNC_RUST', got {manifest.get('ffi_concurrency_model')}"
+        )
+
+    if manifest.get("rust_async_runtime") != "NONE":
+        raise ValueError(
+            f"Invalid rust_async_runtime: expected 'NONE', got {manifest.get('rust_async_runtime')}"
+        )
+
+    if manifest.get("callback_abi") != "NONE":
+        raise ValueError(
+            f"Invalid callback_abi: expected 'NONE', got {manifest.get('callback_abi')}"
+        )
+
+    if manifest.get("cancellation_model") != "P019_SWIFT_COOPERATIVE_NO_MID_FFI_INTERRUPT":
+        raise ValueError(
+            f"Invalid cancellation_model: expected 'P019_SWIFT_COOPERATIVE_NO_MID_FFI_INTERRUPT', got {manifest.get('cancellation_model')}"
+        )
+
     if manifest.get("header_status") != "GENERATED_CBINDGEN_P017":
         raise ValueError(
             f"Invalid header_status: expected 'GENERATED_CBINDGEN_P017', got {manifest.get('header_status')}"
