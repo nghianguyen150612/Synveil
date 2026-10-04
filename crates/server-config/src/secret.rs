@@ -9,6 +9,8 @@ pub enum CredentialId {
     DatabaseUrl,
     DatabasePassword,
     RebaselineTokenKey,
+    NetworkCaKey,
+    NetworkTlsKey,
 }
 
 impl CredentialId {
@@ -18,6 +20,8 @@ impl CredentialId {
             Self::DatabaseUrl => "database-url",
             Self::DatabasePassword => "database-password",
             Self::RebaselineTokenKey => "rebaseline-token-key",
+            Self::NetworkCaKey => "network-ca-key",
+            Self::NetworkTlsKey => "network-tls-key",
         }
     }
 }
@@ -41,6 +45,8 @@ impl<'de> serde::Deserialize<'de> for CredentialId {
             "database-url" => Ok(Self::DatabaseUrl),
             "database-password" => Ok(Self::DatabasePassword),
             "rebaseline-token-key" => Ok(Self::RebaselineTokenKey),
+            "network-ca-key" => Ok(Self::NetworkCaKey),
+            "network-tls-key" => Ok(Self::NetworkTlsKey),
             _ => Err(serde::de::Error::custom("unsupported credential reference")),
         }
     }

@@ -17,9 +17,10 @@ pub use synveil_object_store::{
 pub use model::{
     ConfigFingerprint, ConfigValidationError, DatabaseConfiguration, DatabaseCredentialState,
     DatabaseEndpoint, DatabaseMode, DatabaseOwnership, DependencyRuntimeIdentity,
-    DeploymentProfile, MAX_SERVER_CONFIG_BYTES, ManagedDatabaseDataRoot, NetworkConfiguration,
-    SERVER_CONFIG_SCHEMA_VERSION, ServerConfig, StorageConfiguration, StorageId,
-    StorageRootIdentity,
+    DeploymentProfile, EdgeListener, FirewallManager, FirewallState, MAX_SERVER_CONFIG_BYTES,
+    ManagedDatabaseDataRoot, NetworkConfiguration, NetworkIntegration, NetworkIntegrationId,
+    NetworkTrust, ReachabilityMode, SERVER_CONFIG_SCHEMA_VERSION, ServerConfig,
+    StorageConfiguration, StorageId, StorageRootIdentity,
 };
 pub use secret::{
     CredentialId, ExternalDatabaseCredential, ExternalDatabaseCredentialError,

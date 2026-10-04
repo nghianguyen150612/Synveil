@@ -28,11 +28,10 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         RuntimeServerConfiguration::Managed(config) => Some(config),
         RuntimeServerConfiguration::LegacyOperator => None,
     };
-    let bind_address: SocketAddr = if let Some(config) = managed_config {
-        match &config.network {
-            NetworkConfiguration::NotConfigured => "127.0.0.1:3000".parse()?,
-            NetworkConfiguration::LocalPrivate { bind_address } => bind_address.parse()?,
-        }
+    let bind_address: SocketAddr = if managed_config.is_some() {
+        // The managed HTTPS edge is the only client-facing listener. Never
+        // copy its address into Axum's backend bind.
+        "127.0.0.1:3000".parse()?
     } else {
         env::var("SYNVEIL_BIND_ADDR")
             .unwrap_or_else(|_| "127.0.0.1:3000".to_owned())
@@ -42,9 +41,11 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let trash_retention_policy = TrashRetentionPolicy::from_env()?;
     let mut state =
         ApiState::from_current_platform().with_trash_retention_policy(trash_retention_policy);
-    if managed_config.is_none()
-        && let Ok(origin) = env::var("SYNVEIL_PUBLIC_ORIGIN")
-    {
+    if let Some(config) = managed_config {
+        if let NetworkConfiguration::Configured(network) = &config.network {
+            state = state.with_allowed_origin(network.canonical_origin.trim_end_matches('/'));
+        }
+    } else if let Ok(origin) = env::var("SYNVEIL_PUBLIC_ORIGIN") {
         state = state.with_allowed_origin(origin);
     }
 
