@@ -48,18 +48,33 @@ public final class SessionController {
         state = .needsServerProfile
     }
 
-    /// Transitions root state to `.readyForServerValidation`.
+    /// Transitions from server setup to `.readyForServerValidation`.
+    ///
+    /// Invalid source states are ignored so future integration cannot bypass root lifecycle gates.
     public func markServerReadyForValidation() {
+        guard state == .needsServerProfile else {
+            return
+        }
         state = .readyForServerValidation
     }
 
-    /// Transitions root state to `.needsEnrollment`.
+    /// Transitions from a validated server boundary to `.needsEnrollment`.
+    ///
+    /// P021 does not perform server validation; later Phase D work owns the real validation event.
     public func requireEnrollment() {
+        guard state == .readyForServerValidation else {
+            return
+        }
         state = .needsEnrollment
     }
 
-    /// Transitions root state to `.authenticated`.
+    /// Transitions from enrollment-required state to `.authenticated`.
+    ///
+    /// Authentication cannot be entered directly from recovery or unrelated root states.
     public func markAuthenticated() {
+        guard state == .needsEnrollment else {
+            return
+        }
         state = .authenticated
     }
 
