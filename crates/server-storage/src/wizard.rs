@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg(target_os = "linux")]
 use fs2::FileExt as _;
 use synveil_server_config::{
     ConfigFingerprint, ConfigInspection, ConfigStoreError, ServerConfig, ServerConfigStore,
@@ -1442,6 +1443,7 @@ fn create_managed_root_with_identity(
     Ok(created)
 }
 
+#[cfg(target_os = "linux")]
 fn create_exact_directory(path: &Path, candidate: &CandidatePath) -> Result<(), StorageSetupError> {
     let parent = path.parent().ok_or(StorageSetupError::InvalidLocation)?;
     let directory = open_directory_no_follow(parent)?;
@@ -1453,34 +1455,37 @@ fn create_exact_directory(path: &Path, candidate: &CandidatePath) -> Result<(), 
     {
         return Err(StorageSetupError::IdentityConflict);
     }
-    #[cfg(target_os = "linux")]
-    {
-        use std::{ffi::CString, os::fd::AsRawFd, os::unix::ffi::OsStrExt};
-        let leaf = CString::new(
-            path.file_name()
-                .ok_or(StorageSetupError::InvalidLocation)?
-                .as_bytes(),
-        )
-        .map_err(|_| StorageSetupError::InvalidLocation)?;
-        // SAFETY: The directory fd is open with O_DIRECTORY|O_NOFOLLOW, the
-        // leaf contains no NUL, and mkdirat creates only this single child.
-        let result = unsafe { libc::mkdirat(directory.as_raw_fd(), leaf.as_ptr(), 0o700) };
-        if result != 0 {
-            let error = std::io::Error::last_os_error();
-            return Err(if error.kind() == std::io::ErrorKind::AlreadyExists {
-                StorageSetupError::StalePlan
-            } else if error.kind() == std::io::ErrorKind::PermissionDenied {
-                StorageSetupError::PermissionUnsafe
-            } else {
-                StorageSetupError::StorageUnavailable
-            });
-        }
+    use std::{ffi::CString, os::fd::AsRawFd, os::unix::ffi::OsStrExt};
+    let leaf = CString::new(
+        path.file_name()
+            .ok_or(StorageSetupError::InvalidLocation)?
+            .as_bytes(),
+    )
+    .map_err(|_| StorageSetupError::InvalidLocation)?;
+    // SAFETY: The directory fd is open with O_DIRECTORY|O_NOFOLLOW, the
+    // leaf contains no NUL, and mkdirat creates only this single child.
+    let result = unsafe { libc::mkdirat(directory.as_raw_fd(), leaf.as_ptr(), 0o700) };
+    if result != 0 {
+        let error = std::io::Error::last_os_error();
+        return Err(if error.kind() == std::io::ErrorKind::AlreadyExists {
+            StorageSetupError::StalePlan
+        } else if error.kind() == std::io::ErrorKind::PermissionDenied {
+            StorageSetupError::PermissionUnsafe
+        } else {
+            StorageSetupError::StorageUnavailable
+        });
     }
-    #[cfg(not(target_os = "linux"))]
-    return Err(StorageSetupError::UnsupportedPlatform);
     directory
         .sync_all()
         .map_err(|_| StorageSetupError::OutcomeUnknown)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn create_exact_directory(
+    _path: &Path,
+    _candidate: &CandidatePath,
+) -> Result<(), StorageSetupError> {
+    Err(StorageSetupError::UnsupportedPlatform)
 }
 
 fn open_directory_no_follow(path: &Path) -> Result<File, StorageSetupError> {

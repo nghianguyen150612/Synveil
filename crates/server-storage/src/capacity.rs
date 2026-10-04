@@ -53,10 +53,12 @@ pub(super) fn inspect_capacity(path: &Path) -> Result<CapacityReport, CapacityEr
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
 pub(super) fn checked_bytes(blocks: u64, fragment_size: u64) -> Option<u64> {
     blocks.checked_mul(fragment_size)
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn to_u64(value: impl TryInto<u64>) -> Option<u64> {
     value.try_into().ok()
 }

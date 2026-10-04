@@ -307,6 +307,7 @@ fn is_linux_mount_point(_path: &Path) -> bool {
     false
 }
 
+#[cfg(target_os = "linux")]
 fn unescape_mount_path(value: &str) -> PathBuf {
     PathBuf::from(
         value

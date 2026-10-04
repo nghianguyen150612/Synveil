@@ -1476,7 +1476,7 @@ fn expected_synveil_gid() -> Option<u32> {
         .map(|group| group.gid.as_raw())
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(not(target_os = "linux"), unix))]
 fn expected_synveil_gid() -> Option<u32> {
     None
 }
