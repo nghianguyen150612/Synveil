@@ -5,10 +5,7 @@
 - **Goal**: Establish the Application service boundary via `RustBridgeProtocol`, map shared Rust core primitive models (EnrollmentSecret, DeviceCredentialSecret, LibraryId, NodeId, LogicalName) to C ABI validation exports, preserve SHA256 mapping, maintain strict secrecy/redaction, and complete Phase C Rust↔Swift FFI Foundation closure.
 - **Starting Branch**: `ios-app`
 - **Starting SHA**: `e6c379f7172da83e469a14af35ada754e0167d12`
-- **Work Branch**: `ios/p020-shared-model-mapping-10343842740365488705`
-- **Validated Executable Head**: `36d55f00c44ed2a04f0757f508365690bcc7aeb1`
-- **PR**: #63 — https://github.com/nghianguyen150612/Synveil/pull/63
-- **PR Base**: `ios-app`
+- **Work Branch**: `ios/p020-shared-model-mapping`
 
 ## 2. ABI & Export Set Summary
 - **ABI Version**: `1` (`SYNVEIL_FFI_ABI_VERSION = 1`)
@@ -73,25 +70,3 @@
 Phase C establishes a stable C ABI, Apple static libraries, generated C header, Xcode linking, panic firewall, status model, memory ownership, Swift-owned concurrency, raw FFI isolation, Application protocol boundary, and primitive model mapping.
 
 P021 status: `NOT_STARTED`.
-
-
----
-
-## 10. Merge-Review Test Hardening
-Before final merge verification, the P020 test matrix was hardened without changing the production ABI or semantics:
-
-- Added explicit non-hex enrollment-token rejection at the FFI boundary.
-- Added malformed and nil NodeId rejection coverage.
-- Added exact multibyte 1024-byte LogicalName acceptance coverage.
-- Added matching Simulator protocol-existential coverage for token wrong-length / uppercase / non-hex cases, LibraryId and NodeId malformed cases, NodeId nil, and exact multibyte 1024-byte LogicalName behavior.
-- Corrected XCTest async assertions so every `await` completes before entering `XCTAssert*` autoclosures; this fixes the Xcode test-target compile failure discovered during final merge review.
-
-## 11. Evidence Discipline
-This is the final Prompt020 manifest correction. Final-head workflow run IDs, artifact metadata, Simulator totals, and merge evidence will be recorded in the PR discussion after CI completes. No further evidence-only manifest commit should be created.
-
-## 12. PR / Merge State
-- **PR**: #63 — https://github.com/nghianguyen150612/Synveil/pull/63
-- **PR Base**: `ios-app`
-- **Merge State at this manifest commit**: awaiting final-head verification
-- **P021 Status**: `NOT_STARTED`
-- **Final `ios-app` SHA**: assigned by GitHub at squash merge and recorded in PR merge metadata

@@ -53,7 +53,8 @@ public struct RustBridgeAsyncAdapter: RustBridgeProtocol, Sendable {
 
     // MARK: - Validation Primitive Operations
 
-    /// Asynchronously validates whether a token matches the canonical enrollment secret format (`sve1_<64 hex chars>`).
+    /// Asynchronously validates whether a token matches the canonical enrollment secret
+    /// format (`sve1_<64 hex chars>`).
     public func validateEnrollmentToken(_ token: String) async throws -> Bool {
         let adapter = self.syncAdapter
         return try await RustBridgeExecutor.run {
@@ -61,7 +62,8 @@ public struct RustBridgeAsyncAdapter: RustBridgeProtocol, Sendable {
         }
     }
 
-    /// Asynchronously validates whether a token matches the canonical device bearer credential format (`svd1_<64 hex chars>`).
+    /// Asynchronously validates whether a token matches the canonical device bearer
+    /// credential format (`svd1_<64 hex chars>`).
     public func validateDeviceBearerToken(_ token: String) async throws -> Bool {
         let adapter = self.syncAdapter
         return try await RustBridgeExecutor.run {
@@ -69,7 +71,8 @@ public struct RustBridgeAsyncAdapter: RustBridgeProtocol, Sendable {
         }
     }
 
-    /// Asynchronously validates whether a string matches a canonical lowercase hyphenated UUIDv7 LibraryId.
+    /// Asynchronously validates whether a string matches a canonical lowercase
+    /// hyphenated UUIDv7 LibraryId.
     public func validateLibraryID(_ value: String) async throws -> Bool {
         let adapter = self.syncAdapter
         return try await RustBridgeExecutor.run {
@@ -77,7 +80,8 @@ public struct RustBridgeAsyncAdapter: RustBridgeProtocol, Sendable {
         }
     }
 
-    /// Asynchronously validates whether a string matches a canonical lowercase hyphenated UUIDv7 NodeId.
+    /// Asynchronously validates whether a string matches a canonical lowercase
+    /// hyphenated UUIDv7 NodeId.
     public func validateNodeID(_ value: String) async throws -> Bool {
         let adapter = self.syncAdapter
         return try await RustBridgeExecutor.run {
@@ -85,7 +89,8 @@ public struct RustBridgeAsyncAdapter: RustBridgeProtocol, Sendable {
         }
     }
 
-    /// Asynchronously validates whether a string is a valid non-empty LogicalName (<= 1024 UTF-8 bytes).
+    /// Asynchronously validates whether a string is a valid non-empty LogicalName
+    /// (<= 1024 UTF-8 bytes).
     public func validateLogicalName(_ value: String) async throws -> Bool {
         let adapter = self.syncAdapter
         return try await RustBridgeExecutor.run {

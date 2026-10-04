@@ -77,19 +77,18 @@ final class RustBridgeProtocolTests: XCTestCase {
         let isInvalidEnrollment = try await bridge.validateEnrollmentToken(invalidEnrollmentPrefix)
         XCTAssertFalse(isInvalidEnrollment)
 
-        let wrongLengthEnrollment = "sve1_" + String(repeating: "a1", count: 31)
-        let isWrongLengthEnrollmentValid =
-            try await bridge.validateEnrollmentToken(wrongLengthEnrollment)
-        XCTAssertFalse(isWrongLengthEnrollmentValid)
+        let wrongLengthEnrollment = "sve1_1234"
+        let isWrongLenEnrollmentValid = try await bridge.validateEnrollmentToken(
+            wrongLengthEnrollment)
+        XCTAssertFalse(isWrongLenEnrollmentValid)
 
         let uppercaseEnrollment = validEnrollment.uppercased()
-        let isUppercaseEnrollmentValid =
-            try await bridge.validateEnrollmentToken(uppercaseEnrollment)
+        let isUppercaseEnrollmentValid = try await bridge.validateEnrollmentToken(
+            uppercaseEnrollment)
         XCTAssertFalse(isUppercaseEnrollmentValid)
 
         let nonHexEnrollment = "sve1_" + String(repeating: "g1", count: 32)
-        let isNonHexEnrollmentValid =
-            try await bridge.validateEnrollmentToken(nonHexEnrollment)
+        let isNonHexEnrollmentValid = try await bridge.validateEnrollmentToken(nonHexEnrollment)
         XCTAssertFalse(isNonHexEnrollmentValid)
 
         // 2. Device bearer token validation
@@ -109,33 +108,38 @@ final class RustBridgeProtocolTests: XCTestCase {
         XCTAssertTrue(isValidNodeID)
 
         let uppercaseUUID = validUUIDv7.uppercased()
-        let isUppercaseLibraryIDValid = try await bridge.validateLibraryID(uppercaseUUID)
-        XCTAssertFalse(isUppercaseLibraryIDValid)
+        let isUppercaseLibValid = try await bridge.validateLibraryID(uppercaseUUID)
+        XCTAssertFalse(isUppercaseLibValid)
 
         let uuidV4 = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
-        let isV4LibraryIDValid = try await bridge.validateLibraryID(uuidV4)
-        let isV4NodeIDValid = try await bridge.validateNodeID(uuidV4)
-        XCTAssertFalse(isV4LibraryIDValid)
-        XCTAssertFalse(isV4NodeIDValid)
+        let isV4LibValid = try await bridge.validateLibraryID(uuidV4)
+        XCTAssertFalse(isV4LibValid)
+
+        let isV4NodeValid = try await bridge.validateNodeID(uuidV4)
+        XCTAssertFalse(isV4NodeValid)
 
         let malformedUUID = "not-a-uuid"
-        let isMalformedLibraryIDValid = try await bridge.validateLibraryID(malformedUUID)
-        let isMalformedNodeIDValid = try await bridge.validateNodeID(malformedUUID)
-        XCTAssertFalse(isMalformedLibraryIDValid)
-        XCTAssertFalse(isMalformedNodeIDValid)
+        let isMalformedLibValid = try await bridge.validateLibraryID(malformedUUID)
+        XCTAssertFalse(isMalformedLibValid)
+
+        let isMalformedNodeValid = try await bridge.validateNodeID(malformedUUID)
+        XCTAssertFalse(isMalformedNodeValid)
 
         let nilUUID = "00000000-0000-0000-0000-000000000000"
-        let isNilNodeIDValid = try await bridge.validateNodeID(nilUUID)
-        XCTAssertFalse(isNilNodeIDValid)
+        let isNilNodeValid = try await bridge.validateNodeID(nilUUID)
+        XCTAssertFalse(isNilNodeValid)
 
         // 4. LogicalName Validation
-        let isSimpleNameValid = try await bridge.validateLogicalName("hello.txt")
-        let isSlashNameValid = try await bridge.validateLogicalName("A/B")
-        let isUnicodeNameValid = try await bridge.validateLogicalName("synveil_🚀_doc.pdf")
+        let isHelloValid = try await bridge.validateLogicalName("hello.txt")
+        XCTAssertTrue(isHelloValid)
+
+        let isSlashValid = try await bridge.validateLogicalName("A/B")
+        XCTAssertTrue(isSlashValid)
+
+        let isUnicodeDocValid = try await bridge.validateLogicalName("synveil_🚀_doc.pdf")
+        XCTAssertTrue(isUnicodeDocValid)
+
         let isEmptyNameValid = try await bridge.validateLogicalName("")
-        XCTAssertTrue(isSimpleNameValid)
-        XCTAssertTrue(isSlashNameValid)
-        XCTAssertTrue(isUnicodeNameValid)
         XCTAssertFalse(isEmptyNameValid)
 
         let maxName = String(repeating: "a", count: 1024)
@@ -151,6 +155,7 @@ final class RustBridgeProtocolTests: XCTestCase {
         let isUnicodeExactValid = try await bridge.validateLogicalName(unicodeExact)
         XCTAssertTrue(isUnicodeExactValid)
 
+        // Multibyte Unicode boundary: 1023 'a's + 4-byte emoji = 1027 bytes -> false
         let unicodeOver = String(repeating: "a", count: 1023) + "🚀"
         XCTAssertEqual(unicodeOver.utf8.count, 1027)
         let isUnicodeOverValid = try await bridge.validateLogicalName(unicodeOver)
