@@ -18,10 +18,12 @@
 		A10000012C00000000000016 /* HTTPTransportRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000016 /* HTTPTransportRequest.swift */; };
 		A10000012C00000000000017 /* HTTPTransportResponse.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000017 /* HTTPTransportResponse.swift */; };
 		A10000012C00000000000018 /* HTTPTransportProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000018 /* HTTPTransportProtocol.swift */; };
+		A10000012C00000000000019 /* RustBridgeAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000019 /* RustBridgeAdapter.swift */; };
 		B10000012C00000000000001 /* SynveilBootstrapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000001 /* SynveilBootstrapTests.swift */; };
 		B10000012C00000000000011 /* ServerEndpointTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000011 /* ServerEndpointTests.swift */; };
 		B10000012C00000000000012 /* AppConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000012 /* AppConfigurationTests.swift */; };
 		B10000012C00000000000013 /* HTTPTransportContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000013 /* HTTPTransportContractTests.swift */; };
+		B10000012C00000000000014 /* RustBridgeABITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000014 /* RustBridgeABITests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -47,10 +49,12 @@
 		A20000012C00000000000016 /* HTTPTransportRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Transport/HTTPTransportRequest.swift; sourceTree = "<group>"; };
 		A20000012C00000000000017 /* HTTPTransportResponse.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Transport/HTTPTransportResponse.swift; sourceTree = "<group>"; };
 		A20000012C00000000000018 /* HTTPTransportProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Transport/HTTPTransportProtocol.swift; sourceTree = "<group>"; };
+		A20000012C00000000000019 /* RustBridgeAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/RustBridge/RustBridgeAdapter.swift; sourceTree = "<group>"; };
 		B20000012C00000000000001 /* SynveilBootstrapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SynveilBootstrapTests.swift; sourceTree = "<group>"; };
 		B20000012C00000000000011 /* ServerEndpointTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/ServerEndpointTests.swift; sourceTree = "<group>"; };
 		B20000012C00000000000012 /* AppConfigurationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/AppConfigurationTests.swift; sourceTree = "<group>"; };
 		B20000012C00000000000013 /* HTTPTransportContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/HTTPTransportContractTests.swift; sourceTree = "<group>"; };
+		B20000012C00000000000014 /* RustBridgeABITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RustBridgeABITests.swift; sourceTree = "<group>"; };
 		B20000012C00000000000002 /* SynveilTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SynveilTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -78,6 +82,7 @@
 				A40000012C00000000000002 /* App */,
 				A40000012C00000000000011 /* Domain */,
 				A40000012C00000000000012 /* Application */,
+				A40000012C00000000000013 /* Infrastructure */,
 				A40000012C00000000000003 /* Resources */,
 				B40000012C00000000000001 /* Tests */,
 				A40000012C00000000000004 /* Products */,
@@ -115,6 +120,22 @@
 			name = Application;
 			sourceTree = "<group>";
 		};
+		A40000012C00000000000013 /* Infrastructure */ = {
+			isa = PBXGroup;
+			children = (
+				A40000012C00000000000014 /* RustBridge */,
+			);
+			name = Infrastructure;
+			sourceTree = "<group>";
+		};
+		A40000012C00000000000014 /* RustBridge */ = {
+			isa = PBXGroup;
+			children = (
+				A20000012C00000000000019 /* RustBridgeAdapter.swift */,
+			);
+			name = RustBridge;
+			sourceTree = "<group>";
+		};
 		A40000012C00000000000003 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
@@ -147,6 +168,7 @@
 				B20000012C00000000000011 /* ServerEndpointTests.swift */,
 				B20000012C00000000000012 /* AppConfigurationTests.swift */,
 				B20000012C00000000000013 /* HTTPTransportContractTests.swift */,
+				B20000012C00000000000014 /* RustBridgeABITests.swift */,
 			);
 			name = SynveilTests;
 			sourceTree = "<group>";
@@ -252,6 +274,7 @@
 				A10000012C00000000000016 /* HTTPTransportRequest.swift in Sources */,
 				A10000012C00000000000017 /* HTTPTransportResponse.swift in Sources */,
 				A10000012C00000000000018 /* HTTPTransportProtocol.swift in Sources */,
+				A10000012C00000000000019 /* RustBridgeAdapter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -263,6 +286,7 @@
 				B10000012C00000000000011 /* ServerEndpointTests.swift in Sources */,
 				B10000012C00000000000012 /* AppConfigurationTests.swift in Sources */,
 				B10000012C00000000000013 /* HTTPTransportContractTests.swift in Sources */,
+				B10000012C00000000000014 /* RustBridgeABITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -402,6 +426,10 @@
 				CODE_SIGNING_REQUIRED = NO;
 				CODE_SIGN_IDENTITY = "";
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Infrastructure/RustBridge/Generated",
+				);
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -411,9 +439,26 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../../target/ios-rust-artifacts/device/arm64",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../../target/ios-rust-artifacts/simulator/universal",
+					"$(SRCROOT)/../../target/ios-rust-artifacts/simulator/arm64",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lsynveil_ios_ffi",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.synveil.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Infrastructure/RustBridge/Raw",
+				);
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -428,6 +473,10 @@
 				CODE_SIGNING_REQUIRED = NO;
 				CODE_SIGN_IDENTITY = "";
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Infrastructure/RustBridge/Generated",
+				);
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -437,9 +486,26 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../../target/ios-rust-artifacts/device/arm64",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../../target/ios-rust-artifacts/simulator/universal",
+					"$(SRCROOT)/../../target/ios-rust-artifacts/simulator/arm64",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lsynveil_ios_ffi",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.synveil.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Infrastructure/RustBridge/Raw",
+				);
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -453,15 +519,36 @@
 				CODE_SIGNING_REQUIRED = NO;
 				CODE_SIGN_IDENTITY = "";
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Infrastructure/RustBridge/Generated",
+				);
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../../target/ios-rust-artifacts/device/arm64",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../../target/ios-rust-artifacts/simulator/universal",
+					"$(SRCROOT)/../../target/ios-rust-artifacts/simulator/arm64",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lsynveil_ios_ffi",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.synveil.ios.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Infrastructure/RustBridge/Raw",
+				);
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Synveil.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Synveil";
@@ -476,15 +563,36 @@
 				CODE_SIGNING_REQUIRED = NO;
 				CODE_SIGN_IDENTITY = "";
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Infrastructure/RustBridge/Generated",
+				);
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../../target/ios-rust-artifacts/device/arm64",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../../target/ios-rust-artifacts/simulator/universal",
+					"$(SRCROOT)/../../target/ios-rust-artifacts/simulator/arm64",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lsynveil_ios_ffi",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.synveil.ios.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Infrastructure/RustBridge/Raw",
+				);
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Synveil.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Synveil";

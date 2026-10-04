@@ -1,0 +1,4 @@
+module SynveilRustFFI {
+    header "../Generated/synveil_ios_ffi.h"
+    export *
+}

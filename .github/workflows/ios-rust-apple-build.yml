@@ -10,7 +10,9 @@ on:
       - "rust-toolchain.toml"
       - "scripts/check-ios-rust.sh"
       - "scripts/build-ios-rust-artifacts.sh"
+      - "scripts/generate-ios-rust-header.sh"
       - "scripts/validate_ios_rust_artifact.py"
+      - "clients/ios/Infrastructure/RustBridge/Generated/synveil_ios_ffi.h"
       - ".github/workflows/ios-rust-apple-build.yml"
   pull_request:
     paths:
@@ -21,7 +23,9 @@ on:
       - "rust-toolchain.toml"
       - "scripts/check-ios-rust.sh"
       - "scripts/build-ios-rust-artifacts.sh"
+      - "scripts/generate-ios-rust-header.sh"
       - "scripts/validate_ios_rust_artifact.py"
+      - "clients/ios/Infrastructure/RustBridge/Generated/synveil_ios_ffi.h"
       - ".github/workflows/ios-rust-apple-build.yml"
   workflow_dispatch:
 
@@ -57,6 +61,11 @@ jobs:
         run: |
           chmod +x scripts/check-ios-rust.sh
           ./scripts/check-ios-rust.sh
+
+      - name: Verify C Header Alignment against Rust Exports
+        run: |
+          chmod +x scripts/generate-ios-rust-header.sh
+          ./scripts/generate-ios-rust-header.sh --check
 
       - name: Build & Stage iOS Rust Apple Release Artifacts
         run: |

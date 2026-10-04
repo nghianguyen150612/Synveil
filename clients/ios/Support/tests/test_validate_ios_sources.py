@@ -121,18 +121,39 @@ class TestValidateIOSSources(unittest.TestCase):
         self.assertEqual(check_file_content_invariants(rel_app, content_app), [])
 
     def test_rust_ffi_boundary(self):
-        # Allowed in RustBridge
-        rel_bridge = "clients/ios/Infrastructure/RustBridge/RustAdapter.swift"
-        content_bridge = "import Foundation\nimport SynveilCoreFFI"
+        # Allowed in RustBridge (SynveilRustFFI)
+        rel_bridge = "clients/ios/Infrastructure/RustBridge/RustBridgeAdapter.swift"
+        content_bridge = "import Foundation\nimport SynveilRustFFI\n\nfunc check() { _ = synveil_ffi_abi_version() }"
         self.assertEqual(check_file_content_invariants(rel_bridge, content_bridge), [])
+
+        # Forbidden in Domain
+        rel_domain = "clients/ios/Domain/Configuration/ServerEndpoint.swift"
+        content_domain = "import Foundation\nimport SynveilRustFFI"
+        violations_domain = check_file_content_invariants(rel_domain, content_domain)
+        self.assertTrue(
+            any("imports raw FFI module(s)" in v for v in violations_domain)
+        )
+
+        # Forbidden in Application
+        rel_app = "clients/ios/Application/Configuration/AppOrchestrator.swift"
+        content_app = "import Foundation\nimport SynveilRustFFI"
+        violations_app = check_file_content_invariants(rel_app, content_app)
+        self.assertTrue(
+            any("imports raw FFI module(s)" in v for v in violations_app)
+        )
 
         # Forbidden in Features
         rel_feature = "clients/ios/Features/FileBrowser/FileView.swift"
-        content_feature = "import SwiftUI\nimport SynveilCoreFFI"
-        violations = check_file_content_invariants(rel_feature, content_feature)
+        content_feature = "import SwiftUI\nimport SynveilRustFFI"
+        violations_feature = check_file_content_invariants(rel_feature, content_feature)
         self.assertTrue(
-            any("directly imports raw FFI module(s)" in v for v in violations)
+            any("imports raw FFI module(s)" in v for v in violations_feature)
         )
+
+        # Comments/strings mentioning SynveilRustFFI do not cause false positives
+        rel_comment = "clients/ios/Domain/Configuration/ServerEndpoint.swift"
+        content_comment = '// SynveilRustFFI module is restricted to RustBridge\nlet doc = "SynveilRustFFI import"'
+        self.assertEqual(check_file_content_invariants(rel_comment, content_comment), [])
 
     def test_conflict_markers(self):
         rel_path = "clients/ios/App/SynveilApp.swift"

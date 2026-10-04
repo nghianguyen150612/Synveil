@@ -22,11 +22,13 @@ class TestValidateIosRustArtifact(unittest.TestCase):
     def test_valid_bundle_without_x86_64(self):
         self._create_mock_file("device/arm64/libsynveil_ios_ffi.a", b"dev_arm64")
         self._create_mock_file("simulator/arm64/libsynveil_ios_ffi.a", b"sim_arm64")
+        self._create_mock_file("include/synveil_ios_ffi.h", b"/* header */")
 
         # Create SHA256SUMS
         import hashlib
         h_dev = hashlib.sha256(b"dev_arm64").hexdigest()
         h_sim = hashlib.sha256(b"sim_arm64").hexdigest()
+        h_hdr = hashlib.sha256(b"/* header */").hexdigest()
 
         manifest = {
             "schema_version": 1,
@@ -37,6 +39,10 @@ class TestValidateIosRustArtifact(unittest.TestCase):
             "rust_toolchain_version": "rustc 1.94.0",
             "cargo_version": "cargo 1.94.0",
             "source_commit_sha": "abc1234",
+            "c_abi_export_status": "ABI_VERSION_ONLY_P016",
+            "c_abi_exports": ["synveil_ffi_abi_version"],
+            "cbindgen_status": "ACTIVE_P016",
+            "header_status": "GENERATED_CBINDGEN_P016",
             "variants": [
                 {
                     "relative_path": "device/arm64/libsynveil_ios_ffi.a",
@@ -62,7 +68,7 @@ class TestValidateIosRustArtifact(unittest.TestCase):
         self._create_mock_file("manifest.json", manifest_bytes)
         h_man = hashlib.sha256(manifest_bytes).hexdigest()
 
-        sums_content = f"{h_dev}  device/arm64/libsynveil_ios_ffi.a\n{h_sim}  simulator/arm64/libsynveil_ios_ffi.a\n{h_man}  manifest.json\n"
+        sums_content = f"{h_dev}  device/arm64/libsynveil_ios_ffi.a\n{h_hdr}  include/synveil_ios_ffi.h\n{h_sim}  simulator/arm64/libsynveil_ios_ffi.a\n{h_man}  manifest.json\n"
         self._create_mock_file("SHA256SUMS", sums_content.encode("utf-8"))
 
         # Should pass validation
@@ -77,6 +83,9 @@ class TestValidateIosRustArtifact(unittest.TestCase):
             "schema_version": 1,
             "package_name": "synveil-ios-ffi",
             "artifact_profile": "release",
+            "c_abi_export_status": "ABI_VERSION_ONLY_P016",
+            "c_abi_exports": ["synveil_ffi_abi_version"],
+            "header_status": "GENERATED_CBINDGEN_P016",
             "variants": [{"relative_path": "device/arm64/libsynveil_ios_ffi.a", "size_bytes": 9}],
         }
         import json
