@@ -5,7 +5,10 @@
 - **Goal**: Implement and prove the Rust↔Swift memory ownership contract for borrowed Swift inputs, Rust-owned output buffers (`SynveilFfiBuffer`), explicit release (`synveil_ffi_buffer_release`), failure-path zeroing, repeated lifecycle safety, and SHA-256 parse/format integration.
 - **Starting Integration Branch**: `ios-app`
 - **Starting SHA**: `4e7cb65269a6950aea1238ff779e2665c669de19`
-- **Work Branch**: `ios/p018-ffi-memory-safety`
+- **Work Branch**: `ios/p018-ffi-memory-safety-8211833278037048778`
+- **Validated Implementation Head**: `40c8765e0e1e370ac8fd1a88a8e326c6e7b30817`
+- **PR**: #55 — https://github.com/nghianguyen150612/Synveil/pull/55
+- **PR Base**: `ios-app`
 - **Authoritative Files Inspected**:
   - `docs/ios/IOS_RUST_SWIFT_FFI_CONTRACT.md`
   - `docs/ios/manifests/PROMPT017_MANIFEST.md`
@@ -109,3 +112,23 @@ synveil_ffi_validate_abi_version
 - `scripts/validate_ios_rust_artifact.py`
 - `scripts/tests/test_validate_ios_rust_artifact.py`
 - `docs/ios/IOS_RUST_SWIFT_FFI_CONTRACT.md`
+
+
+---
+
+## 7. Review Hardening Applied Before Merge
+The implementation was additionally hardened during merge review:
+
+- Removed `Clone` / `Copy` from `SynveilFfiBuffer` so Rust code cannot trivially duplicate a live ownership token.
+- Tightened release-shape validation so a non-null buffer with `len == 0` is rejected rather than reconstructed/freed.
+- Added a regression test for the malformed non-null zero-length shape.
+- This preserves the ABI while better matching the documented rule that only canonical empty (`NULL/0/0`) or a live non-empty Rust-owned buffer is valid.
+
+## 8. Evidence Discipline
+This is the final manifest metadata correction for Prompt018. If this documentation-only commit retriggers CI, final-head workflow/artifact evidence will be recorded in the PR discussion rather than by another manifest commit.
+
+## 9. PR / Merge State
+- **PR**: #55 — https://github.com/nghianguyen150612/Synveil/pull/55
+- **PR Base**: `ios-app`
+- **Merge State at this manifest commit**: awaiting final-head verification
+- **Final `ios-app` SHA**: assigned by GitHub at squash merge and recorded in PR merge metadata
