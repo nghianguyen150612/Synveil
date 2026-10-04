@@ -10,6 +10,8 @@
 		A10000012C00000000000001 /* SynveilApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000001 /* SynveilApp.swift */; };
 		A10000012C00000000000002 /* BootstrapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000002 /* BootstrapView.swift */; };
 		A10000012C00000000000003 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000003 /* Assets.xcassets */; };
+		A10000012C00000000000004 /* AppDependencyContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000005 /* AppDependencyContainer.swift */; };
+		A10000012C00000000000005 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000006 /* RootView.swift */; };
 		A10000012C00000000000011 /* EndpointValidationError.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000011 /* EndpointValidationError.swift */; };
 		A10000012C00000000000012 /* ServerEndpoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000012 /* ServerEndpoint.swift */; };
 		A10000012C00000000000013 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000013 /* AppEnvironment.swift */; };
@@ -24,6 +26,8 @@
 		A10000012C0000000000001C /* RustBridgeExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000001C /* RustBridgeExecutor.swift */; };
 		A10000012C0000000000001D /* RustBridgeAsyncAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000001D /* RustBridgeAsyncAdapter.swift */; };
 		A10000012C0000000000001E /* RustBridgeProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000001E /* RustBridgeProtocol.swift */; };
+		A10000012C0000000000001F /* AppStartupState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000001F /* AppStartupState.swift */; };
+		A10000012C00000000000020 /* SessionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000020 /* SessionController.swift */; };
 		B10000012C00000000000001 /* SynveilBootstrapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000001 /* SynveilBootstrapTests.swift */; };
 		B10000012C00000000000011 /* ServerEndpointTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000011 /* ServerEndpointTests.swift */; };
 		B10000012C00000000000012 /* AppConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000012 /* AppConfigurationTests.swift */; };
@@ -33,6 +37,8 @@
 		B10000012C00000000000016 /* RustBridgeMemoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000016 /* RustBridgeMemoryTests.swift */; };
 		B10000012C00000000000017 /* RustBridgeConcurrencyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000017 /* RustBridgeConcurrencyTests.swift */; };
 		B10000012C00000000000018 /* RustBridgeProtocolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000018 /* RustBridgeProtocolTests.swift */; };
+		B10000012C00000000000019 /* SessionControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000019 /* SessionControllerTests.swift */; };
+		B10000012C0000000000001A /* RootViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000001A /* RootViewTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -50,6 +56,8 @@
 		A20000012C00000000000002 /* BootstrapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/BootstrapView.swift; sourceTree = "<group>"; };
 		A20000012C00000000000003 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Resources/Assets.xcassets; sourceTree = "<group>"; };
 		A20000012C00000000000004 /* Synveil.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Synveil.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000012C00000000000005 /* AppDependencyContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/AppDependencyContainer.swift; sourceTree = "<group>"; };
+		A20000012C00000000000006 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/RootView.swift; sourceTree = "<group>"; };
 		A20000012C00000000000011 /* EndpointValidationError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Configuration/EndpointValidationError.swift; sourceTree = "<group>"; };
 		A20000012C00000000000012 /* ServerEndpoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Configuration/ServerEndpoint.swift; sourceTree = "<group>"; };
 		A20000012C00000000000013 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Configuration/AppEnvironment.swift; sourceTree = "<group>"; };
@@ -64,6 +72,8 @@
 		A20000012C0000000000001C /* RustBridgeExecutor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/RustBridge/RustBridgeExecutor.swift; sourceTree = "<group>"; };
 		A20000012C0000000000001D /* RustBridgeAsyncAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/RustBridge/RustBridgeAsyncAdapter.swift; sourceTree = "<group>"; };
 		A20000012C0000000000001E /* RustBridgeProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Services/RustBridgeProtocol.swift; sourceTree = "<group>"; };
+		A20000012C0000000000001F /* AppStartupState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Session/AppStartupState.swift; sourceTree = "<group>"; };
+		A20000012C00000000000020 /* SessionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Session/SessionController.swift; sourceTree = "<group>"; };
 		B20000012C00000000000001 /* SynveilBootstrapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SynveilBootstrapTests.swift; sourceTree = "<group>"; };
 		B20000012C00000000000011 /* ServerEndpointTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/ServerEndpointTests.swift; sourceTree = "<group>"; };
 		B20000012C00000000000012 /* AppConfigurationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/AppConfigurationTests.swift; sourceTree = "<group>"; };
@@ -73,7 +83,9 @@
 		B20000012C00000000000016 /* RustBridgeMemoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RustBridgeMemoryTests.swift; sourceTree = "<group>"; };
 		B20000012C00000000000017 /* RustBridgeConcurrencyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RustBridgeConcurrencyTests.swift; sourceTree = "<group>"; };
 		B20000012C00000000000018 /* RustBridgeProtocolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RustBridgeProtocolTests.swift; sourceTree = "<group>"; };
-		B20000012C00000000000002 /* SynveilTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SynveilTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B20000012C00000000000019 /* SessionControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SessionControllerTests.swift; sourceTree = "<group>"; };
+		B20000012C0000000000001A /* RootViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RootViewTests.swift; sourceTree = "<group>"; };
+		B20000012C00000000000002 /* SynveilTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SynveilTests.xctest; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -112,6 +124,8 @@
 			children = (
 				A20000012C00000000000001 /* SynveilApp.swift */,
 				A20000012C00000000000002 /* BootstrapView.swift */,
+				A20000012C00000000000005 /* AppDependencyContainer.swift */,
+				A20000012C00000000000006 /* RootView.swift */,
 			);
 			name = App;
 			sourceTree = "<group>";
@@ -134,6 +148,8 @@
 			children = (
 				A20000012C00000000000013 /* AppEnvironment.swift */,
 				A20000012C00000000000014 /* AppConfiguration.swift */,
+				A20000012C0000000000001F /* AppStartupState.swift */,
+				A20000012C00000000000020 /* SessionController.swift */,
 				A20000012C0000000000001E /* RustBridgeProtocol.swift */,
 			);
 			name = Application;
@@ -196,6 +212,8 @@
 				B20000012C00000000000016 /* RustBridgeMemoryTests.swift */,
 				B20000012C00000000000017 /* RustBridgeConcurrencyTests.swift */,
 				B20000012C00000000000018 /* RustBridgeProtocolTests.swift */,
+				B20000012C00000000000019 /* SessionControllerTests.swift */,
+				B20000012C0000000000001A /* RootViewTests.swift */,
 			);
 			name = SynveilTests;
 			sourceTree = "<group>";
@@ -293,6 +311,8 @@
 			files = (
 				A10000012C00000000000001 /* SynveilApp.swift in Sources */,
 				A10000012C00000000000002 /* BootstrapView.swift in Sources */,
+				A10000012C00000000000004 /* AppDependencyContainer.swift in Sources */,
+				A10000012C00000000000005 /* RootView.swift in Sources */,
 				A10000012C00000000000011 /* EndpointValidationError.swift in Sources */,
 				A10000012C00000000000012 /* ServerEndpoint.swift in Sources */,
 				A10000012C00000000000013 /* AppEnvironment.swift in Sources */,
@@ -307,6 +327,8 @@
 				A10000012C0000000000001C /* RustBridgeExecutor.swift in Sources */,
 				A10000012C0000000000001D /* RustBridgeAsyncAdapter.swift in Sources */,
 				A10000012C0000000000001E /* RustBridgeProtocol.swift in Sources */,
+				A10000012C0000000000001F /* AppStartupState.swift in Sources */,
+				A10000012C00000000000020 /* SessionController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -323,6 +345,8 @@
 				B10000012C00000000000016 /* RustBridgeMemoryTests.swift in Sources */,
 				B10000012C00000000000017 /* RustBridgeConcurrencyTests.swift in Sources */,
 				B10000012C00000000000018 /* RustBridgeProtocolTests.swift in Sources */,
+				B10000012C00000000000019 /* SessionControllerTests.swift in Sources */,
+				B10000012C0000000000001A /* RootViewTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
