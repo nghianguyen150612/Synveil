@@ -43,9 +43,10 @@ impl fmt::Display for RuntimeServerConfigurationError {
 
 impl std::error::Error for RuntimeServerConfigurationError {}
 
-/// Select one configuration authority. The production default is fixed at
-/// `/etc/synveil/server-config.json`; an override is explicit and absolute.
-/// No current-directory or directory-scanning discovery is performed.
+/// Select one configuration authority. Linux production defaults to the fixed
+/// `/etc/synveil/server-config.json` path. Other platforms remain in explicit
+/// legacy operator mode unless an absolute override is supplied. No
+/// current-directory or directory-scanning discovery is performed.
 pub fn server_configuration_from_runtime()
 -> Result<RuntimeServerConfiguration, RuntimeServerConfigurationError> {
     let override_path = env::var_os(SERVER_CONFIG_FILE_ENV);
@@ -61,14 +62,34 @@ pub fn server_configuration_from_runtime()
         let root = path
             .parent()
             .ok_or(RuntimeServerConfigurationError::InvalidConfigurationPath)?;
-        let layout = LinuxConfigLayout::at_managed_root(root.to_path_buf())
+        let layout = explicit_runtime_layout(root.to_path_buf())
             .map_err(|_| RuntimeServerConfigurationError::InvalidConfigurationPath)?;
         (ServerConfigStore::new(layout), true)
     } else {
-        (ServerConfigStore::managed_linux(), false)
+        #[cfg(target_os = "linux")]
+        {
+            (ServerConfigStore::managed_linux(), false)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            return Ok(RuntimeServerConfiguration::LegacyOperator);
+        }
     };
 
     select_server_configuration(&store, required)
+}
+
+fn explicit_runtime_layout(
+    root: PathBuf,
+) -> Result<LinuxConfigLayout, synveil_server_config::ConfigStoreError> {
+    #[cfg(target_os = "linux")]
+    {
+        LinuxConfigLayout::at_managed_root(root)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        LinuxConfigLayout::at_root(root)
+    }
 }
 
 fn select_server_configuration(

@@ -63,7 +63,8 @@ require("rebaseline runtime rejects file plus environment", "AmbiguousConfigurat
 require("API and worker share the protected database runtime source", api_source.count("database_config_from_runtime()") >= 1 and worker_source.count("database_config_from_runtime()") >= 1)
 require("API uses the protected rebaseline source", "rebaseline_key_from_runtime()" in api_source)
 require("managed config selection is explicit and does not scan CWD", "SYNVEIL_SERVER_CONFIG_FILE" in selector and "LegacyOperator" in selector and "current-directory" in selector)
-require("explicit managed path overrides retain production ownership checks", "at_managed_root" in selector)
+require("Linux managed path overrides retain production ownership checks", "at_managed_root" in selector and '#[cfg(target_os = "linux")]' in selector)
+require("Linux-only default keeps non-Linux operator mode portable", '#[cfg(target_os = "linux")]' in selector and 'return Ok(RuntimeServerConfiguration::LegacyOperator)' in selector)
 require("mixed managed and legacy sources fail closed", "AmbiguousAuthority" in selector and "has_legacy_configuration_inputs" in selector)
 require("runtime credential tests serialize shared environment changes", "runtime_test_support::environment_lock" in db_loader and "runtime_test_support::environment_lock" in key_loader and "runtime_test_support::environment_lock" in selector)
 

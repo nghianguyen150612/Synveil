@@ -300,15 +300,20 @@ impl ServerConfig {
                 return Err(ConfigValidationError::InvalidDatabaseIdentity);
             }
         }
-        if let Some(endpoint) = &self.database.endpoint {
-            if !valid_endpoint_host(&endpoint.host) || endpoint.port == 0 {
-                return Err(ConfigValidationError::InvalidDatabaseEndpoint);
-            }
+        if self
+            .database
+            .endpoint
+            .as_ref()
+            .is_some_and(|endpoint| !valid_endpoint_host(&endpoint.host) || endpoint.port == 0)
+        {
+            return Err(ConfigValidationError::InvalidDatabaseEndpoint);
         }
-        if let StorageConfiguration::ConfiguredLocal { root } = &self.storage {
-            if !structurally_safe_absolute_path(root) {
-                return Err(ConfigValidationError::InvalidStoragePath);
-            }
+        if matches!(
+            &self.storage,
+            StorageConfiguration::ConfiguredLocal { root }
+                if !structurally_safe_absolute_path(root)
+        ) {
+            return Err(ConfigValidationError::InvalidStoragePath);
         }
         if let NetworkConfiguration::LocalPrivate { bind_address } = &self.network {
             let Ok(address) = bind_address.parse::<SocketAddr>() else {

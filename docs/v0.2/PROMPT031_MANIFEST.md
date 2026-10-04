@@ -112,6 +112,29 @@ Passed:
   `IMPLEMENTATION_PENDING`
 - `git diff --check`
 
+The first hosted PR validation found two P031 regressions: strict Clippy
+rejected the new large inspection value and nested conditions, and macOS
+operator-mode startup incorrectly probed the Linux `/etc` layout (a symlink on
+macOS). Follow-up changes boxed the inspected config, simplified validation,
+made Linux path discovery platform-specific, and made the shared test
+environment lock recover safely from a poisoned mutex. After those changes,
+these focused checks passed:
+
+- `cargo fmt --all -- --check`
+- `CARGO_BUILD_JOBS=1 cargo clippy -p synveil-server-config --all-targets --locked -- -D warnings`
+- `CARGO_BUILD_JOBS=1 cargo clippy -p synveil-api --all-targets --locked -- -D warnings`
+- `CARGO_BUILD_JOBS=1 cargo test -p synveil-server-config --locked` — 25/25
+- `CARGO_BUILD_JOBS=1 cargo test -p synveil-api --lib --locked` — 118/118
+
+Other failures in the first hosted run were outside P031: the dependency gate
+flagged `quick-xml 0.38.4`, which is already in the starting `Cargo.lock`; the
+Windows workspace check failed in unchanged `crates/client/src/launch.rs` at
+`BackgroundClientAvailability::UnsafeState`; the Linux Qt job could not create
+`/usr/src/synveil`; and the Windows candidate job invoked Git's Unix `link.exe`
+instead of the Visual Studio linker. These do not establish Windows
+managed-Host acceptance. Hosted checks are re-evaluated on the follow-up
+commit.
+
 `CARGO_BUILD_JOBS=1 cargo test -p synveil-metadata --locked` returned 101
 because the unrelated P113 `release_artifact_units::artifact_unit_7` shell
 probe reads `RUSTFLAGS` after its sourced helper unsets that variable under

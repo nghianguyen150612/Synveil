@@ -27,13 +27,15 @@ restart and repair. It is local setup evidence, not a public server or TLS
 identity. Missing configuration with existing or ambiguous server evidence
 requires reconciliation; it does not mint a replacement ID.
 
-Unknown future schema versions fail closed and are left untouched. The runtime
-selector uses the fixed production path. `SYNVEIL_SERVER_CONFIG_FILE` is an
-explicit absolute override for development, tests, or administration; it does
-not search the working directory or scan other locations. If the canonical
-managed file is absent, current documented legacy operator configuration can
-still be used. Once managed configuration is present, conflicting legacy
-inputs fail as ambiguous.
+Unknown future schema versions fail closed and are left untouched. Linux uses
+the fixed production path. `SYNVEIL_SERVER_CONFIG_FILE` is an explicit
+absolute override for development, tests, or administration; the selector
+does not search the working directory or scan other locations. Other
+platforms do not probe the Linux `/etc` path by default and retain explicit
+legacy operator mode unless an override is supplied. If the canonical managed
+file is absent, current documented legacy operator configuration can still be
+used. Once managed configuration is present, conflicting legacy inputs fail
+as ambiguous.
 
 ## PostgreSQL profiles
 

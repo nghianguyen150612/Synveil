@@ -41,10 +41,10 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let trash_retention_policy = TrashRetentionPolicy::from_env()?;
     let mut state =
         ApiState::from_current_platform().with_trash_retention_policy(trash_retention_policy);
-    if managed_config.is_none() {
-        if let Ok(origin) = env::var("SYNVEIL_PUBLIC_ORIGIN") {
-            state = state.with_allowed_origin(origin);
-        }
+    if managed_config.is_none()
+        && let Ok(origin) = env::var("SYNVEIL_PUBLIC_ORIGIN")
+    {
+        state = state.with_allowed_origin(origin);
     }
 
     let development_mode = env::var("SYNVEIL_ENV")

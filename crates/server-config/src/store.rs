@@ -94,7 +94,7 @@ pub enum InitializeResult {
 pub enum ConfigInspection {
     Absent,
     ValidCurrent {
-        config: ServerConfig,
+        config: Box<ServerConfig>,
         fingerprint: ConfigFingerprint,
     },
     UnsupportedSchema,
@@ -244,7 +244,7 @@ impl ServerConfigStore {
             ConfigInspection::ValidCurrent {
                 config,
                 fingerprint,
-            } => Ok(Some((config, fingerprint))),
+            } => Ok(Some((*config, fingerprint))),
             ConfigInspection::Absent => Ok(None),
             problem => Err(problem),
         }
@@ -330,7 +330,7 @@ impl ServerConfigStore {
         let fingerprint = ConfigFingerprint::from_canonical_bytes(&canonical);
         match self.validate_required_secrets(&config) {
             Ok(()) => ConfigInspection::ValidCurrent {
-                config,
+                config: Box::new(config),
                 fingerprint,
             },
             Err(ConfigInspection::SecretMissing { id }) => ConfigInspection::SecretMissing { id },
@@ -375,7 +375,7 @@ impl ServerConfigStore {
                         ConfigInspection::IdentityConflict,
                     ));
                 }
-                return Ok(InitializeResult::Reused(config));
+                return Ok(InitializeResult::Reused(*config));
             }
             ConfigInspection::Absent => {}
             other => return Err(ConfigStoreError::NeedsRepair(other)),
@@ -400,7 +400,7 @@ impl ServerConfigStore {
             ConfigInspection::ValidCurrent { config, .. }
                 if config.deployment_profile == request.deployment_profile =>
             {
-                return Ok(InitializeResult::Reused(config));
+                return Ok(InitializeResult::Reused(*config));
             }
             problem => return Err(ConfigStoreError::NeedsRepair(problem)),
         }
@@ -542,7 +542,7 @@ impl ServerConfigStore {
             ConfigInspection::ValidCurrent {
                 config,
                 fingerprint,
-            } if fingerprint == expected => Ok(config),
+            } if fingerprint == expected => Ok(*config),
             ConfigInspection::ValidCurrent { .. } => Err(ConfigStoreError::ConcurrentModification),
             problem => Err(ConfigStoreError::NeedsRepair(problem)),
         }
@@ -905,7 +905,7 @@ impl ServerConfigStore {
             Err(_) => return ConfigInspection::Malformed,
         };
         ConfigInspection::ValidCurrent {
-            config,
+            config: Box::new(config),
             fingerprint: ConfigFingerprint::from_canonical_bytes(&canonical),
         }
     }
