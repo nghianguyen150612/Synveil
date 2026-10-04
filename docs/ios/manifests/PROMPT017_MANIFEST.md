@@ -6,7 +6,10 @@
 - **Goal**: Implement stable FFI status/error model, reusable Rust panic firewall (`ffi_status_boundary`), Swift status decoder and error mapper, minimal fallible bridge C ABI call (`synveil_ffi_validate_abi_version`), real Simulator error tests, and updated artifact validation/headers.
 - **Starting Integration Branch**: `ios-app`
 - **Starting SHA**: `f9947a2491cad26bc1d3a5eb2fd3125d50cc672d`
-- **Work Branch**: `ios/p017-ffi-error-model`
+- **Work Branch**: `ios/p017-ffi-error-model-6468962480144082762`
+- **Validated Implementation Head**: `2c78df6ba55917bcf1ad92efdd26a1fd64d60acd`
+- **PR**: #53 — https://github.com/nghianguyen150612/Synveil/pull/53
+- **PR Base**: `ios-app`
 - **Authoritative Files Inspected**:
   - `docs/ios/IOS_RUST_SWIFT_FFI_CONTRACT.md`
   - `docs/ios/manifests/PROMPT013_MANIFEST.md`
@@ -87,3 +90,32 @@
 - Buffer allocation/release (`SynveilFfiBuffer`, `synveil_ffi_buffer_release`) remains strictly deferred to P018.
 - Concurrency scheduling / async Task offloading remains deferred to P019.
 - Domain model mapping (hashes, tokens, sync feeds) remains deferred to P020.
+
+
+## 8. Implementation-Head CI & Artifact Evidence
+Validated implementation head: `2c78df6ba55917bcf1ad92efdd26a1fd64d60acd`.
+
+- **iOS Rust Apple Build**: run `37174680907` — SUCCESS
+  - Job: `111354736022` — `Rust Apple Target Build`
+  - Artifact: `synveil-ios-rust-staticlibs`
+  - Artifact ID: `11293175492`
+  - Size: `29,526,689` bytes
+  - Expired: false
+  - Expires: `2026-10-18T03:45:21Z`
+- **iOS Static Validation**: run `37174680889` — SUCCESS
+- **iOS Build**: run `37174680882` — SUCCESS
+- **iOS Simulator Tests**: run `37174680879` — SUCCESS
+  - Simulator: iPhone 17 Pro
+  - Runtime: iOS Simulator 26.5
+  - Architecture: arm64
+  - Full test suite: 33 tests, 0 failures
+  - P017 tests compile and execute as part of `SynveilTests`, including real Rust-backed ABI compatibility error paths described in Section 5.
+
+### Evidence discipline
+This is the final manifest metadata correction. If this documentation-only commit retriggers PR workflows, final-head workflow evidence will be recorded in the PR discussion rather than by another manifest commit, avoiding an evidence-commit/concurrency loop.
+
+## 9. PR / Merge State
+- **PR**: #53 — https://github.com/nghianguyen150612/Synveil/pull/53
+- **PR Base**: `ios-app`
+- **Merge State at this manifest commit**: awaiting final-head verification
+- **Final `ios-app` SHA**: assigned by GitHub at squash merge and recorded in PR merge metadata
