@@ -24,6 +24,10 @@ mod rebaseline_snapshot;
 mod request_id;
 mod router;
 mod runtime_database_credential;
+mod runtime_rebaseline_credential;
+mod runtime_server_configuration;
+#[cfg(test)]
+mod runtime_test_support;
 mod state;
 mod sync;
 mod telemetry;
@@ -65,7 +69,17 @@ pub use router::{
 pub use runtime_database_credential::{
     CREDENTIAL_FILE_ENV, CREDENTIAL_ID, CREDENTIALS_DIRECTORY_ENV, MAX_CREDENTIAL_FILE_SIZE,
     RuntimeDatabaseCredentialError, credential_file_path_from_env, database_config_from_runtime,
-    load_database_url_from_runtime_source,
+    database_credential_source_configured, load_database_url_from_runtime_source,
+};
+pub use runtime_rebaseline_credential::{
+    MAX_REBASELINE_KEY_FILE_BYTES, REBASELINE_CREDENTIAL_FILE_ENV, REBASELINE_CREDENTIAL_ID,
+    RuntimeRebaselineCredentialError,
+    credential_file_path_from_env as rebaseline_credential_file_path_from_env,
+    rebaseline_key_from_runtime,
+};
+pub use runtime_server_configuration::{
+    RuntimeServerConfiguration, RuntimeServerConfigurationError, SERVER_CONFIG_FILE_ENV,
+    server_configuration_from_runtime,
 };
 pub use state::{
     ApiState, DenySystemHealth, PlatformReadiness, ReadinessProbe, ReadinessSnapshot,

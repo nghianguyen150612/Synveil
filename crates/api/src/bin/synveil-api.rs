@@ -1,12 +1,17 @@
-use std::{env, error::Error, io, net::SocketAddr, sync::Arc};
+use std::{env, error::Error, net::SocketAddr, sync::Arc};
 
-use synveil_api::{ApiState, CookieConfig, RebaselineTokenKey, init_tracing, router};
+use synveil_api::{
+    ApiState, CookieConfig, RuntimeServerConfiguration, database_config_from_runtime,
+    database_credential_source_configured, init_tracing, rebaseline_key_from_runtime, router,
+    server_configuration_from_runtime,
+};
 use synveil_auth::{PasswordHasherConfig, SessionConfig};
 use synveil_core::TrashRetentionPolicy;
 use synveil_metadata::{
-    ContentReadMetadataBackend, DatabaseConfig, DatabasePool, MigrationRunner,
-    PostgresContentReadRepository, PostgresUploadRepository, UploadMetadataBackend,
+    ContentReadMetadataBackend, DatabasePool, MigrationRunner, PostgresContentReadRepository,
+    PostgresUploadRepository, UploadMetadataBackend,
 };
+use synveil_server_config::{NetworkConfiguration, StorageConfiguration};
 use synveil_storage::{
     ContentReadApplicationService, ObjectStore, UploadApplicationService, UploadLimits,
     open_local_object_store,
@@ -17,16 +22,29 @@ use tokio::net::TcpListener;
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     init_tracing()?;
 
-    let bind_address =
-        env::var("SYNVEIL_BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:3000".to_owned());
-    let bind_address: SocketAddr = bind_address.parse()?;
-    let listener = TcpListener::bind(bind_address).await?;
+    let server_configuration = server_configuration_from_runtime()?;
+    let managed_config = match &server_configuration {
+        RuntimeServerConfiguration::Managed(config) => Some(config),
+        RuntimeServerConfiguration::LegacyOperator => None,
+    };
+    let bind_address: SocketAddr = if let Some(config) = managed_config {
+        match &config.network {
+            NetworkConfiguration::NotConfigured => "127.0.0.1:3000".parse()?,
+            NetworkConfiguration::LocalPrivate { bind_address } => bind_address.parse()?,
+        }
+    } else {
+        env::var("SYNVEIL_BIND_ADDR")
+            .unwrap_or_else(|_| "127.0.0.1:3000".to_owned())
+            .parse()?
+    };
 
     let trash_retention_policy = TrashRetentionPolicy::from_env()?;
     let mut state =
         ApiState::from_current_platform().with_trash_retention_policy(trash_retention_policy);
-    if let Ok(origin) = env::var("SYNVEIL_PUBLIC_ORIGIN") {
-        state = state.with_allowed_origin(origin);
+    if managed_config.is_none() {
+        if let Ok(origin) = env::var("SYNVEIL_PUBLIC_ORIGIN") {
+            state = state.with_allowed_origin(origin);
+        }
     }
 
     let development_mode = env::var("SYNVEIL_ENV")
@@ -40,15 +58,10 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         tracing::warn!("insecure development cookies enabled explicitly");
     }
 
-    if env::var_os("DATABASE_URL").is_some() {
-        let rebaseline_token_key = env::var("SYNVEIL_REBASELINE_TOKEN_KEY").map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "SYNVEIL_REBASELINE_TOKEN_KEY is required with DATABASE_URL",
-            )
-        })?;
-        let rebaseline_token_key = RebaselineTokenKey::from_hex(&rebaseline_token_key)?;
-        let database_config = DatabaseConfig::from_env()?;
+    let database_configured = managed_config.is_some() || database_credential_source_configured();
+    if database_configured {
+        let rebaseline_token_key = rebaseline_key_from_runtime()?;
+        let database_config = database_config_from_runtime()?;
         let pool = DatabasePool::connect(&database_config).await?;
         MigrationRunner::new().run(&pool).await?;
         let pool = Arc::new(pool);
@@ -60,7 +73,12 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         );
         tracing::info!("PostgreSQL authentication backend configured");
 
-        if let Ok(object_root) = env::var("SYNVEIL_OBJECT_ROOT") {
+        let object_root = match managed_config.map(|config| &config.storage) {
+            Some(StorageConfiguration::NotConfigured) => None,
+            Some(StorageConfiguration::ConfiguredLocal { root }) => Some(root.clone()),
+            None => env::var("SYNVEIL_OBJECT_ROOT").ok(),
+        };
+        if let Some(object_root) = object_root {
             let metadata: Arc<dyn UploadMetadataBackend> =
                 Arc::new(PostgresUploadRepository::new(pool.as_ref().clone()));
             let object_store: Arc<dyn ObjectStore> =
@@ -84,10 +102,13 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
     } else {
         tracing::warn!(
-            "DATABASE_URL is not configured; HTTP authentication backend is unavailable"
+            "database credential is not configured; HTTP authentication backend is unavailable"
         );
     }
 
+    // Bind only after configuration, required secrets, dependency settings,
+    // migrations and the selected object-store adapter have been validated.
+    let listener = TcpListener::bind(bind_address).await?;
     tracing::info!(address = %listener.local_addr()?, "Synveil API listening");
     axum::serve(listener, router(state)).await?;
     Ok(())

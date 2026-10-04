@@ -14,6 +14,7 @@ subtle.workspace = true
 sqlx.workspace = true
 time.workspace = true
 uuid.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true

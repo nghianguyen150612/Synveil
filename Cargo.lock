@@ -2770,6 +2770,7 @@ dependencies = [
  "futures-util",
  "hmac",
  "http-body-util",
+ "libc",
  "reqwest",
  "serde",
  "serde_json",
@@ -2782,13 +2783,16 @@ dependencies = [
  "synveil-core",
  "synveil-metadata",
  "synveil-platform",
+ "synveil-server-config",
  "synveil-storage",
+ "tempfile",
  "tokio",
  "tower",
  "tower-http",
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -2910,6 +2914,7 @@ dependencies = [
  "time",
  "tokio",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -2932,6 +2937,24 @@ dependencies = [
  "keyring",
  "synveil-core",
  "synveil-object-store",
+ "zeroize",
+]
+
+[[package]]
+name = "synveil-server-config"
+version = "0.1.0"
+dependencies = [
+ "fs2",
+ "getrandom 0.4.3",
+ "libc",
+ "nix",
+ "serde",
+ "serde_json",
+ "sha2",
+ "synveil-metadata",
+ "tempfile",
+ "url",
+ "uuid",
  "zeroize",
 ]
 

@@ -7,9 +7,13 @@
 
 use std::{env, error::Error, io, sync::Arc};
 
-use synveil_api::init_tracing;
+use synveil_api::{
+    RuntimeServerConfiguration, database_config_from_runtime, init_tracing,
+    server_configuration_from_runtime,
+};
 use synveil_core::{GcWorkerConfig, ObjectGcPolicy};
-use synveil_metadata::{DatabaseConfig, DatabasePool, MigrationRunner};
+use synveil_metadata::{DatabasePool, MigrationRunner};
+use synveil_server_config::StorageConfiguration;
 use synveil_storage::{GcWorker, ObjectStore, open_local_object_store};
 use tokio::{sync::watch, time::timeout};
 
@@ -23,14 +27,29 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         return Ok(());
     }
 
-    let database_config = DatabaseConfig::from_env()?;
+    let server_configuration = server_configuration_from_runtime()?;
+    let managed_config = match &server_configuration {
+        RuntimeServerConfiguration::Managed(config) => Some(config),
+        RuntimeServerConfiguration::LegacyOperator => None,
+    };
+    let database_config = database_config_from_runtime()?;
     let policy = ObjectGcPolicy::from_env()?;
-    let object_root = env::var("SYNVEIL_OBJECT_ROOT").map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "SYNVEIL_OBJECT_ROOT is required when the GC worker is enabled",
-        )
-    })?;
+    let object_root = match managed_config.map(|config| &config.storage) {
+        Some(StorageConfiguration::ConfiguredLocal { root }) => root.clone(),
+        Some(StorageConfiguration::NotConfigured) => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "managed server storage is not configured",
+            )
+            .into());
+        }
+        None => env::var("SYNVEIL_OBJECT_ROOT").map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "SYNVEIL_OBJECT_ROOT is required when the GC worker is enabled",
+            )
+        })?,
+    };
     let pool = DatabasePool::connect(&database_config).await?;
     MigrationRunner::new().run(&pool).await?;
     let object_store: Arc<dyn ObjectStore> = Arc::new(open_local_object_store(object_root)?);

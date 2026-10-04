@@ -1363,3 +1363,23 @@ the recovery path never deletes or overwrites a stored secret merely because a
 read failed. Client launch recovery remains inside the existing bounded
 manager, and `OutcomeUnknown` always refreshes instead of replaying. See
 [`ADR-048`](../adr/ADR-048-production-desktop-recovery-and-resilience-ux.md).
+
+## Managed server configuration and secret ownership (Prompt031)
+
+The managed Host path has one non-secret JSON authority at
+`/etc/synveil/server-config.json`; database URLs, generated database passwords,
+and the rebaseline key live only as protected files under
+`/etc/synveil/credentials`. The config is `root:synveil 0640`; the credential
+source directory and files are `root:root 0700` and `root:root 0600`. Runtime
+services read the config without write access and receive source credentials
+later through ADR-025 `LoadCredential=` delivery. API and worker share one
+bounded database credential policy, and the rebaseline-key loader follows the
+same file-versus-environment ambiguity rule. Secret wrappers redact `Debug`,
+`Display`, and expected validation errors; diagnostics use only non-secret
+canonical config fingerprints. See
+[`MANAGED_SERVER_CONFIGURATION.md`](../v0.2/MANAGED_SERVER_CONFIGURATION.md)
+and [ADR-061](../adr/ADR-061-v0.2-managed-server-configuration.md).
+
+The implemented filesystem checks use disposable roots. They do not claim
+physical `/etc` ownership verification, power-loss testing, service delivery,
+or completed managed Host acceptance; P032–P036 remain open.

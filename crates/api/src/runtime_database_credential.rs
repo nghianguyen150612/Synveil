@@ -11,10 +11,12 @@
 
 use std::{
     env, fs,
+    io::Read,
     path::{Path, PathBuf},
 };
 
 use synveil_metadata::{DatabaseConfig, DatabaseConfigError};
+use zeroize::Zeroizing;
 
 /// Env var that points at the delivered credential file via `Environment=%d/...`.
 /// Non-secret — it carries the path, not the secret.
@@ -105,10 +107,21 @@ pub fn credential_file_path_from_env() -> Option<PathBuf> {
     None
 }
 
+/// Whether a database credential source was explicitly selected. API runtime
+/// uses this to preserve its no-database development mode while still treating
+/// a configured-but-missing protected file as an error.
+pub fn database_credential_source_configured() -> bool {
+    credential_file_path_from_env().is_some()
+        || env::var_os(synveil_metadata::DATABASE_URL_ENV).is_some()
+}
+
 /// Whether `DATABASE_URL` is present in the environment (non-empty after trim).
 fn database_url_env_present() -> bool {
-    if let Ok(val) = env::var(synveil_metadata::DATABASE_URL_ENV) {
-        return !val.trim().is_empty();
+    if let Some(value) = env::var_os(synveil_metadata::DATABASE_URL_ENV) {
+        if let Some(value) = value.to_str() {
+            return !value.trim().is_empty();
+        }
+        return true;
     }
     false
 }
@@ -142,8 +155,10 @@ pub fn load_database_url_from_runtime_source() -> Result<String, RuntimeDatabase
         (None, true) => {
             // Development fallback: DATABASE_URL env.
             // Reuse canonical validator without logging value.
-            let url = env::var(synveil_metadata::DATABASE_URL_ENV)
-                .map_err(|_| RuntimeDatabaseCredentialError::MissingCredential)?;
+            let mut url = Zeroizing::new(
+                env::var(synveil_metadata::DATABASE_URL_ENV)
+                    .map_err(|_| RuntimeDatabaseCredentialError::MissingCredential)?,
+            );
             // Trim before validation (DatabaseConfig::from_url also trims, but we
             // want empty check without logging).
             if url.trim().is_empty() {
@@ -156,30 +171,79 @@ pub fn load_database_url_from_runtime_source() -> Result<String, RuntimeDatabase
             }
             // Delegate validation to canonical parser; do not include URL in error.
             // We construct a DatabaseConfig to validate and then return raw URL.
-            DatabaseConfig::from_url(url.clone())
+            DatabaseConfig::from_url(url.to_string())
                 .map_err(RuntimeDatabaseCredentialError::InvalidDatabaseUrl)?;
-            Ok(url)
+            Ok(std::mem::take(&mut *url))
         }
         (None, false) => Err(RuntimeDatabaseCredentialError::MissingCredential),
     }
 }
 
-/// Read database URL from a specific credential file path with bounded, safe handling.
+/// Read database URL from a specific credential file path with bounded,
+/// no-follow handling. Delivered credentials must be regular single-link files.
 fn load_database_url_from_file(path: &Path) -> Result<String, RuntimeDatabaseCredentialError> {
-    // Bounded size check via metadata when available, to fail fast before reading.
-    if let Ok(meta) = fs::metadata(path) {
-        if meta.len() as usize > MAX_CREDENTIAL_FILE_SIZE {
-            return Err(RuntimeDatabaseCredentialError::OversizedCredential {
-                limit: MAX_CREDENTIAL_FILE_SIZE,
-            });
-        }
-        // If file is a directory, treat as unreadable.
-        if meta.is_dir() {
+    if !path.is_absolute() {
+        return Err(RuntimeDatabaseCredentialError::UnreadableCredentialFile);
+    }
+    let meta = fs::symlink_metadata(path)
+        .map_err(|_| RuntimeDatabaseCredentialError::UnreadableCredentialFile)?;
+    if meta.file_type().is_symlink() || !meta.is_file() {
+        return Err(RuntimeDatabaseCredentialError::UnreadableCredentialFile);
+    }
+    if meta.len() > MAX_CREDENTIAL_FILE_SIZE as u64 {
+        return Err(RuntimeDatabaseCredentialError::OversizedCredential {
+            limit: MAX_CREDENTIAL_FILE_SIZE,
+        });
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if meta.nlink() != 1 {
             return Err(RuntimeDatabaseCredentialError::UnreadableCredentialFile);
         }
     }
-    let bytes =
-        fs::read(path).map_err(|_| RuntimeDatabaseCredentialError::UnreadableCredentialFile)?;
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    let mut file = options
+        .open(path)
+        .map_err(|_| RuntimeDatabaseCredentialError::UnreadableCredentialFile)?;
+    let opened = file
+        .metadata()
+        .map_err(|_| RuntimeDatabaseCredentialError::UnreadableCredentialFile)?;
+    if !opened.is_file() || !same_file_identity(&meta, &opened) {
+        return Err(RuntimeDatabaseCredentialError::UnreadableCredentialFile);
+    }
+    if opened.len() > MAX_CREDENTIAL_FILE_SIZE as u64 {
+        return Err(RuntimeDatabaseCredentialError::OversizedCredential {
+            limit: MAX_CREDENTIAL_FILE_SIZE,
+        });
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if opened.nlink() != 1 {
+            return Err(RuntimeDatabaseCredentialError::UnreadableCredentialFile);
+        }
+    }
+    let mut bytes = Zeroizing::new(Vec::with_capacity(opened.len() as usize));
+    file.by_ref()
+        .take(MAX_CREDENTIAL_FILE_SIZE as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| RuntimeDatabaseCredentialError::UnreadableCredentialFile)?;
+    let after = file
+        .metadata()
+        .map_err(|_| RuntimeDatabaseCredentialError::UnreadableCredentialFile)?;
+    if bytes.len() as u64 != opened.len()
+        || after.len() != opened.len()
+        || !same_file_identity(&opened, &after)
+    {
+        return Err(RuntimeDatabaseCredentialError::UnreadableCredentialFile);
+    }
 
     if bytes.len() > MAX_CREDENTIAL_FILE_SIZE {
         return Err(RuntimeDatabaseCredentialError::OversizedCredential {
@@ -190,9 +254,15 @@ fn load_database_url_from_file(path: &Path) -> Result<String, RuntimeDatabaseCre
         return Err(RuntimeDatabaseCredentialError::EmptyCredential);
     }
     // Convert to String; database URLs are ASCII/UTF-8. If not valid UTF-8, treat as invalid.
-    let mut url = String::from_utf8(bytes).map_err(|_| {
-        RuntimeDatabaseCredentialError::InvalidDatabaseUrl(DatabaseConfigError::UnsupportedScheme)
-    })?;
+    let mut url = match String::from_utf8(std::mem::take(&mut *bytes)) {
+        Ok(url) => Zeroizing::new(url),
+        Err(error) => {
+            let _invalid_bytes = Zeroizing::new(error.into_bytes());
+            return Err(RuntimeDatabaseCredentialError::InvalidDatabaseUrl(
+                DatabaseConfigError::UnsupportedScheme,
+            ));
+        }
+    };
 
     // Normalize harmless trailing line ending(s): files commonly end with one `\n`
     // or `\r\n`. We strip exactly one trailing `\n` and an optional preceding `\r`,
@@ -223,9 +293,20 @@ fn load_database_url_from_file(path: &Path) -> Result<String, RuntimeDatabaseCre
         });
     }
     // Validate via canonical parser without logging secret.
-    DatabaseConfig::from_url(url.clone())
+    DatabaseConfig::from_url(url.to_string())
         .map_err(RuntimeDatabaseCredentialError::InvalidDatabaseUrl)?;
-    Ok(url)
+    Ok(std::mem::take(&mut *url))
+}
+
+#[cfg(unix)]
+fn same_file_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    left.dev() == right.dev() && left.ino() == right.ino()
+}
+
+#[cfg(not(unix))]
+fn same_file_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    left.len() == right.len()
 }
 
 /// Load `DatabaseConfig` from the runtime credential source (credential file or
@@ -255,19 +336,10 @@ mod tests {
         RuntimeDatabaseCredentialError, load_database_url_from_file_for_test,
         load_database_url_from_runtime_source,
     };
-    use std::{
-        env, fs,
-        path::PathBuf,
-        sync::{Mutex, OnceLock},
-    };
-
-    fn env_mutex() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
+    use std::{env, fs, path::PathBuf};
 
     fn with_env_lock<F: FnOnce() + std::panic::UnwindSafe>(f: F) {
-        let _guard = env_mutex().lock().unwrap();
+        let _guard = crate::runtime_test_support::environment_lock();
         let orig_cred = env::var(CREDENTIAL_FILE_ENV).ok();
         let orig_dir = env::var(CREDENTIALS_DIRECTORY_ENV).ok();
         let orig_url = env::var(synveil_metadata::DATABASE_URL_ENV).ok();

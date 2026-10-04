@@ -77,6 +77,13 @@ impl std::error::Error for RebaselineTokenKeyParseError {}
 #[derive(Clone)]
 pub struct RebaselineTokenKey([u8; 32]);
 
+impl Drop for RebaselineTokenKey {
+    fn drop(&mut self) {
+        use zeroize::Zeroize as _;
+        self.0.zeroize();
+    }
+}
+
 impl RebaselineTokenKey {
     #[must_use]
     pub fn generate() -> Self {

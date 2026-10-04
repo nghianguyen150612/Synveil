@@ -1298,6 +1298,16 @@ replacement for server PostgreSQL. `LocalStateConfig::from_platform` resolves
 explicit absolute database path is also available for composition and tests.
 The database stores no authentication or object-backend secrets.
 
+### Managed Host storage configuration boundary (Prompt031)
+
+The v0.2 managed server configuration begins with storage state
+`NotConfigured`; it does not select a root or create `objects/`/`staging/`.
+P032 owns the user-selected server object-data root, path/capacity/ownership
+qualification, identity, and ObjectStore layout initialization. The managed
+PostgreSQL cluster location remains a separate `/var/lib/synveil` state
+hierarchy and cannot stand in for object data. See
+[`MANAGED_SERVER_CONFIGURATION.md`](../v0.2/MANAGED_SERVER_CONFIGURATION.md).
+
 The independent migration set in `crates/client-sync/migrations` currently
 creates strict SQLite tables for:
 

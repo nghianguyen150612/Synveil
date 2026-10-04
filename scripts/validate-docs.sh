@@ -91,6 +91,9 @@ python3 scripts/validate-server-setup-contract.py || failures=$((failures + 1))
 echo "DOC-UNIT-9: checking the Prompt030 server dependency strategy"
 python3 scripts/validate-server-dependency-strategy.py || failures=$((failures + 1))
 
+echo "DOC-UNIT-10: checking the Prompt031 managed server configuration"
+python3 scripts/validate-managed-server-config.py || failures=$((failures + 1))
+
 if [[ "$failures" -ne 0 ]]; then
     echo "documentation validation failed: $failures issue(s)" >&2
     exit 1

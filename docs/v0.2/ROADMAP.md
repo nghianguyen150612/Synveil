@@ -319,8 +319,13 @@ PostgreSQL provisioning or service implementation is claimed.
 
 ### P031 — Managed Server Configuration
 
-Generate safe configuration, credentials and directories from user-friendly
-choices, preserving secret ownership, permissions and recovery boundaries.
+**Implemented (Prompt031):** the managed server configuration foundation
+provides one versioned non-secret configuration authority, stable local server
+installation identity, protected database/rebaseline credential references and
+Linux source-secret layout, durable atomic/reconcilable writes, and shared
+runtime credential loading. P032–P036 still own storage selection, service
+provisioning, reachability, first-admin bootstrap and end-to-end Host
+acceptance.
 
 ### P032 — Storage Location Wizard
 

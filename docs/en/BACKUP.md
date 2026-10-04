@@ -339,9 +339,12 @@ is validated against canonical bounds 10..=900 without clamping. Out-of-range
 or non-numeric values are rejected before any cycle begins with a clear
 diagnostic and non-zero exit; no partial worker execution occurs.
 
-**Database:** Reuses canonical `DatabaseConfig` (`DATABASE_URL`) and
-`MigrationRunner`. No second bootstrap path, no credential logging, no secret
-exposure.
+**Database:** Reuses canonical `DatabaseConfig` and `MigrationRunner`.
+The scheduled-maintenance service loads its protected `database-url` credential
+through the existing `LoadCredential=` path. API and worker now share that
+runtime loader for later managed services; explicit `DATABASE_URL` remains the
+legacy developer/operator fallback when no protected file source is selected.
+No second bootstrap path, credential logging, or secret exposure is introduced.
 
 **Result:** The typed `ScheduledMaintenanceCycleResult` is preserved internally
 (tick: `Idle`/`SkippedExpired`/`HandedOffExisting`/`MaterializedAndHandedOff`;
@@ -647,8 +650,10 @@ does **not** recursively `chown` arbitrary user pools to `synveil`.
 root-owned credential source, `daemon-reload`, `systemctl
 enable`) is `root`; one-shot runtime (`DynamicPool` → cycle) is `synveil` and
 never creates users, `chown`s, modifies units, invokes `systemctl`, or
-escalates. Database connectivity remains `DATABASE_URL`-configured (TCP or
-`AF_UNIX`) — no `peer` authentication tied to the Unix username is assumed.
+escalates. Database connectivity remains PostgreSQL URL-based (TCP or
+`AF_UNIX`): managed runtime receives it from `database-url` through
+`LoadCredential=`, while `DATABASE_URL` is the explicit legacy/manual form. No
+`peer` authentication tied to the Unix username is assumed.
 
 **Portability:** Linux username/UID/GID/systemd remain outside `crates/core`
 and portable Synveil Server APIs. No domain type gains a Unix identity field.
