@@ -17,5 +17,13 @@ The `App` directory contains the application entry point and top-level dependenc
   - Direct C-FFI Rust invocations.
   - Feature-specific UI view implementations or domain algorithms.
 
-## Future Files Location
-When P007 initializes the Swift sources, the application entry point will be placed here (e.g. `App/SynveilApp.swift`, `App/AppDependencyContainer.swift`).
+## App Composition & Root Routing
+- **`SynveilApp`**: `@main` application entry point. Owns `@State` top-level `AppDependencyContainer` and constructs `RootView` wired to `sessionController.start()`.
+- **`AppDependencyContainer`**: `@MainActor` top-level dependency composition root holding `AppConfiguration` and `SessionController`.
+- **`RootView`**: Authoritative root SwiftUI shell. Switches on `sessionController.state` to present mutually exclusive application surfaces:
+  - `.initializing` -> `LaunchView` (`synveil.root.initializing`)
+  - `.needsServerProfile` -> `ServerSetupPlaceholderView` (`synveil.root.server-setup`)
+  - `.readyForServerValidation` -> `ServerValidationPlaceholderView` (`synveil.root.server-validation`)
+  - `.needsEnrollment` -> `EnrollmentPlaceholderView` (`synveil.root.enrollment`)
+  - `.authenticated` -> `AuthenticatedShellPlaceholderView` (`synveil.root.authenticated`)
+  - `.recoveryRequired` -> `RecoveryPlaceholderView` (`synveil.root.recovery`)

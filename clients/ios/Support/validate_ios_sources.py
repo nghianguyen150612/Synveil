@@ -220,6 +220,14 @@ def check_file_content_invariants(rel_path_str, content):
                         f"Domain file '{rel_path_str}' imports raw FFI module(s): {sorted(list(ffi_found))}"
                     )
 
+            # Application layer rules
+            elif layer == "Application":
+                forbidden_found = imports.intersection(DOMAIN_FORBIDDEN_IMPORTS)
+                if forbidden_found:
+                    violations.append(
+                        f"Application file '{rel_path_str}' violates layer boundaries by importing forbidden UI/storage module(s): {sorted(list(forbidden_found))}"
+                    )
+
             # Infrastructure layer rules
             elif layer == "Infrastructure":
                 forbidden_found = imports.intersection(INFRASTRUCTURE_FORBIDDEN_IMPORTS)

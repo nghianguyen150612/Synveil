@@ -2,15 +2,19 @@ import SwiftUI
 
 @main
 struct SynveilApp: App {
-    private let configuration: AppConfiguration
+    @State private var container: AppDependencyContainer
 
     init() {
-        self.configuration = AppConfiguration.load()
+        let configuration = AppConfiguration.load()
+        _container = State(initialValue: AppDependencyContainer(configuration: configuration))
     }
 
     var body: some Scene {
         WindowGroup {
-            BootstrapView()
+            RootView(sessionController: container.sessionController)
+                .task {
+                    await container.sessionController.start()
+                }
         }
     }
 }
