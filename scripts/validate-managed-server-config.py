@@ -79,11 +79,13 @@ for path in sorted((ROOT / "deploy/config").glob("*.env*")):
         if re.match(r"(?:export\s+)?SYNVEIL_REBASELINE_TOKEN_KEY\s*=?", stripped):
             FAILURES.append(f"secret rebaseline-key assignment in {path.relative_to(ROOT)}:{number}")
 
-deploy_files = [
-    *((ROOT / "deploy/systemd").glob("synveil-api*.service")),
-    *((ROOT / "deploy/systemd").glob("synveil-worker*.service")),
-]
-require("P031 does not add API or worker service units", not deploy_files)
+# P031 itself did not add service units. Downstream P033 may now provide them,
+# but they must remain outside the desktop/package-neutral manifest.
+desktop_manifest = (ROOT / "deploy/install/MANIFEST").read_text(encoding="utf-8")
+require(
+    "managed service units are not owned by the P031 desktop package",
+    "synveil-api.service" not in desktop_manifest and "synveil-worker.service" not in desktop_manifest,
+)
 require("P031 does not add PostgreSQL provisioning commands", not re.search(r"\b(initdb|pg_ctl|createdb|createuser|psql)\b", store))
 require("managed bind remains loopback-only", "is_loopback()" in model and "127.0.0.1:3000" in api_source)
 require("P032-P035 remain explicit downstream boundaries", all(term in adr for term in ("P032", "P033", "P034", "P035")))

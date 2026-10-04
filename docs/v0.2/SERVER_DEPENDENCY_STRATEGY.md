@@ -1,5 +1,7 @@
 # Synveil v0.2 server dependency strategy
 
+> Prompt033 implementation note: PostgreSQL 17 now has a distinct immutable runtime/cluster identity and systemd lifecycle described in [SERVER_SERVICE_INSTALLATION](SERVER_SERVICE_INSTALLATION.md); clean-machine acquisition remains P036 and CI packages remain fixtures.
+
 ## Status and scope
 
 **Accepted Prompt030 contract.** Personal / Home Mode uses a

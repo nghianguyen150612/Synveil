@@ -1,5 +1,7 @@
 # Synveil deployment and operations architecture
 
+> **Managed Host (Prompt033):** qualified Linux hosts use the boot-enabled topology and separate package authority in [`SERVER_SERVICE_INSTALLATION`](../v0.2/SERVER_SERVICE_INSTALLATION.md).
+
 Status: **PLANNED production blueprint**
 
 Docker Compose is a supported Advanced / Server Mode production topology, not

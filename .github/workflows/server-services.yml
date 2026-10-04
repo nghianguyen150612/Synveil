@@ -1,0 +1,39 @@
+name: Prompt033 server services
+
+on:
+  pull_request:
+    paths:
+      - 'crates/server-service/**'
+      - 'crates/api/src/bin/synveil-{api,worker,server-migrate}.rs'
+      - 'deploy/server/**'
+      - 'deploy/systemd/synveil-*.service'
+      - 'deploy/systemd/synveil-server.target'
+      - 'deploy/sysusers.d/synveil-postgres.conf'
+      - 'deploy/tmpfiles.d/synveil-postgresql.conf'
+      - 'scripts/validate-server-service-installation.py'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  static-contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
+      - run: cargo test -p synveil-server-service --locked
+      - run: cargo check -p synveil-api --bins --locked
+      - run: python3 scripts/validate-server-service-installation.py
+      - name: Verify systemd topology with fixture executables
+        run: |
+          sudo mkdir -p /opt/synveil/server/current /opt/synveil/postgresql/17/current/bin
+          for file in synveil-api synveil-worker synveil-server-migrate; do
+            printf '#!/bin/sh\n' | sudo tee "/opt/synveil/server/current/$file" >/dev/null
+            sudo chmod 0755 "/opt/synveil/server/current/$file"
+          done
+          printf '#!/bin/sh\n' | sudo tee /opt/synveil/postgresql/17/current/bin/postgres >/dev/null
+          sudo chmod 0755 /opt/synveil/postgresql/17/current/bin/postgres
+          systemd-analyze verify deploy/systemd/synveil-server.target deploy/systemd/synveil-postgresql.service deploy/systemd/synveil-server-migrate.service deploy/systemd/synveil-api.service deploy/systemd/synveil-worker.service

@@ -52,9 +52,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let (shutdown_sender, mut shutdown) = watch::channel(false);
     tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            let _ = shutdown_sender.send(true);
-        }
+        wait_for_shutdown_signal().await;
+        let _ = shutdown_sender.send(true);
     });
     tracing::info!(
         cycle_interval_seconds = worker.config().cycle_interval().as_secs(),
@@ -127,4 +126,20 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     pool.close().await;
     tracing::info!("internal GC worker stopped");
     Ok(())
+}
+
+async fn wait_for_shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut terminate = signal(SignalKind::terminate()).expect("install SIGTERM handler");
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => { let _ = result; }
+            _ = terminate.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }

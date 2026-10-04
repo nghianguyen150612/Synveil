@@ -1,5 +1,7 @@
 # Managed Server Configuration (Prompt031)
 
+> Prompt033 consumes this configuration through a generation/fingerprint-bound service plan and CAS. See [managed server services](SERVER_SERVICE_INSTALLATION.md).
+
 Status: **Implemented configuration foundation; downstream Host work remains open**
 
 This document defines the durable configuration and protected-secret boundary

@@ -1,5 +1,7 @@
 # Backup, snapshots, retention, and restore
 
+> Removing hosted server software preserves PostgreSQL and object data and does not enable optional backup schedules. See [Prompt033](../v0.2/SERVER_SERVICE_INSTALLATION.md).
+
 Status: **durable backup scheduling, occurrence identity, exactly-once
 scheduled-maintenance handoff, deterministic manual scheduler tick,
 bounded restart-safe misfire policy, fenced scheduled-maintenance worker

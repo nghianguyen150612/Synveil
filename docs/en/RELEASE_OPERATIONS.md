@@ -1,5 +1,7 @@
 # Synveil v0.1 operations guide
 
+> Prompt033 publishes no PostgreSQL artifact. Future publication binds exact provenance, inventory, notices and SHA-256; CI packages are fixtures.
+
 This is the user and operator guide for the v0.1 implementation in this
 repository. It is narrower than the architecture blueprint: anything marked
 deferred or unsupported is not a v0.1 product promise.

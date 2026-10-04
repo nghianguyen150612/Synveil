@@ -22,17 +22,17 @@
       "required": ["id", "artifact_type", "filename", "platform", "architecture", "role", "product_version", "size_bytes", "sha256", "components"],
       "properties": {
         "id": { "type": "string", "pattern": "^[a-z0-9]+(?:[a-z0-9_-]*[a-z0-9])?$" },
-        "artifact_type": { "enum": ["deb", "rpm", "appimage", "windows_installer", "windows_portable_zip"] },
+        "artifact_type": { "enum": ["deb", "rpm", "appimage", "windows_installer", "windows_portable_zip", "server_runtime_bundle", "postgresql_runtime_bundle"] },
         "filename": { "type": "string", "minLength": 1 },
         "platform": { "enum": ["linux", "windows"] },
         "architecture": { "enum": ["x86_64", "aarch64"] },
-        "role": { "enum": ["native_package", "primary_installer", "portable"] },
+        "role": { "enum": ["native_package", "primary_installer", "portable", "server_runtime", "database_runtime"] },
         "product_version": { "type": "string" },
         "size_bytes": { "type": "integer", "minimum": 0 },
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "components": {
           "type": "array", "uniqueItems": true,
-          "items": { "enum": ["synveil-desktop", "synveil-client", "scheduled-maintenance"] }
+          "items": { "enum": ["synveil-desktop", "synveil-client", "scheduled-maintenance", "synveil-api", "synveil-worker", "synveil-server-migrate", "postgresql-17"] }
         },
         "package_metadata": {
           "oneOf": [
