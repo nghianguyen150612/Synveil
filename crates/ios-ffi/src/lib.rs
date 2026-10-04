@@ -638,6 +638,12 @@ mod tests {
         assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
         assert_eq!(valid, 0);
 
+        let non_hex = format!("sve1_{}", "g1".repeat(32));
+        let res =
+            synveil_ffi_enrollment_secret_validate(non_hex.as_ptr(), non_hex.len(), &mut valid);
+        assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
+        assert_eq!(valid, 0);
+
         // Invalid UTF-8
         let bad_utf8 = [0xFF, 0xFE, 0xFD];
         let res =
@@ -688,9 +694,18 @@ mod tests {
         assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
         assert_eq!(valid, 0);
 
-        // Malformed text -> valid = 0
+        // Malformed text -> valid = 0 for both distinct domain ID validators
         let malformed = "not-a-uuid";
         let res = synveil_ffi_library_id_validate(malformed.as_ptr(), malformed.len(), &mut valid);
+        assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
+        assert_eq!(valid, 0);
+
+        let res = synveil_ffi_node_id_validate(malformed.as_ptr(), malformed.len(), &mut valid);
+        assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
+        assert_eq!(valid, 0);
+
+        let nil_uuid = "00000000-0000-0000-0000-000000000000";
+        let res = synveil_ffi_node_id_validate(nil_uuid.as_ptr(), nil_uuid.len(), &mut valid);
         assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
         assert_eq!(valid, 0);
 
@@ -753,9 +768,21 @@ mod tests {
         assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
         assert_eq!(valid, 0);
 
-        // Multibyte boundary test (1023 'a's + 4-byte emoji = 1027 bytes -> valid = 0)
+        // Multibyte exact boundary: 1020 ASCII bytes + one 4-byte emoji = 1024 bytes.
+        let mut unicode_exact = "a".repeat(1020);
+        unicode_exact.push('🚀');
+        assert_eq!(unicode_exact.len(), 1024);
+        let res = synveil_ffi_logical_name_validate(
+            unicode_exact.as_ptr(),
+            unicode_exact.len(),
+            &mut valid,
+        );
+        assert_eq!(res, SYNVEIL_FFI_STATUS_SUCCESS);
+        assert_eq!(valid, 1);
+
+        // Multibyte over-boundary: 1023 ASCII bytes + one 4-byte emoji = 1027 bytes.
         let mut unicode_over = "a".repeat(1023);
-        unicode_over.push('🚀'); // '🚀' is 4 UTF-8 bytes (total 1027 bytes)
+        unicode_over.push('🚀');
         assert_eq!(unicode_over.len(), 1027);
         let res = synveil_ffi_logical_name_validate(
             unicode_over.as_ptr(),
