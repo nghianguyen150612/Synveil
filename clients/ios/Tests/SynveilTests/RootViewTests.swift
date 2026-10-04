@@ -16,7 +16,7 @@ final class RootViewTests: XCTestCase {
             .recoveryRequired(.deviceRevoked),
             .recoveryRequired(.secureStore),
             .recoveryRequired(.enrollmentAmbiguous),
-            .recoveryRequired(.transport)
+            .recoveryRequired(.transport),
         ]
 
         for state in states {
