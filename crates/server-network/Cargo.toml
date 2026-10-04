@@ -1,0 +1,16 @@
+[package]
+name = "synveil-server-network"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Managed server reachability planning and reconciliation boundary"
+
+[dependencies]
+serde.workspace = true
+sha2.workspace = true
+synveil-server-config.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

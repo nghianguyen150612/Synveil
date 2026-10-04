@@ -2962,6 +2962,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "synveil-server-network"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "synveil-server-config",
+ "url",
+]
+
+[[package]]
 name = "synveil-server-service"
 version = "0.1.0"
 dependencies = [

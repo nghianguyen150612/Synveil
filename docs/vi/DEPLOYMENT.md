@@ -1856,3 +1856,11 @@ interaction là runtime gate; Linux static/cross-build không được claim tha
 Xem [`docs/en/DESKTOP_LAUNCH.md`](../en/DESKTOP_LAUNCH.md),
 [`docs/vi/DESKTOP_LAUNCH.md`](DESKTOP_LAUNCH.md) và
 [`ADR-041`](../adr/ADR-041-production-desktop-launch-orchestration.md).
+## Khả năng truy cập Host được quản lý (nền tảng v0.2)
+
+Triển khai Personal/Home được quản lý giữ API tại `127.0.0.1:3000` và giữ
+PostgreSQL riêng tư. Truy cập ngoài máy chỉ đi qua chế độ edge HTTPS được chọn
+rõ ràng: chỉ thiết bị này, địa chỉ LAN riêng đã duyệt, hoặc HTTPS bên ngoài do
+operator sở hữu. Synveil không âm thầm bind wildcard, mở cổng router hay bắt
+buộc relay độc quyền. Xem
+[SERVER_NETWORK_REACHABILITY](../v0.2/SERVER_NETWORK_REACHABILITY.md).
