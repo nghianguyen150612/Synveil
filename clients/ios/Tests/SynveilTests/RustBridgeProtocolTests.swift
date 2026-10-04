@@ -77,6 +77,15 @@ final class RustBridgeProtocolTests: XCTestCase {
         let isInvalidEnrollment = try await bridge.validateEnrollmentToken(invalidEnrollmentPrefix)
         XCTAssertFalse(isInvalidEnrollment)
 
+        let wrongLengthEnrollment = "sve1_" + String(repeating: "a1", count: 31)
+        XCTAssertFalse(try await bridge.validateEnrollmentToken(wrongLengthEnrollment))
+
+        let uppercaseEnrollment = validEnrollment.uppercased()
+        XCTAssertFalse(try await bridge.validateEnrollmentToken(uppercaseEnrollment))
+
+        let nonHexEnrollment = "sve1_" + String(repeating: "g1", count: 32)
+        XCTAssertFalse(try await bridge.validateEnrollmentToken(nonHexEnrollment))
+
         // 2. Device bearer token validation
         let validBearer = "svd1_" + String(repeating: "b2", count: 32)
         let isValidBearer = try await bridge.validateDeviceBearerToken(validBearer)
@@ -98,6 +107,14 @@ final class RustBridgeProtocolTests: XCTestCase {
 
         let uuidV4 = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
         XCTAssertFalse(try await bridge.validateLibraryID(uuidV4))
+        XCTAssertFalse(try await bridge.validateNodeID(uuidV4))
+
+        let malformedUUID = "not-a-uuid"
+        XCTAssertFalse(try await bridge.validateLibraryID(malformedUUID))
+        XCTAssertFalse(try await bridge.validateNodeID(malformedUUID))
+
+        let nilUUID = "00000000-0000-0000-0000-000000000000"
+        XCTAssertFalse(try await bridge.validateNodeID(nilUUID))
 
         // 4. LogicalName Validation
         XCTAssertTrue(try await bridge.validateLogicalName("hello.txt"))
@@ -111,7 +128,10 @@ final class RustBridgeProtocolTests: XCTestCase {
         let overMaxName = String(repeating: "a", count: 1025)
         XCTAssertFalse(try await bridge.validateLogicalName(overMaxName))
 
-        // Multibyte Unicode boundary: 1023 'a's + 4-byte emoji = 1027 bytes -> false
+        let unicodeExact = String(repeating: "a", count: 1020) + "🚀"
+        XCTAssertEqual(unicodeExact.utf8.count, 1024)
+        XCTAssertTrue(try await bridge.validateLogicalName(unicodeExact))
+
         let unicodeOver = String(repeating: "a", count: 1023) + "🚀"
         XCTAssertEqual(unicodeOver.utf8.count, 1027)
         XCTAssertFalse(try await bridge.validateLogicalName(unicodeOver))
