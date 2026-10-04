@@ -9,11 +9,17 @@ mod model;
 mod secret;
 mod store;
 
+pub use synveil_object_store::{
+    CapabilityEvidence, CapabilitySupport, StorageAvailability, StorageBackendKind,
+    StorageCapabilities, StorageCapability,
+};
+
 pub use model::{
     ConfigFingerprint, ConfigValidationError, DatabaseConfiguration, DatabaseCredentialState,
     DatabaseEndpoint, DatabaseMode, DatabaseOwnership, DependencyRuntimeIdentity,
     DeploymentProfile, MAX_SERVER_CONFIG_BYTES, ManagedDatabaseDataRoot, NetworkConfiguration,
-    SERVER_CONFIG_SCHEMA_VERSION, ServerConfig, StorageConfiguration,
+    SERVER_CONFIG_SCHEMA_VERSION, ServerConfig, StorageConfiguration, StorageId,
+    StorageRootIdentity,
 };
 pub use secret::{
     CredentialId, ExternalDatabaseCredential, ExternalDatabaseCredentialError,

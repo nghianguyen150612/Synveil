@@ -450,11 +450,14 @@ domain core:
   missing, or unavailable: no plaintext file/SQLite or volatile fallback. Raw
   pairing codes, database credentials, recovery material, and master keys do
   not appear in logs, command lines, browser storage, or installer bundles.
-- The storage picker exposes only host-authorized candidates. It rejects `/`,
-  home/workspace roots, PostgreSQL paths, unsafe symlinks/junctions/reparse
-  points, and ambiguous removable roots; it verifies a persistent Synveil
-  identity and capability profile before use. A missing root is an unavailable
-  dependency, never permission to initialize a new empty store.
+- Prompt032's managed Linux storage controller separates server object data
+  from the client library. It rejects `/`, home/workspace/config/credential/
+  PostgreSQL/runtime roots, symlinked or redirected roots, unsafe parents,
+  unknown non-empty folders, and overlap with known client-library roots. It
+  binds a strict server/storage identity to the selected filesystem root and
+  verifies the existing ObjectStore layout. Managed API/worker runtime never
+  initializes a missing configured root; a disconnected root remains
+  configured and unavailable. Other platform adapters remain unqualified.
 - Managed PostgreSQL is provisioned with isolated data ownership and runtime/
   migration roles, protected from ordinary uninstall, and recovered through the
   same backup/key/upgrade policy. Personal / Home does not silently switch to

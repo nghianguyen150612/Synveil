@@ -253,9 +253,9 @@ surface a stack trace or require manual database repair for ordinary flows.
 The first-run storage experience uses user language:
 
 ```text
-Choose where Synveil should store your cloud
+Where should Synveil store server data?
 
-D:\\Synveil
+`/var/lib/synveil/storage`
 3.4 TB available
 
 [Use this location]
@@ -264,10 +264,18 @@ D:\\Synveil
 or:
 
 ```text
-External SSD
+External SSD / Synveil
 1.8 TB available
-Optimized for Synveil
+Ready for server data
 ```
+
+This choice is the dedicated root for opaque server object data. It is not the
+client's synchronized library. The recommended path is a suggestion that still
+requires review and confirmation. Selecting a mount root proposes a dedicated
+`Synveil` child instead of claiming the whole mount. P032's Linux managed Host
+implementation reports native capacity and availability; it does not inspect
+or initialize storage until the user confirms. Its current removability result
+is `Unknown`; it does not infer internal or removable media from a path label.
 
 The discovery layer may inspect filesystem type, capacity, writability,
 removability, path safety, available capability evidence, and safely available

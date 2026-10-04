@@ -2784,6 +2784,7 @@ dependencies = [
  "synveil-metadata",
  "synveil-platform",
  "synveil-server-config",
+ "synveil-server-storage",
  "synveil-storage",
  "tempfile",
  "tokio",
@@ -2925,6 +2926,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-util",
+ "serde",
  "sha2",
  "synveil-core",
  "tokio",
@@ -2952,10 +2954,25 @@ dependencies = [
  "serde_json",
  "sha2",
  "synveil-metadata",
+ "synveil-object-store",
  "tempfile",
  "url",
  "uuid",
  "zeroize",
+]
+
+[[package]]
+name = "synveil-server-storage"
+version = "0.1.0"
+dependencies = [
+ "fs2",
+ "libc",
+ "serde",
+ "serde_json",
+ "synveil-server-config",
+ "synveil-storage",
+ "tempfile",
+ "uuid",
 ]
 
 [[package]]
@@ -2965,11 +2982,13 @@ dependencies = [
  "async-trait",
  "bytes",
  "futures-util",
+ "libc",
  "sha2",
  "sqlx",
  "synveil-core",
  "synveil-metadata",
  "synveil-object-store",
+ "tempfile",
  "time",
  "tokio",
  "uuid",

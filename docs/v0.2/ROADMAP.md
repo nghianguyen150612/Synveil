@@ -329,9 +329,12 @@ acceptance.
 
 ### P032 — Storage Location Wizard
 
-Let the user select where Synveil stores data; validate capacity, path and
-ownership safely. Distinguish server storage from the user's synchronized
-folder.
+**Implemented (Prompt032):** the managed Host storage-location foundation
+provides a dedicated local server-object-data selection, capacity/path/ownership
+inspection, durable storage identity, resumable initialization, safe handling
+of existing locations, and typed P031 configuration commit. Server storage
+remains distinct from client libraries. Service provisioning, networking,
+first-admin bootstrap, and end-to-end Host readiness remain P033–P036.
 
 ### P033 — Server Service Installation
 

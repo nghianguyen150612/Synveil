@@ -1,8 +1,11 @@
 use std::{collections::BTreeMap, path::Path};
 
+use serde::{Deserialize, Serialize};
+
 /// Storage behavior that an adapter may prove without changing the portable
 /// correctness path.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StorageCapability {
     Reflink,
     BlockClone,
@@ -66,7 +69,8 @@ impl StorageCapability {
 }
 
 /// Evidence state for one capability. Unknown is different from unsupported.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CapabilitySupport {
     Supported,
     Unsupported,
@@ -75,7 +79,8 @@ pub enum CapabilitySupport {
 }
 
 /// Evidence boundary for a capability report.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CapabilityEvidence {
     NotProbed,
     ReadOnlyPathInspection,
@@ -84,7 +89,8 @@ pub enum CapabilityEvidence {
 }
 
 /// Kind of backend associated with a capability report.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StorageBackendKind {
     LocalFilesystem,
     ObjectStore,
@@ -92,7 +98,8 @@ pub enum StorageBackendKind {
 }
 
 /// Safe, non-destructive availability result for a storage location.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StorageAvailability {
     Available,
     Missing,
@@ -103,7 +110,8 @@ pub enum StorageAvailability {
 
 /// Evidence-backed storage capabilities. No capability is inferred from an
 /// operating-system enum or from a filesystem name.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StorageCapabilities {
     backend: StorageBackendKind,
     availability: StorageAvailability,

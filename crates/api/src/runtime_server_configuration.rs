@@ -12,7 +12,7 @@ pub const SERVER_CONFIG_FILE_ENV: &str = "SYNVEIL_SERVER_CONFIG_FILE";
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RuntimeServerConfiguration {
     LegacyOperator,
-    Managed(ServerConfig),
+    Managed(Box<ServerConfig>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -114,11 +114,11 @@ fn select_server_configuration(
         return Err(RuntimeServerConfigurationError::AmbiguousAuthority);
     }
     if config.database.credential_state != DatabaseCredentialState::Materialized
-        || config.storage == StorageConfiguration::NotConfigured
+        || !matches!(config.storage, StorageConfiguration::ConfiguredLocal { .. })
     {
         return Err(RuntimeServerConfigurationError::ConfigurationNotReady);
     }
-    Ok(RuntimeServerConfiguration::Managed(config))
+    Ok(RuntimeServerConfiguration::Managed(Box::new(config)))
 }
 
 fn has_legacy_configuration_inputs() -> bool {
@@ -139,7 +139,12 @@ mod tests {
     use std::env;
 
     use synveil_server_config::{
-        DeploymentProfile, ExistingServerEvidence, ExternalDatabaseCredential, NewServerConfig,
+        ConfigInspection, DeploymentProfile, ExistingServerEvidence, ExternalDatabaseCredential,
+        NewServerConfig, StorageId, StorageRootIdentity,
+    };
+    use synveil_storage::{
+        CapabilityEvidence, CapabilitySupport, StorageAvailability, StorageBackendKind,
+        StorageCapabilities, StorageCapability,
     };
 
     use super::{
@@ -178,6 +183,40 @@ mod tests {
         }
     }
 
+    fn fixture_layout(temp: &tempfile::TempDir) -> synveil_server_config::LinuxConfigLayout {
+        // macOS exposes temporary directories through `/var`, which is an
+        // intentional system symlink to `/private/var`. Resolve that fixture
+        // alias before exercising the config store's strict no-symlink path
+        // checks; the test should validate the selected config root itself.
+        synveil_server_config::LinuxConfigLayout::at_root(
+            temp.path().canonicalize().unwrap().join("etc/synveil"),
+        )
+        .unwrap()
+    }
+
+    fn ready_storage_capabilities() -> StorageCapabilities {
+        [
+            StorageCapability::ExclusiveCreate,
+            StorageCapability::DurableFsync,
+            StorageCapability::AtomicRename,
+            StorageCapability::AtomicPromotion,
+            StorageCapability::Checksumming,
+            StorageCapability::ReadAfterWrite,
+            StorageCapability::DurableFlush,
+        ]
+        .into_iter()
+        .fold(
+            StorageCapabilities::for_location(
+                StorageBackendKind::LocalFilesystem,
+                StorageAvailability::Available,
+                CapabilityEvidence::AdapterProbe { version: 1 },
+            ),
+            |capabilities, capability| {
+                capabilities.with_support(capability, CapabilitySupport::Supported)
+            },
+        )
+    }
+
     #[test]
     fn absence_uses_legacy_operator_mode_without_cwd_search() {
         clear_env(|| {
@@ -192,9 +231,7 @@ mod tests {
     fn explicit_managed_authority_rejects_mixed_operator_environment() {
         clear_env(|| {
             let temp = tempfile::tempdir().unwrap();
-            let layout =
-                synveil_server_config::LinuxConfigLayout::at_root(temp.path().join("etc/synveil"))
-                    .unwrap();
+            let layout = fixture_layout(&temp);
             let store = synveil_server_config::ServerConfigStore::new(layout.clone());
             store
                 .initialize_managed(
@@ -250,9 +287,7 @@ mod tests {
     fn advanced_external_config_uses_read_only_shared_authority() {
         clear_env(|| {
             let temp = tempfile::tempdir().unwrap();
-            let layout =
-                synveil_server_config::LinuxConfigLayout::at_root(temp.path().join("etc/synveil"))
-                    .unwrap();
+            let layout = fixture_layout(&temp);
             let store = synveil_server_config::ServerConfigStore::new(layout.clone());
             store
                 .initialize_external(
@@ -276,10 +311,52 @@ mod tests {
                 }
                 other => panic!("unexpected inspection: {other:?}"),
             };
+            let root = temp
+                .path()
+                .canonicalize()
+                .unwrap()
+                .join("objects")
+                .to_string_lossy()
+                .into_owned();
+            let storage_id = StorageId::new_v7();
             store
-                .update_storage(
+                .begin_storage_preparation(
                     fingerprint,
-                    temp.path().join("objects").to_string_lossy().into_owned(),
+                    root.clone(),
+                    storage_id.clone(),
+                    StorageRootIdentity::MissingLeaf {
+                        parent_device: 1,
+                        parent_inode: 1,
+                    },
+                )
+                .unwrap();
+            let preparing_fingerprint = match store.inspect() {
+                ConfigInspection::ValidCurrent { fingerprint, .. } => fingerprint,
+                other => panic!("unexpected inspection: {other:?}"),
+            };
+            let directory_identity = StorageRootIdentity::Directory {
+                device: 1,
+                inode: 2,
+            };
+            store
+                .record_storage_directory_identity(
+                    preparing_fingerprint,
+                    root.clone(),
+                    storage_id.clone(),
+                    directory_identity.clone(),
+                )
+                .unwrap();
+            let ready_fingerprint = match store.inspect() {
+                ConfigInspection::ValidCurrent { fingerprint, .. } => fingerprint,
+                other => panic!("unexpected inspection: {other:?}"),
+            };
+            store
+                .complete_storage_preparation(
+                    ready_fingerprint,
+                    root,
+                    storage_id,
+                    directory_identity,
+                    ready_storage_capabilities(),
                 )
                 .unwrap();
             let selected = select_server_configuration(&store, true).unwrap();
@@ -290,6 +367,52 @@ mod tests {
                         && config.database.endpoint.as_ref().is_some_and(|endpoint| endpoint.port == 5544)
             ));
             assert!(!format!("{selected:?}").contains("CANARY-password"));
+        });
+    }
+
+    #[test]
+    fn preparing_storage_is_not_runtime_ready() {
+        clear_env(|| {
+            let temp = tempfile::tempdir().unwrap();
+            let layout = fixture_layout(&temp);
+            let store = synveil_server_config::ServerConfigStore::new(layout);
+            store
+                .initialize_external(
+                    NewServerConfig {
+                        deployment_profile: DeploymentProfile::AdvancedExternal,
+                    },
+                    ExistingServerEvidence::NoKnownServerState,
+                    ExternalDatabaseCredential::new(
+                        "postgresql://operator:CANARY-password@db.example.invalid/synveil"
+                            .to_owned(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            let fingerprint = match store.inspect() {
+                ConfigInspection::ValidCurrent { fingerprint, .. } => fingerprint,
+                other => panic!("unexpected inspection: {other:?}"),
+            };
+            store
+                .begin_storage_preparation(
+                    fingerprint,
+                    temp.path()
+                        .canonicalize()
+                        .unwrap()
+                        .join("object-data")
+                        .to_string_lossy()
+                        .into_owned(),
+                    StorageId::new_v7(),
+                    StorageRootIdentity::MissingLeaf {
+                        parent_device: 1,
+                        parent_inode: 1,
+                    },
+                )
+                .unwrap();
+            assert_eq!(
+                select_server_configuration(&store, true),
+                Err(RuntimeServerConfigurationError::ConfigurationNotReady)
+            );
         });
     }
 }

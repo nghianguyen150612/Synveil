@@ -1298,15 +1298,29 @@ replacement for server PostgreSQL. `LocalStateConfig::from_platform` resolves
 explicit absolute database path is also available for composition and tests.
 The database stores no authentication or object-backend secrets.
 
-### Managed Host storage configuration boundary (Prompt031)
+### Managed Host server object data (Prompt032)
 
-The v0.2 managed server configuration begins with storage state
-`NotConfigured`; it does not select a root or create `objects/`/`staging/`.
-P032 owns the user-selected server object-data root, path/capacity/ownership
-qualification, identity, and ObjectStore layout initialization. The managed
-PostgreSQL cluster location remains a separate `/var/lib/synveil` state
-hierarchy and cannot stand in for object data. See
-[`MANAGED_SERVER_CONFIGURATION.md`](../v0.2/MANAGED_SERVER_CONFIGURATION.md).
+The v0.2 managed server asks, “Where should Synveil store server data?” The
+server object-data root holds opaque `SERVER_OBJECT_DATA`; it is not the user's
+visible synchronized `CLIENT_LIBRARY`. The recommended Linux location is
+`/var/lib/synveil/storage`, separate from PostgreSQL at
+`/var/lib/synveil/postgresql/17` and from configuration and credentials.
+
+Prompt032 adds durable `PreparingLocal` and `ConfiguredLocal` configuration
+states, a distinct UUIDv7 storage ID, the strict
+`.synveil-server-storage.json` ownership marker, confirmation-bound setup, and
+resumable ObjectStore initialization above the existing
+`LocalFilesystemObjectStore`. The adapter's `.synveil-storage-root` marker and
+opaque layout remain canonical and separate. Managed API/worker runtime opens
+the exact existing configured identity only; a missing or replaced mount is
+unavailable and is never initialized as an empty replacement. Legacy explicit
+operator roots retain their documented behavior and are not auto-adopted.
+
+The full state, path/exclusion, capacity, ownership, recovery, and P033–P036
+boundaries are in
+[`SERVER_STORAGE_LOCATION.md`](../v0.2/SERVER_STORAGE_LOCATION.md). This is a
+storage-selection foundation, not whole-server readiness or a client-library
+wizard.
 
 The independent migration set in `crates/client-sync/migrations` currently
 creates strict SQLite tables for:

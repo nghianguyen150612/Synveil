@@ -54,3 +54,30 @@ pub fn open_local_object_store(
 ) -> Result<LocalFilesystemObjectStore, ObjectStoreError> {
     LocalFilesystemObjectStore::open(root)
 }
+
+/// Initialize the local ObjectStore layout below an already existing root.
+/// This never creates the root or any parent and is intended for an explicit
+/// managed-storage bootstrap boundary.
+pub fn initialize_local_object_store_root(
+    root: impl AsRef<Path>,
+) -> Result<LocalFilesystemObjectStore, ObjectStoreError> {
+    LocalFilesystemObjectStore::initialize_existing_root(root)
+}
+
+/// Verify and open a preinitialized local ObjectStore root without creating,
+/// repairing, probing, or otherwise mutating it.
+pub fn open_existing_local_object_store(
+    root: impl AsRef<Path>,
+) -> Result<LocalFilesystemObjectStore, ObjectStoreError> {
+    LocalFilesystemObjectStore::open_existing(root)
+}
+
+/// Open an existing managed root with the exact adapter-probe report persisted
+/// in the typed server configuration. This is read-only and does not rerun the
+/// filesystem probes.
+pub fn open_existing_local_object_store_with_capabilities(
+    root: impl AsRef<Path>,
+    capabilities: StorageCapabilities,
+) -> Result<LocalFilesystemObjectStore, ObjectStoreError> {
+    LocalFilesystemObjectStore::open_existing_with_capabilities(root, capabilities)
+}

@@ -94,6 +94,9 @@ python3 scripts/validate-server-dependency-strategy.py || failures=$((failures +
 echo "DOC-UNIT-10: checking the Prompt031 managed server configuration"
 python3 scripts/validate-managed-server-config.py || failures=$((failures + 1))
 
+echo "DOC-UNIT-11: checking the Prompt032 server storage location"
+python3 scripts/validate-server-storage-location.py || failures=$((failures + 1))
+
 if [[ "$failures" -ne 0 ]]; then
     echo "documentation validation failed: $failures issue(s)" >&2
     exit 1

@@ -20,8 +20,12 @@ contains a transport-neutral owner-authorized content-read service, and the
 legacy operator API composition root wires authenticated current/historical
 full/single-range download routes when a supported database credential source
 and an explicit absolute `SYNVEIL_OBJECT_ROOT` are both set. Prompt031 adds the
-managed non-secret configuration authority, while P032 still owns selecting
-the managed object root. Authenticated version-history metadata
+managed non-secret configuration authority, and Prompt032 adds a confirmed,
+resumable managed server-object-data root with existing-only API/worker
+reopening. This root is separate from the client library, PostgreSQL, config,
+and credentials. P033 through P036 still own service provisioning, networking,
+first-admin bootstrap, and end-to-end Host acceptance. Authenticated
+version-history metadata
 listing and direct lookup require the PostgreSQL metadata service but do not
 require an object root or open storage. The private `synveil-worker` binary is
 also implemented as an opt-in, bounded GC runtime with no listener; it is not

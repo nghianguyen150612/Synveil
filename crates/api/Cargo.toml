@@ -19,6 +19,7 @@ synveil-auth.workspace = true
 synveil-core.workspace = true
 synveil-metadata.workspace = true
 synveil-server-config.workspace = true
+synveil-server-storage.workspace = true
 synveil-platform.workspace = true
 synveil-storage.workspace = true
 tokio.workspace = true

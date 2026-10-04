@@ -5,6 +5,7 @@ members = [
     "crates/platform",
     "crates/metadata",
     "crates/server-config",
+    "crates/server-storage",
     "crates/object-store",
     "crates/storage",
     "crates/api",
@@ -37,6 +38,7 @@ synveil-auth = { path = "crates/auth" }
 synveil-platform = { path = "crates/platform" }
 synveil-metadata = { path = "crates/metadata" }
 synveil-server-config = { path = "crates/server-config" }
+synveil-server-storage = { path = "crates/server-storage" }
 synveil-object-store = { path = "crates/object-store" }
 synveil-storage = { path = "crates/storage" }
 synveil-client-sync = { path = "crates/client-sync" }
@@ -85,6 +87,7 @@ rcgen = { version = "0.13", default-features = false, features = ["crypto", "rin
 # macos_kqueue selected for macOS to avoid fsevent_sys dependency in CI.
 notify = { version = "8.2.0", default-features = false, features = ["macos_kqueue"] }
 nix = { version = "0.29", default-features = false, features = ["fs", "user"] }
+libc = "0.2"
 windows-sys = { version = "0.61.2", default-features = false, features = [
     "Win32_Foundation",
     "Win32_Security",

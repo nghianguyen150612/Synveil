@@ -2,6 +2,10 @@ use std::{fmt, net::SocketAddr};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use synveil_object_store::{
+    CapabilityEvidence, CapabilitySupport, StorageAvailability, StorageBackendKind,
+    StorageCapabilities, StorageCapability,
+};
 
 use crate::CredentialId;
 
@@ -87,11 +91,85 @@ pub enum DatabaseCredentialState {
     Materialized,
 }
 
+/// Stable identity for one managed server-object-storage installation.
+/// This is independent from the server installation ID, object IDs, and any
+/// filesystem or mount identity.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct StorageId(String);
+
+impl StorageId {
+    #[must_use]
+    pub fn new_v7() -> Self {
+        Self(uuid::Uuid::now_v7().to_string())
+    }
+
+    pub fn parse(value: impl Into<String>) -> Result<Self, ConfigValidationError> {
+        let value = value.into();
+        let parsed = uuid::Uuid::parse_str(&value)
+            .map_err(|_| ConfigValidationError::InvalidStorageIdentity)?;
+        if parsed.to_string() != value || parsed.get_version_num() != 7 {
+            return Err(ConfigValidationError::InvalidStorageIdentity);
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
 pub enum StorageConfiguration {
     NotConfigured,
-    ConfiguredLocal { root: String },
+    PreparingLocal {
+        root: String,
+        storage_id: StorageId,
+        root_identity: StorageRootIdentity,
+    },
+    ConfiguredLocal {
+        root: String,
+        storage_id: StorageId,
+        root_identity: StorageRootIdentity,
+        capabilities: StorageCapabilities,
+    },
+}
+
+/// Filesystem object evidence bound into durable storage setup. A missing leaf
+/// records the selected existing parent; a directory records its native
+/// filesystem and inode identity. Values are diagnostic identity evidence,
+/// never secrets or portable path strings.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum StorageRootIdentity {
+    MissingLeaf {
+        parent_device: u64,
+        parent_inode: u64,
+    },
+    Directory {
+        device: u64,
+        inode: u64,
+    },
+}
+
+impl StorageRootIdentity {
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        match self {
+            Self::MissingLeaf {
+                parent_device,
+                parent_inode,
+            } => *parent_device != 0 || *parent_inode != 0,
+            Self::Directory { device, inode } => *device != 0 || *inode != 0,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_directory(&self) -> bool {
+        matches!(self, Self::Directory { .. })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -154,6 +232,9 @@ pub enum ConfigValidationError {
     InvalidDatabaseEndpoint,
     InvalidCredentialReference,
     InvalidStoragePath,
+    InvalidStorageIdentity,
+    InvalidStorageRootIdentity,
+    InvalidStorageCapabilities,
     InvalidNetworkConfiguration,
     UnsupportedServiceTopology,
     InvalidConfigurationState,
@@ -177,6 +258,9 @@ impl fmt::Display for ConfigValidationError {
             Self::InvalidDatabaseEndpoint => "database endpoint is invalid",
             Self::InvalidCredentialReference => "database credential reference is invalid",
             Self::InvalidStoragePath => "server storage path is structurally unsafe",
+            Self::InvalidStorageIdentity => "server storage identity is invalid",
+            Self::InvalidStorageRootIdentity => "server storage root identity is invalid",
+            Self::InvalidStorageCapabilities => "server storage capability evidence is invalid",
             Self::InvalidNetworkConfiguration => "network configuration is invalid",
             Self::UnsupportedServiceTopology => "server service topology is unsupported",
             Self::InvalidConfigurationState => "configuration state is invalid",
@@ -308,12 +392,24 @@ impl ServerConfig {
         {
             return Err(ConfigValidationError::InvalidDatabaseEndpoint);
         }
-        if matches!(
-            &self.storage,
-            StorageConfiguration::ConfiguredLocal { root }
-                if !structurally_safe_absolute_path(root)
-        ) {
-            return Err(ConfigValidationError::InvalidStoragePath);
+        match &self.storage {
+            StorageConfiguration::NotConfigured => {}
+            StorageConfiguration::PreparingLocal {
+                root,
+                storage_id,
+                root_identity,
+            } => validate_storage_identity(root, storage_id, root_identity, false)?,
+            StorageConfiguration::ConfiguredLocal {
+                root,
+                storage_id,
+                root_identity,
+                capabilities,
+            } => {
+                validate_storage_identity(root, storage_id, root_identity, true)?;
+                if !valid_local_storage_capabilities(capabilities) {
+                    return Err(ConfigValidationError::InvalidStorageCapabilities);
+                }
+            }
         }
         if let NetworkConfiguration::LocalPrivate { bind_address } = &self.network {
             let Ok(address) = bind_address.parse::<SocketAddr>() else {
@@ -374,6 +470,39 @@ impl ServerConfig {
             configuration_state: ConfigurationState::Prepared,
         }
     }
+}
+
+fn validate_storage_identity(
+    root: &str,
+    storage_id: &StorageId,
+    root_identity: &StorageRootIdentity,
+    require_directory: bool,
+) -> Result<(), ConfigValidationError> {
+    if !structurally_safe_absolute_path(root) {
+        return Err(ConfigValidationError::InvalidStoragePath);
+    }
+    StorageId::parse(storage_id.as_str().to_owned())?;
+    if !root_identity.is_valid() || (require_directory && !root_identity.is_directory()) {
+        return Err(ConfigValidationError::InvalidStorageRootIdentity);
+    }
+    Ok(())
+}
+
+fn valid_local_storage_capabilities(capabilities: &StorageCapabilities) -> bool {
+    capabilities.backend() == StorageBackendKind::LocalFilesystem
+        && capabilities.availability() == StorageAvailability::Available
+        && capabilities.evidence() == (CapabilityEvidence::AdapterProbe { version: 1 })
+        && [
+            StorageCapability::ExclusiveCreate,
+            StorageCapability::DurableFsync,
+            StorageCapability::AtomicRename,
+            StorageCapability::AtomicPromotion,
+            StorageCapability::Checksumming,
+            StorageCapability::ReadAfterWrite,
+            StorageCapability::DurableFlush,
+        ]
+        .into_iter()
+        .all(|capability| capabilities.support(capability) == CapabilitySupport::Supported)
 }
 
 fn valid_database_identifier(value: &str) -> bool {
@@ -449,8 +578,10 @@ pub(crate) fn structurally_safe_absolute_path(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        ConfigValidationError, DatabaseCredentialState, DeploymentProfile, NetworkConfiguration,
-        ServerConfig, StorageConfiguration,
+        CapabilityEvidence, CapabilitySupport, ConfigValidationError, DatabaseCredentialState,
+        DeploymentProfile, NetworkConfiguration, ServerConfig, StorageAvailability,
+        StorageBackendKind, StorageCapabilities, StorageCapability, StorageConfiguration,
+        StorageId, StorageRootIdentity,
     };
 
     fn managed() -> ServerConfig {
@@ -467,6 +598,68 @@ mod tests {
         let second = config.canonical_bytes().unwrap();
         assert_eq!(first, second);
         assert_eq!(ServerConfig::parse(&first).unwrap(), config);
+    }
+
+    #[test]
+    fn configured_storage_persists_strict_adapter_capability_evidence() {
+        let mut config = managed();
+        config.storage = StorageConfiguration::ConfiguredLocal {
+            root: "/var/lib/synveil/storage".to_owned(),
+            storage_id: StorageId::new_v7(),
+            root_identity: StorageRootIdentity::Directory {
+                device: 10,
+                inode: 20,
+            },
+            capabilities: ready_storage_capabilities(),
+        };
+        let bytes = config.canonical_bytes().unwrap();
+        assert_eq!(ServerConfig::parse(&bytes).unwrap(), config);
+        assert_eq!(config.canonical_bytes().unwrap(), bytes);
+
+        let mut incomplete = config.clone();
+        if let StorageConfiguration::ConfiguredLocal { capabilities, .. } = &mut incomplete.storage
+        {
+            *capabilities = StorageCapabilities::for_location(
+                StorageBackendKind::LocalFilesystem,
+                StorageAvailability::Available,
+                CapabilityEvidence::AdapterProbe { version: 1 },
+            );
+        }
+        assert_eq!(
+            incomplete.validate(),
+            Err(ConfigValidationError::InvalidStorageCapabilities)
+        );
+
+        let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        value["storage"]["capabilities"]["capabilities"]["future_capability"] =
+            serde_json::json!("supported");
+        assert_eq!(
+            ServerConfig::parse(&serde_json::to_vec(&value).unwrap()),
+            Err(ConfigValidationError::InvalidFormat)
+        );
+    }
+
+    fn ready_storage_capabilities() -> StorageCapabilities {
+        [
+            StorageCapability::ExclusiveCreate,
+            StorageCapability::DurableFsync,
+            StorageCapability::AtomicRename,
+            StorageCapability::AtomicPromotion,
+            StorageCapability::Checksumming,
+            StorageCapability::ReadAfterWrite,
+            StorageCapability::DurableFlush,
+        ]
+        .into_iter()
+        .fold(
+            StorageCapabilities::for_location(
+                StorageBackendKind::LocalFilesystem,
+                StorageAvailability::Available,
+                CapabilityEvidence::AdapterProbe { version: 1 },
+            ),
+            |capabilities, capability| {
+                capabilities.with_support(capability, CapabilitySupport::Supported)
+            },
+        )
     }
 
     #[test]
@@ -515,6 +708,12 @@ mod tests {
         config = managed();
         config.storage = StorageConfiguration::ConfiguredLocal {
             root: "/".to_owned(),
+            storage_id: StorageId::new_v7(),
+            root_identity: StorageRootIdentity::Directory {
+                device: 1,
+                inode: 1,
+            },
+            capabilities: StorageCapabilities::unknown(),
         };
         assert_eq!(
             config.validate(),
@@ -547,6 +746,20 @@ mod tests {
         assert_ne!(
             external.deployment_profile,
             managed_config.deployment_profile
+        );
+    }
+
+    #[test]
+    fn storage_identity_accepts_only_canonical_uuid_v7_values() {
+        let valid = StorageId::new_v7();
+        assert_eq!(StorageId::parse(valid.as_str()), Ok(valid));
+        assert_eq!(
+            StorageId::parse("018f2ed0-44c2-4c00-8000-000000000001"),
+            Err(ConfigValidationError::InvalidStorageIdentity)
+        );
+        assert_eq!(
+            StorageId::parse("not-a-uuid"),
+            Err(ConfigValidationError::InvalidStorageIdentity)
         );
     }
 
