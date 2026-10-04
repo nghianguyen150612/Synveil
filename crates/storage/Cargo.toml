@@ -10,6 +10,7 @@ description = "Storage composition boundary for Synveil application adapters"
 async-trait.workspace = true
 bytes.workspace = true
 futures-util.workspace = true
+libc.workspace = true
 sha2.workspace = true
 synveil-core.workspace = true
 synveil-metadata.workspace = true
@@ -21,3 +22,4 @@ uuid.workspace = true
 [dev-dependencies]
 sqlx.workspace = true
 synveil-object-store = { workspace = true, features = ["test-util"] }
+tempfile = "3"

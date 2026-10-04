@@ -14,6 +14,7 @@ async-trait.workspace = true
 bytes.workspace = true
 futures-core.workspace = true
 futures-util = { workspace = true, optional = true }
+serde.workspace = true
 sha2 = { workspace = true, optional = true }
 synveil-core.workspace = true
 

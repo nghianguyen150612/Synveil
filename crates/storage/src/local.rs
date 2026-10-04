@@ -114,6 +114,19 @@ impl LocalFilesystemObjectStore {
         }
 
         ensure_root_directory_sync(&requested_root)?;
+        Self::initialize_existing_root(&requested_root)
+    }
+
+    /// Initialize the ObjectStore layout below an already existing dedicated
+    /// root. Unlike [`Self::open`], this never creates the root or its parent.
+    /// Managed Host bootstrap uses this only after durable server-storage
+    /// identity has been recorded and verified.
+    pub fn initialize_existing_root(root: impl AsRef<Path>) -> Result<Self, ObjectStoreError> {
+        let requested_root = root.as_ref().to_path_buf();
+        if requested_root.as_os_str().is_empty() || !requested_root.is_absolute() {
+            return Err(ObjectStoreError::InvalidRequest);
+        }
+        require_root_directory_sync(&requested_root)?;
         let root = validate_storage_root_sync(&requested_root)?;
         initialize_root_marker_sync(&root)?;
 
@@ -146,6 +159,61 @@ impl LocalFilesystemObjectStore {
             directory_sync_supported: directory_fsync,
             mutation_lock: Arc::new(Mutex::new(())),
         })
+    }
+
+    /// Open and verify an existing ObjectStore layout without creating,
+    /// repairing, probing, or otherwise mutating the configured root.
+    pub fn open_existing(root: impl AsRef<Path>) -> Result<Self, ObjectStoreError> {
+        let requested_root = root.as_ref().to_path_buf();
+        if requested_root.as_os_str().is_empty() || !requested_root.is_absolute() {
+            return Err(ObjectStoreError::InvalidRequest);
+        }
+        require_root_directory_sync(&requested_root)?;
+        let root = validate_storage_root_sync(&requested_root)?;
+        verify_root_marker_sync(&root)?;
+
+        let objects_dir = root.join(OBJECTS_DIRECTORY);
+        let staging_dir = root.join(STAGING_DIRECTORY);
+        let object_layout_dir = objects_dir.join(OBJECT_LAYOUT_VERSION);
+        require_directory_sync(&objects_dir)?;
+        require_directory_sync(&staging_dir)?;
+        require_directory_sync(&object_layout_dir)?;
+
+        Ok(Self {
+            root,
+            objects_dir,
+            staging_dir,
+            object_layout_dir,
+            capabilities: StorageCapabilities::for_location(
+                StorageBackendKind::LocalFilesystem,
+                StorageAvailability::Available,
+                CapabilityEvidence::NotProbed,
+            ),
+            // Runtime operations continue to request directory durability.
+            // This read-only opener does not claim that the filesystem has
+            // passed a fresh capability probe.
+            directory_sync_supported: true,
+            mutation_lock: Arc::new(Mutex::new(())),
+        })
+    }
+
+    /// Reopen existing layout using the non-mutating capability evidence
+    /// persisted by the managed storage bootstrap. The report is not probed
+    /// here; the typed server configuration must validate its adapter/version
+    /// boundary before calling this method.
+    pub fn open_existing_with_capabilities(
+        root: impl AsRef<Path>,
+        capabilities: StorageCapabilities,
+    ) -> Result<Self, ObjectStoreError> {
+        if capabilities.backend() != StorageBackendKind::LocalFilesystem
+            || capabilities.availability() != StorageAvailability::Available
+            || capabilities.evidence() != (CapabilityEvidence::AdapterProbe { version: 1 })
+        {
+            return Err(ObjectStoreError::StorageUnavailable);
+        }
+        let mut store = Self::open_existing(root)?;
+        store.capabilities = capabilities;
+        Ok(store)
     }
 
     /// Compatibility constructor spelling for runtime composition code.
@@ -1311,6 +1379,8 @@ fn ensure_directory_sync(path: &Path) -> Result<(), ObjectStoreError> {
             if is_redirected(&metadata) || !metadata.is_dir() {
                 return Err(ObjectStoreError::StorageUnavailable);
             }
+            let parent = path.parent().ok_or(ObjectStoreError::InvalidRequest)?;
+            sync_directory_sync(parent).map_err(map_io_error)?;
             Ok(())
         }
         Err(error) => Err(map_io_error(error)),
@@ -1324,16 +1394,7 @@ fn initialize_root_marker_sync(root: &Path) -> Result<(), ObjectStoreError> {
             if is_redirected(&metadata) || !metadata.is_file() {
                 return Err(ObjectStoreError::StorageUnavailable);
             }
-            let file = fs::File::open(&marker).map_err(map_io_error)?;
-            let mut content = Vec::new();
-            file.take((ROOT_MARKER_CONTENT.len() + 1) as u64)
-                .read_to_end(&mut content)
-                .map_err(map_io_error)?;
-            if content == ROOT_MARKER_CONTENT {
-                Ok(())
-            } else {
-                Err(ObjectStoreError::StorageUnavailable)
-            }
+            verify_root_marker_sync(root)
         }
         Err(error) if error.kind() == ErrorKind::NotFound => {
             let mut file = fs::OpenOptions::new()
@@ -1348,10 +1409,57 @@ fn initialize_root_marker_sync(root: &Path) -> Result<(), ObjectStoreError> {
                     }
                 })?;
             file.write_all(ROOT_MARKER_CONTENT).map_err(map_io_error)?;
-            file.sync_all().map_err(map_io_error)
+            file.sync_all().map_err(map_io_error)?;
+            sync_directory_sync(root).map_err(map_io_error)?;
+            verify_root_marker_sync(root)
         }
         Err(error) => Err(map_io_error(error)),
     }
+}
+
+fn verify_root_marker_sync(root: &Path) -> Result<(), ObjectStoreError> {
+    let marker = root.join(ROOT_MARKER_NAME);
+    let metadata = fs::symlink_metadata(&marker).map_err(map_io_error)?;
+    if is_redirected(&metadata) || !metadata.is_file() {
+        return Err(ObjectStoreError::StorageUnavailable);
+    }
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    let file = options.open(&marker).map_err(map_io_error)?;
+    let opened = file.metadata().map_err(map_io_error)?;
+    if !opened.is_file() || opened.len() > (ROOT_MARKER_CONTENT.len() + 1) as u64 {
+        return Err(ObjectStoreError::StorageUnavailable);
+    }
+    let mut content = Vec::new();
+    file.take((ROOT_MARKER_CONTENT.len() + 1) as u64)
+        .read_to_end(&mut content)
+        .map_err(map_io_error)?;
+    if content == ROOT_MARKER_CONTENT {
+        Ok(())
+    } else {
+        Err(ObjectStoreError::StorageUnavailable)
+    }
+}
+
+fn require_root_directory_sync(path: &Path) -> Result<(), ObjectStoreError> {
+    let metadata = fs::symlink_metadata(path).map_err(map_io_error)?;
+    if is_redirected(&metadata) || !metadata.is_dir() {
+        return Err(ObjectStoreError::StorageUnavailable);
+    }
+    Ok(())
+}
+
+fn require_directory_sync(path: &Path) -> Result<(), ObjectStoreError> {
+    let metadata = fs::symlink_metadata(path).map_err(map_io_error)?;
+    if is_redirected(&metadata) || !metadata.is_dir() {
+        return Err(ObjectStoreError::StorageUnavailable);
+    }
+    Ok(())
 }
 
 fn probe_file_fsync(staging_dir: &Path) -> bool {
@@ -1768,6 +1876,21 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn existing_only_open_does_not_create_or_repair_layout() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("server-storage");
+        fs::create_dir(&root).unwrap();
+        assert!(LocalFilesystemObjectStore::open_existing(&root).is_err());
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+
+        LocalFilesystemObjectStore::initialize_existing_root(&root).unwrap();
+        fs::remove_dir_all(root.join("objects")).unwrap();
+        assert!(LocalFilesystemObjectStore::open_existing(&root).is_err());
+        assert!(!root.join("objects").exists());
+        assert!(root.join(".synveil-storage-root").is_file());
     }
 
     #[cfg(windows)]

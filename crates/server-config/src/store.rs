@@ -5,11 +5,12 @@ use std::{
     io::{Read, Write},
     path::{Component, Path, PathBuf},
 };
+use synveil_object_store::StorageCapabilities;
 
 use crate::{
     ConfigFingerprint, ConfigValidationError, CredentialId, DatabaseCredentialState,
     DatabaseEndpoint, DeploymentProfile, ExternalDatabaseCredential, MAX_SERVER_CONFIG_BYTES,
-    NetworkConfiguration, ServerConfig, StorageConfiguration,
+    NetworkConfiguration, ServerConfig, StorageConfiguration, StorageId, StorageRootIdentity,
 };
 
 pub const SERVER_CONFIG_FILE_NAME: &str = "server-config.json";
@@ -151,6 +152,7 @@ pub enum ConfigStoreError {
     GenerationExhausted,
     SecretAlreadyExists { id: CredentialId },
     ExternalCredentialRequired,
+    StorageStateConflict,
     InvalidSecret { id: CredentialId },
     OutcomeUnknown,
     FailureInjected(WriteFailurePoint),
@@ -187,6 +189,9 @@ impl fmt::Display for ConfigStoreError {
             }
             Self::ExternalCredentialRequired => {
                 formatter.write_str("external PostgreSQL credential is required")
+            }
+            Self::StorageStateConflict => {
+                formatter.write_str("managed storage state changed and requires review")
             }
             Self::InvalidSecret { .. } => formatter.write_str("managed secret is invalid"),
             Self::OutcomeUnknown => {
@@ -435,15 +440,134 @@ impl ServerConfigStore {
         Ok(InitializeResult::Created(config))
     }
 
-    /// Typed storage-only mutation for P032. The caller must present the
-    /// canonical non-secret fingerprint it reviewed before the update.
-    pub fn update_storage(
+    /// Durably record the confirmed storage intent before any filesystem
+    /// initialization. Repeating the same pending operation is idempotent.
+    pub fn begin_storage_preparation(
         &self,
         expected: ConfigFingerprint,
         root: String,
+        storage_id: StorageId,
+        root_identity: StorageRootIdentity,
     ) -> Result<ServerConfig, ConfigStoreError> {
         let mut config = self.current_for_update(expected)?;
-        config.storage = StorageConfiguration::ConfiguredLocal { root };
+        match &config.storage {
+            StorageConfiguration::NotConfigured => {
+                config.storage = StorageConfiguration::PreparingLocal {
+                    root,
+                    storage_id,
+                    root_identity,
+                };
+            }
+            StorageConfiguration::PreparingLocal {
+                root: current_root,
+                storage_id: current_id,
+                root_identity: current_identity,
+            } if current_root == &root
+                && current_id == &storage_id
+                && current_identity == &root_identity =>
+            {
+                return Ok(config);
+            }
+            StorageConfiguration::PreparingLocal { .. }
+            | StorageConfiguration::ConfiguredLocal { .. } => {
+                return Err(ConfigStoreError::StorageStateConflict);
+            }
+        }
+        config.generation = config
+            .generation
+            .checked_add(1)
+            .ok_or(ConfigStoreError::GenerationExhausted)?;
+        self.atomic_write_config(&config, Some(expected))?;
+        Ok(config)
+    }
+
+    /// Bind the directory inode after a missing selected leaf is created with
+    /// its matching identity marker already present. Repeating the exact
+    /// identity update is idempotent.
+    pub fn record_storage_directory_identity(
+        &self,
+        expected: ConfigFingerprint,
+        root: String,
+        storage_id: StorageId,
+        root_identity: StorageRootIdentity,
+    ) -> Result<ServerConfig, ConfigStoreError> {
+        if !root_identity.is_directory() || !root_identity.is_valid() {
+            return Err(ConfigStoreError::StorageStateConflict);
+        }
+        let mut config = self.current_for_update(expected)?;
+        match &config.storage {
+            StorageConfiguration::PreparingLocal {
+                root: current_root,
+                storage_id: current_id,
+                root_identity: current_identity,
+            } if current_root == &root && current_id == &storage_id => match current_identity {
+                StorageRootIdentity::MissingLeaf { .. } => {
+                    config.storage = StorageConfiguration::PreparingLocal {
+                        root,
+                        storage_id,
+                        root_identity,
+                    };
+                }
+                StorageRootIdentity::Directory { .. } if current_identity == &root_identity => {
+                    return Ok(config);
+                }
+                StorageRootIdentity::Directory { .. } => {
+                    return Err(ConfigStoreError::StorageStateConflict);
+                }
+            },
+            _ => return Err(ConfigStoreError::StorageStateConflict),
+        }
+        config.generation = config
+            .generation
+            .checked_add(1)
+            .ok_or(ConfigStoreError::GenerationExhausted)?;
+        self.atomic_write_config(&config, Some(expected))?;
+        Ok(config)
+    }
+
+    /// Commit readiness only after the managed identity, ObjectStore layout,
+    /// and required filesystem probes have been verified. Repeating the same
+    /// completed transition is idempotent.
+    pub fn complete_storage_preparation(
+        &self,
+        expected: ConfigFingerprint,
+        root: String,
+        storage_id: StorageId,
+        root_identity: StorageRootIdentity,
+        capabilities: StorageCapabilities,
+    ) -> Result<ServerConfig, ConfigStoreError> {
+        let mut config = self.current_for_update(expected)?;
+        match &config.storage {
+            StorageConfiguration::PreparingLocal {
+                root: current_root,
+                storage_id: current_id,
+                root_identity: current_identity,
+            } if current_root == &root
+                && current_id == &storage_id
+                && current_identity == &root_identity
+                && root_identity.is_directory() =>
+            {
+                config.storage = StorageConfiguration::ConfiguredLocal {
+                    root,
+                    storage_id,
+                    root_identity,
+                    capabilities,
+                };
+            }
+            StorageConfiguration::ConfiguredLocal {
+                root: current_root,
+                storage_id: current_id,
+                root_identity: current_identity,
+                capabilities: current_capabilities,
+            } if current_root == &root
+                && current_id == &storage_id
+                && current_identity == &root_identity
+                && current_capabilities == &capabilities =>
+            {
+                return Ok(config);
+            }
+            _ => return Err(ConfigStoreError::StorageStateConflict),
+        }
         config.generation = config
             .generation
             .checked_add(1)
@@ -1352,7 +1476,7 @@ fn expected_synveil_gid() -> Option<u32> {
         .map(|group| group.gid.as_raw())
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(not(target_os = "linux"), unix))]
 fn expected_synveil_gid() -> Option<u32> {
     None
 }
@@ -1360,6 +1484,10 @@ fn expected_synveil_gid() -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use std::{fs, os::unix::fs::PermissionsExt};
+    use synveil_object_store::{
+        CapabilityEvidence, CapabilitySupport, StorageAvailability, StorageBackendKind,
+        StorageCapabilities, StorageCapability,
+    };
 
     use super::{
         CONFIG_DIRECTORY_MODE, CONFIG_FILE_MODE, CREDENTIAL_DIRECTORY_MODE, ConfigInspection,
@@ -1369,6 +1497,7 @@ mod tests {
     use crate::{
         ConfigFingerprint, CredentialId, DatabaseCredentialState, DeploymentProfile,
         ExternalDatabaseCredential, MAX_EXTERNAL_DATABASE_URL_BYTES, StorageConfiguration,
+        StorageId, StorageRootIdentity,
     };
 
     fn fixture_store() -> (tempfile::TempDir, ServerConfigStore) {
@@ -1389,6 +1518,29 @@ mod tests {
         {
             InitializeResult::Created(config) | InitializeResult::Reused(config) => config,
         }
+    }
+
+    fn ready_storage_capabilities() -> StorageCapabilities {
+        [
+            StorageCapability::ExclusiveCreate,
+            StorageCapability::DurableFsync,
+            StorageCapability::AtomicRename,
+            StorageCapability::AtomicPromotion,
+            StorageCapability::Checksumming,
+            StorageCapability::ReadAfterWrite,
+            StorageCapability::DurableFlush,
+        ]
+        .into_iter()
+        .fold(
+            StorageCapabilities::for_location(
+                StorageBackendKind::LocalFilesystem,
+                StorageAvailability::Available,
+                CapabilityEvidence::AdapterProbe { version: 1 },
+            ),
+            |capabilities, capability| {
+                capabilities.with_support(capability, CapabilitySupport::Supported)
+            },
+        )
     }
 
     #[test]
@@ -1542,13 +1694,24 @@ mod tests {
         };
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
         let mut workers = Vec::new();
-        for root in ["/srv/synveil/one", "/srv/synveil/two"] {
+        for (root, storage_id) in [
+            ("/srv/synveil/one", StorageId::new_v7()),
+            ("/srv/synveil/two", StorageId::new_v7()),
+        ] {
             let store = store.clone();
             let barrier = std::sync::Arc::clone(&barrier);
             let root = root.to_owned();
             workers.push(std::thread::spawn(move || {
                 barrier.wait();
-                store.update_storage(fingerprint, root)
+                store.begin_storage_preparation(
+                    fingerprint,
+                    root,
+                    storage_id,
+                    StorageRootIdentity::MissingLeaf {
+                        parent_device: 1,
+                        parent_inode: 1,
+                    },
+                )
             }));
         }
         barrier.wait();
@@ -1573,9 +1736,142 @@ mod tests {
         assert_eq!(persisted.generation, 1);
         assert!(matches!(
             persisted.storage,
-            StorageConfiguration::ConfiguredLocal { root }
+            StorageConfiguration::PreparingLocal { root, .. }
                 if root == "/srv/synveil/one" || root == "/srv/synveil/two"
         ));
+    }
+
+    #[test]
+    fn configured_transition_outcome_unknown_reconciles_the_same_storage_identity() {
+        for point in [
+            WriteFailurePoint::BeforeTemporaryCreate,
+            WriteFailurePoint::AfterTemporaryWrite,
+            WriteFailurePoint::AfterFileSync,
+            WriteFailurePoint::BeforeRename,
+            WriteFailurePoint::AfterRename,
+            WriteFailurePoint::BeforeParentSync,
+            WriteFailurePoint::AfterParentSync,
+            WriteFailurePoint::PostWriteVerification,
+        ] {
+            let (_temp, store) = fixture_store();
+            initialize_managed(&store);
+            let fingerprint = match store.inspect() {
+                ConfigInspection::ValidCurrent { fingerprint, .. } => fingerprint,
+                other => panic!("unexpected inspection: {other:?}"),
+            };
+            let root = "/srv/synveil/reconcile-final-commit".to_owned();
+            let storage_id = StorageId::new_v7();
+            store
+                .begin_storage_preparation(
+                    fingerprint,
+                    root.clone(),
+                    storage_id.clone(),
+                    StorageRootIdentity::MissingLeaf {
+                        parent_device: 10,
+                        parent_inode: 20,
+                    },
+                )
+                .unwrap();
+            let preparing_fingerprint = match store.inspect() {
+                ConfigInspection::ValidCurrent { fingerprint, .. } => fingerprint,
+                other => panic!("unexpected inspection: {other:?}"),
+            };
+            let root_identity = StorageRootIdentity::Directory {
+                device: 10,
+                inode: 30,
+            };
+            store
+                .record_storage_directory_identity(
+                    preparing_fingerprint,
+                    root.clone(),
+                    storage_id.clone(),
+                    root_identity.clone(),
+                )
+                .unwrap();
+            let configured_fingerprint = match store.inspect() {
+                ConfigInspection::ValidCurrent { fingerprint, .. } => fingerprint,
+                other => panic!("unexpected inspection: {other:?}"),
+            };
+            let failing = ServerConfigStore {
+                layout: store.layout().clone(),
+                failure_point: Some(point),
+            };
+            assert!(
+                failing
+                    .complete_storage_preparation(
+                        configured_fingerprint,
+                        root.clone(),
+                        storage_id.clone(),
+                        root_identity.clone(),
+                        ready_storage_capabilities(),
+                    )
+                    .is_err()
+            );
+
+            let reconciler = ServerConfigStore::new(store.layout().clone());
+            let (after, after_fingerprint) = match reconciler.inspect() {
+                ConfigInspection::ValidCurrent {
+                    config,
+                    fingerprint,
+                } => (*config, fingerprint),
+                other => panic!("fault left config unreconcilable at {point:?}: {other:?}"),
+            };
+            let commit_may_have_landed = matches!(
+                point,
+                WriteFailurePoint::AfterRename
+                    | WriteFailurePoint::BeforeParentSync
+                    | WriteFailurePoint::AfterParentSync
+                    | WriteFailurePoint::PostWriteVerification
+            );
+            if commit_may_have_landed {
+                assert!(matches!(
+                    &after.storage,
+                    StorageConfiguration::ConfiguredLocal {
+                        root: actual_root,
+                        storage_id: actual_id,
+                        root_identity: actual_identity,
+                        ..
+                    } if actual_root == &root
+                        && actual_id == &storage_id
+                        && actual_identity == &root_identity
+                ));
+            } else {
+                assert!(matches!(
+                    &after.storage,
+                    StorageConfiguration::PreparingLocal {
+                        root: actual_root,
+                        storage_id: actual_id,
+                        root_identity: actual_identity,
+                    } if actual_root == &root
+                        && actual_id == &storage_id
+                        && actual_identity == &root_identity
+                ));
+                reconciler
+                    .complete_storage_preparation(
+                        after_fingerprint,
+                        root.clone(),
+                        storage_id.clone(),
+                        root_identity.clone(),
+                        ready_storage_capabilities(),
+                    )
+                    .unwrap();
+            }
+            let final_config = match reconciler.inspect() {
+                ConfigInspection::ValidCurrent { config, .. } => config,
+                other => panic!("reconciliation failed at {point:?}: {other:?}"),
+            };
+            assert!(matches!(
+                &final_config.storage,
+                StorageConfiguration::ConfiguredLocal {
+                    root: actual_root,
+                    storage_id: actual_id,
+                    root_identity: actual_identity,
+                    ..
+                } if actual_root == &root
+                    && actual_id == &storage_id
+                    && actual_identity == &root_identity
+            ));
+        }
     }
 
     #[test]
@@ -1668,22 +1964,105 @@ mod tests {
             ConfigInspection::ValidCurrent { fingerprint, .. } => fingerprint,
             other => panic!("unexpected inspection: {other:?}"),
         };
-        let updated = store
-            .update_storage(fingerprint, "/srv/synveil/server-data".to_owned())
+        let storage_id = StorageId::new_v7();
+        let parent_identity = StorageRootIdentity::MissingLeaf {
+            parent_device: 1,
+            parent_inode: 2,
+        };
+        let directory_identity = StorageRootIdentity::Directory {
+            device: 1,
+            inode: 3,
+        };
+        let preparing = store
+            .begin_storage_preparation(
+                fingerprint,
+                "/srv/synveil/server-data".to_owned(),
+                storage_id.clone(),
+                parent_identity.clone(),
+            )
             .unwrap();
         assert_eq!(
-            updated.server_installation_id,
+            preparing.server_installation_id,
             config.server_installation_id
         );
-        assert_eq!(updated.generation, 1);
+        assert_eq!(preparing.generation, 1);
         assert_eq!(
-            updated.storage,
+            preparing.storage,
+            StorageConfiguration::PreparingLocal {
+                root: "/srv/synveil/server-data".to_owned(),
+                storage_id: storage_id.clone(),
+                root_identity: parent_identity.clone(),
+            }
+        );
+        assert_eq!(preparing.database, config.database);
+        assert_eq!(
+            preparing.rebaseline_token_key_ref,
+            config.rebaseline_token_key_ref
+        );
+        assert_eq!(preparing.network, config.network);
+        let prepared_fingerprint = match store.inspect() {
+            ConfigInspection::ValidCurrent { fingerprint, .. } => fingerprint,
+            other => panic!("unexpected inspection: {other:?}"),
+        };
+        let retried = store
+            .begin_storage_preparation(
+                prepared_fingerprint,
+                "/srv/synveil/server-data".to_owned(),
+                storage_id.clone(),
+                parent_identity.clone(),
+            )
+            .unwrap();
+        assert_eq!(retried.generation, preparing.generation);
+        assert_eq!(retried.storage, preparing.storage);
+        let directory_bound = store
+            .record_storage_directory_identity(
+                prepared_fingerprint,
+                "/srv/synveil/server-data".to_owned(),
+                storage_id.clone(),
+                directory_identity.clone(),
+            )
+            .unwrap();
+        let directory_bound_fingerprint = match store.inspect() {
+            ConfigInspection::ValidCurrent { fingerprint, .. } => fingerprint,
+            other => panic!("unexpected inspection: {other:?}"),
+        };
+        assert_eq!(directory_bound.generation, 2);
+        let configured = store
+            .complete_storage_preparation(
+                directory_bound_fingerprint,
+                "/srv/synveil/server-data".to_owned(),
+                storage_id.clone(),
+                directory_identity.clone(),
+                ready_storage_capabilities(),
+            )
+            .unwrap();
+        assert_eq!(
+            configured.server_installation_id,
+            config.server_installation_id
+        );
+        assert_eq!(configured.generation, 3);
+        assert_eq!(configured.database, config.database);
+        assert_eq!(
+            configured.rebaseline_token_key_ref,
+            config.rebaseline_token_key_ref
+        );
+        assert_eq!(configured.network, config.network);
+        assert_eq!(
+            configured.storage,
             StorageConfiguration::ConfiguredLocal {
-                root: "/srv/synveil/server-data".to_owned()
+                root: "/srv/synveil/server-data".to_owned(),
+                storage_id: storage_id.clone(),
+                root_identity: directory_identity,
+                capabilities: ready_storage_capabilities(),
             }
         );
         assert!(matches!(
-            store.update_storage(fingerprint, "/srv/other".to_owned()),
+            store.begin_storage_preparation(
+                fingerprint,
+                "/srv/other".to_owned(),
+                storage_id,
+                parent_identity,
+            ),
             Err(ConfigStoreError::ConcurrentModification)
         ));
     }
@@ -1933,7 +2312,15 @@ mod tests {
                 layout: store.layout.clone(),
                 failure_point: Some(point),
             };
-            let result = failing.update_storage(expected, "/srv/synveil/test".to_owned());
+            let result = failing.begin_storage_preparation(
+                expected,
+                "/srv/synveil/test".to_owned(),
+                StorageId::new_v7(),
+                StorageRootIdentity::MissingLeaf {
+                    parent_device: 1,
+                    parent_inode: 1,
+                },
+            );
             assert!(result.is_err(), "fault point {point:?}");
             let after = ServerConfigStore::new(store.layout.clone()).inspect();
             match point {
@@ -1942,7 +2329,7 @@ mod tests {
                 | WriteFailurePoint::AfterParentSync
                 | WriteFailurePoint::PostWriteVerification => {
                     assert!(
-                        matches!(after, ConfigInspection::ValidCurrent { config, .. } if config.generation == 1)
+                        matches!(after, ConfigInspection::ValidCurrent { config, .. } if config.generation == 1 && matches!(config.storage, StorageConfiguration::PreparingLocal { .. }))
                     );
                 }
                 _ => assert!(

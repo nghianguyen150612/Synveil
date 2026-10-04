@@ -11,7 +11,8 @@ use synveil_metadata::{
     ContentReadMetadataBackend, DatabasePool, MigrationRunner, PostgresContentReadRepository,
     PostgresUploadRepository, UploadMetadataBackend,
 };
-use synveil_server_config::{NetworkConfiguration, StorageConfiguration};
+use synveil_server_config::NetworkConfiguration;
+use synveil_server_storage::open_existing_managed_local_storage;
 use synveil_storage::{
     ContentReadApplicationService, ObjectStore, UploadApplicationService, UploadLimits,
     open_local_object_store,
@@ -73,16 +74,19 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         );
         tracing::info!("PostgreSQL authentication backend configured");
 
-        let object_root = match managed_config.map(|config| &config.storage) {
-            Some(StorageConfiguration::NotConfigured) => None,
-            Some(StorageConfiguration::ConfiguredLocal { root }) => Some(root.clone()),
-            None => env::var("SYNVEIL_OBJECT_ROOT").ok(),
+        let object_store: Option<Arc<dyn ObjectStore>> = match managed_config {
+            Some(config) => Some(Arc::new(open_existing_managed_local_storage(config)?)),
+            None => env::var("SYNVEIL_OBJECT_ROOT")
+                .ok()
+                .map(|root| {
+                    open_local_object_store(root)
+                        .map(|store| Arc::new(store) as Arc<dyn ObjectStore>)
+                })
+                .transpose()?,
         };
-        if let Some(object_root) = object_root {
+        if let Some(object_store) = object_store {
             let metadata: Arc<dyn UploadMetadataBackend> =
                 Arc::new(PostgresUploadRepository::new(pool.as_ref().clone()));
-            let object_store: Arc<dyn ObjectStore> =
-                Arc::new(open_local_object_store(object_root)?);
             let content_metadata: Arc<dyn ContentReadMetadataBackend> =
                 Arc::new(PostgresContentReadRepository::new(pool.as_ref().clone()));
             let content_service =

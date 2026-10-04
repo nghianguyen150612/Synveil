@@ -60,11 +60,15 @@ secret wrapper and persists it only in the protected credential source.
 
 ## Storage, network, and topology state
 
-Storage begins as `NotConfigured`. P032 receives `update_storage`, a typed
-compare-and-swap operation that changes only the storage selection. P031 does
-not choose a root or create `objects/` or `staging/`. The schema performs
-structural path checks; P032 owns path identity, capacity, ownership, and
-ObjectStore qualification.
+Storage begins as `NotConfigured`. Prompt032 extends the typed V1 state to
+`PreparingLocal` and `ConfiguredLocal`, including a UUIDv7 storage ID and
+filesystem root identity. `ConfiguredLocal` also persists the validated
+LocalFilesystemObjectStore capability report used to reopen managed runtime
+without probing or mutating storage. Its compare-and-swap transitions change
+only storage. P031 itself did not choose a root or create `objects/` or
+`staging/`; Prompt032 owns path identity, capacity, ownership, durable
+identity, and ObjectStore qualification. See
+[`SERVER_STORAGE_LOCATION.md`](SERVER_STORAGE_LOCATION.md).
 
 Network begins as `NotConfigured`. P031 exposes only a local-loopback update
 boundary for future coordination. It cannot write a wildcard/public address or
@@ -131,13 +135,12 @@ data, storage selection, network reachability, or admin-bootstrap state.
 
 ## Current runtime and limits
 
-API and worker share the protected database runtime loader. API loads the
-selected configuration and required credentials, validates database settings,
-connects/applies migrations and prepares configured storage before opening its
-listener. Managed mode is rejected until P033 has materialized `database-url`
-and P032 has selected storage. Legacy operator mode continues to support its
-documented explicit environment inputs, including the safe loopback API
-default.
+API and worker share the protected database runtime loader. Managed API and
+worker open only the existing storage identity committed by Prompt032; startup
+does not create, repair, probe, or replace a missing configured root. Managed
+mode also depends on the required database/runtime setup. Legacy operator mode
+continues to support its documented explicit environment inputs, including
+the safe loopback API default and explicit-root ObjectStore behavior.
 
 Filesystem semantics are covered in disposable fixtures, including Linux mode
 bits, symlinks, hard links, atomic replacement, CAS, interruption injection,
@@ -147,7 +150,8 @@ service, bind a public listener, select storage, create an administrator, or
 qualify a clean machine. Ubuntu 24.04/Fedora 42 x86_64 remain managed-Host
 implementation targets; Windows native P028 acceptance stays pending.
 
-P032 owns storage selection; P033 owns runtime provisioning/services;
+P032 owns storage selection and existing-only managed storage opening; P033
+owns runtime provisioning/services;
 P034 owns reachability; P035 owns first-admin bootstrap; P036 owns complete
 Host readiness acceptance. This foundation alone does not complete
 `first-run-2.json` or guided self-hosting.

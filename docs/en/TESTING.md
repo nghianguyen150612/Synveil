@@ -155,6 +155,14 @@ They do not certify PostgreSQL isolation, local fsync/rename/symlink behavior,
 S3 read-after-write/checksum behavior, Caddy streaming, container privileges or
 real browser/platform semantics.
 
+Prompt032 adds unit and native-Linux fixture coverage for server storage
+selection, component-aware client-library exclusion, capacity, confirmation,
+durable identity, interruption reconciliation, unknown-data preservation, and
+existing-only managed API/worker reopening. These tests are source/fixture and
+local-host evidence; they do not establish clean-machine Host readiness or
+physical power-cut behavior. FIRST-RUN-2 overall remains
+`IMPLEMENTATION_PENDING` until P033–P036 complete the Host journey.
+
 ## Test architecture and harnesses
 
 ### Required harness components

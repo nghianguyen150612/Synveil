@@ -13,7 +13,7 @@ use synveil_api::{
 };
 use synveil_core::{GcWorkerConfig, ObjectGcPolicy};
 use synveil_metadata::{DatabasePool, MigrationRunner};
-use synveil_server_config::StorageConfiguration;
+use synveil_server_storage::open_existing_managed_local_storage;
 use synveil_storage::{GcWorker, ObjectStore, open_local_object_store};
 use tokio::{sync::watch, time::timeout};
 
@@ -34,25 +34,20 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     };
     let database_config = database_config_from_runtime()?;
     let policy = ObjectGcPolicy::from_env()?;
-    let object_root = match managed_config.map(|config| &config.storage) {
-        Some(StorageConfiguration::ConfiguredLocal { root }) => root.clone(),
-        Some(StorageConfiguration::NotConfigured) => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "managed server storage is not configured",
-            )
-            .into());
-        }
-        None => env::var("SYNVEIL_OBJECT_ROOT").map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "SYNVEIL_OBJECT_ROOT is required when the GC worker is enabled",
-            )
-        })?,
-    };
     let pool = DatabasePool::connect(&database_config).await?;
     MigrationRunner::new().run(&pool).await?;
-    let object_store: Arc<dyn ObjectStore> = Arc::new(open_local_object_store(object_root)?);
+    let object_store: Arc<dyn ObjectStore> = match managed_config {
+        Some(config) => Arc::new(open_existing_managed_local_storage(config)?),
+        None => {
+            let object_root = env::var("SYNVEIL_OBJECT_ROOT").map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "SYNVEIL_OBJECT_ROOT is required when the GC worker is enabled",
+                )
+            })?;
+            Arc::new(open_local_object_store(object_root)?)
+        }
+    };
     let worker = GcWorker::new(pool.clone(), policy, vec![object_store], worker_config)?;
 
     let (shutdown_sender, mut shutdown) = watch::channel(false);

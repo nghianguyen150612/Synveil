@@ -39,8 +39,10 @@ Synveil uses the word backup for two related but distinct responsibilities:
    immutable `BackupSnapshot` manifests and restores individual or complete
    content after deletion, corruption, or device loss.
 2. **Synveil instance disaster recovery:** the operator backs up PostgreSQL,
-   object storage, configuration, and required secrets together so the server
-   itself can be rebuilt.
+   server object storage, configuration, and required secrets together so the
+   server itself can be rebuilt. Server object storage is the dedicated opaque
+   object-data root; it is distinct from every user's synchronized client
+   library. See the v0.2 [server storage location contract](../v0.2/SERVER_STORAGE_LOCATION.md).
 
 Device snapshots stored only on the same sole disk as live Synveil data protect
 history from sync deletion but do not protect against that disk's loss. The UI
