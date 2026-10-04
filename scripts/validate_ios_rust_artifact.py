@@ -19,6 +19,7 @@ import sys
 ALLOWED_PATHS_BASE = {
     "device/arm64/libsynveil_ios_ffi.a",
     "simulator/arm64/libsynveil_ios_ffi.a",
+    "include/synveil_ios_ffi.h",
     "manifest.json",
     "SHA256SUMS",
 }
@@ -81,6 +82,21 @@ def validate_artifact_bundle(staging_dir: str) -> None:
             f"Invalid artifact_profile: expected 'release', got {manifest.get('artifact_profile')}"
         )
 
+    if manifest.get("c_abi_export_status") != "ABI_VERSION_ONLY_P016":
+        raise ValueError(
+            f"Invalid c_abi_export_status: expected 'ABI_VERSION_ONLY_P016', got {manifest.get('c_abi_export_status')}"
+        )
+
+    if manifest.get("c_abi_exports") != ["synveil_ffi_abi_version"]:
+        raise ValueError(
+            f"Invalid c_abi_exports: expected ['synveil_ffi_abi_version'], got {manifest.get('c_abi_exports')}"
+        )
+
+    if manifest.get("header_status") != "GENERATED_CBINDGEN_P016":
+        raise ValueError(
+            f"Invalid header_status: expected 'GENERATED_CBINDGEN_P016', got {manifest.get('header_status')}"
+        )
+
     variants = manifest.get("variants")
     if not isinstance(variants, list) or len(variants) == 0:
         raise ValueError("manifest.json must contain a non-empty 'variants' array")
@@ -88,10 +104,15 @@ def validate_artifact_bundle(staging_dir: str) -> None:
     has_x86_64 = any(
         v.get("rust_target_triple") == "x86_64-apple-ios" for v in variants
     )
+    has_universal = any(
+        v.get("rust_target_triple") == "universal-simulator" for v in variants
+    )
 
     allowed_set = set(ALLOWED_PATHS_BASE)
     if has_x86_64:
-        allowed_set.update(ALLOWED_PATHS_X86_64)
+        allowed_set.add("simulator/x86_64/libsynveil_ios_ffi.a")
+    if has_universal:
+        allowed_set.add("simulator/universal/libsynveil_ios_ffi.a")
 
     # 2. Closed File Set Validation
     actual_staged_files = set()

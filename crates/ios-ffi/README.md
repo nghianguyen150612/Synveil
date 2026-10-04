@@ -7,6 +7,10 @@ Dedicated thin C ABI bridge crate for the native Synveil iOS client (`v0.1`).
 - Wraps platform-neutral shared Rust core (`synveil-core`).
 - Produces a release static library archive (`staticlib` -> `libsynveil_ios_ffi.a`).
 
+## First Exported C Symbol (P016)
+- `synveil_ffi_abi_version() -> u32`: returns `SYNVEIL_FFI_ABI_VERSION` (`1`).
+- Protected by `std::panic::catch_unwind` returning `0` on panic.
+
 ## Prohibited Dependencies
 This crate must remain free of desktop, server, async runtime, database, and platform keyring dependencies:
 - `synveil-client` / `synveil-desktop` / CXX-Qt / Qt bindings
@@ -15,11 +19,15 @@ This crate must remain free of desktop, server, async runtime, database, and pla
 - Tokio / Reqwest
 - Keyring / Apple Framework Bindings
 
-## Build & Validation
+## Build, Header Generation & Validation
 ```bash
 # Host check and tests
 cargo check -p synveil-ios-ffi --locked
 cargo test -p synveil-ios-ffi --locked
+
+# Generate / verify C header
+./scripts/generate-ios-rust-header.sh
+./scripts/generate-ios-rust-header.sh --check
 
 # Local Apple target compilation check (macOS)
 ./scripts/check-ios-rust.sh
@@ -29,7 +37,7 @@ cargo test -p synveil-ios-ffi --locked
 python3 scripts/validate_ios_rust_artifact.py
 ```
 
-## CI Pipeline (P015)
+## CI Pipeline (P016)
 Workflows: `.github/workflows/ios-rust-apple-build.yml`
 Artifacts published: `synveil-ios-rust-staticlibs`
 Staging directory: `target/ios-rust-artifacts/`
@@ -38,5 +46,6 @@ Contains:
 - `simulator/arm64/libsynveil_ios_ffi.a`
 - `simulator/x86_64/libsynveil_ios_ffi.a`
 - `simulator/universal/libsynveil_ios_ffi.a`
-- `manifest.json` (Schema v1 metadata)
+- `include/synveil_ios_ffi.h`
+- `manifest.json` (Schema v1 metadata with C ABI exports)
 - `SHA256SUMS` (Integrity checksums)

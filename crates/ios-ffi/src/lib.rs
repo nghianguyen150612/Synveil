@@ -1,20 +1,29 @@
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 //! Dedicated thin C ABI bridge crate for Synveil iOS (`synveil-ios-ffi`).
 //!
 //! # Architecture & Ownership Boundary
-//! This crate is the sole future owner of the C ABI exports for the native
+//! This crate is the sole owner of the C ABI exports for the native
 //! Synveil iOS client (`v0.1`). It acts as an isolation layer between pure,
 //! platform-neutral shared Rust core crates (`synveil-core`) and Swift
 //! infrastructure adapters (`clients/ios/Infrastructure/RustBridge`).
-//!
-//! # Prompt 014 Status
-//! Prompt 014 establishes workspace membership, staticlib compilation capability,
-//! dependency closure auditing, and Apple target compile verification.
-//!
-//! In accordance with the FFI contract (`docs/ios/IOS_RUST_SWIFT_FFI_CONTRACT.md`),
-//! no public `extern "C"` functions, `#[no_mangle]` symbols, cbindgen C headers,
-//! or Swift linking exist in Prompt 014. Public FFI exports begin in Prompt 016.
+
+/// Canonical ABI version exposed across the Swift ↔ Rust C ABI boundary.
+pub const SYNVEIL_FFI_ABI_VERSION: u32 = 1;
+
+/// Returns the supported C ABI version for `synveil-ios-ffi`.
+///
+/// # ABI Guarantees
+/// - Accepts no arguments.
+/// - Allocates no heap memory.
+/// - Performs no I/O, network, or platform operations.
+/// - Is deterministic, reentrant, and thread-safe.
+/// - Catches any internal panic and returns `0` (invalid ABI version) on unwind.
+#[allow(unsafe_code)]
+#[unsafe(no_mangle)]
+pub extern "C" fn synveil_ffi_abi_version() -> u32 {
+    std::panic::catch_unwind(|| SYNVEIL_FFI_ABI_VERSION).unwrap_or(0)
+}
 
 /// Compile-time marker confirming bridge crate identity and core wiring.
 #[doc(hidden)]
@@ -30,6 +39,12 @@ pub fn bridge_compile_marker() -> &'static str {
 mod tests {
     use super::*;
     use synveil_core::Sha256Digest;
+
+    #[test]
+    fn test_abi_version_constant_and_export() {
+        assert_eq!(SYNVEIL_FFI_ABI_VERSION, 1);
+        assert_eq!(synveil_ffi_abi_version(), 1);
+    }
 
     #[test]
     fn test_bridge_compile_marker() {

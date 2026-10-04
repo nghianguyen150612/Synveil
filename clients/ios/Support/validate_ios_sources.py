@@ -37,7 +37,7 @@ INFRASTRUCTURE_FORBIDDEN_IMPORTS = {"SwiftUI", "UIKit"}
 FEATURES_FORBIDDEN_IMPORTS = {"Security", "GRDB", "SQLite3", "SQLite"}
 
 # Known raw FFI module names (can be expanded in Phase C / P013+)
-RAW_FFI_MODULES = {"synveil_core_ffi", "SynveilCoreFFI", "CBridge"}
+RAW_FFI_MODULES = {"synveil_core_ffi", "SynveilCoreFFI", "CBridge", "SynveilRustFFI"}
 
 # Prohibited platform symbols in upper layers (Domain, Application, Features)
 FORBIDDEN_NETWORK_SYMBOLS = {

@@ -184,21 +184,42 @@ fi
 
 echo ""
 echo "=== Step 6: Symbol Export Inspection ==="
-if command -v nm >/dev/null 2>&1; then
-    echo "Inspecting symbols for unexpected synveil_ffi_* C ABI exports..."
-    SYMBOLS="$(nm -g "${STAGING_DIR}/device/arm64/libsynveil_ios_ffi.a" 2>/dev/null || true)"
-    if echo "${SYMBOLS}" | grep -q "synveil_ffi_"; then
-        echo "ERROR: Unexpected synveil_ffi_* C ABI symbol found prior to P016!" >&2
-        echo "${SYMBOLS}" | grep "synveil_ffi_" >&2
+if command -v nm >/dev/null 2>&1 || command -v strings >/dev/null 2>&1; then
+    echo "Inspecting symbols for approved C ABI export synveil_ffi_abi_version..."
+    SYMBOLS=""
+    if command -v nm >/dev/null 2>&1; then
+        SYMBOLS="$(nm -g "${STAGING_DIR}/device/arm64/libsynveil_ios_ffi.a" 2>/dev/null || true)"
+    fi
+
+    if ! echo "${SYMBOLS}" | grep -q "synveil_ffi_" && command -v strings >/dev/null 2>&1; then
+        echo "Notice: nm did not yield C ABI symbols (possibly GNU nm on Mach-O); falling back to strings for symbol search."
+        SYMBOLS="$(strings "${STAGING_DIR}/device/arm64/libsynveil_ios_ffi.a" 2>/dev/null || true)"
+    fi
+    FFI_SYMBOLS="$(echo "${SYMBOLS}" | grep "synveil_ffi_" | awk '{print $NF}' | sed 's/^_//' | sort -u || true)"
+
+    if [ -z "${FFI_SYMBOLS}" ]; then
+        echo "ERROR: Required C ABI symbol 'synveil_ffi_abi_version' was NOT found!" >&2
         exit 1
     fi
-    echo "Symbol inspection passed! No synveil_ffi_* C ABI symbols found."
+
+    EXPECTED_SYMBOLS="synveil_ffi_abi_version"
+    if [ "${FFI_SYMBOLS}" != "${EXPECTED_SYMBOLS}" ]; then
+        echo "ERROR: Unexpected C ABI symbols found in static library!" >&2
+        echo "Found symbols:" >&2
+        echo "${FFI_SYMBOLS}" >&2
+        echo "Expected exact set: '${EXPECTED_SYMBOLS}'" >&2
+        exit 1
+    fi
+    echo "Symbol inspection passed! Found exact approved symbol: synveil_ffi_abi_version"
 else
     echo "Notice: nm tool not present on host; skipping nm symbol inspection."
 fi
 
 echo ""
-echo "=== Step 7: Generate Manifest & Checksums ==="
+echo "=== Step 7: Stage Generated Header & Generate Manifest ==="
+echo "Copying generated C header into staged layout..."
+mkdir -p "${STAGING_DIR}/include"
+cp "clients/ios/Infrastructure/RustBridge/Generated/synveil_ios_ffi.h" "${STAGING_DIR}/include/synveil_ios_ffi.h"
 PKG_VERSION="$(cargo metadata --format-version 1 --no-deps | python3 -c 'import sys, json; data = json.load(sys.stdin); pkg = next((p for p in data.get("packages", []) if p.get("name") == "synveil-ios-ffi"), None); print(pkg["version"] if pkg else "0.1.0")')"
 RUSTC_VER="$(rustc --version)"
 CARGO_VER="$(cargo --version)"
@@ -253,10 +274,13 @@ manifest = {
     "rust_toolchain_version": rustc_ver,
     "cargo_version": cargo_ver,
     "source_commit_sha": commit_sha,
-    "c_abi_export_status": "NONE_IN_P015",
-    "cbindgen_status": "DEFERRED_TO_P016",
-    "header_status": "NONE_IN_P015",
-    "xcframework_status": "NONE_IN_P015",
+    "c_abi_export_status": "ABI_VERSION_ONLY_P016",
+    "c_abi_exports": [
+        "synveil_ffi_abi_version"
+    ],
+    "cbindgen_status": "ACTIVE_P016",
+    "header_status": "GENERATED_CBINDGEN_P016",
+    "xcframework_status": "XCFRAMEWORK_NOT_REQUIRED_P016",
     "variants": variants
 }
 

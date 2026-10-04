@@ -4,10 +4,28 @@ on:
   push:
     paths:
       - "clients/ios/**"
+      - "crates/ios-ffi/**"
+      - "crates/core/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "scripts/build-ios-rust-artifacts.sh"
+      - "scripts/prepare-ios-rust-xcode.sh"
+      - "scripts/generate-ios-rust-header.sh"
+      - "scripts/validate_ios_rust_artifact.py"
       - ".github/workflows/ios-build.yml"
   pull_request:
     paths:
       - "clients/ios/**"
+      - "crates/ios-ffi/**"
+      - "crates/core/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "scripts/build-ios-rust-artifacts.sh"
+      - "scripts/prepare-ios-rust-xcode.sh"
+      - "scripts/generate-ios-rust-header.sh"
+      - "scripts/validate_ios_rust_artifact.py"
       - ".github/workflows/ios-build.yml"
   workflow_dispatch:
 
@@ -43,6 +61,11 @@ jobs:
           echo ""
           echo "=== Available Xcode Installations ==="
           ls -ld /Applications/Xcode*.app 2>/dev/null || true
+
+      - name: Prepare Rust Static Libraries for Xcode
+        run: |
+          chmod +x scripts/prepare-ios-rust-xcode.sh
+          ./scripts/prepare-ios-rust-xcode.sh
 
       - name: Build Xcode Project
         run: |
