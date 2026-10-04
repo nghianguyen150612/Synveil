@@ -1,4 +1,5 @@
 use std::{env, fmt, time::Duration};
+use zeroize::Zeroizing;
 
 use crate::DatabaseConfigError;
 
@@ -106,13 +107,13 @@ impl Default for PoolConfig {
 /// omitted from `Debug` output because it may contain credentials.
 #[derive(Clone)]
 pub struct DatabaseConfig {
-    database_url: String,
+    database_url: Zeroizing<String>,
     pool: PoolConfig,
 }
 
 impl DatabaseConfig {
     pub fn from_url(url: impl Into<String>) -> Result<Self, DatabaseConfigError> {
-        let database_url = url.into();
+        let database_url = Zeroizing::new(url.into());
         let database_url = database_url.trim();
         if database_url.is_empty() {
             return Err(DatabaseConfigError::EmptyUrl);
@@ -122,7 +123,7 @@ impl DatabaseConfig {
         }
 
         Ok(Self {
-            database_url: database_url.to_owned(),
+            database_url: Zeroizing::new(database_url.to_owned()),
             pool: PoolConfig::default(),
         })
     }
@@ -149,7 +150,7 @@ impl DatabaseConfig {
     }
 
     pub(crate) fn database_url(&self) -> &str {
-        &self.database_url
+        self.database_url.as_str()
     }
 }
 

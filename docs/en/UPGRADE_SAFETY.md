@@ -65,6 +65,14 @@ replacement may leave a partial application payload; reinstall repairs that
 payload while preserving durable data. This is not an atomic whole-package
 rollback guarantee.
 
+For a managed Host, Prompt031's `/etc/synveil/server-config.json` and protected
+credential sources under `/etc/synveil/credentials` are part of the preserved
+configuration boundary. Ordinary upgrade, repair, and reinstall do not rewrite
+an unknown/newer schema, replace an installation ID, or rotate database or
+rebaseline secrets. Missing or malformed managed state requires explicit
+reconciliation. The separate destructive `--purge` operation retains the
+documented `/etc/synveil` ownership scope above.
+
 Ordinary uninstall removes only package-owned artifacts. Explicit `--purge`
 removes documented Synveil-owned `/etc/synveil` and `/var/lib/synveil` state,
 including administrator credentials there. It does not remove external library

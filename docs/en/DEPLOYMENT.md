@@ -17,9 +17,11 @@ authentication transport, first-run bootstrap HTTP boundary, minimal web
 setup/login/session shell documented in the API contract, and the explicit-root
 local `ObjectStore` adapter/conformance boundary. The storage crate also
 contains a transport-neutral owner-authorized content-read service, and the
-developer API composition root wires authenticated current/historical
-full/single-range download routes when `DATABASE_URL` and an explicit absolute
-`SYNVEIL_OBJECT_ROOT` are both set. Authenticated version-history metadata
+legacy operator API composition root wires authenticated current/historical
+full/single-range download routes when a supported database credential source
+and an explicit absolute `SYNVEIL_OBJECT_ROOT` are both set. Prompt031 adds the
+managed non-secret configuration authority, while P032 still owns selecting
+the managed object root. Authenticated version-history metadata
 listing and direct lookup require the PostgreSQL metadata service but do not
 require an object root or open storage. The private `synveil-worker` binary is
 also implemented as an opt-in, bounded GC runtime with no listener; it is not
@@ -337,20 +339,23 @@ validated bind paths.
 
 Repository status: the explicit-root local filesystem adapter and its managed
 `objects/` plus `staging/` layout are `IMPLEMENTED/VALIDATED` at the storage
-crate boundary. The developer API composition root accepts
-`SYNVEIL_OBJECT_ROOT` only alongside `DATABASE_URL` and then installs the
+crate boundary. In legacy operator mode, the developer API composition root
+accepts `SYNVEIL_OBJECT_ROOT` only alongside the explicit database credential
+authority and then installs the
 validated upload and download application services behind the authenticated HTTP
 routes; an unset root fails closed rather than selecting a default. The storage
 crate's content-read application service and API download transport use the same
 metadata/`ObjectStore` ports. Safe version restore is implemented at the
 authenticated API/metadata boundary but still requires the PostgreSQL metadata
-service. With `DATABASE_URL`, the API also requires
-`SYNVEIL_REBASELINE_TOKEN_KEY` as exactly 64 lowercase hexadecimal characters
-(32 random bytes). It is a deployment secret: keep the same value across
-process restarts and replicas, inject it through the supported secret boundary,
-and never print it or commit it. Missing/malformed configuration fails startup
-closed; rotating it deliberately invalidates outstanding bootstrap cursor and
-completion tokens, so OPEN sessions must restart. HTTP download production
+service. Legacy operator mode may use `DATABASE_URL` and the explicit
+`SYNVEIL_REBASELINE_TOKEN_KEY` compatibility input, exactly 64 lowercase
+hexadecimal characters (32 random bytes). Managed services use the versioned
+`/etc/synveil/server-config.json` authority and protected credentials described
+in [Managed Server Configuration](../v0.2/MANAGED_SERVER_CONFIGURATION.md).
+Keep the rebaseline key stable across process restarts and replicas, inject it
+through a supported secret boundary, and never print or commit it. Missing or
+malformed configuration fails startup closed; deliberate rotation invalidates
+outstanding bootstrap cursor and completion tokens. HTTP download production
 configuration/preflight, automatic conflict resolution, backup, and installer
 wiring remain `PLANNED`; typed client mutation submission, per-device
 feed/checkpoint validation, and the server-side logical rebaseline bootstrap
@@ -2009,3 +2014,20 @@ not claimed by Linux static or cross-build evidence.
 See [`docs/en/DESKTOP_LAUNCH.md`](DESKTOP_LAUNCH.md),
 [`docs/vi/DESKTOP_LAUNCH.md`](../vi/DESKTOP_LAUNCH.md), and
 [`ADR-041`](../adr/ADR-041-production-desktop-launch-orchestration.md).
+
+## Managed server configuration (Prompt031)
+
+Managed Host configuration is a bounded, versioned, non-secret JSON authority
+at `/etc/synveil/server-config.json`; it is not an `.env` file. Linux source
+secrets remain root-owned in `/etc/synveil/credentials` with mode `0700`, and
+individual source credentials use mode `0600`. API and worker share the
+protected `database-url` runtime loader, and the API's rebaseline key uses the
+same file-versus-environment ambiguity policy. Production service units will
+deliver `database-url` and `rebaseline-token-key` through systemd
+`LoadCredential=` under the existing [ADR-025](../adr/ADR-025-linux-runtime-credential-delivery.md)
+contract; P033 owns those units and wiring. Explicit environment fallback
+remains available for legacy operator and developer deployments when no file
+credential source is selected. Mixing both sources fails closed.
+
+See [Managed Server Configuration](../v0.2/MANAGED_SERVER_CONFIGURATION.md)
+for schema, ownership, reconciliation, repair, and P032–P036 boundaries.
