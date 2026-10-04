@@ -78,13 +78,19 @@ final class RustBridgeProtocolTests: XCTestCase {
         XCTAssertFalse(isInvalidEnrollment)
 
         let wrongLengthEnrollment = "sve1_" + String(repeating: "a1", count: 31)
-        XCTAssertFalse(try await bridge.validateEnrollmentToken(wrongLengthEnrollment))
+        let isWrongLengthEnrollmentValid =
+            try await bridge.validateEnrollmentToken(wrongLengthEnrollment)
+        XCTAssertFalse(isWrongLengthEnrollmentValid)
 
         let uppercaseEnrollment = validEnrollment.uppercased()
-        XCTAssertFalse(try await bridge.validateEnrollmentToken(uppercaseEnrollment))
+        let isUppercaseEnrollmentValid =
+            try await bridge.validateEnrollmentToken(uppercaseEnrollment)
+        XCTAssertFalse(isUppercaseEnrollmentValid)
 
         let nonHexEnrollment = "sve1_" + String(repeating: "g1", count: 32)
-        XCTAssertFalse(try await bridge.validateEnrollmentToken(nonHexEnrollment))
+        let isNonHexEnrollmentValid =
+            try await bridge.validateEnrollmentToken(nonHexEnrollment)
+        XCTAssertFalse(isNonHexEnrollmentValid)
 
         // 2. Device bearer token validation
         let validBearer = "svd1_" + String(repeating: "b2", count: 32)
@@ -103,38 +109,52 @@ final class RustBridgeProtocolTests: XCTestCase {
         XCTAssertTrue(isValidNodeID)
 
         let uppercaseUUID = validUUIDv7.uppercased()
-        XCTAssertFalse(try await bridge.validateLibraryID(uppercaseUUID))
+        let isUppercaseLibraryIDValid = try await bridge.validateLibraryID(uppercaseUUID)
+        XCTAssertFalse(isUppercaseLibraryIDValid)
 
         let uuidV4 = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
-        XCTAssertFalse(try await bridge.validateLibraryID(uuidV4))
-        XCTAssertFalse(try await bridge.validateNodeID(uuidV4))
+        let isV4LibraryIDValid = try await bridge.validateLibraryID(uuidV4)
+        let isV4NodeIDValid = try await bridge.validateNodeID(uuidV4)
+        XCTAssertFalse(isV4LibraryIDValid)
+        XCTAssertFalse(isV4NodeIDValid)
 
         let malformedUUID = "not-a-uuid"
-        XCTAssertFalse(try await bridge.validateLibraryID(malformedUUID))
-        XCTAssertFalse(try await bridge.validateNodeID(malformedUUID))
+        let isMalformedLibraryIDValid = try await bridge.validateLibraryID(malformedUUID)
+        let isMalformedNodeIDValid = try await bridge.validateNodeID(malformedUUID)
+        XCTAssertFalse(isMalformedLibraryIDValid)
+        XCTAssertFalse(isMalformedNodeIDValid)
 
         let nilUUID = "00000000-0000-0000-0000-000000000000"
-        XCTAssertFalse(try await bridge.validateNodeID(nilUUID))
+        let isNilNodeIDValid = try await bridge.validateNodeID(nilUUID)
+        XCTAssertFalse(isNilNodeIDValid)
 
         // 4. LogicalName Validation
-        XCTAssertTrue(try await bridge.validateLogicalName("hello.txt"))
-        XCTAssertTrue(try await bridge.validateLogicalName("A/B"))
-        XCTAssertTrue(try await bridge.validateLogicalName("synveil_🚀_doc.pdf"))
-        XCTAssertFalse(try await bridge.validateLogicalName(""))
+        let isSimpleNameValid = try await bridge.validateLogicalName("hello.txt")
+        let isSlashNameValid = try await bridge.validateLogicalName("A/B")
+        let isUnicodeNameValid = try await bridge.validateLogicalName("synveil_🚀_doc.pdf")
+        let isEmptyNameValid = try await bridge.validateLogicalName("")
+        XCTAssertTrue(isSimpleNameValid)
+        XCTAssertTrue(isSlashNameValid)
+        XCTAssertTrue(isUnicodeNameValid)
+        XCTAssertFalse(isEmptyNameValid)
 
         let maxName = String(repeating: "a", count: 1024)
-        XCTAssertTrue(try await bridge.validateLogicalName(maxName))
+        let isMaxNameValid = try await bridge.validateLogicalName(maxName)
+        XCTAssertTrue(isMaxNameValid)
 
         let overMaxName = String(repeating: "a", count: 1025)
-        XCTAssertFalse(try await bridge.validateLogicalName(overMaxName))
+        let isOverMaxNameValid = try await bridge.validateLogicalName(overMaxName)
+        XCTAssertFalse(isOverMaxNameValid)
 
         let unicodeExact = String(repeating: "a", count: 1020) + "🚀"
         XCTAssertEqual(unicodeExact.utf8.count, 1024)
-        XCTAssertTrue(try await bridge.validateLogicalName(unicodeExact))
+        let isUnicodeExactValid = try await bridge.validateLogicalName(unicodeExact)
+        XCTAssertTrue(isUnicodeExactValid)
 
         let unicodeOver = String(repeating: "a", count: 1023) + "🚀"
         XCTAssertEqual(unicodeOver.utf8.count, 1027)
-        XCTAssertFalse(try await bridge.validateLogicalName(unicodeOver))
+        let isUnicodeOverValid = try await bridge.validateLogicalName(unicodeOver)
+        XCTAssertFalse(isUnicodeOverValid)
 
         // 5. SHA256 parse / format
         let canonicalSha = "sha256:" + String(repeating: "12", count: 32)
