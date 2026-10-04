@@ -13,7 +13,10 @@ returning `1` (`SYNVEIL_FFI_ABI_VERSION`).
 - **Prompt**: 016
 - **Integration Branch Target**: `ios-app`
 - **Starting SHA**: `e1d6b5bb463adada37d4f0687581f918b336e7cb`
-- **Work Branch**: `ios/p016-first-rust-call-jules`
+- **Work Branch**: `ios/p016-first-rust-call-jules-3637492448085105526`
+- **Implementation Head (code/workflow state)**: `fbaca544892275ed36742888584f47a166455e58`
+- **PR**: #52 — https://github.com/nghianguyen150612/Synveil/pull/52
+- **PR Base**: `ios-app`
 - **Rust Toolchain**: `rustc 1.94.0` (Edition 2024)
 
 ## Part A — Rust ABI Implementation
@@ -84,10 +87,31 @@ returning `1` (`SYNVEIL_FFI_ABI_VERSION`).
 - `git diff --check`: PASSED
 
 ## Required macOS CI Workflow Gates
-- `iOS Rust Apple Build`: SUCCESS
-- `iOS Static Validation`: SUCCESS
-- `iOS Build`: SUCCESS
-- `iOS Simulator Tests`: SUCCESS
+Implementation-head evidence (`fbaca544892275ed36742888584f47a166455e58`):
+- `iOS Rust Apple Build`: SUCCESS — run `37169749423`, job `111340087850`
+  - Artifact: `synveil-ios-rust-staticlibs`
+  - Artifact ID: `11291515206`
+  - Size: `29,525,819` bytes
+  - Expired: false
+  - Expires: `2026-10-18T02:08:30Z`
+- `iOS Static Validation`: SUCCESS — run `37169749404`
+- `iOS Build`: SUCCESS — run `37169749519`, Xcode Simulator Build job `111340088144`
+- `iOS Simulator Tests`: SUCCESS — run `37169749433`, job `111340087716`
+  - Selected Simulator: iPhone 17 Pro
+  - Runtime: iOS Simulator 26.5
+  - Architecture: arm64
+  - Full suite: 29 tests, 0 failures
+  - `RustBridgeABITests`: 2 tests, 0 failures
+  - `testRustBridgeABIVersionInitialization`: PASS, proving the Swift adapter executed the linked Rust `synveil_ffi_abi_version()` and observed ABI v1
+
+Final-head workflow evidence is intentionally recorded in the PR discussion after this manifest commit, not by another evidence-only commit, to avoid an infinite synchronize/concurrency rerun loop.
 
 ## Unrelated CI Classifications
 - `Build, reproduce, inspect, and smoke AppImage`: Failed with `[synveil-artifact] ERROR: private or temporary build path found in synveil-desktop` (`matched path marker: /home/`). Pre-existing desktop build issue on `ios-app` branch unrelated to iOS Swift/Rust bridge work.
+
+
+## PR / Merge State
+- **PR**: #52 — https://github.com/nghianguyen150612/Synveil/pull/52
+- **PR Base**: `ios-app`
+- **Merge state at manifest commit**: awaiting final-head verification
+- **Final `ios-app` SHA**: assigned by GitHub at squash merge and recorded in PR merge metadata
