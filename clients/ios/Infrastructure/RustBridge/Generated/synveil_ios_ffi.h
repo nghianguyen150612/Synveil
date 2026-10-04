@@ -125,6 +125,71 @@ uint32_t synveil_ffi_validate_abi_version(uint32_t expected_version);
 uint32_t synveil_ffi_buffer_release(struct SynveilFfiBuffer *buffer);
 
 /**
+ * Validates whether a borrowed string token matches the canonical enrollment secret format (`sve1_<64 lowercase hex>`).
+ *
+ * # Returns
+ * - `SYNVEIL_FFI_STATUS_SUCCESS` (0) with `*out_valid = 1` if valid, or `*out_valid = 0` if domain-invalid.
+ * - `SYNVEIL_FFI_STATUS_INVALID_ARGUMENT` (1) if `out_valid` is null or `input_ptr` is null with `input_len > 0`.
+ * - `SYNVEIL_FFI_STATUS_INVALID_UTF8` (2) if `input_ptr` contains invalid UTF-8 bytes.
+ * - `SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED` (6) if an internal panic occurs.
+ */
+uint32_t synveil_ffi_enrollment_secret_validate(const uint8_t *input_ptr,
+                                                size_t input_len,
+                                                uint8_t *out_valid);
+
+/**
+ * Validates whether a borrowed string token matches the canonical device credential format (`svd1_<64 lowercase hex>`).
+ *
+ * # Returns
+ * - `SYNVEIL_FFI_STATUS_SUCCESS` (0) with `*out_valid = 1` if valid, or `*out_valid = 0` if domain-invalid.
+ * - `SYNVEIL_FFI_STATUS_INVALID_ARGUMENT` (1) if `out_valid` is null or `input_ptr` is null with `input_len > 0`.
+ * - `SYNVEIL_FFI_STATUS_INVALID_UTF8` (2) if `input_ptr` contains invalid UTF-8 bytes.
+ * - `SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED` (6) if an internal panic occurs.
+ */
+uint32_t synveil_ffi_device_credential_validate(const uint8_t *input_ptr,
+                                                size_t input_len,
+                                                uint8_t *out_valid);
+
+/**
+ * Validates whether a borrowed string representation matches a canonical lowercase hyphenated UUIDv7 LibraryId.
+ *
+ * # Returns
+ * - `SYNVEIL_FFI_STATUS_SUCCESS` (0) with `*out_valid = 1` if valid, or `*out_valid = 0` if domain-invalid.
+ * - `SYNVEIL_FFI_STATUS_INVALID_ARGUMENT` (1) if `out_valid` is null or `input_ptr` is null with `input_len > 0`.
+ * - `SYNVEIL_FFI_STATUS_INVALID_UTF8` (2) if `input_ptr` contains invalid UTF-8 bytes.
+ * - `SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED` (6) if an internal panic occurs.
+ */
+uint32_t synveil_ffi_library_id_validate(const uint8_t *input_ptr,
+                                         size_t input_len,
+                                         uint8_t *out_valid);
+
+/**
+ * Validates whether a borrowed string representation matches a canonical lowercase hyphenated UUIDv7 NodeId.
+ *
+ * # Returns
+ * - `SYNVEIL_FFI_STATUS_SUCCESS` (0) with `*out_valid = 1` if valid, or `*out_valid = 0` if domain-invalid.
+ * - `SYNVEIL_FFI_STATUS_INVALID_ARGUMENT` (1) if `out_valid` is null or `input_ptr` is null with `input_len > 0`.
+ * - `SYNVEIL_FFI_STATUS_INVALID_UTF8` (2) if `input_ptr` contains invalid UTF-8 bytes.
+ * - `SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED` (6) if an internal panic occurs.
+ */
+uint32_t synveil_ffi_node_id_validate(const uint8_t *input_ptr,
+                                      size_t input_len,
+                                      uint8_t *out_valid);
+
+/**
+ * Validates whether a borrowed UTF-8 string is a valid non-empty LogicalName (<= 1024 UTF-8 bytes).
+ *
+ * # Returns
+ * - `SYNVEIL_FFI_STATUS_SUCCESS` (0) with `*out_valid = 1` if valid, or `*out_valid = 0` if domain-invalid.
+ * - `SYNVEIL_FFI_STATUS_INVALID_ARGUMENT` (1) if `out_valid` is null or `input_ptr` is null with `input_len > 0`.
+ * - `SYNVEIL_FFI_STATUS_INVALID_UTF8` (2) if `input_ptr` contains invalid UTF-8 bytes.
+ * - `SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED` (6) if an internal panic occurs.
+ */
+uint32_t synveil_ffi_logical_name_validate(const uint8_t *input_ptr,
+                                           size_t input_len,
+                                           uint8_t *out_valid);
+
+/**
  * Parses a canonical SHA-256 string (e.g. `sha256:<64 hex chars>`) from borrowed UTF-8 input bytes
  * and outputs a Rust-owned 32-byte raw digest buffer in `out_digest`.
  *

@@ -369,9 +369,41 @@ Raw C ABI bindings and generated headers reside **exclusively** under:
 
 Upper layers (`Features`, `Application`, `Domain`) MUST NEVER import raw FFI module symbols directly.
 
-### 14.2 Protocol Deferral Decision (P013)
-* `RustBridgeProtocol` remains **deferred** in P013–P018 (`RUST_BRIDGE_PROTOCOL_DEFERRED_TO_P020`).
-* A Swift-facing `RustBridgeProtocol` will be introduced in P020 once callable FFI signatures are compiled and verified. Fake/empty marker protocols are prohibited.
+### 14.2 Protocol Implementation Status (P020)
+* `RUST_BRIDGE_PROTOCOL_DEFERRED_TO_P020` → `IMPLEMENTED_P020`.
+* A pure Swift `RustBridgeProtocol` (`Sendable`, async, native types only) is implemented in `clients/ios/Application/Services/RustBridgeProtocol.swift`.
+* `RustBridgeAsyncAdapter` conforms to `RustBridgeProtocol`.
+
+### 14.3 Mapped Model Surface (Prompt020)
+
+| Swift concept | Rust shared-core source | C ABI export |
+|---|---|---|
+| Enrollment token format | `EnrollmentSecret` | `synveil_ffi_enrollment_secret_validate` |
+| Device bearer format | `DeviceCredentialSecret` | `synveil_ffi_device_credential_validate` |
+| Library identity | `LibraryId` | `synveil_ffi_library_id_validate` |
+| Node identity | `NodeId` | `synveil_ffi_node_id_validate` |
+| Logical file/folder name | `LogicalName` | `synveil_ffi_logical_name_validate` |
+| SHA-256 digest | `Sha256Digest` | `synveil_ffi_sha256_parse` / `synveil_ffi_sha256_format` |
+
+### 14.4 C ABI Export Set (Prompt020)
+
+Exact 10 sorted exported C ABI symbols:
+1. `synveil_ffi_abi_version`
+2. `synveil_ffi_buffer_release`
+3. `synveil_ffi_device_credential_validate`
+4. `synveil_ffi_enrollment_secret_validate`
+5. `synveil_ffi_library_id_validate`
+6. `synveil_ffi_logical_name_validate`
+7. `synveil_ffi_node_id_validate`
+8. `synveil_ffi_sha256_format`
+9. `synveil_ffi_sha256_parse`
+10. `synveil_ffi_validate_abi_version`
+
+### 14.5 Phase C Foundation Closure Status
+
+```text
+P013–P020 FFI FOUNDATION COMPLETE
+```
 
 ---
 

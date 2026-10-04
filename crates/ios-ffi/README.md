@@ -11,15 +11,26 @@ It bridges pure shared domain logic in `synveil-core` to the native iOS client o
 
 ## 2. Exported C ABI Surface
 
-At P018, the exported C ABI functions are exactly:
+At P020, the exported C ABI functions are exactly 10 sorted exports:
 
 ```c
 uint32_t synveil_ffi_abi_version(void);
-uint32_t synveil_ffi_validate_abi_version(uint32_t expected_version);
 uint32_t synveil_ffi_buffer_release(struct SynveilFfiBuffer *buffer);
-uint32_t synveil_ffi_sha256_parse(const uint8_t *input_ptr, size_t input_len, struct SynveilFfiBuffer *out_digest);
+uint32_t synveil_ffi_device_credential_validate(const uint8_t *input_ptr, size_t input_len, uint8_t *out_valid);
+uint32_t synveil_ffi_enrollment_secret_validate(const uint8_t *input_ptr, size_t input_len, uint8_t *out_valid);
+uint32_t synveil_ffi_library_id_validate(const uint8_t *input_ptr, size_t input_len, uint8_t *out_valid);
+uint32_t synveil_ffi_logical_name_validate(const uint8_t *input_ptr, size_t input_len, uint8_t *out_valid);
+uint32_t synveil_ffi_node_id_validate(const uint8_t *input_ptr, size_t input_len, uint8_t *out_valid);
 uint32_t synveil_ffi_sha256_format(const uint8_t *digest_ptr, size_t digest_len, struct SynveilFfiBuffer *out_utf8);
+uint32_t synveil_ffi_sha256_parse(const uint8_t *input_ptr, size_t input_len, struct SynveilFfiBuffer *out_digest);
+uint32_t synveil_ffi_validate_abi_version(uint32_t expected_version);
 ```
+
+### Boolean Validation Conventions & Secrecy
+- Reusable helper `ffi_bool_validation_boundary` checks `out_valid != NULL`, initializes `*out_valid = 0`, catches unwinding panics, and writes `1` for valid domain inputs or `0` for invalid domain inputs.
+- Domain failures return `SYNVEIL_FFI_STATUS_SUCCESS` (0) with `*out_valid = 0`.
+- Memory, encoding, or null-pointer errors return non-zero FFI status codes.
+- Secret tokens (`sve1_`, `svd1_`) are never logged, formatted into error messages, or retained by bridge memory.
 
 ---
 

@@ -182,10 +182,23 @@ class TestValidateIOSSources(unittest.TestCase):
         content_bridge = "import Foundation\n\nprivate let syncAdapter: RustBridgeAdapter"
         self.assertEqual(check_file_content_invariants(rel_bridge, content_bridge), [])
 
-        # RustBridgeAsyncAdapter is not falsely rejected in upper layers
+        # RustBridgeAsyncAdapter allowed in App composition root
         rel_app_async = "clients/ios/App/SynveilApp.swift"
-        content_app_async = "import SwiftUI\n\nlet asyncAdapter = try await RustBridgeAsyncAdapter()"
+        content_app_async = "import SwiftUI\n\nlet bridge: any RustBridgeProtocol = try await RustBridgeAsyncAdapter()"
         self.assertEqual(check_file_content_invariants(rel_app_async, content_app_async), [])
+
+        # Concrete RustBridgeAsyncAdapter prohibited in Application, Domain, and Features
+        rel_app_layer = "clients/ios/Application/Services/MyService.swift"
+        content_app_layer = "import Foundation\n\nlet bridge: RustBridgeAsyncAdapter"
+        violations_app_layer = check_file_content_invariants(rel_app_layer, content_app_layer)
+        self.assertTrue(
+            any("directly uses concrete 'RustBridgeAsyncAdapter'" in v for v in violations_app_layer)
+        )
+
+        # RustBridgeProtocol allowed in Application, Domain, Features, App, Infrastructure, Tests
+        rel_proto_app = "clients/ios/Application/Services/MyService.swift"
+        content_proto_app = "import Foundation\n\nlet bridge: any RustBridgeProtocol"
+        self.assertEqual(check_file_content_invariants(rel_proto_app, content_proto_app), [])
 
     def test_conflict_markers(self):
         rel_path = "clients/ios/App/SynveilApp.swift"

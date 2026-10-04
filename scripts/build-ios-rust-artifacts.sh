@@ -202,7 +202,7 @@ if command -v nm >/dev/null 2>&1 || command -v strings >/dev/null 2>&1; then
         exit 1
     fi
 
-    EXPECTED_SYMBOLS="$(printf "synveil_ffi_abi_version\nsynveil_ffi_buffer_release\nsynveil_ffi_sha256_format\nsynveil_ffi_sha256_parse\nsynveil_ffi_validate_abi_version")"
+    EXPECTED_SYMBOLS="$(printf "synveil_ffi_abi_version\nsynveil_ffi_buffer_release\nsynveil_ffi_device_credential_validate\nsynveil_ffi_enrollment_secret_validate\nsynveil_ffi_library_id_validate\nsynveil_ffi_logical_name_validate\nsynveil_ffi_node_id_validate\nsynveil_ffi_sha256_format\nsynveil_ffi_sha256_parse\nsynveil_ffi_validate_abi_version")"
     if [ "${FFI_SYMBOLS}" != "${EXPECTED_SYMBOLS}" ]; then
         echo "ERROR: Unexpected C ABI symbols found in static library!" >&2
         echo "Found symbols:" >&2
@@ -276,10 +276,15 @@ manifest = {
     "rust_toolchain_version": rustc_ver,
     "cargo_version": cargo_ver,
     "source_commit_sha": commit_sha,
-    "c_abi_export_status": "MEMORY_MODEL_P018",
+    "c_abi_export_status": "MODEL_MAPPING_P020",
     "c_abi_exports": [
         "synveil_ffi_abi_version",
         "synveil_ffi_buffer_release",
+        "synveil_ffi_device_credential_validate",
+        "synveil_ffi_enrollment_secret_validate",
+        "synveil_ffi_library_id_validate",
+        "synveil_ffi_logical_name_validate",
+        "synveil_ffi_node_id_validate",
         "synveil_ffi_sha256_format",
         "synveil_ffi_sha256_parse",
         "synveil_ffi_validate_abi_version"
@@ -287,6 +292,8 @@ manifest = {
     "ffi_status_model": "P017_STABLE_UINT32",
     "ffi_memory_model": "P018_RUST_OWNED_BUFFER",
     "ffi_concurrency_model": "P019_SWIFT_MANAGED_SYNC_RUST",
+    "ffi_model_mapping": "P020_AUTH_FILE_PRIMITIVES",
+    "rust_bridge_protocol": "P020_APPLICATION_SERVICE_BOUNDARY",
     "rust_async_runtime": "NONE",
     "callback_abi": "NONE",
     "cancellation_model": "P019_SWIFT_COOPERATIVE_NO_MID_FFI_INTERRUPT",

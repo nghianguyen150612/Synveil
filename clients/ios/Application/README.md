@@ -15,4 +15,4 @@ The `Application` directory contains application-level orchestration, use-case c
 - **Prohibited Dependencies**:
   - `SwiftUI` or `UIKit` framework imports.
   - Concrete `URLSession`, SQLite SQL queries, or `Security.framework` Keychain calls (must depend strictly on Service protocols).
-  - Direct C-FFI Rust invocations.
+  - Direct C-FFI Rust invocations or concrete `RustBridgeAsyncAdapter`/`RustBridgeAdapter` dependencies (must depend on `RustBridgeProtocol` abstraction defined in `Application/Services/RustBridgeProtocol.swift`).

@@ -68,12 +68,25 @@ The `clients/ios/Infrastructure/RustBridge/` directory contains the sole Swift i
 
 ## 3. Approved C ABI Surface & Operations
 
-### Exports (`synveil_ffi_*`)
+### Exports (`synveil_ffi_*`) — Exact 10 Sorted Exports
 - `synveil_ffi_abi_version() -> uint32_t`
-- `synveil_ffi_validate_abi_version(expected: uint32_t) -> uint32_t`
 - `synveil_ffi_buffer_release(buffer: *mut SynveilFfiBuffer) -> uint32_t`
-- `synveil_ffi_sha256_parse(input_ptr, input_len, out_digest) -> uint32_t`
+- `synveil_ffi_device_credential_validate(input_ptr, input_len, out_valid) -> uint32_t`
+- `synveil_ffi_enrollment_secret_validate(input_ptr, input_len, out_valid) -> uint32_t`
+- `synveil_ffi_library_id_validate(input_ptr, input_len, out_valid) -> uint32_t`
+- `synveil_ffi_logical_name_validate(input_ptr, input_len, out_valid) -> uint32_t`
+- `synveil_ffi_node_id_validate(input_ptr, input_len, out_valid) -> uint32_t`
 - `synveil_ffi_sha256_format(digest_ptr, digest_len, out_utf8) -> uint32_t`
+- `synveil_ffi_sha256_parse(input_ptr, input_len, out_digest) -> uint32_t`
+- `synveil_ffi_validate_abi_version(expected: uint32_t) -> uint32_t`
+
+### Boolean Validation Semantics
+- Valid domain input -> status `SUCCESS`, `*out_valid = 1`.
+- Domain-invalid input -> status `SUCCESS`, `*out_valid = 0`.
+- Null output pointer -> status `INVALID_ARGUMENT`.
+- Null input pointer with `len > 0` -> status `INVALID_ARGUMENT`.
+- Invalid UTF-8 input -> status `INVALID_UTF8`.
+- Panic during validation -> firewalled status `PANIC_ENCOUNTERED`.
 
 ---
 
@@ -82,7 +95,7 @@ The `clients/ios/Infrastructure/RustBridge/` directory contains the sole Swift i
 ### 4.1 Synchronous vs Async Roles
 - **`RustBridgeAdapter`**: Low-level synchronous Infrastructure primitive performing C ABI calls and managing memory cleanup.
 - **`RustBridgeExecutor`**: Encapsulated enum running synchronous work on a `Task.detached` worker to escape inherited actor context (`@MainActor`). Private worker handles are never exposed.
-- **`RustBridgeAsyncAdapter`**: Swift-facing `Sendable` async boundary providing `parseSHA256` and `formatSHA256`.
+- **`RustBridgeAsyncAdapter`**: Swift-facing `Sendable` async boundary conforming to `RustBridgeProtocol` (`Application/Services/RustBridgeProtocol.swift`). Upper layers (`Application`, `Domain`, `Features`) depend on `any RustBridgeProtocol`.
 
 ### 4.2 Cooperative Cancellation Policy
 - Cancellation is checked before scheduling worker, inside detached worker before calling FFI, and after worker completion before publishing results.

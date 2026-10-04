@@ -82,14 +82,19 @@ def validate_artifact_bundle(staging_dir: str) -> None:
             f"Invalid artifact_profile: expected 'release', got {manifest.get('artifact_profile')}"
         )
 
-    if manifest.get("c_abi_export_status") != "MEMORY_MODEL_P018":
+    if manifest.get("c_abi_export_status") != "MODEL_MAPPING_P020":
         raise ValueError(
-            f"Invalid c_abi_export_status: expected 'MEMORY_MODEL_P018', got {manifest.get('c_abi_export_status')}"
+            f"Invalid c_abi_export_status: expected 'MODEL_MAPPING_P020', got {manifest.get('c_abi_export_status')}"
         )
 
     expected_exports = [
         "synveil_ffi_abi_version",
         "synveil_ffi_buffer_release",
+        "synveil_ffi_device_credential_validate",
+        "synveil_ffi_enrollment_secret_validate",
+        "synveil_ffi_library_id_validate",
+        "synveil_ffi_logical_name_validate",
+        "synveil_ffi_node_id_validate",
         "synveil_ffi_sha256_format",
         "synveil_ffi_sha256_parse",
         "synveil_ffi_validate_abi_version",
@@ -97,6 +102,16 @@ def validate_artifact_bundle(staging_dir: str) -> None:
     if manifest.get("c_abi_exports") != expected_exports:
         raise ValueError(
             f"Invalid c_abi_exports: expected {expected_exports}, got {manifest.get('c_abi_exports')}"
+        )
+
+    if manifest.get("ffi_model_mapping") != "P020_AUTH_FILE_PRIMITIVES":
+        raise ValueError(
+            f"Invalid ffi_model_mapping: expected 'P020_AUTH_FILE_PRIMITIVES', got {manifest.get('ffi_model_mapping')}"
+        )
+
+    if manifest.get("rust_bridge_protocol") != "P020_APPLICATION_SERVICE_BOUNDARY":
+        raise ValueError(
+            f"Invalid rust_bridge_protocol: expected 'P020_APPLICATION_SERVICE_BOUNDARY', got {manifest.get('rust_bridge_protocol')}"
         )
 
     if manifest.get("ffi_status_model") != "P017_STABLE_UINT32":
@@ -142,6 +157,11 @@ def validate_artifact_bundle(staging_dir: str) -> None:
         for required_symbol in [
             "SynveilFfiBuffer",
             "synveil_ffi_buffer_release",
+            "synveil_ffi_enrollment_secret_validate",
+            "synveil_ffi_device_credential_validate",
+            "synveil_ffi_library_id_validate",
+            "synveil_ffi_node_id_validate",
+            "synveil_ffi_logical_name_validate",
             "synveil_ffi_sha256_parse",
             "synveil_ffi_sha256_format",
         ]:

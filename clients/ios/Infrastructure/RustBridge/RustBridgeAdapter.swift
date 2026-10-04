@@ -128,4 +128,111 @@ public struct RustBridgeAdapter: Sendable {
 
         return resultString
     }
+
+    // MARK: - Validation Primitive Operations
+
+    /// Generic C ABI boolean validation wrapper.
+    private func validateBoolPrimitive(
+        _ operation: (UnsafeMutablePointer<UInt8>) -> UInt32
+    ) throws -> Bool {
+        var validByte: UInt8 = 0
+        let rawStatus = operation(&validByte)
+        try RustBridgeError.checkStatus(rawStatus)
+        return validByte == 1
+    }
+
+    /// Validates whether a token string matches the canonical enrollment secret format (`sve1_<64 hex>`).
+    public func validateEnrollmentToken(_ token: String) throws -> Bool {
+        let utf8Bytes = Array(token.utf8)
+        return try validateEnrollmentTokenUTF8Bytes(utf8Bytes)
+    }
+
+    /// Internal test seam for raw UTF-8 bytes.
+    func validateEnrollmentTokenUTF8Bytes(_ bytes: [UInt8]) throws -> Bool {
+        try validateBoolPrimitive { outValidPtr in
+            if bytes.isEmpty {
+                return synveil_ffi_enrollment_secret_validate(nil, 0, outValidPtr)
+            } else {
+                return bytes.withUnsafeBufferPointer { bufPtr in
+                    synveil_ffi_enrollment_secret_validate(bufPtr.baseAddress, bufPtr.count, outValidPtr)
+                }
+            }
+        }
+    }
+
+    /// Validates whether a token string matches the canonical device bearer credential format (`svd1_<64 hex>`).
+    public func validateDeviceCredential(_ token: String) throws -> Bool {
+        let utf8Bytes = Array(token.utf8)
+        return try validateDeviceCredentialUTF8Bytes(utf8Bytes)
+    }
+
+    /// Internal test seam for raw UTF-8 bytes.
+    func validateDeviceCredentialUTF8Bytes(_ bytes: [UInt8]) throws -> Bool {
+        try validateBoolPrimitive { outValidPtr in
+            if bytes.isEmpty {
+                return synveil_ffi_device_credential_validate(nil, 0, outValidPtr)
+            } else {
+                return bytes.withUnsafeBufferPointer { bufPtr in
+                    synveil_ffi_device_credential_validate(bufPtr.baseAddress, bufPtr.count, outValidPtr)
+                }
+            }
+        }
+    }
+
+    /// Validates whether a string matches a canonical lowercase hyphenated UUIDv7 LibraryId.
+    public func validateLibraryID(_ value: String) throws -> Bool {
+        let utf8Bytes = Array(value.utf8)
+        return try validateLibraryIDUTF8Bytes(utf8Bytes)
+    }
+
+    /// Internal test seam for raw UTF-8 bytes.
+    func validateLibraryIDUTF8Bytes(_ bytes: [UInt8]) throws -> Bool {
+        try validateBoolPrimitive { outValidPtr in
+            if bytes.isEmpty {
+                return synveil_ffi_library_id_validate(nil, 0, outValidPtr)
+            } else {
+                return bytes.withUnsafeBufferPointer { bufPtr in
+                    synveil_ffi_library_id_validate(bufPtr.baseAddress, bufPtr.count, outValidPtr)
+                }
+            }
+        }
+    }
+
+    /// Validates whether a string matches a canonical lowercase hyphenated UUIDv7 NodeId.
+    public func validateNodeID(_ value: String) throws -> Bool {
+        let utf8Bytes = Array(value.utf8)
+        return try validateNodeIDUTF8Bytes(utf8Bytes)
+    }
+
+    /// Internal test seam for raw UTF-8 bytes.
+    func validateNodeIDUTF8Bytes(_ bytes: [UInt8]) throws -> Bool {
+        try validateBoolPrimitive { outValidPtr in
+            if bytes.isEmpty {
+                return synveil_ffi_node_id_validate(nil, 0, outValidPtr)
+            } else {
+                return bytes.withUnsafeBufferPointer { bufPtr in
+                    synveil_ffi_node_id_validate(bufPtr.baseAddress, bufPtr.count, outValidPtr)
+                }
+            }
+        }
+    }
+
+    /// Validates whether a string is a valid non-empty LogicalName (<= 1024 UTF-8 bytes).
+    public func validateLogicalName(_ value: String) throws -> Bool {
+        let utf8Bytes = Array(value.utf8)
+        return try validateLogicalNameUTF8Bytes(utf8Bytes)
+    }
+
+    /// Internal test seam for raw UTF-8 bytes.
+    func validateLogicalNameUTF8Bytes(_ bytes: [UInt8]) throws -> Bool {
+        try validateBoolPrimitive { outValidPtr in
+            if bytes.isEmpty {
+                return synveil_ffi_logical_name_validate(nil, 0, outValidPtr)
+            } else {
+                return bytes.withUnsafeBufferPointer { bufPtr in
+                    synveil_ffi_logical_name_validate(bufPtr.baseAddress, bufPtr.count, outValidPtr)
+                }
+            }
+        }
+    }
 }
