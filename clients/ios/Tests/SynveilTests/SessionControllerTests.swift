@@ -72,4 +72,21 @@ final class SessionControllerTests: XCTestCase {
         controller.requireRecovery(.transport)
         XCTAssertEqual(controller.state, .recoveryRequired(.transport))
     }
+
+    @MainActor
+    func testInvalidTransitionsCannotBypassLifecycleGates() {
+        let controller = SessionController()
+
+        controller.markAuthenticated()
+        XCTAssertEqual(controller.state, .initializing)
+
+        controller.showServerProfileSetup()
+        controller.markAuthenticated()
+        XCTAssertEqual(controller.state, .needsServerProfile)
+
+        controller.markServerReadyForValidation()
+        controller.requireRecovery(.authentication)
+        controller.markAuthenticated()
+        XCTAssertEqual(controller.state, .recoveryRequired(.authentication))
+    }
 }
