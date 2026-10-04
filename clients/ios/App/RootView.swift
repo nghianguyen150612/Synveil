@@ -168,6 +168,9 @@ struct RecoveryPlaceholderView: View {
 
 #Preview("Authenticated Placeholder") {
     let controller = SessionController()
+    controller.showServerProfileSetup()
+    controller.markServerReadyForValidation()
+    controller.requireEnrollment()
     controller.markAuthenticated()
     return RootView(sessionController: controller)
 }
