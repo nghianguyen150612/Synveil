@@ -1,4 +1,7 @@
-use std::{fmt, net::SocketAddr};
+use std::{
+    fmt,
+    net::{IpAddr, SocketAddr},
+};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -176,7 +179,92 @@ impl StorageRootIdentity {
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
 pub enum NetworkConfiguration {
     NotConfigured,
-    LocalPrivate { bind_address: String },
+    Preparing(NetworkIntegration),
+    Configured(NetworkIntegration),
+}
+
+/// Durable, non-secret identity and evidence for the client-facing HTTPS edge.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkIntegration {
+    pub network_integration_id: NetworkIntegrationId,
+    pub mode: ReachabilityMode,
+    /// Always the private Axum endpoint; this is never the edge listener.
+    pub backend_endpoint: String,
+    pub listener: EdgeListener,
+    pub canonical_origin: String,
+    pub trust: NetworkTrust,
+    pub firewall: FirewallState,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct NetworkIntegrationId(String);
+
+impl NetworkIntegrationId {
+    #[must_use]
+    pub fn new_v7() -> Self {
+        Self(uuid::Uuid::now_v7().to_string())
+    }
+    pub fn parse(value: impl Into<String>) -> Result<Self, ConfigValidationError> {
+        let value = value.into();
+        let id = uuid::Uuid::parse_str(&value)
+            .map_err(|_| ConfigValidationError::InvalidNetworkConfiguration)?;
+        if id.to_string() != value || id.get_version_num() != 7 {
+            return Err(ConfigValidationError::InvalidNetworkConfiguration);
+        }
+        Ok(Self(value))
+    }
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReachabilityMode {
+    LocalOnly,
+    PrivateLan,
+    AdvancedExternalHttps,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EdgeListener {
+    pub address: IpAddr,
+    pub port: u16,
+    pub interface_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub enum NetworkTrust {
+    ManagedPrivateCa { ca_certificate_sha256: String },
+    PublicWebPki,
+    OperatorManagedHttps,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum FirewallState {
+    NotRequired,
+    Planned {
+        manager: FirewallManager,
+        rule_id: String,
+    },
+    Applied {
+        manager: FirewallManager,
+        rule_id: String,
+    },
+    OperatorOwned,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FirewallManager {
+    Ufw,
+    Firewalld,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -411,13 +499,10 @@ impl ServerConfig {
                 }
             }
         }
-        if let NetworkConfiguration::LocalPrivate { bind_address } = &self.network {
-            let Ok(address) = bind_address.parse::<SocketAddr>() else {
-                return Err(ConfigValidationError::InvalidNetworkConfiguration);
-            };
-            if !address.ip().is_loopback() || address.port() == 0 {
-                return Err(ConfigValidationError::InvalidNetworkConfiguration);
-            }
+        if let NetworkConfiguration::Preparing(network)
+        | NetworkConfiguration::Configured(network) = &self.network
+        {
+            validate_network(network)?;
         }
         if self.service_topology_version != super::model::SERVICE_TOPOLOGY_VERSION {
             return Err(ConfigValidationError::UnsupportedServiceTopology);
@@ -470,6 +555,73 @@ impl ServerConfig {
             configuration_state: ConfigurationState::Prepared,
         }
     }
+}
+
+fn validate_network(network: &NetworkIntegration) -> Result<(), ConfigValidationError> {
+    NetworkIntegrationId::parse(network.network_integration_id.as_str().to_owned())?;
+    let backend: SocketAddr = network
+        .backend_endpoint
+        .parse()
+        .map_err(|_| ConfigValidationError::InvalidNetworkConfiguration)?;
+    if backend != SocketAddr::from(([127, 0, 0, 1], 3000)) || network.listener.port == 0 {
+        return Err(ConfigValidationError::InvalidNetworkConfiguration);
+    }
+    let origin = url::Url::parse(&network.canonical_origin)
+        .map_err(|_| ConfigValidationError::InvalidNetworkConfiguration)?;
+    if origin.scheme() != "https"
+        || origin.username() != ""
+        || origin.password().is_some()
+        || origin.query().is_some()
+        || origin.fragment().is_some()
+        || origin.path() != "/"
+        || origin.host_str().is_none()
+        || origin.port() == Some(0)
+    {
+        return Err(ConfigValidationError::InvalidNetworkConfiguration);
+    }
+    let private_v4 =
+        |ip: std::net::Ipv4Addr| ip.is_private() && !ip.is_loopback() && !ip.is_link_local();
+    match network.mode {
+        ReachabilityMode::LocalOnly => {
+            if !network.listener.address.is_loopback()
+                || network.listener.interface_id.is_some()
+                || !matches!(network.firewall, FirewallState::NotRequired)
+                || !matches!(network.trust, NetworkTrust::ManagedPrivateCa { .. })
+            {
+                return Err(ConfigValidationError::InvalidNetworkConfiguration);
+            }
+        }
+        ReachabilityMode::PrivateLan => {
+            if !matches!(network.listener.address, IpAddr::V4(ip) if private_v4(ip))
+                || network
+                    .listener
+                    .interface_id
+                    .as_deref()
+                    .is_none_or(|v| v.is_empty() || v.len() > 128)
+                || !matches!(network.trust, NetworkTrust::ManagedPrivateCa { .. })
+            {
+                return Err(ConfigValidationError::InvalidNetworkConfiguration);
+            }
+        }
+        ReachabilityMode::AdvancedExternalHttps => {
+            if !matches!(network.firewall, FirewallState::OperatorOwned)
+                || matches!(network.trust, NetworkTrust::ManagedPrivateCa { .. })
+            {
+                return Err(ConfigValidationError::InvalidNetworkConfiguration);
+            }
+        }
+    }
+    if let NetworkTrust::ManagedPrivateCa {
+        ca_certificate_sha256,
+    } = &network.trust
+    {
+        if ca_certificate_sha256.len() != 64
+            || !ca_certificate_sha256.bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            return Err(ConfigValidationError::InvalidNetworkConfiguration);
+        }
+    }
+    Ok(())
 }
 
 fn validate_storage_identity(
@@ -579,7 +731,8 @@ pub(crate) fn structurally_safe_absolute_path(value: &str) -> bool {
 mod tests {
     use super::{
         CapabilityEvidence, CapabilitySupport, ConfigValidationError, DatabaseCredentialState,
-        DeploymentProfile, NetworkConfiguration, ServerConfig, StorageAvailability,
+        DeploymentProfile, EdgeListener, FirewallState, NetworkConfiguration, NetworkIntegration,
+        NetworkIntegrationId, NetworkTrust, ReachabilityMode, ServerConfig, StorageAvailability,
         StorageBackendKind, StorageCapabilities, StorageCapability, StorageConfiguration,
         StorageId, StorageRootIdentity,
     };
@@ -720,9 +873,21 @@ mod tests {
             Err(ConfigValidationError::InvalidStoragePath)
         );
         config = managed();
-        config.network = NetworkConfiguration::LocalPrivate {
-            bind_address: "0.0.0.0:3000".to_owned(),
-        };
+        config.network = NetworkConfiguration::Configured(NetworkIntegration {
+            network_integration_id: NetworkIntegrationId::new_v7(),
+            mode: ReachabilityMode::PrivateLan,
+            backend_endpoint: "127.0.0.1:3000".to_owned(),
+            listener: EdgeListener {
+                address: "0.0.0.0".parse().unwrap(),
+                port: 443,
+                interface_id: Some("ethernet-1".to_owned()),
+            },
+            canonical_origin: "https://192.168.1.20/".to_owned(),
+            trust: NetworkTrust::ManagedPrivateCa {
+                ca_certificate_sha256: "a".repeat(64),
+            },
+            firewall: FirewallState::NotRequired,
+        });
         assert_eq!(
             config.validate(),
             Err(ConfigValidationError::InvalidNetworkConfiguration)

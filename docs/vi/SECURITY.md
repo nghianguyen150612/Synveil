@@ -1313,3 +1313,10 @@ secure storage tạm thời không khả dụng; recovery không xóa hoặc ghi
 chỉ vì đọc secret thất bại. Launch recovery vẫn nằm trong manager bounded hiện
 có và `OutcomeUnknown` luôn refresh thay vì replay. Xem
 [`ADR-048`](../adr/ADR-048-production-desktop-recovery-and-resilience-ux.md).
+## Biên tin cậy mạng được quản lý (nền tảng v0.2)
+
+Dịch vụ được quản lý ngoài loopback chỉ dùng HTTPS. Hosting riêng dùng khóa CA
+và khóa leaf tách biệt, được giữ như server secret; edge chỉ nhận khóa leaf.
+Tin cậy CA riêng có phạm vi theo profile và không bao giờ tắt kiểm tra chuỗi,
+thời hạn hoặc hostname. API và PostgreSQL vẫn riêng tư; tích hợp firewall luôn
+rõ ràng, có danh tính và không phá hủy policy hiện hữu.
