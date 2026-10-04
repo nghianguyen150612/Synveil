@@ -51,5 +51,4 @@ final class RootViewTests: XCTestCase {
             controller.requireRecovery(reason)
         }
     }
-    }
 }
