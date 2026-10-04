@@ -1,22 +1,46 @@
-# Dedicated C ABI Bridge Crate (`synveil-ios-ffi`)
+# Dedicated Thin iOS FFI Crate (`synveil-ios-ffi`)
 
-This crate provides the C ABI bridge layer between `synveil-core` and the native Synveil iOS Swift client (`clients/ios/Infrastructure/RustBridge`).
+## 1. Role & Isolation Boundary
 
-## C ABI Exports (P017)
-1. `synveil_ffi_abi_version() -> u32`
-2. `synveil_ffi_validate_abi_version(expected_version: u32) -> u32`
+`synveil-ios-ffi` is the dedicated thin C ABI bridge crate for Synveil iOS (`v0.1`).
+It resides at `crates/ios-ffi/` and produces the release static library `libsynveil_ios_ffi.a`.
 
-## FFI Status Table
-All fallible FFI functions return a `u32` status code:
-- `0` = `SYNVEIL_FFI_STATUS_SUCCESS`
-- `1` = `SYNVEIL_FFI_STATUS_INVALID_ARGUMENT`
-- `2` = `SYNVEIL_FFI_STATUS_INVALID_UTF8`
-- `3` = `SYNVEIL_FFI_STATUS_BUFFER_TOO_SMALL`
-- `4` = `SYNVEIL_FFI_STATUS_DOMAIN_ERROR`
-- `5` = `SYNVEIL_FFI_STATUS_INTERNAL_ERROR`
-- `6` = `SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED`
-- `7` = `SYNVEIL_FFI_STATUS_UNSUPPORTED_ABI_VERSION`
+It bridges pure shared domain logic in `synveil-core` to the native iOS client over a strict C ABI.
 
-## Panic Firewall Policy
-All exported fallible C ABI functions wrap execution in `ffi_status_boundary` (`std::panic::catch_unwind`).
-No Rust panic unwinds across the C ABI boundary into foreign Swift frames. Panic payloads are caught and converted cleanly to `SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED` (6) without exposing panic message strings.
+---
+
+## 2. Exported C ABI Surface
+
+At P018, the exported C ABI functions are exactly:
+
+```c
+uint32_t synveil_ffi_abi_version(void);
+uint32_t synveil_ffi_validate_abi_version(uint32_t expected_version);
+uint32_t synveil_ffi_buffer_release(struct SynveilFfiBuffer *buffer);
+uint32_t synveil_ffi_sha256_parse(const uint8_t *input_ptr, size_t input_len, struct SynveilFfiBuffer *out_digest);
+uint32_t synveil_ffi_sha256_format(const uint8_t *digest_ptr, size_t digest_len, struct SynveilFfiBuffer *out_utf8);
+```
+
+---
+
+## 3. Memory Ownership & Safety Preconditions
+
+### `SynveilFfiBuffer` Layout
+```rust
+#[repr(C)]
+pub struct SynveilFfiBuffer {
+    pub data: *mut u8,
+    pub len: usize,
+    pub capacity: usize,
+}
+```
+
+### Rules
+1. **Canonical Empty State**: `{ data: NULL, len: 0, capacity: 0 }`.
+2. **Borrowed Inputs**: Input pointers (`const uint8_t *`, `size_t`) are borrowed strictly for the synchronous duration of the FFI function call. Rust never retains or frees foreign input pointers.
+3. **Rust-Owned Outputs**: Output allocations are created via standard Rust allocator and transferred to caller-visible `SynveilFfiBuffer` structs on `SUCCESS`.
+4. **Failure Zeroing Invariant**: If an FFI function returns non-success or panics, any provided `out_buffer` remains or is set to canonical zero state (`NULL`/0/0).
+5. **Release Requirements**: Foreign callers must release Rust-owned buffers by passing them to `synveil_ffi_buffer_release`.
+6. **Release Idempotence**: `synveil_ffi_buffer_release` immediately zeroes the caller's struct before dropping memory, making repeated release calls on the same zeroed struct safe.
+7. **Copied Live Struct Prohibition**: Physically copying a live `SynveilFfiBuffer` and releasing both copies is strictly prohibited.
+8. **Generic Zeroization Policy**: Buffer memory is freed via the default Rust allocator. Generic release does not guarantee cryptographic zeroization (`GENERIC_BUFFER_RELEASE_DOES_NOT_GUARANTEE_SECRET_ZEROIZATION`).

@@ -149,6 +149,9 @@ All exported C symbols MUST use the mandatory prefix:
 Examples:
 * `synveil_ffi_abi_version`
 * `synveil_ffi_validate_abi_version`
+* `synveil_ffi_buffer_release`
+* `synveil_ffi_sha256_parse`
+* `synveil_ffi_sha256_format`
 
 Generic symbol names (e.g., `free`, `parse`, `hash`, `version`) are strictly prohibited to prevent link-time collisions in Xcode binaries.
 
@@ -182,10 +185,10 @@ Null-terminated C strings (`const char*` with trailing `\0`) are NOT used as pri
 
 ### 5.3 Output Strings (Rust → Swift)
 1. Rust allocates the output string buffer using Rust allocator.
-2. Rust returns a raw buffer handle containing pointer + length to Swift.
+2. Rust returns a raw buffer handle containing pointer + length + capacity (`SynveilFfiBuffer`) to Swift.
 3. Swift copies/consumes the string into a native Swift `String`.
 4. Swift MUST explicitly call `synveil_ffi_buffer_release()` to free the Rust-allocated output buffer.
-5. Swift MUST NEVER call libc `free()` or `free()` on Rust-allocated memory.
+5. Swift MUST NEVER call libc `free()` or `deallocate()` on Rust-allocated memory.
 
 ---
 
@@ -223,17 +226,16 @@ Every `SynveilFfiBuffer` allocated by Rust MUST be freed by calling `synveil_ffi
 All fallible FFI functions MUST return an explicit status code (`uint32_t`) as the function return value, returning data payloads via out-parameters:
 
 ```c
-// Conceptual C ABI function signature
-uint32_t synveil_ffi_compute_sha256(
-    const uint8_t* input_ptr,
+uint32_t synveil_ffi_sha256_parse(
+    const uint8_t *input_ptr,
     size_t input_len,
-    SynveilFfiBuffer* out_buffer
+    SynveilFfiBuffer *out_digest
 );
 ```
 
 ### 7.2 Error Rules
 1. Status `0` (`SYNVEIL_FFI_STATUS_SUCCESS`) indicates success; out-parameters are valid ONLY when status is `0`.
-2. Non-zero status indicates failure; out-parameter buffers remain unallocated or zeroed.
+2. Non-zero status indicates failure; out-parameter buffers remain unallocated or canonical zeroed (`NULL`/0/0).
 3. No Rust `Result` or Swift exception crosses the ABI directly.
 4. Status codes are stable machine-readable integers (`uint32_t`).
 5. Diagnostic error strings MUST NEVER contain user credentials, tokens, or raw file content.
@@ -283,7 +285,9 @@ Uncaught panics convert cleanly into `SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED` (6).
 2. **No Cross-Allocator Free**: Swift MUST NEVER call `free()`, `realloc()`, or Swift deallocators on Rust pointers. Swift calls `synveil_ffi_buffer_release()`.
 3. **No Retained Swift Borrow**: Rust MUST NEVER retain or free pointers borrowed from Swift input calls past function return.
 4. **Explicit Release Lifecycle**: Output wrappers in Swift MUST invoke release upon completion or deinitialization.
-5. **No Double Free**: Swift adapters MUST zero or invalidate local pointer references immediately after calling release functions.
+5. **No Double Free**: Swift adapters MUST zero or invalidate local pointer references immediately after calling release functions. `synveil_ffi_buffer_release` zeroes the struct upon release so repeated calls on the zeroed struct are idempotent.
+6. **Copied-Live-Buffer Prohibition**: Physically copying a live `SynveilFfiBuffer` struct and releasing both copies is strictly prohibited.
+7. **Generic Zeroization Policy**: Memory is freed using the standard Rust allocator (`GENERIC_BUFFER_RELEASE_DOES_NOT_GUARANTEE_SECRET_ZEROIZATION`).
 
 ---
 
@@ -331,7 +335,7 @@ synveil-ios-ffi (C ABI)
 
 ## 13. Part L — Threading Contract
 
-1. **Stateless Reentrancy**: All stateless pure FFI functions (`synveil_ffi_generate_uuidv7`, `synveil_ffi_hash_sha256`) MUST be reentrant and safe to call concurrently from any thread.
+1. **Stateless Reentrancy**: All stateless pure FFI functions (`synveil_ffi_generate_uuidv7`, `synveil_ffi_sha256_parse`, `synveil_ffi_sha256_format`) MUST be reentrant and safe to call concurrently from any thread.
 2. **No Swift Assumptions**: Rust FFI functions MUST NOT assume Swift thread-local state or GCD dispatch queue identity.
 3. **No Global Mutable State**: `synveil-ios-ffi` MUST NOT introduce global mutable static variables or hidden process-wide singletons.
 
@@ -347,8 +351,8 @@ Raw C ABI bindings and generated headers reside **exclusively** under:
 Upper layers (`Features`, `Application`, `Domain`) MUST NEVER import raw FFI module symbols directly.
 
 ### 14.2 Protocol Deferral Decision (P013)
-* `RustBridgeProtocol` remains **deferred** in P013.
-* A Swift-facing `RustBridgeProtocol` will be introduced in P016 / P020 once callable FFI signatures are compiled and verified. Fake/empty marker protocols are prohibited.
+* `RustBridgeProtocol` remains **deferred** in P013–P018 (`RUST_BRIDGE_PROTOCOL_DEFERRED_TO_P020`).
+* A Swift-facing `RustBridgeProtocol` will be introduced in P020 once callable FFI signatures are compiled and verified. Fake/empty marker protocols are prohibited.
 
 ---
 
@@ -357,12 +361,15 @@ Upper layers (`Features`, `Application`, `Domain`) MUST NEVER import raw FFI mod
 The FFI API surface MUST remain deliberately narrow.
 
 ### 15.1 Candidate Capabilities for P016–P020
+* `synveil_ffi_abi_version() -> uint32_t` (P016)
+* `synveil_ffi_validate_abi_version(u32) -> uint32_t` (P017)
+* `synveil_ffi_buffer_release(buffer) -> uint32_t` (P018)
+* `synveil_ffi_sha256_parse(input_ptr, input_len, out_digest) -> uint32_t` (P018)
+* `synveil_ffi_sha256_format(digest_ptr, digest_len, out_utf8) -> uint32_t` (P018)
 * `generate_uuidv7() -> String` (UUIDv7 string generation)
-* `compute_sha256(data) -> HexString` (SHA-256 cryptographic hashing)
 * `validate_enrollment_token(token) -> Bool` (`sve1_` token format verification)
 * `validate_bearer_token(token) -> Bool` (`svd1_` token format verification)
 * `evaluate_sync_feed(json) -> ParsedFeed` (Journal change feed parsing & verification)
-* `compute_signed_ack(library_id, seq, secret) -> Token` (Sync ACK signing)
 
 ### 15.2 Explicitly Excluded Capabilities
 The following MUST NOT cross FFI:
@@ -396,9 +403,9 @@ The following MUST NOT cross FFI:
 `CBINDGEN_RECOMMENDED_FOR_P014_P015`
 
 * **Policy**:
-  * P014/P015 will configure `cbindgen` to generate standard C headers (`synveil_ios_ffi.h`) directly from Rust `#[repr(C)]` exports.
-  * Generated headers will live in `clients/ios/Infrastructure/RustBridge/`.
-  * CI will verify header alignment against Rust source to prevent drift.
+  * P014/P015/P018 configure `cbindgen` to generate standard C headers (`synveil_ios_ffi.h`) directly from Rust `#[repr(C)]` exports.
+  * Generated headers live in `clients/ios/Infrastructure/RustBridge/Generated/`.
+  * CI verifies header alignment against Rust source to prevent drift via `./scripts/generate-ios-rust-header.sh --check`.
 
 ---
 
@@ -444,10 +451,10 @@ The following MUST NOT cross FFI:
 
 | Failure Source | May Cross ABI? | ABI Representation | Swift Handling | Implementation Prompt |
 |---|---|---|---|---|
-| **FFI Argument Error** | Yes | `SYNVEIL_FFI_STATUS_INVALID_ARGUMENT` | Throws `RustBridgeError.invalidArgument` | P017 |
-| **Invalid UTF-8 Input**| Yes | `SYNVEIL_FFI_STATUS_INVALID_UTF8` | Throws `RustBridgeError.invalidUtf8` | P017 |
-| **Domain Validation** | Yes | `SYNVEIL_FFI_STATUS_DOMAIN_ERROR` | Throws `RustBridgeError.domainError` | P017 / P020 |
-| **Uncaught Rust Panic**| Yes (Firewalled)| `SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED` | Throws `RustBridgeError.panicEncountered` | P017 |
+| **FFI Argument Error** | Yes | `SYNVEIL_FFI_STATUS_INVALID_ARGUMENT` | Throws `RustBridgeError.invalidArgument` | P017 / P018 |
+| **Invalid UTF-8 Input**| Yes | `SYNVEIL_FFI_STATUS_INVALID_UTF8` | Throws `RustBridgeError.invalidUtf8` | P017 / P018 |
+| **Domain Validation** | Yes | `SYNVEIL_FFI_STATUS_DOMAIN_ERROR` | Throws `RustBridgeError.domainError` | P017 / P018 / P020 |
+| **Uncaught Rust Panic**| Yes (Firewalled)| `SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED` | Throws `RustBridgeError.panicEncountered` | P017 / P018 |
 | **Memory Allocation** | Yes | `SYNVEIL_FFI_STATUS_INTERNAL_ERROR` | Throws `RustBridgeError.internalError` | P017 / P018 |
 | **Unsupported ABI** | Yes | `SYNVEIL_FFI_STATUS_UNSUPPORTED_ABI_VERSION` | Throws `RustBridgeCompatibilityError.unsupportedABIVersion` | P017 |
 
@@ -457,8 +464,8 @@ The following MUST NOT cross FFI:
 |---|---|---|---|---|
 | **ABI Version Query** | Synchronous | Yes (Trivial) | Fully Reentrant | P016 |
 | **ABI Validation Query**| Synchronous | Yes (Trivial) | Fully Reentrant | P017 |
+| **SHA-256 Parse / Format**| Synchronous | No (Dispatch Off-Main) | Fully Reentrant | P018 |
 | **UUIDv7 Generation** | Synchronous | No (Dispatch Off-Main) | Fully Reentrant | P016 / P018 |
-| **SHA-256 Hashing** | Synchronous | No (Dispatch Off-Main) | Fully Reentrant | P016 / P018 |
 | **Token Format Parsing**| Synchronous | No (Dispatch Off-Main) | Fully Reentrant | P020 |
 | **Sync Feed Evaluation**| Synchronous | No (Dispatch Off-Main) | Fully Reentrant | P020 |
 
@@ -479,6 +486,6 @@ P020 (Model Map) ◄── P019 (Async Bound) ◄── P018 (Mem Safety) ◄─
 | **P015** | **Rust Apple Artifact CI** | GitHub Actions workflow for Apple target artifact compilation (`libsynveil_ios_ffi.a`). |
 | **P016** | **First Trivial FFI Call** | Implement `synveil_ffi_abi_version()`. Link static library in Xcode. Execute trivial Swift→Rust call in unit test. |
 | **P017** | **FFI Error Model & Panic Firewall**| Implement status envelope, error codes, and `catch_unwind` panic firewall. |
-| **P018** | **Memory Ownership & Safety** | Implement `SynveilFfiBuffer` allocation/release functions. Stress test string/byte buffers for leaks/double-free. |
+| **P018** | **Memory Ownership & Safety** | Implement `SynveilFfiBuffer` allocation/release functions, SHA-256 parse/format capabilities, Swift `consumeRustBuffer` copy-before-release lifecycle, failure path zeroing, and repeated lifecycle stress tests. |
 | **P019** | **Async & Concurrency Boundary** | Enforce background thread dispatch policy for FFI calls. Verify non-blocking MainActor execution. |
 | **P020** | **Shared Model Mapping** | Implement token parsing, hash calculation, and sync feed evaluation FFI signatures. Introduce Swift `RustBridgeProtocol`. |

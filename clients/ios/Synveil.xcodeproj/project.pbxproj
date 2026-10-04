@@ -27,6 +27,7 @@
 		B10000012C00000000000013 /* HTTPTransportContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000013 /* HTTPTransportContractTests.swift */; };
 		B10000012C00000000000014 /* RustBridgeABITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000014 /* RustBridgeABITests.swift */; };
 		B10000012C00000000000015 /* RustBridgeErrorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000015 /* RustBridgeErrorTests.swift */; };
+		B10000012C00000000000016 /* RustBridgeMemoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000016 /* RustBridgeMemoryTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -61,6 +62,7 @@
 		B20000012C00000000000013 /* HTTPTransportContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/HTTPTransportContractTests.swift; sourceTree = "<group>"; };
 		B20000012C00000000000014 /* RustBridgeABITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RustBridgeABITests.swift; sourceTree = "<group>"; };
 		B20000012C00000000000015 /* RustBridgeErrorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RustBridgeErrorTests.swift; sourceTree = "<group>"; };
+		B20000012C00000000000016 /* RustBridgeMemoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RustBridgeMemoryTests.swift; sourceTree = "<group>"; };
 		B20000012C00000000000002 /* SynveilTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SynveilTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -178,6 +180,7 @@
 				B20000012C00000000000013 /* HTTPTransportContractTests.swift */,
 				B20000012C00000000000014 /* RustBridgeABITests.swift */,
 				B20000012C00000000000015 /* RustBridgeErrorTests.swift */,
+				B20000012C00000000000016 /* RustBridgeMemoryTests.swift */,
 			);
 			name = SynveilTests;
 			sourceTree = "<group>";
@@ -299,6 +302,7 @@
 				B10000012C00000000000013 /* HTTPTransportContractTests.swift in Sources */,
 				B10000012C00000000000014 /* RustBridgeABITests.swift in Sources */,
 				B10000012C00000000000015 /* RustBridgeErrorTests.swift in Sources */,
+				B10000012C00000000000016 /* RustBridgeMemoryTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
