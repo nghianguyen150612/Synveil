@@ -135,6 +135,11 @@ upload requirements. Legacy explicit-root operator behavior remains intact.
 API configuration now rejects `PreparingLocal` as runtime-not-ready. Runtime
 disappearance is not converted to `NotConfigured` or an empty replacement.
 
+The Ubuntu leg of Rust CI now runs the focused ObjectStore, server-storage,
+server-config, storage, and API library tests before the broader workspace
+suite. This keeps P032's native Linux storage evidence visible even when an
+unrelated earlier workspace test fails.
+
 Native Linux tests exercise actual temporary-directory `statvfs`, mode/type and
 symlink handling, marker persistence, ObjectStore initialization/reopen,
 write/fsync/rename/remove probe, config CAS, stale confirmation, and
@@ -153,6 +158,7 @@ client-library first-run UX.
 
 ## Changed paths
 
+- `.github/workflows/ci.yml`
 - `Cargo.toml`, `Cargo.lock`
 - `crates/api/Cargo.toml`
 - `crates/api/src/bin/synveil-api.rs`

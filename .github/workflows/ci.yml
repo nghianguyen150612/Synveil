@@ -336,6 +336,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config libdbus-1-dev
 
+      - name: Test managed server storage bootstrap and runtime
+        if: runner.os == 'Linux'
+        run: CARGO_BUILD_JOBS=1 cargo test -p synveil-object-store -p synveil-server-storage -p synveil-server-config -p synveil-storage -p synveil-api --lib --locked
+
       - name: Test workspace without the platform-specific Qt binary
         run: cargo test --workspace --exclude synveil-desktop --locked
 
