@@ -1388,3 +1388,10 @@ and [ADR-061](../adr/ADR-061-v0.2-managed-server-configuration.md).
 The implemented filesystem checks use disposable roots. They do not claim
 physical `/etc` ownership verification, power-loss testing, service delivery,
 or completed managed Host acceptance; P032–P036 remain open.
+## Managed network trust boundary (v0.2 foundation)
+
+Managed off-loopback service is HTTPS-only. Private hosting uses separate CA
+and leaf keys held as server secrets; the edge receives only the leaf key.
+Private CA trust is profile-scoped and never disables certificate-chain,
+validity, or hostname verification. The API and PostgreSQL remain loopback/
+private, and firewall integration is explicit, identified, and non-destructive.
