@@ -62,7 +62,7 @@ pub enum SynveilFfiStatus {
 /// - Valid allocated state: `data != NULL`, `len > 0`, `capacity >= len`.
 /// - Releasing a buffer via `synveil_ffi_buffer_release` zeroes all fields back to canonical empty state.
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct SynveilFfiBuffer {
     pub data: *mut u8,
     pub len: usize,
@@ -208,28 +208,30 @@ pub extern "C" fn synveil_ffi_buffer_release(buffer: *mut SynveilFfiBuffer) -> u
             return Err(SynveilFfiStatus::InvalidArgument);
         }
 
-        // SAFETY: buffer is checked non-null.
-        let buf_val = unsafe { *buffer };
+        // SAFETY: buffer is checked non-null. Read fields individually so the ownership-bearing
+        // struct is not made Copy/Clone in Rust.
+        let (data, len, capacity) = unsafe { ((*buffer).data, (*buffer).len, (*buffer).capacity) };
 
-        if buf_val.is_canonical_empty() {
+        if data.is_null() && len == 0 && capacity == 0 {
             return Ok(());
         }
 
-        // Validate buffer shape invariants
-        if buf_val.data.is_null() || buf_val.len > buf_val.capacity || buf_val.capacity == 0 {
+        // Validate the only supported live-buffer shape: non-null data, len > 0,
+        // and capacity >= len. Non-null zero-length shapes are not produced by this crate.
+        if data.is_null() || len == 0 || capacity == 0 || len > capacity {
             return Err(SynveilFfiStatus::InvalidArgument);
         }
 
-        // Zero out caller-visible struct BEFORE dropping allocation to invalidate pointer on caller side
+        // Zero out caller-visible struct BEFORE dropping allocation to invalidate pointer on caller side.
         // SAFETY: buffer pointer was checked non-null and valid.
         unsafe {
             buffer.write(SynveilFfiBuffer::CANONICAL_EMPTY);
         }
 
-        // Reconstruct Vec and drop it using default Rust allocator
-        // SAFETY: buf_val was verified to contain non-null data, capacity >= len > 0,
-        // capacity > 0, and originated from a Rust Vec allocation.
-        let _vec = unsafe { Vec::from_raw_parts(buf_val.data, buf_val.len, buf_val.capacity) };
+        // Reconstruct Vec and drop it using default Rust allocator.
+        // SAFETY: data was verified non-null, len > 0, capacity >= len, and this function's ABI
+        // precondition requires the buffer to be an unmodified value produced by this crate.
+        let _vec = unsafe { Vec::from_raw_parts(data, len, capacity) };
         // _vec is dropped at end of scope.
 
         Ok(())
@@ -472,6 +474,16 @@ mod tests {
         };
         assert_eq!(
             synveil_ffi_buffer_release(&mut malformed_null_data),
+            SYNVEIL_FFI_STATUS_INVALID_ARGUMENT
+        );
+
+        let mut malformed_zero_len = SynveilFfiBuffer {
+            data: std::ptr::NonNull::dangling().as_ptr(),
+            len: 0,
+            capacity: 8, // live buffers must never be non-null with zero length
+        };
+        assert_eq!(
+            synveil_ffi_buffer_release(&mut malformed_zero_len),
             SYNVEIL_FFI_STATUS_INVALID_ARGUMENT
         );
     }
