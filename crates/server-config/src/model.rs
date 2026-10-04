@@ -731,7 +731,8 @@ pub(crate) fn structurally_safe_absolute_path(value: &str) -> bool {
 mod tests {
     use super::{
         CapabilityEvidence, CapabilitySupport, ConfigValidationError, DatabaseCredentialState,
-        DeploymentProfile, NetworkConfiguration, ServerConfig, StorageAvailability,
+        DeploymentProfile, EdgeListener, FirewallState, NetworkConfiguration, NetworkIntegration,
+        NetworkIntegrationId, NetworkTrust, ReachabilityMode, ServerConfig, StorageAvailability,
         StorageBackendKind, StorageCapabilities, StorageCapability, StorageConfiguration,
         StorageId, StorageRootIdentity,
     };
