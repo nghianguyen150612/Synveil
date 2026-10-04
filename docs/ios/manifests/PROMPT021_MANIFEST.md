@@ -150,13 +150,27 @@ ABI version remains `1`. Exact 10 exported C ABI symbols preserved.
 `cargo fmt`, `cargo check`, `cargo test`, `cargo clippy`, `validate_ios_sources.py`, Python unittest suites all PASSED cleanly.
 
 ## 38. Final Implementation Commit
-Pending PR submission.
+`d8064fc4eb9c14f95280fd8af2031cc641df8d3e` (merge-review hardened executable head).
 
 ## 39. PR Number / URL
-Pending PR creation.
+PR #64 — https://github.com/nghianguyen150612/Synveil/pull/64
 
 ## 40. PR Base
 `ios-app`
 
 ## 41–48. CI & Merge Evidence
-To be recorded upon PR creation and CI execution.
+Final-head workflow IDs and merge evidence are recorded in the PR discussion after the final CI run to avoid an evidence-commit loop.
+
+
+## 49. Merge-Review State-Machine Hardening
+Before merge, root transition safety was tightened:
+
+- `markServerReadyForValidation()` only transitions from `.needsServerProfile`.
+- `requireEnrollment()` only transitions from `.readyForServerValidation`.
+- `markAuthenticated()` only transitions from `.needsEnrollment`.
+- Invalid attempts to enter `.authenticated` from `.initializing`, `.needsServerProfile`, or `.recoveryRequired` are ignored.
+- Root previews/tests now construct later states through the valid lifecycle path.
+- `SessionControllerTests` includes a regression test proving lifecycle gates cannot be bypassed.
+
+## 50. Evidence Discipline
+This is the final Prompt021 manifest metadata correction. Final-head CI and merge evidence will be recorded in the PR discussion. No additional evidence-only manifest commit should be created.
