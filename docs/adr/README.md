@@ -81,6 +81,7 @@ một tệp để trạng thái và hệ quả không bị lệch giữa hai b�
 | [060](ADR-060-v0.2-managed-postgresql-dependency-strategy.md) | v0.2 managed PostgreSQL dependency strategy / Chiến lược dependency PostgreSQL managed v0.2 | Accepted — Prompt030 |
 | [061](ADR-061-v0.2-managed-server-configuration.md) | v0.2 managed server configuration and secret ownership / Cấu hình server managed và ownership secret v0.2 | Accepted — Prompt031 |
 | [062](ADR-062-v0.2-managed-server-storage-location.md) | v0.2 managed server storage location / Vị trí storage server managed v0.2 | Accepted — Prompt032 |
+| [063](ADR-063-v0.2-managed-server-services.md) | v0.2 managed server services | Accepted — Prompt033 |
 
 ## Process / Quy trình
 

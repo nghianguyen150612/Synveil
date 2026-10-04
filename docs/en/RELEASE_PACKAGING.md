@@ -1,5 +1,7 @@
 # Production release packaging, installation, upgrade, and uninstall (Prompt 108)
 
+> The Prompt033 server runtime and PostgreSQL runtime are distinct closed artifacts, never desktop-package content. See [server service installation](../v0.2/SERVER_SERVICE_INSTALLATION.md).
+
 This document is the release-facing contract for the production desktop
 runtime. It covers the Linux DEB/RPM artifacts, the Windows portable ZIP, the
 package-neutral installer, and the data-preserving upgrade/removal rules.

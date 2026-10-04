@@ -1,5 +1,7 @@
 # Synveil security and privacy architecture
 
+> Managed Host services separate `synveil` from `synveil-postgres`, use systemd credentials, and remain private during P033. See [the service contract](../v0.2/SERVER_SERVICE_INSTALLATION.md).
+
 Status: **Normative threat-model blueprint**
 
 Release status note: the native desktop/client lifecycle, profile onboarding,

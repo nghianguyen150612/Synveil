@@ -1,0 +1,44 @@
+[Unit]
+Description=Synveil managed private PostgreSQL 17
+PartOf=synveil-server.target
+Before=synveil-server-migrate.service synveil-api.service synveil-worker.service
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+Type=notify
+User=synveil-postgres
+Group=synveil-postgres
+ExecStart=/opt/synveil/postgresql/17/current/bin/postgres -D /var/lib/synveil/postgresql/17/data -c config_file=/etc/synveil/postgresql/postgresql.conf
+ExecReload=/bin/kill -HUP $MAINPID
+KillSignal=SIGINT
+TimeoutStartSec=90
+TimeoutStopSec=90
+Restart=on-failure
+RestartSec=5s
+RuntimeDirectory=synveil/postgresql
+RuntimeDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+ReadWritePaths=/var/lib/synveil/postgresql/17 /run/synveil/postgresql
+InaccessiblePaths=/etc/synveil/credentials
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=synveil-server.target

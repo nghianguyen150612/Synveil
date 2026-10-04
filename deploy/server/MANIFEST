@@ -1,0 +1,16 @@
+# Distinct SERVER_PACKAGE authority. This manifest is never consumed by the
+# desktop uninstaller. Closed inventory; no wildcard source or destination.
+# source destination mode owner group lifecycle
+SERVER_API /opt/synveil/server/RUNTIME_ID/synveil-api 0755 root root REPLACEABLE
+SERVER_WORKER /opt/synveil/server/RUNTIME_ID/synveil-worker 0755 root root REPLACEABLE
+SERVER_MIGRATE /opt/synveil/server/RUNTIME_ID/synveil-server-migrate 0755 root root REPLACEABLE
+deploy/systemd/synveil-server.target /usr/lib/systemd/system/synveil-server.target 0644 root root INTEGRATION
+deploy/systemd/synveil-postgresql.service /usr/lib/systemd/system/synveil-postgresql.service 0644 root root INTEGRATION
+deploy/systemd/synveil-server-migrate.service /usr/lib/systemd/system/synveil-server-migrate.service 0644 root root INTEGRATION
+deploy/systemd/synveil-api.service /usr/lib/systemd/system/synveil-api.service 0644 root root INTEGRATION
+deploy/systemd/synveil-worker.service /usr/lib/systemd/system/synveil-worker.service 0644 root root INTEGRATION
+deploy/sysusers.d/synveil-postgres.conf /usr/lib/sysusers.d/synveil-postgres.conf 0644 root root INTEGRATION
+deploy/tmpfiles.d/synveil-postgresql.conf /usr/lib/tmpfiles.d/synveil-postgresql.conf 0644 root root INTEGRATION
+deploy/server/systemd-managed/synveil-server.target.conf /usr/lib/systemd/system/synveil-server.target.d/10-managed-postgresql.conf 0644 root root MANAGED_PROFILE_INTEGRATION
+deploy/server/systemd-managed/synveil-server-migrate.service.conf /usr/lib/systemd/system/synveil-server-migrate.service.d/10-managed-postgresql.conf 0644 root root MANAGED_PROFILE_INTEGRATION
+# DATA, CONFIG, SECRET, and object storage are deliberately not owned here.

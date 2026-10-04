@@ -114,6 +114,25 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // migrations and the selected object-store adapter have been validated.
     let listener = TcpListener::bind(bind_address).await?;
     tracing::info!(address = %listener.local_addr()?, "Synveil API listening");
-    axum::serve(listener, router(state)).await?;
+    axum::serve(listener, router(state))
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
     Ok(())
+}
+
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut terminate = signal(SignalKind::terminate()).expect("install SIGTERM handler");
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => { let _ = result; }
+            _ = terminate.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+    tracing::info!("Synveil API shutdown requested");
 }

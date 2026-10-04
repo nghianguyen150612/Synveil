@@ -105,5 +105,17 @@ class ReleaseManifestTests(unittest.TestCase):
     def test_32_no_secret_fields(self):
         encoded=json.dumps(self.document([self.artifact()])).lower()
         for word in ("password","api_key","private_key","secretstore","token"): self.assertNotIn(word,encoded)
+    def test_33_closed_server_runtime_bundle(self):
+        artifact = self.artifact("server_runtime_bundle", "server.tar.zst", "server-linux-x86_64")
+        artifact["role"] = "server_runtime"
+        artifact["components"] = ["synveil-api", "synveil-worker", "synveil-server-migrate"]
+        manifest.validate(self.document([artifact]))
+        artifact["components"].pop()
+        self.rejected(self.document([artifact]), "incomplete closed component inventory")
+    def test_34_postgresql_runtime_is_distinct(self):
+        artifact = self.artifact("postgresql_runtime_bundle", "postgresql.tar.zst", "postgresql-17-linux-x86_64")
+        artifact["role"] = "database_runtime"
+        artifact["components"] = ["postgresql-17"]
+        manifest.validate(self.document([artifact]))
 
 if __name__ == "__main__": unittest.main()

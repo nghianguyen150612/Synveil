@@ -1,5 +1,7 @@
 # Storage, object lifecycle, versions, and trash
 
+> Managed Host ownership handoff is identity-checked and exact-path-only; PostgreSQL cannot own object storage. See [Prompt033](../v0.2/SERVER_SERVICE_INSTALLATION.md).
+
 Status: **ObjectStore contract VALIDATED; in-memory adapter VALIDATED; local
 filesystem adapter IMPLEMENTED/VALIDATED; persisted upload-session and
 application-service subset IMPLEMENTED/VALIDATED; exact-offset HTTP upload

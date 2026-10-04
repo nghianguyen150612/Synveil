@@ -1,0 +1,17 @@
+[package]
+name = "synveil-server-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Safe managed server service planning and PostgreSQL identity boundary"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+synveil-server-config.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

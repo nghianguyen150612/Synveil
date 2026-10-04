@@ -6,6 +6,7 @@ members = [
     "crates/metadata",
     "crates/server-config",
     "crates/server-storage",
+    "crates/server-service",
     "crates/object-store",
     "crates/storage",
     "crates/api",

@@ -1,0 +1,44 @@
+[Unit]
+Description=Synveil internal worker
+PartOf=synveil-server.target
+Requires=synveil-server-migrate.service synveil-api.service
+After=synveil-server-migrate.service synveil-api.service
+Before=shutdown.target
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=synveil
+Group=synveil
+ExecStart=/opt/synveil/server/current/synveil-worker
+Environment=SYNVEIL_SERVER_CONFIG_FILE=/etc/synveil/server-config.json
+Environment=SYNVEIL_DATABASE_CREDENTIAL_FILE=%d/database-url
+Environment=SYNVEIL_GC_WORKER_ENABLED=1
+LoadCredential=database-url:/etc/synveil/credentials/database-url
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=90
+UMask=0077
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+InaccessiblePaths=/etc/synveil/credentials
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=synveil-server.target

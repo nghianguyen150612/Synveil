@@ -12,11 +12,11 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 
 SCHEMA_VERSION = 1
 PRODUCT = "Synveil"
-TYPES = {"deb", "rpm", "appimage", "windows_installer", "windows_portable_zip"}
+TYPES = {"deb", "rpm", "appimage", "windows_installer", "windows_portable_zip", "server_runtime_bundle", "postgresql_runtime_bundle"}
 PLATFORMS = {"linux", "windows"}
 ARCHITECTURES = {"x86_64", "aarch64"}
-ROLES = {"native_package", "primary_installer", "portable"}
-COMPONENTS = {"synveil-desktop", "synveil-client", "scheduled-maintenance"}
+ROLES = {"native_package", "primary_installer", "portable", "server_runtime", "database_runtime"}
+COMPONENTS = {"synveil-desktop", "synveil-client", "scheduled-maintenance", "synveil-api", "synveil-worker", "synveil-server-migrate", "postgresql-17"}
 TOP_FIELDS = {"schema_version", "product", "product_version", "source_commit", "artifacts"}
 ARTIFACT_FIELDS = {"id", "artifact_type", "filename", "platform", "architecture", "role", "product_version", "size_bytes", "sha256", "components", "package_metadata"}
 REQUIRED_ARTIFACT_FIELDS = ARTIFACT_FIELDS - {"package_metadata"}
@@ -77,6 +77,14 @@ def validate_artifact(item: object, product_version: str, artifact_root: Path | 
     expected_role = {"deb": "native_package", "rpm": "native_package", "windows_portable_zip": "portable"}.get(kind)
     if expected_role and item["role"] != expected_role:
         fail(f"{where}: artifact_type/role mismatch")
+    if kind == "server_runtime_bundle" and item["role"] != "server_runtime":
+        fail(f"{where}: server bundle requires server_runtime role")
+    if kind == "postgresql_runtime_bundle" and item["role"] != "database_runtime":
+        fail(f"{where}: PostgreSQL bundle requires database_runtime role")
+    if kind == "server_runtime_bundle" and set(item["components"]) != {"synveil-api", "synveil-worker", "synveil-server-migrate"}:
+        fail(f"{where}: server bundle has incomplete closed component inventory")
+    if kind == "postgresql_runtime_bundle" and item["components"] != ["postgresql-17"]:
+        fail(f"{where}: PostgreSQL bundle must identify PostgreSQL 17")
     if item["product_version"] != product_version:
         fail(f"{where}: product_version mismatch")
     if not safe_filename(item["filename"]):

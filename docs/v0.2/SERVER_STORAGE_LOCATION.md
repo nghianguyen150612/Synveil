@@ -1,5 +1,7 @@
 # Server Storage Location (Prompt032)
 
+> Prompt033 performs only an identity-checked, exact-path service ownership handoff and never recursively changes an arbitrary selected tree. See [server services](SERVER_SERVICE_INSTALLATION.md).
+
 Status: **implemented managed-storage selection and bootstrap foundation**
 
 This contract concerns `SERVER_OBJECT_DATA`: opaque server-side objects owned
