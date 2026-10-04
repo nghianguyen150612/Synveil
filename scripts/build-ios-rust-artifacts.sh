@@ -202,7 +202,7 @@ if command -v nm >/dev/null 2>&1 || command -v strings >/dev/null 2>&1; then
         exit 1
     fi
 
-    EXPECTED_SYMBOLS="$(printf "synveil_ffi_abi_version\nsynveil_ffi_validate_abi_version")"
+    EXPECTED_SYMBOLS="$(printf "synveil_ffi_abi_version\nsynveil_ffi_buffer_release\nsynveil_ffi_sha256_format\nsynveil_ffi_sha256_parse\nsynveil_ffi_validate_abi_version")"
     if [ "${FFI_SYMBOLS}" != "${EXPECTED_SYMBOLS}" ]; then
         echo "ERROR: Unexpected C ABI symbols found in static library!" >&2
         echo "Found symbols:" >&2
@@ -276,12 +276,16 @@ manifest = {
     "rust_toolchain_version": rustc_ver,
     "cargo_version": cargo_ver,
     "source_commit_sha": commit_sha,
-    "c_abi_export_status": "STATUS_MODEL_P017",
+    "c_abi_export_status": "MEMORY_MODEL_P018",
     "c_abi_exports": [
         "synveil_ffi_abi_version",
+        "synveil_ffi_buffer_release",
+        "synveil_ffi_sha256_format",
+        "synveil_ffi_sha256_parse",
         "synveil_ffi_validate_abi_version"
     ],
     "ffi_status_model": "P017_STABLE_UINT32",
+    "ffi_memory_model": "P018_RUST_OWNED_BUFFER",
     "cbindgen_status": "ACTIVE_P017",
     "header_status": "GENERATED_CBINDGEN_P017",
     "xcframework_status": "XCFRAMEWORK_NOT_REQUIRED_P017",

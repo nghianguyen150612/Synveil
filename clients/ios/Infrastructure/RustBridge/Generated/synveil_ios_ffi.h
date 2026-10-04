@@ -9,8 +9,10 @@
 
 #include <stdarg.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -60,6 +62,30 @@
 #define SYNVEIL_FFI_STATUS_UNSUPPORTED_ABI_VERSION 7
 
 /**
+ * Generic C-compatible heap buffer representation owned by Rust.
+ *
+ * # ABI Layout
+ * Across C/Swift boundaries, this struct maps to:
+ * ```c
+ * typedef struct SynveilFfiBuffer {
+ *     uint8_t *data;
+ *     size_t len;
+ *     size_t capacity;
+ * } SynveilFfiBuffer;
+ * ```
+ *
+ * # Memory Invariants
+ * - Canonical empty state: `data == NULL`, `len == 0`, `capacity == 0`.
+ * - Valid allocated state: `data != NULL`, `len > 0`, `capacity >= len`.
+ * - Releasing a buffer via `synveil_ffi_buffer_release` zeroes all fields back to canonical empty state.
+ */
+typedef struct SynveilFfiBuffer {
+  uint8_t *data;
+  size_t len;
+  size_t capacity;
+} SynveilFfiBuffer;
+
+/**
  * Returns the supported C ABI version for `synveil-ios-ffi`.
  *
  * # ABI Guarantees
@@ -81,5 +107,49 @@ uint32_t synveil_ffi_abi_version(void);
  * - `SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED` (6) if an internal panic occurs.
  */
 uint32_t synveil_ffi_validate_abi_version(uint32_t expected_version);
+
+/**
+ * Releases memory owned by a `SynveilFfiBuffer` previously produced by `synveil-ios-ffi`.
+ *
+ * # Safety & Preconditions
+ * - `buffer` must be a non-null pointer to a `SynveilFfiBuffer`.
+ * - `buffer` must be either canonical empty (`NULL`/0/0) or an unmodified buffer created by `synveil-ios-ffi`.
+ * - Releasing a canonical empty buffer succeeds and does nothing.
+ * - Releasing a buffer immediately zeroes the pointed struct to canonical empty state before dropping memory.
+ * - Copying a live `SynveilFfiBuffer` and releasing both copies is prohibited.
+ *
+ * # Generic Zeroization Policy
+ * `synveil_ffi_buffer_release` frees buffer memory via the default Rust allocator.
+ * It does not guarantee cryptographic zeroization of release memory contents (`GENERIC_BUFFER_RELEASE_DOES_NOT_GUARANTEE_SECRET_ZEROIZATION`).
+ */
+uint32_t synveil_ffi_buffer_release(struct SynveilFfiBuffer *buffer);
+
+/**
+ * Parses a canonical SHA-256 string (e.g. `sha256:<64 hex chars>`) from borrowed UTF-8 input bytes
+ * and outputs a Rust-owned 32-byte raw digest buffer in `out_digest`.
+ *
+ * # Returns
+ * - `SYNVEIL_FFI_STATUS_SUCCESS` (0) on valid parse, writing a 32-byte digest to `out_digest`.
+ * - `SYNVEIL_FFI_STATUS_INVALID_ARGUMENT` (1) if `out_digest` is null or `input_ptr` is null with `input_len > 0`.
+ * - `SYNVEIL_FFI_STATUS_INVALID_UTF8` (2) if `input_ptr` contains invalid UTF-8 bytes.
+ * - `SYNVEIL_FFI_STATUS_DOMAIN_ERROR` (4) if input is valid UTF-8 but invalid Synveil SHA-256 representation.
+ * - `SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED` (6) if an internal panic occurs.
+ */
+uint32_t synveil_ffi_sha256_parse(const uint8_t *input_ptr,
+                                  size_t input_len,
+                                  struct SynveilFfiBuffer *out_digest);
+
+/**
+ * Formats a 32-byte raw SHA-256 digest into a canonical `sha256:<64 hex chars>` UTF-8 string buffer in `out_utf8`.
+ *
+ * # Returns
+ * - `SYNVEIL_FFI_STATUS_SUCCESS` (0) on valid 32-byte digest input, writing a 71-byte UTF-8 buffer to `out_utf8`.
+ * - `SYNVEIL_FFI_STATUS_INVALID_ARGUMENT` (1) if `out_utf8` is null or `digest_ptr` is null with `digest_len > 0`.
+ * - `SYNVEIL_FFI_STATUS_DOMAIN_ERROR` (4) if `digest_len != 32`.
+ * - `SYNVEIL_FFI_STATUS_PANIC_ENCOUNTERED` (6) if an internal panic occurs.
+ */
+uint32_t synveil_ffi_sha256_format(const uint8_t *digest_ptr,
+                                   size_t digest_len,
+                                   struct SynveilFfiBuffer *out_utf8);
 
 #endif  /* SYNVEIL_IOS_FFI_H */

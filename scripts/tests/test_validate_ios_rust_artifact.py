@@ -20,15 +20,16 @@ class TestValidateIosRustArtifact(unittest.TestCase):
             f.write(content)
 
     def test_valid_bundle_without_x86_64(self):
+        hdr_bytes = b"/* header */\ntypedef struct SynveilFfiBuffer { int x; } SynveilFfiBuffer;\nuint32_t synveil_ffi_buffer_release(struct SynveilFfiBuffer *b);\nuint32_t synveil_ffi_sha256_parse();\nuint32_t synveil_ffi_sha256_format();\n"
         self._create_mock_file("device/arm64/libsynveil_ios_ffi.a", b"dev_arm64")
         self._create_mock_file("simulator/arm64/libsynveil_ios_ffi.a", b"sim_arm64")
-        self._create_mock_file("include/synveil_ios_ffi.h", b"/* header */")
+        self._create_mock_file("include/synveil_ios_ffi.h", hdr_bytes)
 
         # Create SHA256SUMS
         import hashlib
         h_dev = hashlib.sha256(b"dev_arm64").hexdigest()
         h_sim = hashlib.sha256(b"sim_arm64").hexdigest()
-        h_hdr = hashlib.sha256(b"/* header */").hexdigest()
+        h_hdr = hashlib.sha256(hdr_bytes).hexdigest()
 
         manifest = {
             "schema_version": 1,
@@ -39,9 +40,16 @@ class TestValidateIosRustArtifact(unittest.TestCase):
             "rust_toolchain_version": "rustc 1.94.0",
             "cargo_version": "cargo 1.94.0",
             "source_commit_sha": "abc1234",
-            "c_abi_export_status": "STATUS_MODEL_P017",
-            "c_abi_exports": ["synveil_ffi_abi_version", "synveil_ffi_validate_abi_version"],
+            "c_abi_export_status": "MEMORY_MODEL_P018",
+            "c_abi_exports": [
+                "synveil_ffi_abi_version",
+                "synveil_ffi_buffer_release",
+                "synveil_ffi_sha256_format",
+                "synveil_ffi_sha256_parse",
+                "synveil_ffi_validate_abi_version",
+            ],
             "ffi_status_model": "P017_STABLE_UINT32",
+            "ffi_memory_model": "P018_RUST_OWNED_BUFFER",
             "cbindgen_status": "ACTIVE_P017",
             "header_status": "GENERATED_CBINDGEN_P017",
             "variants": [
@@ -76,9 +84,42 @@ class TestValidateIosRustArtifact(unittest.TestCase):
         validate_artifact_bundle(self.test_dir)
 
     def test_unexpected_file_fails(self):
+        hdr_bytes = b"/* header */\ntypedef struct SynveilFfiBuffer { int x; } SynveilFfiBuffer;\nuint32_t synveil_ffi_buffer_release(struct SynveilFfiBuffer *b);\nuint32_t synveil_ffi_sha256_parse();\nuint32_t synveil_ffi_sha256_format();\n"
         self._create_mock_file("device/arm64/libsynveil_ios_ffi.a", b"dev_arm64")
         self._create_mock_file("simulator/arm64/libsynveil_ios_ffi.a", b"sim_arm64")
+        self._create_mock_file("include/synveil_ios_ffi.h", hdr_bytes)
         self._create_mock_file("unexpected_junk.tmp", b"junk")
+
+        manifest = {
+            "schema_version": 1,
+            "package_name": "synveil-ios-ffi",
+            "artifact_profile": "release",
+            "c_abi_export_status": "MEMORY_MODEL_P018",
+            "c_abi_exports": [
+                "synveil_ffi_abi_version",
+                "synveil_ffi_buffer_release",
+                "synveil_ffi_sha256_format",
+                "synveil_ffi_sha256_parse",
+                "synveil_ffi_validate_abi_version",
+            ],
+            "ffi_status_model": "P017_STABLE_UINT32",
+            "ffi_memory_model": "P018_RUST_OWNED_BUFFER",
+            "header_status": "GENERATED_CBINDGEN_P017",
+            "variants": [{"relative_path": "device/arm64/libsynveil_ios_ffi.a", "size_bytes": 9}],
+        }
+        import json
+        self._create_mock_file("manifest.json", json.dumps(manifest).encode("utf-8"))
+        self._create_mock_file("SHA256SUMS", b"dummy SHA256SUMS")
+
+        with self.assertRaises(ValueError) as ctx:
+            validate_artifact_bundle(self.test_dir)
+        self.assertIn("Closed file set validation failed", str(ctx.exception))
+
+    def test_stale_p017_manifest_fails(self):
+        hdr_bytes = b"/* header */\ntypedef struct SynveilFfiBuffer { int x; } SynveilFfiBuffer;\nuint32_t synveil_ffi_buffer_release(struct SynveilFfiBuffer *b);\nuint32_t synveil_ffi_sha256_parse();\nuint32_t synveil_ffi_sha256_format();\n"
+        self._create_mock_file("device/arm64/libsynveil_ios_ffi.a", b"dev_arm64")
+        self._create_mock_file("simulator/arm64/libsynveil_ios_ffi.a", b"sim_arm64")
+        self._create_mock_file("include/synveil_ios_ffi.h", hdr_bytes)
 
         manifest = {
             "schema_version": 1,
@@ -96,7 +137,7 @@ class TestValidateIosRustArtifact(unittest.TestCase):
 
         with self.assertRaises(ValueError) as ctx:
             validate_artifact_bundle(self.test_dir)
-        self.assertIn("Closed file set validation failed", str(ctx.exception))
+        self.assertIn("c_abi_export_status", str(ctx.exception))
 
 
 if __name__ == "__main__":
