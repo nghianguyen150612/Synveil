@@ -37,6 +37,7 @@ ApplicationWindow {
         closePolicy: Popup.NoAutoClose
         visible: bridge.startup_choice_required
                  && bridge.welcome_destination === "existing_client"
+                 && !bridge.auth_required && !bridge.auth_in_flight
         focus: visible
         Accessible.name: qsTr("Choose whether Synveil starts when you sign in")
 
@@ -82,6 +83,45 @@ ApplicationWindow {
                 enabled: bridge.startup_choice_available && !bridge.background_startup_busy
                 onClicked: bridge.confirmStartupChoice(firstLaunchStartupCheckBox.checked)
                 Accessible.name: qsTr("Continue with selected sign-in startup choice")
+            }
+        }
+    }
+
+    Dialog {
+        id: signOutConfirmation
+        objectName: "signOutConfirmation"
+        title: qsTr("Sign out of this device?")
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        closePolicy: Popup.CloseOnEscape
+        standardButtons: Dialog.NoButton
+
+        contentItem: ColumnLayout {
+            spacing: 14
+            Label {
+                Layout.preferredWidth: 420
+                text: qsTr("Signing out removes this device's saved Synveil credential. You'll need a new device code to sign in again.")
+                wrapMode: Text.WordWrap
+            }
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                Button {
+                    objectName: "cancelSignOutButton"
+                    text: qsTr("Cancel")
+                    onClicked: signOutConfirmation.reject()
+                    Accessible.name: qsTr("Cancel sign out")
+                    Accessible.description: qsTr("Keep this device signed in")
+                }
+                Button {
+                    objectName: "confirmSignOutButton"
+                    text: qsTr("Sign out")
+                    onClicked: {
+                        signOutConfirmation.accept()
+                        bridge.signOut()
+                    }
+                    Accessible.name: qsTr("Confirm sign out")
+                    Accessible.description: qsTr("Remove this device's saved Synveil credential")
+                }
             }
         }
     }
@@ -1275,6 +1315,7 @@ ApplicationWindow {
                     }
 
                     Rectangle {
+                        objectName: "authenticationPage"
                         Layout.fillWidth: true
                         visible: bridge.auth_required
                                  || bridge.auth_in_flight
@@ -1292,7 +1333,7 @@ ApplicationWindow {
                             spacing: 8
 
                             Label {
-                                text: qsTr("Device authentication")
+                                text: qsTr("Sign in to this device")
                                 font.pixelSize: 15
                                 font.weight: Font.DemiBold
                             }
@@ -1300,12 +1341,12 @@ ApplicationWindow {
                             Label {
                                 Layout.fillWidth: true
                                 text: bridge.credential_store_unavailable
-                                      ? qsTr("Secure credential storage is temporarily unavailable. Try again later; Synveil has not removed the stored credential.")
+                                      ? qsTr("Secure credential storage isn't available right now.")
                                       : bridge.auth_required
-                                      ? qsTr("Enter the one-time enrollment token to reconnect this device.")
+                                      ? qsTr("Enter the one-time device code from your Synveil server.")
                                       : bridge.auth_status_unknown
-                                        ? qsTr("Checking authentication status.")
-                                      : qsTr("This device uses the configured secure credential.")
+                                        ? qsTr("Checking sign-in status…")
+                                      : qsTr("This device is signed in.")
                                 color: palette.text
                                 wrapMode: Text.WordWrap
                                 font.pixelSize: 12
@@ -1316,22 +1357,24 @@ ApplicationWindow {
                                 spacing: 8
 
                                 TextField {
-                                    id: enrollmentToken
+                                    id: deviceCodeField
+                                    objectName: "deviceCodeField"
                                     Layout.fillWidth: true
                                     visible: bridge.auth_required || bridge.auth_in_flight
                                     enabled: !bridge.auth_in_flight
-                                    placeholderText: qsTr("Enrollment token")
+                                    placeholderText: qsTr("Device setup code")
                                     echoMode: TextInput.Password
                                     maximumLength: 69
                                     inputMethodHints: Qt.ImhSensitiveData
                                     persistentSelection: false
                                     selectByMouse: false
-                                    Accessible.name: qsTr("Enrollment token")
+                                    Accessible.name: qsTr("Device setup code")
+                                    Accessible.description: qsTr("One-time device code from your Synveil server")
 
                                     function submitToken() {
                                         if (bridge.auth_in_flight
                                                 || !bridge.auth_required
-                                                || text.trim().length === 0) {
+                                                || text.length === 0) {
                                             return
                                         }
                                         var token = text
@@ -1341,37 +1384,53 @@ ApplicationWindow {
 
                                     onAccepted: submitToken()
                                     onVisibleChanged: {
-                                        if (!visible) {
+                                        if (visible) {
+                                            forceActiveFocus()
+                                        } else {
                                             clear()
                                         }
                                     }
                                 }
 
                                 Button {
+                                    objectName: "signInButton"
                                     text: qsTr("Sign in")
                                     visible: bridge.auth_required
                                     enabled: !bridge.auth_in_flight
-                                             && enrollmentToken.text.trim().length > 0
-                                    onClicked: enrollmentToken.submitToken()
+                                             && deviceCodeField.text.length > 0
+                                    onClicked: deviceCodeField.submitToken()
                                     Accessible.name: qsTr("Sign in this device")
+                                    Accessible.description: qsTr("Use the entered one-time device code")
                                 }
 
                                 Button {
+                                    objectName: "signOutButton"
                                     text: qsTr("Sign out")
                                     visible: bridge.selected_can_sign_out
                                     enabled: !bridge.auth_in_flight
-                                    onClicked: bridge.signOut()
+                                    onClicked: signOutConfirmation.open()
                                     Accessible.name: qsTr("Sign out this device")
+                                    Accessible.description: qsTr("Open confirmation before removing the saved credential")
+                                }
+
+                                BusyIndicator {
+                                    objectName: "authenticationBusyIndicator"
+                                    running: bridge.auth_in_flight
+                                    visible: running
+                                    Accessible.name: qsTr("Signing in")
                                 }
                             }
 
                             Label {
+                                objectName: "authenticationFeedbackLabel"
                                 Layout.fillWidth: true
                                 visible: bridge.auth_feedback.length > 0
                                 text: bridge.auth_feedback
                                 color: palette.text
                                 wrapMode: Text.WordWrap
                                 font.pixelSize: 12
+                                Accessible.name: text
+                                Accessible.description: qsTr("Authentication status")
                             }
                         }
                     }

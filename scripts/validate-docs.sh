@@ -112,6 +112,9 @@ python3 scripts/validate-unified-welcome.py || failures=$((failures + 1))
 echo "DOC-UNIT-16: checking the Prompt038 connection setup"
 python3 scripts/validate-connection-setup-simplification.py || failures=$((failures + 1))
 
+echo "DOC-UNIT-17: checking the Prompt039 authentication UX"
+python3 scripts/validate-authentication-ux-polish.py || failures=$((failures + 1))
+
 if [[ "$failures" -ne 0 ]]; then
     echo "documentation validation failed: $failures issue(s)" >&2
     exit 1

@@ -409,6 +409,13 @@ open.
 Improve user-facing sign-in, error and recovery states without changing the
 authentication protocol or credential owner.
 
+**Implemented (Prompt039 source):** desktop authentication now presents the
+existing one-time device-enrollment exchange in ordinary product language,
+keeps transient secret handling and credential ownership unchanged, maps
+authentication failures to bounded user-safe states, reconciles unknown
+outcomes without replaying one-time grants, and makes Sign Out explicit and
+data-preserving. P040–P042 remain open.
+
 ### P040 — Library First-Run Wizard
 
 Guide creation of the first library and selection of its local folder with
