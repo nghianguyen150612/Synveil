@@ -20,7 +20,60 @@ use zeroize::Zeroizing;
 
 use crate::{ClientSyncError, EnrollmentCredentials, LocalStateStore, state::now_ms};
 
-const MAX_BASE_URL_BYTES: usize = 2_048;
+pub const MAX_BASE_URL_BYTES: usize = 2_048;
+
+/// A bounded, user-facing server address which delegates all URL security
+/// decisions to [`CanonicalBaseUrl`]. It only trims outer whitespace and
+/// supplies the unambiguous production default scheme.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UserServerAddress {
+    canonical: CanonicalBaseUrl,
+}
+
+impl UserServerAddress {
+    pub fn parse(value: &str) -> Result<Self, ClientSyncError> {
+        if value.len() > MAX_BASE_URL_BYTES || value.chars().any(char::is_control) {
+            return Err(ClientSyncError::InvalidServerUrl);
+        }
+        let value = value.trim();
+        if value.is_empty() {
+            return Err(ClientSyncError::InvalidServerUrl);
+        }
+        let candidate = if value.contains("://") || value.starts_with("javascript:") {
+            value.to_owned()
+        } else {
+            let completed = format!("https://{value}");
+            if completed.len() > MAX_BASE_URL_BYTES {
+                return Err(ClientSyncError::InvalidServerUrl);
+            }
+            completed
+        };
+        CanonicalBaseUrl::parse(&candidate).map(|canonical| Self { canonical })
+    }
+
+    #[must_use]
+    pub const fn canonical(&self) -> &CanonicalBaseUrl {
+        &self.canonical
+    }
+
+    /// Derive presentation metadata only after canonical parsing succeeds.
+    #[must_use]
+    pub fn default_display_label(&self) -> String {
+        let host = self.canonical.url.host_str().unwrap_or_default();
+        if host.is_empty() {
+            return "Synveil".to_owned();
+        }
+        let host = if host.contains(':') && !host.starts_with('[') {
+            format!("[{host}]")
+        } else {
+            host.to_owned()
+        };
+        self.canonical
+            .url
+            .port()
+            .map_or(host.clone(), |port| format!("{host}:{port}"))
+    }
+}
 const MAX_PROFILE_LABEL_BYTES: usize = 256;
 const MAX_PROFILES: usize = 1_024;
 const MAX_PENDING_SECRET_CLEANUP: usize = 128;

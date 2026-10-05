@@ -239,6 +239,68 @@ fn canonical_url_normalizes_scheme_host_port_ipv6_and_idna() {
 }
 
 #[test]
+fn user_server_address_securely_completes_ordinary_inputs() {
+    use super::UserServerAddress;
+    for (raw, canonical, label) in [
+        (
+            "cloud.example.com",
+            "https://cloud.example.com/",
+            "cloud.example.com",
+        ),
+        (
+            "cloud.example.com:8443",
+            "https://cloud.example.com:8443/",
+            "cloud.example.com:8443",
+        ),
+        (
+            "https://cloud.example.com",
+            "https://cloud.example.com/",
+            "cloud.example.com",
+        ),
+        (" 192.168.1.50 ", "https://192.168.1.50/", "192.168.1.50"),
+        (
+            "192.168.1.50:8443",
+            "https://192.168.1.50:8443/",
+            "192.168.1.50:8443",
+        ),
+        ("[fd00::1]", "https://[fd00::1]/", "[fd00::1]"),
+        (
+            "https://[fd00::1]:8443",
+            "https://[fd00::1]:8443/",
+            "[fd00::1]:8443",
+        ),
+    ] {
+        let address = UserServerAddress::parse(raw).expect("ordinary secure address");
+        assert_eq!(address.canonical().as_str(), canonical);
+        assert_eq!(address.default_display_label(), label);
+    }
+}
+
+#[test]
+fn user_server_address_rejects_insecure_ambiguous_and_unbounded_input() {
+    use super::{MAX_BASE_URL_BYTES, UserServerAddress};
+    for raw in [
+        "",
+        "   ",
+        "http://example.com",
+        "ftp://example.com",
+        "file:///tmp/server",
+        "javascript:alert(1)",
+        "https://user:pass@example.com",
+        "https://example.com/path",
+        "https://example.com/?x=1",
+        "https://example.com/#fragment",
+        "https://example.com:0",
+        "https:\\example.com",
+        "[fd00::1",
+        "cloud.example.com\n",
+    ] {
+        assert!(UserServerAddress::parse(raw).is_err(), "accepted {raw:?}");
+    }
+    assert!(UserServerAddress::parse(&"a".repeat(MAX_BASE_URL_BYTES + 1)).is_err());
+}
+
+#[test]
 fn canonical_url_rejects_userinfo_non_https_paths_queries_fragments_and_invalid_ports() {
     for raw in [
         "http://example.com",

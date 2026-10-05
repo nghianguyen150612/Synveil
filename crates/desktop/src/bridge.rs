@@ -242,6 +242,10 @@ pub mod ffi {
         #[qinvokable]
         fn configure_profile(self: Pin<&mut Self>, server_url: QString, display_label: QString);
 
+        #[cxx_name = "connectToServer"]
+        #[qinvokable]
+        fn connect_to_server(self: Pin<&mut Self>, server_address: QString);
+
         #[cxx_name = "setLibraryFolder"]
         #[qinvokable]
         fn set_library_folder(self: Pin<&mut Self>, folder_url: QString);
@@ -874,6 +878,30 @@ impl ffi::DesktopUiBridge {
 
     fn configure_profile(self: Pin<&mut Self>, server_url: QString, display_label: QString) {
         request_profile_configuration(self, server_url, display_label);
+    }
+
+    fn connect_to_server(self: Pin<&mut Self>, server_address: QString) {
+        let input = String::from(server_address);
+        let trimmed = input.trim();
+        if trimmed.to_ascii_lowercase().starts_with("http://") {
+            let mut object = self;
+            object.as_mut().set_configuration_feedback(QString::from(
+                "Synveil connections use HTTPS. Enter a secure server address.",
+            ));
+            return;
+        }
+        let Ok(address) = synveil_client::UserServerAddress::parse(&input) else {
+            let mut object = self;
+            object
+                .as_mut()
+                .set_configuration_feedback(QString::from("Enter a valid Synveil server address."));
+            return;
+        };
+        request_profile_configuration(
+            self,
+            QString::from(address.canonical().as_str()),
+            QString::from(address.default_display_label()),
+        );
     }
 
     fn set_library_folder(mut self: Pin<&mut Self>, folder_url: QString) {

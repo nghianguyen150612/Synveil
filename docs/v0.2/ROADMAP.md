@@ -396,6 +396,14 @@ withheld until its required gate passes.
 Reduce server address and profile setup to ordinary user concepts while
 preserving existing origin validation and connection ownership.
 
+**Implemented (Prompt038 source):** Connect now asks ordinary users only for a
+server address, securely completes an omitted scheme as HTTPS, retains
+`CanonicalBaseUrl` and the existing rustls readiness probe as authority, and
+derives non-security display metadata automatically. Durable mutation remains
+inside DesktopController/local IPC/synveil-client. Unknown outcomes reconcile
+before retry and origin changes retain credential fencing. P039–P042 remain
+open.
+
 ### P039 — Authentication UX Polish
 
 Improve user-facing sign-in, error and recovery states without changing the
