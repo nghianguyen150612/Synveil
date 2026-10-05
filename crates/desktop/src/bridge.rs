@@ -17,6 +17,10 @@ use synveil_client::{
 };
 #[cfg(target_os = "linux")]
 use synveil_install_engine::{AppImageIntegration, AppImageIntegrationStatus};
+use synveil_server_bootstrap::{
+    CanonicalOwners, CoordinatorError, OwnerObservation, PrivilegedEffect,
+    ServerBootstrapCoordinator,
+};
 use tokio::runtime::{Builder, Handle, Runtime};
 use zeroize::Zeroizing;
 
@@ -142,6 +146,10 @@ pub mod ffi {
         #[qproperty(bool, auth_status_unknown)]
         #[qproperty(bool, tray_available)]
         #[qproperty(bool, profile_ready)]
+        #[qproperty(QString, welcome_destination)]
+        #[qproperty(bool, host_available)]
+        #[qproperty(QString, host_feedback)]
+        #[qproperty(bool, welcome_action_busy)]
         #[qproperty(bool, smoke_test)]
         #[qproperty(bool, live_test)]
         #[qproperty(bool, live_test_rapid_clicks)]
@@ -153,6 +161,18 @@ pub mod ffi {
         #[cxx_name = "startController"]
         #[qinvokable]
         fn start_controller(self: Pin<&mut Self>);
+
+        #[cxx_name = "chooseHost"]
+        #[qinvokable]
+        fn choose_host(self: Pin<&mut Self>);
+
+        #[cxx_name = "chooseConnect"]
+        #[qinvokable]
+        fn choose_connect(self: Pin<&mut Self>);
+
+        #[cxx_name = "showWelcome"]
+        #[qinvokable]
+        fn show_welcome(self: Pin<&mut Self>);
 
         #[cxx_name = "installTray"]
         #[qinvokable]
@@ -350,6 +370,10 @@ pub struct DesktopUiBridgeRust {
     pub(crate) auth_status_unknown: bool,
     pub(crate) tray_available: bool,
     pub(crate) profile_ready: bool,
+    pub(crate) welcome_destination: QString,
+    pub(crate) host_available: bool,
+    pub(crate) host_feedback: QString,
+    pub(crate) welcome_action_busy: bool,
     pub(crate) smoke_test: bool,
     pub(crate) live_test: bool,
     pub(crate) live_test_rapid_clicks: bool,
@@ -379,6 +403,30 @@ pub struct DesktopUiBridgeRust {
     started: bool,
     stopping: bool,
     tray: Option<cxx::UniquePtr<ffi::NativeTray>>,
+    host_coordinator: ServerBootstrapCoordinator<UnavailableHostOwners>,
+}
+
+/// P036 has not yet supplied a production desktop privileged adapter. This
+/// bounded adapter reports that fact and can never apply a machine effect.
+#[derive(Default)]
+struct UnavailableHostOwners;
+
+impl CanonicalOwners for UnavailableHostOwners {
+    fn inspect(&mut self) -> Result<OwnerObservation, CoordinatorError> {
+        Ok(OwnerObservation::default())
+    }
+
+    fn current_generation(&mut self) -> Result<u64, CoordinatorError> {
+        Ok(0)
+    }
+
+    fn apply(&mut self, _effect: PrivilegedEffect) -> Result<(), CoordinatorError> {
+        Err(CoordinatorError::OwnerRejected)
+    }
+
+    fn trust_descriptor(&mut self) -> Result<String, CoordinatorError> {
+        Err(CoordinatorError::NotReady)
+    }
 }
 
 impl Default for DesktopUiBridgeRust {
@@ -503,6 +551,10 @@ impl Default for DesktopUiBridgeRust {
             auth_status_unknown: false,
             tray_available: false,
             profile_ready,
+            welcome_destination: QString::from("initializing"),
+            host_available: false,
+            host_feedback: QString::from("Hosting isn't available on this device yet."),
+            welcome_action_busy: false,
             smoke_test,
             live_test,
             live_test_rapid_clicks,
@@ -531,6 +583,7 @@ impl Default for DesktopUiBridgeRust {
             started: false,
             stopping: false,
             tray: None,
+            host_coordinator: ServerBootstrapCoordinator::new(UnavailableHostOwners),
         }
     }
 }
@@ -539,6 +592,10 @@ impl cxx_qt::Initialize for ffi::DesktopUiBridge {
     fn initialize(mut self: Pin<&mut Self>) {
         let snapshot = self.rust().presented.clone();
         apply_snapshot(self.as_mut(), snapshot);
+        // The first mapped value is only an in-process placeholder. Keep a
+        // neutral screen until DesktopController publishes its bounded result.
+        self.as_mut()
+            .set_welcome_destination(QString::from("initializing"));
     }
 }
 
@@ -583,6 +640,49 @@ impl SnapshotDispatcher {
 }
 
 impl ffi::DesktopUiBridge {
+    fn choose_host(mut self: Pin<&mut Self>) {
+        if self.rust().welcome_action_busy || self.rust().profile_configured {
+            return;
+        }
+        self.as_mut().set_welcome_action_busy(true);
+        // This is the sole explicit P037 Host intent boundary. Inspection and
+        // the unavailable presentation below perform no privileged apply.
+        self.as_mut()
+            .rust_mut()
+            .get_mut()
+            .host_coordinator
+            .begin_host();
+        let inspected = self.as_mut().rust_mut().get_mut().host_coordinator.status();
+        self.as_mut()
+            .set_welcome_destination(QString::from("host_setup"));
+        self.as_mut()
+            .set_host_feedback(QString::from(if inspected.is_ok() {
+                "Hosting isn't available on this device yet."
+            } else {
+                "Synveil couldn't check hosting status."
+            }));
+        self.as_mut().set_welcome_action_busy(false);
+    }
+
+    fn choose_connect(mut self: Pin<&mut Self>) {
+        if self.rust().welcome_action_busy || self.rust().profile_configured {
+            return;
+        }
+        // Routing only: the existing configureProfile -> DesktopController ->
+        // local IPC owner remains the only connection mutation path.
+        self.as_mut().set_welcome_action_busy(true);
+        self.as_mut()
+            .set_welcome_destination(QString::from("connect_setup"));
+        self.as_mut().set_welcome_action_busy(false);
+    }
+
+    fn show_welcome(mut self: Pin<&mut Self>) {
+        if !self.rust().profile_configured && !self.rust().configuration_busy {
+            self.as_mut()
+                .set_welcome_destination(QString::from("welcome"));
+        }
+    }
+
     fn start_controller(mut self: Pin<&mut Self>) {
         let (started, runtime, controller, launch_manager) = {
             let state = self.rust();
@@ -1014,6 +1114,21 @@ fn apply_snapshot(mut object: Pin<&mut ffi::DesktopUiBridge>, snapshot: UiSnapsh
     object
         .as_mut()
         .set_profile_configured(snapshot.profile_configured);
+    let current_destination = String::from(object.rust().welcome_destination.clone());
+    if snapshot.profile_configured {
+        object
+            .as_mut()
+            .set_welcome_destination(QString::from("existing_client"));
+    } else if current_destination == "initializing" {
+        let destination = presentation::welcome_destination(
+            true,
+            false,
+            synveil_server_bootstrap::HostSetupState::NotStarted,
+        );
+        object
+            .as_mut()
+            .set_welcome_destination(QString::from(destination.code()));
+    }
     object
         .as_mut()
         .set_profile_authenticated(snapshot.profile_authenticated);

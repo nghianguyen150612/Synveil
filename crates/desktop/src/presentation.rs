@@ -16,6 +16,60 @@ use synveil_client::{
     DesktopControllerRuntimeState, DesktopControllerSnapshot, DesktopControllerSyncControlState,
     DesktopControllerSyncOutcome, LibraryId,
 };
+use synveil_server_bootstrap::HostSetupState;
+
+/// The single, ephemeral first-run destination rendered by QML.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WelcomeDestination {
+    Initializing,
+    Welcome,
+    HostResume,
+    HostReady,
+    ExistingClient,
+    HostNeedsAttention,
+}
+
+impl WelcomeDestination {
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Initializing => "initializing",
+            Self::Welcome => "welcome",
+            Self::HostResume => "host_resume",
+            Self::HostReady => "host_ready",
+            Self::ExistingClient => "existing_client",
+            Self::HostNeedsAttention => "host_needs_attention",
+        }
+    }
+}
+
+/// Compose canonical client configuration and P036 inspection without adding
+/// a durable "welcome seen" owner. Authentication and library count do not
+/// affect this first-level decision once a profile is configured.
+#[must_use]
+pub const fn welcome_destination(
+    client_initialized: bool,
+    profile_configured: bool,
+    host_state: HostSetupState,
+) -> WelcomeDestination {
+    if !client_initialized {
+        return WelcomeDestination::Initializing;
+    }
+    if profile_configured {
+        return WelcomeDestination::ExistingClient;
+    }
+    match host_state {
+        HostSetupState::NotStarted | HostSetupState::Blocked => WelcomeDestination::Welcome,
+        HostSetupState::Ready => WelcomeDestination::HostReady,
+        HostSetupState::NeedsRepair => WelcomeDestination::HostNeedsAttention,
+        HostSetupState::PreflightPassed
+        | HostSetupState::DependenciesReady
+        | HostSetupState::ConfigurationReady
+        | HostSetupState::StorageReady
+        | HostSetupState::ServicesReady
+        | HostSetupState::AdminBootstrapRequired => WelcomeDestination::HostResume,
+    }
+}
 
 /// Presentation guard independent of the controller's own protocol bound.
 pub const MAX_PRESENTED_LIBRARY_ROWS: usize = 2_048;
@@ -1663,5 +1717,52 @@ mod tests {
         let rendered = format!("{ui:?}");
         assert!(!rendered.contains("/private/root"));
         assert!(!rendered.contains("Debug"));
+    }
+
+    #[test]
+    fn welcome_routing_uses_authoritative_client_and_host_state() {
+        use super::WelcomeDestination as Destination;
+
+        assert_eq!(
+            welcome_destination(false, false, HostSetupState::NotStarted),
+            Destination::Initializing
+        );
+        assert_eq!(
+            welcome_destination(true, false, HostSetupState::NotStarted),
+            Destination::Welcome
+        );
+        assert_eq!(
+            welcome_destination(true, true, HostSetupState::NotStarted),
+            Destination::ExistingClient
+        );
+        assert_eq!(
+            welcome_destination(true, true, HostSetupState::NeedsRepair),
+            Destination::ExistingClient
+        );
+        assert_eq!(
+            welcome_destination(true, false, HostSetupState::StorageReady),
+            Destination::HostResume
+        );
+        assert_eq!(
+            welcome_destination(true, false, HostSetupState::Ready),
+            Destination::HostReady
+        );
+        assert_eq!(
+            welcome_destination(true, false, HostSetupState::NeedsRepair),
+            Destination::HostNeedsAttention
+        );
+        assert_eq!(
+            welcome_destination(true, false, HostSetupState::Blocked),
+            Destination::Welcome
+        );
+    }
+
+    #[test]
+    fn configured_signed_out_and_zero_library_clients_bypass_welcome() {
+        // Authentication and library state intentionally are not routing inputs.
+        assert_eq!(
+            welcome_destination(true, true, HostSetupState::NotStarted),
+            WelcomeDestination::ExistingClient
+        );
     }
 }

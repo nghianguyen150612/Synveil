@@ -106,6 +106,9 @@ python3 scripts/validate-server-network-reachability.py || failures=$((failures 
 echo "DOC-UNIT-14: checking the Prompt035 server first-admin bootstrap"
 python3 scripts/validate-server-first-admin-bootstrap.py || failures=$((failures + 1))
 
+echo "DOC-UNIT-15: checking the Prompt037 unified Welcome"
+python3 scripts/validate-unified-welcome.py || failures=$((failures + 1))
+
 if [[ "$failures" -ne 0 ]]; then
     echo "documentation validation failed: $failures issue(s)" >&2
     exit 1

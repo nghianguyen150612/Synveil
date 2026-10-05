@@ -383,6 +383,14 @@ Checkpoint: **V0.2 GUIDED SELF-HOSTING READY**
 On first launch, offer **Host Synveil** or **Connect to Synveil** in product
 language without engineering terminology.
 
+**Implemented (Prompt037 source):** first launch now presents one unified native
+Welcome with first-class **Host Synveil** and **Connect to Synveil** choices.
+Routing is derived from authoritative client and P036 Host state; displaying
+Welcome has no mutation, partial Host setup resumes, existing configured clients
+bypass Welcome, and Connect retains the client-owned profile path. P038–P042
+remain open. Prompt036 native Phase-E qualification remains independently
+withheld until its required gate passes.
+
 ### P038 — Connection Setup Simplification
 
 Reduce server address and profile setup to ordinary user concepts while
