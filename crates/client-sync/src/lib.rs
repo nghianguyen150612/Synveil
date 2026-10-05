@@ -79,8 +79,8 @@ pub use observation::{
 pub use outbound::{OutboundSubmissionEngine, OutboundSubmissionOutcome};
 pub use path::ManagedRelativePath;
 pub use profiles::{
-    CanonicalBaseUrl, DeviceEnrollmentRecord, LoadedDeviceCredential, ServerProfile,
-    ServerProfileConfigurationChange, ServerProfileId,
+    CanonicalBaseUrl, DeviceEnrollmentRecord, LoadedDeviceCredential, MAX_BASE_URL_BYTES,
+    ServerProfile, ServerProfileConfigurationChange, ServerProfileId, UserServerAddress,
 };
 pub use rebaseline::{
     RebaselineApplier, RebaselineApplyOutcome, RebaselineBoundary, RebaselineHandoffOutcome,

@@ -69,7 +69,7 @@ pub use process::{
 };
 pub use synveil_client_sync::{
     DesktopLifecycleEvent, DesktopSyncHost, DesktopSyncHostHandle, RootAvailability,
-    ServerProfileId,
+    ServerProfileId, UserServerAddress,
 };
 pub use synveil_core::LibraryId;
 

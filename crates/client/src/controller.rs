@@ -1272,6 +1272,22 @@ impl DesktopController {
         .await
     }
 
+    /// Convert ordinary address input into the canonical profile command.
+    /// The controller remains the sole desktop admission/IPC owner.
+    pub async fn connect_to_server(
+        &self,
+        server_address: &str,
+    ) -> Result<DesktopControllerCommandResult, DesktopControllerError> {
+        let Ok(address) = synveil_client_sync::UserServerAddress::parse(server_address) else {
+            return Ok(DesktopControllerCommandResult::InvalidServerAddress);
+        };
+        self.configure_profile(
+            address.canonical().as_str().to_owned(),
+            address.default_display_label(),
+        )
+        .await
+    }
+
     /// Validate and probe a candidate profile without changing durable state.
     /// The operation is admitted through the same bounded configuration gate
     /// as apply, so a late probe cannot race a newer configuration mutation.

@@ -86,6 +86,7 @@ một tệp để trạng thái và hệ quả không bị lệch giữa hai b�
 | [065](ADR-065-v0.2-managed-first-admin-bootstrap.md) | v0.2 managed first-admin bootstrap | Accepted — Prompt035 |
 | [066](ADR-066-v0.2-end-to-end-server-bootstrap-coordinator.md) | v0.2 end-to-end Server Bootstrap Coordinator | Accepted — Prompt036 |
 | [067](ADR-067-v0.2-unified-first-run-welcome.md) | v0.2 unified first-run Welcome | Accepted — Prompt037 |
+| [068](ADR-068-v0.2-simplified-connection-setup.md) | v0.2 simplified connection setup | Accepted — Prompt038 |
 
 ## Process / Quy trình
 

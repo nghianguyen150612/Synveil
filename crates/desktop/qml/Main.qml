@@ -252,10 +252,14 @@ ApplicationWindow {
     }
 
     function submitProfileConfiguration() {
-        if (bridge.configuration_busy || serverUrlField.text.trim().length === 0) {
+        if (bridge.configuration_busy || serverAddressField.text.trim().length === 0) {
             return false
         }
-        bridge.configureProfile(serverUrlField.text, profileLabelField.text)
+        if (bridge.profile_configured) {
+            bridge.configureProfile(serverAddressField.text, profileLabelField.text)
+        } else {
+            bridge.connectToServer(serverAddressField.text)
+        }
         root.editingConnection = false
         return true
     }
@@ -1151,7 +1155,8 @@ ApplicationWindow {
                             spacing: 8
 
                             Button {
-                                objectName: "welcomeBackButton"
+                                id: connectBackButton
+                                objectName: "connectBackButton"
                                 visible: bridge.welcome_destination === "connect_setup"
                                          && !bridge.profile_configured
                                          && !bridge.configuration_busy
@@ -1163,7 +1168,7 @@ ApplicationWindow {
                             Label {
                                 text: bridge.profile_configured
                                       ? qsTr("Server connection")
-                                      : qsTr("Connect to a Synveil server")
+                                      : qsTr("Connect to Synveil")
                                 font.pixelSize: 15
                                 font.weight: Font.DemiBold
                             }
@@ -1172,38 +1177,45 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 text: bridge.profile_configured
                                       ? qsTr("The server address and label are stored locally without credentials.")
-                                      : qsTr("Enter the HTTPS address of the Synveil server. You can authenticate this device after the connection is verified.")
+                                      : qsTr("Synveil connects securely over HTTPS.")
                                 color: palette.text
                                 wrapMode: Text.WordWrap
                                 font.pixelSize: 12
                             }
 
                             TextField {
-                                id: serverUrlField
+                                id: serverAddressField
+                                objectName: "serverAddressField"
                                 Layout.fillWidth: true
                                 visible: !bridge.profile_configured
                                          || root.editingConnection
                                          || bridge.configuration_busy
                                 enabled: !bridge.configuration_busy
                                 text: bridge.profile_server_url
-                                placeholderText: qsTr("https://server.example")
+                                placeholderText: qsTr("synveil.example.com")
                                 maximumLength: 2048
                                 inputMethodHints: Qt.ImhUrlCharactersOnly
-                                Accessible.name: qsTr("Synveil server address")
+                                Accessible.name: qsTr("Server address")
+                                KeyNavigation.tab: connectServerButton
                                 onAccepted: root.submitProfileConfiguration()
+                                onVisibleChanged: {
+                                    if (visible && !bridge.profile_configured && enabled) {
+                                        forceActiveFocus(Qt.TabFocusReason)
+                                    }
+                                }
                             }
 
                             TextField {
                                 id: profileLabelField
+                                objectName: "connectionNameField"
                                 Layout.fillWidth: true
-                                visible: !bridge.profile_configured
-                                         || root.editingConnection
-                                         || bridge.configuration_busy
+                                visible: bridge.profile_configured
+                                         && (root.editingConnection || bridge.configuration_busy)
                                 enabled: !bridge.configuration_busy
                                 text: bridge.profile_display_name
-                                placeholderText: qsTr("Server label")
+                                placeholderText: qsTr("Connection name")
                                 maximumLength: 256
-                                Accessible.name: qsTr("Server label")
+                                Accessible.name: qsTr("Connection name")
                                 onAccepted: root.submitProfileConfiguration()
                             }
 
@@ -1212,16 +1224,20 @@ ApplicationWindow {
                                 spacing: 8
 
                                 Button {
+                                    id: connectServerButton
+                                    objectName: "connectServerButton"
                                     text: bridge.profile_configured
                                           ? qsTr("Save connection")
-                                          : qsTr("Verify and connect")
+                                          : qsTr("Connect")
                                     visible: !bridge.profile_configured
                                              || root.editingConnection
                                              || bridge.configuration_busy
                                     enabled: !bridge.configuration_busy
-                                             && serverUrlField.text.trim().length > 0
+                                             && serverAddressField.text.trim().length > 0
                                     onClicked: root.submitProfileConfiguration()
-                                    Accessible.name: qsTr("Verify and save server connection")
+                                    Accessible.name: bridge.profile_configured
+                                                     ? qsTr("Save connection") : qsTr("Connect")
+                                    KeyNavigation.tab: connectBackButton
                                 }
 
                                 Button {
@@ -1230,7 +1246,7 @@ ApplicationWindow {
                                              && root.editingConnection
                                              && !bridge.configuration_busy
                                     onClicked: {
-                                        serverUrlField.text = bridge.profile_server_url
+                                        serverAddressField.text = bridge.profile_server_url
                                         profileLabelField.text = bridge.profile_display_name
                                         root.editingConnection = false
                                     }
@@ -1246,12 +1262,14 @@ ApplicationWindow {
                             }
 
                             Label {
+                                objectName: "connectionFeedbackLabel"
                                 Layout.fillWidth: true
                                 visible: bridge.configuration_feedback.length > 0
                                 text: bridge.configuration_feedback
                                 color: palette.text
                                 wrapMode: Text.WordWrap
                                 font.pixelSize: 12
+                                Accessible.name: text
                             }
                         }
                     }
