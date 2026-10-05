@@ -1,0 +1,63 @@
+name: authentication UX polish
+
+on:
+  pull_request:
+  push:
+    branches: [codex/p039-authentication-ux-polish]
+
+jobs:
+  auth-domain-and-controller:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p synveil-client --locked authentication
+      - run: cargo test -p synveil-client --locked controller
+      - run: cargo test -p synveil-client-sync --locked authentication
+
+  desktop-auth-presentation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Qt and native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config \
+            qt6-base-dev qt6-declarative-dev qt6-tools-dev-tools libgl1-mesa-dev xvfb \
+            qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-dialogs \
+            qml6-module-qtquick-layouts qml6-module-qtquick-window \
+            qml6-module-qtqml-workerscript qml6-module-qtquick-templates \
+            qml6-module-qtquick-nativestyle
+      - run: cargo test -p synveil-desktop --locked authentication
+      - run: cargo test -p synveil-desktop --locked
+      - run: cargo check -p synveil-desktop --locked
+      - run: ./scripts/test-desktop-ui.sh
+
+  auth-security-regressions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test -p synveil-client --locked auth
+      - run: cargo test -p synveil-client-sync --locked enrollment
+      - run: python3 scripts/validate-authentication-ux-polish.py
+
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy -p synveil-client -p synveil-desktop --all-targets --locked --no-deps -- -D warnings
+      - run: python3 scripts/validate-authentication-ux-polish.py
+      - run: python3 -m py_compile scripts/validate-authentication-ux-polish.py
+      - run: ./scripts/validate-docs.sh
+      - run: ./scripts/validate-install-acceptance.sh
+      - run: git diff --check

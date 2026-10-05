@@ -74,6 +74,79 @@ pub const fn welcome_destination(
 /// Presentation guard independent of the controller's own protocol bound.
 pub const MAX_PRESENTED_LIBRARY_ROWS: usize = 2_048;
 
+/// Safe, Rust-owned authentication presentation. It deliberately carries no
+/// secret or transport detail; QML only renders the code, message and action.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AuthenticationPresentation {
+    pub code: &'static str,
+    pub message: &'static str,
+    pub action: Option<&'static str>,
+}
+
+/// Convert every canonical authentication result into bounded product copy.
+#[must_use]
+pub const fn authentication_presentation(
+    result: DesktopControllerCommandResult,
+) -> AuthenticationPresentation {
+    match result {
+        DesktopControllerCommandResult::Authenticated => AuthenticationPresentation {
+            code: "authenticated",
+            message: "This device is signed in.",
+            action: Some("sign_out"),
+        },
+        DesktopControllerCommandResult::SignedOut => AuthenticationPresentation {
+            code: "sign_in_required",
+            message: "This device is signed out.",
+            action: Some("sign_in"),
+        },
+        DesktopControllerCommandResult::InvalidCredentials => AuthenticationPresentation {
+            code: "invalid_code",
+            message: "That device code wasn't accepted. Check the code and try again.",
+            action: Some("sign_in"),
+        },
+        DesktopControllerCommandResult::NetworkUnavailable => AuthenticationPresentation {
+            code: "network_unavailable",
+            message: "You're offline. Check your network and try again.",
+            action: Some("sign_in"),
+        },
+        DesktopControllerCommandResult::ServerUnavailable => AuthenticationPresentation {
+            code: "server_unavailable",
+            message: "Synveil couldn't reach the server right now.",
+            action: Some("sign_in"),
+        },
+        DesktopControllerCommandResult::RateLimited => AuthenticationPresentation {
+            code: "rate_limited",
+            message: "Too many attempts. Wait a moment and try again.",
+            action: Some("sign_in"),
+        },
+        DesktopControllerCommandResult::SecureStoreUnavailable => AuthenticationPresentation {
+            code: "secure_storage_unavailable",
+            message: "Secure credential storage isn't available right now.",
+            action: Some("sign_in"),
+        },
+        DesktopControllerCommandResult::Busy => AuthenticationPresentation {
+            code: "busy",
+            message: "Sign-in is already in progress.",
+            action: None,
+        },
+        DesktopControllerCommandResult::OutcomeUnknown => AuthenticationPresentation {
+            code: "reconciling",
+            message: "Synveil is checking whether this device was signed in.",
+            action: None,
+        },
+        DesktopControllerCommandResult::ProtocolError => AuthenticationPresentation {
+            code: "protocol_problem",
+            message: "This Synveil installation couldn't complete sign-in.",
+            action: Some("sign_in"),
+        },
+        _ => AuthenticationPresentation {
+            code: "protocol_problem",
+            message: "Synveil couldn't complete this authentication action.",
+            action: None,
+        },
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UiLibrary {
     pub library_id: String,
@@ -937,9 +1010,32 @@ pub const fn library_setup_feedback(result: DesktopControllerCommandResult) -> &
 /// credential, token, path, or response body is included.
 #[must_use]
 pub const fn auth_feedback(result: DesktopControllerCommandResult) -> &'static str {
+    if matches!(
+        result,
+        DesktopControllerCommandResult::Authenticated
+            | DesktopControllerCommandResult::SignedOut
+            | DesktopControllerCommandResult::InvalidCredentials
+            | DesktopControllerCommandResult::NetworkUnavailable
+            | DesktopControllerCommandResult::ServerUnavailable
+            | DesktopControllerCommandResult::RateLimited
+            | DesktopControllerCommandResult::SecureStoreUnavailable
+            | DesktopControllerCommandResult::Busy
+            | DesktopControllerCommandResult::OutcomeUnknown
+            | DesktopControllerCommandResult::ProtocolError
+    ) {
+        return authentication_presentation(result).message;
+    }
     match result {
-        DesktopControllerCommandResult::Authenticated => "Signed in; status will update.",
-        DesktopControllerCommandResult::SignedOut => "Signed out; local credential removed.",
+        DesktopControllerCommandResult::Authenticated
+        | DesktopControllerCommandResult::SignedOut
+        | DesktopControllerCommandResult::InvalidCredentials
+        | DesktopControllerCommandResult::NetworkUnavailable
+        | DesktopControllerCommandResult::ServerUnavailable
+        | DesktopControllerCommandResult::RateLimited
+        | DesktopControllerCommandResult::SecureStoreUnavailable
+        | DesktopControllerCommandResult::Busy
+        | DesktopControllerCommandResult::OutcomeUnknown
+        | DesktopControllerCommandResult::ProtocolError => authentication_presentation(result).message,
         DesktopControllerCommandResult::ProfileConfigured => {
             "Server profile saved; continue with device authentication."
         }
@@ -957,18 +1053,9 @@ pub const fn auth_feedback(result: DesktopControllerCommandResult) -> &'static s
         | DesktopControllerCommandResult::ServerIdentityConflict => {
             "Library setup status is unavailable."
         }
-        DesktopControllerCommandResult::InvalidCredentials => {
-            "The enrollment token was not accepted."
-        }
         DesktopControllerCommandResult::InvalidConfiguration => "The profile details are invalid.",
         DesktopControllerCommandResult::InvalidServerAddress => {
             "Enter a valid HTTPS server address."
-        }
-        DesktopControllerCommandResult::NetworkUnavailable => {
-            "Network unavailable. Try again later."
-        }
-        DesktopControllerCommandResult::ServerUnavailable => {
-            "The server is unavailable. Try again later."
         }
         DesktopControllerCommandResult::Timeout => "The server did not respond in time.",
         DesktopControllerCommandResult::TlsFailure => {
@@ -980,17 +1067,6 @@ pub const fn auth_feedback(result: DesktopControllerCommandResult) -> &'static s
         DesktopControllerCommandResult::PersistenceFailure => {
             "The profile could not be saved locally."
         }
-        DesktopControllerCommandResult::RateLimited => "Too many attempts. Try again later.",
-        DesktopControllerCommandResult::SecureStoreUnavailable => {
-            "Secure credential storage is unavailable."
-        }
-        DesktopControllerCommandResult::Busy => {
-            "An authentication request is already being processed."
-        }
-        DesktopControllerCommandResult::OutcomeUnknown => {
-            "Synveil cannot confirm whether the sign-in change completed. It is checking the current authentication status."
-        }
-        DesktopControllerCommandResult::ProtocolError => "Background service is incompatible.",
         DesktopControllerCommandResult::Disconnected
         | DesktopControllerCommandResult::Unavailable
         | DesktopControllerCommandResult::AlreadyUnavailable => "Background service unavailable.",
@@ -1247,7 +1323,6 @@ mod tests {
 
         for message in messages {
             let lower = message.to_ascii_lowercase();
-            assert!(lower.contains("cannot confirm"), "{message}");
             assert!(lower.contains("checking"), "{message}");
             assert!(!lower.contains("retry"), "{message}");
             assert!(!lower.contains("try again"), "{message}");
@@ -1268,7 +1343,7 @@ mod tests {
             "Pause synchronization",
             "Resume synchronization",
             "Close the desktop window to the system tray",
-            "Synveil server address",
+            "Server address",
             "Sign in this device",
             "Library name",
             "Choose local library folder",
@@ -1585,43 +1660,43 @@ mod tests {
         let cases = [
             (
                 DesktopControllerCommandResult::Authenticated,
-                "Signed in; status will update.",
+                "This device is signed in.",
             ),
             (
                 DesktopControllerCommandResult::SignedOut,
-                "Signed out; local credential removed.",
+                "This device is signed out.",
             ),
             (
                 DesktopControllerCommandResult::InvalidCredentials,
-                "The enrollment token was not accepted.",
+                "That device code wasn't accepted. Check the code and try again.",
             ),
             (
                 DesktopControllerCommandResult::NetworkUnavailable,
-                "Network unavailable. Try again later.",
+                "You're offline. Check your network and try again.",
             ),
             (
                 DesktopControllerCommandResult::ServerUnavailable,
-                "The server is unavailable. Try again later.",
+                "Synveil couldn't reach the server right now.",
             ),
             (
                 DesktopControllerCommandResult::RateLimited,
-                "Too many attempts. Try again later.",
+                "Too many attempts. Wait a moment and try again.",
             ),
             (
                 DesktopControllerCommandResult::SecureStoreUnavailable,
-                "Secure credential storage is unavailable.",
+                "Secure credential storage isn't available right now.",
             ),
             (
                 DesktopControllerCommandResult::Busy,
-                "An authentication request is already being processed.",
+                "Sign-in is already in progress.",
             ),
             (
                 DesktopControllerCommandResult::OutcomeUnknown,
-                "Synveil cannot confirm whether the sign-in change completed. It is checking the current authentication status.",
+                "Synveil is checking whether this device was signed in.",
             ),
             (
                 DesktopControllerCommandResult::ProtocolError,
-                "Background service is incompatible.",
+                "This Synveil installation couldn't complete sign-in.",
             ),
         ];
 
@@ -1630,6 +1705,45 @@ mod tests {
             assert_eq!(feedback, expected);
             assert!(!feedback.contains("synthetic-enrollment-token"));
             assert!(!feedback.contains("/private/"));
+        }
+    }
+
+    #[test]
+    fn authentication_results_have_stable_state_and_allowed_action() {
+        use DesktopControllerCommandResult as Result;
+        let cases = [
+            (Result::Authenticated, "authenticated", Some("sign_out")),
+            (Result::SignedOut, "sign_in_required", Some("sign_in")),
+            (Result::InvalidCredentials, "invalid_code", Some("sign_in")),
+            (
+                Result::NetworkUnavailable,
+                "network_unavailable",
+                Some("sign_in"),
+            ),
+            (
+                Result::ServerUnavailable,
+                "server_unavailable",
+                Some("sign_in"),
+            ),
+            (Result::RateLimited, "rate_limited", Some("sign_in")),
+            (
+                Result::SecureStoreUnavailable,
+                "secure_storage_unavailable",
+                Some("sign_in"),
+            ),
+            (Result::Busy, "busy", None),
+            (Result::ProtocolError, "protocol_problem", Some("sign_in")),
+            (Result::OutcomeUnknown, "reconciling", None),
+        ];
+        for (result, code, action) in cases {
+            let presented = authentication_presentation(result);
+            assert_eq!(presented.code, code);
+            assert_eq!(presented.action, action);
+            assert!(!presented
+                .message
+                .to_ascii_lowercase()
+                .contains("enrollment"));
+            assert!(!presented.message.contains("synthetic-device-code-canary"));
         }
     }
 
