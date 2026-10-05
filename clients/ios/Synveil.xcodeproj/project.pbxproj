@@ -39,6 +39,9 @@
 		B10000012C00000000000018 /* RustBridgeProtocolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000018 /* RustBridgeProtocolTests.swift */; };
 		B10000012C00000000000019 /* SessionControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000019 /* SessionControllerTests.swift */; };
 		B10000012C0000000000001A /* RootViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000001A /* RootViewTests.swift */; };
+		A10000012C00000000000021 /* ServerSetupViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000021 /* ServerSetupViewModel.swift */; };
+		A10000012C00000000000022 /* ServerSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000022 /* ServerSetupView.swift */; };
+		B10000012C0000000000001B /* ServerSetupViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000001B /* ServerSetupViewModelTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -86,6 +89,9 @@
 		B20000012C00000000000019 /* SessionControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SessionControllerTests.swift; sourceTree = "<group>"; };
 		B20000012C0000000000001A /* RootViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RootViewTests.swift; sourceTree = "<group>"; };
 		B20000012C00000000000002 /* SynveilTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SynveilTests.xctest; sourceTree = "<group>"; };
+		A20000012C00000000000021 /* ServerSetupViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Onboarding/ServerSetupViewModel.swift; sourceTree = "<group>"; };
+		A20000012C00000000000022 /* ServerSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Onboarding/ServerSetupView.swift; sourceTree = "<group>"; };
+		B20000012C0000000000001B /* ServerSetupViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/ServerSetupViewModelTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -110,6 +116,7 @@
 			isa = PBXGroup;
 			children = (
 				A40000012C00000000000002 /* App */,
+				A40000012C00000000000015 /* Features */,
 				A40000012C00000000000011 /* Domain */,
 				A40000012C00000000000012 /* Application */,
 				A40000012C00000000000013 /* Infrastructure */,
@@ -117,6 +124,23 @@
 				B40000012C00000000000001 /* Tests */,
 				A40000012C00000000000004 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+				A40000012C00000000000015 /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				A40000012C00000000000016 /* Onboarding */,
+			);
+			name = Features;
+			sourceTree = "<group>";
+		};
+		A40000012C00000000000016 /* Onboarding */ = {
+			isa = PBXGroup;
+			children = (
+				A20000012C00000000000021 /* ServerSetupViewModel.swift */,
+				A20000012C00000000000022 /* ServerSetupView.swift */,
+			);
+			name = Onboarding;
 			sourceTree = "<group>";
 		};
 		A40000012C00000000000002 /* App */ = {
@@ -214,6 +238,7 @@
 				B20000012C00000000000018 /* RustBridgeProtocolTests.swift */,
 				B20000012C00000000000019 /* SessionControllerTests.swift */,
 				B20000012C0000000000001A /* RootViewTests.swift */,
+				B20000012C0000000000001B /* ServerSetupViewModelTests.swift */,
 			);
 			name = SynveilTests;
 			sourceTree = "<group>";
@@ -329,6 +354,8 @@
 				A10000012C0000000000001E /* RustBridgeProtocol.swift in Sources */,
 				A10000012C0000000000001F /* AppStartupState.swift in Sources */,
 				A10000012C00000000000020 /* SessionController.swift in Sources */,
+				A10000012C00000000000021 /* ServerSetupViewModel.swift in Sources */,
+				A10000012C00000000000022 /* ServerSetupView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -347,6 +374,7 @@
 				B10000012C00000000000018 /* RustBridgeProtocolTests.swift in Sources */,
 				B10000012C00000000000019 /* SessionControllerTests.swift in Sources */,
 				B10000012C0000000000001A /* RootViewTests.swift in Sources */,
+				B10000012C0000000000001B /* ServerSetupViewModelTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

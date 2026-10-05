@@ -55,6 +55,18 @@ final class SessionControllerTests: XCTestCase {
     }
 
     @MainActor
+    func testConfigureServerEndpointSetsEndpointAndTransitionsState() throws {
+        let controller = SessionController()
+        controller.showServerProfileSetup()
+
+        let endpoint = try ServerEndpoint(validating: "https://synveil.example.com")
+        controller.configureServerEndpoint(endpoint)
+
+        XCTAssertEqual(controller.serverEndpoint, endpoint)
+        XCTAssertEqual(controller.state, .readyForServerValidation)
+    }
+
+    @MainActor
     func testControlledTransitions() {
         let controller = SessionController()
 

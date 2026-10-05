@@ -11,6 +11,9 @@ public final class SessionController {
     /// The current application startup state.
     public private(set) var state: AppStartupState
 
+    /// The active server endpoint profile, if configured.
+    public private(set) var serverEndpoint: ServerEndpoint?
+
     /// Bootstrap application configuration.
     private let configuration: AppConfiguration
 
@@ -22,6 +25,7 @@ public final class SessionController {
     /// - Parameter configuration: App configuration containing non-secret bootstrap settings.
     public init(configuration: AppConfiguration = AppConfiguration.load()) {
         self.configuration = configuration
+        self.serverEndpoint = configuration.serverEndpoint
         self.state = .initializing
     }
 
@@ -46,6 +50,17 @@ public final class SessionController {
     /// Transitions root state to `.needsServerProfile`.
     public func showServerProfileSetup() {
         state = .needsServerProfile
+    }
+
+    /// Configures a locally valid server endpoint and transitions root state to `.readyForServerValidation`.
+    ///
+    /// - Parameter endpoint: The validated server base endpoint.
+    public func configureServerEndpoint(_ endpoint: ServerEndpoint) {
+        guard state == .needsServerProfile else {
+            return
+        }
+        self.serverEndpoint = endpoint
+        state = .readyForServerValidation
     }
 
     /// Transitions from server setup to `.readyForServerValidation`.
