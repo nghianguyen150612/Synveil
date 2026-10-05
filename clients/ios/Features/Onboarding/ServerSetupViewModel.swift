@@ -73,7 +73,9 @@ public final class ServerSetupViewModel {
         case .empty:
             return "Please enter a server address."
         case .invalidURL:
-            return "Invalid server address structure. Please enter a complete URL (e.g. https://synveil.example.com)."
+            return
+                "Invalid server address structure. "
+                + "Please enter a complete URL (e.g. https://synveil.example.com)."
         case .unsupportedScheme(let scheme):
             if scheme.isEmpty {
                 return "Server address requires a URL scheme (e.g. https://synveil.example.com)."

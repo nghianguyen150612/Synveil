@@ -21,7 +21,10 @@ final class ServerSetupViewModelTests: XCTestCase {
         let controller = SessionController()
         controller.showServerProfileSetup()
 
-        let viewModel = ServerSetupViewModel(sessionController: controller, initialInput: "   \n\t ")
+        let viewModel = ServerSetupViewModel(
+            sessionController: controller,
+            initialInput: "   \n\t "
+        )
         let result = viewModel.submit()
 
         XCTAssertFalse(result)
@@ -34,7 +37,10 @@ final class ServerSetupViewModelTests: XCTestCase {
         let controller = SessionController()
         controller.showServerProfileSetup()
 
-        let viewModel = ServerSetupViewModel(sessionController: controller, initialInput: "synveil.example.com")
+        let viewModel = ServerSetupViewModel(
+            sessionController: controller,
+            initialInput: "synveil.example.com"
+        )
         let result = viewModel.submit()
 
         XCTAssertFalse(result)
@@ -50,7 +56,10 @@ final class ServerSetupViewModelTests: XCTestCase {
         let controller = SessionController()
         controller.showServerProfileSetup()
 
-        let viewModel = ServerSetupViewModel(sessionController: controller, initialInput: "ftp://synveil.example.com")
+        let viewModel = ServerSetupViewModel(
+            sessionController: controller,
+            initialInput: "ftp://synveil.example.com"
+        )
         let result = viewModel.submit()
 
         XCTAssertFalse(result)

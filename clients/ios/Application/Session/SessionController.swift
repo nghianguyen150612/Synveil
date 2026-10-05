@@ -52,7 +52,7 @@ public final class SessionController {
         state = .needsServerProfile
     }
 
-    /// Configures a locally valid server endpoint and transitions root state to `.readyForServerValidation`.
+    /// Configures a server endpoint and transitions state to `.readyForServerValidation`.
     ///
     /// - Parameter endpoint: The validated server base endpoint.
     public func configureServerEndpoint(_ endpoint: ServerEndpoint) {
