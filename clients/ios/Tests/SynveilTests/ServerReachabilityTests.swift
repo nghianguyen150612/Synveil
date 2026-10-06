@@ -25,7 +25,11 @@ final class ServerReachabilityTests: XCTestCase {
 
             switch handler {
             case .success(let resp):
-                return HTTPTransportResponse(statusCode: resp.statusCode, headers: resp.headers, body: resp.body)
+                return HTTPTransportResponse(
+                    statusCode: resp.statusCode,
+                    headers: resp.headers,
+                    body: resp.body
+                )
             case .failure(let err):
                 throw err
             }
@@ -34,7 +38,9 @@ final class ServerReachabilityTests: XCTestCase {
 
     // MARK: - Helper Constructors
 
-    private func makeEndpoint(_ urlString: String = "https://synveil.example.com") -> ServerEndpoint {
+    private func makeEndpoint(
+        _ urlString: String = "https://synveil.example.com"
+    ) -> ServerEndpoint {
         try! ServerEndpoint(validating: urlString)
     }
 
@@ -42,20 +48,39 @@ final class ServerReachabilityTests: XCTestCase {
         string.data(using: .utf8)!
     }
 
+    private func makeConfiguredSessionController(
+        endpoint: ServerEndpoint? = nil
+    ) -> SessionController {
+        let controller = SessionController()
+        controller.showServerProfileSetup()
+        controller.configureServerEndpoint(endpoint ?? makeEndpoint())
+        return controller
+    }
+
     // MARK: - 1. /health/live valid 200 {"status":"live"} succeeds
 
     func test01_livenessSuccess() async {
         let mock = MockHTTPTransport()
-        mock.responses["/health/live"] = .success(.init(
-            statusCode: 200,
-            headers: ["Content-Type": "application/json", "X-Request-Id": "req_live_12345678"],
-            body: makeJsonData("{\"status\":\"live\"}")
-        ))
-        mock.responses["/health/ready"] = .success(.init(
-            statusCode: 200,
-            headers: ["Content-Type": "application/json", "X-Request-Id": "req_ready_12345678"],
-            body: makeJsonData("{\"status\":\"ready\"}")
-        ))
+        mock.responses["/health/live"] = .success(
+            .init(
+                statusCode: 200,
+                headers: [
+                    "Content-Type": "application/json",
+                    "X-Request-Id": "req_live_12345678",
+                ],
+                body: makeJsonData("{\"status\":\"live\"}")
+            )
+        )
+        mock.responses["/health/ready"] = .success(
+            .init(
+                statusCode: 200,
+                headers: [
+                    "Content-Type": "application/json",
+                    "X-Request-Id": "req_ready_12345678",
+                ],
+                body: makeJsonData("{\"status\":\"ready\"}")
+            )
+        )
 
         let service = ServerValidationService(transport: mock)
         let result = await service.validateServer(endpoint: makeEndpoint())
@@ -86,16 +111,20 @@ final class ServerReachabilityTests: XCTestCase {
 
     func test03_readinessCalledOnlyAfterSuccessfulLiveness() async {
         let mock = MockHTTPTransport()
-        mock.responses["/health/live"] = .success(.init(
-            statusCode: 200,
-            headers: ["Content-Type": "application/json"],
-            body: makeJsonData("{\"status\":\"live\"}")
-        ))
-        mock.responses["/health/ready"] = .success(.init(
-            statusCode: 200,
-            headers: ["Content-Type": "application/json"],
-            body: makeJsonData("{\"status\":\"ready\"}")
-        ))
+        mock.responses["/health/live"] = .success(
+            .init(
+                statusCode: 200,
+                headers: ["Content-Type": "application/json"],
+                body: makeJsonData("{\"status\":\"live\"}")
+            )
+        )
+        mock.responses["/health/ready"] = .success(
+            .init(
+                statusCode: 200,
+                headers: ["Content-Type": "application/json"],
+                body: makeJsonData("{\"status\":\"ready\"}")
+            )
+        )
 
         let service = ServerValidationService(transport: mock)
         _ = await service.validateServer(endpoint: makeEndpoint())
@@ -109,16 +138,20 @@ final class ServerReachabilityTests: XCTestCase {
 
     func test04_readinessSuccess() async {
         let mock = MockHTTPTransport()
-        mock.responses["/health/live"] = .success(.init(
-            statusCode: 200,
-            headers: ["Content-Type": "application/json"],
-            body: makeJsonData("{\"status\":\"live\"}")
-        ))
-        mock.responses["/health/ready"] = .success(.init(
-            statusCode: 200,
-            headers: ["Content-Type": "application/json"],
-            body: makeJsonData("{\"status\":\"ready\"}")
-        ))
+        mock.responses["/health/live"] = .success(
+            .init(
+                statusCode: 200,
+                headers: ["Content-Type": "application/json"],
+                body: makeJsonData("{\"status\":\"live\"}")
+            )
+        )
+        mock.responses["/health/ready"] = .success(
+            .init(
+                statusCode: 200,
+                headers: ["Content-Type": "application/json"],
+                body: makeJsonData("{\"status\":\"ready\"}")
+            )
+        )
 
         let service = ServerValidationService(transport: mock)
         let result = await service.validateServer(endpoint: makeEndpoint())
@@ -134,16 +167,33 @@ final class ServerReachabilityTests: XCTestCase {
 
     func test05_readiness503MapsToAliveButNotReady() async {
         let mock = MockHTTPTransport()
-        mock.responses["/health/live"] = .success(.init(
-            statusCode: 200,
-            headers: ["Content-Type": "application/json"],
-            body: makeJsonData("{\"status\":\"live\"}")
-        ))
-        mock.responses["/health/ready"] = .success(.init(
-            statusCode: 503,
-            headers: ["Content-Type": "application/json", "X-Request-Id": "req_503_12345678"],
-            body: makeJsonData("{\"error\":{\"code\":\"service_initializing\",\"message\":\"Server warming up\",\"request_id\":\"req_503_12345678\",\"retryable\":true}}")
-        ))
+        mock.responses["/health/live"] = .success(
+            .init(
+                statusCode: 200,
+                headers: ["Content-Type": "application/json"],
+                body: makeJsonData("{\"status\":\"live\"}")
+            )
+        )
+        let errJson = """
+            {
+              "error": {
+                "code": "service_initializing",
+                "message": "Server warming up",
+                "request_id": "req_503_12345678",
+                "retryable": true
+              }
+            }
+            """
+        mock.responses["/health/ready"] = .success(
+            .init(
+                statusCode: 503,
+                headers: [
+                    "Content-Type": "application/json",
+                    "X-Request-Id": "req_503_12345678",
+                ],
+                body: makeJsonData(errJson)
+            )
+        )
 
         let service = ServerValidationService(transport: mock)
         let result = await service.validateServer(endpoint: makeEndpoint())
@@ -220,11 +270,13 @@ final class ServerReachabilityTests: XCTestCase {
 
     func test11_unexpectedContentTypeRejected() async {
         let mock = MockHTTPTransport()
-        mock.responses["/health/live"] = .success(.init(
-            statusCode: 200,
-            headers: ["Content-Type": "text/html"],
-            body: makeJsonData("<html><body>200 OK</body></html>")
-        ))
+        mock.responses["/health/live"] = .success(
+            .init(
+                statusCode: 200,
+                headers: ["Content-Type": "text/html"],
+                body: makeJsonData("<html><body>200 OK</body></html>")
+            )
+        )
 
         let service = ServerValidationService(transport: mock)
         let result = await service.validateServer(endpoint: makeEndpoint())
@@ -248,11 +300,13 @@ final class ServerReachabilityTests: XCTestCase {
 
     func test13_malformedJsonRejected() async {
         let mock = MockHTTPTransport()
-        mock.responses["/health/live"] = .success(.init(
-            statusCode: 200,
-            headers: ["Content-Type": "application/json"],
-            body: makeJsonData("{ invalid json }")
-        ))
+        mock.responses["/health/live"] = .success(
+            .init(
+                statusCode: 200,
+                headers: ["Content-Type": "application/json"],
+                body: makeJsonData("{ invalid json }")
+            )
+        )
 
         let service = ServerValidationService(transport: mock)
         let result = await service.validateServer(endpoint: makeEndpoint())
@@ -265,11 +319,13 @@ final class ServerReachabilityTests: XCTestCase {
     func test14_wrongHealthStatusRejected() async {
         let mock = MockHTTPTransport()
         // /health/live returns "ready" instead of "live"
-        mock.responses["/health/live"] = .success(.init(
-            statusCode: 200,
-            headers: ["Content-Type": "application/json"],
-            body: makeJsonData("{\"status\":\"ready\"}")
-        ))
+        mock.responses["/health/live"] = .success(
+            .init(
+                statusCode: 200,
+                headers: ["Content-Type": "application/json"],
+                body: makeJsonData("{\"status\":\"ready\"}")
+            )
+        )
 
         let service = ServerValidationService(transport: mock)
         let result = await service.validateServer(endpoint: makeEndpoint())
@@ -281,11 +337,23 @@ final class ServerReachabilityTests: XCTestCase {
 
     func test15_genericHttpErrorHandled() async {
         let mock = MockHTTPTransport()
-        mock.responses["/health/live"] = .success(.init(
-            statusCode: 500,
-            headers: ["Content-Type": "application/json"],
-            body: makeJsonData("{\"error\":{\"code\":\"internal_error\",\"message\":\"Internal server error\",\"request_id\":\"req_500_12345678\",\"retryable\":true}}")
-        ))
+        let errJson = """
+            {
+              "error": {
+                "code": "internal_error",
+                "message": "Internal server error",
+                "request_id": "req_500_12345678",
+                "retryable": true
+              }
+            }
+            """
+        mock.responses["/health/live"] = .success(
+            .init(
+                statusCode: 500,
+                headers: ["Content-Type": "application/json"],
+                body: makeJsonData(errJson)
+            )
+        )
 
         let service = ServerValidationService(transport: mock)
         let result = await service.validateServer(endpoint: makeEndpoint())
@@ -306,12 +374,14 @@ final class ServerReachabilityTests: XCTestCase {
         let mock = MockHTTPTransport()
         mock.responses["/health/live"] = .failure(.cancelled)
 
-        let sessionController = SessionController()
-        sessionController.configureServerEndpoint(makeEndpoint())
+        let sessionController = makeConfiguredSessionController()
         XCTAssertEqual(sessionController.state, .readyForServerValidation)
 
         let service = ServerValidationService(transport: mock)
-        let viewModel = ServerValidationViewModel(sessionController: sessionController, validationService: service)
+        let viewModel = ServerValidationViewModel(
+            sessionController: sessionController,
+            validationService: service
+        )
 
         viewModel.validateServer()
         viewModel.cancelValidation()
@@ -329,32 +399,38 @@ final class ServerReachabilityTests: XCTestCase {
         let mock = MockHTTPTransport()
         mock.responses["/health/live"] = .failure(.offline)
 
-        let sessionController = SessionController()
-        sessionController.configureServerEndpoint(makeEndpoint())
+        let sessionController = makeConfiguredSessionController()
 
         let service = ServerValidationService(transport: mock)
-        let viewModel = ServerValidationViewModel(sessionController: sessionController, validationService: service)
+        let viewModel = ServerValidationViewModel(
+            sessionController: sessionController,
+            validationService: service
+        )
 
         viewModel.validateServer()
         try? await Task.sleep(nanoseconds: 50_000_000)
         XCTAssertEqual(mock.recordedRequests.count, 1)
 
         // Update mock to succeed on second attempt
-        mock.responses["/health/live"] = .success(.init(
-            statusCode: 200,
-            headers: ["Content-Type": "application/json"],
-            body: makeJsonData("{\"status\":\"live\"}")
-        ))
-        mock.responses["/health/ready"] = .success(.init(
-            statusCode: 200,
-            headers: ["Content-Type": "application/json"],
-            body: makeJsonData("{\"status\":\"ready\"}")
-        ))
+        mock.responses["/health/live"] = .success(
+            .init(
+                statusCode: 200,
+                headers: ["Content-Type": "application/json"],
+                body: makeJsonData("{\"status\":\"live\"}")
+            )
+        )
+        mock.responses["/health/ready"] = .success(
+            .init(
+                statusCode: 200,
+                headers: ["Content-Type": "application/json"],
+                body: makeJsonData("{\"status\":\"ready\"}")
+            )
+        )
 
         viewModel.retry()
         try? await Task.sleep(nanoseconds: 50_000_000)
 
-        XCTAssertEqual(mock.recordedRequests.count, 3) // 1 initial + 2 retry probes (live + ready)
+        XCTAssertEqual(mock.recordedRequests.count, 3)  // 1 initial + 2 retry probes
         XCTAssertEqual(viewModel.state, .ready)
         XCTAssertEqual(sessionController.state, .needsEnrollment)
     }
@@ -364,23 +440,29 @@ final class ServerReachabilityTests: XCTestCase {
     @MainActor
     func test18_validFullCheckTransitionsToNeedsEnrollment() async {
         let mock = MockHTTPTransport()
-        mock.responses["/health/live"] = .success(.init(
-            statusCode: 200,
-            headers: ["Content-Type": "application/json"],
-            body: makeJsonData("{\"status\":\"live\"}")
-        ))
-        mock.responses["/health/ready"] = .success(.init(
-            statusCode: 200,
-            headers: ["Content-Type": "application/json"],
-            body: makeJsonData("{\"status\":\"ready\"}")
-        ))
+        mock.responses["/health/live"] = .success(
+            .init(
+                statusCode: 200,
+                headers: ["Content-Type": "application/json"],
+                body: makeJsonData("{\"status\":\"live\"}")
+            )
+        )
+        mock.responses["/health/ready"] = .success(
+            .init(
+                statusCode: 200,
+                headers: ["Content-Type": "application/json"],
+                body: makeJsonData("{\"status\":\"ready\"}")
+            )
+        )
 
-        let sessionController = SessionController()
-        sessionController.configureServerEndpoint(makeEndpoint())
+        let sessionController = makeConfiguredSessionController()
         XCTAssertEqual(sessionController.state, .readyForServerValidation)
 
         let service = ServerValidationService(transport: mock)
-        let viewModel = ServerValidationViewModel(sessionController: sessionController, validationService: service)
+        let viewModel = ServerValidationViewModel(
+            sessionController: sessionController,
+            validationService: service
+        )
 
         viewModel.validateServer()
         try? await Task.sleep(nanoseconds: 50_000_000)
@@ -396,12 +478,14 @@ final class ServerReachabilityTests: XCTestCase {
         let mock = MockHTTPTransport()
         mock.responses["/health/live"] = .failure(.offline)
 
-        let sessionController = SessionController()
-        sessionController.configureServerEndpoint(makeEndpoint())
+        let sessionController = makeConfiguredSessionController()
         XCTAssertEqual(sessionController.state, .readyForServerValidation)
 
         let service = ServerValidationService(transport: mock)
-        let viewModel = ServerValidationViewModel(sessionController: sessionController, validationService: service)
+        let viewModel = ServerValidationViewModel(
+            sessionController: sessionController,
+            validationService: service
+        )
 
         viewModel.validateServer()
         try? await Task.sleep(nanoseconds: 50_000_000)
@@ -415,22 +499,28 @@ final class ServerReachabilityTests: XCTestCase {
     @MainActor
     func test20_serverValidationNeverProducesAuthenticated() async {
         let mock = MockHTTPTransport()
-        mock.responses["/health/live"] = .success(.init(
-            statusCode: 200,
-            headers: ["Content-Type": "application/json"],
-            body: makeJsonData("{\"status\":\"live\"}")
-        ))
-        mock.responses["/health/ready"] = .success(.init(
-            statusCode: 200,
-            headers: ["Content-Type": "application/json"],
-            body: makeJsonData("{\"status\":\"ready\"}")
-        ))
+        mock.responses["/health/live"] = .success(
+            .init(
+                statusCode: 200,
+                headers: ["Content-Type": "application/json"],
+                body: makeJsonData("{\"status\":\"live\"}")
+            )
+        )
+        mock.responses["/health/ready"] = .success(
+            .init(
+                statusCode: 200,
+                headers: ["Content-Type": "application/json"],
+                body: makeJsonData("{\"status\":\"ready\"}")
+            )
+        )
 
-        let sessionController = SessionController()
-        sessionController.configureServerEndpoint(makeEndpoint())
+        let sessionController = makeConfiguredSessionController()
 
         let service = ServerValidationService(transport: mock)
-        let viewModel = ServerValidationViewModel(sessionController: sessionController, validationService: service)
+        let viewModel = ServerValidationViewModel(
+            sessionController: sessionController,
+            validationService: service
+        )
 
         viewModel.validateServer()
         try? await Task.sleep(nanoseconds: 50_000_000)
