@@ -121,7 +121,7 @@ pub use sync_cycle::{
 };
 
 /// Current durable local schema version.
-pub const LOCAL_SCHEMA_VERSION: i64 = 7;
+pub const LOCAL_SCHEMA_VERSION: i64 = 8;
 
 /// Feed and snapshot pages are deliberately processed one at a time.
 pub const MAX_PAGE_ITEMS: usize = 1_000;

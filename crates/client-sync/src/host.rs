@@ -1264,6 +1264,11 @@ impl HostInner {
                 ))
             }
         };
+        let cycle: Arc<dyn SyncCycleExecutor> = Arc::new(FirstSyncEvidenceCycle::new(
+            scope,
+            Arc::clone(&self.state),
+            cycle,
+        ));
         let cycle = Arc::new(RootGatedCycle::new(scope, Arc::clone(&replica), cycle));
 
         let observer = match watcher {
@@ -1342,7 +1347,15 @@ impl HostInner {
         }
 
         let library = self.build_library(config).await?;
-        let registration = self.runtime.register_executor(Arc::clone(&library.cycle))?;
+        let first_sync_completed = self
+            .state
+            .replica(library_id)
+            .await?
+            .ok_or(ClientSyncError::InvalidState)?
+            .first_sync_completed();
+        let registration = self
+            .runtime
+            .register_executor_with_first_sync(Arc::clone(&library.cycle), first_sync_completed)?;
         if registration == SyncRuntimeRegistration::AlreadyRegistered {
             return Err(DesktopSyncHostError::InvalidState);
         }
@@ -2757,6 +2770,52 @@ struct RootGatedCycle {
     inner: Arc<dyn SyncCycleExecutor>,
 }
 
+/// Durable first-sync evidence sits around the existing bounded cycle. It is
+/// not a second scheduler or synchronization state machine: only the cycle's
+/// canonical `is_idle()` proof may promote the replica marker.
+struct FirstSyncEvidenceCycle {
+    scope: ReplicaScope,
+    state: Arc<LocalStateStore>,
+    inner: Arc<dyn SyncCycleExecutor>,
+}
+
+impl FirstSyncEvidenceCycle {
+    fn new(
+        scope: ReplicaScope,
+        state: Arc<LocalStateStore>,
+        inner: Arc<dyn SyncCycleExecutor>,
+    ) -> Self {
+        Self {
+            scope,
+            state,
+            inner,
+        }
+    }
+}
+
+#[async_trait]
+impl SyncCycleExecutor for FirstSyncEvidenceCycle {
+    fn scope(&self) -> ReplicaScope {
+        self.scope
+    }
+
+    async fn run_once(&self, observed_at: Timestamp) -> Result<SyncCycleResult, ClientSyncError> {
+        self.inner.run_once(observed_at).await
+    }
+
+    async fn record_quiescent(&self) -> Result<(), ClientSyncError> {
+        self.state
+            .mark_first_sync_completed(self.scope.library_id())
+            .await
+    }
+
+    async fn revoke_quiescent(&self) -> Result<(), ClientSyncError> {
+        self.state
+            .clear_first_sync_completed(self.scope.library_id())
+            .await
+    }
+}
+
 impl RootGatedCycle {
     fn new(
         scope: ReplicaScope,
@@ -2780,6 +2839,14 @@ impl SyncCycleExecutor for RootGatedCycle {
     async fn run_once(&self, observed_at: Timestamp) -> Result<SyncCycleResult, ClientSyncError> {
         validate_root_for_cycle(self.replica.as_ref())?;
         self.inner.run_once(observed_at).await
+    }
+
+    async fn record_quiescent(&self) -> Result<(), ClientSyncError> {
+        self.inner.record_quiescent().await
+    }
+
+    async fn revoke_quiescent(&self) -> Result<(), ClientSyncError> {
+        self.inner.revoke_quiescent().await
     }
 }
 

@@ -118,6 +118,9 @@ python3 scripts/validate-authentication-ux-polish.py || failures=$((failures + 1
 echo "DOC-UNIT-18: checking the Prompt040 first-library wizard"
 python3 scripts/validate-library-first-run-wizard.py || failures=$((failures + 1))
 
+echo "DOC-UNIT-19: checking the Prompt041 installation-to-sync progress"
+python3 scripts/validate-installation-to-sync-progress.py || failures=$((failures + 1))
+
 if [[ "$failures" -ne 0 ]]; then
     echo "documentation validation failed: $failures issue(s)" >&2
     exit 1

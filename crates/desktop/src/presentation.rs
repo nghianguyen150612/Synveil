@@ -29,6 +29,86 @@ pub enum WelcomeDestination {
     HostNeedsAttention,
 }
 
+/// Small, Rust-owned product state used by the installation-to-sync surface.
+/// QML renders these values and never derives meaning from runtime strings.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FirstRunProgressStageState {
+    Pending,
+    Active,
+    Waiting,
+    Complete,
+    ActionRequired,
+}
+
+impl FirstRunProgressStageState {
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Active => "active",
+            Self::Waiting => "waiting",
+            Self::Complete => "complete",
+            Self::ActionRequired => "action_required",
+        }
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Pending => "Not started",
+            Self::Active => "Active",
+            Self::Waiting => "Waiting",
+            Self::Complete => "Complete",
+            Self::ActionRequired => "Action required",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FirstRunProgressStage {
+    pub id: &'static str,
+    pub title: &'static str,
+    pub state: FirstRunProgressStageState,
+    pub detail: &'static str,
+    pub action: Option<&'static str>,
+    pub action_label: Option<&'static str>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FirstRunProgress {
+    pub visible: bool,
+    pub status: &'static str,
+    pub stages: Vec<FirstRunProgressStage>,
+}
+
+impl FirstRunProgress {
+    fn hidden(stages: Vec<FirstRunProgressStage>) -> Self {
+        Self {
+            visible: false,
+            status: "Your files are up to date.",
+            stages,
+        }
+    }
+}
+
+fn progress_stage(
+    id: &'static str,
+    title: &'static str,
+    state: FirstRunProgressStageState,
+    detail: &'static str,
+    action: Option<&'static str>,
+    action_label: Option<&'static str>,
+) -> FirstRunProgressStage {
+    FirstRunProgressStage {
+        id,
+        title,
+        state,
+        detail,
+        action,
+        action_label,
+    }
+}
+
 impl WelcomeDestination {
     #[must_use]
     pub const fn code(self) -> &'static str {
@@ -197,6 +277,7 @@ pub struct UiLibrary {
     pub next_due_ms: Option<u64>,
     pub wake_pending: bool,
     pub transient_failures: u32,
+    pub first_sync_completed: bool,
     pub needs_attention: bool,
     pub can_sync: bool,
 }
@@ -274,6 +355,7 @@ pub struct UiSnapshot {
     pub recovery_waiting_count: usize,
     pub client_recovery_code: &'static str,
     pub client_recovery_label: &'static str,
+    pub first_run_progress: FirstRunProgress,
 }
 
 impl Default for UiSnapshot {
@@ -370,6 +452,7 @@ pub fn map_snapshot(snapshot: &DesktopControllerSnapshot) -> UiSnapshot {
     let (freshness_code, freshness_label) = freshness_presentation(snapshot.freshness);
     let (sync_control_code, sync_control_label) =
         sync_control_presentation(snapshot.sync_control_state);
+    let first_run_progress = first_run_progress(snapshot);
 
     UiSnapshot {
         connection_code,
@@ -412,7 +495,356 @@ pub fn map_snapshot(snapshot: &DesktopControllerSnapshot) -> UiSnapshot {
         recovery_waiting_count: bounded_usize(recovery.total_waiting),
         client_recovery_code,
         client_recovery_label,
+        first_run_progress,
     }
+}
+
+/// Project the authoritative setup and first-sync owners into five compact
+/// product stages. Installation itself is intentionally absent: the desktop
+/// has no native installer telemetry to prove a package-manager milestone.
+#[must_use]
+pub fn first_run_progress(snapshot: &DesktopControllerSnapshot) -> FirstRunProgress {
+    let app_ready = snapshot.process.is_some_and(|process| {
+        matches!(process.state, synveil_client::DesktopProcessStatus::Running)
+            && process.control_ready
+    });
+    let app_stage = progress_stage(
+        "app_ready",
+        "Synveil ready",
+        if app_ready {
+            FirstRunProgressStageState::Complete
+        } else if matches!(
+            snapshot.connection_state,
+            DesktopControllerConnectionState::Connecting
+                | DesktopControllerConnectionState::Reconnecting
+        ) || snapshot.freshness == DesktopControllerFreshness::Unavailable
+        {
+            FirstRunProgressStageState::Active
+        } else {
+            FirstRunProgressStageState::Waiting
+        },
+        if app_ready {
+            "Synveil is ready."
+        } else {
+            "Starting Synveil…"
+        },
+        None,
+        None,
+    );
+
+    let server_ready = snapshot.profile_configured;
+    let server_stage = progress_stage(
+        "server_ready",
+        "Server ready",
+        if server_ready {
+            FirstRunProgressStageState::Complete
+        } else if app_ready
+            && snapshot.connection_state == DesktopControllerConnectionState::Connected
+            && snapshot.freshness == DesktopControllerFreshness::Fresh
+        {
+            FirstRunProgressStageState::ActionRequired
+        } else {
+            FirstRunProgressStageState::Pending
+        },
+        if server_ready {
+            "Server setup completed."
+        } else {
+            "Connect to a Synveil server to continue."
+        },
+        (!server_ready).then_some("configure_connection"),
+        (!server_ready).then_some("Open connection"),
+    );
+
+    let signed_in = snapshot.profile_authenticated;
+    let signed_in_stage = progress_stage(
+        "signed_in",
+        "Signed in",
+        if !server_ready {
+            FirstRunProgressStageState::Pending
+        } else if signed_in {
+            FirstRunProgressStageState::Complete
+        } else if snapshot.connection_state == DesktopControllerConnectionState::Connected
+            && snapshot.freshness == DesktopControllerFreshness::Fresh
+        {
+            FirstRunProgressStageState::ActionRequired
+        } else {
+            FirstRunProgressStageState::Waiting
+        },
+        if signed_in {
+            "This device is signed in."
+        } else {
+            "Sign in to continue."
+        },
+        (!signed_in && server_ready).then_some("sign_in"),
+        (!signed_in && server_ready).then_some("Sign in to continue"),
+    );
+
+    let library_ready = !snapshot.libraries.is_empty();
+    let library_stage = progress_stage(
+        "library_ready",
+        "Library ready",
+        if !signed_in {
+            FirstRunProgressStageState::Pending
+        } else if library_ready {
+            FirstRunProgressStageState::Complete
+        } else if snapshot.connection_state == DesktopControllerConnectionState::Connected
+            && snapshot.freshness == DesktopControllerFreshness::Fresh
+        {
+            FirstRunProgressStageState::ActionRequired
+        } else {
+            FirstRunProgressStageState::Waiting
+        },
+        if library_ready {
+            "Your library is configured."
+        } else {
+            "Set up a library to start synchronizing."
+        },
+        (!library_ready && signed_in).then_some("resume_setup"),
+        (!library_ready && signed_in).then_some("Set up a library"),
+    );
+
+    let first_sync_stage = first_sync_stage(snapshot, library_ready, signed_in);
+    let stages = vec![
+        app_stage,
+        server_stage,
+        signed_in_stage,
+        library_stage,
+        first_sync_stage,
+    ];
+    if !snapshot
+        .libraries
+        .iter()
+        .any(|library| !library.first_sync_completed)
+    {
+        return FirstRunProgress::hidden(stages);
+    }
+
+    let status = stages
+        .iter()
+        .find(|stage| stage.id == "first_sync")
+        .map_or("Checking sync status…", |stage| stage.detail);
+    FirstRunProgress {
+        visible: library_ready && !snapshot.libraries.is_empty(),
+        status,
+        stages,
+    }
+}
+
+fn first_sync_stage(
+    snapshot: &DesktopControllerSnapshot,
+    library_ready: bool,
+    signed_in: bool,
+) -> FirstRunProgressStage {
+    if !library_ready || !signed_in {
+        return progress_stage(
+            "first_sync",
+            "First sync",
+            FirstRunProgressStageState::Pending,
+            "Waiting for your library.",
+            None,
+            None,
+        );
+    }
+
+    let pending = snapshot
+        .libraries
+        .iter()
+        .filter(|library| !library.first_sync_completed)
+        .collect::<Vec<_>>();
+    if pending.is_empty() && first_sync_completion_proven(snapshot) {
+        return progress_stage(
+            "first_sync",
+            "Up to date",
+            FirstRunProgressStageState::Complete,
+            "Your files are up to date.",
+            None,
+            None,
+        );
+    }
+    // A durable completion marker records first-run history, but the current
+    // snapshot still has to be quiescent before this projection may call the
+    // stage complete. This also prevents a newer running/follow-up cycle from
+    // being hidden behind an old idle result.
+    let pending = if pending.is_empty() {
+        snapshot.libraries.iter().collect::<Vec<_>>()
+    } else {
+        pending
+    };
+    if snapshot.connection_state != DesktopControllerConnectionState::Connected
+        || snapshot.freshness != DesktopControllerFreshness::Fresh
+    {
+        return progress_stage(
+            "first_sync",
+            "First sync",
+            FirstRunProgressStageState::Waiting,
+            "Waiting for connection…",
+            None,
+            None,
+        );
+    }
+    if snapshot.sync_control_state == DesktopControllerSyncControlState::PausedByUser {
+        return progress_stage(
+            "first_sync",
+            "First sync",
+            FirstRunProgressStageState::ActionRequired,
+            "Synchronization is paused.",
+            Some("resume_sync"),
+            Some("Resume synchronization"),
+        );
+    }
+    if pending.iter().any(|library| {
+        matches!(
+            library.auth_state,
+            DesktopControllerAuthState::Missing
+                | DesktopControllerAuthState::Blocked
+                | DesktopControllerAuthState::Revoked
+        ) || library.runtime_state == DesktopControllerRuntimeState::AuthBlocked
+    }) {
+        return progress_stage(
+            "first_sync",
+            "First sync",
+            FirstRunProgressStageState::ActionRequired,
+            "Sign in again to continue.",
+            Some("sign_in"),
+            Some("Sign in to continue"),
+        );
+    }
+    if pending
+        .iter()
+        .any(|library| library.root_state == DesktopControllerRootState::Unavailable)
+    {
+        return progress_stage(
+            "first_sync",
+            "First sync",
+            FirstRunProgressStageState::ActionRequired,
+            "The local folder is unavailable.",
+            Some("check_again"),
+            Some("Check folder"),
+        );
+    }
+    if pending
+        .iter()
+        .any(|library| library.root_state == DesktopControllerRootState::Recovering)
+    {
+        return progress_stage(
+            "first_sync",
+            "First sync",
+            FirstRunProgressStageState::Waiting,
+            "Checking the local folder…",
+            None,
+            None,
+        );
+    }
+    if pending
+        .iter()
+        .any(|library| library.conflict_state == DesktopControllerConflictState::Required)
+    {
+        return progress_stage(
+            "first_sync",
+            "First sync",
+            FirstRunProgressStageState::ActionRequired,
+            "Resolve the conflict to continue.",
+            Some("resolve_conflict"),
+            Some("Resolve the conflict"),
+        );
+    }
+    if pending.iter().any(|library| {
+        matches!(
+            library.runtime_state,
+            DesktopControllerRuntimeState::Faulted | DesktopControllerRuntimeState::Stopped
+        ) || matches!(
+            library.last_outcome,
+            Some(
+                DesktopControllerSyncOutcome::RecoveryBlocked
+                    | DesktopControllerSyncOutcome::FatalLocal
+                    | DesktopControllerSyncOutcome::Panicked
+            )
+        )
+    }) {
+        return progress_stage(
+            "first_sync",
+            "First sync",
+            FirstRunProgressStageState::ActionRequired,
+            "Synchronization needs attention.",
+            Some("check_again"),
+            Some("Check sync status"),
+        );
+    }
+    if pending.iter().any(|library| {
+        library.runtime_state == DesktopControllerRuntimeState::Running
+            || library.last_outcome == Some(DesktopControllerSyncOutcome::Progress)
+    }) {
+        return progress_stage(
+            "first_sync",
+            "Synchronizing",
+            FirstRunProgressStageState::Active,
+            "Syncing your files…",
+            None,
+            None,
+        );
+    }
+    if pending.iter().any(|library| {
+        matches!(
+            library.runtime_state,
+            DesktopControllerRuntimeState::Scheduled | DesktopControllerRuntimeState::BackingOff
+        ) || matches!(
+            library.last_outcome,
+            Some(
+                DesktopControllerSyncOutcome::Offline
+                    | DesktopControllerSyncOutcome::ServerTransient
+                    | DesktopControllerSyncOutcome::RateLimited
+            )
+        )
+    }) {
+        return progress_stage(
+            "first_sync",
+            "First sync",
+            FirstRunProgressStageState::Waiting,
+            "Waiting to synchronize…",
+            None,
+            None,
+        );
+    }
+    progress_stage(
+        "first_sync",
+        "First sync",
+        FirstRunProgressStageState::Waiting,
+        "Checking sync status…",
+        None,
+        None,
+    )
+}
+
+fn first_sync_completion_proven(snapshot: &DesktopControllerSnapshot) -> bool {
+    snapshot.connection_state == DesktopControllerConnectionState::Connected
+        && snapshot.freshness == DesktopControllerFreshness::Fresh
+        && snapshot.profile_authenticated
+        && snapshot.process.is_some_and(|process| {
+            matches!(process.state, synveil_client::DesktopProcessStatus::Running)
+                && process.control_ready
+        })
+        && snapshot.sync_control_state == DesktopControllerSyncControlState::Running
+        && !snapshot.libraries.is_empty()
+        && snapshot.libraries.iter().all(|library| {
+            library.first_sync_completed
+                && library.runtime_state == DesktopControllerRuntimeState::Idle
+                && library.last_outcome == Some(DesktopControllerSyncOutcome::Idle)
+                && !library.wake_pending
+                && library.root_state == DesktopControllerRootState::Available
+                && library.auth_state == DesktopControllerAuthState::Ready
+                && library.conflict_state == DesktopControllerConflictState::Clear
+        })
+}
+
+/// Defensive controller-side ordering guard for GUI updates. A newer
+/// connection generation always wins; within one generation revisions cannot
+/// move backwards. Freshness changes at the same revision are allowed because
+/// they represent a current connection transition rather than library data.
+#[must_use]
+pub fn snapshot_is_acceptable(current: &UiSnapshot, incoming: &UiSnapshot) -> bool {
+    incoming.connection_generation > current.connection_generation
+        || (incoming.connection_generation == current.connection_generation
+            && incoming.revision >= current.revision)
 }
 
 /// Preserve a stable selection across an atomic snapshot replacement, or
@@ -685,6 +1117,7 @@ fn map_library(
         next_due_ms: status.next_due_ms,
         wake_pending: status.wake_pending,
         transient_failures: status.transient_failures,
+        first_sync_completed: status.first_sync_completed,
         needs_attention,
         can_sync,
     }
@@ -1187,6 +1620,7 @@ mod tests {
             last_outcome: Some(DesktopControllerSyncOutcome::Idle),
             wake_pending: false,
             transient_failures: 0,
+            first_sync_completed: true,
         }
     }
 
@@ -1219,6 +1653,25 @@ mod tests {
         snapshot.profile_configured = true;
         snapshot.profile_authenticated = true;
         snapshot
+    }
+
+    fn progress_stage_for<'a>(
+        progress: &'a FirstRunProgress,
+        id: &str,
+    ) -> &'a FirstRunProgressStage {
+        progress
+            .stages
+            .iter()
+            .find(|stage| stage.id == id)
+            .expect("progress stage")
+    }
+
+    fn first_sync_stage_for(snapshot: &DesktopControllerSnapshot) -> FirstRunProgressStage {
+        first_sync_stage(
+            snapshot,
+            !snapshot.libraries.is_empty(),
+            snapshot.profile_authenticated,
+        )
     }
 
     #[test]
@@ -1395,31 +1848,101 @@ mod tests {
     #[test]
     fn library_setup_results_have_bounded_copy_and_one_safe_action() {
         let cases = [
-            (DesktopControllerCommandResult::LibraryConfigured, "checking", "wait"),
-            (DesktopControllerCommandResult::LibraryAlreadyConfigured, "checking", "wait"),
-            (DesktopControllerCommandResult::InvalidLibraryName, "invalid_name", "edit_name"),
-            (DesktopControllerCommandResult::InvalidLibraryRoot, "invalid_folder", "choose_folder"),
-            (DesktopControllerCommandResult::AuthenticationRequired, "sign_in_required", "sign_in"),
-            (DesktopControllerCommandResult::ServerIdentityConflict, "setup_needs_review", "check_connection"),
-            (DesktopControllerCommandResult::NetworkUnavailable, "connection_problem", "retry_setup"),
-            (DesktopControllerCommandResult::ServerUnavailable, "connection_problem", "retry_setup"),
-            (DesktopControllerCommandResult::Timeout, "connection_problem", "retry_setup"),
-            (DesktopControllerCommandResult::TlsFailure, "connection_problem", "retry_setup"),
-            (DesktopControllerCommandResult::IncompatibleServer, "server_incompatible", "check_server"),
-            (DesktopControllerCommandResult::PersistenceFailure, "setup_incomplete", "resume_setup"),
+            (
+                DesktopControllerCommandResult::LibraryConfigured,
+                "checking",
+                "wait",
+            ),
+            (
+                DesktopControllerCommandResult::LibraryAlreadyConfigured,
+                "checking",
+                "wait",
+            ),
+            (
+                DesktopControllerCommandResult::InvalidLibraryName,
+                "invalid_name",
+                "edit_name",
+            ),
+            (
+                DesktopControllerCommandResult::InvalidLibraryRoot,
+                "invalid_folder",
+                "choose_folder",
+            ),
+            (
+                DesktopControllerCommandResult::AuthenticationRequired,
+                "sign_in_required",
+                "sign_in",
+            ),
+            (
+                DesktopControllerCommandResult::ServerIdentityConflict,
+                "setup_needs_review",
+                "check_connection",
+            ),
+            (
+                DesktopControllerCommandResult::NetworkUnavailable,
+                "connection_problem",
+                "retry_setup",
+            ),
+            (
+                DesktopControllerCommandResult::ServerUnavailable,
+                "connection_problem",
+                "retry_setup",
+            ),
+            (
+                DesktopControllerCommandResult::Timeout,
+                "connection_problem",
+                "retry_setup",
+            ),
+            (
+                DesktopControllerCommandResult::TlsFailure,
+                "connection_problem",
+                "retry_setup",
+            ),
+            (
+                DesktopControllerCommandResult::IncompatibleServer,
+                "server_incompatible",
+                "check_server",
+            ),
+            (
+                DesktopControllerCommandResult::PersistenceFailure,
+                "setup_incomplete",
+                "resume_setup",
+            ),
             (DesktopControllerCommandResult::Busy, "busy", "wait"),
-            (DesktopControllerCommandResult::OutcomeUnknown, "checking", "wait"),
-            (DesktopControllerCommandResult::Unavailable, "client_unavailable", "start_client"),
-            (DesktopControllerCommandResult::ProtocolError, "client_unavailable", "start_client"),
+            (
+                DesktopControllerCommandResult::OutcomeUnknown,
+                "checking",
+                "wait",
+            ),
+            (
+                DesktopControllerCommandResult::Unavailable,
+                "client_unavailable",
+                "start_client",
+            ),
+            (
+                DesktopControllerCommandResult::ProtocolError,
+                "client_unavailable",
+                "start_client",
+            ),
         ];
         for (result, code, action) in cases {
             let presented = library_setup_presentation(result);
             assert_eq!(presented.code, code);
             assert_eq!(presented.action, action);
             assert!(!presented.message.is_empty());
-            for forbidden in ["replica", "root node", "UUID", "manifest", "IPC", ".synveil"] {
+            for forbidden in [
+                "replica",
+                "root node",
+                "UUID",
+                "manifest",
+                "IPC",
+                ".synveil",
+            ] {
                 assert!(
-                    !presented.message.to_ascii_lowercase().contains(&forbidden.to_ascii_lowercase()),
+                    !presented
+                        .message
+                        .to_ascii_lowercase()
+                        .contains(&forbidden.to_ascii_lowercase()),
                     "{} exposed {forbidden}",
                     presented.message
                 );
@@ -1997,5 +2520,255 @@ mod tests {
             welcome_destination(true, true, HostSetupState::NotStarted),
             WelcomeDestination::ExistingClient
         );
+    }
+
+    #[test]
+    fn p041_fresh_setup_evidence_completes_only_setup_stages() {
+        let ui = map_snapshot(&authenticated_snapshot(vec![status(library_id(41))]));
+        for id in ["app_ready", "server_ready", "signed_in", "library_ready"] {
+            assert_eq!(
+                progress_stage_for(&ui.first_run_progress, id).state,
+                FirstRunProgressStageState::Complete,
+                "{id}"
+            );
+        }
+        assert!(!ui.first_run_progress.visible);
+    }
+
+    #[test]
+    fn p041_welcome_and_connection_states_do_not_complete_later_stages() {
+        let welcome = map_snapshot(&fresh_snapshot(Vec::new()));
+        assert_eq!(
+            progress_stage_for(&welcome.first_run_progress, "server_ready").state,
+            FirstRunProgressStageState::ActionRequired
+        );
+        assert_eq!(
+            progress_stage_for(&welcome.first_run_progress, "signed_in").state,
+            FirstRunProgressStageState::Pending
+        );
+        assert_eq!(
+            progress_stage_for(&welcome.first_run_progress, "library_ready").state,
+            FirstRunProgressStageState::Pending
+        );
+
+        let mut connecting = DesktopControllerSnapshot::default();
+        connecting.connection_state = DesktopControllerConnectionState::Connecting;
+        connecting.freshness = DesktopControllerFreshness::Unavailable;
+        let progress = first_run_progress(&connecting);
+        assert_eq!(
+            progress_stage_for(&progress, "server_ready").state,
+            FirstRunProgressStageState::Pending
+        );
+    }
+
+    #[test]
+    fn p041_authentication_and_library_setup_are_action_required() {
+        let mut unauthenticated = fresh_snapshot(Vec::new());
+        unauthenticated.profile_configured = true;
+        let progress = first_run_progress(&unauthenticated);
+        assert_eq!(
+            progress_stage_for(&progress, "signed_in").state,
+            FirstRunProgressStageState::ActionRequired
+        );
+        assert_eq!(
+            progress_stage_for(&progress, "signed_in").action,
+            Some("sign_in")
+        );
+
+        let progress = first_run_progress(&authenticated_snapshot(Vec::new()));
+        assert_eq!(
+            progress_stage_for(&progress, "library_ready").state,
+            FirstRunProgressStageState::ActionRequired
+        );
+        assert_eq!(
+            progress_stage_for(&progress, "library_ready").action,
+            Some("resume_setup")
+        );
+    }
+
+    #[test]
+    fn p041_library_confirmation_does_not_complete_first_sync() {
+        let mut item = status(library_id(42));
+        item.first_sync_completed = false;
+        let progress = first_run_progress(&authenticated_snapshot(vec![item]));
+        assert_eq!(
+            progress_stage_for(&progress, "library_ready").state,
+            FirstRunProgressStageState::Complete
+        );
+        assert_ne!(
+            progress_stage_for(&progress, "first_sync").state,
+            FirstRunProgressStageState::Complete
+        );
+        assert!(!progress.status.contains('%'));
+    }
+
+    #[test]
+    fn p041_running_scheduled_and_progress_states_are_not_completion() {
+        let mut scheduled = status(library_id(43));
+        scheduled.first_sync_completed = false;
+        scheduled.runtime_state = DesktopControllerRuntimeState::Scheduled;
+        assert_eq!(
+            first_sync_stage_for(&authenticated_snapshot(vec![scheduled])).state,
+            FirstRunProgressStageState::Waiting
+        );
+
+        let mut running = status(library_id(44));
+        running.first_sync_completed = false;
+        running.runtime_state = DesktopControllerRuntimeState::Running;
+        let stage = first_sync_stage_for(&authenticated_snapshot(vec![running]));
+        assert_eq!(stage.state, FirstRunProgressStageState::Active);
+        assert_eq!(stage.detail, "Syncing your files…");
+
+        let mut progress = status(library_id(45));
+        progress.first_sync_completed = false;
+        progress.last_outcome = Some(DesktopControllerSyncOutcome::Progress);
+        let stage = first_sync_stage_for(&authenticated_snapshot(vec![progress]));
+        assert_eq!(stage.state, FirstRunProgressStageState::Active);
+        assert_ne!(stage.state, FirstRunProgressStageState::Complete);
+    }
+
+    #[test]
+    fn p041_idle_requires_quiescent_evidence_and_no_follow_up_wake() {
+        let complete = authenticated_snapshot(vec![status(library_id(46))]);
+        assert!(first_sync_completion_proven(&complete));
+        assert_eq!(
+            first_sync_stage_for(&complete).state,
+            FirstRunProgressStageState::Complete
+        );
+
+        let mut follow_up = complete.clone();
+        follow_up.libraries[0].wake_pending = true;
+        assert!(!first_sync_completion_proven(&follow_up));
+        assert_ne!(
+            first_sync_stage_for(&follow_up).state,
+            FirstRunProgressStageState::Complete
+        );
+
+        let mut more_work = complete.clone();
+        more_work.libraries[0].runtime_state = DesktopControllerRuntimeState::Scheduled;
+        more_work.libraries[0].last_outcome = Some(DesktopControllerSyncOutcome::Progress);
+        assert!(!first_sync_completion_proven(&more_work));
+    }
+
+    #[test]
+    fn p041_stale_or_disconnected_state_waits_without_advancing_sync() {
+        let mut stale = authenticated_snapshot(vec![status(library_id(47))]);
+        stale.libraries[0].first_sync_completed = false;
+        stale.connection_state = DesktopControllerConnectionState::Reconnecting;
+        stale.freshness = DesktopControllerFreshness::Stale;
+        assert_eq!(
+            first_sync_stage_for(&stale).state,
+            FirstRunProgressStageState::Waiting
+        );
+        assert!(!first_sync_completion_proven(&stale));
+
+        stale.connection_state = DesktopControllerConnectionState::Disconnected;
+        stale.freshness = DesktopControllerFreshness::Unavailable;
+        assert_eq!(
+            first_sync_stage_for(&stale).detail,
+            "Waiting for connection…"
+        );
+    }
+
+    #[test]
+    fn p041_waiting_and_action_required_sync_states_remain_distinct() {
+        let mut backoff = status(library_id(48));
+        backoff.first_sync_completed = false;
+        backoff.runtime_state = DesktopControllerRuntimeState::BackingOff;
+        backoff.last_outcome = Some(DesktopControllerSyncOutcome::ServerTransient);
+        assert_eq!(
+            first_sync_stage_for(&authenticated_snapshot(vec![backoff])).state,
+            FirstRunProgressStageState::Waiting
+        );
+
+        let mut auth = status(library_id(49));
+        auth.first_sync_completed = false;
+        auth.auth_state = DesktopControllerAuthState::Missing;
+        auth.runtime_state = DesktopControllerRuntimeState::AuthBlocked;
+        let auth_stage = first_sync_stage_for(&authenticated_snapshot(vec![auth]));
+        assert_eq!(auth_stage.state, FirstRunProgressStageState::ActionRequired);
+        assert_eq!(auth_stage.action, Some("sign_in"));
+
+        let mut conflict = status(library_id(50));
+        conflict.first_sync_completed = false;
+        conflict.conflict_state = DesktopControllerConflictState::Required;
+        let conflict_stage = first_sync_stage_for(&authenticated_snapshot(vec![conflict]));
+        assert_eq!(
+            conflict_stage.state,
+            FirstRunProgressStageState::ActionRequired
+        );
+        assert_eq!(conflict_stage.action, Some("resolve_conflict"));
+
+        let mut paused = authenticated_snapshot(vec![status(library_id(51))]);
+        paused.libraries[0].first_sync_completed = false;
+        paused.sync_control_state = DesktopControllerSyncControlState::PausedByUser;
+        let paused_stage = first_sync_stage_for(&paused);
+        assert_eq!(
+            paused_stage.state,
+            FirstRunProgressStageState::ActionRequired
+        );
+        assert_eq!(paused_stage.action, Some("resume_sync"));
+    }
+
+    #[test]
+    fn p041_root_and_fatal_states_never_look_synced() {
+        let mut root = status(library_id(52));
+        root.first_sync_completed = false;
+        root.root_state = DesktopControllerRootState::Unavailable;
+        root.runtime_state = DesktopControllerRuntimeState::RootBlocked;
+        let root_stage = first_sync_stage_for(&authenticated_snapshot(vec![root]));
+        assert_eq!(root_stage.state, FirstRunProgressStageState::ActionRequired);
+        assert_eq!(root_stage.action, Some("check_again"));
+
+        let mut fatal = status(library_id(53));
+        fatal.first_sync_completed = false;
+        fatal.runtime_state = DesktopControllerRuntimeState::Faulted;
+        fatal.last_outcome = Some(DesktopControllerSyncOutcome::FatalLocal);
+        let fatal_stage = first_sync_stage_for(&authenticated_snapshot(vec![fatal]));
+        assert_eq!(
+            fatal_stage.state,
+            FirstRunProgressStageState::ActionRequired
+        );
+        assert_ne!(fatal_stage.state, FirstRunProgressStageState::Complete);
+    }
+
+    #[test]
+    fn p041_ordering_guard_rejects_old_revision_and_generation() {
+        let current = map_snapshot(&authenticated_snapshot(vec![status(library_id(54))]));
+        let mut older_revision = current.clone();
+        older_revision.revision = current.revision.saturating_sub(1);
+        assert!(!snapshot_is_acceptable(&current, &older_revision));
+
+        let mut older_generation = current.clone();
+        older_generation.connection_generation = current.connection_generation.saturating_sub(1);
+        older_generation.revision = current.revision.saturating_add(100);
+        assert!(!snapshot_is_acceptable(&current, &older_generation));
+        assert!(snapshot_is_acceptable(&current, &current));
+    }
+
+    #[test]
+    fn p041_stage_codes_and_copy_are_bounded_and_accessible() {
+        let progress = first_run_progress(&authenticated_snapshot(vec![status(library_id(55))]));
+        let ids = progress
+            .stages
+            .iter()
+            .map(|stage| stage.id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            vec![
+                "app_ready",
+                "server_ready",
+                "signed_in",
+                "library_ready",
+                "first_sync"
+            ]
+        );
+        assert!(progress.stages.iter().all(|stage| {
+            !stage.title.contains("rebaseline")
+                && !stage.detail.contains("checkpoint")
+                && !stage.detail.contains("runtime")
+                && !stage.detail.contains("SQLite")
+        }));
     }
 }

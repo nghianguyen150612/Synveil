@@ -434,6 +434,14 @@ open.
 Show truthful, meaningful progress from installation through setup and first
 synchronization, distinguishing completed stages and user action required.
 
+**Implemented (Prompt041 source):** the desktop now composes five bounded
+Rust-owned stages from the existing process, profile, authentication, library,
+controller, and sync-runtime evidence. It reports **Synveil ready** rather than
+fabricating native installer completion, distinguishes waiting from action
+required, and completes first-sync progress only after true idle/quiescent
+evidence with no pending follow-up. Existing configured users remain on normal
+routing; P042 repair and recovery remains open.
+
 ### P042 — Repair and Recovery UX
 
 Provide user-facing **Repair Synveil**, **Reconnect server**, **Restore missing
@@ -441,7 +449,7 @@ folder** and **Restart background service** actions where supported, without
 exposing internal mechanisms. Missing local roots never imply remote deletion;
 unknown outcomes are reconciled before retry.
 
-Checkpoint: **V0.2 FIRST RUN EXPERIENCE READY**
+The Phase-F checkpoint remains reserved for completion of P042.
 
 ## PHASE G — RELEASE PRODUCTIZATION (P043–048)
 

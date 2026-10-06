@@ -382,6 +382,7 @@ pub struct SyncRuntimeLibraryStatus {
     last_outcome: Option<SyncRuntimeOutcome>,
     wake_pending: bool,
     transient_failures: u32,
+    first_sync_completed: bool,
 }
 
 impl SyncRuntimeLibraryStatus {
@@ -415,6 +416,11 @@ impl SyncRuntimeLibraryStatus {
     #[must_use]
     pub const fn transient_failures(self) -> u32 {
         self.transient_failures
+    }
+
+    #[must_use]
+    pub const fn first_sync_completed(self) -> bool {
+        self.first_sync_completed
     }
 }
 
@@ -501,6 +507,21 @@ pub trait SyncCycleExecutor: Send + Sync {
     fn scope(&self) -> ReplicaScope;
 
     async fn run_once(&self, observed_at: Timestamp) -> Result<SyncCycleResult, ClientSyncError>;
+
+    /// Called only after the supervisor has observed a true idle result and
+    /// confirmed that no follow-up wake remains pending. Production desktop
+    /// composition uses this hook to persist its bounded first-sync proof;
+    /// test executors and other embeddings have no extra work to do.
+    async fn record_quiescent(&self) -> Result<(), ClientSyncError> {
+        Ok(())
+    }
+
+    /// Revoke a quiescent proof if a follow-up wake arrived during the
+    /// asynchronous evidence write. Production composition uses this to keep
+    /// the durable marker conservative across that narrow race window.
+    async fn revoke_quiescent(&self) -> Result<(), ClientSyncError> {
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -583,6 +604,17 @@ impl SyncRuntime {
         &self,
         executor: Arc<dyn SyncCycleExecutor>,
     ) -> Result<SyncRuntimeRegistration, SyncRuntimeError> {
+        self.register_executor_with_first_sync(executor, true)
+    }
+
+    /// Register a library with its durable first-synchronization evidence.
+    /// The runtime advances this bit only after a cycle classified as true
+    /// idle; scheduling or partial progress is never completion proof.
+    pub fn register_executor_with_first_sync(
+        &self,
+        executor: Arc<dyn SyncCycleExecutor>,
+        first_sync_completed: bool,
+    ) -> Result<SyncRuntimeRegistration, SyncRuntimeError> {
         let lifecycle = lock_unpoisoned(&self.shared.lifecycle);
         if lifecycle.phase == LifecyclePhase::Stopping {
             return Err(SyncRuntimeError::Stopping);
@@ -598,7 +630,11 @@ impl SyncRuntime {
         }
         libraries.insert(
             executor.scope().library_id(),
-            RuntimeLibraryEntry::new(executor, started.then(Instant::now)),
+            RuntimeLibraryEntry::with_first_sync(
+                executor,
+                started.then(Instant::now),
+                first_sync_completed,
+            ),
         );
         drop(libraries);
         drop(lifecycle);
@@ -1132,8 +1168,13 @@ struct RuntimeLibraryEntry {
 }
 
 impl RuntimeLibraryEntry {
-    fn new(runner: Arc<dyn SyncCycleExecutor>, start_at: Option<Instant>) -> Self {
+    fn with_first_sync(
+        runner: Arc<dyn SyncCycleExecutor>,
+        start_at: Option<Instant>,
+        first_sync_completed: bool,
+    ) -> Self {
         let mut state = RuntimeLibraryState::new();
+        state.first_sync_completed = first_sync_completed;
         if let Some(start_at) = start_at {
             state.reset_for_start(start_at);
         }
@@ -1152,6 +1193,7 @@ struct RuntimeLibraryState {
     pending_wake: Option<SyncRuntimeWakeReason>,
     transient_failures: u32,
     last_outcome: Option<SyncRuntimeOutcome>,
+    first_sync_completed: bool,
 }
 
 impl RuntimeLibraryState {
@@ -1163,6 +1205,7 @@ impl RuntimeLibraryState {
             pending_wake: None,
             transient_failures: 0,
             last_outcome: None,
+            first_sync_completed: true,
         }
     }
 
@@ -1186,6 +1229,7 @@ impl RuntimeLibraryState {
             last_outcome: self.last_outcome,
             wake_pending: self.pending_wake.is_some(),
             transient_failures: self.transient_failures,
+            first_sync_completed: self.first_sync_completed,
         }
     }
 }
@@ -1214,7 +1258,7 @@ async fn supervisor_loop(shared: Arc<RuntimeShared>) {
                     break;
                 };
                 active -= 1;
-                finish_cycle(&shared, completion, true);
+                finish_cycle(&shared, completion, true).await;
             }
             break;
         }
@@ -1240,7 +1284,7 @@ async fn supervisor_loop(shared: Arc<RuntimeShared>) {
             completion = completion_receiver.recv(), if active > 0 => {
                 if let Some(completion) = completion {
                     active -= 1;
-                    finish_cycle(&shared, completion, false);
+                    finish_cycle(&shared, completion, false).await;
                 }
             }
             _ = shared.wake_notify.notified() => {}
@@ -1353,13 +1397,18 @@ fn earliest_due(shared: &Arc<RuntimeShared>) -> Option<Instant> {
         .min()
 }
 
-fn finish_cycle(shared: &Arc<RuntimeShared>, completion: CycleCompletion, stopping: bool) {
+async fn finish_cycle(shared: &Arc<RuntimeShared>, completion: CycleCompletion, stopping: bool) {
+    let true_idle = matches!(
+        &completion.execution,
+        CycleExecution::Returned(Ok(result)) if result.is_idle()
+    );
     let outcome = classify_execution(&completion.execution);
     let now = Instant::now();
     let mut backoff = None;
     let mut auth_blocked = false;
     let mut faulted = false;
     let mut remove = false;
+    let mut quiescent_runner = None;
 
     {
         let mut libraries = lock_unpoisoned(&shared.libraries);
@@ -1375,6 +1424,9 @@ fn finish_cycle(shared: &Arc<RuntimeShared>, completion: CycleCompletion, stoppi
             remove = !entry.registered;
         } else {
             let pending = entry.state.pending_wake.take();
+            if true_idle && pending.is_none() {
+                quiescent_runner = Some(Arc::clone(&entry.runner));
+            }
             let decision =
                 schedule_after_cycle(&mut entry.state, shared.config, outcome, pending, now);
             backoff = decision.backoff;
@@ -1383,6 +1435,34 @@ fn finish_cycle(shared: &Arc<RuntimeShared>, completion: CycleCompletion, stoppi
         }
         if remove {
             libraries.remove(&completion.library_id);
+        }
+    }
+
+    if let Some(runner) = quiescent_runner {
+        if runner.record_quiescent().await.is_ok() {
+            let follow_up_pending = {
+                let libraries = lock_unpoisoned(&shared.libraries);
+                libraries.get(&completion.library_id).is_some_and(|entry| {
+                    entry.state.pending_wake.is_some()
+                        || entry.state.phase == SyncRuntimeLibraryPhase::Scheduled
+                })
+            };
+            if follow_up_pending {
+                let _ = runner.revoke_quiescent().await;
+            }
+            let mut libraries = lock_unpoisoned(&shared.libraries);
+            if let Some(entry) = libraries.get_mut(&completion.library_id) {
+                entry.state.first_sync_completed = !follow_up_pending;
+            }
+        } else {
+            let mut libraries = lock_unpoisoned(&shared.libraries);
+            if let Some(entry) = libraries.get_mut(&completion.library_id) {
+                entry.state.first_sync_completed = false;
+                entry.state.phase = SyncRuntimeLibraryPhase::Faulted;
+                entry.state.next_due = None;
+                entry.state.last_outcome = Some(SyncRuntimeOutcome::FatalLocal);
+            }
+            faulted = true;
         }
     }
 
@@ -1826,6 +1906,7 @@ mod tests {
         max_active: Arc<AtomicUsize>,
         global_active: Arc<AtomicUsize>,
         global_max_active: Arc<AtomicUsize>,
+        quiescent: AtomicUsize,
         started: Notify,
         release: Notify,
         hold: AtomicBool,
@@ -1858,6 +1939,7 @@ mod tests {
                 max_active: Arc::new(AtomicUsize::new(0)),
                 global_active,
                 global_max_active,
+                quiescent: AtomicUsize::new(0),
                 started: Notify::new(),
                 release: Notify::new(),
                 hold: AtomicBool::new(false),
@@ -1870,6 +1952,10 @@ mod tests {
 
         fn max_active(&self) -> usize {
             self.max_active.load(Ordering::SeqCst)
+        }
+
+        fn quiescent(&self) -> usize {
+            self.quiescent.load(Ordering::SeqCst)
         }
 
         fn release(&self) {
@@ -1907,6 +1993,11 @@ mod tests {
             self.active.fetch_sub(1, Ordering::SeqCst);
             self.global_active.fetch_sub(1, Ordering::SeqCst);
             result
+        }
+
+        async fn record_quiescent(&self) -> Result<(), ClientSyncError> {
+            self.quiescent.fetch_add(1, Ordering::SeqCst);
+            Ok(())
         }
     }
 
@@ -2549,6 +2640,67 @@ mod tests {
         settle().await;
         assert_eq!(executor.calls(), 2);
         handle.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn first_sync_completion_requires_true_idle_after_progress() {
+        let executor = FakeExecutor::new(scope(), vec![Ok(progress_result()), Ok(idle_result())]);
+        let library_id = executor.scope.library_id();
+        let runtime = SyncRuntime::new(config());
+        runtime
+            .register_executor_with_first_sync(executor.clone(), false)
+            .expect("register first-sync fixture");
+        let handle = runtime.start().expect("start first-sync fixture");
+
+        settle().await;
+        let status = handle.status(library_id).expect("progress status");
+        assert_eq!(status.last_outcome(), Some(SyncRuntimeOutcome::Progress));
+        assert!(!status.first_sync_completed());
+        assert_eq!(executor.quiescent(), 0);
+
+        tokio::time::advance(FAIR_FOLLOW_UP_DELAY).await;
+        settle().await;
+        let status = handle.status(library_id).expect("idle status");
+        assert_eq!(status.last_outcome(), Some(SyncRuntimeOutcome::Idle));
+        assert!(status.first_sync_completed());
+        assert_eq!(executor.quiescent(), 1);
+        handle.shutdown().await.expect("first-sync shutdown");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn first_sync_completion_waits_for_a_pending_follow_up_wake() {
+        let executor = FakeExecutor::new(scope(), vec![Ok(idle_result()), Ok(idle_result())]);
+        executor.hold.store(true, Ordering::SeqCst);
+        let library_id = executor.scope.library_id();
+        let runtime = SyncRuntime::new(config());
+        runtime
+            .register_executor_with_first_sync(executor.clone(), false)
+            .expect("register wake fixture");
+        let handle = runtime.start().expect("start wake fixture");
+        settle().await;
+        assert_eq!(executor.calls(), 1);
+        assert_eq!(executor.quiescent(), 0);
+        assert_eq!(
+            handle.wake_library_status(library_id, SyncRuntimeWakeReason::Manual),
+            SyncRuntimeWakeResult::AlreadyRunningFollowupRecorded
+        );
+        executor.release();
+        settle().await;
+        let status = handle.status(library_id).expect("follow-up status");
+        assert!(!status.first_sync_completed());
+        assert_eq!(status.phase(), SyncRuntimeLibraryPhase::Scheduled);
+        assert_eq!(executor.quiescent(), 0);
+
+        tokio::time::advance(FAIR_FOLLOW_UP_DELAY).await;
+        settle().await;
+        assert!(
+            handle
+                .status(library_id)
+                .expect("final status")
+                .first_sync_completed()
+        );
+        assert_eq!(executor.quiescent(), 1);
+        handle.shutdown().await.expect("wake fixture shutdown");
     }
 
     #[tokio::test(start_paused = true)]

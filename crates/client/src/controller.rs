@@ -415,6 +415,7 @@ pub struct DesktopControllerLibraryStatus {
     pub last_outcome: Option<DesktopControllerSyncOutcome>,
     pub wake_pending: bool,
     pub transient_failures: u32,
+    pub first_sync_completed: bool,
 }
 
 /// One coherent, latest-state presentation snapshot.  `revision` advances only
@@ -2937,6 +2938,7 @@ fn map_library_status(status: ControlLibraryStatus) -> DesktopControllerLibraryS
         last_outcome: status.last_outcome.map(map_sync_outcome),
         wake_pending: status.wake_pending,
         transient_failures: status.transient_failures,
+        first_sync_completed: status.first_sync_completed,
     }
 }
 
@@ -3028,6 +3030,7 @@ mod tests {
             last_outcome,
             wake_pending: false,
             transient_failures: 0,
+            first_sync_completed: true,
         }
     }
 
@@ -3126,6 +3129,7 @@ mod tests {
             last_outcome: None,
             wake_pending: false,
             transient_failures: 0,
+            first_sync_completed: true,
         }];
         let item = ControlAttentionItem {
             attention_id: conflict_id.to_string(),
@@ -3406,6 +3410,7 @@ mod tests {
                 last_outcome: None,
                 wake_pending: false,
                 transient_failures: 0,
+                first_sync_completed: true,
             }],
             libraries_truncated: false,
             attention: DesktopControllerAttentionSnapshot::default(),
@@ -3977,6 +3982,7 @@ mod tests {
                     last_outcome: Some(DesktopControllerSyncOutcome::Progress),
                     wake_pending: true,
                     transient_failures: 0,
+                    first_sync_completed: false,
                 }],
                 libraries_truncated: false,
                 attention: DesktopControllerAttentionSnapshot::default(),

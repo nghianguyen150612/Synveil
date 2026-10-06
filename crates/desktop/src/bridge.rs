@@ -108,6 +108,9 @@ pub mod ffi {
         #[qproperty(bool, attention_items_truncated)]
         #[qproperty(i32, root_unavailable_count)]
         #[qproperty(bool, libraries_truncated)]
+        #[qproperty(bool, first_run_progress_visible)]
+        #[qproperty(QString, first_run_progress_status)]
+        #[qproperty(QVariant, first_run_progress_stages)]
         #[qproperty(QString, selected_library_id)]
         #[qproperty(QString, selected_library_label)]
         #[qproperty(QString, selected_runtime_label)]
@@ -338,6 +341,9 @@ pub struct DesktopUiBridgeRust {
     pub(crate) attention_items_truncated: bool,
     pub(crate) root_unavailable_count: i32,
     pub(crate) libraries_truncated: bool,
+    pub(crate) first_run_progress_visible: bool,
+    pub(crate) first_run_progress_status: QString,
+    pub(crate) first_run_progress_stages: QVariant,
     pub(crate) selected_library_id: QString,
     pub(crate) selected_library_label: QString,
     pub(crate) selected_runtime_label: QString,
@@ -523,6 +529,9 @@ impl Default for DesktopUiBridgeRust {
             attention_items_truncated: false,
             root_unavailable_count: 0,
             libraries_truncated: false,
+            first_run_progress_visible: false,
+            first_run_progress_status: QString::from("Checking sync status…"),
+            first_run_progress_stages: QVariant::default(),
             selected_library_id: QString::default(),
             selected_library_label: QString::default(),
             selected_runtime_label: QString::default(),
@@ -855,9 +864,8 @@ impl ffi::DesktopUiBridge {
                 .set_library_setup_feedback_action(QString::from("resume_setup"));
         } else {
             let controller = self.rust().controller.clone();
-            self.as_mut().set_recovery_feedback(QString::from(
-                "Checking the current library setup status…",
-            ));
+            self.as_mut()
+                .set_recovery_feedback(QString::from("Checking the current library setup status…"));
             controller.refresh_state();
         }
     }
@@ -946,9 +954,8 @@ impl ffi::DesktopUiBridge {
         let Some(display) = path.to_str().map(str::to_owned) else {
             self.as_mut().rust_mut().get_mut().library_setup_root = None;
             self.as_mut().set_library_setup_folder(QString::default());
-            self.as_mut().set_library_setup_feedback(QString::from(
-                "The selected folder is unavailable.",
-            ));
+            self.as_mut()
+                .set_library_setup_feedback(QString::from("The selected folder is unavailable."));
             self.as_mut()
                 .set_library_setup_feedback_code(QString::from("invalid_folder"));
             self.as_mut()
@@ -1077,6 +1084,9 @@ fn launch_result_label(result: BackgroundLaunchResult) -> &'static str {
 }
 
 fn apply_snapshot(mut object: Pin<&mut ffi::DesktopUiBridge>, snapshot: UiSnapshot) {
+    if !presentation::snapshot_is_acceptable(&object.rust().presented, &snapshot) {
+        return;
+    }
     if object.rust().live_test {
         eprintln!(
             "SYNVEIL-LIVE-UI STATE connection={} freshness={} process={} generation={} libraries={} root={} auth={} error={} can_sync={} tray={}",
@@ -1252,9 +1262,7 @@ fn apply_snapshot(mut object: Pin<&mut ffi::DesktopUiBridge>, snapshot: UiSnapsh
     }
     if !library_setup_required {
         object.as_mut().rust_mut().get_mut().library_setup_root = None;
-        object
-            .as_mut()
-            .set_library_setup_folder(QString::default());
+        object.as_mut().set_library_setup_folder(QString::default());
     }
     object
         .as_mut()
@@ -1304,6 +1312,17 @@ fn apply_snapshot(mut object: Pin<&mut ffi::DesktopUiBridge>, snapshot: UiSnapsh
     object
         .as_mut()
         .set_libraries_truncated(snapshot.libraries_truncated);
+    object
+        .as_mut()
+        .set_first_run_progress_visible(snapshot.first_run_progress.visible);
+    object
+        .as_mut()
+        .set_first_run_progress_status(QString::from(snapshot.first_run_progress.status));
+    object
+        .as_mut()
+        .set_first_run_progress_stages(to_qvariant_progress_list(
+            &snapshot.first_run_progress.stages,
+        ));
     update_selected_properties(object.as_mut());
     update_selected_attention_properties(object.as_mut());
     update_tray(object);
@@ -2422,7 +2441,11 @@ fn request_library_setup(mut object: Pin<&mut ffi::DesktopUiBridge>, name: Strin
         let result = controller.setup_library(name, root_path).await;
         let result = result.ok();
         let feedback = result.map_or_else(
-            || presentation::library_setup_presentation(DesktopControllerCommandResult::Unavailable),
+            || {
+                presentation::library_setup_presentation(
+                    DesktopControllerCommandResult::Unavailable,
+                )
+            },
             presentation::library_setup_presentation,
         );
         let awaiting_confirmation = result.is_some_and(|result| {
@@ -2714,8 +2737,26 @@ fn to_qvariant_list(libraries: &[UiLibrary]) -> QVariant {
         );
         insert_bool(&mut map, "wakePending", library.wake_pending);
         insert_u32(&mut map, "transientFailures", library.transient_failures);
+        insert_bool(&mut map, "firstSyncCompleted", library.first_sync_completed);
         insert_bool(&mut map, "needsAttention", library.needs_attention);
         insert_bool(&mut map, "canSync", library.can_sync);
+        list.append(QVariant::from(&map));
+    }
+    QVariant::from(&list)
+}
+
+fn to_qvariant_progress_list(stages: &[presentation::FirstRunProgressStage]) -> QVariant {
+    let mut list = QVariantList::default();
+    list.reserve(stages.len().try_into().unwrap_or(isize::MAX));
+    for stage in stages {
+        let mut map = QVariantMap::default();
+        insert_string(&mut map, "stageId", stage.id);
+        insert_string(&mut map, "title", stage.title);
+        insert_string(&mut map, "state", stage.state.code());
+        insert_string(&mut map, "stateLabel", stage.state.label());
+        insert_string(&mut map, "detail", stage.detail);
+        insert_string(&mut map, "action", stage.action.unwrap_or(""));
+        insert_string(&mut map, "actionLabel", stage.action_label.unwrap_or(""));
         list.append(QVariant::from(&map));
     }
     QVariant::from(&list)

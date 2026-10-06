@@ -102,7 +102,7 @@ async fn validate_objects(pool: &SqlitePool, version: i64) -> Result<(), ClientS
             return Err(ClientSyncError::LocalSchemaInvalid);
         }
     }
-    // Names and introduction versions come from migrations 0001-0007. These
+    // Names and introduction versions come from migrations 0001-0008. These
     // metadata-only probes do not scan content or manufacture missing tables.
     for &(introduced, kind, name) in REQUIRED_OBJECTS {
         if introduced > version {
@@ -254,6 +254,7 @@ const REQUIRED_COLUMNS: &[(i64, &str)] = &[
         "SELECT issue_id, library_id, node_id, server_sequence, bootstrap_generation, issue_kind, expected_state, created_at_ms, resolved_at_ms FROM local_apply_issues LIMIT 0",
     ),
     (2, "SELECT server_profile_id FROM replicas LIMIT 0"),
+    (8, "SELECT first_sync_completed FROM replicas LIMIT 0"),
     (
         2,
         "SELECT profile_id, canonical_base_url, transport_policy, display_label, created_at_ms, last_connected_at_ms FROM server_profiles LIMIT 0",
@@ -346,6 +347,7 @@ const REQUIRED_COLUMN_COUNTS: &[(i64, &str, i64)] = &[
     (2, "profile_device_enrollments", 6),
     (2, "profile_secret_cleanup", 3),
     (2, "replicas", 12),
+    (8, "replicas", 13),
     (2, "server_profiles", 6),
     (3, "observation_issues", 7),
     (3, "observation_nodes", 8),
