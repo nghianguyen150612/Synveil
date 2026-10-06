@@ -510,6 +510,7 @@ pub struct ControlLibraryStatus {
     pub last_outcome: Option<ControlSyncOutcome>,
     pub wake_pending: bool,
     pub transient_failures: u32,
+    pub first_sync_completed: bool,
 }
 
 /// Bounded library-list response. `truncated` makes the frame-size policy
@@ -1528,6 +1529,7 @@ impl DesktopControlHandle {
             last_outcome,
             wake_pending: status.wake_pending(),
             transient_failures: status.transient_failures(),
+            first_sync_completed: status.first_sync_completed(),
         })
     }
 }
@@ -3665,6 +3667,7 @@ mod tests {
             last_outcome: Some(ControlSyncOutcome::Idle),
             wake_pending: false,
             transient_failures: 0,
+            first_sync_completed: true,
         };
         let response = ControlResponse {
             request_id: 7,

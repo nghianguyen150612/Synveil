@@ -7,7 +7,8 @@ use sqlx::{
 };
 
 use crate::{
-    ClientSyncError, LocalStateConfig, LocalStateStore, test_support::remove_dir_all_bounded,
+    ClientSyncError, LOCAL_SCHEMA_VERSION, LocalStateConfig, LocalStateStore,
+    test_support::remove_dir_all_bounded,
 };
 
 async fn fixture(version: i64) -> (std::path::PathBuf, LocalStateConfig, SqlitePool) {
@@ -45,10 +46,10 @@ async fn schema(pool: &SqlitePool) -> Vec<(String, String, String)> {
 
 #[tokio::test]
 async fn every_frozen_prefix_upgrades_reopens_and_matches_fresh_schema() {
-    let (fresh_dir, fresh_config, fresh_pool) = fixture(7).await;
+    let (fresh_dir, fresh_config, fresh_pool) = fixture(LOCAL_SCHEMA_VERSION).await;
     let expected = schema(&fresh_pool).await;
     let migrator = sqlx::migrate!("./migrations");
-    assert_eq!(migrator.iter().count(), 7);
+    assert_eq!(migrator.iter().count(), LOCAL_SCHEMA_VERSION as usize);
     assert!(migrator.iter().all(|migration| !migration.no_tx));
     assert!(!migrator.ignore_missing);
     let mut required = super::REQUIRED_OBJECTS
@@ -68,16 +69,16 @@ async fn every_frozen_prefix_upgrades_reopens_and_matches_fresh_schema() {
             .collect()
     );
     fresh_pool.close().await;
-    for version in 1..=7 {
+    for version in 1..LOCAL_SCHEMA_VERSION {
         let (directory, config, pool) = fixture(version).await;
         pool.close().await;
         let store = LocalStateStore::open(&config).await.unwrap();
-        assert_eq!(store.schema_version().await.unwrap(), 7);
+        assert_eq!(store.schema_version().await.unwrap(), LOCAL_SCHEMA_VERSION);
         assert_eq!(schema(&store.pool).await, expected);
         store.close_pool().await;
         drop(store);
         let store = LocalStateStore::open(&config).await.unwrap();
-        assert_eq!(store.schema_version().await.unwrap(), 7);
+        assert_eq!(store.schema_version().await.unwrap(), LOCAL_SCHEMA_VERSION);
         store.close_pool().await;
         drop(store);
         remove_dir_all_bounded(&directory).unwrap();
@@ -121,7 +122,7 @@ async fn failed_transaction_rolls_back_ddl_data_and_version_then_restart_resumes
     assert_eq!(version, 6);
     pool.close().await;
     let store = LocalStateStore::open(&config).await.unwrap();
-    assert_eq!(store.schema_version().await.unwrap(), 7);
+    assert_eq!(store.schema_version().await.unwrap(), LOCAL_SCHEMA_VERSION);
     assert_eq!(
         sqlx::query_scalar::<_, String>("SELECT display_label FROM server_profiles")
             .fetch_one(&store.pool)
@@ -138,7 +139,7 @@ async fn failed_transaction_rolls_back_ddl_data_and_version_then_restart_resumes
 async fn damaged_or_unknown_schema_fails_closed_without_repairing_evidence() {
     for (mutation, unsupported) in [
         (
-            "UPDATE _sqlx_migrations SET version=8 WHERE version=7",
+            "UPDATE _sqlx_migrations SET version=9 WHERE version=7",
             true,
         ),
         (
@@ -299,6 +300,14 @@ async fn snapshot(pool: &SqlitePool, tables: &[&str]) -> Vec<Vec<String>> {
                 .fetch_all(pool)
                 .await
                 .unwrap();
+        // Migration 0008 adds a presentation-only completion marker. The
+        // fixture starts before that column exists, so compare the durable
+        // sync data shared by both schema shapes here; state tests cover the
+        // marker's default and transition separately.
+        let columns = columns
+            .into_iter()
+            .filter(|column| column != "first_sync_completed")
+            .collect::<Vec<_>>();
         let expression = columns
             .iter()
             .map(|name| format!("quote({name})"))

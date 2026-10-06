@@ -223,6 +223,7 @@ pub struct ReplicaRecord {
     applied_sequence: Sequence,
     acknowledged_sequence: Sequence,
     status: EngineStatus,
+    first_sync_completed: bool,
 }
 
 impl ReplicaRecord {
@@ -264,6 +265,11 @@ impl ReplicaRecord {
     #[must_use]
     pub const fn status(&self) -> EngineStatus {
         self.status
+    }
+
+    #[must_use]
+    pub const fn first_sync_completed(&self) -> bool {
+        self.first_sync_completed
     }
 }
 
@@ -1292,8 +1298,9 @@ impl LocalStateStore {
         sqlx::query(
             "INSERT INTO replicas (
                  library_id, owner_user_id, device_id, root_binding_id,
-                 created_at_ms, updated_at_ms, server_profile_id
-             ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                 created_at_ms, updated_at_ms, server_profile_id,
+                 first_sync_completed
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, 0)
              ON CONFLICT(library_id) DO NOTHING",
         )
         .bind(scope.library_id().to_string())
@@ -1333,7 +1340,8 @@ impl LocalStateStore {
         let row = sqlx::query(
             "SELECT owner_user_id, device_id, library_id, root_binding_id,
                     root_node_id, journal_epoch, applied_sequence,
-                    acknowledged_sequence, status, server_profile_id
+                    acknowledged_sequence, status, server_profile_id,
+                    first_sync_completed
              FROM replicas WHERE library_id = ?",
         )
         .bind(library_id.to_string())
@@ -1355,6 +1363,47 @@ impl LocalStateStore {
                 .execute(&self.pool)
                 .await?
                 .rows_affected();
+        if changed != 1 {
+            return Err(ClientSyncError::InvalidState);
+        }
+        Ok(())
+    }
+
+    /// Record the only durable completion proof used by the desktop progress
+    /// projection. The caller must have already observed a true idle cycle;
+    /// this method only stores that bounded fact and never infers it.
+    pub async fn mark_first_sync_completed(
+        &self,
+        library_id: LibraryId,
+    ) -> Result<(), ClientSyncError> {
+        let changed = sqlx::query(
+            "UPDATE replicas SET first_sync_completed = 1, updated_at_ms = ?
+             WHERE library_id = ?",
+        )
+        .bind(now_ms()?)
+        .bind(library_id.to_string())
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        if changed != 1 {
+            return Err(ClientSyncError::InvalidState);
+        }
+        Ok(())
+    }
+
+    pub async fn clear_first_sync_completed(
+        &self,
+        library_id: LibraryId,
+    ) -> Result<(), ClientSyncError> {
+        let changed = sqlx::query(
+            "UPDATE replicas SET first_sync_completed = 0, updated_at_ms = ?
+             WHERE library_id = ?",
+        )
+        .bind(now_ms()?)
+        .bind(library_id.to_string())
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
         if changed != 1 {
             return Err(ClientSyncError::InvalidState);
         }
@@ -5652,6 +5701,7 @@ fn decode_replica(row: sqlx::sqlite::SqliteRow) -> Result<ReplicaRecord, ClientS
         applied_sequence: sequence_from_i64(row.try_get("applied_sequence")?)?,
         acknowledged_sequence: sequence_from_i64(row.try_get("acknowledged_sequence")?)?,
         status: parse_status(row.try_get("status")?)?,
+        first_sync_completed: row.try_get::<i64, _>("first_sync_completed")? != 0,
     })
 }
 
@@ -6775,6 +6825,44 @@ mod tests {
         assert_ne!(other.library_id(), replica_scope.library_id());
         reopened.close_pool().await;
         drop(reopened);
+        remove_dir_all_bounded(&directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn new_replica_first_sync_evidence_is_false_until_marked() {
+        let (path, directory) = temporary_database("first-sync-evidence");
+        let store = LocalStateStore::open(&LocalStateConfig::new(&path))
+            .await
+            .unwrap();
+        let replica_scope = scope();
+        let record = store
+            .bind_replica(replica_scope, RootBindingId::new())
+            .await
+            .unwrap();
+        assert!(!record.first_sync_completed());
+        assert!(
+            !store
+                .replica(replica_scope.library_id())
+                .await
+                .unwrap()
+                .unwrap()
+                .first_sync_completed()
+        );
+
+        store
+            .mark_first_sync_completed(replica_scope.library_id())
+            .await
+            .unwrap();
+        assert!(
+            store
+                .replica(replica_scope.library_id())
+                .await
+                .unwrap()
+                .unwrap()
+                .first_sync_completed()
+        );
+        store.close_pool().await;
+        drop(store);
         remove_dir_all_bounded(&directory).unwrap();
     }
 

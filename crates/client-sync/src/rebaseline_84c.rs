@@ -29,9 +29,9 @@ mod tests {
 
     use crate::{
         ClientSyncError, EngineConfig, FailureInjector, FailurePoint, FilesystemLocalReplica,
-        InboundSyncEngine, LocalFingerprint, LocalNode, LocalReplica, LocalStateConfig,
-        LocalStateStore, ManagedRelativePath, OpaqueEvidence, OutboundIntent, OutboundIntentKind,
-        RebaselineApplier, RebaselineApplyOutcome, RebaselineBoundary,
+        InboundSyncEngine, LOCAL_SCHEMA_VERSION, LocalFingerprint, LocalNode, LocalReplica,
+        LocalStateConfig, LocalStateStore, ManagedRelativePath, OpaqueEvidence, OutboundIntent,
+        OutboundIntentKind, RebaselineApplier, RebaselineApplyOutcome, RebaselineBoundary,
         RebaselineHandoffConfirmation, RebaselineHandoffOutcome, RebaselineSnapshotDescriptor,
         RebaselineSnapshotPage, RebaselineSnapshotSource, RemoteCheckpoint, RemoteError,
         RemoteErrorKind, ReplicaScope, RootBindingId, SyncRemote,
@@ -503,7 +503,10 @@ mod tests {
         let config = LocalStateConfig::new(db_path.clone());
         let store = LocalStateStore::open(&config).await.unwrap();
         let version_after = store.schema_version().await.unwrap();
-        assert_eq!(version_after, 7, "schema must migrate 4 -> 7");
+        assert_eq!(
+            version_after, LOCAL_SCHEMA_VERSION,
+            "schema must migrate 4 -> current"
+        );
         // new tables exist and are initially empty
         let pool2 = sqlite_pool(&db_path).await;
         for table in [
@@ -562,7 +565,7 @@ mod tests {
         store.close_pool().await;
         drop(store);
         let store2 = LocalStateStore::open(&config).await.unwrap();
-        assert_eq!(store2.schema_version().await.unwrap(), 7);
+        assert_eq!(store2.schema_version().await.unwrap(), LOCAL_SCHEMA_VERSION);
         let pool3 = sqlite_pool(&db_path).await;
         let nodes_reopen: Vec<(String, Option<String>, String, String, i64)> =
             sqlx::query_as("SELECT node_id, parent_node_id, logical_name, node_kind, revision FROM local_nodes WHERE library_id = ? ORDER BY node_id")

@@ -1639,7 +1639,10 @@ mod tests {
         let store = LocalStateStore::open(&LocalStateConfig::new(&database))
             .await
             .unwrap();
-        assert_eq!(store.schema_version().await.unwrap(), 7);
+        assert_eq!(
+            store.schema_version().await.unwrap(),
+            crate::LOCAL_SCHEMA_VERSION
+        );
         let verify = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect(&format!("sqlite:{}?mode=rw", database.display()))

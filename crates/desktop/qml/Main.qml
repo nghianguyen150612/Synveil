@@ -319,6 +319,21 @@ ApplicationWindow {
         return true
     }
 
+    function openFirstRunProgressAction(action) {
+        if (action === "configure_connection") {
+            root.editingConnection = true
+        } else if (action === "resume_setup") {
+            bridge.resumePendingSetup()
+        } else if (action === "resume_sync") {
+            bridge.resumeSync()
+        } else if (action === "check_again") {
+            bridge.retrySelectedRecovery(bridge.selected_library_id,
+                                         bridge.connection_generation)
+        } else if (action === "sign_in") {
+            bridge.selectLibrary(bridge.selected_library_id)
+        }
+    }
+
     Connections {
         target: bridge
 
@@ -1771,6 +1786,123 @@ ApplicationWindow {
                     }
                 }
             }
+        }
+    }
+
+    Pane {
+        id: firstRunProgressPage
+        objectName: "firstRunProgressPage"
+        anchors.fill: parent
+        visible: bridge.first_run_progress_visible
+                 && !bridge.library_setup_required
+                 && !root.editingConnection
+                 && !bridge.auth_required
+                 && !bridge.auth_in_flight
+        padding: 36
+
+        ColumnLayout {
+            anchors.centerIn: parent
+            width: Math.min(620, firstRunProgressPage.availableWidth)
+            spacing: 14
+
+            Label {
+                objectName: "firstRunProgressHeading"
+                Layout.fillWidth: true
+                text: qsTr("Getting Synveil ready")
+                font.pixelSize: 28
+                font.weight: Font.DemiBold
+                Accessible.name: text
+            }
+
+            Label {
+                id: firstRunProgressStatus
+                objectName: "firstRunProgressStatus"
+                Layout.fillWidth: true
+                text: bridge.first_run_progress_status
+                color: palette.text
+                wrapMode: Text.WordWrap
+                Accessible.name: text
+            }
+
+            ListView {
+                id: firstRunProgressList
+                objectName: "firstRunProgressList"
+                Layout.fillWidth: true
+                implicitHeight: contentHeight
+                interactive: false
+                clip: true
+                model: bridge.first_run_progress_stages
+                spacing: 6
+                Accessible.name: qsTr("Synveil setup progress")
+                Accessible.description: qsTr("Shows the current state of setup and first synchronization")
+
+                delegate: Item {
+                    id: progressStageDelegate
+                    required property var modelData
+                    width: ListView.view.width
+                    implicitHeight: progressStageRow.implicitHeight + 16
+                    objectName: {
+                        switch (progressStageDelegate.modelData.stageId) {
+                        case "app_ready": return "appReadyProgressStage"
+                        case "server_ready": return "serverReadyProgressStage"
+                        case "signed_in": return "signedInProgressStage"
+                        case "library_ready": return "libraryReadyProgressStage"
+                        case "first_sync": return "firstSyncProgressStage"
+                        default: return "firstRunProgressStage"
+                        }
+                    }
+                    Accessible.name: progressStageDelegate.modelData.title
+                              + qsTr(" — ")
+                              + progressStageDelegate.modelData.stateLabel
+                    Accessible.description: progressStageDelegate.modelData.detail
+
+                    RowLayout {
+                        id: progressStageRow
+                        anchors.fill: parent
+                        anchors.leftMargin: 12
+                        anchors.rightMargin: 12
+                        spacing: 10
+
+                        Label {
+                            Layout.preferredWidth: 24
+                            text: progressStageDelegate.modelData.stateLabel
+                            horizontalAlignment: Text.AlignHCenter
+                            font.weight: Font.DemiBold
+                            Accessible.name: progressStageDelegate.modelData.stateLabel
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 2
+
+                            Label {
+                                Layout.fillWidth: true
+                                text: progressStageDelegate.modelData.title
+                                font.weight: Font.Medium
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: progressStageDelegate.modelData.detail
+                                      + qsTr("  (%1)").arg(progressStageDelegate.modelData.stateLabel)
+                                color: palette.text
+                                wrapMode: Text.WordWrap
+                            }
+
+                            Button {
+                                objectName: "firstRunProgressAction"
+                                visible: progressStageDelegate.modelData.actionLabel
+                                         !== undefined
+                                         && progressStageDelegate.modelData.actionLabel.length > 0
+                                text: visible ? progressStageDelegate.modelData.actionLabel : ""
+                                onClicked: root.openFirstRunProgressAction(
+                                               progressStageDelegate.modelData.action)
+                                Accessible.name: text
+                            }
+                        }
+                    }
+                }
+            }
+
         }
     }
 
