@@ -24,8 +24,13 @@ ApplicationWindow {
 
     FolderDialog {
         id: libraryFolderDialog
+        objectName: "libraryFolderDialog"
         title: qsTr("Choose a local library folder")
-        onAccepted: bridge.setLibraryFolder(selectedFolder.toString())
+        onAccepted: {
+            bridge.setLibraryFolder(selectedFolder.toString())
+            chooseLibraryFolderButton.forceActiveFocus(Qt.TabFocusReason)
+        }
+        onRejected: chooseLibraryFolderButton.forceActiveFocus(Qt.TabFocusReason)
     }
 
     Popup {
@@ -343,8 +348,9 @@ ApplicationWindow {
     }
 
     header: ToolBar {
-        visible: bridge.welcome_destination === "existing_client"
-                 || bridge.welcome_destination === "connect_setup"
+        visible: (bridge.welcome_destination === "existing_client"
+                  || bridge.welcome_destination === "connect_setup")
+                 && !bridge.library_setup_required
         contentHeight: 84
         ColumnLayout {
             anchors.fill: parent
@@ -1436,103 +1442,6 @@ ApplicationWindow {
                     }
 
                     Rectangle {
-                        Layout.fillWidth: true
-                        visible: bridge.library_setup_required
-                                 || bridge.library_setup_busy
-                                 || (bridge.library_setup_feedback.length > 0
-                                     && bridge.library_count === 0)
-                        implicitHeight: librarySetupColumn.implicitHeight + 28
-                        radius: 10
-                        color: palette.base
-                        border.color: palette.midlight
-
-                        ColumnLayout {
-                            id: librarySetupColumn
-                            anchors.fill: parent
-                            anchors.margins: 14
-                            spacing: 8
-
-                            Label {
-                                text: qsTr("Set up a library")
-                                font.pixelSize: 15
-                                font.weight: Font.DemiBold
-                            }
-
-                            Label {
-                                Layout.fillWidth: true
-                                text: qsTr("Choose a writable local folder. If setup was interrupted, choose the same folder to continue safely. Synveil will not delete existing files.")
-                                color: palette.text
-                                wrapMode: Text.WordWrap
-                                font.pixelSize: 12
-                            }
-
-                            TextField {
-                                id: libraryNameField
-                                Layout.fillWidth: true
-                                enabled: !bridge.library_setup_busy
-                                placeholderText: qsTr("Library name")
-                                maximumLength: 1024
-                                Accessible.name: qsTr("Library name")
-                                onAccepted: root.submitLibrarySetup()
-                            }
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 8
-
-                                Button {
-                                    text: qsTr("Choose folder")
-                                    enabled: !bridge.library_setup_busy
-                                    onClicked: libraryFolderDialog.open()
-                                    Accessible.name: qsTr("Choose local library folder")
-                                }
-
-                                Label {
-                                    Layout.fillWidth: true
-                                    text: bridge.library_setup_folder.length > 0
-                                          ? bridge.library_setup_folder
-                                          : qsTr("No folder selected")
-                                    color: palette.text
-                                    elide: Text.ElideMiddle
-                                    Accessible.name: qsTr("Selected library folder")
-                                }
-                            }
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 8
-
-                                Button {
-                                    id: createLibraryButton
-                                    text: qsTr("Create library")
-                                    enabled: !bridge.library_setup_busy
-                                             && libraryNameField.text.trim().length > 0
-                                             && bridge.library_setup_folder.length > 0
-                                    highlighted: true
-                                    onClicked: root.submitLibrarySetup()
-                                    Accessible.name: qsTr("Create library")
-                                }
-
-                                BusyIndicator {
-                                    running: bridge.library_setup_busy
-                                    visible: running
-                                    Layout.preferredWidth: 24
-                                    Layout.preferredHeight: 24
-                                }
-                            }
-
-                            Label {
-                                Layout.fillWidth: true
-                                visible: bridge.library_setup_feedback.length > 0
-                                text: bridge.library_setup_feedback
-                                color: palette.text
-                                wrapMode: Text.WordWrap
-                                font.pixelSize: 12
-                            }
-                        }
-                    }
-
-                    Rectangle {
                         id: attentionCard
                         Layout.fillWidth: true
                         visible: bridge.attention_count > 0
@@ -1861,6 +1770,134 @@ ApplicationWindow {
                         font.pixelSize: 12
                     }
                 }
+            }
+        }
+    }
+
+    Pane {
+        id: libraryFirstRunPage
+        objectName: "libraryFirstRunPage"
+        anchors.fill: parent
+        visible: bridge.library_setup_required
+        padding: 36
+
+        ColumnLayout {
+            anchors.centerIn: parent
+            width: Math.min(560, libraryFirstRunPage.availableWidth)
+            spacing: 16
+
+            Label {
+                objectName: "libraryFirstRunHeading"
+                Layout.fillWidth: true
+                text: qsTr("Set up your first library")
+                font.pixelSize: 28
+                font.weight: Font.DemiBold
+                Accessible.name: text
+            }
+
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("Choose a folder on this device. Existing files stay in place and can be added to your new Synveil library.")
+                color: palette.text
+                wrapMode: Text.WordWrap
+            }
+
+            Label {
+                Layout.fillWidth: true
+                text: qsTr("If you’re finishing an interrupted setup, choose the same folder again.")
+                color: palette.text
+                wrapMode: Text.WordWrap
+            }
+
+            TextField {
+                id: libraryNameField
+                objectName: "libraryNameField"
+                Layout.fillWidth: true
+                enabled: !bridge.library_setup_busy
+                placeholderText: qsTr("Library name")
+                maximumLength: 1024
+                Accessible.name: qsTr("Library name")
+                KeyNavigation.tab: chooseLibraryFolderButton
+                onAccepted: root.submitLibrarySetup()
+                onVisibleChanged: {
+                    if (!visible) {
+                        clear()
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 10
+
+                Button {
+                    id: chooseLibraryFolderButton
+                    objectName: "chooseLibraryFolderButton"
+                    text: qsTr("Choose folder")
+                    enabled: !bridge.library_setup_busy
+                    onClicked: libraryFolderDialog.open()
+                    Accessible.name: qsTr("Choose local library folder")
+                    KeyNavigation.tab: createLibraryButton
+                }
+
+                Label {
+                    objectName: "selectedLibraryFolderLabel"
+                    Layout.fillWidth: true
+                    text: bridge.library_setup_folder.length > 0
+                          ? bridge.library_setup_folder
+                          : qsTr("No folder selected")
+                    color: palette.text
+                    elide: Text.ElideMiddle
+                    Accessible.name: qsTr("Selected library folder")
+                    Accessible.description: text
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 10
+
+                Button {
+                    id: createLibraryButton
+                    objectName: "createLibraryButton"
+                    text: qsTr("Create library")
+                    enabled: !bridge.library_setup_busy
+                             && libraryNameField.text.trim().length > 0
+                             && bridge.library_setup_folder.length > 0
+                    highlighted: true
+                    onClicked: root.submitLibrarySetup()
+                    Accessible.name: qsTr("Create library")
+                }
+
+                BusyIndicator {
+                    id: librarySetupBusyIndicator
+                    objectName: "librarySetupBusyIndicator"
+                    running: bridge.library_setup_busy
+                    visible: running
+                    Layout.preferredWidth: 24
+                    Layout.preferredHeight: 24
+                    Accessible.name: qsTr("Setting up your library")
+                }
+            }
+
+            Label {
+                id: librarySetupFeedbackLabel
+                objectName: "librarySetupFeedbackLabel"
+                Layout.fillWidth: true
+                visible: bridge.library_setup_feedback.length > 0
+                text: bridge.library_setup_feedback
+                color: palette.text
+                wrapMode: Text.WordWrap
+                Accessible.name: text
+                Accessible.description: qsTr("Library setup status")
+            }
+        }
+
+        onVisibleChanged: {
+            if (visible) {
+                Qt.callLater(function() {
+                    libraryNameField.forceActiveFocus(Qt.TabFocusReason)
+                })
             }
         }
     }

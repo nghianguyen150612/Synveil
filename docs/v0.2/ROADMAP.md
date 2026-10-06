@@ -421,6 +421,14 @@ data-preserving. P040–P042 remain open.
 Guide creation of the first library and selection of its local folder with
 minimal screens and safe existing-folder handling.
 
+**Implemented (Prompt040 source):** an authenticated zero-library client
+snapshot now opens a focused first-library page with a library name field and
+the native folder picker. The existing client setup operation remains the
+authority for safe non-empty-folder bootstrap, durable binding, and pending
+setup recovery. The page leaves only after refreshed authoritative state shows
+the library; it does not claim first synchronization. P041 and P042 remain
+open.
+
 ### P041 — Installation-to-Sync Progress Experience
 
 Show truthful, meaningful progress from installation through setup and first

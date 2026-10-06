@@ -1,0 +1,63 @@
+name: library first-run wizard
+
+on:
+  pull_request:
+  push:
+    branches: [codex/p040-library-first-run-wizard]
+
+jobs:
+  library-setup-and-root-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p synveil-client --locked desktop_control_ipc
+      - run: cargo test -p synveil-client --locked controller
+      - run: cargo test -p synveil-client-sync --locked onboarding_root_validation_admits_existing_content_but_reserves_control_tree
+      - run: cargo test -p synveil-client-sync --locked root_overlap_uses_components_not_string_prefixes
+      - run: cargo test -p synveil-client-sync --locked root_marker_binding_and_verified_staging_are_durable
+      - run: cargo test -p synveil-client-sync --locked existing_tree_scan_creates_content_intents_without_deletes
+      - run: cargo test -p synveil-client-sync --locked new_library_root_seed_is_idempotent_and_preserves_descendants
+      - run: cargo test -p synveil-client-sync --locked host32_missing_root_is_per_library_degraded_and_never_a_mass_delete
+
+  desktop-presentation-and-qml:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Qt and native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config \
+            qt6-base-dev qt6-declarative-dev qt6-tools-dev-tools libgl1-mesa-dev xvfb \
+            qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-dialogs \
+            qml6-module-qtquick-layouts qml6-module-qtquick-window \
+            qml6-module-qtqml-workerscript qml6-module-qtquick-templates \
+            qml6-module-qtquick-nativestyle
+      - run: cargo test -p synveil-desktop --locked library_setup_results_have_bounded_copy_and_one_safe_action
+      - run: cargo test -p synveil-desktop --locked ux_unit_3_authenticated_empty_state_uses_one_library_setup_action
+      - run: cargo test -p synveil-desktop --locked
+      - run: cargo check -p synveil-desktop --locked
+      - run: ./scripts/test-desktop-ui.sh
+
+  documentation-and-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy -p synveil-client-sync -p synveil-client -p synveil-desktop --all-targets --locked --no-deps -- -D warnings
+      - run: python3 scripts/validate-library-first-run-wizard.py
+      - run: python3 -m py_compile scripts/validate-library-first-run-wizard.py
+      - run: ./scripts/validate-docs.sh
+      - run: ./scripts/validate-install-acceptance.sh
+      - run: git diff --check

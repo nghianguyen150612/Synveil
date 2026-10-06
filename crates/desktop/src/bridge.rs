@@ -86,6 +86,8 @@ pub mod ffi {
         #[qproperty(bool, library_setup_required)]
         #[qproperty(bool, library_setup_busy)]
         #[qproperty(QString, library_setup_feedback)]
+        #[qproperty(QString, library_setup_feedback_code)]
+        #[qproperty(QString, library_setup_feedback_action)]
         #[qproperty(QString, library_setup_folder)]
         #[qproperty(QString, last_error_label)]
         #[qproperty(i32, recovery_action_required_count)]
@@ -314,6 +316,8 @@ pub struct DesktopUiBridgeRust {
     pub(crate) library_setup_required: bool,
     pub(crate) library_setup_busy: bool,
     pub(crate) library_setup_feedback: QString,
+    pub(crate) library_setup_feedback_code: QString,
+    pub(crate) library_setup_feedback_action: QString,
     pub(crate) library_setup_folder: QString,
     pub(crate) last_error_label: QString,
     pub(crate) recovery_action_required_count: i32,
@@ -395,6 +399,8 @@ pub struct DesktopUiBridgeRust {
     auth_gate: Arc<SyncRequestGate>,
     configuration_gate: Arc<SyncRequestGate>,
     library_setup_gate: Arc<SyncRequestGate>,
+    library_setup_awaiting_confirmation: bool,
+    library_setup_confirmation_revision: Option<u64>,
     attention_gate: Arc<SyncRequestGate>,
     recovery_gate: Arc<SyncRequestGate>,
     library_setup_root: Option<std::path::PathBuf>,
@@ -495,6 +501,8 @@ impl Default for DesktopUiBridgeRust {
             library_setup_required: false,
             library_setup_busy: false,
             library_setup_feedback: QString::default(),
+            library_setup_feedback_code: QString::default(),
+            library_setup_feedback_action: QString::default(),
             library_setup_folder: QString::default(),
             last_error_label: QString::default(),
             recovery_action_required_count: 0,
@@ -575,6 +583,8 @@ impl Default for DesktopUiBridgeRust {
             auth_gate: Arc::new(SyncRequestGate::default()),
             configuration_gate: Arc::new(SyncRequestGate::default()),
             library_setup_gate: Arc::new(SyncRequestGate::default()),
+            library_setup_awaiting_confirmation: false,
+            library_setup_confirmation_revision: None,
             attention_gate: Arc::new(SyncRequestGate::default()),
             recovery_gate: Arc::new(SyncRequestGate::default()),
             library_setup_root: None,
@@ -835,13 +845,21 @@ impl ffi::DesktopUiBridge {
     }
 
     fn resume_pending_setup(mut self: Pin<&mut Self>) {
-        self.as_mut().set_library_setup_required(true);
-        self.as_mut().set_library_setup_feedback(QString::from(
-            "Choose the same local folder and library name to continue setup safely.",
-        ));
-        self.as_mut().set_recovery_feedback(QString::from(
-            "Use the library setup form below to continue the existing setup.",
-        ));
+        if self.rust().library_setup_required {
+            self.as_mut().set_library_setup_feedback(QString::from(
+                "Choose the same local folder and library name to continue setup safely.",
+            ));
+            self.as_mut()
+                .set_library_setup_feedback_code(QString::from("resume_setup"));
+            self.as_mut()
+                .set_library_setup_feedback_action(QString::from("resume_setup"));
+        } else {
+            let controller = self.rust().controller.clone();
+            self.as_mut().set_recovery_feedback(QString::from(
+                "Checking the current library setup status…",
+            ));
+            controller.refresh_state();
+        }
     }
 
     fn pause_sync(self: Pin<&mut Self>) {
@@ -917,19 +935,34 @@ impl ffi::DesktopUiBridge {
         };
         let Some(path) = path else {
             self.as_mut().rust_mut().get_mut().library_setup_root = None;
+            self.as_mut().set_library_setup_folder(QString::default());
+            self.as_mut().set_library_setup_feedback(QString::default());
             self.as_mut()
-                .set_library_setup_folder(QString::from("No folder selected"));
+                .set_library_setup_feedback_code(QString::default());
+            self.as_mut()
+                .set_library_setup_feedback_action(QString::default());
             return;
         };
         let Some(display) = path.to_str().map(str::to_owned) else {
             self.as_mut().rust_mut().get_mut().library_setup_root = None;
+            self.as_mut().set_library_setup_folder(QString::default());
+            self.as_mut().set_library_setup_feedback(QString::from(
+                "The selected folder is unavailable.",
+            ));
             self.as_mut()
-                .set_library_setup_folder(QString::from("Selected folder is unavailable."));
+                .set_library_setup_feedback_code(QString::from("invalid_folder"));
+            self.as_mut()
+                .set_library_setup_feedback_action(QString::from("choose_folder"));
             return;
         };
         self.as_mut().rust_mut().get_mut().library_setup_root = Some(path);
         self.as_mut()
             .set_library_setup_folder(QString::from(display));
+        self.as_mut().set_library_setup_feedback(QString::default());
+        self.as_mut()
+            .set_library_setup_feedback_code(QString::default());
+        self.as_mut()
+            .set_library_setup_feedback_action(QString::default());
     }
 
     fn setup_library(self: Pin<&mut Self>, name: QString) {
@@ -1166,12 +1199,63 @@ fn apply_snapshot(mut object: Pin<&mut ffi::DesktopUiBridge>, snapshot: UiSnapsh
     object.as_mut().set_profile_server_url(QString::from(
         snapshot.profile_server_url.as_deref().unwrap_or(""),
     ));
-    object.as_mut().set_library_setup_required(
-        snapshot.freshness_code == "fresh"
-            && snapshot.profile_configured
-            && snapshot.profile_authenticated
-            && snapshot.libraries.is_empty(),
+    let library_setup_required = presentation::library_first_run_required(
+        snapshot.freshness_code == "fresh",
+        snapshot.profile_configured,
+        snapshot.profile_authenticated,
+        !snapshot.libraries.is_empty(),
     );
+    let setup_confirmation_finished = {
+        let state = object.as_mut().rust_mut().get_mut();
+        let finished = state
+            .library_setup_confirmation_revision
+            .is_some_and(|revision| {
+                presentation::library_setup_confirmation_finished(
+                    state.library_setup_awaiting_confirmation,
+                    snapshot.freshness_code == "fresh",
+                    snapshot.revision,
+                    revision,
+                )
+            });
+        if finished {
+            state.library_setup_awaiting_confirmation = false;
+            state.library_setup_confirmation_revision = None;
+        }
+        finished
+    };
+    object
+        .as_mut()
+        .set_library_setup_required(library_setup_required);
+    if setup_confirmation_finished {
+        object.as_mut().set_library_setup_busy(false);
+        if library_setup_required {
+            object
+                .as_mut()
+                .set_library_setup_feedback_code(QString::from("setup_incomplete"));
+            object
+                .as_mut()
+                .set_library_setup_feedback_action(QString::from("resume_setup"));
+            object.as_mut().set_library_setup_feedback(QString::from(
+                "Setup is still being confirmed. Choose the same folder to continue safely.",
+            ));
+        } else {
+            object
+                .as_mut()
+                .set_library_setup_feedback(QString::default());
+            object
+                .as_mut()
+                .set_library_setup_feedback_code(QString::default());
+            object
+                .as_mut()
+                .set_library_setup_feedback_action(QString::default());
+        }
+    }
+    if !library_setup_required {
+        object.as_mut().rust_mut().get_mut().library_setup_root = None;
+        object
+            .as_mut()
+            .set_library_setup_folder(QString::default());
+    }
     object
         .as_mut()
         .set_last_error_label(QString::from(snapshot.last_error_label));
@@ -2256,49 +2340,76 @@ fn request_library_setup(mut object: Pin<&mut ffi::DesktopUiBridge>, name: Strin
         )
     };
     if !required {
-        object.as_mut().set_library_setup_feedback(QString::from(
-            "Library setup becomes available after this device is authenticated.",
-        ));
+        set_library_setup_feedback_copy(
+            object,
+            "sign_in_required",
+            "Sign in to this device to continue.",
+            "sign_in",
+        );
         return;
     }
     if name.is_empty() {
-        object
-            .as_mut()
-            .set_library_setup_feedback(QString::from("Enter a library name."));
+        set_library_setup_feedback_copy(
+            object,
+            "invalid_name",
+            "Enter a library name to continue.",
+            "edit_name",
+        );
         return;
     }
     if name.len() > 1_024 || name.chars().any(char::is_control) {
-        object
-            .as_mut()
-            .set_library_setup_feedback(QString::from("Choose a shorter library name."));
+        set_library_setup_feedback_copy(
+            object,
+            "invalid_name",
+            "Choose a shorter library name.",
+            "edit_name",
+        );
         return;
     }
     let Some(root) = root else {
-        object
-            .as_mut()
-            .set_library_setup_feedback(QString::from("Choose a local folder first."));
+        set_library_setup_feedback_copy(
+            object,
+            "folder_required",
+            "Choose a local folder first.",
+            "choose_folder",
+        );
         return;
     };
     let Some(root_path) = root.to_str().map(str::to_owned) else {
-        object
-            .as_mut()
-            .set_library_setup_feedback(QString::from("The selected folder is unavailable."));
+        set_library_setup_feedback_copy(
+            object,
+            "invalid_folder",
+            "The selected folder is unavailable.",
+            "choose_folder",
+        );
         return;
     };
     if !gate.try_acquire() {
-        object.as_mut().set_library_setup_feedback(QString::from(
-            "A library setup request is already being processed.",
-        ));
+        set_library_setup_feedback_copy(
+            object,
+            "busy",
+            "Setup is already being processed. Please wait.",
+            "wait",
+        );
         return;
     }
     let Some(runtime) = runtime else {
         gate.release();
-        object.as_mut().set_library_setup_feedback(QString::from(
-            "Synveil could not start this action. Reopen the desktop app and try again.",
-        ));
+        set_library_setup_feedback_copy(
+            object,
+            "client_unavailable",
+            "Synveil isn’t ready yet. Reopen the app to continue setup.",
+            "start_client",
+        );
         return;
     };
     object.as_mut().set_library_setup_busy(true);
+    object
+        .as_mut()
+        .set_library_setup_feedback_code(QString::from("creating"));
+    object
+        .as_mut()
+        .set_library_setup_feedback_action(QString::from("wait"));
     object
         .as_mut()
         .set_library_setup_feedback(QString::from("Creating library…"));
@@ -2306,36 +2417,82 @@ fn request_library_setup(mut object: Pin<&mut ffi::DesktopUiBridge>, name: Strin
         eprintln!("SYNVEIL-LIVE-UI ACTION setup_library");
     }
     let qt_thread = object.as_ref().get_ref().qt_thread();
+    let refresh_controller = controller.clone();
     runtime.spawn(async move {
         let result = controller.setup_library(name, root_path).await;
-        let (feedback, configured) = match result {
-            Ok(result) => {
-                controller.refresh_state();
-                (
-                    presentation::library_setup_feedback(result),
-                    matches!(
-                        result,
-                        DesktopControllerCommandResult::LibraryConfigured
-                            | DesktopControllerCommandResult::LibraryAlreadyConfigured
-                    ),
-                )
-            }
-            Err(_) => ("Background service unavailable.", false),
-        };
+        let result = result.ok();
+        let feedback = result.map_or_else(
+            || presentation::library_setup_presentation(DesktopControllerCommandResult::Unavailable),
+            presentation::library_setup_presentation,
+        );
+        let awaiting_confirmation = result.is_some_and(|result| {
+            matches!(
+                result,
+                DesktopControllerCommandResult::LibraryConfigured
+                    | DesktopControllerCommandResult::LibraryAlreadyConfigured
+                    | DesktopControllerCommandResult::OutcomeUnknown
+            )
+        });
         if live_test {
-            eprintln!("SYNVEIL-LIVE-UI RESULT setup_feedback={feedback}");
-        }
+            eprintln!("SYNVEIL-LIVE-UI RESULT setup_feedback={}", feedback.code);
+        };
         gate.release();
         let _ = qt_thread.queue(move |mut object| {
-            object.as_mut().set_library_setup_busy(false);
-            object
-                .as_mut()
-                .set_library_setup_feedback(QString::from(feedback));
-            if configured {
-                object.as_mut().set_library_setup_required(false);
+            let state = object.as_mut().rust_mut().get_mut();
+            let already_confirmed = state.presented.freshness_code == "fresh"
+                && state.presented.profile_configured
+                && state.presented.profile_authenticated
+                && !state.presented.libraries.is_empty();
+            if awaiting_confirmation && !already_confirmed {
+                state.library_setup_awaiting_confirmation = true;
+                state.library_setup_confirmation_revision = Some(state.presented.revision);
+                object.as_mut().set_library_setup_busy(true);
+            } else {
+                state.library_setup_awaiting_confirmation = false;
+                state.library_setup_confirmation_revision = None;
+                object.as_mut().set_library_setup_busy(false);
             }
+            if already_confirmed {
+                object
+                    .as_mut()
+                    .set_library_setup_feedback(QString::default());
+                object
+                    .as_mut()
+                    .set_library_setup_feedback_code(QString::default());
+                object
+                    .as_mut()
+                    .set_library_setup_feedback_action(QString::default());
+            } else {
+                object
+                    .as_mut()
+                    .set_library_setup_feedback(QString::from(feedback.message));
+                object
+                    .as_mut()
+                    .set_library_setup_feedback_code(QString::from(feedback.code));
+                object
+                    .as_mut()
+                    .set_library_setup_feedback_action(QString::from(feedback.action));
+            }
+            refresh_controller.refresh_state();
         });
     });
+}
+
+fn set_library_setup_feedback_copy(
+    mut object: Pin<&mut ffi::DesktopUiBridge>,
+    code: &'static str,
+    message: &'static str,
+    action: &'static str,
+) {
+    object
+        .as_mut()
+        .set_library_setup_feedback_code(QString::from(code));
+    object
+        .as_mut()
+        .set_library_setup_feedback_action(QString::from(action));
+    object
+        .as_mut()
+        .set_library_setup_feedback(QString::from(message));
 }
 
 fn request_authentication(mut object: Pin<&mut ffi::DesktopUiBridge>, input: Zeroizing<String>) {

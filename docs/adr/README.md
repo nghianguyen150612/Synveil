@@ -88,6 +88,7 @@ một tệp để trạng thái và hệ quả không bị lệch giữa hai b�
 | [067](ADR-067-v0.2-unified-first-run-welcome.md) | v0.2 unified first-run Welcome | Accepted — Prompt037 |
 | [068](ADR-068-v0.2-simplified-connection-setup.md) | v0.2 simplified connection setup | Accepted — Prompt038 |
 | [069](ADR-069-v0.2-desktop-authentication-presentation.md) | v0.2 desktop authentication presentation | Accepted — Prompt039 |
+| [070](ADR-070-v0.2-library-first-run-wizard.md) | v0.2 library first-run wizard | Accepted — Prompt040 |
 
 ## Process / Quy trình
 
