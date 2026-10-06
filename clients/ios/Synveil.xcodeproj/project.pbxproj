@@ -41,7 +41,14 @@
 		B10000012C0000000000001A /* RootViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000001A /* RootViewTests.swift */; };
 		A10000012C00000000000021 /* ServerSetupViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000021 /* ServerSetupViewModel.swift */; };
 		A10000012C00000000000022 /* ServerSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000022 /* ServerSetupView.swift */; };
+		A10000012C00000000000023 /* SynveilTransportError.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000023 /* SynveilTransportError.swift */; };
+		A10000012C00000000000024 /* ServerProbeResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000024 /* ServerProbeResult.swift */; };
+		A10000012C00000000000025 /* ServerValidationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000025 /* ServerValidationService.swift */; };
+		A10000012C00000000000026 /* URLSessionHTTPTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000026 /* URLSessionHTTPTransport.swift */; };
+		A10000012C00000000000027 /* ServerValidationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000027 /* ServerValidationViewModel.swift */; };
+		A10000012C00000000000028 /* ServerValidationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000028 /* ServerValidationView.swift */; };
 		B10000012C0000000000001B /* ServerSetupViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000001B /* ServerSetupViewModelTests.swift */; };
+		B10000012C0000000000001C /* ServerReachabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000001C /* ServerReachabilityTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -91,7 +98,14 @@
 		B20000012C00000000000002 /* SynveilTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SynveilTests.xctest; sourceTree = "<group>"; };
 		A20000012C00000000000021 /* ServerSetupViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Onboarding/ServerSetupViewModel.swift; sourceTree = "<group>"; };
 		A20000012C00000000000022 /* ServerSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Onboarding/ServerSetupView.swift; sourceTree = "<group>"; };
+		A20000012C00000000000023 /* SynveilTransportError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Transport/SynveilTransportError.swift; sourceTree = "<group>"; };
+		A20000012C00000000000024 /* ServerProbeResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Transport/ServerProbeResult.swift; sourceTree = "<group>"; };
+		A20000012C00000000000025 /* ServerValidationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Transport/ServerValidationService.swift; sourceTree = "<group>"; };
+		A20000012C00000000000026 /* URLSessionHTTPTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Network/URLSessionHTTPTransport.swift; sourceTree = "<group>"; };
+		A20000012C00000000000027 /* ServerValidationViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Onboarding/ServerValidationViewModel.swift; sourceTree = "<group>"; };
+		A20000012C00000000000028 /* ServerValidationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Onboarding/ServerValidationView.swift; sourceTree = "<group>"; };
 		B20000012C0000000000001B /* ServerSetupViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/ServerSetupViewModelTests.swift; sourceTree = "<group>"; };
+		B20000012C0000000000001C /* ServerReachabilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/ServerReachabilityTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -139,6 +153,8 @@
 			children = (
 				A20000012C00000000000021 /* ServerSetupViewModel.swift */,
 				A20000012C00000000000022 /* ServerSetupView.swift */,
+				A20000012C00000000000027 /* ServerValidationViewModel.swift */,
+				A20000012C00000000000028 /* ServerValidationView.swift */,
 			);
 			name = Onboarding;
 			sourceTree = "<group>";
@@ -163,6 +179,9 @@
 				A20000012C00000000000016 /* HTTPTransportRequest.swift */,
 				A20000012C00000000000017 /* HTTPTransportResponse.swift */,
 				A20000012C00000000000018 /* HTTPTransportProtocol.swift */,
+				A20000012C00000000000023 /* SynveilTransportError.swift */,
+				A20000012C00000000000024 /* ServerProbeResult.swift */,
+				A20000012C00000000000025 /* ServerValidationService.swift */,
 			);
 			name = Domain;
 			sourceTree = "<group>";
@@ -183,6 +202,7 @@
 			isa = PBXGroup;
 			children = (
 				A40000012C00000000000014 /* RustBridge */,
+				A20000012C00000000000026 /* URLSessionHTTPTransport.swift */,
 			);
 			name = Infrastructure;
 			sourceTree = "<group>";
@@ -239,6 +259,7 @@
 				B20000012C00000000000019 /* SessionControllerTests.swift */,
 				B20000012C0000000000001A /* RootViewTests.swift */,
 				B20000012C0000000000001B /* ServerSetupViewModelTests.swift */,
+				B20000012C0000000000001C /* ServerReachabilityTests.swift */,
 			);
 			name = SynveilTests;
 			sourceTree = "<group>";
@@ -356,6 +377,12 @@
 				A10000012C00000000000020 /* SessionController.swift in Sources */,
 				A10000012C00000000000021 /* ServerSetupViewModel.swift in Sources */,
 				A10000012C00000000000022 /* ServerSetupView.swift in Sources */,
+				A10000012C00000000000023 /* SynveilTransportError.swift in Sources */,
+				A10000012C00000000000024 /* ServerProbeResult.swift in Sources */,
+				A10000012C00000000000025 /* ServerValidationService.swift in Sources */,
+				A10000012C00000000000026 /* URLSessionHTTPTransport.swift in Sources */,
+				A10000012C00000000000027 /* ServerValidationViewModel.swift in Sources */,
+				A10000012C00000000000028 /* ServerValidationView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -375,6 +402,7 @@
 				B10000012C00000000000019 /* SessionControllerTests.swift in Sources */,
 				B10000012C0000000000001A /* RootViewTests.swift in Sources */,
 				B10000012C0000000000001B /* ServerSetupViewModelTests.swift in Sources */,
+				B10000012C0000000000001C /* ServerReachabilityTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
