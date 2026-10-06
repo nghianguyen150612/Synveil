@@ -28,9 +28,9 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p synveil-client --locked launch::
-      - run: cargo test -p synveil-client --locked controller::
-      - run: cargo test -p synveil-client --locked process::
+      - run: "cargo test -p synveil-client --locked launch::"
+      - run: "cargo test -p synveil-client --locked controller::"
+      - run: "cargo test -p synveil-client --locked process::"
       - run: cargo test -p synveil-client --test desktop_control_ipc --locked
 
   root-and-data-safety:

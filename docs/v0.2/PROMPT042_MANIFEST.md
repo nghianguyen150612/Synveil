@@ -104,6 +104,14 @@ PostgreSQL and first-admin bootstrap workflows also reported failure. These
 are baseline failures, not P042 success or P042 regressions; native job details
 must be inspected when observing the final P042 head.
 
+## P042-caused hosted failure and fix
+
+Initial focused workflow run 37461335694 was rejected before jobs started:
+three unquoted test filters ended in `::`, making invalid YAML. Quoted those
+run commands and parsed the full workflow locally (eight jobs, string commands).
+Published history is retained; the follow-up commit fixes only workflow syntax
+and records the actual failure. Final-head hosted results remain external.
+
 ## Publication evidence
 
 Local commit/tree identifiers are reported externally after commit to avoid a
