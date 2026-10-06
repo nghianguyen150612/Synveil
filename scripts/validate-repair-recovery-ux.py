@@ -44,6 +44,8 @@ require("restart belongs to launch manager", "pub async fn restart(&self)" in la
 restart = section(launch, "pub async fn restart(&self)", "pub async fn autostart_status")
 require("restart shares bounded launch gate", "gate.in_flight" in restart and "retry_after" in restart and "time::timeout" in restart)
 require("uncertain stop/start inspect before replay", "RestartPhase::Stopping" in restart and "RestartPhase::Starting" in restart and "stopped_for_restart().await" in restart and "self.backend.inspect().await" in restart)
+require("resolved status checks cannot start a new restart", "status_check && pending.is_none()" in restart and "manager.check_restart_status().await" in bridge)
+require("late uncertain callback retains authoritative readiness", "actions::restart_reconciliation_pending" in bridge and "p042_status_check_after_readiness_never_restarts" in launch)
 require("stop proof precedes launch", restart.index("stopped_for_restart().await") < restart.index("self.ensure_inner().await"))
 require("supervised restart matches the kernel control peer", "client.peer_process_id() == Some(service_pid)" in launch and "linux_running_service_pid" in launch)
 require("native full-stop proof is explicit", all(s in launch for s in ("ActiveState=inactive", "SubState=dead", "MainPID=0", "ControlPID=0", "linux_restart_stop_proven")))

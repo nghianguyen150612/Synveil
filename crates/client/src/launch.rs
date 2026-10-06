@@ -496,6 +496,16 @@ impl BackgroundClientManager {
     /// Compose the existing supervisor stop/start authority under the same
     /// launch gate. Uncertain stop/start is inspected, never blindly replayed.
     pub async fn restart(&self) -> BackgroundRestartResult {
+        self.restart_attempt(false).await
+    }
+
+    /// Continue a pending attempt, or inspect readiness if it already resolved.
+    /// A delayed UI status check must never initiate a fresh stop/start cycle.
+    pub async fn check_restart_status(&self) -> BackgroundRestartResult {
+        self.restart_attempt(true).await
+    }
+
+    async fn restart_attempt(&self, status_check: bool) -> BackgroundRestartResult {
         let pending = {
             let mut gate = self.gate.lock().await;
             if gate.in_flight || gate.retry_after.is_some_and(|until| until > Instant::now()) {
@@ -504,7 +514,17 @@ impl BackgroundClientManager {
             gate.in_flight = true;
             gate.restart_pending
         };
-        let result = time::timeout(self.timing.startup_timeout, self.restart_inner(pending))
+        let operation = async {
+            if status_check && pending.is_none() {
+                return if self.backend.inspect().await == BackgroundClientAvailability::Running {
+                    BackgroundRestartResult::Recovered
+                } else {
+                    BackgroundRestartResult::Failed
+                };
+            }
+            self.restart_inner(pending).await
+        };
+        let result = time::timeout(self.timing.startup_timeout, operation)
             .await
             .unwrap_or(BackgroundRestartResult::Reconciling);
         let mut gate = self.gate.lock().await;
@@ -2383,11 +2403,17 @@ mod p042_tests {
             m.ensure_running().await,
             BackgroundLaunchResult::AlreadyStarting
         );
-        assert_eq!(m.restart().await, BackgroundRestartResult::Reconciling);
+        assert_eq!(
+            m.check_restart_status().await,
+            BackgroundRestartResult::Reconciling
+        );
         assert_eq!(b.stops.load(Ordering::SeqCst), 1);
         b.stopped.store(true, Ordering::SeqCst);
         allow_inspection(&m).await;
-        assert_eq!(m.restart().await, BackgroundRestartResult::Recovered);
+        assert_eq!(
+            m.check_restart_status().await,
+            BackgroundRestartResult::Recovered
+        );
         assert_eq!(b.stops.load(Ordering::SeqCst), 1);
         assert_eq!(b.starts.load(Ordering::SeqCst), 1);
     }
@@ -2399,11 +2425,43 @@ mod p042_tests {
         let m = manager(b.clone());
         assert_eq!(m.restart().await, BackgroundRestartResult::Reconciling);
         allow_inspection(&m).await;
-        assert_eq!(m.restart().await, BackgroundRestartResult::Reconciling);
+        assert_eq!(
+            m.check_restart_status().await,
+            BackgroundRestartResult::Reconciling
+        );
         assert_eq!(b.starts.load(Ordering::SeqCst), 1);
         b.running.store(true, Ordering::SeqCst);
         assert!(m.reconcile_restart_readiness().await);
         assert!(!m.reconcile_restart_readiness().await);
+        assert_eq!(b.starts.load(Ordering::SeqCst), 1);
+        assert_eq!(b.stops.load(Ordering::SeqCst), 1);
+    }
+    #[tokio::test]
+    async fn p042_status_check_without_pending_never_starts_stopped_client() {
+        let b = Arc::new(Backend::new());
+        b.running.store(false, Ordering::SeqCst);
+        let m = manager(b.clone());
+        assert_eq!(
+            m.check_restart_status().await,
+            BackgroundRestartResult::Failed
+        );
+        assert_eq!(b.starts.load(Ordering::SeqCst), 0);
+        assert_eq!(b.stops.load(Ordering::SeqCst), 0);
+    }
+    #[tokio::test]
+    async fn p042_status_check_after_readiness_never_restarts() {
+        let mut b = Backend::new();
+        b.start_uncertain = true;
+        let b = Arc::new(b);
+        let m = manager(b.clone());
+        assert_eq!(m.restart().await, BackgroundRestartResult::Reconciling);
+        b.running.store(true, Ordering::SeqCst);
+        assert!(m.reconcile_restart_readiness().await);
+        allow_inspection(&m).await;
+        assert_eq!(
+            m.check_restart_status().await,
+            BackgroundRestartResult::Recovered
+        );
         assert_eq!(b.starts.load(Ordering::SeqCst), 1);
         assert_eq!(b.stops.load(Ordering::SeqCst), 1);
     }

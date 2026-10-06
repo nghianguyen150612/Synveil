@@ -31,7 +31,9 @@ GUI inspects current owners; it never replays a previous action.
 
 Linux stop-state parsing deliberately rejects deactivating, missing properties,
 nonzero process/control IDs, missing units and failed status commands. Native stop/start/probe commands run asynchronously under explicit timeouts; cancellation is uncertain and
-retains the manager's reconciliation fence. Existing launch cooldown remains. Only the service utility child is canceled on timeout; the Synveil client is never forcibly killed.
+retains the manager's reconciliation fence. A resolved status check only inspects readiness; it cannot begin a fresh restart.
+Confirmed readiness wins over a delayed uncertain UI callback. Existing launch
+cooldown remains. Only the service utility child is canceled on timeout; the Synveil client is never forcibly killed.
 
 P042 also repairs the pending-setup root-seeding query inherited from P041: it
 now selects the first-sync evidence required by the canonical replica decoder.

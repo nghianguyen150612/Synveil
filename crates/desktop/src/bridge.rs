@@ -1905,7 +1905,10 @@ fn update_restart_action_visibility(mut object: Pin<&mut ffi::DesktopUiBridge>) 
 
 fn request_background_restart(mut object: Pin<&mut ffi::DesktopUiBridge>) {
     let state = object.rust();
-    if (!state.restart_supported && !state.restart_reconciling) || state.recovery_busy {
+    if (!state.restart_supported && !state.restart_reconciling)
+        || state.recovery_busy
+        || state.configuration_busy
+    {
         return;
     }
     let controller = state.controller.clone();
@@ -1915,6 +1918,7 @@ fn request_background_restart(mut object: Pin<&mut ffi::DesktopUiBridge>) {
         controller.refresh_state();
         return;
     }
+    let was_reconciling = state.restart_reconciling;
     let manager = state.launch_manager.clone();
     let gate = Arc::clone(&state.recovery_gate);
     let Some(runtime) = state.runtime.as_ref().map(|r| r.handle().clone()) else {
@@ -1924,20 +1928,32 @@ fn request_background_restart(mut object: Pin<&mut ffi::DesktopUiBridge>) {
         return;
     }
     object.as_mut().set_recovery_busy(true);
+    object.as_mut().set_restart_reconciling(true);
     object
         .as_mut()
         .set_recovery_feedback(QString::from("Checking the background service…"));
     let qt_thread = object.as_ref().get_ref().qt_thread();
     runtime.spawn(async move {
-        let result = manager.restart().await;
+        let result = if was_reconciling {
+            manager.check_restart_status().await
+        } else {
+            manager.restart().await
+        };
         controller.refresh_state();
         gate.release();
         let _ = qt_thread.queue(move |mut object| {
             use synveil_client::BackgroundRestartResult;
-            let unknown = result == BackgroundRestartResult::Reconciling;
             object.as_mut().set_recovery_busy(false);
-            let reconciling = unknown || (result == BackgroundRestartResult::Busy && object.rust().restart_reconciling);
+            let reconciling = actions::restart_reconciliation_pending(
+                result,
+                object.rust().restart_reconciling,
+                was_reconciling,
+            );
             object.as_mut().set_restart_reconciling(reconciling);
+            if !reconciling && (result == BackgroundRestartResult::Reconciling
+                || (was_reconciling && result == BackgroundRestartResult::Busy)) {
+                return;
+            }
             object.as_mut().set_recovery_feedback(QString::from(match result {
                 BackgroundRestartResult::Recovered => "Background service is running. Your files and settings are preserved.",
                 BackgroundRestartResult::Reconciling => "Checking the background service. Select Check service status to inspect the result before any further action.",

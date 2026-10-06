@@ -58,12 +58,12 @@ Observed local results:
 
 | Actual command | Result |
 |---|---|
-| cargo test -p synveil-client --locked --lib | 93 passed before the last restart-reconciliation test; final focused P042 run: 9 passed (85 filtered); updated kernel-peer fixture: 1 passed |
+| cargo test -p synveil-client --locked --lib | 93 passed before final restart-reconciliation extensions; final focused P042 run: 11 passed (85 filtered); updated kernel-peer fixture: 1 passed |
 | cargo test -p synveil-client-sync --locked --lib | 292 passed after the required root-seeding query fix |
 | cargo test -p synveil-install-engine --locked | 503 integration/contract tests passed across all six suites |
 | cargo test -p synveil-client --test desktop_control_ipc --locked | 5 passed |
 | cargo test -p synveil-client-sync --test inbound --locked | 12 passed |
-| cargo test -p synveil-desktop --locked | 90 passed after the final callback-order and current-process readiness refinements |
+| cargo test -p synveil-desktop --locked | 91 passed after the final restart callback-order correction |
 | cargo check -p synveil-client -p synveil-client-sync -p synveil-install-engine -p synveil-desktop --locked | Passed |
 | cargo fmt --all -- --check | Passed on the final source tree |
 | python3 scripts/validate-repair-recovery-ux.py | Passed |
@@ -81,10 +81,12 @@ suppressed in committed source/CI. A further diagnostic invocation permits only
 these two baseline lint classes to expose P042 warnings; it is not a strict
 quality-gate pass. That diagnostic reaches another unchanged P041
 field_reassign_with_default test initializer (baseline presentation.rs:2554).
+A final diagnostic allowing only those three inherited lint classes passes
+for client/desktop; committed CI still runs the strict commands.
 The full desktop script runs 90 passing tests, then fails on existing
 object-store double_must_use (types.rs:95 and :359); its later release build,
 QML lint and release smoke steps therefore do not run.
-Supplemental debug cargo build succeeds and the actual debug offscreen
+Final supplemental debug cargo build succeeds and the actual debug offscreen
 --qml-smoke-test exits 0. It reports existing startup-popup accessibility and
 sign-out-dialog implicitWidth warnings. Supplemental strict qmllint reports
 unresolved QtQml Timer/Connections and existing CXX-Qt integer metadata warnings;
@@ -115,6 +117,14 @@ validator but failed the existing docs script because the Ubuntu runner lacked
 `rg`; added ripgrep to that job’s dependency installation (no validator bypass).
 The local full docs validator remains passing. Final-head hosted results remain
 external.
+
+Final source review found a P042 restart callback-order race: confirmed readiness
+could arrive before a delayed uncertain callback, leaving a stale status action
+that would initiate a new restart. Added a separate manager status-check API
+under the same gate (resolved checks are read-only), preserved confirmed UI
+readiness over late callbacks, and added deterministic manager/UI-policy tests.
+Final focused verification passes 11 client tests and 91 desktop tests. The
+static validator also guards the resolved-status and late-callback boundaries.
 
 ## Publication evidence
 
