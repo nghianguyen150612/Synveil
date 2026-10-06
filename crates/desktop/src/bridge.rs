@@ -25,7 +25,7 @@ use tokio::runtime::{Builder, Handle, Runtime};
 use zeroize::Zeroizing;
 
 use crate::{actions, presentation, profile};
-use actions::{LatestValue, StartupIntentGate, SyncRequestGate};
+use actions::{LatestValue, ReconciliationFence, StartupIntentGate, SyncRequestGate};
 use presentation::{UiAttentionItem, UiLibrary, UiRecoveryItem, UiSnapshot};
 
 type QVariantList = QList<QVariant>;
@@ -95,6 +95,11 @@ pub mod ffi {
         #[qproperty(QString, client_recovery_label)]
         #[qproperty(QVariant, recovery_items)]
         #[qproperty(bool, recovery_items_truncated)]
+        #[qproperty(bool, can_reconnect_server)]
+        #[qproperty(QString, repair_capability)]
+        #[qproperty(QString, repair_guidance)]
+        #[qproperty(bool, restart_supported)]
+        #[qproperty(bool, restart_reconciling)]
         #[qproperty(bool, recovery_busy)]
         #[qproperty(QString, recovery_feedback)]
         #[qproperty(bool, credential_store_unavailable)]
@@ -202,6 +207,10 @@ pub mod ffi {
         #[cxx_name = "syncNow"]
         #[qinvokable]
         fn sync_now(self: Pin<&mut Self>);
+
+        #[cxx_name = "restartBackgroundService"]
+        #[qinvokable]
+        fn restart_background_service(self: Pin<&mut Self>);
 
         #[cxx_name = "retrySelectedRecovery"]
         #[qinvokable]
@@ -328,7 +337,16 @@ pub struct DesktopUiBridgeRust {
     pub(crate) client_recovery_label: QString,
     pub(crate) recovery_items: QVariant,
     pub(crate) recovery_items_truncated: bool,
+    pub(crate) can_reconnect_server: bool,
+    pub(crate) repair_capability: QString,
+    pub(crate) repair_guidance: QString,
+    pub(crate) restart_supported: bool,
+    native_restart_support: bool,
+    native_restart_generation: u64,
+    pub(crate) restart_reconciling: bool,
     pub(crate) recovery_busy: bool,
+    configuration_reconcile: Option<ReconciliationFence>,
+    recovery_reconcile: Option<ReconciliationFence>,
     pub(crate) recovery_feedback: QString,
     pub(crate) credential_store_unavailable: bool,
     pub(crate) libraries: QVariant,
@@ -516,7 +534,16 @@ impl Default for DesktopUiBridgeRust {
             client_recovery_label: QString::from("Background client status unknown"),
             recovery_items: QVariant::default(),
             recovery_items_truncated: false,
+            can_reconnect_server: false,
+            repair_capability: QString::from(presentation::repair_presentation().0.code()),
+            repair_guidance: QString::from(presentation::repair_presentation().1),
+            restart_supported: false,
+            native_restart_support: false,
+            native_restart_generation: 0,
+            restart_reconciling: false,
             recovery_busy: false,
+            configuration_reconcile: None,
+            recovery_reconcile: None,
             recovery_feedback: QString::default(),
             credential_store_unavailable: false,
             libraries: QVariant::default(),
@@ -737,6 +764,11 @@ impl ffi::DesktopUiBridge {
                 dispatcher.publish(presentation::map_snapshot(&controller.snapshot()));
                 return;
             }
+            let restart_generation = controller.snapshot().connection_generation;
+            let restart_supported = launch_manager.restart_supported().await;
+            let _ = dispatcher.qt_thread.queue(move |object| {
+                update_restart_capability(object, restart_supported, restart_generation);
+            });
             let launch_result = launch_manager.ensure_running().await;
             let launch_label = launch_result_label(launch_result);
             let _ = dispatcher.qt_thread.queue(move |mut object| {
@@ -764,6 +796,22 @@ impl ffi::DesktopUiBridge {
             dispatcher.publish(presentation::map_snapshot(&controller.snapshot()));
             while updates.changed().await.is_ok() {
                 let snapshot = updates.borrow_and_update().clone();
+                let recovered = launch_manager.reconcile_restart_readiness().await;
+                let restart_supported = launch_manager.restart_supported().await;
+                let restart_generation = snapshot.connection_generation;
+                let _ = dispatcher.qt_thread.queue(move |mut object| {
+                    update_restart_capability(
+                        object.as_mut(),
+                        restart_supported,
+                        restart_generation,
+                    );
+                    if recovered {
+                        object.as_mut().set_restart_reconciling(false);
+                        object.as_mut().set_recovery_feedback(QString::from(
+                            "Background service is running. Your files and settings are preserved.",
+                        ));
+                    }
+                });
                 dispatcher.publish(presentation::map_snapshot(&snapshot));
             }
         });
@@ -835,6 +883,10 @@ impl ffi::DesktopUiBridge {
 
     fn sync_now(self: Pin<&mut Self>) {
         request_sync(self);
+    }
+
+    fn restart_background_service(self: Pin<&mut Self>) {
+        request_background_restart(self);
     }
 
     fn retry_selected_recovery(
@@ -1087,6 +1139,32 @@ fn apply_snapshot(mut object: Pin<&mut ffi::DesktopUiBridge>, snapshot: UiSnapsh
     if !presentation::snapshot_is_acceptable(&object.rust().presented, &snapshot) {
         return;
     }
+    let fresh = snapshot.freshness_code == "fresh";
+    let configuration_done = object
+        .rust()
+        .configuration_reconcile
+        .is_some_and(|f| f.satisfied(snapshot.connection_generation, snapshot.revision, fresh));
+    let recovery_done = object
+        .rust()
+        .recovery_reconcile
+        .is_some_and(|f| f.satisfied(snapshot.connection_generation, snapshot.revision, fresh));
+    if configuration_done {
+        object.as_mut().rust_mut().get_mut().configuration_reconcile = None;
+        object.rust().configuration_gate.release();
+        object.as_mut().set_configuration_busy(false);
+        object.as_mut().set_configuration_feedback(QString::from(
+            "Server connection checked. Review the current connection before continuing.",
+        ));
+    }
+    if recovery_done {
+        object.as_mut().rust_mut().get_mut().recovery_reconcile = None;
+        object.rust().recovery_gate.release();
+        object.as_mut().set_recovery_busy(false);
+        object.as_mut().set_recovery_feedback(QString::from(
+            "Folder status checked. Follow the current folder status below.",
+        ));
+    }
+
     if object.rust().live_test {
         eprintln!(
             "SYNVEIL-LIVE-UI STATE connection={} freshness={} process={} generation={} libraries={} root={} auth={} error={} can_sync={} tray={}",
@@ -1140,6 +1218,7 @@ fn apply_snapshot(mut object: Pin<&mut ffi::DesktopUiBridge>, snapshot: UiSnapsh
         state.auth_delivery_unknown = false;
     }
     object.as_mut().rust_mut().get_mut().presented = snapshot.clone();
+    update_restart_action_visibility(object.as_mut());
     object.as_mut().rust_mut().get_mut().selected_id = selected_id;
     object
         .as_mut()
@@ -1267,6 +1346,9 @@ fn apply_snapshot(mut object: Pin<&mut ffi::DesktopUiBridge>, snapshot: UiSnapsh
     object
         .as_mut()
         .set_last_error_label(QString::from(snapshot.last_error_label));
+    object
+        .as_mut()
+        .set_can_reconnect_server(snapshot.can_reconnect_server);
     object
         .as_mut()
         .set_recovery_action_required_count(safe_i32(snapshot.recovery_action_required));
@@ -1668,17 +1750,23 @@ fn request_recovery_retry(
             .presented
             .recovery_items
             .iter()
-            .filter(|item| item.action_code == Some("check_again"))
+            .filter(|item| {
+                matches!(
+                    item.action_code,
+                    Some("check_again" | "restore_missing_folder")
+                )
+            })
             .find(|item| {
                 selected_id
                     .is_some_and(|selected_id| item.library_id.as_deref() == Some(selected_id))
             })
             .or_else(|| {
-                state
-                    .presented
-                    .recovery_items
-                    .iter()
-                    .find(|item| item.action_code == Some("check_again"))
+                state.presented.recovery_items.iter().find(|item| {
+                    matches!(
+                        item.action_code,
+                        Some("check_again" | "restore_missing_folder")
+                    )
+                })
             })
             .cloned();
         (
@@ -1716,6 +1804,17 @@ fn request_recovery_retry(
             "Recovery status changed; checking the current state.",
         ));
         return;
+    };
+    if !presentation::recovery_mutation_allowed(&object.rust().presented, &controller.snapshot()) {
+        controller.refresh_state();
+        object.as_mut().set_recovery_feedback(QString::from(
+            "Folder status changed; checking the current state.",
+        ));
+        return;
+    }
+    let fence = ReconciliationFence {
+        generation,
+        revision: object.rust().presented.revision,
     };
     if !gate.try_acquire() {
         object
@@ -1760,17 +1859,108 @@ fn request_recovery_retry(
         if live_test {
             eprintln!("SYNVEIL-LIVE-UI RESULT recovery_feedback={feedback}");
         }
-        gate.release();
+        if !outcome_unknown { gate.release(); }
         let _ = qt_thread.queue(move |mut object| {
-            object.as_mut().set_recovery_busy(false);
-            object
-                .as_mut()
-                .set_recovery_feedback(QString::from(feedback));
             if outcome_unknown {
+                object.as_mut().rust_mut().get_mut().recovery_reconcile = Some(fence);
+                let latest = object.rust().presented.clone();
+                apply_snapshot(object.as_mut(), latest);
+            } else { object.as_mut().set_recovery_busy(false); }
+            if !outcome_unknown || object.rust().recovery_reconcile.is_some() {
+                object.as_mut().set_recovery_feedback(QString::from(feedback));
+            }
+            if outcome_unknown && object.rust().recovery_reconcile.is_some() {
                 object.as_mut().set_last_error_label(QString::from(
                     "Synveil cannot confirm whether the recovery check completed. Current status is being checked.",
                 ));
             }
+        });
+    });
+}
+
+fn update_restart_capability(
+    mut object: Pin<&mut ffi::DesktopUiBridge>,
+    supported: bool,
+    generation: u64,
+) {
+    if object.rust().controller.snapshot().connection_generation != generation {
+        return;
+    }
+    object.as_mut().rust_mut().get_mut().native_restart_support = supported;
+    object
+        .as_mut()
+        .rust_mut()
+        .get_mut()
+        .native_restart_generation = generation;
+    update_restart_action_visibility(object);
+}
+
+fn update_restart_action_visibility(mut object: Pin<&mut ffi::DesktopUiBridge>) {
+    let state = object.rust();
+    let supported = state.native_restart_support
+        && state.native_restart_generation == state.presented.connection_generation
+        && presentation::recovery_mutation_allowed(&state.presented, &state.controller.snapshot());
+    object.as_mut().set_restart_supported(supported);
+}
+
+fn request_background_restart(mut object: Pin<&mut ffi::DesktopUiBridge>) {
+    let state = object.rust();
+    if (!state.restart_supported && !state.restart_reconciling)
+        || state.recovery_busy
+        || state.configuration_busy
+    {
+        return;
+    }
+    let controller = state.controller.clone();
+    if !state.restart_reconciling
+        && !presentation::recovery_mutation_allowed(&state.presented, &controller.snapshot())
+    {
+        controller.refresh_state();
+        return;
+    }
+    let was_reconciling = state.restart_reconciling;
+    let manager = state.launch_manager.clone();
+    let gate = Arc::clone(&state.recovery_gate);
+    let Some(runtime) = state.runtime.as_ref().map(|r| r.handle().clone()) else {
+        return;
+    };
+    if !gate.try_acquire() {
+        return;
+    }
+    object.as_mut().set_recovery_busy(true);
+    object.as_mut().set_restart_reconciling(true);
+    object
+        .as_mut()
+        .set_recovery_feedback(QString::from("Checking the background service…"));
+    let qt_thread = object.as_ref().get_ref().qt_thread();
+    runtime.spawn(async move {
+        let result = if was_reconciling {
+            manager.check_restart_status().await
+        } else {
+            manager.restart().await
+        };
+        controller.refresh_state();
+        gate.release();
+        let _ = qt_thread.queue(move |mut object| {
+            use synveil_client::BackgroundRestartResult;
+            object.as_mut().set_recovery_busy(false);
+            let reconciling = actions::restart_reconciliation_pending(
+                result,
+                object.rust().restart_reconciling,
+                was_reconciling,
+            );
+            object.as_mut().set_restart_reconciling(reconciling);
+            if !reconciling && (result == BackgroundRestartResult::Reconciling
+                || (was_reconciling && result == BackgroundRestartResult::Busy)) {
+                return;
+            }
+            object.as_mut().set_recovery_feedback(QString::from(match result {
+                BackgroundRestartResult::Recovered => "Background service is running. Your files and settings are preserved.",
+                BackgroundRestartResult::Reconciling => "Checking the background service. Select Check service status to inspect the result before any further action.",
+                BackgroundRestartResult::Busy => "A background service check is already in progress. Check its status in a moment.",
+                BackgroundRestartResult::GuidanceOnly => "Restart is not available from this app. Use your system’s existing Synveil service controls, if installed.",
+                BackgroundRestartResult::Failed => "The background service could not restart. Your files and settings are preserved.",
+            }));
         });
     });
 }
@@ -2254,6 +2444,17 @@ fn request_profile_configuration(
         )
     };
 
+    if !presentation::recovery_mutation_allowed(&object.rust().presented, &controller.snapshot()) {
+        controller.refresh_state();
+        object
+            .as_mut()
+            .set_configuration_feedback(QString::from("Checking the server connection…"));
+        return;
+    }
+    let fence = ReconciliationFence {
+        generation: object.rust().presented.connection_generation,
+        revision: object.rust().presented.revision,
+    };
     if !profile_ready {
         object.as_mut().set_configuration_feedback(QString::from(
             "Synveil could not load this device's server settings.",
@@ -2282,8 +2483,6 @@ fn request_profile_configuration(
         eprintln!("SYNVEIL-LIVE-UI ACTION configure_profile");
     }
     let qt_thread = object.as_ref().get_ref().qt_thread();
-    let saved_server_url = server_url.clone();
-    let saved_display_label = display_label.clone();
     runtime.spawn(async move {
         let (feedback, configured, outcome_unknown) = match controller
             .configure_profile(server_url, display_label)
@@ -2309,34 +2508,28 @@ fn request_profile_configuration(
         if live_test {
             eprintln!("SYNVEIL-LIVE-UI RESULT profile_feedback={feedback}");
         }
-        gate.release();
+        if !outcome_unknown && !configured {
+            gate.release();
+        }
         let _ = qt_thread.queue(move |mut object| {
-            object.as_mut().set_configuration_busy(false);
-            object
-                .as_mut()
-                .set_configuration_feedback(QString::from(feedback));
-            if configured {
-                object.as_mut().set_profile_configured(true);
-                object
-                    .as_mut()
-                    .set_profile_server_url(QString::from(saved_server_url));
-                object
-                    .as_mut()
-                    .set_profile_display_name(QString::from(saved_display_label));
-                object.as_mut().set_configuration_feedback(QString::default());
-                object
-                    .as_mut()
-                    .set_profile_message(QString::from("Server connection saved."));
+            if outcome_unknown || configured {
+                object.as_mut().rust_mut().get_mut().configuration_reconcile = Some(fence);
+                let latest = object.rust().presented.clone();
+                apply_snapshot(object.as_mut(), latest);
+            } else {
+                object.as_mut().set_configuration_busy(false);
             }
-            if outcome_unknown {
+            if !outcome_unknown && !configured {
                 object
                     .as_mut()
-                    .set_configuration_feedback(QString::default());
+                    .set_configuration_feedback(QString::from(feedback));
+            } else if object.rust().configuration_reconcile.is_some() {
                 object
                     .as_mut()
-                    .set_profile_message(QString::from(
-                        "Synveil cannot confirm whether the server connection was saved. It is checking the current profile status.",
-                    ));
+                    .set_configuration_feedback(QString::from("Checking the server connection…"));
+                object
+                    .as_mut()
+                    .set_profile_message(QString::from("Checking the server connection…"));
             }
         });
     });
@@ -2767,6 +2960,8 @@ fn to_qvariant_recovery_list(items: &[UiRecoveryItem]) -> QVariant {
     list.reserve(items.len().try_into().unwrap_or(isize::MAX));
     for item in items {
         let mut map = QVariantMap::default();
+        insert_string(&mut map, "state", item.state.code());
+        insert_string(&mut map, "capability", item.capability.code());
         insert_string(&mut map, "recoveryId", &item.recovery_id);
         insert_string(
             &mut map,

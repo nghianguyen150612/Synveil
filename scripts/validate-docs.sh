@@ -121,6 +121,9 @@ python3 scripts/validate-library-first-run-wizard.py || failures=$((failures + 1
 echo "DOC-UNIT-19: checking the Prompt041 installation-to-sync progress"
 python3 scripts/validate-installation-to-sync-progress.py || failures=$((failures + 1))
 
+echo "DOC-UNIT-20: checking Prompt042 repair and recovery"
+python3 scripts/validate-repair-recovery-ux.py || failures=$((failures + 1))
+
 if [[ "$failures" -ne 0 ]]; then
     echo "documentation validation failed: $failures issue(s)" >&2
     exit 1

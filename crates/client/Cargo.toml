@@ -19,7 +19,7 @@ quick-xml.workspace = true
 synveil-client-sync.workspace = true
 synveil-core.workspace = true
 synveil-platform.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["process"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true

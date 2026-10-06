@@ -54,8 +54,8 @@ pub use controller::{
 };
 pub use launch::{
     AutostartState, BackgroundClientAvailability, BackgroundClientManager, BackgroundLaunchBackend,
-    BackgroundLaunchError, BackgroundLaunchResult, BackgroundLaunchTiming, BackgroundStartMode,
-    DESKTOP_LAUNCH_MANAGER_READINESS, LINUX_USER_SERVICE_NAME, LaunchStats,
+    BackgroundLaunchError, BackgroundLaunchResult, BackgroundLaunchTiming, BackgroundRestartResult,
+    BackgroundStartMode, DESKTOP_LAUNCH_MANAGER_READINESS, LINUX_USER_SERVICE_NAME, LaunchStats,
     NativeBackgroundLaunchBackend, SupervisorState, WindowsTaskDefinition,
     packaged_client_path_from,
 };

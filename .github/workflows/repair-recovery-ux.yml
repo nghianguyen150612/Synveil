@@ -1,0 +1,123 @@
+name: repair and recovery UX
+
+on:
+  pull_request:
+  push:
+    branches: [feat/repair-recovery-ux]
+
+jobs:
+  recovery-projection:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p synveil-client --locked recovery_projection
+
+  client-process-lifecycle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: "cargo test -p synveil-client --locked launch::"
+      - run: "cargo test -p synveil-client --locked controller::"
+      - run: "cargo test -p synveil-client --locked process::"
+      - run: cargo test -p synveil-client --test desktop_control_ipc --locked
+
+  root-and-data-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p synveil-client-sync --locked --lib
+      - run: cargo test -p synveil-client-sync --locked --tests
+
+  installer-repair-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p synveil-install-engine --locked
+
+  formatting:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+
+  static-and-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config ripgrep
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: python3 scripts/validate-repair-recovery-ux.py
+      - run: python3 -m py_compile scripts/validate-repair-recovery-ux.py
+      - run: ./scripts/validate-docs.sh
+      - run: ./scripts/validate-install-acceptance.sh
+      - run: git diff --check
+
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy -p synveil-client -p synveil-client-sync -p synveil-install-engine --all-targets --locked --no-deps -- -D warnings
+
+  desktop-and-qml:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Qt and native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config \
+            qt6-base-dev qt6-declarative-dev qt6-tools-dev-tools libgl1-mesa-dev xvfb \
+            qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-dialogs \
+            qml6-module-qtquick-layouts qml6-module-qtquick-window \
+            qml6-module-qtqml-workerscript qml6-module-qtquick-templates \
+            qml6-module-qtquick-nativestyle
+      - run: cargo test -p synveil-desktop --locked
+      - run: cargo check -p synveil-desktop --locked
+      - run: cargo clippy -p synveil-desktop --all-targets --locked --no-deps -- -D warnings
+      - run: ./scripts/test-desktop-ui.sh

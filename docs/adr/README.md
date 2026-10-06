@@ -112,3 +112,5 @@ Consequences / Hệ quả
 Alternatives / Phương án khác
 Migration and review trigger / Điều kiện di chuyển và xem xét lại
 ```
+
+- [ADR-072: v0.2 repair and recovery UX](ADR-072-v0.2-repair-recovery-ux.md)

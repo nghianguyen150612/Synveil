@@ -362,6 +362,22 @@ ApplicationWindow {
         }
     }
 
+    Dialog {
+        id: repairGuidanceDialog
+        objectName: "repairGuidanceDialog"
+        title: qsTr("Repair Synveil")
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(520, root.width - 40)
+        standardButtons: Dialog.Ok
+        contentItem: Label {
+            text: bridge.repair_guidance
+            wrapMode: Text.WordWrap
+            Accessible.name: text
+        }
+        onClosed: repairHelpButton.forceActiveFocus(Qt.TabFocusReason)
+    }
+
     header: ToolBar {
         visible: (bridge.welcome_destination === "existing_client"
                   || bridge.welcome_destination === "connect_setup")
@@ -1020,11 +1036,9 @@ ApplicationWindow {
 
                     Rectangle {
                         id: recoveryCard
+                        objectName: "recoveryPage"
                         Layout.fillWidth: true
-                        visible: bridge.recovery_action_required_count > 0
-                                 || bridge.recovery_waiting_count > 0
-                                 || bridge.recovery_feedback.length > 0
-                                 || bridge.recovery_busy
+                        visible: true
                         implicitHeight: recoveryColumn.implicitHeight + 28
                         radius: 10
                         color: palette.base
@@ -1040,7 +1054,8 @@ ApplicationWindow {
                                 Layout.fillWidth: true
 
                                 Label {
-                                    text: qsTr("Recovery")
+                                    objectName: "recoverySummary"
+                                    text: qsTr("Repair and recovery")
                                     font.pixelSize: 15
                                     font.weight: Font.DemiBold
                                     Layout.fillWidth: true
@@ -1057,10 +1072,59 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 text: bridge.recovery_waiting_count > 0
                                       ? qsTr("Synveil is retrying some conditions automatically. Items that need your action are listed below.")
-                                      : qsTr("Use only the supported action for each condition. Synveil keeps recovery state across desktop restarts.")
+                                      : qsTr("Synveil keeps your files and settings when recovering. Follow the guidance for any item below.")
                                 color: palette.text
                                 wrapMode: Text.WordWrap
                                 font.pixelSize: 12
+                            }
+
+                            RowLayout {
+                                Button {
+                                    objectName: "reconnectServerButton"
+                                    text: qsTr("Reconnect server")
+                                    visible: bridge.can_reconnect_server
+                                    enabled: !bridge.configuration_busy && !bridge.recovery_busy
+                                    onClicked: {
+                                        root.editingConnection = true
+                                        serverAddressField.forceActiveFocus(Qt.TabFocusReason)
+                                    }
+                                    Accessible.name: text
+                                    Accessible.description: qsTr("Review the server connection using the existing connection settings.")
+                                }
+                                Button {
+                                    id: repairHelpButton
+                                    objectName: "repairSynveilButton"
+                                    text: qsTr("How to repair Synveil")
+                                    visible: bridge.repair_capability === "guidance_only"
+                                    onClicked: repairGuidanceDialog.open()
+                                    Accessible.name: text
+                                    Accessible.description: qsTr("Show repair instructions. This does not perform a repair.")
+                                }
+                                Button {
+                                    objectName: "restartBackgroundServiceButton"
+                                    text: qsTr("Restart background service")
+                                    visible: bridge.restart_supported && !bridge.restart_reconciling
+                                    enabled: !bridge.recovery_busy && !bridge.configuration_busy
+                                    onClicked: bridge.restartBackgroundService()
+                                    Accessible.name: text
+                                    Accessible.description: qsTr("Restart the existing Synveil background service while preserving your files and settings.")
+                                }
+                                Button {
+                                    objectName: "reconcileBackgroundServiceButton"
+                                    text: qsTr("Check service status")
+                                    visible: bridge.restart_reconciling
+                                    enabled: !bridge.recovery_busy
+                                    onClicked: bridge.restartBackgroundService()
+                                    Accessible.name: text
+                                }
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                visible: bridge.recovery_action_required_count > 0
+                                         && !bridge.restart_supported && !bridge.restart_reconciling
+                                text: qsTr("Restart background service is not available from this app. Use your system’s existing Synveil service controls, if installed.")
+                                wrapMode: Text.WordWrap
+                                Accessible.name: text
                             }
 
                             ListView {
@@ -1123,9 +1187,13 @@ ApplicationWindow {
 
                                             Button {
                                                 visible: recoveryDelegate.modelData.actionCode === "configure_profile"
-                                                text: qsTr("Open connection")
+                                                objectName: "recoveryConnectionSettingsButton"
+                                                text: recoveryDelegate.modelData.actionLabel
                                                 enabled: !bridge.recovery_busy
-                                                onClicked: root.editingConnection = true
+                                                onClicked: {
+                                                    root.editingConnection = true
+                                                    serverAddressField.forceActiveFocus(Qt.TabFocusReason)
+                                                }
                                                 Accessible.name: qsTr("Open server connection settings")
                                             }
 
@@ -1147,15 +1215,20 @@ ApplicationWindow {
 
                                             Button {
                                                 visible: recoveryDelegate.modelData.actionCode === "check_again"
-                                                text: qsTr("Check again")
+                                                         || recoveryDelegate.modelData.actionCode === "restore_missing_folder"
+                                                objectName: recoveryDelegate.modelData.actionCode === "restore_missing_folder"
+                                                            ? "restoreMissingFolderButton" : "recoveryCheckAgainButton"
+                                                text: recoveryDelegate.modelData.actionLabel
                                                 enabled: !bridge.recovery_busy
+                                                         && recoveryDelegate.modelData.capability === "supported"
                                                 onClicked: {
                                                     bridge.selectLibrary(recoveryDelegate.modelData.libraryId)
                                                     bridge.retrySelectedRecovery(
                                                         recoveryDelegate.modelData.libraryId,
                                                         recoveryDelegate.modelData.connectionGeneration)
                                                 }
-                                                Accessible.name: qsTr("Check this recovery condition again")
+                                                Accessible.name: text
+                                                Accessible.description: recoveryDelegate.modelData.detail
                                             }
 
                                             Button {
@@ -1182,13 +1255,17 @@ ApplicationWindow {
                             Label {
                                 Layout.fillWidth: true
                                 visible: bridge.recovery_feedback.length > 0
+                                objectName: "recoveryFeedbackLabel"
                                 text: bridge.recovery_feedback
+                                Accessible.name: text
                                 color: palette.text
                                 wrapMode: Text.WordWrap
                                 font.pixelSize: 12
                             }
 
                             BusyIndicator {
+                                objectName: "recoveryBusyIndicator"
+                                Accessible.name: qsTr("Checking recovery status")
                                 running: bridge.recovery_busy
                                 visible: running
                                 Layout.preferredWidth: 24
