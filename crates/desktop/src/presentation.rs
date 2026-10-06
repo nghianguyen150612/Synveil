@@ -304,8 +304,71 @@ pub struct UiAttentionItem {
     pub can_retry_local: bool,
 }
 
+/// Presentation only: canonical controller/process owners retain all truth.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RecoveryState {
+    Waiting,
+    ActionRequired,
+    Recovered,
+}
+impl RecoveryState {
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Waiting => "waiting",
+            Self::ActionRequired => "action_required",
+            Self::Recovered => "recovered",
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RecoveryCapability {
+    Supported,
+    GuidanceOnly,
+    Unavailable,
+}
+impl RecoveryCapability {
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Supported => "supported",
+            Self::GuidanceOnly => "guidance_only",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+pub fn repair_presentation() -> (RecoveryCapability, &'static str) {
+    if cfg!(windows) {
+        (RecoveryCapability::GuidanceOnly,
+         "Use the official Synveil installer for the same installed version and choose Repair Synveil. Your files and settings are preserved. The desktop cannot verify or launch a suitable installer here.")
+    } else if cfg!(target_os = "linux") {
+        (RecoveryCapability::GuidanceOnly,
+         "For a system package, repair Synveil using your system’s package manager. For AppImage, use its existing integration repair. Use the same installed version. Your files and settings are preserved; this app has not performed a repair.")
+    } else {
+        (
+            RecoveryCapability::Unavailable,
+            "Installation repair is not available on this device.",
+        )
+    }
+}
+
+/// An action rendered from older status cannot mutate a newer profile/root.
+pub fn recovery_mutation_allowed(
+    presented: &UiSnapshot,
+    current: &DesktopControllerSnapshot,
+) -> bool {
+    current.freshness == DesktopControllerFreshness::Fresh
+        && current.connection_state == DesktopControllerConnectionState::Connected
+        && current.process.as_ref().is_some_and(|process| {
+            process.state == synveil_client::DesktopProcessStatus::Running && process.control_ready
+        })
+        && current.connection_generation == presented.connection_generation
+        && current.revision == presented.revision
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UiRecoveryItem {
+    pub state: RecoveryState,
+    pub capability: RecoveryCapability,
     pub recovery_id: String,
     pub library_id: Option<String>,
     pub library_label: String,
@@ -349,6 +412,7 @@ pub struct UiSnapshot {
     pub profile_authenticated: bool,
     pub profile_display_name: Option<String>,
     pub profile_server_url: Option<String>,
+    pub can_reconnect_server: bool,
     pub recovery_items: Vec<UiRecoveryItem>,
     pub recovery_items_truncated: bool,
     pub recovery_action_required: usize,
@@ -485,6 +549,10 @@ pub fn map_snapshot(snapshot: &DesktopControllerSnapshot) -> UiSnapshot {
         profile_authenticated: snapshot.profile_authenticated,
         profile_display_name: snapshot.profile_display_name.clone(),
         profile_server_url: snapshot.profile_server_url.clone(),
+        can_reconnect_server: recovery.items.iter().any(|item| {
+            item.kind == DesktopControllerRecoveryKind::ProfileConfigurationRequired
+                && item.action_required
+        }) && snapshot.freshness == DesktopControllerFreshness::Fresh,
         recovery_items,
         recovery_items_truncated: recovery.truncated,
         recovery_action_required: bounded_usize(
@@ -926,11 +994,38 @@ fn map_attention_item(item: &DesktopControllerAttentionItem) -> UiAttentionItem 
 
 fn map_recovery_item(item: &DesktopControllerRecoveryItem) -> UiRecoveryItem {
     let (kind_code, kind_label, detail) = recovery_kind_presentation(item.kind);
+    let detail = if item.kind == DesktopControllerRecoveryKind::RootUnavailable && item.waiting {
+        "Synveil is checking the original folder. Your files and library are preserved."
+    } else {
+        detail
+    };
     let (action_code, action_label) = item
         .action
         .map(recovery_action_presentation)
         .unwrap_or((None, ""));
+    let (action_code, action_label) = if item.kind == DesktopControllerRecoveryKind::RootUnavailable
+    {
+        if item.waiting {
+            (None, "")
+        } else {
+            (Some("restore_missing_folder"), "Restore missing folder")
+        }
+    } else {
+        (action_code, action_label)
+    };
     UiRecoveryItem {
+        state: if item.waiting {
+            RecoveryState::Waiting
+        } else if item.action_required {
+            RecoveryState::ActionRequired
+        } else {
+            RecoveryState::Recovered
+        },
+        capability: if action_code.is_some() {
+            RecoveryCapability::Supported
+        } else {
+            RecoveryCapability::Unavailable
+        },
         recovery_id: item.recovery_id.clone(),
         library_label: item
             .library_id
@@ -1011,7 +1106,7 @@ fn recovery_kind_presentation(
         DesktopControllerRecoveryKind::RootUnavailable => (
             "root_unavailable",
             "Local folder unavailable",
-            "The configured folder is unavailable. Synveil has not treated it as empty.",
+            "Reconnect the drive or restore access to the original folder, then select Restore missing folder to check it. Synveil has not treated it as empty. Your files and library are preserved.",
         ),
         DesktopControllerRecoveryKind::ServerRetryable => (
             "server_retryable",
@@ -1037,7 +1132,7 @@ fn recovery_action_presentation(
     match action {
         DesktopControllerRecoveryAction::StartClient => (Some("start_client"), "Start client"),
         DesktopControllerRecoveryAction::ConfigureProfile => {
-            (Some("configure_profile"), "Configure connection")
+            (Some("configure_profile"), "Reconnect server")
         }
         DesktopControllerRecoveryAction::Authenticate => (Some("authenticate"), "Sign in"),
         DesktopControllerRecoveryAction::CheckAgain => (Some("check_again"), "Check again"),
@@ -1601,6 +1696,97 @@ pub const fn auth_feedback(result: DesktopControllerCommandResult) -> &'static s
 mod tests {
     use super::*;
     use synveil_client::{DesktopControllerProcessStatus, DesktopProcessStatus, ServerProfileId};
+
+    #[test]
+    fn p042_same_root_restore_is_a_typed_preserving_recheck() {
+        let mut library = status(library_id(42));
+        library.root_state = DesktopControllerRootState::Unavailable;
+        let snapshot = authenticated_snapshot(vec![library]);
+        let ui = map_snapshot(&snapshot);
+        let item = &ui.recovery_items[0];
+        assert_eq!(item.action_code, Some("restore_missing_folder"));
+        assert_eq!(item.state, RecoveryState::ActionRequired);
+        assert_eq!(item.capability, RecoveryCapability::Supported);
+        assert!(item.detail.contains("original folder"));
+        assert!(item.detail.contains("not treated it as empty"));
+        assert_eq!(ui.libraries.len(), 1);
+        assert!(snapshot.libraries[0].first_sync_completed);
+        assert!(recovery_mutation_allowed(&ui, &snapshot));
+        let mut changed = snapshot.clone();
+        changed.process.as_mut().unwrap().control_ready = false;
+        assert!(!recovery_mutation_allowed(&ui, &changed));
+        changed = snapshot.clone();
+        changed.revision += 1;
+        assert!(!recovery_mutation_allowed(&ui, &changed));
+        changed = snapshot.clone();
+        changed.connection_generation += 1;
+        assert!(!recovery_mutation_allowed(&ui, &changed));
+        changed = snapshot;
+        changed.freshness = DesktopControllerFreshness::Stale;
+        assert!(!recovery_mutation_allowed(&ui, &changed));
+    }
+    #[test]
+    fn p042_recovering_folder_waits_and_transient_server_does_not_edit_profile() {
+        let mut library = status(library_id(42));
+        library.root_state = DesktopControllerRootState::Recovering;
+        let ui = map_snapshot(&authenticated_snapshot(vec![library.clone()]));
+        assert_eq!(ui.recovery_items[0].state, RecoveryState::Waiting);
+        assert_ne!(
+            ui.recovery_items[0].action_code,
+            Some("restore_missing_folder")
+        );
+        library.root_state = DesktopControllerRootState::Available;
+        library.last_outcome = Some(DesktopControllerSyncOutcome::ServerTransient);
+        let ui = map_snapshot(&authenticated_snapshot(vec![library]));
+        assert_eq!(ui.recovery_items[0].state, RecoveryState::Waiting);
+        assert_eq!(ui.recovery_items[0].action_code, Some("check_again"));
+    }
+    #[test]
+    fn p042_repair_is_guidance_without_a_desktop_lifecycle_authority() {
+        let (capability, detail) = repair_presentation();
+        assert_ne!(capability, RecoveryCapability::Supported);
+        assert!(!detail.is_empty());
+        assert_eq!(
+            recovery_action_presentation(DesktopControllerRecoveryAction::ConfigureProfile).1,
+            "Reconnect server"
+        );
+    }
+    #[test]
+    fn p042_product_surface_has_stable_accessibility_and_no_secrets() {
+        let qml = include_str!("../qml/Main.qml");
+        for name in [
+            "recoveryPage",
+            "recoverySummary",
+            "repairSynveilButton",
+            "reconnectServerButton",
+            "restoreMissingFolderButton",
+            "restartBackgroundServiceButton",
+            "recoveryBusyIndicator",
+            "recoveryFeedbackLabel",
+        ] {
+            assert!(qml.contains(name), "{name}");
+        }
+        for kind in [
+            DesktopControllerRecoveryKind::ClientUnavailable,
+            DesktopControllerRecoveryKind::RootUnavailable,
+            DesktopControllerRecoveryKind::ServerRetryable,
+        ] {
+            let copy = recovery_kind_presentation(kind).2.to_lowercase();
+            for term in [
+                "sqlite",
+                "ipc",
+                "secretstore",
+                "uuid",
+                "root binding",
+                ".synveil",
+                "postgresql",
+                "manifest",
+                "journal",
+            ] {
+                assert!(!copy.contains(term));
+            }
+        }
+    }
 
     fn library_id(seed: u128) -> String {
         let mut bytes = seed.to_be_bytes();

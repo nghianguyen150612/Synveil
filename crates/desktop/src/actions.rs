@@ -54,6 +54,21 @@ impl SyncRequestGate {
     }
 }
 
+/// Transient admission fence, discarded after an authoritative refresh.
+/// It stores no recovery truth and never causes replay after GUI reopen.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ReconciliationFence {
+    pub generation: u64,
+    pub revision: u64,
+}
+impl ReconciliationFence {
+    pub(crate) fn satisfied(self, generation: u64, revision: u64, fresh: bool) -> bool {
+        fresh
+            && (generation > self.generation
+                || (generation == self.generation && revision > self.revision))
+    }
+}
+
 /// Coalesces repeated startup-toggle clicks to the latest desired value while
 /// one bounded supervisor operation is in flight. It never creates one task
 /// or one process-management command per click.
@@ -371,5 +386,22 @@ mod tests {
         assert_eq!(gate.try_start(), None);
         gate.release();
         assert_eq!(gate.try_start(), Some((false, 2)));
+    }
+}
+
+#[cfg(test)]
+mod p042_tests {
+    use super::*;
+    #[test]
+    fn p042_unknown_mutation_waits_for_fresh_newer_authority() {
+        let fence = ReconciliationFence {
+            generation: 4,
+            revision: 12,
+        };
+        assert!(!fence.satisfied(4, 12, true));
+        assert!(!fence.satisfied(3, 100, true));
+        assert!(!fence.satisfied(4, 13, false));
+        assert!(fence.satisfied(4, 13, true));
+        assert!(fence.satisfied(5, 1, true));
     }
 }

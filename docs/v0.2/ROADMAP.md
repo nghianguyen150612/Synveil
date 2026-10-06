@@ -449,7 +449,17 @@ folder** and **Restart background service** actions where supported, without
 exposing internal mechanisms. Missing local roots never imply remote deletion;
 unknown outcomes are reconciled before retry.
 
-The Phase-F checkpoint remains reserved for completion of P042.
+**Implemented (Prompt042; strict validation checkpoint held):**
+[repair and recovery UX](REPAIR_RECOVERY_UX.md),
+[ADR-072](../adr/ADR-072-v0.2-repair-recovery-ux.md), and
+[Prompt042 evidence](PROMPT042_MANIFEST.md) compose existing owners with typed
+capabilities, same-root restoration, profile reconciliation and bounded
+supervised restart. Installation repair is truthful guidance only.
+The Phase-F checkpoint remains held while inherited strict source/CI gates fail.
+The external Prompt042 handoff records actual publication, hosted CI and merge
+evidence without embedding this commit’s own identity. Native acceptance and
+Phase G remain separate;
+P043 has not begun.
 
 ## PHASE G — RELEASE PRODUCTIZATION (P043–048)
 

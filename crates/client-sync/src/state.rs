@@ -1172,7 +1172,8 @@ impl LocalStateStore {
         let row = sqlx::query(
             "SELECT owner_user_id, device_id, library_id, root_binding_id,
                     root_node_id, journal_epoch, applied_sequence,
-                    acknowledged_sequence, status, server_profile_id
+                    acknowledged_sequence, status, server_profile_id,
+                    first_sync_completed
              FROM replicas WHERE library_id = ?",
         )
         .bind(scope.library_id().to_string())
@@ -6896,6 +6897,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(seeded.root_node_id(), Some(root_id));
+        assert!(!seeded.first_sync_completed());
         assert_eq!(
             store
                 .local_nodes(replica_scope.library_id())
@@ -6938,6 +6940,25 @@ mod tests {
                 .await
                 .unwrap()
                 .is_some()
+        );
+
+        store
+            .mark_first_sync_completed(replica_scope.library_id())
+            .await
+            .unwrap();
+        let recovered = store
+            .prepare_new_library_root(replica_scope, binding, profile_id, root_id)
+            .await
+            .unwrap();
+        assert!(recovered.first_sync_completed());
+        assert_eq!(recovered.root_node_id(), Some(root_id));
+        assert_eq!(
+            store
+                .local_nodes(replica_scope.library_id())
+                .await
+                .unwrap()
+                .len(),
+            2
         );
 
         store.close_pool().await;

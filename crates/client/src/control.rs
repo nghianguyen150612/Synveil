@@ -2658,6 +2658,8 @@ pub struct DesktopControlClient {
     endpoint: DesktopControlEndpoint,
     io: BoxedControlIo,
     next_request_id: u64,
+    #[cfg(target_os = "linux")]
+    peer_process_id: Option<u32>,
 }
 
 impl fmt::Debug for DesktopControlClient {
@@ -2670,6 +2672,13 @@ impl fmt::Debug for DesktopControlClient {
 }
 
 impl DesktopControlClient {
+    /// Local kernel peer identity for the lifecycle owner only. Never part of
+    /// status serialization, UI presentation, or a process-kill target.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn peer_process_id(&self) -> Option<u32> {
+        self.peer_process_id
+    }
+
     /// Connect and complete the version-1 handshake.
     pub async fn connect(
         endpoint: DesktopControlEndpoint,
@@ -2678,7 +2687,7 @@ impl DesktopControlClient {
         if let DesktopControlEndpoint::UnixSocket { path } = &endpoint {
             validate_unix_client_endpoint(path).map_err(DesktopControlClientError::Endpoint)?;
         }
-        let mut io = open_control_connection(&endpoint).await?;
+        let (mut io, _peer_process_id) = open_control_connection(&endpoint).await?;
         write_frame(
             &mut io,
             &ControlClientHello {
@@ -2706,6 +2715,8 @@ impl DesktopControlClient {
             endpoint,
             io,
             next_request_id: 1,
+            #[cfg(target_os = "linux")]
+            peer_process_id: _peer_process_id,
         })
     }
 
@@ -3015,7 +3026,7 @@ impl DesktopControlEventStream {
 
 async fn open_control_connection(
     endpoint: &DesktopControlEndpoint,
-) -> Result<BoxedControlIo, DesktopControlClientError> {
+) -> Result<(BoxedControlIo, Option<u32>), DesktopControlClientError> {
     match endpoint {
         DesktopControlEndpoint::UnixSocket { path } => {
             #[cfg(unix)]
@@ -3027,7 +3038,15 @@ async fn open_control_connection(
                 .await
                 .map_err(|_| DesktopControlClientError::Connection)?
                 .map_err(|_| DesktopControlClientError::Connection)?;
-                Ok(Box::new(stream))
+                #[cfg(target_os = "linux")]
+                let peer_process_id = stream
+                    .peer_cred()
+                    .ok()
+                    .and_then(|cred| cred.pid())
+                    .and_then(|pid| u32::try_from(pid).ok());
+                #[cfg(not(target_os = "linux"))]
+                let peer_process_id = None;
+                Ok((Box::new(stream), peer_process_id))
             }
             #[cfg(not(unix))]
             {
@@ -3044,7 +3063,7 @@ async fn open_control_connection(
                     .write(true)
                     .open(name)
                     .map_err(|_| DesktopControlClientError::Connection)?;
-                return Ok(Box::new(client));
+                return Ok((Box::new(client), None));
             }
             #[cfg(not(windows))]
             {
@@ -4018,6 +4037,8 @@ mod tests {
         let mut client = DesktopControlClient::connect(endpoint)
             .await
             .expect("control connect");
+        #[cfg(target_os = "linux")]
+        assert_eq!(client.peer_process_id(), Some(std::process::id()));
         assert_eq!(
             client.ping().await.expect("ping"),
             DesktopProcessStatus::Running

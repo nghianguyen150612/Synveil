@@ -253,6 +253,20 @@ pub struct LaunchStats {
 pub trait BackgroundLaunchBackend: Send + Sync {
     async fn inspect(&self) -> BackgroundClientAvailability;
 
+    /// True only when this owner can prove graceful stop before relaunch.
+    async fn restart_supported(&self) -> bool {
+        false
+    }
+
+    async fn stop_for_restart(&self) -> Result<(), BackgroundLaunchError> {
+        self.stop_supervised().await
+    }
+
+    /// Endpoint disappearance alone is never stop evidence.
+    async fn stopped_for_restart(&self) -> bool {
+        false
+    }
+
     async fn request_start(&self) -> Result<BackgroundStartMode, BackgroundLaunchError>;
 
     async fn autostart_status(&self) -> Result<AutostartState, BackgroundLaunchError> {
@@ -276,10 +290,27 @@ pub trait BackgroundLaunchBackend: Send + Sync {
     }
 }
 
+/// Bounded lifecycle outcomes; acknowledgement alone is not success.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BackgroundRestartResult {
+    Recovered,
+    Reconciling,
+    Busy,
+    GuidanceOnly,
+    Failed,
+}
+
+#[derive(Clone, Copy)]
+enum RestartPhase {
+    Stopping,
+    Starting,
+}
+
 #[derive(Default)]
 struct LaunchGate {
     in_flight: bool,
     retry_after: Option<Instant>,
+    restart_pending: Option<RestartPhase>,
 }
 
 #[derive(Default)]
@@ -361,7 +392,10 @@ impl BackgroundClientManager {
 
         {
             let mut gate = self.gate.lock().await;
-            if gate.in_flight || gate.retry_after.is_some_and(|until| until > Instant::now()) {
+            if gate.in_flight
+                || gate.restart_pending.is_some()
+                || gate.retry_after.is_some_and(|until| until > Instant::now())
+            {
                 self.counters
                     .coalesced_requests
                     .fetch_add(1, Ordering::Relaxed);
@@ -434,6 +468,87 @@ impl BackgroundClientManager {
                     Err(_) => BackgroundLaunchResult::Failed,
                 }
             }
+        }
+    }
+
+    pub async fn restart_supported(&self) -> bool {
+        time::timeout(self.timing.probe_timeout, self.backend.restart_supported())
+            .await
+            .unwrap_or(false)
+    }
+
+    /// Snapshot-driven readiness reconciliation never issues stop or start.
+    pub async fn reconcile_restart_readiness(&self) -> bool {
+        let mut gate = self.gate.lock().await;
+        if gate.in_flight || !matches!(gate.restart_pending, Some(RestartPhase::Starting)) {
+            return false;
+        }
+        let running = matches!(
+            time::timeout(self.timing.probe_timeout, self.backend.inspect()).await,
+            Ok(BackgroundClientAvailability::Running)
+        );
+        if running {
+            gate.restart_pending = None;
+        }
+        running
+    }
+
+    /// Compose the existing supervisor stop/start authority under the same
+    /// launch gate. Uncertain stop/start is inspected, never blindly replayed.
+    pub async fn restart(&self) -> BackgroundRestartResult {
+        let pending = {
+            let mut gate = self.gate.lock().await;
+            if gate.in_flight || gate.retry_after.is_some_and(|until| until > Instant::now()) {
+                return BackgroundRestartResult::Busy;
+            }
+            gate.in_flight = true;
+            gate.restart_pending
+        };
+        let result = time::timeout(self.timing.startup_timeout, self.restart_inner(pending))
+            .await
+            .unwrap_or(BackgroundRestartResult::Reconciling);
+        let mut gate = self.gate.lock().await;
+        gate.in_flight = false;
+        if result != BackgroundRestartResult::Reconciling {
+            gate.restart_pending = None;
+        }
+        gate.retry_after = Some(Instant::now() + self.timing.retry_cooldown);
+        result
+    }
+
+    async fn restart_inner(&self, pending: Option<RestartPhase>) -> BackgroundRestartResult {
+        if matches!(pending, Some(RestartPhase::Starting)) {
+            return if self.backend.inspect().await == BackgroundClientAvailability::Running {
+                BackgroundRestartResult::Recovered
+            } else {
+                // Starting may have committed; no second launch here.
+                BackgroundRestartResult::Reconciling
+            };
+        }
+        if pending.is_none() {
+            if !self.backend.restart_supported().await {
+                return BackgroundRestartResult::GuidanceOnly;
+            }
+            self.gate.lock().await.restart_pending = Some(RestartPhase::Stopping);
+            // Even an error may mean stop completed. Inspect before deciding.
+            let _ = self.backend.stop_for_restart().await;
+        }
+        if !self.backend.stopped_for_restart().await {
+            return BackgroundRestartResult::Reconciling;
+        }
+        self.gate.lock().await.restart_pending = Some(RestartPhase::Starting);
+        let started = self.ensure_inner().await;
+        if self.backend.inspect().await == BackgroundClientAvailability::Running {
+            BackgroundRestartResult::Recovered
+        } else if matches!(
+            started,
+            BackgroundLaunchResult::NotInstalled
+                | BackgroundLaunchResult::LaunchDenied
+                | BackgroundLaunchResult::UnsafeState
+        ) {
+            BackgroundRestartResult::Failed
+        } else {
+            BackgroundRestartResult::Reconciling
         }
     }
 
@@ -672,6 +787,67 @@ impl NativeBackgroundLaunchBackend {
 
 #[async_trait]
 impl BackgroundLaunchBackend for NativeBackgroundLaunchBackend {
+    async fn restart_supported(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            // Direct processes and Windows tasks lack a full-stop proof here.
+            let Ok(output) = systemctl_recovery_command(&[
+                "--user",
+                "show",
+                LINUX_USER_SERVICE_NAME,
+                "--property=LoadState",
+                "--property=ActiveState",
+                "--property=MainPID",
+            ])
+            .await
+            else {
+                return false;
+            };
+            if !output.status.success() {
+                return false;
+            }
+            let state = String::from_utf8_lossy(&output.stdout);
+            let Some(service_pid) = linux_running_service_pid(&state) else {
+                return false;
+            };
+            let Ok(endpoint) =
+                DesktopControlEndpoint::for_profile(self.platform.as_ref(), self.profile_id)
+            else {
+                return false;
+            };
+            let Ok(mut client) = DesktopControlClient::connect(endpoint).await else {
+                return false;
+            };
+            return client.peer_process_id() == Some(service_pid)
+                && matches!(client.ping().await, Ok(DesktopProcessStatus::Running));
+        }
+        #[allow(unreachable_code)]
+        false
+    }
+
+    async fn stopped_for_restart(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            // systemctl stop waits for the supervised process group to exit.
+            // Also reject a separately running profile endpoint.
+            return linux_restart_stopped().await
+                && self.inspect_endpoint().await == EndpointInspection::Unavailable;
+        }
+        #[allow(unreachable_code)]
+        false
+    }
+
+    async fn stop_for_restart(&self) -> Result<(), BackgroundLaunchError> {
+        #[cfg(target_os = "linux")]
+        {
+            // Cancellation leaves an uncertain result; the manager keeps its
+            // pending stop fence and inspects before any subsequent start.
+            return systemctl_recovery_action("stop").await;
+        }
+        #[allow(unreachable_code)]
+        Err(BackgroundLaunchError::Unsupported)
+    }
+
     async fn inspect(&self) -> BackgroundClientAvailability {
         match self.inspect_endpoint().await {
             EndpointInspection::Running => return BackgroundClientAvailability::Running,
@@ -692,7 +868,7 @@ impl BackgroundLaunchBackend for NativeBackgroundLaunchBackend {
 
         #[cfg(target_os = "linux")]
         {
-            return match self.linux_supervisor_state() {
+            return match linux_unit_state_async().await {
                 LinuxSupervisorState::LoadedActive => BackgroundClientAvailability::Starting,
                 LinuxSupervisorState::LoadedInactive => {
                     BackgroundClientAvailability::SupervisorInactive
@@ -723,9 +899,11 @@ impl BackgroundLaunchBackend for NativeBackgroundLaunchBackend {
     async fn request_start(&self) -> Result<BackgroundStartMode, BackgroundLaunchError> {
         #[cfg(target_os = "linux")]
         {
-            return match self.linux_supervisor_state() {
+            return match linux_unit_state_async().await {
                 LinuxSupervisorState::LoadedActive | LinuxSupervisorState::LoadedInactive => {
-                    systemctl_user_action("start").map(|()| BackgroundStartMode::Supervised)
+                    systemctl_recovery_action("start")
+                        .await
+                        .map(|()| BackgroundStartMode::Supervised)
                 }
                 LinuxSupervisorState::Absent | LinuxSupervisorState::Unavailable => {
                     self.direct_start()
@@ -1001,6 +1179,132 @@ fn systemctl_command(args: &[&str]) -> Result<std::process::Output, BackgroundLa
         .stderr(Stdio::null())
         .output()
         .map_err(|_| BackgroundLaunchError::SupervisorUnavailable)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_running_service_pid(state: &str) -> Option<u32> {
+    if !state.lines().any(|line| line == "LoadState=loaded")
+        || !state.lines().any(|line| line == "ActiveState=active")
+    {
+        return None;
+    }
+    state
+        .lines()
+        .find_map(|line| line.strip_prefix("MainPID="))
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|pid| *pid != 0)
+}
+
+#[cfg(target_os = "linux")]
+async fn systemctl_recovery_command(
+    args: &[&str],
+) -> Result<std::process::Output, BackgroundLaunchError> {
+    let executable = systemctl_path().ok_or(BackgroundLaunchError::SupervisorUnavailable)?;
+    let mut command = tokio::process::Command::new(executable);
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    time::timeout(DEFAULT_STARTUP_TIMEOUT, command.output())
+        .await
+        .map_err(|_| BackgroundLaunchError::Failed)?
+        .map_err(|_| BackgroundLaunchError::SupervisorUnavailable)
+}
+
+#[cfg(target_os = "linux")]
+async fn systemctl_recovery_action(action: &str) -> Result<(), BackgroundLaunchError> {
+    let output = systemctl_recovery_command(&["--user", action, LINUX_USER_SERVICE_NAME]).await?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(BackgroundLaunchError::Failed)
+    }
+}
+
+#[cfg(target_os = "linux")]
+async fn linux_unit_state_async() -> LinuxSupervisorState {
+    let Ok(output) = systemctl_recovery_command(&[
+        "--user",
+        "show",
+        LINUX_USER_SERVICE_NAME,
+        "--property=LoadState",
+        "--property=ActiveState",
+    ])
+    .await
+    else {
+        return LinuxSupervisorState::Unavailable;
+    };
+    if !output.status.success() {
+        return LinuxSupervisorState::Unavailable;
+    }
+    let state = String::from_utf8_lossy(&output.stdout);
+    if state.lines().any(|line| line == "LoadState=loaded") {
+        if state.lines().any(|line| {
+            matches!(
+                line,
+                "ActiveState=active"
+                    | "ActiveState=activating"
+                    | "ActiveState=deactivating"
+                    | "ActiveState=reloading"
+            )
+        }) {
+            LinuxSupervisorState::LoadedActive
+        } else if state
+            .lines()
+            .any(|line| matches!(line, "ActiveState=inactive" | "ActiveState=failed"))
+        {
+            LinuxSupervisorState::LoadedInactive
+        } else {
+            LinuxSupervisorState::Unavailable
+        }
+    } else if state
+        .lines()
+        .any(|line| line == "LoadState=not-found" || line == "LoadState=masked")
+    {
+        LinuxSupervisorState::Absent
+    } else {
+        LinuxSupervisorState::Unavailable
+    }
+}
+
+#[cfg(target_os = "linux")]
+async fn linux_restart_stopped() -> bool {
+    let Ok(output) = systemctl_recovery_command(&[
+        "--user",
+        "show",
+        LINUX_USER_SERVICE_NAME,
+        "--property=LoadState",
+        "--property=ActiveState",
+        "--property=SubState",
+        "--property=MainPID",
+        "--property=ControlPID",
+    ])
+    .await
+    else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let state = String::from_utf8_lossy(&output.stdout);
+    linux_restart_stop_proven(&state)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_restart_stop_proven(state: &str) -> bool {
+    // A failed is-active probe, deactivating service, or missing property is
+    // not a stop proof. No arbitrary process identifier is acted on.
+    [
+        "LoadState=loaded",
+        "ActiveState=inactive",
+        "SubState=dead",
+        "MainPID=0",
+        "ControlPID=0",
+    ]
+    .iter()
+    .all(|expected| state.lines().any(|line| line == *expected))
 }
 
 #[cfg(target_os = "linux")]
@@ -1947,5 +2251,213 @@ mod tests {
             );
         }
         let _ = fs::remove_dir_all(root);
+    }
+}
+
+#[cfg(test)]
+mod p042_tests {
+    use super::*;
+    use std::sync::atomic::AtomicBool;
+    use tokio::sync::Notify;
+
+    struct Backend {
+        running: AtomicBool,
+        stopped: AtomicBool,
+        supports: bool,
+        stop_uncertain: bool,
+        start_uncertain: bool,
+        block_stop: bool,
+        entered: Notify,
+        release: Notify,
+        stops: AtomicUsize,
+        starts: AtomicUsize,
+    }
+    impl Backend {
+        fn new() -> Self {
+            Self {
+                running: AtomicBool::new(true),
+                stopped: AtomicBool::new(true),
+                supports: true,
+                stop_uncertain: false,
+                start_uncertain: false,
+                block_stop: false,
+                entered: Notify::new(),
+                release: Notify::new(),
+                stops: AtomicUsize::new(0),
+                starts: AtomicUsize::new(0),
+            }
+        }
+    }
+    #[async_trait]
+    impl BackgroundLaunchBackend for Backend {
+        async fn inspect(&self) -> BackgroundClientAvailability {
+            if self.running.load(Ordering::SeqCst) {
+                BackgroundClientAvailability::Running
+            } else {
+                BackgroundClientAvailability::Stopped
+            }
+        }
+        async fn restart_supported(&self) -> bool {
+            self.supports
+        }
+        async fn stopped_for_restart(&self) -> bool {
+            self.stopped.load(Ordering::SeqCst)
+        }
+        async fn stop_supervised(&self) -> Result<(), BackgroundLaunchError> {
+            self.stops.fetch_add(1, Ordering::SeqCst);
+            self.entered.notify_one();
+            if self.block_stop {
+                self.release.notified().await;
+            }
+            self.running.store(false, Ordering::SeqCst);
+            if self.stop_uncertain {
+                Err(BackgroundLaunchError::Failed)
+            } else {
+                Ok(())
+            }
+        }
+        async fn request_start(&self) -> Result<BackgroundStartMode, BackgroundLaunchError> {
+            self.starts.fetch_add(1, Ordering::SeqCst);
+            self.running.store(!self.start_uncertain, Ordering::SeqCst);
+            Ok(BackgroundStartMode::Supervised)
+        }
+    }
+    fn manager(backend: Arc<Backend>) -> BackgroundClientManager {
+        BackgroundClientManager::with_backend(
+            ServerProfileId::new(),
+            backend,
+            BackgroundLaunchTiming::default(),
+        )
+    }
+    async fn allow_inspection(manager: &BackgroundClientManager) {
+        // Deterministically advance admission; production retains its cooldown.
+        manager.gate.lock().await.retry_after = None;
+    }
+    #[test]
+    fn p042_restart_requires_a_running_managed_process_identity() {
+        let running = "LoadState=loaded\nActiveState=active\nMainPID=42";
+        assert_eq!(linux_running_service_pid(running), Some(42));
+        for uncertain in [
+            running.replace("MainPID=42", "MainPID=0"),
+            running.replace("active", "deactivating"),
+            running.replace("loaded", "not-found"),
+            running.replace("MainPID=42", ""),
+        ] {
+            assert_eq!(linux_running_service_pid(&uncertain), None);
+        }
+    }
+    #[test]
+    fn p042_partial_or_deactivating_supervisor_state_is_not_stop_proof() {
+        let stopped =
+            "LoadState=loaded\nActiveState=inactive\nSubState=dead\nMainPID=0\nControlPID=0";
+        assert!(linux_restart_stop_proven(stopped));
+        for uncertain in [
+            stopped.replace("inactive", "deactivating"),
+            stopped.replace("MainPID=0", "MainPID=2"),
+            stopped.replace("ControlPID=0", ""),
+            stopped.replace("loaded", "not-found"),
+        ] {
+            assert!(!linux_restart_stop_proven(&uncertain));
+        }
+    }
+    #[tokio::test]
+    async fn p042_restart_requires_stop_proof_and_running_readiness() {
+        let b = Arc::new(Backend::new());
+        let m = manager(b.clone());
+        assert_eq!(m.restart().await, BackgroundRestartResult::Recovered);
+        assert_eq!(b.stops.load(Ordering::SeqCst), 1);
+        assert_eq!(b.starts.load(Ordering::SeqCst), 1);
+        assert_eq!(m.restart().await, BackgroundRestartResult::Busy);
+    }
+    #[tokio::test]
+    async fn p042_unknown_stop_is_reconciled_without_repeating_shutdown() {
+        let mut b = Backend::new();
+        b.stop_uncertain = true;
+        b.stopped.store(false, Ordering::SeqCst);
+        let b = Arc::new(b);
+        let m = manager(b.clone());
+        assert_eq!(m.restart().await, BackgroundRestartResult::Reconciling);
+        assert_eq!(b.starts.load(Ordering::SeqCst), 0);
+        allow_inspection(&m).await;
+        assert_eq!(
+            m.ensure_running().await,
+            BackgroundLaunchResult::AlreadyStarting
+        );
+        assert_eq!(m.restart().await, BackgroundRestartResult::Reconciling);
+        assert_eq!(b.stops.load(Ordering::SeqCst), 1);
+        b.stopped.store(true, Ordering::SeqCst);
+        allow_inspection(&m).await;
+        assert_eq!(m.restart().await, BackgroundRestartResult::Recovered);
+        assert_eq!(b.stops.load(Ordering::SeqCst), 1);
+        assert_eq!(b.starts.load(Ordering::SeqCst), 1);
+    }
+    #[tokio::test]
+    async fn p042_unknown_start_never_replays_launch() {
+        let mut b = Backend::new();
+        b.start_uncertain = true;
+        let b = Arc::new(b);
+        let m = manager(b.clone());
+        assert_eq!(m.restart().await, BackgroundRestartResult::Reconciling);
+        allow_inspection(&m).await;
+        assert_eq!(m.restart().await, BackgroundRestartResult::Reconciling);
+        assert_eq!(b.starts.load(Ordering::SeqCst), 1);
+        b.running.store(true, Ordering::SeqCst);
+        assert!(m.reconcile_restart_readiness().await);
+        assert!(!m.reconcile_restart_readiness().await);
+        assert_eq!(b.starts.load(Ordering::SeqCst), 1);
+        assert_eq!(b.stops.load(Ordering::SeqCst), 1);
+    }
+    #[tokio::test]
+    async fn p042_restart_and_start_share_one_admission() {
+        let mut b = Backend::new();
+        b.block_stop = true;
+        let b = Arc::new(b);
+        let m = manager(b.clone());
+        let other = m.clone();
+        let task = tokio::spawn(async move { other.restart().await });
+        b.entered.notified().await;
+        assert_eq!(m.restart().await, BackgroundRestartResult::Busy);
+        assert_eq!(
+            m.ensure_running().await,
+            BackgroundLaunchResult::AlreadyStarting
+        );
+        b.release.notify_one();
+        assert_eq!(task.await.unwrap(), BackgroundRestartResult::Recovered);
+        assert_eq!(b.stops.load(Ordering::SeqCst), 1);
+    }
+    #[tokio::test]
+    async fn p042_unsupported_restart_is_guidance_without_mutation() {
+        let mut b = Backend::new();
+        b.supports = false;
+        let b = Arc::new(b);
+        let m = manager(b.clone());
+        assert!(!m.restart_supported().await);
+        assert_eq!(m.restart().await, BackgroundRestartResult::GuidanceOnly);
+        assert_eq!(b.starts.load(Ordering::SeqCst), 0);
+        assert_eq!(b.stops.load(Ordering::SeqCst), 0);
+    }
+    #[tokio::test(start_paused = true)]
+    async fn p042_timeout_retains_stop_reconciliation_before_launch() {
+        let mut b = Backend::new();
+        b.block_stop = true;
+        b.stopped.store(false, Ordering::SeqCst);
+        let b = Arc::new(b);
+        let m = manager(b.clone());
+        assert_eq!(m.restart().await, BackgroundRestartResult::Reconciling);
+        allow_inspection(&m).await;
+        assert_eq!(m.restart().await, BackgroundRestartResult::Reconciling);
+        assert_eq!(b.starts.load(Ordering::SeqCst), 0);
+        assert_eq!(b.stops.load(Ordering::SeqCst), 1);
+    }
+    #[tokio::test]
+    async fn p042_gui_reopen_does_not_replay_restart() {
+        let b = Arc::new(Backend::new());
+        let reopened = manager(b.clone());
+        assert_eq!(
+            reopened.ensure_running().await,
+            BackgroundLaunchResult::AlreadyRunning
+        );
+        assert_eq!(b.stops.load(Ordering::SeqCst), 0);
+        assert_eq!(b.starts.load(Ordering::SeqCst), 0);
     }
 }
