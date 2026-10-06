@@ -178,7 +178,7 @@ impl ContentDescriptor {
         }
     }
 
-    #[must_use]
+    #[must_use = "The returned stream must be polled to receive the downloaded content."]
     pub fn into_stream(self) -> ContentByteStream {
         self.body
     }

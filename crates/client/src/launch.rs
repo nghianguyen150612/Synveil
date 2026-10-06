@@ -1581,11 +1581,12 @@ fn windows_task_state(profile_id: ServerProfileId) -> WindowsTaskState {
 #[cfg(any(windows, test))]
 fn decode_task_xml(bytes: &[u8]) -> Option<String> {
     if let Some(payload) = bytes.strip_prefix(&[0xff, 0xfe]) {
-        if payload.len() % 2 != 0 {
+        let (pairs, remainder) = payload.as_chunks::<2>();
+        if !remainder.is_empty() {
             return None;
         }
-        let words = payload
-            .chunks_exact(2)
+        let words = pairs
+            .iter()
             .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
             .collect::<Vec<_>>();
         String::from_utf16(&words).ok()
@@ -2218,6 +2219,17 @@ mod tests {
         assert!(!endpoint.unix_path().unwrap().exists());
         state.close_pool().await;
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn windows_task_xml_decoding_preserves_endianness_and_rejects_malformed_utf16() {
+        let expected = "<Task>Nguyễn 😀</Task>";
+        let mut bytes = vec![0xff, 0xfe];
+        bytes.extend(expected.encode_utf16().flat_map(u16::to_le_bytes));
+        assert_eq!(decode_task_xml(&bytes).as_deref(), Some(expected));
+        assert_eq!(decode_task_xml(&[0xff, 0xfe, 0x41]), None);
+        assert_eq!(decode_task_xml(&[0xff, 0xfe, 0x00, 0xd8]), None);
+        assert_eq!(decode_task_xml(&[0xfe, 0xff, 0x00, 0x41]), None);
     }
 
     #[test]

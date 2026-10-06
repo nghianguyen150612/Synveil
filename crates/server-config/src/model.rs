@@ -614,12 +614,10 @@ fn validate_network(network: &NetworkIntegration) -> Result<(), ConfigValidation
     if let NetworkTrust::ManagedPrivateCa {
         ca_certificate_sha256,
     } = &network.trust
+        && (ca_certificate_sha256.len() != 64
+            || !ca_certificate_sha256.bytes().all(|b| b.is_ascii_hexdigit()))
     {
-        if ca_certificate_sha256.len() != 64
-            || !ca_certificate_sha256.bytes().all(|b| b.is_ascii_hexdigit())
-        {
-            return Err(ConfigValidationError::InvalidNetworkConfiguration);
-        }
+        return Err(ConfigValidationError::InvalidNetworkConfiguration);
     }
     Ok(())
 }

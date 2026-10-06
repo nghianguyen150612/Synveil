@@ -151,7 +151,7 @@ pub struct UploadProgress {
 pub type UploadByteStream =
     Pin<Box<dyn Stream<Item = Result<Bytes, UploadError>> + Send + 'static>>;
 
-#[must_use]
+#[must_use = "The returned stream must be consumed by the upload service."]
 pub fn boxed_upload_stream<S>(stream: S) -> UploadByteStream
 where
     S: Stream<Item = Result<Bytes, UploadError>> + Send + 'static,

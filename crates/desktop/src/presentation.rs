@@ -2737,9 +2737,11 @@ mod tests {
             FirstRunProgressStageState::Pending
         );
 
-        let mut connecting = DesktopControllerSnapshot::default();
-        connecting.connection_state = DesktopControllerConnectionState::Connecting;
-        connecting.freshness = DesktopControllerFreshness::Unavailable;
+        let connecting = DesktopControllerSnapshot {
+            connection_state: DesktopControllerConnectionState::Connecting,
+            freshness: DesktopControllerFreshness::Unavailable,
+            ..DesktopControllerSnapshot::default()
+        };
         let progress = first_run_progress(&connecting);
         assert_eq!(
             progress_stage_for(&progress, "server_ready").state,

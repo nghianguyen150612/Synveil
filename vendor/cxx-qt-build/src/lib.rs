@@ -65,6 +65,32 @@ struct GeneratedCppFilePaths {
     qobject_header: Option<PathBuf>,
 }
 
+// Qt 6.4 predates QML_USING and cannot resolve CXX's qualified int32 alias
+// or a leading global qualifier on QObject in moc metadata. Normalize only
+// these equivalent names for qmltyperegistrar; generated C++ and Rust types
+// remain unchanged. builtins.h already asserts int32_t and int have equal size.
+fn normalize_qml_metatype_aliases(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            for (key, value) in fields {
+                if key == "type" && value.as_str() == Some("::std::int32_t") {
+                    *value = serde_json::Value::String("int".to_owned());
+                } else if key == "name" && value.as_str() == Some("::QObject") {
+                    *value = serde_json::Value::String("QObject".to_owned());
+                } else {
+                    normalize_qml_metatype_aliases(value);
+                }
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                normalize_qml_metatype_aliases(value);
+            }
+        }
+        _ => {}
+    }
+}
+
 struct GeneratedCpp {
     cxx_qt: Option<CppFragment>,
     cxx: cxx_gen::GeneratedCode,
@@ -891,6 +917,37 @@ impl CxxQtBuilder {
                 .iter()
                 .map(|products| products.metatypes_json.clone())
                 .collect();
+
+            for path in &qml_metatypes_json {
+                if std::fs::metadata(path).expect("Read moc metadata").len() == 0 {
+                    continue;
+                }
+                let mut metadata: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(path).expect("Read moc metadata"))
+                        .expect("Parse moc metadata");
+                normalize_qml_metatype_aliases(&mut metadata);
+                std::fs::write(
+                    path,
+                    serde_json::to_vec(&metadata).expect("Encode moc metadata"),
+                )
+                .expect("Write QML-compatible moc metadata");
+            }
+
+            // Supply the actual QObject base metadata, as Qt's CMake QML
+            // registration does with foreign types. This is metadata only:
+            // do not compile another QObject moc implementation.
+            let qobject_header = qtbuild
+                .include_paths()
+                .into_iter()
+                .map(|path| path.join("qobject.h"))
+                .find(|path| path.is_file())
+                .expect("QtCore QObject header is required for QML metadata");
+            qml_metatypes_json.push(
+                qtbuild
+                    .moc()
+                    .compile(qobject_header, MocArguments::default())
+                    .metatypes_json,
+            );
 
             // Inject CXX-Qt builtin meta types
             let builtins_path = dir::out().join("builtins.h");
