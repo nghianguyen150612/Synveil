@@ -1,7 +1,10 @@
 import Foundation
 
-/// Delegate that explicitly rejects all HTTP redirects to prevent silent cross-origin/endpoint redirection.
-private final class RedirectRejectingDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+/// Delegate that explicitly rejects all HTTP redirects to prevent silent
+/// cross-origin/endpoint redirection.
+private final class RedirectRejectingDelegate:
+    NSObject, URLSessionDataDelegate, @unchecked Sendable
+{
     func urlSession(
         _ session: URLSession,
         task: URLSessionTask,
@@ -27,11 +30,13 @@ public final class URLSessionHTTPTransport: HTTPTransportProtocol, @unchecked Se
     /// Initializes `URLSessionHTTPTransport` with explicit timeout and policy settings.
     ///
     /// - Parameters:
-    ///   - userAgent: The User-Agent string to include on outbound requests (default: "Synveil/0.1.0 (iOS)").
+    ///   - userAgent: The User-Agent string to include on outbound requests
+    ///     (default: "Synveil/0.1.0 (iOS)").
     ///   - requestTimeout: Timeout interval for single requests in seconds (default: 10s).
     ///   - resourceTimeout: Timeout interval for entire resource transfer in seconds (default: 15s).
     ///   - maxResponseBodyBytes: Maximum allowed response body size in bytes (default: 64 KiB).
-    ///   - allowLoopbackTestHttp: Whether cleartext HTTP is permitted for numeric loopback (`127.0.0.1`, `[::1]`).
+    ///   - allowLoopbackTestHttp: Whether cleartext HTTP is permitted for numeric
+    ///     loopback (`127.0.0.1`, `[::1]`).
     public init(
         userAgent: String = "Synveil/0.1.0 (iOS)",
         requestTimeout: TimeInterval = 10.0,
@@ -48,7 +53,11 @@ public final class URLSessionHTTPTransport: HTTPTransportProtocol, @unchecked Se
         configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
 
         let delegate = RedirectRejectingDelegate()
-        self.session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
+        self.session = URLSession(
+            configuration: configuration,
+            delegate: delegate,
+            delegateQueue: nil
+        )
         self.userAgent = userAgent
         self.maxResponseBodyBytes = maxResponseBodyBytes
         self.allowLoopbackTestHttp = allowLoopbackTestHttp
@@ -154,12 +163,12 @@ public final class URLSessionHTTPTransport: HTTPTransportProtocol, @unchecked Se
         case .timedOut:
             return .timeout
         case .serverCertificateUntrusted,
-             .serverCertificateHasBadDate,
-             .serverCertificateHasUnknownRoot,
-             .serverCertificateNotYetValid,
-             .secureConnectionFailed,
-             .clientCertificateRejected,
-             .clientCertificateRequired:
+            .serverCertificateHasBadDate,
+            .serverCertificateHasUnknownRoot,
+            .serverCertificateNotYetValid,
+            .secureConnectionFailed,
+            .clientCertificateRejected,
+            .clientCertificateRequired:
             return .tlsError
         case .cancelled:
             return .cancelled
