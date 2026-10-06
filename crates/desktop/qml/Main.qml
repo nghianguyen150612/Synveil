@@ -44,11 +44,11 @@ ApplicationWindow {
                  && bridge.welcome_destination === "existing_client"
                  && !bridge.auth_required && !bridge.auth_in_flight
         focus: visible
-        Accessible.name: qsTr("Choose whether Synveil starts when you sign in")
 
         ColumnLayout {
             anchors.fill: parent
             spacing: 14
+            Accessible.name: qsTr("Choose whether Synveil starts when you sign in")
 
             Label {
                 Layout.fillWidth: true
