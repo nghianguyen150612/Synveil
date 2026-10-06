@@ -126,6 +126,16 @@ readiness over late callbacks, and added deterministic manager/UI-policy tests.
 Final focused verification passes 11 client tests and 91 desktop tests. The
 static validator also guards the resolved-status and late-callback boundaries.
 
+The broader final-head Rust CI also exposed an inherited Windows compile error:
+Native WindowsTaskState::Stale referenced an undeclared availability UnsafeState
+(baseline launch.rs:711). P042’s Windows recovery surface needs to compile, so
+added that fail-closed classification to the existing availability enum/manager,
+and extended the existing no-launch security test over all unsafe classes.
+This does not enable Windows restart or introduce an alternate supervisor.
+Other broader inherited failures remain documented externally: the old packaging
+fixture expects client schema 7 although P041 already raised it to 8, macOS
+UnsafeEndpoint fixtures, and dependency advisories. None is called P042 success.
+
 ## Publication evidence
 
 Local commit/tree identifiers are reported externally after commit to avoid a

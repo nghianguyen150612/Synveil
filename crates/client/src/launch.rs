@@ -58,6 +58,7 @@ pub enum BackgroundClientAvailability {
     ProtocolIncompatible,
     MalformedControl,
     WriterConflict,
+    UnsafeState,
     TerminalFault,
 }
 
@@ -444,7 +445,8 @@ impl BackgroundClientManager {
             BackgroundClientAvailability::Running => BackgroundLaunchResult::AlreadyRunning,
             BackgroundClientAvailability::Starting => BackgroundLaunchResult::AlreadyStarting,
             BackgroundClientAvailability::EndpointSecurity
-            | BackgroundClientAvailability::WriterConflict => BackgroundLaunchResult::UnsafeState,
+            | BackgroundClientAvailability::WriterConflict
+            | BackgroundClientAvailability::UnsafeState => BackgroundLaunchResult::UnsafeState,
             BackgroundClientAvailability::ProtocolIncompatible
             | BackgroundClientAvailability::MalformedControl
             | BackgroundClientAvailability::TerminalFault => BackgroundLaunchResult::LaunchDenied,
@@ -1981,20 +1983,23 @@ mod tests {
 
     #[tokio::test]
     async fn launch6_security_failure_never_starts() {
-        let backend = FakeBackend::new(
+        for availability in [
             BackgroundClientAvailability::EndpointSecurity,
-            Ok(BackgroundStartMode::Direct),
-        );
-        let manager = BackgroundClientManager::with_backend(
-            ServerProfileId::new(),
-            backend.clone(),
-            test_timing(),
-        );
-        assert_eq!(
-            manager.ensure_running().await,
-            BackgroundLaunchResult::UnsafeState
-        );
-        assert_eq!(backend.starts.load(Ordering::Relaxed), 0);
+            BackgroundClientAvailability::WriterConflict,
+            BackgroundClientAvailability::UnsafeState,
+        ] {
+            let backend = FakeBackend::new(availability, Ok(BackgroundStartMode::Direct));
+            let manager = BackgroundClientManager::with_backend(
+                ServerProfileId::new(),
+                backend.clone(),
+                test_timing(),
+            );
+            assert_eq!(
+                manager.ensure_running().await,
+                BackgroundLaunchResult::UnsafeState
+            );
+            assert_eq!(backend.starts.load(Ordering::Relaxed), 0);
+        }
     }
 
     #[tokio::test]
