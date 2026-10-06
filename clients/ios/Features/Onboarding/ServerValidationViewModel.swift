@@ -107,34 +107,70 @@ public final class ServerValidationViewModel {
             let details = code != nil ? " (Code: \(code!))" : ""
             return (
                 "Server Not Ready",
-                "The server was reached but is currently undergoing maintenance or initialization\(details). Please try again in a few moments."
+                "The server was reached but is currently undergoing maintenance or "
+                    + "initialization\(details). Please try again in a few moments."
             )
         case .failed(let error):
             switch error {
             case .offline:
-                return ("Connection Error", "Unable to connect to the server. Please check your network connection and server address.")
+                return (
+                    "Connection Error",
+                    "Unable to connect to the server. Please check your network connection "
+                        + "and server address."
+                )
             case .dnsFailure:
-                return ("Server Not Found", "Could not resolve the server address. Please verify the host name.")
+                return (
+                    "Server Not Found",
+                    "Could not resolve the server address. Please verify the host name."
+                )
             case .timeout:
-                return ("Request Timed Out", "The server did not respond in time. Please try again.")
+                return (
+                    "Request Timed Out",
+                    "The server did not respond in time. Please try again."
+                )
             case .tlsError:
-                return ("Security Failure", "A secure TLS connection could not be established with the server.")
+                return (
+                    "Security Failure",
+                    "A secure TLS connection could not be established with the server."
+                )
             case .redirectRejected:
-                return ("Redirect Rejected", "The server attempted an unexpected redirect, which is prohibited for security.")
+                return (
+                    "Redirect Rejected",
+                    "The server attempted an unexpected redirect, which is prohibited "
+                        + "for security."
+                )
             case .unexpectedContentType:
-                return ("Incompatible Service", "The server responded with an invalid payload format. Please ensure the URL points to a Synveil server.")
+                return (
+                    "Incompatible Service",
+                    "The server responded with an invalid payload format. Please ensure "
+                        + "the URL points to a Synveil server."
+                )
             case .bodyLimitExceeded:
-                return ("Response Too Large", "The server health response exceeded the expected maximum size limit.")
+                return (
+                    "Response Too Large",
+                    "The server health response exceeded the expected maximum size limit."
+                )
             case .malformedResponse, .protocolError:
-                return ("Incompatible Server", "The endpoint responded but does not appear to run a compatible Synveil service.")
+                return (
+                    "Incompatible Server",
+                    "The endpoint responded but does not appear to run a compatible "
+                        + "Synveil service."
+                )
             case .httpError(let statusCode, let code, _):
                 let codeDetail = code != nil ? " (\(code!))" : ""
-                return ("Server Error", "Server returned HTTP error status \(statusCode)\(codeDetail).")
+                return (
+                    "Server Error",
+                    "Server returned HTTP error status \(statusCode)\(codeDetail)."
+                )
             case .configurationError:
-                return ("Configuration Error", "Invalid server configuration or transport policy.")
+                return (
+                    "Configuration Error",
+                    "Invalid server configuration or transport policy."
+                )
             case .cancelled:
                 return ("Cancelled", "Validation was cancelled.")
             }
         }
     }
+
 }
