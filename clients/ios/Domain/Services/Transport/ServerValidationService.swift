@@ -194,9 +194,11 @@ public final class ServerValidationService: ServerValidationServiceProtocol, Sen
     }
 
     private func isJsonContentType(_ headers: [String: String]) -> Bool {
-        guard let contentType = headers.first(where: {
-            $0.key.lowercased() == "content-type"
-        })?.value else {
+        guard
+            let contentType = headers.first(where: {
+                $0.key.lowercased() == "content-type"
+            })?.value
+        else {
             return false
         }
         let mime = contentType.components(separatedBy: ";").first?
@@ -206,9 +208,11 @@ public final class ServerValidationService: ServerValidationServiceProtocol, Sen
     }
 
     private func extractSafeHeaderRequestId(_ headers: [String: String]) -> String? {
-        guard let val = headers.first(where: {
-            $0.key.lowercased() == "x-request-id"
-        })?.value else {
+        guard
+            let val = headers.first(where: {
+                $0.key.lowercased() == "x-request-id"
+            })?.value
+        else {
             return nil
         }
         return sanitizeRequestId(val)
