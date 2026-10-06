@@ -110,7 +110,11 @@ Initial focused workflow run 37461335694 was rejected before jobs started:
 three unquoted test filters ended in `::`, making invalid YAML. Quoted those
 run commands and parsed the full workflow locally (eight jobs, string commands).
 Published history is retained; the follow-up commit fixes only workflow syntax
-and records the actual failure. Final-head hosted results remain external.
+and records the actual failure. The next hosted static/docs job passed the P042
+validator but failed the existing docs script because the Ubuntu runner lacked
+`rg`; added ripgrep to that job’s dependency installation (no validator bypass).
+The local full docs validator remains passing. Final-head hosted results remain
+external.
 
 ## Publication evidence
 
