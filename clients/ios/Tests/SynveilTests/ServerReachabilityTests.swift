@@ -48,6 +48,7 @@ final class ServerReachabilityTests: XCTestCase {
         string.data(using: .utf8)!
     }
 
+    @MainActor
     private func makeConfiguredSessionController(
         endpoint: ServerEndpoint? = nil
     ) -> SessionController {
