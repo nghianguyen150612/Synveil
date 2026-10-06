@@ -13,7 +13,9 @@ struct RootView: View {
         case .needsServerProfile:
             ServerSetupView(viewModel: ServerSetupViewModel(sessionController: sessionController))
         case .readyForServerValidation:
-            ServerValidationView(\n                viewModel: ServerValidationViewModel(sessionController: sessionController)\n            )
+            ServerValidationView(
+                viewModel: ServerValidationViewModel(sessionController: sessionController)
+            )
         case .needsEnrollment:
             EnrollmentPlaceholderView()
         case .authenticated:
