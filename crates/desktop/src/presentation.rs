@@ -71,6 +71,30 @@ pub const fn welcome_destination(
     }
 }
 
+/// First-library routing is derived only from one fresh, authenticated client
+/// snapshot. It is never a persisted "first run completed" preference.
+#[must_use]
+pub const fn library_first_run_required(
+    snapshot_fresh: bool,
+    profile_configured: bool,
+    profile_authenticated: bool,
+    has_configured_library: bool,
+) -> bool {
+    snapshot_fresh && profile_configured && profile_authenticated && !has_configured_library
+}
+
+/// A setup command's success/unknown result is not enough to leave the wizard.
+/// Only a newer fresh snapshot completes the confirmation interval.
+#[must_use]
+pub const fn library_setup_confirmation_finished(
+    awaiting_confirmation: bool,
+    snapshot_fresh: bool,
+    snapshot_revision: u64,
+    submitted_revision: u64,
+) -> bool {
+    awaiting_confirmation && snapshot_fresh && snapshot_revision > submitted_revision
+}
+
 /// Presentation guard independent of the controller's own protocol bound.
 pub const MAX_PRESENTED_LIBRARY_ROWS: usize = 2_048;
 
@@ -81,6 +105,15 @@ pub struct AuthenticationPresentation {
     pub code: &'static str,
     pub message: &'static str,
     pub action: Option<&'static str>,
+}
+
+/// Bounded library-setup copy and its one safe next action. QML renders this
+/// model and never interprets raw client or transport failures.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LibrarySetupPresentation {
+    pub code: &'static str,
+    pub message: &'static str,
+    pub action: &'static str,
 }
 
 /// Convert every canonical authentication result into bounded product copy.
@@ -959,50 +992,88 @@ pub const fn sync_control_feedback(result: DesktopControllerCommandResult) -> &'
     }
 }
 
-/// Map library onboarding results to bounded, generic UI copy. The selected
-/// folder and remote diagnostics are intentionally not echoed here.
+/// Map library onboarding results to bounded product copy and a safe action.
+/// The selected folder and remote diagnostics are intentionally not echoed.
 #[must_use]
-pub const fn library_setup_feedback(result: DesktopControllerCommandResult) -> &'static str {
+pub const fn library_setup_presentation(
+    result: DesktopControllerCommandResult,
+) -> LibrarySetupPresentation {
     match result {
-        DesktopControllerCommandResult::LibraryConfigured => "Library created; status will update.",
-        DesktopControllerCommandResult::LibraryAlreadyConfigured => {
-            "That folder is already configured."
+        DesktopControllerCommandResult::LibraryConfigured
+        | DesktopControllerCommandResult::LibraryAlreadyConfigured => LibrarySetupPresentation {
+            code: "checking",
+            message: "Checking whether your library is ready…",
+            action: "wait",
+        },
+        DesktopControllerCommandResult::InvalidLibraryName => LibrarySetupPresentation {
+            code: "invalid_name",
+            message: "Enter a library name to continue.",
+            action: "edit_name",
+        },
+        DesktopControllerCommandResult::InvalidLibraryRoot => LibrarySetupPresentation {
+            code: "invalid_folder",
+            message: "Synveil can’t use that folder. Choose another folder or check that it is available.",
+            action: "choose_folder",
+        },
+        DesktopControllerCommandResult::AuthenticationRequired => LibrarySetupPresentation {
+            code: "sign_in_required",
+            message: "Sign in to this device to continue.",
+            action: "sign_in",
+        },
+        DesktopControllerCommandResult::ServerIdentityConflict => LibrarySetupPresentation {
+            code: "setup_needs_review",
+            message: "Synveil couldn’t safely confirm this setup. Check your server connection before continuing.",
+            action: "check_connection",
+        },
+        DesktopControllerCommandResult::NetworkUnavailable
+        | DesktopControllerCommandResult::ServerUnavailable
+        | DesktopControllerCommandResult::Timeout
+        | DesktopControllerCommandResult::TlsFailure => LibrarySetupPresentation {
+            code: "connection_problem",
+            message: "Synveil couldn’t reach your server securely. Check your connection and try again.",
+            action: "retry_setup",
+        },
+        DesktopControllerCommandResult::IncompatibleServer => LibrarySetupPresentation {
+            code: "server_incompatible",
+            message: "This server isn’t compatible with this version of Synveil.",
+            action: "check_server",
+        },
+        DesktopControllerCommandResult::PersistenceFailure => LibrarySetupPresentation {
+            code: "setup_incomplete",
+            message: "Setup is incomplete on this device. Choose the same folder to continue safely.",
+            action: "resume_setup",
+        },
+        DesktopControllerCommandResult::Busy | DesktopControllerCommandResult::AdmissionLimited => {
+            LibrarySetupPresentation {
+                code: "busy",
+                message: "Setup is already being processed. Please wait.",
+                action: "wait",
+            }
         }
-        DesktopControllerCommandResult::InvalidLibraryName => "Enter a valid library name.",
-        DesktopControllerCommandResult::InvalidLibraryRoot => {
-            "Choose a writable local folder with no conflicting Synveil control tree."
-        }
-        DesktopControllerCommandResult::AuthenticationRequired => {
-            "Authenticate this device before creating a library."
-        }
-        DesktopControllerCommandResult::ServerIdentityConflict => {
-            "The server returned a conflicting library identity."
-        }
-        DesktopControllerCommandResult::NetworkUnavailable => {
-            "Network unavailable. Try again later."
-        }
-        DesktopControllerCommandResult::ServerUnavailable => {
-            "The server is unavailable. Try again later."
-        }
-        DesktopControllerCommandResult::Timeout => "The server did not respond in time.",
-        DesktopControllerCommandResult::TlsFailure => {
-            "A secure connection to the server could not be established."
-        }
-        DesktopControllerCommandResult::PersistenceFailure => {
-            "The library could not be saved locally."
-        }
-        DesktopControllerCommandResult::Busy => "Another request is already being processed.",
-        DesktopControllerCommandResult::OutcomeUnknown => {
-            "Synveil cannot confirm whether library setup completed. It is checking the current status before another setup action."
-        }
-        DesktopControllerCommandResult::Unavailable
-        | DesktopControllerCommandResult::Disconnected
-        | DesktopControllerCommandResult::AlreadyUnavailable => "Background service unavailable.",
+        DesktopControllerCommandResult::OutcomeUnknown => LibrarySetupPresentation {
+            code: "checking",
+            message: "Checking whether your library was created…",
+            action: "wait",
+        },
         DesktopControllerCommandResult::Stopped
-        | DesktopControllerCommandResult::RuntimeStopped => "Background service is stopped.",
-        DesktopControllerCommandResult::AdmissionLimited => "Try again in a moment.",
-        DesktopControllerCommandResult::ProtocolError => "Background service is incompatible.",
-        _ => "Library setup could not be completed.",
+        | DesktopControllerCommandResult::RuntimeStopped => LibrarySetupPresentation {
+            code: "client_unavailable",
+            message: "Synveil isn’t ready yet. Start the app again to continue setup.",
+            action: "start_client",
+        },
+        DesktopControllerCommandResult::ProtocolError
+        | DesktopControllerCommandResult::Unavailable
+        | DesktopControllerCommandResult::Disconnected
+        | DesktopControllerCommandResult::AlreadyUnavailable => LibrarySetupPresentation {
+            code: "client_unavailable",
+            message: "Synveil isn’t ready yet. Reopen the app to continue setup.",
+            action: "start_client",
+        },
+        _ => LibrarySetupPresentation {
+            code: "setup_problem",
+            message: "Synveil couldn’t finish setting up your library. Choose the same folder to continue safely.",
+            action: "resume_setup",
+        },
     }
 }
 
@@ -1186,6 +1257,15 @@ mod tests {
         );
         assert!(ui.recovery_items.is_empty());
         assert_eq!(ui.recovery_action_required, 0);
+        assert!(library_first_run_required(true, true, true, false));
+        assert!(!library_first_run_required(false, true, true, false));
+        assert!(!library_first_run_required(true, false, true, false));
+        assert!(!library_first_run_required(true, true, false, false));
+        assert!(!library_first_run_required(true, true, true, true));
+        assert!(!library_setup_confirmation_finished(true, true, 8, 8));
+        assert!(!library_setup_confirmation_finished(true, false, 9, 8));
+        assert!(!library_setup_confirmation_finished(false, true, 9, 8));
+        assert!(library_setup_confirmation_finished(true, true, 9, 8));
     }
 
     #[test]
@@ -1313,11 +1393,50 @@ mod tests {
     }
 
     #[test]
+    fn library_setup_results_have_bounded_copy_and_one_safe_action() {
+        let cases = [
+            (DesktopControllerCommandResult::LibraryConfigured, "checking", "wait"),
+            (DesktopControllerCommandResult::LibraryAlreadyConfigured, "checking", "wait"),
+            (DesktopControllerCommandResult::InvalidLibraryName, "invalid_name", "edit_name"),
+            (DesktopControllerCommandResult::InvalidLibraryRoot, "invalid_folder", "choose_folder"),
+            (DesktopControllerCommandResult::AuthenticationRequired, "sign_in_required", "sign_in"),
+            (DesktopControllerCommandResult::ServerIdentityConflict, "setup_needs_review", "check_connection"),
+            (DesktopControllerCommandResult::NetworkUnavailable, "connection_problem", "retry_setup"),
+            (DesktopControllerCommandResult::ServerUnavailable, "connection_problem", "retry_setup"),
+            (DesktopControllerCommandResult::Timeout, "connection_problem", "retry_setup"),
+            (DesktopControllerCommandResult::TlsFailure, "connection_problem", "retry_setup"),
+            (DesktopControllerCommandResult::IncompatibleServer, "server_incompatible", "check_server"),
+            (DesktopControllerCommandResult::PersistenceFailure, "setup_incomplete", "resume_setup"),
+            (DesktopControllerCommandResult::Busy, "busy", "wait"),
+            (DesktopControllerCommandResult::OutcomeUnknown, "checking", "wait"),
+            (DesktopControllerCommandResult::Unavailable, "client_unavailable", "start_client"),
+            (DesktopControllerCommandResult::ProtocolError, "client_unavailable", "start_client"),
+        ];
+        for (result, code, action) in cases {
+            let presented = library_setup_presentation(result);
+            assert_eq!(presented.code, code);
+            assert_eq!(presented.action, action);
+            assert!(!presented.message.is_empty());
+            for forbidden in ["replica", "root node", "UUID", "manifest", "IPC", ".synveil"] {
+                assert!(
+                    !presented.message.to_ascii_lowercase().contains(&forbidden.to_ascii_lowercase()),
+                    "{} exposed {forbidden}",
+                    presented.message
+                );
+            }
+            assert!(!presented.message.contains('/'));
+        }
+        let unknown = library_setup_presentation(DesktopControllerCommandResult::OutcomeUnknown);
+        assert!(unknown.message.contains("Checking"));
+        assert_eq!(unknown.action, "wait");
+    }
+
+    #[test]
     fn ux_unit_8_unknown_outcomes_wait_for_reconciliation_without_retry_advice() {
         let messages = [
             command_feedback(DesktopControllerCommandResult::OutcomeUnknown),
             sync_control_feedback(DesktopControllerCommandResult::OutcomeUnknown),
-            library_setup_feedback(DesktopControllerCommandResult::OutcomeUnknown),
+            library_setup_presentation(DesktopControllerCommandResult::OutcomeUnknown).message,
             auth_feedback(DesktopControllerCommandResult::OutcomeUnknown),
         ];
 
