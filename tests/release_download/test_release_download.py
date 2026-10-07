@@ -246,15 +246,8 @@ class StageRaceSecurityTests(unittest.TestCase):
         self.assertEqual([],list(self.root.glob('.synveil-download-*')))
 
     def test_73_enospc_during_directory_sync_is_not_reported_verified(self):
-        real_fsync = download.os.fsync
-        calls = 0
-        def fail_directory_sync(fd):
-            nonlocal calls
-            calls += 1
-            if calls == 2:
-                raise OSError(errno.ENOSPC, 'full')
-            return real_fsync(fd)
-        with mock.patch.object(download.os, 'fsync', side_effect=fail_directory_sync):
+        with mock.patch.object(download, '_sync_staging_parent',
+                                side_effect=OSError(errno.ENOSPC, 'full')):
             self.error('INSUFFICIENT_DISK_SPACE',download.stage_artifact,io.BytesIO(self.payload),self.root,self.selection)
         target = self.root/'synveil.deb'
         self.assertEqual(self.payload,target.read_bytes())
@@ -289,14 +282,7 @@ class StageRaceSecurityTests(unittest.TestCase):
         self.assertEqual([],list(self.root.glob('.synveil-download-*')))
 
     def test_76_directory_sync_failure_never_returns_verified(self):
-        real_fsync = download.os.fsync
-        calls = 0
-        def fail_directory_sync(fd):
-            nonlocal calls
-            calls += 1
-            if calls == 2:
-                raise OSError(5, 'io failure')
-            return real_fsync(fd)
-        with mock.patch.object(download.os, 'fsync', side_effect=fail_directory_sync):
+        with mock.patch.object(download, '_sync_staging_parent',
+                                side_effect=OSError(5, 'io failure')):
             self.error('STAGING_ERROR',download.stage_artifact,io.BytesIO(self.payload),self.root,self.selection)
         self.assertEqual(self.payload,(self.root/'synveil.deb').read_bytes())

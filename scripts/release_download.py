@@ -113,6 +113,20 @@ def _sync_windows_directory(path: Path, expected_identity: os.stat_result) -> No
         close(handle)
 
 
+def _sync_staging_parent(root: Path, root_identity: os.stat_result, directory_fd: int | None) -> None:
+    """Platform boundary for committing the promoted name to its parent."""
+    if directory_fd is not None:
+        os.fsync(directory_fd)
+    elif os.name == "nt":
+        _sync_windows_directory(root, root_identity)
+    else:
+        sync_fd = os.open(root, os.O_RDONLY)
+        try:
+            os.fsync(sync_fd)
+        finally:
+            os.close(sync_fd)
+
+
 class BoundedArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
         # argparse's default includes raw invalid/unknown argument values.
@@ -560,16 +574,7 @@ def stage_artifact(stream: BinaryIO, destination_root: Path,
             os.unlink(temp_path.name, dir_fd=directory_fd)
         temp_path = None
         try:
-            if directory_fd is not None:
-                os.fsync(directory_fd)
-            elif os.name == "nt":
-                _sync_windows_directory(root, root_identity)
-            else:
-                sync_fd = os.open(root, os.O_RDONLY)
-                try:
-                    os.fsync(sync_fd)
-                finally:
-                    os.close(sync_fd)
+            _sync_staging_parent(root, root_identity, directory_fd)
         except OSError as error:
             _raise_staging_error(error)
         return acquisition_result("VERIFIED", target, selection)

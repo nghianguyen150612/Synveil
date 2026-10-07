@@ -73,12 +73,15 @@ def main() -> int:
 
     acquisition = read("scripts/release_download.py")
     stage = acquisition[acquisition.index("def stage_artifact") :]
+    parent_sync = acquisition[acquisition.index("def _sync_staging_parent") :
+                               acquisition.index("class BoundedArgumentParser")]
     require("INSUFFICIENT_DISK_SPACE" in acquisition
             and "os.link" in stage
             and "_raise_staging_error(error)" in stage,
             "bounded no-clobber acquisition and disk-full handling missing")
-    require("_sync_windows_directory" in stage
-            and "os.fsync(directory_fd)" in stage,
+    require("_sync_staging_parent(root, root_identity, directory_fd)" in stage
+            and "_sync_windows_directory" in parent_sync
+            and "os.fsync(directory_fd)" in parent_sync,
             "platform parent-directory durability path missing")
     require("return acquisition_result(\"VERIFIED\"" in stage
             and stage.index("_raise_staging_error(error)") < stage.index("return acquisition_result(\"VERIFIED\""),

@@ -136,18 +136,30 @@ changed. Hosted CI must still run final-head platform suites before merge.
 
 ## Publication record
 
-The following fields are filled from observed GitHub state, never planned data:
+Observed GitHub state for the initial published head:
 
-- Complete changed-file inventory and local results: listed above; full diff
-  review and staged-diff review occur before commit.
-- Local commit/tree and remote commit/tree: verified before PR creation.
-- Remote branch, base, ancestry, and commit list: queried before PR creation;
-  branch must be exactly `feat/installation-resilience-hardening`.
-- PR number/URL, hosted run IDs, classification of failures, and merge commit:
-  recorded after observing GitHub.
-- Resulting `origin/main`, P043 ancestry, final source/docs/validator presence,
-  P045 deferral, and clean worktree: verified after merge and reported with the
-  exact final identifiers.
+- Required remote branch: `feat/installation-resilience-hardening`; the GitHub
+  branch API returned that exact name, with no `codex/` prefix.
+- Local commit/tree: `84ad1209da1a8f70b0748d8cfa0598dd75d1789d` /
+  `81f205dadc42ecac4311a0441b18212b09bb5d60`.
+- Remote commit/tree after the initial push: the same commit/tree as local.
+- Comparison against `main`: `ahead_by=1`, `behind_by=0`; the sole commit was
+  `84ad1209da1a8f70b0748d8cfa0598dd75d1789d`.
+- PR: [#75 — Synveil v0.2 P044: Installation Resilience Hardening](https://github.com/nghianguyen150612/Synveil/pull/75), base `main`.
+- Hosted checks on the initial head: the journal/process-restart, lifecycle,
+  Linux package-boundary, AppImage, preservation, docs/static, strict P044
+  quality and Ubuntu acquisition jobs passed. The Windows acquisition job
+  exposed that its directory-sync fault fixture patched Unix `os.fsync` rather
+  than the shared platform boundary; the fixture was corrected in a follow-up.
+  The existing Windows native acceptance workflow failed before invoking its
+  installer test because its build selected Git's `/usr/bin/link` instead of
+  MSVC `link.exe`; that workflow is unchanged by P044 and this is classified as
+  an inherited Windows toolchain failure. Remaining hosted checks, including
+  the real Windows installer interruption fixture, are observed on the final
+  PR head before merge.
+- Merge/resulting-main SHA and post-merge clean worktree are intentionally
+  recorded only after GitHub reports the real merge. VM power-cycle evidence
+  remains **BLOCKED / unavailable native power-cycle evidence**.
 
 No ADR is added: this change validates/enforces the existing P008/P008A,
 P009/P010, P006 and platform ownership architecture. ADR-074 was checked as
