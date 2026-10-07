@@ -87,6 +87,12 @@ require("legacy bindings receive migration default", "DEFAULT 1" in read("crates
 require("P040 remains the library owner", "library_setup_required" in qml and "bind_replica" in host)
 require("existing libraries are not forced into the page", "if !snapshot" in presentation and "first_sync_completed" in presentation)
 require("P042 remains deferred", "P042" in progress_doc and "P042" in roadmap)
-require("Phase-F checkpoint is not claimed", "V0.2 FIRST RUN EXPERIENCE READY" not in (qml + bridge + presentation + controller + control + runtime + host + progress_doc + adr + roadmap))
+implementation = qml + bridge + presentation + controller + control + runtime + host + progress_doc + adr
+phase_f_marker = "V0.2 FIRST RUN EXPERIENCE READY"
+p042a_manifest = read("docs/v0.2/PROMPT042A_MANIFEST.md")
+require(
+    "Phase-F checkpoint is recorded in roadmap evidence, not implementation",
+    phase_f_marker not in implementation and phase_f_marker in roadmap and phase_f_marker in p042a_manifest,
+)
 
 print("installation-to-sync progress validation passed")

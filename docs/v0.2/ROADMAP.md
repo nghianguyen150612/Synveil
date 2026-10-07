@@ -455,11 +455,15 @@ unknown outcomes are reconciled before retry.
 [Prompt042 evidence](PROMPT042_MANIFEST.md) compose existing owners with typed
 capabilities, same-root restoration, profile reconciliation and bounded
 supervised restart. Installation repair is truthful guidance only.
-The Phase-F checkpoint remains held while inherited strict source/CI gates fail.
-The external Prompt042 handoff records actual publication, hosted CI and merge
-evidence without embedding this commit’s own identity. Native acceptance and
-Phase G remain separate;
-P043 has not begun.
+
+**Phase-F readiness checkpoint (Prompt042A): V0.2 FIRST RUN EXPERIENCE READY**
+
+The strict Phase-F Rust, desktop/QML, dependency-policy, and P037–P042
+validation gates passed on PR #73's source head. The [Prompt042A manifest](PROMPT042A_MANIFEST.md)
+records the branch, hosted workflow evidence, and inherited unrelated CI
+failures. This checkpoint marks first-run UX readiness only; it does not claim
+a v0.2 release, P043 completion, native Windows acceptance, or a clean-machine
+matrix. P043 has not begun.
 
 ## PHASE G — RELEASE PRODUCTIZATION (P043–048)
 
