@@ -108,6 +108,7 @@ change that acceptance rule.
 - `scripts/validate-installer-security-hardening.py`
 - `scripts/validate-windows-installer.py`
 - `tests/install-error-model/p006-acquisition-codes.json`
+- `tests/install-error-model/test_acquisition_bridge.py`
 - `tests/linux_quick_install/test_linux_quick_install.py`
 - `tests/release_download/test_release_download.py`
 
@@ -121,11 +122,12 @@ change that acceptance rule.
 | `python3 -m unittest discover -s tests/release_download -v` | Passed: 77 tests |
 | `python3 -m unittest discover -s tests/linux_quick_install -v` | Passed: 15 tests |
 | `python3 scripts/validate-install-error-model.py` | Passed: 20 exact P006 acquisition codes |
+| `./scripts/validate-install-error-model.sh` | Passed: 4 bridge tests and 118 Rust error-model tests |
 | `python3 scripts/validate-installer-security-hardening.py` | Passed |
 | `python3 scripts/validate-installation-resilience-hardening.py` | Passed |
 | `python3 scripts/validate-windows-installer.py` | Passed |
 | `python3 -m unittest discover -s scripts -p test_windows_lifecycle.py -v` | Passed: 6 lifecycle-model tests |
-| `python3 -m py_compile scripts/validate-installation-resilience-hardening.py scripts/release_download.py scripts/linux_quick_install.py scripts/validate-install-error-model.py` | Passed |
+| `python3 -m py_compile scripts/validate-installation-resilience-hardening.py scripts/release_download.py scripts/linux_quick_install.py scripts/validate-install-error-model.py tests/install-error-model/test_acquisition_bridge.py` | Passed |
 | `./scripts/validate-docs.sh` | Passed, including P043/P044 validators |
 | `./scripts/validate-install-acceptance.sh` | Passed: 11 scenarios; native execution not performed |
 | `git diff --check` | Passed |
@@ -151,6 +153,9 @@ Observed GitHub state for the initial published head:
   quality and Ubuntu acquisition jobs passed. The Windows acquisition job
   exposed that its directory-sync fault fixture patched Unix `os.fsync` rather
   than the shared platform boundary; the fixture was corrected in a follow-up.
+  A broader Rust CI quality job also found the bridge unit test still expected
+  19 codes after adding the disk-full code; its expected count is corrected to
+  20 in the current follow-up.
   The existing Windows native acceptance workflow failed before invoking its
   installer test because its build selected Git's `/usr/bin/link` instead of
   MSVC `link.exe`; that workflow is unchanged by P044 and this is classified as
