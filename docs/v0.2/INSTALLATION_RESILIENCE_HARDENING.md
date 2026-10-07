@@ -60,7 +60,7 @@ durability.
 | 19. During ordinary uninstall | process loss | Some owned integration/payload/registration may be removed | Reconcile remaining trusted owned state; resume ordinary removal only; never turn into purge | Application/server data and unknown neighbors survive | Existing lifecycle/AppImage uninstall fixtures; no native uninstall kill test |
 | 20. During native package-manager execution | process loss, signal, manager error | Native package state is authoritative and result may be unknown; absent package metadata with remaining owned payload is partial state | Inspect exact DEB/RPM package identity/version before disposition; absent metadata plus payload stops as `OutcomeUnknown`; never immediately rerun APT/DNF | Never delete dpkg/apt/rpm/dnf locks or user/server state | Quick-install interruption and partial-payload fixtures; ordinary Linux package CI is separate native lifecycle evidence |
 | 21. During AppImage integration | process loss, partial launcher/record, ENOSPC | Trusted record may be complete, incomplete, missing, or unknown/newer | Inspect record and owned integration; missing record with adjacent launcher is `Incomplete`, unknown/newer fails closed | Unknown launcher and user state preserved | AppImage partial-record and removal fixtures |
-| 22. During Windows Setup replacement | forced process termination after first changed owned payload copy; disk-full copy/registration | Fixture is designed to observe new target `LICENSE` bytes while the old ownership manifest and registration hash still agree; a later 64 MiB package-owned payload must remain incomplete | Start a fresh compatible Setup, revalidate the old ownership boundary, finish the target payload, and verify the final registration/manifest/payload hashes; no binary rollback | P027 ownership scope, state, disabled startup choice, and unknown files are asserted by the fixture | Four P044 workflow attempts failed before interruption evidence: the first missed the copy boundary; the next two failed Inno identity preflight, with run `37605784763` showing the installed location but a missing ownership hash. Run `37608018258` stopped at compile because Inno rejected the unsupported `64bit` registry flag. P043 security run `37609990151` then found unsupported `SetRegView`. The current retry uses documented `HKCU64` for registry writes and reads, and asserts the digest. Not full runtime closure or power-loss evidence |
+| 22. During Windows Setup replacement | forced process termination after first changed owned payload copy; disk-full copy/registration | Fixture is designed to observe new target `LICENSE` bytes while the old ownership manifest and registration hash still agree; a later 64 MiB package-owned payload must remain incomplete | Start a fresh compatible Setup, revalidate the old ownership boundary, finish the target payload, and verify the final registration/manifest/payload hashes; no binary rollback | P027 ownership scope, state, disabled startup choice, and unknown files are asserted by the fixture | Focused P044 run `37610709603` installed the old fixture but found an empty `SynveilManifestSha256` value and stopped before upgrade. Current source explicitly writes the target manifest hash at `ssPostInstall` and aborts if that write fails; run `37611946019` is pending. No Windows interruption pass is claimed yet; no full runtime closure or power-loss evidence |
 | 23. During obsolete owned-file cleanup | process loss or delete failure | Trusted previous and target manifests define old-minus-new set | Recompute scope from manifests; missing known obsolete files are no-op; never scan leftovers | Unknown adjacent files are never deleted | Windows ownership source contract and lifecycle fixture; interrupted native cleanup not executed |
 | 24. Disk exhaustion during download/staging | ENOSPC/quota at temp create, stream, flush, fsync, promotion, directory sync | Temp may be partial; final may be absent or complete but unreported | Return finite disk-full/staging error; clean only owned temp; reverify any final file; no manager invocation | Existing destination and unrelated files preserved | Deterministic Python ENOSPC fixtures |
 | 25. Disk exhaustion while writing journal state | injected ENOSPC at checkpoint boundaries | Before mutation-start: no apply. After mutation: earlier chain plus unmatched start remains | Before mutation, stop/replan; after mutation, stop and inspect; retain old checkpoints | Never delete earlier checkpoints to free space | Journal deterministic disk-full fault fixtures; not a real full filesystem |
@@ -87,17 +87,16 @@ P044 adds a focused Windows CI fixture that compiles the repository's actual
 a supported upgrade and during same-version repair, then launches new Setup
 processes to recover both states. The payload is synthetic and bounded
 (including a 64 MiB file); the startup handoff uses the real release
-`synveil-client.exe`. The first hosted attempt did not observe the copy boundary
-before Setup exited. The second failed its identity preflight; the third showed
-that the registered `InstallLocation` was present but the trusted
-`SynveilManifestSha256` value was absent from the HKCU identity read by Setup.
-None produced interruption evidence. The fourth P044 attempt stopped at Inno
-compilation because `64bit` is not a supported registry-entry flag. A P043
-security workflow compile check then found that `SetRegView` is not available
-in the pinned Inno version. The current retry uses the documented `HKCU64` root
-for registry writes and recovery reads, and asserts the registered manifest
-digest. This fixture does not qualify the Qt runtime closure or establish
-production Windows clean-machine behavior.
+`synveil-client.exe`. Earlier hosted attempts either missed the copy boundary,
+failed their identity preflight, or stopped at Inno compilation because the
+`64bit` registry-entry flag and `SetRegView` are unavailable in the pinned
+Inno version. The fifth completed P044 attempt, run `37610709603`, compiled and
+ran the old Setup but found that `SynveilManifestSha256` was empty in its HKCU
+uninstall registration, so it stopped before exercising interruption. The
+current source explicitly writes the target manifest hash at `ssPostInstall`
+and aborts if the write fails; focused run `37611946019` is pending. This
+fixture does not qualify the Qt runtime closure or establish production Windows
+clean-machine behavior.
 Preservation evidence uses fresh test-owned data sentinels; it does not access
 or claim preservation of pre-existing user data on that runner. The current
 full Windows installer run stopped before Inno because the runtime stage lacked
