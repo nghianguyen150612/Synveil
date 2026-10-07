@@ -18,8 +18,17 @@ function Full-RepoPath([string]$Path, [string]$Root) {
     return [IO.Path]::GetFullPath($Path)
 }
 function Invoke-Checked([string]$File, [string[]]$Arguments, [string]$Kind) {
-    & $File @Arguments
-    if ($LASTEXITCODE -ne 0) { Fail $Kind "process exited $LASTEXITCODE" }
+    # GUI toolchain installers must finish before their output is consumed.
+    # ArgumentList preserves each argument without shell/string interpolation.
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = $File
+    $info.UseShellExecute = $false
+    foreach ($argument in $Arguments) { $info.ArgumentList.Add($argument) }
+    $process = [Diagnostics.Process]::Start($info)
+    try {
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) { Fail $Kind "process exited $($process.ExitCode)" }
+    } finally { $process.Dispose() }
 }
 function Get-WorkspaceVersion([string]$CargoToml) {
     $text = [IO.File]::ReadAllText($CargoToml)
