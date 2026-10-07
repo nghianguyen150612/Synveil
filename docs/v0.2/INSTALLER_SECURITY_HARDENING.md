@@ -68,7 +68,7 @@ W native execution is reported only after a real hosted result.
 | Command-line injection | Python argv / Rust Command / fixed Inno Exec | Preserve structured native argv; reject malformed/duplicate Windows custom options | S argv assertions; W option fixtures |
 | Option injection | Local artifact argument | Add `--` for APT/DNF and reject option-like basename/nonabsolute local argument | S package argv/path tests |
 | Shell injection | No shell templates in acquisition/manager | Preserve; AppImage desktop/systemd expansion characters escaped | S metacharacter argv; E generated integration |
-| PATH executable substitution | Client canonical sibling; OS tool boundaries | Reject client links resolving outside sibling directory; package tools/systemctl use OS identities; bootstrap fixes interpreter and search path | Client P043 resolver test; S PATH test; E source |
+| PATH executable substitution | Client canonical sibling; OS tool boundaries | Reject client links resolving outside sibling directory; package tools/systemctl use OS identities; Task Scheduler uses native GetSystemDirectoryW, not SystemRoot; bootstrap fixes interpreter and search path | Client P043 resolver test; S PATH test; E source |
 | Environment injection across privilege | Whole Linux installer already rejects root | Sudo receives only exact OS executable/argv and a small PATH/C locale environment; no loader, proxy, HOME or Python inheritance | S scoped environment assertions; Q root guard |
 | Package-hook privilege confusion | Hooks never start persistent client / edit homes | Scope sysusers/tmpfiles to owned config; fixed PATH; reject config leaf links; no raw argument logs | Static gate, DEB/RPM validators, S preinst fixture |
 | Process-name ownership confusion | P026 profile task identity; P042 kernel IPC peer PID | Already sufficient; no process-name kill or lookup added | Existing client supervisor/Task Scheduler tests; static gate |
@@ -92,7 +92,9 @@ LocalAppData package root. `/DIR`, `/ALLUSERS`, `/LOADINF`, duplicate/malformed
 security options, redirected roots and ancestor reparse points fail before
 payload mutation. Setup/repair/cleanup use trusted closed manifests; helper
 execution requires manifest-bound SHA-256. Shortcut destinations remain the
-current user's reviewed integration. Native Inno owns removal; unknown files
+current user's reviewed integration. Task XML uses native per-user LocalAppData
+private staging and an exact-byte read handle that denies writing/deletion
+through native consumption; environment variables cannot choose its root/tool. Native Inno owns removal; unknown files
 never enter old-minus-new cleanup.
 
 Linux quick install qualifies the host, authenticates channel and selected

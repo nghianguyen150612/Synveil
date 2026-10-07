@@ -62,8 +62,9 @@ function Assert-CompilerEngineVersion([string]$Compiler, [string]$TempRoot, [str
     # Upstream ISCC's PE resource is a placeholder, not the engine identity.
     # Compile a fixed Output=no probe: ISCC reports ISCmplr's actual version.
     $probe = Join-Path $TempRoot ('compiler-probe-' + [guid]::NewGuid().ToString('N') + '.iss')
-    [IO.File]::WriteAllText($probe, "[Setup]`nAppName=Synveil compiler identity probe`nAppVersion=0.1.0`nDefaultDirName={tmp}`nPrivilegesRequired=lowest`nOutput=no`n")
+    [IO.File]::WriteAllText($probe, "#define EngineVersionProbe 1`n[Setup]`nAppName=Synveil compiler identity probe`nAppVersion=0.1.0`nDefaultDirName={tmp}`nPrivilegesRequired=lowest`nOutput=no`n")
     Assert-NoReparseAncestry (Join-Path (Split-Path $Compiler) 'ISCmplr.dll') $true
+    Assert-NoReparseAncestry (Join-Path (Split-Path $Compiler) 'ISPP.dll') $true
     $info = [Diagnostics.ProcessStartInfo]::new()
     $info.FileName = $Compiler; $info.UseShellExecute = $false
     $info.RedirectStandardOutput = $true; $info.RedirectStandardError = $true
@@ -191,12 +192,24 @@ try {
     }
     $compatibleSources = ';' + (($sources | Sort-Object -Unique) -join ';') + ';'
     $escapedStage = $stage.Replace('"','""'); $escapedOutput = $output.Replace('"','""')
-    $defines = @('#define SynveilVersion "' + $version.Product + '"','#define SynveilWindowsVersion "' + $version.Windows + '"','#define SynveilSourceRevision "' + $revision + '"','#define SynveilManifestSha256 "' + $manifestHash + '"','#define SynveilPayloadDir "' + $escapedStage + '"','#define SynveilOutputDir "' + $escapedOutput + '"')
+    $defines = @(
+        ('#define SynveilVersion "' + $version.Product + '"')
+        ('#define SynveilWindowsVersion "' + $version.Windows + '"')
+        ('#define SynveilSourceRevision "' + $revision + '"')
+        ('#define SynveilManifestSha256 "' + $manifestHash + '"')
+        ('#define SynveilPayloadDir "' + $escapedStage + '"')
+        ('#define SynveilOutputDir "' + $escapedOutput + '"')
+    )
     $defines += '#define SynveilCompatibleSources "' + $compatibleSources + '"'
     [IO.File]::WriteAllLines((Join-Path $generated 'version.iss'), $defines, [Text.UTF8Encoding]::new($false))
     $escapedGenerated = $generated.Replace('"','""')
     $sourceScript = (Join-Path $repo 'deploy/windows/installer/Synveil.iss').Replace('"','""')
-    [IO.File]::WriteAllLines((Join-Path $generated 'build.iss'), @('#define GeneratedDir "' + $escapedGenerated + '"','#include "' + $sourceScript + '"'), [Text.UTF8Encoding]::new($false))
+    $buildLines = @(
+        ('#define GeneratedDir "' + $escapedGenerated + '"')
+        ('#include "' + $sourceScript + '"')
+    )
+    if ($defines.Count -ne 7 -or $buildLines.Count -ne 2) { Fail "INSTALLER_COMPILE_FAILURE" "generated directive boundaries are invalid" }
+    [IO.File]::WriteAllLines((Join-Path $generated 'build.iss'), $buildLines, [Text.UTF8Encoding]::new($false))
     $lock = Read-ToolchainLock (Join-Path $repo 'deploy/windows/installer/toolchain.lock'); $compiler = Get-InnoCompiler $lock $InnoToolchainDirectory $temp
     Remove-Item (Join-Path $output 'SynveilSetup.exe') -Force -ErrorAction SilentlyContinue
     Invoke-Checked $compiler @('/Q',(Join-Path $generated 'build.iss')) "INSTALLER_COMPILE_FAILURE"

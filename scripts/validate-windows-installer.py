@@ -150,7 +150,8 @@ def main() -> int:
         require(evidence in workflow, f"P025 hosted workflow evidence: {evidence}")
     for evidence in (r"\Synveil\BackgroundClient\profile-", "InteractiveToken", "LeastPrivilege", "<LogonTrigger>",
                      "MultipleInstancesPolicy>IgnoreNew", "windows_task_xml_is_authoritative", "UnsafeState",
-                     "System32", "schtasks.exe", "create_new(true)", "file.sync_all()"):
+                     "GetSystemDirectoryW", "SHGetKnownFolderPath", "share_mode(1)",
+                     "schtasks.exe", "create_new(true)", "file.sync_all()"):
         require(evidence in launch, f"P026 Task Scheduler authority: {evidence}")
     for forbidden in ("cmd.exe", "powershell.exe", "CurrentVersion\\Run"):
         require(forbidden.lower() not in launch.lower(), f"P026 forbidden startup mechanism: {forbidden}")

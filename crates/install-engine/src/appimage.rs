@@ -268,6 +268,7 @@ fn validate_artifact(path: &Path) -> Result<PathBuf, AppImageIntegrationError> {
     if !path.is_absolute() || path.components().any(|c| matches!(c, Component::ParentDir)) {
         return Err(AppImageIntegrationError::UnsafePath);
     }
+    reject_symlink_ancestors(path)?;
     let metadata =
         fs::symlink_metadata(path).map_err(|_| AppImageIntegrationError::InvalidArtifact)?;
     if !metadata.file_type().is_file() || metadata.permissions().mode() & 0o111 == 0 {
@@ -330,7 +331,15 @@ fn quote_systemd(path: &Path) -> Result<String, AppImageIntegrationError> {
 
 fn sha256(path: &Path) -> Result<String, AppImageIntegrationError> {
     let mut hasher = Sha256::new();
-    hasher.update(fs::read(path)?);
+    let mut file = fs::File::open(path)?;
+    let mut chunk = [0_u8; 65536];
+    loop {
+        let length = file.read(&mut chunk)?;
+        if length == 0 {
+            break;
+        }
+        hasher.update(&chunk[..length]);
+    }
     Ok(format!("{:x}", hasher.finalize()))
 }
 

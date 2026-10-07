@@ -80,6 +80,12 @@ def main() -> int:
     require(not re.search(r'remove_dir_all|\.clear\(\)', journal), 'destructive journal reset')
     app=read('crates/install-engine/src/appimage.rs')
     require('let previous = self.existing_record()?' in app and 'reject_symlink_ancestors(path)?' in app, 'AppImage ownership validation lost')
+    launch=read('crates/client/src/launch.rs')
+    require('GetSystemDirectoryW' in launch and 'SHGetKnownFolderPath' in launch and 'share_mode(1)' in launch,
+            'Windows native tool/private locked XML boundary lost')
+    scheduler=launch.split('fn schtasks_path()')[1].split('fn schtasks_command')[0]
+    require('var_os("SystemRoot")' not in scheduler and 'std::env::temp_dir()' not in scheduler,
+            'Windows environment substitution reintroduced')
     iss=read('deploy/windows/installer/Synveil.iss')
     for token in ('PrivilegesRequired=lowest','UsePreviousAppDir=no','ValidateSecurityOptions','RequireInstallRoot','RequireNoReparseAncestry','IsExplicitUpgradeSource','RequireOwnedExecutable','PrepareToInstall'):
         require(token in iss,'Windows security contract lost: '+token)

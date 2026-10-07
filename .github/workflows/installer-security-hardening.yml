@@ -65,6 +65,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Windows common engine policy tests (no native filesystem claim)
         run: cargo test -p synveil-install-engine --test lifecycle_contract --test engine_contract --test error_model_contract --locked
+      - name: Windows native tool identity and locked XML security fixtures
+        run: cargo test -p synveil-client --lib p043_windows --locked
   static-docs:
     name: Security structural and documentation gates
     runs-on: ubuntu-latest

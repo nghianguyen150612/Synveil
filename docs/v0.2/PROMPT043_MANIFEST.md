@@ -66,7 +66,9 @@ Concrete gaps fixed:
 10. Windows cleanup checked only the final reparse object and used prefix
     containment. Now component-safe identities, full ancestor checks, fixed
     per-user root, pre-copy collision checks, explicit option parsing and
-    manifest-bound helper rehashing protect mutation/deletion/execution.
+    manifest-bound helper rehashing protect mutation/deletion/execution. Existing
+    copy destinations also require prior ownership during repair/upgrade; a newly
+    added payload cannot overwrite an unknown adjacent file.
 11. Client sibling resolution could follow a client link outside the desktop's
     canonical directory. It now requires the same canonical parent. Registered
     Windows uninstall discovery is a bounded owned executable identity.
@@ -77,6 +79,12 @@ Concrete gaps fixed:
 13. AppImage raw Debug IO errors and generic post-native retry guidance could
     leak paths or mishandle uncertain mutation. Errors are finite; post-native
     unknown errors preserve staging and require reconciliation.
+
+14. Windows Task Scheduler accepted caller SystemRoot and predictable shared
+    temp XML. The existing P026 owner now uses GetSystemDirectoryW and native
+    LocalAppData, private unpredictable staging, exact-byte read-handle validation
+    and FILE_SHARE_READ protection through native consumption. Environment
+    substitution and replacement fixtures are Windows-only; no new task owner.
 
 Windows remains ordinary per-user; AppImage remains ordinary-user only. Native
 DEB/RPM authority remains visible and scoped; Host/server setup remains outside
@@ -98,8 +106,10 @@ and independent public-root rollout remain release operations; P043 implements
 verification, not a release-signing service.
 
 `tempfile` moves from install-engine dev dependency to runtime dependency for
-secure AppImage staging; it was already locked at 3.27.0. No Cargo lock/package
-upgrade is introduced, and quick-xml remains 0.41.0. No advisory ignore is added.
+secure AppImage staging and is reused by the Windows client startup staging;
+it was already locked at 3.27.0. Cargo.lock changes only the client dependency
+edge, with no package version upgrade. Existing windows-sys adds feature gates
+for native system-directory/known-folder APIs. Quick-xml remains 0.41.0. No advisory ignore is added.
 
 ## Validation evidence
 
@@ -134,7 +144,9 @@ scratch sysroot enabled client validation, it stopped at missing Qt. Neither
 attempt establishes a whole-workspace strict quality pass. Existing same-head
 CI owns that gate. Native Windows compilation/options/junction evidence is
 pending hosted CI; it is not native runtime or clean-machine qualification.
-Linux clean-machine, full native package/AppImage, server/PostgreSQL and wider
+A Windows cross-check was attempted locally but stops at the unavailable MinGW
+C toolchain; actual Windows fixtures remain hosted evidence. Linux clean-machine,
+full native package/AppImage, server/PostgreSQL and wider
 platform acceptance are not claimed. Hosted failures are inspected against the
 actual baseline, rather than relabelled from the historical handoff.
 
@@ -152,6 +164,8 @@ now checks the actual valid policy. Staged paths are explicitly reviewed. No P04
 
 ## Reviewed file inventory
 
+- `Cargo.lock`
+- `crates/client/Cargo.toml`
 - `.github/workflows/installer-security-hardening.yml`
 - `crates/client/src/launch.rs`
 - `crates/install-engine/Cargo.toml`
@@ -229,7 +243,9 @@ Initial publication observed:
   compiler then exposed an inherited invalid PE-resource version check. Upstream
   ISCC resources contain a placeholder; the producer now compiles a fixed
   Output=no probe and checks the actual engine version without changing the
-  distribution hash pin.
+  distribution hash pin. The next actual compiler result exposed inherited
+  PowerShell array-expression grouping that merged generated directives; each
+  directive is now separately grouped, with explicit count assertions.
 - Review also closed writable-ancestor relocation of private Linux staging,
   channel high-water, journal and AppImage ownership paths. Root-owned sticky
   temporary roots remain supported. Tests prove zero write/delete under an

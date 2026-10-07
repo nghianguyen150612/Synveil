@@ -398,8 +398,9 @@ begin
       Relative := ManifestEntryPath(Lines[I]);
       if Relative = '' then RaiseException('The staged package identity is unsafe.');
       RequireNoReparseAncestry(AddBackslash(PackageRoot()) + Relative, True);
-      if FreshInstall and (GetFileAttributes(AddBackslash(PackageRoot()) + Relative) <> $FFFFFFFF) then
-        RaiseException('Fresh installation conflicts with an unowned payload file.');
+      if (GetFileAttributes(AddBackslash(PackageRoot()) + Relative) <> $FFFFFFFF) and
+         (FreshInstall or (PreviousManifest.IndexOf(Uppercase(Relative)) < 0)) then
+        RaiseException('Installation conflicts with an unowned payload file.');
     end;
   finally
     Lines.Free;
