@@ -20,6 +20,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Install documentation search prerequisite
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
       - name: Validate matrix and adversarial evidence tests
         run: |
           python3 scripts/validate-cross-platform-clean-machine-matrix.py

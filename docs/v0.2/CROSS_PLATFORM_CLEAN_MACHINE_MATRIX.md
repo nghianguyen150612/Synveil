@@ -1,5 +1,17 @@
 # Cross-platform clean-machine matrix (P045)
 
+Completed hosted evidence on source `931736c9be13230bf7c3389462c084bedde6a227`
+is diagnostic until the required native rows qualify. P045 run `37635214022`
+passed source gates but failed docs validation because ripgrep was absent; its
+32 BLOCKED aggregate records remain valid. The documentation prerequisite is
+now explicit. Windows run `37635213226` failed before Setup on `ncrypt.dll` from
+the Qt Schannel backend. Linux packages run `37635213211` failed exact desktop
+byte equality; client/maintenance and the separate Qt job matched. AppImage run
+`37635213434` passed build/reproduction/manifest/smoke checks. Linux clean-machine
+run `37635213585` passed its producer/static jobs but skipped native consumers
+under the ordinary PR manual-run condition. The P045 caller requests native
+execution and was prevented by contract failure. None is a native row PASS.
+
 Status: **infrastructure/source implemented; acceptance checkpoint withheld.**
 
 This is the current P045 target ledger. No target is newly accepted by this

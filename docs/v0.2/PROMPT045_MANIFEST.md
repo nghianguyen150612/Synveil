@@ -1,5 +1,45 @@
 # Prompt045 manifest — Cross-platform clean-machine matrix
 
+## Continuation: observed hosted outcomes on 931736c9
+
+The existing four P045 commits and PR #78 are preserved. Source
+`931736c9be13230bf7c3389462c084bedde6a227`, tree
+`a1255123c5b468971ac526bd5a2ca67525d05744`, has now completed hosted runs:
+
+- P045 run `37635214022`: source-gates job `112841481512` PASS; contract job
+  `112841481885` FAIL because the runner lacked `rg`. The 32 counted issues
+  were five navigation queries, four Windows-wording queries, and 23 release-freeze
+  queries (11 facts plus 12 paths), not contradictions in BLOCKED evidence.
+  Other search scans also could not execute. The job now installs ripgrep and
+  docs validation fails immediately and explicitly if that prerequisite is absent.
+  No documentation checks or acceptance evidence requirements are suppressed.
+  Evidence-gate job `112854085633` correctly FAILS with 32 required BLOCKED
+  records; Windows/Linux reusable jobs were skipped after contract failure.
+- Windows native run `37635213226`, producer job `112839512450`: authenticated
+  MSVC linker selection remains correct. Runtime closure failed on the Qt
+  Schannel backend's `ncrypt.dll` import; Setup was not produced, and standard-user
+  consumer job `112850583911` was skipped. Windows installer also failed there.
+  Classification and system ownership are under review; no candidate is invented.
+- Linux packages run `37635213211`, job `112839527206`: independent desktop
+  release bytes differ, each 8,496,328 bytes, A SHA-256
+  `7af3981dd351b11c823fedd43c2f644ce5c3d1b71e7319d65944f4bcd06ba092`,
+  B SHA-256 `5d04b8227ff3fa634db3a2ae455b8090e63538c57ceba132ed2f3d0bac36bd61`,
+  first difference at byte 1,380,551. Client and maintenance bytes match; separate
+  Qt diagnostic job `112839527799` passed. Equality remains mandatory.
+- AppImage run `37635213434` PASS, uploaded artifact `11489334126`. The entrypoint,
+  independent AppImage byte comparison, manifest identity and bounded xcb smoke
+  passed. This is producer evidence on this source, not INSTALL-JOURNEY-4 PASS
+  on either qualified Linux target. Later source changes require affected reruns.
+- Linux clean-machine run `37635213585`: static job `112839522604` and producer
+  job `112839522972` PASS; native consumer `112862996980` and Phase C gate
+  `112862999147` skipped. Ordinary PR runs retain P020's explicit manual-run
+  condition; P045's reusable call already sets `run_native: true`, but was not
+  reached after its contract failed. No capability guard is removed.
+
+These completed results supersede the earlier pending status. Acceptance remains
+withheld, PR #78 remains draft/unmerged, and P046 deferred. Fix and rerun source,
+artifact and job identities are recorded only after observation in the PR report.
+
 Status: **infrastructure/source implemented; acceptance checkpoint withheld.**
 
 | Field | Observed value |

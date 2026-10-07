@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Missing search tooling must not masquerade as missing documentation, or
+# silently skip the release-facing safety scans below.
+if ! command -v rg >/dev/null 2>&1; then
+    echo "documentation validation requires ripgrep (rg); install the prerequisite" >&2
+    exit 2
+fi
+
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_root"
 failures=0
