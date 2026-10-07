@@ -353,10 +353,13 @@ done
 
 is_system_dll() {
     local name="${1^^}"
+    # Imports must be canonical basenames, never a caller-selected directory.
+    # This reviewed OS policy does not infer ownership from packaged files.
+    [[ "$name" =~ ^[A-Z0-9_.-]+$ ]] || return 1
     case "$name" in
-        API-MS-WIN-*|EXT-MS-WIN-*|KERNEL32.DLL|KERNELBASE.DLL|NTDLL.DLL|ADVAPI32.DLL|\
+        API-MS-WIN-*.DLL|EXT-MS-WIN-*.DLL|KERNEL32.DLL|KERNELBASE.DLL|NTDLL.DLL|ADVAPI32.DLL|\
         USER32.DLL|GDI32.DLL|OLE32.DLL|OLEAUT32.DLL|SHELL32.DLL|SHLWAPI.DLL|COMDLG32.DLL|\
-        COMBASE.DLL|WS2_32.DLL|IPHLPAPI.DLL|CRYPT32.DLL|BCRYPT.DLL|BCRYPTPRIMITIVES.DLL|WINHTTP.DLL|\
+        COMBASE.DLL|WS2_32.DLL|IPHLPAPI.DLL|CRYPT32.DLL|BCRYPT.DLL|BCRYPTPRIMITIVES.DLL|NCRYPT.DLL|WINHTTP.DLL|\
         VERSION.DLL|DWMAPI.DLL|IMM32.DLL|SETUPAPI.DLL|AUTHZ.DLL|D3D11.DLL|D3D12.DLL|\
         D3D9.DLL|DNSAPI.DLL|DWRITE.DLL|DXGI.DLL|IMAGEHLP.DLL|MPR.DLL|MSVCRT.DLL|\
         NETAPI32.DLL|RPCRT4.DLL|SECUR32.DLL|SHCORE.DLL|USERENV.DLL|UXTHEME.DLL|\
@@ -367,6 +370,16 @@ is_system_dll() {
             return 1
             ;;
     esac
+}
+
+assert_no_packaged_system_dlls() {
+    local dll
+    while IFS= read -r dll; do
+        if is_system_dll "${dll##*/}"; then
+            printf '[synveil-windows-package] ERROR: packaged file cannot establish Windows system ownership: %s\n' "$dll" >&2
+            return 1
+        fi
+    done < <(find "$STAGE_ROOT" -type f -iname '*.dll' -print)
 }
 
 pe_import_names() {
@@ -392,6 +405,18 @@ find_stage_dll() {
     find "$STAGE_ROOT" -type f -iname "$requested" -print -quit
 }
 
+require_import_resolution() {
+    local imported="$1"
+    local pe_file="$2"
+    if is_system_dll "$imported"; then
+        return 0
+    fi
+    if [[ -z "$(find_stage_dll "$imported")" ]]; then
+        printf '[synveil-windows-package] ERROR: missing non-system import %s required by %s\n' "$imported" "$pe_file" >&2
+        return 1
+    fi
+}
+
 sha256_file() {
     local file="$1"
     if command -v sha256sum >/dev/null 2>&1; then
@@ -407,17 +432,12 @@ sha256_file() {
 # Audit every shipped PE's imports. Windows system/API-set DLLs are supplied by
 # Windows; every other imported DLL must be in this ZIP. This catches Linux
 # shared-library leakage and incomplete Qt/C++ runtime closure.
+assert_no_packaged_system_dlls
 while IFS= read -r pe_file; do
     assert_pe "$pe_file"
     while IFS= read -r imported; do
         [[ -z "$imported" ]] && continue
-        if is_system_dll "$imported"; then
-            continue
-        fi
-        if [[ -z "$(find_stage_dll "$imported")" ]]; then
-            printf '[synveil-windows-package] ERROR: missing non-system import %s required by %s\n' "$imported" "$pe_file" >&2
-            exit 1
-        fi
+        require_import_resolution "$imported" "$pe_file" || exit 1
     done < <(pe_import_names "$pe_file")
 done < <(find "$STAGE_ROOT" -type f \( -iname '*.exe' -o -iname '*.dll' \) -print | sort)
 

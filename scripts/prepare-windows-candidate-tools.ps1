@@ -16,6 +16,19 @@ function Get-ToolIdentity([string]$Name) {
 }
 $linker = Get-ToolIdentity 'link.exe'
 $compiler = Get-ToolIdentity 'cl.exe'
+# NCrypt is a Windows CNG system component since Vista, including Windows 11.
+# Observe only the OS-selected System32 file, never a DLL found through PATH or
+# the payload. This producer observation does not qualify a Windows 11 journey.
+$systemDirectory = [Environment]::SystemDirectory
+$ncryptPath = [IO.Path]::GetFullPath((Join-Path $systemDirectory 'ncrypt.dll'))
+$ncryptFile = Get-Item -LiteralPath $ncryptPath
+$ncryptVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($ncryptPath)
+$ncryptSignature = Get-AuthenticodeSignature -LiteralPath $ncryptPath
+if ($null -ne $ncryptFile.LinkType -or $ncryptVersion.CompanyName -cne 'Microsoft Corporation' -or $ncryptVersion.OriginalFilename -ine 'ncrypt.dll' -or $ncryptSignature.Status -ne 'Valid' -or $ncryptSignature.SignerCertificate.Subject -notmatch 'CN=Microsoft (Windows|Corporation)(,|$)') { throw 'WINDOWS_SYSTEM_NCRYPT_IDENTITY_FAILURE' }
+$ncryptBytes = [IO.File]::ReadAllBytes($ncryptPath)
+$ncryptOffset = [BitConverter]::ToInt32($ncryptBytes, 0x3c)
+if ($ncryptOffset -lt 0 -or $ncryptOffset + 6 -ge $ncryptBytes.Length -or [BitConverter]::ToUInt32($ncryptBytes, $ncryptOffset) -ne 0x00004550 -or [BitConverter]::ToUInt16($ncryptBytes, $ncryptOffset + 4) -ne 0x8664) { throw 'WINDOWS_SYSTEM_NCRYPT_ARCHITECTURE_FAILURE' }
+$systemNcrypt = [ordered]@{name='ncrypt.dll';path=$ncryptPath;owner='Windows OS';signature_status=[string]$ncryptSignature.Status;signer=$ncryptSignature.SignerCertificate.Subject;version=$ncryptVersion.FileVersion;sha256=(Get-FileHash -LiteralPath $ncryptPath -Algorithm SHA256).Hash.ToLowerInvariant()}
 $redistRoot = $env:VCToolsRedistDir
 if ([string]::IsNullOrWhiteSpace($redistRoot)) {
     $redistVersion = (Get-Content (Join-Path $env:VCINSTALLDIR 'Auxiliary\Build\Microsoft.VCRedistVersion.default.txt') -Raw).Trim()
@@ -41,5 +54,5 @@ $dllIdentities = @($runtime | ForEach-Object {
 "SYNVEIL_MSVC_CRT_DIR=$crt" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
 New-Item (Split-Path $EvidencePath -Parent) -ItemType Directory -Force | Out-Null
 $os = Get-CimInstance Win32_OperatingSystem
-[ordered]@{schema_version=1;source_commit=(git rev-parse HEAD);compiler=$compiler;linker=$linker;msvc_tools=$env:VCToolsVersion;crt_directory=$crtDirectories[0].Name;runtime=$dllIdentities;producer_os=@{caption=$os.Caption;version=$os.Version;build=$os.BuildNumber;architecture=$env:PROCESSOR_ARCHITECTURE}} | ConvertTo-Json -Depth 6 | Set-Content $EvidencePath -Encoding utf8
+[ordered]@{schema_version=1;source_commit=(git rev-parse HEAD);compiler=$compiler;linker=$linker;msvc_tools=$env:VCToolsVersion;crt_directory=$crtDirectories[0].Name;runtime=$dllIdentities;system_dlls=@($systemNcrypt);producer_os=@{caption=$os.Caption;version=$os.Version;build=$os.BuildNumber;architecture=$env:PROCESSOR_ARCHITECTURE}} | ConvertTo-Json -Depth 6 | Set-Content $EvidencePath -Encoding utf8
 Write-Host "Selected MSVC compiler $($compiler.version), linker $($linker.version); app-local CRT files: $($runtime.Count)"

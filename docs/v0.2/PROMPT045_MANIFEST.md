@@ -40,6 +40,19 @@ These completed results supersede the earlier pending status. Acceptance remains
 withheld, PR #78 remains draft/unmerged, and P046 deferred. Fix and rerun source,
 artifact and job identities are recorded only after observation in the PR report.
 
+The Windows classifier now recognizes canonical `ncrypt.dll` as the Windows CNG
+OS component documented by Microsoft's
+[NCryptOpenStorageProvider requirements](https://learn.microsoft.com/en-us/windows/win32/api/ncrypt/nf-ncrypt-ncryptopenstorageprovider)
+(minimum client Windows Vista, hence present on qualified Windows 11). It never
+copies that OS DLL into the package. Import names containing a directory or
+noncanonical characters cannot establish OS ownership; any packaged file bearing
+a reviewed system DLL name is rejected. MSVCP140/VCRUNTIME140 and unknown imports
+still require product runtime resolution and exhaustive PE validation. Regression
+tests execute the actual classifier/resolver and reject an attacker-controlled
+packaged NCRYPT.dll. The native producer observes only the OS-selected System32
+file's Microsoft signature, version, hash and AMD64 identity, separately from
+app-local CRT provenance. This is producer diagnostics, not Windows 11 acceptance.
+
 Status: **infrastructure/source implemented; acceptance checkpoint withheld.**
 
 | Field | Observed value |

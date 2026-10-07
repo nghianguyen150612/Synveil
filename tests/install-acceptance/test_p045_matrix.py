@@ -146,6 +146,29 @@ class MatrixGateTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             p045.validate_matrix(matrix)
 
+    def test_ncrypt_requires_canonical_system_policy_not_packaged_ownership(self):
+        source = (ROOT / "deploy/packages/build-windows.sh").read_text()
+        begin = source.index("is_system_dll() {")
+        end = source.index("\nsha256_file()", begin)
+        policy = source[begin:end]
+        command = policy + "\nis_system_dll ncrypt.dll && is_system_dll NCRYPT.DLL && ! is_system_dll ./ncrypt.dll && ! is_system_dll 'C:\\attacker\\ncrypt.dll' && ! is_system_dll 'API-MS-WIN-../evil.dll' && ! is_system_dll MSVCP140.dll && ! is_system_dll unknown.dll && assert_no_packaged_system_dlls\n"
+        with tempfile.TemporaryDirectory() as work:
+            env = {**__import__("os").environ, "STAGE_ROOT": work}
+            # Product CRT remains outside system policy and may be shipped.
+            Path(work, "MSVCP140.dll").write_bytes(b"fixture; not product evidence")
+            clean = subprocess.run(["bash", "-c", command], env=env, capture_output=True, text=True, timeout=5)
+            self.assertEqual(clean.returncode, 0, clean.stderr)
+            for missing in ("unknown.dll", "VCRUNTIME140.dll"):
+                rejected = subprocess.run(["bash", "-c", policy + f"\nrequire_import_resolution {missing} qschannelbackend.dll"], env=env, capture_output=True, text=True, timeout=5)
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertIn("missing non-system import", rejected.stderr)
+            resolved = subprocess.run(["bash", "-c", policy + "\nrequire_import_resolution MSVCP140.dll qschannelbackend.dll"], env=env, capture_output=True, text=True, timeout=5)
+            self.assertEqual(resolved.returncode, 0, resolved.stderr)
+            Path(work, "NCRYPT.dll").write_bytes(b"attacker-controlled DLL")
+            poisoned = subprocess.run(["bash", "-c", command], env=env, capture_output=True, text=True, timeout=5)
+            self.assertNotEqual(poisoned.returncode, 0)
+            self.assertIn("cannot establish Windows system ownership", poisoned.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
