@@ -34,6 +34,15 @@ for value in (
 ):
     require(value, value in qml)
 
+startup_choice = qml[qml.index('id: startupChoicePopup') : qml.index('id: signOutConfirmation')]
+startup_choice_popup, startup_choice_layout = startup_choice.split("ColumnLayout {", 1)
+startup_choice_layout = startup_choice_layout.split("\n        }", 1)[0]
+require(
+    "startup choice accessibility label is attached to an Item",
+    'Accessible.name: qsTr("Choose whether Synveil starts when you sign in")' in startup_choice_layout
+    and "Accessible.name:" not in startup_choice_popup,
+)
+
 welcome = qml[qml.index("id: welcomePage") : qml.index("id: hostSetupPage")]
 for forbidden in ("serverUrlField", "Password", "PostgreSQL", "DATABASE_URL", "systemd", "Caddy"):
     require(f"Welcome excludes {forbidden}", forbidden not in welcome)

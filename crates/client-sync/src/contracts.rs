@@ -781,7 +781,7 @@ impl RemoteContent {
         self.sha256
     }
 
-    #[must_use]
+    #[must_use = "The returned stream must be polled to receive the remote content."]
     pub fn into_stream(self) -> ContentByteStream {
         self.body
     }

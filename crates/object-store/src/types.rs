@@ -91,7 +91,7 @@ impl PutRequest {
         self.integrity
     }
 
-    #[must_use]
+    #[must_use = "Use the returned object key, content stream and integrity expectation together."]
     pub fn into_parts(self) -> (ObjectKey, ByteStream, IntegrityExpectation) {
         (self.key, self.body, self.integrity)
     }
@@ -355,7 +355,7 @@ impl ObjectRead {
         self.range
     }
 
-    #[must_use]
+    #[must_use = "The returned stream must be polled to receive the object content."]
     pub fn into_stream(self) -> ByteStream {
         self.body
     }

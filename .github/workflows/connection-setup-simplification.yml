@@ -35,8 +35,9 @@ jobs:
             libgl1-mesa-dev xvfb \
             qml6-module-qtquick qml6-module-qtquick-controls \
             qml6-module-qtquick-dialogs qml6-module-qtquick-layouts \
-            qml6-module-qtquick-window qml6-module-qtqml-workerscript \
+            qml6-module-qtquick-window qml6-module-qtqml qml6-module-qtqml-models qml6-module-qtqml-workerscript \
             qml6-module-qtquick-templates qml6-module-qtquick-nativestyle
+          sudo install -d -o "$(id -un)" -g "$(id -gn)" /usr/src/synveil
       - run: cargo test -p synveil-desktop --locked
       - run: cargo check -p synveil-desktop --locked
       - run: ./scripts/test-desktop-ui.sh
@@ -48,7 +49,7 @@ jobs:
       - name: Install native build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+          sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config qt6-base-dev qt6-declarative-dev qt6-tools-dev-tools ripgrep
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy

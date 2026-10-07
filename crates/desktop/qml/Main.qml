@@ -27,7 +27,7 @@ ApplicationWindow {
         objectName: "libraryFolderDialog"
         title: qsTr("Choose a local library folder")
         onAccepted: {
-            bridge.setLibraryFolder(selectedFolder.toString())
+            bridge.setLibraryFolder(String(selectedFolder))
             chooseLibraryFolderButton.forceActiveFocus(Qt.TabFocusReason)
         }
         onRejected: chooseLibraryFolderButton.forceActiveFocus(Qt.TabFocusReason)
@@ -44,11 +44,11 @@ ApplicationWindow {
                  && bridge.welcome_destination === "existing_client"
                  && !bridge.auth_required && !bridge.auth_in_flight
         focus: visible
-        Accessible.name: qsTr("Choose whether Synveil starts when you sign in")
 
         ColumnLayout {
             anchors.fill: parent
             spacing: 14
+            Accessible.name: qsTr("Choose whether Synveil starts when you sign in")
 
             Label {
                 Layout.fillWidth: true
@@ -166,25 +166,23 @@ ApplicationWindow {
     }
 
     function observeLiveTestState() {
-        var signature = [
-            "connection=" + bridge.connection_label,
-            "freshness=" + bridge.freshness_label,
-            "process=" + bridge.process_label,
-            "launch=" + bridge.launch_label,
-            "generation=" + bridge.connection_generation,
-            "libraries=" + bridge.library_count,
-            "root=" + bridge.selected_root_label,
-            "auth=" + bridge.selected_auth_label,
-            "error=" + bridge.last_error_label,
-            "can_sync=" + bridge.selected_can_sync,
-            "auth_required=" + bridge.auth_required,
-            "auth_in_flight=" + bridge.auth_in_flight,
-            "can_sign_out=" + bridge.selected_can_sign_out,
-            "profile_configured=" + bridge.profile_configured,
-            "profile_authenticated=" + bridge.profile_authenticated,
-            "tray=" + bridge.tray_available,
-            "library_list_count=" + libraryList.count
-        ].join(" ")
+        var signature = "connection=" + bridge.connection_label
+            + " freshness=" + bridge.freshness_label
+            + " process=" + bridge.process_label
+            + " launch=" + bridge.launch_label
+            + " generation=" + bridge.connection_generation
+            + " libraries=" + bridge.library_count
+            + " root=" + bridge.selected_root_label
+            + " auth=" + bridge.selected_auth_label
+            + " error=" + bridge.last_error_label
+            + " can_sync=" + bridge.selected_can_sync
+            + " auth_required=" + bridge.auth_required
+            + " auth_in_flight=" + bridge.auth_in_flight
+            + " can_sign_out=" + bridge.selected_can_sign_out
+            + " profile_configured=" + bridge.profile_configured
+            + " profile_authenticated=" + bridge.profile_authenticated
+            + " tray=" + bridge.tray_available
+            + " library_list_count=" + libraryList.count
         root.observeLiveTestRootLabel(signature)
         if (signature === root.liveTestSignature) {
             return
@@ -2104,9 +2102,7 @@ ApplicationWindow {
 
         onVisibleChanged: {
             if (visible) {
-                Qt.callLater(function() {
-                    libraryNameField.forceActiveFocus(Qt.TabFocusReason)
-                })
+                libraryNameField.forceActiveFocus(Qt.TabFocusReason)
             }
         }
     }
