@@ -379,7 +379,7 @@ assert_no_packaged_system_dlls() {
             printf '[synveil-windows-package] ERROR: packaged file cannot establish Windows system ownership: %s\n' "$dll" >&2
             return 1
         fi
-    done < <(find "$STAGE_ROOT" -type f -iname '*.dll' -print)
+    done < <(find "$STAGE_ROOT" \( -type f -o -type l \) -iname '*.dll' -print)
 }
 
 pe_import_names() {

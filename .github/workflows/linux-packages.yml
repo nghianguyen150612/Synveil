@@ -28,6 +28,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install native packaging tooling
         run: |
@@ -49,6 +51,7 @@ jobs:
       - name: Verify single version source (Cargo.toml)
         run: |
           set -euo pipefail
+          bash scripts/test-reproducible-qt-wrapper.sh
           grep -A3 '\[workspace.package\]' Cargo.toml | grep 'version'
           test -f deploy/packages/common/version.sh
           bash -c 'source deploy/packages/common/version.sh && synveil_cargo_version'
@@ -104,6 +107,15 @@ jobs:
 
       - name: Rebuild release binaries after clearing release outputs
         run: scripts/verify-release-build-reproducibility.sh
+
+      - name: Preserve native-package differential evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synveil-native-package-repro-diagnosis
+          path: target/synveil-repro-diagnosis/
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: DEB inspection (dpkg-deb info + contents)
         run: |
@@ -252,6 +264,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install native Qt and packaging toolchain
         run: |
@@ -379,6 +393,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Report the systemd version under test
         run: |
@@ -411,6 +427,8 @@ jobs:
     steps:
       - name: Check out exact package source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Download exact newly-built package artifact
         uses: actions/download-artifact@v4
@@ -508,6 +526,8 @@ jobs:
 
       - name: Check out exact package source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Download exact newly-built package artifact
         uses: actions/download-artifact@v4

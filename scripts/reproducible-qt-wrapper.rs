@@ -136,10 +136,128 @@ fn run_qmlcachegen() -> Result<ExitStatus, String> {
         .iter()
         .map(|argument| canonicalize_qml_input(argument))
         .collect::<Result<Vec<_>, String>>()?;
-    Command::new(REAL_QMLCACHEGEN)
-        .args(rewritten)
+    let status = Command::new(REAL_QMLCACHEGEN)
+        .args(&rewritten)
+        .env("QT_HASH_SEED", "0")
         .status()
-        .map_err(|error| format!("could not run qmlcachegen at {REAL_QMLCACHEGEN}: {error}"))
+        .map_err(|error| format!("could not run qmlcachegen at {REAL_QMLCACHEGEN}: {error}"))?;
+    if status.success() {
+        if let Some(index) = rewritten.iter().position(|argument| argument == "-o") {
+            let output = rewritten
+                .get(index + 1)
+                .ok_or("qmlcachegen -o has no path")?;
+            let version = Command::new(REAL_QMLCACHEGEN)
+                .arg("--version")
+                .env("QT_HASH_SEED", "0")
+                .output()
+                .map_err(|error| format!("could not observe qmlcachegen version: {error}"))?;
+            if !version.status.success() {
+                return Err("qmlcachegen version observation failed".to_owned());
+            }
+            // Ubuntu 24.04's Qt 6.4.2 emits AOT temporaries from a hash keyed
+            // by type pointers. Pinning the hash seed cannot stabilize those
+            // allocation addresses. Canonicalize at generation time, before
+            // any C++ compilation; never edit or mask a linked binary.
+            // Other Qt versions, including the AppImage's 6.7.3, are unchanged.
+            if String::from_utf8_lossy(&version.stdout).trim() == "qmlcachegen 6.4.2" {
+                let path = Path::new(output);
+                let original = fs::read_to_string(path).map_err(|error| {
+                    format!("could not read generated {}: {error}", path.display())
+                })?;
+                let normalized = normalize_register_declarations(&original);
+                let mut provenance = output.to_os_string();
+                provenance.push(".synveil-qt-original");
+                fs::write(Path::new(&provenance), &original).map_err(|error| {
+                    format!("could not preserve original QML generator output: {error}")
+                })?;
+                if normalized != original {
+                    fs::write(path, normalized).map_err(|error| {
+                        format!("could not canonicalize generated QML register order: {error}")
+                    })?;
+                }
+            }
+        }
+    }
+    Ok(status)
+}
+
+// QQmlJSCodeGenerator::run in Qt 6.4.2 iterates
+// QHash<int, QHash<QQmlJSScope::ConstPtr, QString>> when emitting declarations.
+// Only contiguous, uninitialized registers of observed built-in types move.
+// Keep names/types and every initializer, statement and other line unchanged.
+fn normalize_register_declarations(source: &str) -> String {
+    fn register_name(line: &str) -> Option<&str> {
+        let line = line.strip_suffix('\n').unwrap_or(line);
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        let name = [
+            "QObject *",
+            "QString ",
+            "QVariant ",
+            "bool ",
+            "double ",
+            "int ",
+        ]
+        .iter()
+        .find_map(|prefix| line.strip_prefix(prefix))?
+        .strip_suffix(';')?
+        .strip_prefix('r')?;
+        let (register, variant) = name.split_once('_')?;
+        if register.is_empty()
+            || variant.is_empty()
+            || !register.bytes().all(|b| b.is_ascii_digit())
+            || !variant.bytes().all(|b| b.is_ascii_digit())
+        {
+            return None;
+        }
+        Some(name)
+    }
+    fn flush(output: &mut String, declarations: &mut Vec<&str>) {
+        declarations.sort_by_key(|line| register_name(line).unwrap());
+        for line in declarations.drain(..) {
+            output.push_str(line);
+        }
+    }
+    let mut output = String::with_capacity(source.len());
+    let mut declarations = Vec::new();
+    for line in source.split_inclusive('\n') {
+        if register_name(line).is_some() {
+            declarations.push(line);
+        } else {
+            flush(&mut output, &mut declarations);
+            output.push_str(line);
+        }
+    }
+    flush(&mut output, &mut declarations);
+    output
+}
+
+#[cfg(test)]
+mod register_order_tests {
+    use super::normalize_register_declarations;
+    #[test]
+    fn equivalent_aot_register_orders_are_identical() {
+        let a = "Q_UNUSED(argumentsPtr)\nQVariant r2_2;\nQObject *r2_1;\n// generate_Load\nreturn r2_2;\n";
+        let b = "Q_UNUSED(argumentsPtr)\nQObject *r2_1;\nQVariant r2_2;\n// generate_Load\nreturn r2_2;\n";
+        assert_eq!(normalize_register_declarations(a), b);
+        assert_eq!(normalize_register_declarations(b), b);
+    }
+    #[test]
+    fn initializers_and_statements_remain_ordered() {
+        let source = "QString r2_2;\nQObject *r2_1 = lookup();\nint r2_3;\nreturn r2_3;\n";
+        assert_eq!(normalize_register_declarations(source), source);
+    }
+    #[test]
+    fn unrelated_cpp_and_unknown_types_are_untouched() {
+        let source = "CustomType r2_2;\nCustomType r2_1;\nint other;\nreturn r2_1;\n";
+        assert_eq!(normalize_register_declarations(source), source);
+    }
+    #[test]
+    fn crlf_is_preserved() {
+        assert_eq!(
+            normalize_register_declarations("bool r2_2;\r\nint r2_1;\r\n"),
+            "int r2_1;\r\nbool r2_2;\r\n"
+        );
+    }
 }
 
 /// Map a checkout-relative QML source to its canonical stand-in.
@@ -155,10 +273,7 @@ fn canonicalize_qml_input(argument: &std::ffi::OsStr) -> Result<std::ffi::OsStri
         return Ok(argument.to_owned());
     };
     // Only QML inputs carry the leak; leave anything else alone.
-    if !path
-        .extension()
-        .is_some_and(|extension| extension == "qml")
-    {
+    if !path.extension().is_some_and(|extension| extension == "qml") {
         return Ok(argument.to_owned());
     }
 

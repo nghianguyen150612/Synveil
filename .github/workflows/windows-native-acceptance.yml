@@ -75,6 +75,11 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($version)) { throw 'P028_PRODUCT_VERSION_FAILURE' }
           $identity = [ordered]@{schema_version=1;source_commit=(git rev-parse HEAD);product_version=$version;filename='SynveilSetup.exe';size_bytes=(Get-Item $setup).Length;sha256=(Get-FileHash $setup -Algorithm SHA256).Hash.ToLowerInvariant();release_manifest_sha256=(Get-FileHash target/windows-installer/SYNVEIL-RELEASE-MANIFEST.json -Algorithm SHA256).Hash.ToLowerInvariant();inno_setup_version='6.7.3';qt_version='6.8.3';msvc_tools=$env:VCToolsVersion;windows_caption=$os.Caption;windows_version=$os.Version;windows_build=$os.BuildNumber;architecture=$env:PROCESSOR_ARCHITECTURE;artifact_id='windows-x86_64-installer';artifact_type='windows_installer';platform='windows';toolchain_identity_sha256=(Get-FileHash target/windows-toolchain.json -Algorithm SHA256).Hash.ToLowerInvariant()}
           $identity | ConvertTo-Json | Set-Content target/windows-installer/p028-candidate.json -Encoding utf8
+      - name: Record observed candidate and release manifest
+        shell: pwsh
+        run: |
+          Get-Content target/windows-installer/p028-candidate.json -Raw
+          Get-Content target/windows-installer/SYNVEIL-RELEASE-MANIFEST.json -Raw
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ env.CANDIDATE_NAME }}

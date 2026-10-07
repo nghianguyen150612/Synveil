@@ -168,6 +168,11 @@ class MatrixGateTests(unittest.TestCase):
             poisoned = subprocess.run(["bash", "-c", command], env=env, capture_output=True, text=True, timeout=5)
             self.assertNotEqual(poisoned.returncode, 0)
             self.assertIn("cannot establish Windows system ownership", poisoned.stderr)
+            Path(work, "NCRYPT.dll").unlink()
+            Path(work, "ncrypt.dll").symlink_to("MSVCP140.dll")
+            redirected = subprocess.run(["bash", "-c", command], env=env, capture_output=True, text=True, timeout=5)
+            self.assertNotEqual(redirected.returncode, 0)
+            self.assertIn("cannot establish Windows system ownership", redirected.stderr)
 
 
 if __name__ == "__main__":

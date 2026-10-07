@@ -56,6 +56,7 @@ jobs:
             --manifest target/packages/SYNVEIL-RELEASE-MANIFEST.json
           python3 scripts/release_manifest.py validate --artifact-root target/packages \
             target/packages/SYNVEIL-RELEASE-MANIFEST.json
+          cat target/packages/SYNVEIL-RELEASE-MANIFEST.json
       - name: Host-decontaminated bounded QML smoke
         run: |
           APPIMAGE="target/packages/Synveil-$(bash -c 'source deploy/packages/common/version.sh; synveil_cargo_version')-x86_64.AppImage"

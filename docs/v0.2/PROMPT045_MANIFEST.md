@@ -64,6 +64,47 @@ The predicate now accepts only the two explicit NCrypt resource names; all fixed
 path/signature/company/PE requirements remain. The producer is Windows Server,
 not a tested Windows 11 build, and no Setup identity is inferred from preflight.
 
+## Desktop generator differential diagnosis
+
+The uploaded `synveil-desktop-repro-diagnosis` artifact `11493000259` belongs to
+the passing pinned Qt 6.7.3 job. It does not contain the failing system-Qt job's
+trees. That failing job's log reports the real linked mismatch but the diagnostic
+searched only top-level generated directories; actual CXX-Qt files live beneath
+`release/build/<crate>-<hash>/out`. The diagnostic now discovers those nested
+Qt/CXX inputs and the native-package job uploads its own distinctly named report.
+No missing generated coverage is treated as a deterministic-generation proof.
+
+Using the real Qt 6.4.2 qmlcachegen and the unchanged product Main.qml, 12 runs
+with cleared environment produced 12 different C++ hashes; 12 with
+`QT_HASH_SEED=0` also produced 12 different hashes. The diffs are uninitialized
+AOT register declaration order. Qt's
+[6.4.2 generator source](https://github.com/qt/qtdeclarative/blob/v6.4.2/src/qmlcompiler/qqmljscodegenerator.cpp)
+iterates `QHash<int, QHash<QQmlJSScope::ConstPtr, QString>>`: allocation-dependent
+type-pointer keys explain why a fixed hash seed does not fix this order.
+Two actual raw outputs compiled with the same source path produced differing
+objects (503,248 versus 503,240 bytes). Canonicalizing only contiguous independent
+uninitialized registers of the observed built-in types made the objects exactly
+identical, 503,272 bytes, SHA-256
+`d74b27095398f7c73c5ec1474e65a1619f1f3b1e42097a9f85b5d70b6b235f3d`.
+These are diagnostic objects, not candidate desktop binaries or native evidence.
+
+The build-host Qt wrapper applies that deterministic declaration order only to
+the observed Qt 6.4.2 generator output, before C++ compilation. It preserves the
+complete original generated source alongside normalized source for diagnosis.
+Names/types, initializers and executable statements are retained; later Qt
+versions, including AppImage Qt 6.7.3, are unaffected by this normalization.
+Four source/mechanics regressions cover equivalence, initializer/statement
+ordering, untouched unknown C++, and newline preservation. Twelve invocations
+of the actual production wrapper retained 12 distinct raw originals but produced
+one exact normalized hash. The independent full linked-byte gate remains
+unchanged; fresh A/B release and hosted candidate results are still required.
+
+Native DEB/RPM acceptance production now uses Ubuntu 24.04's distro Qt runtime,
+matching the package's declared distro dependencies; AppImage retains its pinned
+bundled Qt 6.7.3 after native packages are frozen. Package workflow checkouts bind
+the true source head. Actual release manifests are printed only after validation
+to retain source/version/size/hash identities in the producer logs.
+
 Status: **infrastructure/source implemented; acceptance checkpoint withheld.**
 
 | Field | Observed value |
