@@ -21,7 +21,15 @@ if ([string]::IsNullOrWhiteSpace($redistRoot)) {
     $redistVersion = (Get-Content (Join-Path $env:VCINSTALLDIR 'Auxiliary\Build\Microsoft.VCRedistVersion.default.txt') -Raw).Trim()
     $redistRoot = Join-Path $env:VCINSTALLDIR "Redist\MSVC\$redistVersion"
 }
-$crt = [IO.Path]::GetFullPath((Join-Path $redistRoot 'x64\Microsoft.VC143.CRT'))
+$x64Redist = [IO.Path]::GetFullPath((Join-Path $redistRoot 'x64')).TrimEnd('\') + '\'
+# The active runner may select VS 2026 rather than VS 2022. Select exactly one
+# CRT directory inside that active redist root, without guessing its generation
+# or searching a different SDK/System32 installation.
+$crtDirectories = @(Get-ChildItem -LiteralPath $x64Redist -Directory -Filter 'Microsoft.VC*.CRT' |
+    Where-Object { $_.Name -match '^Microsoft\.VC\d+\.CRT$' })
+if ($crtDirectories.Count -ne 1 -or $null -ne $crtDirectories[0].LinkType) { throw 'MSVC_CRT_SELECTION_FAILURE' }
+$crt = [IO.Path]::GetFullPath($crtDirectories[0].FullName)
+if (!$crt.StartsWith($x64Redist, [StringComparison]::OrdinalIgnoreCase)) { throw 'MSVC_CRT_CONTAINMENT_FAILURE' }
 $runtime = @(Get-ChildItem -LiteralPath $crt -Filter '*.dll' -File)
 if ($runtime.Count -eq 0 -or !(Test-Path (Join-Path $crt 'msvcp140.dll'))) { throw 'MSVC_CRT_UNAVAILABLE' }
 $dllIdentities = @($runtime | ForEach-Object {
@@ -32,5 +40,5 @@ $dllIdentities = @($runtime | ForEach-Object {
 "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$($linker.path)" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
 "SYNVEIL_MSVC_CRT_DIR=$crt" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
 New-Item (Split-Path $EvidencePath -Parent) -ItemType Directory -Force | Out-Null
-[ordered]@{schema_version=1;compiler=$compiler;linker=$linker;msvc_tools=$env:VCToolsVersion;runtime=$dllIdentities} | ConvertTo-Json -Depth 6 | Set-Content $EvidencePath -Encoding utf8
+[ordered]@{schema_version=1;compiler=$compiler;linker=$linker;msvc_tools=$env:VCToolsVersion;crt_directory=$crtDirectories[0].Name;runtime=$dllIdentities} | ConvertTo-Json -Depth 6 | Set-Content $EvidencePath -Encoding utf8
 Write-Host "Selected MSVC compiler $($compiler.version), linker $($linker.version); app-local CRT files: $($runtime.Count)"

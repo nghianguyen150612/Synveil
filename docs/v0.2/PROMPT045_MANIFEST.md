@@ -124,3 +124,26 @@ P046 deferred. No v0.2.0 release/tag is created.
 No native graphical install, launch, named-pipe, first-run, live server or product
 power-cycle PASS was produced locally. Candidate SHA-256/size/build identities
 remain unavailable until actual hosted producers pass.
+
+## Initial publication and diagnostic correction
+
+- PR [#78](https://github.com/nghianguyen150612/Synveil/pull/78) is open as a
+  draft from exactly `feat/cross-platform-clean-machine-matrix` to `main`.
+  GitHub's branch API verified that name and initial head
+  `9e1ea1cb7ca1adaa730014d20d8a0885b9495ff8` immediately before creation;
+  initial tree `690c924ab26001a8eea0d82af5ced86c1ca32d37` matched publication.
+- Initial Windows native push run `37632007612`, job `112828403852`, failed
+  before runtime compilation in the new tool-identity preparation. The active
+  hosted toolchain was Visual Studio 18, MSVC `14.51.36231`; its redist lacked
+  the helper's assumed `Microsoft.VC143.CRT` directory. This was a P045 harness
+  selection defect, not an installed product FAIL. The helper now selects
+  exactly one generation-named CRT directory strictly inside the active x64
+  redist root and records the observed name. It does not search System32 or
+  silently select another SDK.
+- Initial Windows installer push run `37632007596` also failed before Setup.
+  Initial AppImage push `37632007346` and aggregate PR `37632164383` had not
+  completed at correction time. Their superseded-head results are diagnostic
+  only; the correction requires final-head reruns and no PASS is reused.
+
+Acceptance remains withheld. No Windows 11 build, candidate hash, native
+journey, power-cycle, merge or resulting main is inferred from these runs.
