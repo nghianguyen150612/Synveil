@@ -17,7 +17,9 @@ struct RootView: View {
                 viewModel: ServerValidationViewModel(sessionController: sessionController)
             )
         case .needsEnrollment:
-            EnrollmentPlaceholderView()
+            EnrollmentView(
+                viewModel: EnrollmentViewModel(sessionController: sessionController)
+            )
         case .authenticated:
             AuthenticatedShellPlaceholderView()
         case .recoveryRequired(let reason):
