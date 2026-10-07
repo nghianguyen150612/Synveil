@@ -2,7 +2,8 @@ param(
     [Parameter(Mandatory=$true)][string]$Setup,
     [Parameter(Mandatory=$true)][string]$EvidenceDirectory,
     [string]$OlderFixtureSetup,
-    [string]$NewerFixtureSetup
+    [string]$NewerFixtureSetup,
+    [string]$NewerLicenseHash
 )
 
 $ErrorActionPreference = 'Stop'
@@ -36,11 +37,13 @@ try {
     if ($process.ExitCode -ne 0) { throw "STANDARD_USER_TEST_FAILURE: child exit $($process.ExitCode); see bounded logs" }
     Copy-Item -LiteralPath $childEvidence -Destination $evidence
     if ($OlderFixtureSetup -and $NewerFixtureSetup) {
+        if ($NewerLicenseHash -notmatch '^[0-9a-f]{64}$') { throw 'STANDARD_USER_TEST_FAILURE: newer fixture license identity is missing' }
         $lifecycleScript = Join-Path $PSScriptRoot 'test-windows-installer-lifecycle.ps1'
         $lifecycleEvidence = Join-Path $env:SystemDrive "Users\$user\AppData\Local\Synveil\installer\windows-lifecycle-evidence.json"
         $lifecycleArgs = @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$lifecycleScript,
             '-Setup',([IO.Path]::GetFullPath($Setup)),'-OlderFixtureSetup',([IO.Path]::GetFullPath($OlderFixtureSetup)),
-            '-NewerFixtureSetup',([IO.Path]::GetFullPath($NewerFixtureSetup)),'-RepositoryRoot',([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))),
+            '-NewerFixtureSetup',([IO.Path]::GetFullPath($NewerFixtureSetup)),'-NewerLicenseHash',$NewerLicenseHash,
+            '-RepositoryRoot',([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))),
             '-EvidencePath',$lifecycleEvidence)
         $lifecycle = Start-Process (Get-Command pwsh).Source -Credential $credential -LoadUserProfile -ArgumentList $lifecycleArgs `
             -RedirectStandardOutput (Join-Path $EvidenceDirectory 'lifecycle.stdout.log') -RedirectStandardError (Join-Path $EvidenceDirectory 'lifecycle.stderr.log') -PassThru

@@ -109,3 +109,40 @@ channel/version selection.
 The in-memory and durable paths now use the same common-engine compensation candidate policy: only an explicitly reversible effect with a safe inverse and adapter support is eligible, and eligible effects are visited in reverse successful-application order. The durable path surrounds that shared lifecycle policy with fallible checkpoints. It commits `CompensationStarted` before calling `compensate_effect`, calls `verify_compensation` only after compensation succeeds, and commits `CompensationVerified` only after both operations succeed. Failure to persist the start prevents compensation; interruption after the start requires inspection and never replays compensation. A verified compensation is represented as `Compensated`, causes a stopped/replan-required recovery, and is neither treated as installed nor automatically reapplied.
 
 Schema version 1 recovery now applies a strict semantic state machine in addition to the existing hash chain. `TransactionOpened` is required exactly once at generation zero; effect starts follow plan order; effect results require a prior mutation start; duplicate transitions are rejected; and no record may follow completion. `FinalVerificationSucceeded` requires every planned effect to be durably verified, while `TransactionCompleted` requires durable final verification. These rules run both before public `append` creates a checkpoint and again while loading all persisted records. A valid SHA-256 chain proves local integrity and ordering, not that an impossible record sequence is semantically valid.
+
+## Prompt044 resilience hardening
+
+P044 keeps this schema and recovery authority. It adds typed disk-full
+classification, deterministic I/O fault boundaries after write, file sync,
+no-replace commit, committed-object sync, and parent-directory sync, plus
+fail-closed rejection of unexpected objects in a transaction directory. The
+fault hooks are supplied through `JournalOptions`; they are not production
+environment switches. An injected `DiskFull` at the mutation-start append
+returns before `apply_effect`. A disk-full result after an effect may have
+mutated returns inspection-required and prevents later effects.
+
+Creation of a new journal root now syncs each newly created directory's parent.
+An empty transaction directory left after a failed first checkpoint can be
+reused by `StartNew` only after acquiring the OS lock and validating that no
+checkpoint evidence exists; `ResumeExisting` still treats an empty journal as
+corrupt. A stale lock *file* does not establish a live writer. The OS lock is
+still held across all inspection and mutation. Unrecognized files fail closed;
+only regular, recognized `.tmp` checkpoint files remain eligible for existing
+P008 cleanup.
+
+Acquisition distinguishes ENOSPC/quota exhaustion from generic staging errors.
+Artifact bytes are flushed and synced before no-clobber promotion. A directory
+sync failure does not produce a `VERIFIED` acquisition result. A completed file
+that exists after an ambiguous post-promotion failure is re-hashed against the
+authenticated selection on a later attempt; incomplete staging bytes are never
+reused as trusted cache. On Windows, the parent directory is opened with
+reparse-point protections and its identity checked before `FlushFileBuffers`;
+hosted Windows checks are authoritative for that platform-specific path.
+
+The deterministic fault tests and a subprocess forcibly terminated after a
+synced payload mutation exercise source ordering and restart reconciliation.
+They do not demonstrate filesystem/controller power-loss durability. This
+environment has no disposable VM power-cycle control plane; P044 therefore
+records **BLOCKED / unavailable native power-cycle evidence**. Filesystem and OS
+sync guarantees remain platform-dependent. A process kill, container restart,
+or graceful reboot is not reported as physical power loss.

@@ -172,6 +172,12 @@ def main() -> int:
                      "p027-obsolete-owned.txt", "downgrade-fixture", "reinstall-production",
                      "startup_preference_preserved", "authorized_scope"):
         require(evidence in lifecycle_test, f"P027 native lifecycle evidence: {evidence}")
+    for evidence in ("Interrupt-UpgradeAfterOwnedPayloadCopy", "NewerLicenseHash",
+                     "LIFECYCLE_INTERRUPTION_FAILURE", "process_termination='forced'",
+                     "prior_manifest_and_registration_matched"):
+        require(evidence in lifecycle_test, f"P044 Windows interruption evidence: {evidence}")
+    require("P044_NEWER_LICENSE_HASH" in workflow,
+            "P044 Windows interruption fixture does not bind its target payload identity")
     require("unins000.exe" not in lifecycle_test.lower(), "registered uninstaller must not be hard-coded")
     for evidence in ("PURGE_CLASSES", 'frozenset({"APPLICATION_CONFIG"})', "confirmed",
                      "USER_LIBRARY", "CREDENTIAL_STATE", "SERVER_DATABASE"):

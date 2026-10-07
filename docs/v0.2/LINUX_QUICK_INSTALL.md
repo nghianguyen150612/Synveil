@@ -77,6 +77,17 @@ message. Network retries and package transaction replays are intentionally
 absent; an interrupted ambiguous transaction is `OutcomeUnknown` and must be
 reconciled from native state before retrying.
 
+P044 classifies ENOSPC and quota exhaustion while creating, writing, syncing,
+promoting, or syncing the artifact directory as `InsufficientDiskSpace` before
+native package mutation. The staging file is discarded when owned cleanup is
+possible; a failed directory durability operation never returns a verified
+acquisition result. A later attempt may reuse a completed destination only
+after re-verifying its exact authenticated size and digest. Partial bytes are
+not range-resumed or trusted as cache. If interruption may have reached APT or
+DNF, the installer inspects `dpkg-query`/`rpm` state and exact package identity
+before it can choose a disposition. It never deletes dpkg, apt, rpm, or dnf lock
+files, and it never treats a missing child-process result as proof of failure.
+
 ## Plan, evidence, reruns, and completion
 
 Before privilege, the plan names the product version, DEB/RPM, x86_64, verified
@@ -111,6 +122,7 @@ P019 owns the later friendly first-launch and autostart choices.
 | 2 | command usage |
 | 10 | unsupported/mismatched explicit profile or platform |
 | 20 | release trust, integrity, selection, or staging failure |
+| 25 | local staging disk full before native package mutation |
 | 30 | bounded network/download failure |
 | 40 | authorization required or failed |
 | 50 | package manager busy/failure or incompatible installed state |

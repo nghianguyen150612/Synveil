@@ -97,10 +97,14 @@ def main() -> int:
         require(not re.search(r'\$HOME|/home/|client\.db|systemctl\s+--user\s+(?:start|enable)|rm\s+.*lock', executable), 'privileged user-state/lock mutation')
     for name in ('INSTALLER_SECURITY_HARDENING.md','PROMPT043_MANIFEST.md'):
         require((ROOT/'docs/v0.2'/name).is_file(), 'P043 documentation absent')
-    require(not (ROOT/'docs/v0.2/PROMPT044_MANIFEST.md').exists(), 'P044 implementation must remain deferred')
+    require((ROOT/'docs/v0.2/PROMPT044_MANIFEST.md').is_file(), 'P044 evidence manifest absent')
+    require((ROOT/'docs/v0.2/INSTALLATION_RESILIENCE_HARDENING.md').is_file(), 'P044 resilience evidence absent')
+    require((ROOT/'scripts/validate-installation-resilience-hardening.py').is_file(), 'P044 static validator absent')
     roadmap=read('docs/v0.2/ROADMAP.md')
     phase=roadmap.split('### P044 —')[1].split('## Release acceptance')[0]
-    require('**Implemented' not in phase,'later Phase-G completion claimed')
+    require('**Implemented' in phase,'P044 source/evidence status missing')
+    p045=roadmap.split('### P045 —')[1].split('### P046 —')[0]
+    require('**Implemented' not in p045,'P045 must remain deferred')
     print('installer security hardening: PASS')
     return 0
 

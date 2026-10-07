@@ -25,6 +25,7 @@ import linux_platform_detection
 EXIT_USAGE = 2
 EXIT_UNSUPPORTED = 10
 EXIT_INTEGRITY = 20
+EXIT_DISK_SPACE = 25
 EXIT_DOWNLOAD = 30
 EXIT_AUTHORIZATION = 40
 EXIT_PACKAGE_MANAGER = 50
@@ -140,7 +141,7 @@ class NativeManager:
         if self.verify(expected_version):
             return
         installed = self.installed_version()
-        payload_present = any(Path(item).exists() for item in REQUIRED_PATHS)
+        payload_present = package_payload_present()
         if installed is not None or payload_present:
             raise QuickInstallError("OutcomeUnknown", "The failed package transaction left native state that is not fully verified.",
                                     "Inspect or repair native package state before retrying.", EXIT_UNKNOWN)
@@ -188,6 +189,11 @@ def native_product_version(value: str) -> str:
                                 "Use a compatible lifecycle owner; do not reset native state.", EXIT_UNKNOWN)
     release_channel.parse_stable_version(match[1])
     return match[1]
+
+
+def package_payload_present() -> bool:
+    """Treat leftover or ambiguous package-owned paths as partial native state."""
+    return any(Path(item).exists() or Path(item).is_symlink() for item in REQUIRED_PATHS)
 
 
 def system_executable(name: str) -> str:
@@ -366,6 +372,13 @@ def run(argv: list[str] | None = None, *, manager_factory=NativeManager,
         manager = manager_factory(profile)
         manager.artifact_evidence = evidence
         installed = manager.installed_version()
+        if installed is None and package_payload_present():
+            raise QuickInstallError(
+                "OutcomeUnknown",
+                "Native package metadata reports absent while package-owned payload remains.",
+                "Inspect or repair partial native package state before retrying.",
+                EXIT_UNKNOWN,
+            )
         release_channel.parse_stable_version(evidence["product_version"])
         if installed is not None:
             release_channel.parse_stable_version(installed)
@@ -395,15 +408,24 @@ def run(argv: list[str] | None = None, *, manager_factory=NativeManager,
         return 0
     except (release_channel.ChannelError, release_download.AcquisitionError) as error:
         network_codes = {"NETWORK_ERROR"}
-        category = "DownloadFailed" if error.code in network_codes else "IntegrityVerificationFailed"
-        status = EXIT_DOWNLOAD if error.code in network_codes else EXIT_INTEGRITY
+        if error.code == "INSUFFICIENT_DISK_SPACE":
+            category, status = "InsufficientDiskSpace", EXIT_DISK_SPACE
+        elif error.code in network_codes:
+            category, status = "DownloadFailed", EXIT_DOWNLOAD
+        else:
+            category, status = "IntegrityVerificationFailed", EXIT_INTEGRITY
         print(f"{category}: Trusted release acquisition failed ({error.code}).", file=sys.stderr)
-        print("No package change was made. Check trusted bootstrap inputs and retry.", file=sys.stderr)
+        if category == "InsufficientDiskSpace":
+            print("No package change was made. Free local disk space, then retry acquisition.", file=sys.stderr)
+        else:
+            print("No package change was made. Check trusted bootstrap inputs and retry.", file=sys.stderr)
         return status
     except QuickInstallError as error:
         preserve_staging = error.category == "OutcomeUnknown"
         print(f"{error.category}: {error}", file=sys.stderr)
-        print(("Package state may have changed. " if mutation_started else "No package change was made. ") + error.action,
+        uncertain_prior_state = error.category == "OutcomeUnknown"
+        print(("Package state may have changed. " if mutation_started or uncertain_prior_state
+               else "No package change was made. ") + error.action,
               file=sys.stderr)
         return error.exit_status
     except (OSError, ValueError) as error:
@@ -411,6 +433,9 @@ def run(argv: list[str] | None = None, *, manager_factory=NativeManager,
             preserve_staging = True
             print("OutcomeUnknown: Native package state requires inspection before any retry.", file=sys.stderr)
             return EXIT_UNKNOWN
+        if isinstance(error, OSError) and release_download._is_disk_full(error):
+            print("InsufficientDiskSpace: No package change was made; free local disk space and retry.", file=sys.stderr)
+            return EXIT_DISK_SPACE
         print("InternalFailure: The installer could not complete safely.", file=sys.stderr)
         print("No package change was assumed. Review bounded diagnostics and retry.", file=sys.stderr)
         return EXIT_INTERNAL

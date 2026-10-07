@@ -133,6 +133,14 @@ jobs:
             $versionLine = $lines.FindIndex({ param($line) $line.StartsWith('version=') })
             if ($versionLine -lt 0) { throw 'LIFECYCLE_FIXTURE_FAILURE: manifest version missing' }
             $lines[$versionLine] = "version=$Version"
+            if ($Version -ceq '1.1.0') {
+              $license = Join-Path $Path 'LICENSE'
+              [IO.File]::AppendAllText($license, "`nP044 interrupted-upgrade fixture`n", [Text.UTF8Encoding]::new($false))
+              $licenseLine = $lines.FindIndex({ param($line) $line.EndsWith(' LICENSE') })
+              if ($licenseLine -lt 0) { throw 'LIFECYCLE_FIXTURE_FAILURE: LICENSE ownership entry missing' }
+              $licenseHash = (Get-FileHash -LiteralPath $license -Algorithm SHA256).Hash.ToLowerInvariant()
+              $lines[$licenseLine] = "$licenseHash $((Get-Item -LiteralPath $license).Length) LICENSE"
+            }
             if ($Obsolete) {
               $owned = Join-Path $Path 'p027-obsolete-owned.txt'
               [IO.File]::WriteAllText($owned, 'P027 obsolete package fixture', [Text.UTF8Encoding]::new($false))
@@ -144,8 +152,10 @@ jobs:
           }
           New-FixtureStage target/p027-runtime-old '1.0.0' -Obsolete
           New-FixtureStage target/p027-runtime-new '1.1.0'
+          $newerLicenseHash = (Get-FileHash -LiteralPath target/p027-runtime-new/LICENSE -Algorithm SHA256).Hash.ToLowerInvariant()
           ./scripts/build-windows-installer.ps1 -RuntimeStagingDirectory target/p027-runtime-old -OutputDirectory target/p027-fixture-old -LifecycleFixtureVersion 1.0.0
           ./scripts/build-windows-installer.ps1 -RuntimeStagingDirectory target/p027-runtime-new -OutputDirectory target/p027-fixture-new -LifecycleFixtureVersion 1.1.0
+          "P044_NEWER_LICENSE_HASH=$newerLicenseHash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Qualify installation as a disposable standard user
         shell: pwsh
         run: |
@@ -153,7 +163,8 @@ jobs:
             -Setup target/windows-installer/SynveilSetup.exe `
             -EvidenceDirectory target/windows-per-user-evidence `
             -OlderFixtureSetup target/p027-fixture-old/SynveilSetup.exe `
-            -NewerFixtureSetup target/p027-fixture-new/SynveilSetup.exe
+            -NewerFixtureSetup target/p027-fixture-new/SynveilSetup.exe `
+            -NewerLicenseHash $env:P044_NEWER_LICENSE_HASH
       - name: Upload installer and bounded acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4

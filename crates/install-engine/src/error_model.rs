@@ -122,6 +122,7 @@ pub enum AcquisitionFailureCode {
     NetworkError,
     NoMatchingArtifact,
     SourceCommitMismatch,
+    InsufficientDiskSpace,
     StagingError,
     UnsafePath,
     UnsafeRedirect,
@@ -133,12 +134,13 @@ pub enum AcquisitionFailureCode {
 }
 
 impl AcquisitionFailureCode {
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::AmbiguousArtifact,
         Self::ArtifactDigestMismatch,
         Self::ArtifactTooLarge,
         Self::ArtifactTruncated,
         Self::DestinationConflict,
+        Self::InsufficientDiskSpace,
         Self::InvalidManifest,
         Self::ManifestAuthFailed,
         Self::ManifestTooLarge,
@@ -168,6 +170,7 @@ impl AcquisitionFailureCode {
             Self::NetworkError => "NETWORK_ERROR",
             Self::NoMatchingArtifact => "NO_MATCHING_ARTIFACT",
             Self::SourceCommitMismatch => "SOURCE_COMMIT_MISMATCH",
+            Self::InsufficientDiskSpace => "INSUFFICIENT_DISK_SPACE",
             Self::StagingError => "STAGING_ERROR",
             Self::UnsafePath => "UNSAFE_PATH",
             Self::UnsafeRedirect => "UNSAFE_REDIRECT",
@@ -196,6 +199,7 @@ impl TryFrom<&str> for AcquisitionFailureCode {
             "NETWORK_ERROR" => Ok(Self::NetworkError),
             "NO_MATCHING_ARTIFACT" => Ok(Self::NoMatchingArtifact),
             "SOURCE_COMMIT_MISMATCH" => Ok(Self::SourceCommitMismatch),
+            "INSUFFICIENT_DISK_SPACE" => Ok(Self::InsufficientDiskSpace),
             "STAGING_ERROR" => Ok(Self::StagingError),
             "UNSAFE_PATH" => Ok(Self::UnsafePath),
             "UNSAFE_REDIRECT" => Ok(Self::UnsafeRedirect),
@@ -594,6 +598,32 @@ pub fn map_journal(error: JournalErrorCode, context: &FailureContext) -> UserFac
             UserRetryPolicy::ReconcileFirst,
             RecommendedAction::InspectRecovery,
         ),
+        JournalErrorCode::JournalDiskFull => {
+            if matches!(
+                context.recovery_disposition,
+                Some(
+                    RecoveryDisposition::InspectionRequired
+                        | RecoveryDisposition::StillUnknown
+                        | RecoveryDisposition::JournalCorrupt
+                )
+            ) {
+                recovery(
+                    context,
+                    FailureSourceFamily::Journal,
+                    "JOURNAL_DISK_FULL_RECONCILE_FIRST",
+                    RecommendedAction::InspectRecovery,
+                )
+            } else {
+                make_error(
+                    InstallerErrorCategory::InsufficientDiskSpace,
+                    context,
+                    FailureSourceFamily::Journal,
+                    "JOURNAL_DISK_FULL",
+                    UserRetryPolicy::AfterUserAction,
+                    RecommendedAction::FreeDiskSpace,
+                )
+            }
+        }
         JournalErrorCode::JournalLimitExceeded => recovery(
             context,
             FailureSourceFamily::Journal,
@@ -766,6 +796,14 @@ pub fn map_acquisition(code: AcquisitionFailureCode, context: &FailureContext) -
             code.as_code(),
             UserRetryPolicy::SafeImmediate,
             RecommendedAction::RetryDownload,
+        ),
+        AcquisitionFailureCode::InsufficientDiskSpace => make_error(
+            InstallerErrorCategory::InsufficientDiskSpace,
+            context,
+            FailureSourceFamily::Acquisition,
+            code.as_code(),
+            UserRetryPolicy::AfterUserAction,
+            RecommendedAction::FreeDiskSpace,
         ),
         AcquisitionFailureCode::UnsupportedPlatform => make_error(
             InstallerErrorCategory::UnsupportedPlatform,
@@ -1216,6 +1254,8 @@ fn source_code_allowed(family: FailureSourceFamily, code: &str) -> bool {
                 | "JOURNAL_UNSUPPORTED_SCHEMA"
                 | "JOURNAL_PLAN_MISMATCH"
                 | "JOURNAL_IO_FAILED"
+                | "JOURNAL_DISK_FULL"
+                | "JOURNAL_DISK_FULL_RECONCILE_FIRST"
                 | "JOURNAL_LIMIT_EXCEEDED"
                 | "ACTIVE_TRANSACTION_EXISTS"
                 | "RECOVERY_INSPECTION_REQUIRED"

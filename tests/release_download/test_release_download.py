@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import copy, hashlib, importlib.util, io, json, sys, tempfile, unittest
+import errno
 import urllib.error
 from pathlib import Path
 from unittest import mock
@@ -211,3 +212,91 @@ class StageRaceSecurityTests(unittest.TestCase):
         with mock.patch.object(download, '_matches', side_effect=replace_before_last_use):
             self.error('UNSAFE_PATH',download.stage_artifact,io.BytesIO(self.payload),self.root,self.selection)
         self.assertFalse((self.root/'synveil.deb').exists()); self.assertEqual([],list(self.root.glob('.synveil-download-*')))
+
+    def test_70_enospc_during_temp_creation_has_no_final_artifact(self):
+        with mock.patch.object(download.tempfile, 'mkstemp', side_effect=OSError(errno.ENOSPC, 'full')):
+            self.error('INSUFFICIENT_DISK_SPACE',download.stage_artifact,io.BytesIO(self.payload),self.root,self.selection)
+        self.assertFalse((self.root/'synveil.deb').exists())
+        self.assertEqual([],list(self.root.glob('.synveil-download-*')))
+
+    def test_71_enospc_during_file_sync_cleans_only_owned_temp(self):
+        with mock.patch.object(download.os, 'fsync', side_effect=OSError(errno.ENOSPC, 'full')):
+            self.error('INSUFFICIENT_DISK_SPACE',download.stage_artifact,io.BytesIO(self.payload),self.root,self.selection)
+        self.assertFalse((self.root/'synveil.deb').exists())
+        self.assertEqual([],list(self.root.glob('.synveil-download-*')))
+
+    def test_72_enospc_during_promotion_never_promotes_partial_bytes(self):
+        with mock.patch.object(download.os, 'link', side_effect=OSError(errno.ENOSPC, 'full')):
+            self.error('INSUFFICIENT_DISK_SPACE',download.stage_artifact,io.BytesIO(self.payload),self.root,self.selection)
+        self.assertFalse((self.root/'synveil.deb').exists())
+        self.assertEqual([],list(self.root.glob('.synveil-download-*')))
+
+    def test_72a_promotion_failure_is_after_file_fsync(self):
+        real_fsync = download.os.fsync
+        calls = 0
+        def observe_file_sync(fd):
+            nonlocal calls
+            calls += 1
+            return real_fsync(fd)
+        with mock.patch.object(download.os, 'fsync', side_effect=observe_file_sync), \
+             mock.patch.object(download.os, 'link', side_effect=OSError(errno.ENOSPC, 'full')):
+            self.error('INSUFFICIENT_DISK_SPACE',download.stage_artifact,io.BytesIO(self.payload),self.root,self.selection)
+        self.assertGreaterEqual(calls, 1)
+        self.assertFalse((self.root/'synveil.deb').exists())
+        self.assertEqual([],list(self.root.glob('.synveil-download-*')))
+
+    def test_73_enospc_during_directory_sync_is_not_reported_verified(self):
+        real_fsync = download.os.fsync
+        calls = 0
+        def fail_directory_sync(fd):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError(errno.ENOSPC, 'full')
+            return real_fsync(fd)
+        with mock.patch.object(download.os, 'fsync', side_effect=fail_directory_sync):
+            self.error('INSUFFICIENT_DISK_SPACE',download.stage_artifact,io.BytesIO(self.payload),self.root,self.selection)
+        target = self.root/'synveil.deb'
+        self.assertEqual(self.payload,target.read_bytes())
+        self.assertEqual([],list(self.root.glob('.synveil-download-*')))
+        self.assertEqual('NOOP_ALREADY_VERIFIED',download.stage_artifact(io.BytesIO(b''),self.root,self.selection)['result'])
+
+    def test_74_racing_existing_destination_survives_failed_promotion(self):
+        target = self.root/'synveil.deb'
+        class Racing(io.BytesIO):
+            def read(inner, size=-1):
+                value = super(Racing, inner).read(size)
+                if value and not target.exists():
+                    target.write_bytes(b'user destination')
+                return value
+        self.error('DESTINATION_CONFLICT',download.stage_artifact,Racing(self.payload),self.root,self.selection)
+        self.assertEqual(b'user destination',target.read_bytes())
+
+    def test_75_enospc_during_stream_write_cleans_partial_temp(self):
+        original_fdopen = download.os.fdopen
+        class FullOutput:
+            def __init__(self, fd, mode): self.file = original_fdopen(fd, mode)
+            def __enter__(self): return self
+            def __exit__(self, *args): return self.file.__exit__(*args)
+            def fileno(self): return self.file.fileno()
+            def write(self, data):
+                self.file.write(data[:1])
+                raise OSError(errno.ENOSPC, 'full')
+            def flush(self): return self.file.flush()
+        with mock.patch.object(download.os, 'fdopen', side_effect=FullOutput):
+            self.error('INSUFFICIENT_DISK_SPACE',download.stage_artifact,io.BytesIO(self.payload),self.root,self.selection)
+        self.assertFalse((self.root/'synveil.deb').exists())
+        self.assertEqual([],list(self.root.glob('.synveil-download-*')))
+
+    def test_76_directory_sync_failure_never_returns_verified(self):
+        real_fsync = download.os.fsync
+        calls = 0
+        def fail_directory_sync(fd):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError(5, 'io failure')
+            return real_fsync(fd)
+        with mock.patch.object(download.os, 'fsync', side_effect=fail_directory_sync):
+            self.error('STAGING_ERROR',download.stage_artifact,io.BytesIO(self.payload),self.root,self.selection)
+        self.assertEqual(self.payload,(self.root/'synveil.deb').read_bytes())

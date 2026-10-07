@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
-use std::fs::{self, OpenOptions};
-use std::path::Path;
+use std::fs::{self, File, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use synveil_install_engine::*;
 use tempfile::TempDir;
 
@@ -57,6 +59,78 @@ impl InstallationAdapter for Adapter {
     fn verify_installation(&mut self, _: &InstallationPlan) -> bool {
         self.calls.push("final".into());
         self.final_ok
+    }
+}
+
+#[derive(Default)]
+struct ProcessAdapter {
+    marker: PathBuf,
+    terminate_after_apply: bool,
+    calls: Vec<String>,
+}
+
+impl ProcessAdapter {
+    fn marker_is_applied(&self) -> bool {
+        fs::read(&self.marker).is_ok_and(|bytes| bytes == b"owned-payload-applied")
+    }
+}
+
+impl InstallationAdapter for ProcessAdapter {
+    fn preflight(&mut self) -> Vec<PreflightFinding> {
+        vec![]
+    }
+    fn privilege_available(&mut self, _: PrivilegeRequirement) -> bool {
+        true
+    }
+    fn inspect_preconditions(&mut self, _: &InstallationEffect) -> bool {
+        true
+    }
+    fn apply_effect(&mut self, effect: &InstallationEffect) -> ApplyOutcome {
+        self.calls.push(format!("apply:{}", effect.effect_id));
+        let mut payload = File::create(&self.marker).unwrap();
+        payload.write_all(b"owned-payload-applied").unwrap();
+        payload.sync_all().unwrap();
+        #[cfg(unix)]
+        File::open(self.marker.parent().unwrap())
+            .unwrap()
+            .sync_all()
+            .unwrap();
+        if self.terminate_after_apply {
+            #[cfg(unix)]
+            {
+                let _ = Command::new("/bin/kill")
+                    .args(["-KILL", &std::process::id().to_string()])
+                    .status();
+                panic!("SIGKILL command returned without terminating process");
+            }
+            #[cfg(not(unix))]
+            std::process::exit(86);
+        }
+        ApplyOutcome::Success
+    }
+    fn verify_effect(&mut self, effect: &InstallationEffect) -> bool {
+        self.calls.push(format!("verify:{}", effect.effect_id));
+        self.marker_is_applied()
+    }
+    fn reconcile_unknown(&mut self, effect: &InstallationEffect) -> ReconciliationOutcome {
+        self.calls.push(format!("reconcile:{}", effect.effect_id));
+        if self.marker_is_applied() {
+            ReconciliationOutcome::VerifiedApplied
+        } else {
+            ReconciliationOutcome::VerifiedNotApplied
+        }
+    }
+    fn compensation_supported(&mut self, _: &InstallationEffect) -> bool {
+        false
+    }
+    fn compensate_effect(&mut self, _: &InstallationEffect) -> bool {
+        false
+    }
+    fn verify_compensation(&mut self, _: &InstallationEffect) -> bool {
+        false
+    }
+    fn verify_installation(&mut self, _: &InstallationPlan) -> bool {
+        self.marker_is_applied()
     }
 }
 fn effect(id: &str, phase: EffectPhase) -> InstallationEffect {
@@ -149,6 +223,104 @@ fn execute(
 ) -> JournalExecutionResult {
     InstallerEngine.execute_journaled(&request(p), p, a, root, mode)
 }
+
+#[test]
+fn process_restart_child() {
+    if let Some(root) = std::env::var_os("SYNVEIL_JOURNAL_INTERRUPT_ROOT") {
+        let root = PathBuf::from(root);
+        let p = plan();
+        let mut adapter = ProcessAdapter {
+            marker: root.join("owned-payload"),
+            terminate_after_apply: true,
+            ..Default::default()
+        };
+        let _ = InstallerEngine.execute_journaled(
+            &request(&p),
+            &p,
+            &mut adapter,
+            &root.join("journal"),
+            JournalMode::StartNew,
+        );
+        panic!("process interruption fixture returned without terminating");
+    }
+}
+
+#[test]
+fn process_restart_recover_child() {
+    let Some(root) = std::env::var_os("SYNVEIL_JOURNAL_RECOVER_ROOT") else {
+        return;
+    };
+    let root = PathBuf::from(root);
+    let p = plan();
+    let mut adapter = ProcessAdapter {
+        marker: root.join("owned-payload"),
+        ..Default::default()
+    };
+    let result = InstallerEngine.execute_journaled(
+        &request(&p),
+        &p,
+        &mut adapter,
+        &root.join("journal"),
+        JournalMode::ResumeExisting,
+    );
+    assert!(result.completed);
+    assert_eq!(result.disposition, RecoveryDisposition::ReconciledApplied);
+    assert_eq!(
+        adapter
+            .calls
+            .iter()
+            .filter(|call| call.starts_with("apply:"))
+            .count(),
+        0
+    );
+    assert!(
+        adapter
+            .calls
+            .iter()
+            .any(|call| call.starts_with("reconcile:"))
+    );
+    assert!(adapter.calls.iter().any(|call| call.starts_with("verify:")));
+}
+
+#[test]
+fn forced_process_termination_restarts_from_durable_evidence() {
+    let root = TempDir::new().unwrap();
+    let child = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "process_restart_child", "--nocapture"])
+        .env("SYNVEIL_JOURNAL_INTERRUPT_ROOT", root.path())
+        .output()
+        .unwrap();
+    assert!(
+        !child.status.success(),
+        "child unexpectedly exited successfully"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(child.status.signal(), Some(9));
+    }
+
+    let recovery = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "process_restart_recover_child", "--nocapture"])
+        .env("SYNVEIL_JOURNAL_RECOVER_ROOT", root.path())
+        .output()
+        .unwrap();
+    assert!(
+        recovery.status.success(),
+        "fresh recovery process failed: {recovery:?}"
+    );
+    assert!(root.path().join("owned-payload").exists());
+    let journal = InstallationJournal::open(
+        &root.path().join("journal"),
+        &plan(),
+        JournalMode::ResumeExisting,
+    )
+    .unwrap();
+    assert!(matches!(
+        journal.records().last().unwrap().record,
+        JournalRecord::TransactionCompleted
+    ));
+}
 fn tx(root: &Path) -> std::path::PathBuf {
     root.join("install.current-user.v1")
 }
@@ -188,6 +360,14 @@ fn fresh_journal_is_created() {
     let d = TempDir::new().unwrap();
     let j = InstallationJournal::open(d.path(), &plan(), JournalMode::StartNew).unwrap();
     assert!(j.transaction_directory().is_dir())
+}
+#[test]
+fn nested_journal_root_is_created_for_new_transaction() {
+    let d = TempDir::new().unwrap();
+    let root = d.path().join("new-parent").join("journal-root");
+    let journal = InstallationJournal::open(&root, &plan(), JournalMode::StartNew).unwrap();
+    assert!(root.is_dir());
+    assert!(journal.transaction_directory().is_dir());
 }
 #[test]
 fn schema_is_one() {
@@ -378,6 +558,14 @@ fn second_writer_is_busy() {
     )
 }
 #[test]
+fn stale_lock_file_without_live_os_lock_does_not_brick_empty_transaction() {
+    let d = TempDir::new().unwrap();
+    fs::create_dir(tx(d.path())).unwrap();
+    fs::write(tx(d.path()).join("lock"), b"stale lock file").unwrap();
+    let journal = InstallationJournal::open(d.path(), &plan(), JournalMode::StartNew).unwrap();
+    assert!(journal.transaction_directory().is_dir());
+}
+#[test]
 fn writer_lock_prevents_execution() {
     let d = TempDir::new().unwrap();
     let p = plan();
@@ -461,6 +649,197 @@ fn pre_mutation_fault(point: JournalFaultPoint) {
     );
     assert_eq!(r.error, Some(JournalErrorCode::JournalIoFailed));
     assert_eq!(applies(&a), 0)
+}
+#[test]
+fn post_boundary_faults_reconcile_only_when_a_start_checkpoint_exists() {
+    for point in [
+        JournalFaultPoint::AfterWrite,
+        JournalFaultPoint::AfterFileSync,
+        JournalFaultPoint::AfterCommit,
+        JournalFaultPoint::AfterCommittedObjectSync,
+        JournalFaultPoint::AfterDirectorySync,
+    ] {
+        let d = TempDir::new().unwrap();
+        let p = plan();
+        let mut first = good_adapter();
+        let result = InstallerEngine.execute_journaled_with_options(
+            &request(&p),
+            &p,
+            &mut first,
+            d.path(),
+            JournalMode::StartNew,
+            JournalOptions {
+                fail_at: Some((JournalRecordClass::EffectMutationStart, point)),
+            },
+        );
+        assert_eq!(result.error, Some(JournalErrorCode::JournalIoFailed));
+        assert_eq!(applies(&first), 0);
+
+        let mut restarted = good_adapter();
+        restarted.reconcile = Some(ReconciliationOutcome::VerifiedNotApplied);
+        let result = execute(d.path(), &p, &mut restarted, JournalMode::ResumeExisting);
+        match point {
+            JournalFaultPoint::AfterWrite | JournalFaultPoint::AfterFileSync => {
+                assert!(result.completed);
+                assert_eq!(applies(&restarted), 1);
+            }
+            JournalFaultPoint::AfterCommit
+            | JournalFaultPoint::AfterCommittedObjectSync
+            | JournalFaultPoint::AfterDirectorySync => {
+                assert_eq!(result.disposition, RecoveryDisposition::ReplanRequired);
+                assert_eq!(applies(&restarted), 0);
+                assert!(
+                    restarted
+                        .calls
+                        .iter()
+                        .any(|call| call.starts_with("reconcile:"))
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[test]
+fn disk_full_during_mutation_checkpoint_keeps_apply_at_zero_and_can_resume() {
+    let d = TempDir::new().unwrap();
+    let p = plan();
+    let mut first = good_adapter();
+    let result = InstallerEngine.execute_journaled_with_options(
+        &request(&p),
+        &p,
+        &mut first,
+        d.path(),
+        JournalMode::StartNew,
+        JournalOptions {
+            fail_at: Some((
+                JournalRecordClass::EffectMutationStart,
+                JournalFaultPoint::DiskFull,
+            )),
+        },
+    );
+    assert_eq!(result.error, Some(JournalErrorCode::JournalDiskFull));
+    assert_eq!(result.disposition, RecoveryDisposition::ReplanRequired);
+    assert_eq!(applies(&first), 0);
+
+    let mut restarted = good_adapter();
+    let resumed = execute(d.path(), &p, &mut restarted, JournalMode::ResumeExisting);
+    assert!(resumed.completed);
+    assert_eq!(applies(&restarted), 1);
+}
+
+#[test]
+fn disk_full_after_apply_requires_reconciliation_before_later_effects() {
+    let d = TempDir::new().unwrap();
+    let p = plan_with(&[
+        ("package.one", EffectPhase::Install),
+        ("package.two", EffectPhase::Install),
+    ]);
+    let mut first = good_adapter();
+    let result = InstallerEngine.execute_journaled_with_options(
+        &request(&p),
+        &p,
+        &mut first,
+        d.path(),
+        JournalMode::StartNew,
+        JournalOptions {
+            fail_at: Some((
+                JournalRecordClass::EffectVerification,
+                JournalFaultPoint::DiskFull,
+            )),
+        },
+    );
+    assert_eq!(result.error, Some(JournalErrorCode::JournalDiskFull));
+    assert_eq!(result.disposition, RecoveryDisposition::InspectionRequired);
+    assert_eq!(applies(&first), 1);
+    assert!(!first.calls.iter().any(|call| call == "apply:package.two"));
+
+    let mut restarted = good_adapter();
+    restarted.reconcile = Some(ReconciliationOutcome::VerifiedApplied);
+    let resumed = execute(d.path(), &p, &mut restarted, JournalMode::ResumeExisting);
+    assert!(resumed.completed);
+    assert!(
+        restarted
+            .calls
+            .iter()
+            .any(|call| call == "reconcile:package.one")
+    );
+    assert!(
+        !restarted
+            .calls
+            .iter()
+            .any(|call| call == "apply:package.one")
+    );
+    assert!(
+        restarted
+            .calls
+            .iter()
+            .any(|call| call == "apply:package.two")
+    );
+}
+
+#[test]
+fn disk_full_after_final_verification_requires_read_only_recovery() {
+    let d = TempDir::new().unwrap();
+    let p = plan();
+    let mut first = good_adapter();
+    let result = InstallerEngine.execute_journaled_with_options(
+        &request(&p),
+        &p,
+        &mut first,
+        d.path(),
+        JournalMode::StartNew,
+        JournalOptions {
+            fail_at: Some((
+                JournalRecordClass::FinalVerification,
+                JournalFaultPoint::DiskFull,
+            )),
+        },
+    );
+    assert_eq!(result.error, Some(JournalErrorCode::JournalDiskFull));
+    assert_eq!(result.disposition, RecoveryDisposition::InspectionRequired);
+    assert_eq!(applies(&first), 1);
+
+    let mut restarted = good_adapter();
+    let resumed = execute(d.path(), &p, &mut restarted, JournalMode::ResumeExisting);
+    assert!(resumed.completed);
+    assert_eq!(applies(&restarted), 0);
+    assert!(
+        restarted
+            .calls
+            .iter()
+            .any(|call| call.starts_with("verify:"))
+    );
+    assert!(restarted.calls.iter().any(|call| call == "final"));
+}
+
+#[test]
+fn committed_completion_after_sync_error_returns_already_completed() {
+    let d = TempDir::new().unwrap();
+    let p = plan();
+    let mut first = good_adapter();
+    let result = InstallerEngine.execute_journaled_with_options(
+        &request(&p),
+        &p,
+        &mut first,
+        d.path(),
+        JournalMode::StartNew,
+        JournalOptions {
+            fail_at: Some((
+                JournalRecordClass::TransactionCompletion,
+                JournalFaultPoint::AfterDirectorySync,
+            )),
+        },
+    );
+    assert_eq!(result.error, Some(JournalErrorCode::JournalIoFailed));
+    assert_eq!(result.disposition, RecoveryDisposition::InspectionRequired);
+    assert_eq!(applies(&first), 1);
+
+    let mut restarted = good_adapter();
+    let resumed = execute(d.path(), &p, &mut restarted, JournalMode::ResumeExisting);
+    assert!(resumed.completed);
+    assert_eq!(resumed.disposition, RecoveryDisposition::AlreadyCompleted);
+    assert_eq!(applies(&restarted), 0);
 }
 #[test]
 fn next_effect_waits_for_verified_checkpoint() {
@@ -806,6 +1185,19 @@ fn corrupt_json_zero_mutation() {
     let r = execute(d.path(), &p, &mut a, JournalMode::ResumeExisting);
     assert_eq!(r.error, Some(JournalErrorCode::JournalCorrupt));
     assert_eq!(applies(&a), 0)
+}
+#[test]
+fn unexpected_transaction_file_fails_closed_before_mutation() {
+    let (d, p) = journal_fixture();
+    fs::write(
+        tx(d.path()).join("unexpected-state"),
+        b"not journal evidence",
+    )
+    .unwrap();
+    let mut a = good_adapter();
+    let r = execute(d.path(), &p, &mut a, JournalMode::ResumeExisting);
+    assert_eq!(r.error, Some(JournalErrorCode::JournalCorrupt));
+    assert_eq!(applies(&a), 0);
 }
 #[test]
 fn broken_checksum_zero_mutation() {

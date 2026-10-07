@@ -127,6 +127,9 @@ python3 scripts/validate-repair-recovery-ux.py || failures=$((failures + 1))
 echo "DOC-UNIT-21: checking Prompt043 installer security"
 python3 scripts/validate-installer-security-hardening.py || failures=$((failures + 1))
 
+echo "DOC-UNIT-22: checking Prompt044 installation resilience"
+python3 scripts/validate-installation-resilience-hardening.py || failures=$((failures + 1))
+
 if [[ "$failures" -ne 0 ]]; then
     echo "documentation validation failed: $failures issue(s)" >&2
     exit 1
