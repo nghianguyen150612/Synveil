@@ -241,7 +241,7 @@ Invoke-Setup $NewerFixtureSetup @('/REPAIR=1') 0 'same-version-repair'
 $null = Get-ManifestHashes
 Assert-True (Test-Path -LiteralPath $unknown -PathType Leaf) 'P044_WINDOWS_REPAIR_FAILURE: unknown adjacent file was removed.'
 Assert-True (Test-Path -LiteralPath $startMenu -PathType Leaf) 'P044_WINDOWS_REPAIR_FAILURE: owned shortcut was not restored.'
-Assert-True (!(Test-Path -LiteralPath $desktop)) 'P044_WINDOWS_REPAIR_FAILURE: explicit desktop shortcut choice changed.'
+Assert-True (Test-Path -LiteralPath $desktop) 'P044_WINDOWS_REPAIR_FAILURE: explicit desktop shortcut choice was not preserved.'
 Assert-True ((Get-StateSnapshot) -ceq $stateBefore) 'P044_WINDOWS_REPAIR_FAILURE: durable user-state sentinels changed.'
 Assert-StartupDisabled
 

@@ -204,6 +204,7 @@ def main() -> int:
             and "NewerRuntimePayloadHash" in p044_windows_test
             and "unknown adjacent file" in p044_windows_test
             and "startup preference" in p044_windows_test
+            and "Test-Path -LiteralPath $desktop) 'P044_WINDOWS_REPAIR_FAILURE: explicit desktop shortcut choice was not preserved.'" in p044_windows_test
             and "repair-interrupted" in p044_windows_test
             and "P044_WINDOWS_REPAIR_INTERRUPTION_FAILURE" in p044_windows_test
             and "fresh same-version Setup process" in p044_windows_test,
