@@ -56,8 +56,8 @@ def validate_appdir(appdir: Path) -> None:
             fail(f"APPIMAGE-10: bundled {qt} library missing")
     if not contains(appdir, "usr/qml/**/qmldir"):
         fail("APPIMAGE-11: bundled QML module metadata missing")
-    if not (contains(appdir, "usr/plugins/platforms/libqxcb.so") or contains(appdir, "usr/plugins/platforms/libqoffscreen.so")):
-        fail("APPIMAGE-12: bundled Qt platform plugin missing")
+    if not contains(appdir, "usr/plugins/platforms/libqxcb.so"):
+        fail("APPIMAGE-12: bundled graphical Qt xcb platform plugin missing")
 
 
 def run_smoke(artifact: Path) -> None:
@@ -70,9 +70,13 @@ def run_smoke(artifact: Path) -> None:
         }}
         env.update(HOME=str(base / "home"), XDG_CONFIG_HOME=str(base / "config"),
                    XDG_DATA_HOME=str(base / "data"), XDG_CACHE_HOME=str(base / "cache"),
-                   XDG_RUNTIME_DIR=str(base / "runtime"), QT_QPA_PLATFORM="offscreen",
+                   XDG_RUNTIME_DIR=str(base / "runtime"), QT_QPA_PLATFORM="xcb",
                    QML_DISABLE_DISK_CACHE="1", APPIMAGE_EXTRACT_AND_RUN="1")
-        subprocess.run(["timeout", "20s", str(artifact), "--qml-smoke-test"], cwd=base, env=env, check=True)
+        # The production artifact deliberately ships xcb, not a developer-only
+        # offscreen plugin. Exercise that exact bundled plugin on a disposable
+        # display. This remains CI smoke, never native-clean-machine evidence.
+        subprocess.run(["xvfb-run", "-a", "-s", "-screen 0 1280x800x24", "timeout", "20s",
+                        str(artifact), "--qml-smoke-test"], cwd=base, env=env, check=True, timeout=35)
 
 
 def inspect_artifact(artifact: Path, smoke: bool) -> None:

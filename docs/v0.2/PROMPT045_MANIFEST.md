@@ -171,3 +171,25 @@ Broad workspace strict Clippy subsequently passed locally using scenario-owned
 DBus development metadata and Qt 6.7.3 staged under work/. The earlier missing
 local dependency result is preserved above. This remains source evidence on
 Debian 13, not native acceptance.
+
+## AppImage producer diagnostic and smoke-harness correction
+
+AppImage PR run `37632569430`, job `112830353029`, on the previous source head
+passed actual AppImage construction, independent byte comparison, entrypoint
+inspection and release-manifest byte identity. APPIMAGE-8 did not recur. Its
+later CI smoke failed because the harness requested an `offscreen` plugin while
+the self-contained production artifact correctly shipped `xcb` only.
+
+The source/build validator now requires the graphical xcb plugin and the bounded
+smoke uses that exact bundled plugin on a disposable Xvfb display. It does not
+inject a developer Qt plugin, bundle offscreen only to green CI, or claim native
+GUI acceptance. The workflow installs only display-harness prerequisites for
+that check, checks out the true source head, and preserves candidate bytes and
+manifest even after a later failure. Fresh final-head AppImage/native reruns are
+still required; the superseded run is diagnostic only.
+
+The focused Linux notify watcher test executed one real test and passed locally
+on the unchanged Rust source (`linux_notify_backend_handles_live_rename_move_delete_symlink_and_editor_save`).
+This does not establish installed synchronization or acceptance on either
+qualified Linux target. The historical hosted move-intent failure is not
+converted into a native PASS.

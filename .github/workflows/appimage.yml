@@ -22,6 +22,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@stable
       # Pinned action and exact official Qt archive; all Qt host tools and
       # runtime libraries therefore come from one compatible toolchain.
@@ -37,7 +39,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y file shellcheck pkg-config libdbus-1-dev \
-            libfuse2
+            libfuse2 xvfb xauth
           sudo install -d -m 0777 /usr/src/synveil
       - name: Static contracts and shell checks
         run: |
@@ -69,6 +71,7 @@ jobs:
             grep -Eo 'GLIBC(_[A-Z]+)?_[0-9]+\.[0-9]+(\.[0-9]+)?' | sort -Vu | tail -20 | tee target/packages/ABI-SYMBOLS.txt
           sha256sum "$APPIMAGE" | tee target/packages/APPIMAGE-SHA256.txt
       - name: Upload unsigned portable artifact and evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: synveil-appimage-x86_64
