@@ -86,6 +86,10 @@ Concrete gaps fixed:
     and FILE_SHARE_READ protection through native consumption. Environment
     substitution and replacement fixtures are Windows-only; no new task owner.
 
+15. Standard argument-parser failures echoed invalid/unknown argument values.
+    P006/P017 now share a finite parser error, with actual CLI regression cases
+    proving synthetic secret values are not echoed.
+
 Windows remains ordinary per-user; AppImage remains ordinary-user only. Native
 DEB/RPM authority remains visible and scoped; Host/server setup remains outside
 installer ownership. Unknown adjacent files and every durable protected class
@@ -126,7 +130,7 @@ Observed local validation on the reviewed source:
 - `cargo clippy -p synveil-client --all-targets --locked -- -D warnings`: pass
   using the same scratch D-Bus development metadata.
 - Python offline suites: manifest 34, acquisition 69, channel 101,
-  focused security 22, quick-install 12, platform detection 11, Windows model 6:
+  focused security 23, quick-install 12, platform detection 11, Windows model 6:
   all pass.
 - `cargo deny check`: advisories, bans, licenses and sources pass; no ignores.
 - `python3 -m pip_audit -r scripts/requirements-installer-security.txt`: no

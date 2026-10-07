@@ -123,6 +123,16 @@ class SignatureSecurity(unittest.TestCase):
 
 
 class PathAndCommandSecurity(unittest.TestCase):
+    def test_cli_errors_do_not_echo_unknown_or_malformed_argument_values(self):
+        scripts=['release_download.py']
+        if os.name == 'posix': scripts.append('linux_quick_install.py')
+        for script in scripts:
+            for arguments in (['--unknown=SYNTHETIC_PRIVATE_VALUE'], ['--minimum-channel-generation=SYNTHETIC_PRIVATE_VALUE']):
+                result=subprocess.run([sys.executable,str(ROOT/'scripts'/script),*arguments],capture_output=True,text=True)
+                self.assertEqual(2,result.returncode)
+                self.assertIn('INVALID_ARGUMENTS',result.stderr)
+                self.assertNotIn('SYNTHETIC_PRIVATE_VALUE',result.stderr)
+
     def test_portable_basename_property_cases(self):
         for name in ('../evil','/absolute','C:\\absolute','C:evil','\\\\server\\share','nested/path','nested\\path',
                      '.', '..', '', 'a\x00b', 'a\nb', 'a\tb', 'name ', ' name', 'name.', 'NUL.exe', 'COM1',
@@ -171,6 +181,9 @@ class PathAndCommandSecurity(unittest.TestCase):
             path = Path(directory)/'synveil.deb'; path.write_bytes(b'verified')
             evidence = {'final_path':str(path),'artifact_size':8,'artifact_sha256':hashlib.sha256(b'verified').hexdigest()}
             quick.require_staged_evidence(evidence)
+            path.chmod(0o666)
+            with self.assertRaises(quick.QuickInstallError): quick.require_staged_evidence(evidence)
+            path.chmod(0o644)
             path.write_bytes(b'replaced')
             with self.assertRaises(quick.QuickInstallError): quick.require_staged_evidence(evidence)
             path.unlink(); path.symlink_to(Path(directory)/'outside')

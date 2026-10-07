@@ -318,7 +318,7 @@ def persist_channel_high_water(root: Path, channel: release_channel.Authenticate
 
 
 def parser() -> argparse.ArgumentParser:
-    result = argparse.ArgumentParser(description=__doc__)
+    result = release_download.BoundedArgumentParser(description=__doc__)
     result.add_argument("--platform-profile", choices=sorted(PROFILES),
                         help="optional assertion; never overrides detected host qualification")
     result.add_argument("--detect-only", action="store_true",

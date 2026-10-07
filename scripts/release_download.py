@@ -34,6 +34,12 @@ class AcquisitionError(ValueError):
         self.code = code
 
 
+class BoundedArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        # argparse's default includes raw invalid/unknown argument values.
+        self.exit(2, "INVALID_ARGUMENTS: use the documented installer arguments.\n")
+
+
 @dataclass(frozen=True)
 class ReleaseTrustPolicy:
     """Trusted local bootstrap input; never construct this from remote metadata."""
@@ -362,6 +368,8 @@ def _matches(path: Path, size: int, digest: str) -> bool:
         info = path.lstat()
         if not stat.S_ISREG(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400 or info.st_size != size:
             return False
+        if os.name == "posix" and (info.st_uid not in {0, os.getuid()} or info.st_mode & 0o022):
+            return False
         fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
         with os.fdopen(fd, "rb") as stream:
             opened = os.fstat(stream.fileno())
@@ -527,7 +535,7 @@ def acquisition_result(result: str, path: Path, selection: SelectedArtifact) -> 
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = BoundedArgumentParser(description=__doc__)
     parser.add_argument("manifest", type=Path)
     trust = parser.add_mutually_exclusive_group(required=True)
     trust.add_argument("--expected-manifest-sha256")

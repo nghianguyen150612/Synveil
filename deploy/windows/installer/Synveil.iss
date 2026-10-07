@@ -43,7 +43,7 @@ Name: "{userprograms}\Synveil"; Filename: "{app}\synveil-desktop.exe"; WorkingDi
 Name: "{userdesktop}\Synveil"; Filename: "{app}\synveil-desktop.exe"; WorkingDir: "{app}"; Check: ShouldCreateDesktopIcon
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1"; ValueType: string; ValueName: "SynveilManifestSha256"; ValueData: "{#SynveilManifestSha256}"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\{{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1"; ValueType: string; ValueName: "SynveilManifestSha256"; ValueData: "{#SynveilManifestSha256}"; Flags: uninsdeletevalue
 
 [Code]
 var
@@ -172,13 +172,14 @@ function ParseVersionPart(const Value: String): Integer;
 var
   I: Integer;
 begin
-  if Value = '' then RaiseException('Installed Synveil version is malformed.');
+  if (Value = '') or (Length(Value) > 10) then RaiseException('Installed Synveil version is malformed.');
   if (Length(Value) > 1) and (Value[1] = '0') then
     RaiseException('Installed Synveil version is malformed.');
   for I := 1 to Length(Value) do
     if (Value[I] < '0') or (Value[I] > '9') then
       RaiseException('Installed Synveil version is malformed.');
-  Result := StrToInt(Value);
+  Result := StrToIntDef(Value, -1);
+  if Result < 0 then RaiseException('Installed Synveil version is malformed.');
 end;
 
 procedure ParseStrictVersion(const Value: String; var Major, Minor, Patch: Integer);
