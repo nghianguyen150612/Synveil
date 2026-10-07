@@ -173,6 +173,14 @@ Observed GitHub state for the initial published head:
   test now uses the actual Windows `cygpath` on Git Bash runners and retains a
   mock only on hosts without `cygpath`; hosted rerun is pending. This is a
   P044 test-harness failure, not Windows interruption evidence.
+  The next Windows installer run, `37598501246` on head
+  `bdeed9c6faf841a0f498c370c11c33dc87534896`, confirmed that MSYS path
+  conversion also rewrote path fragments in `CARGO_ENCODED_RUSTFLAGS`; the
+  remap assertion failed before runtime build or Inno execution. The build now
+  excludes that one encoded variable from MSYS conversion while preserving
+  existing exclusions, and its fixtures check all three path spellings. This
+  hosted failure identified a P044 Windows build-path resilience gap; final-head
+  hosted verification remains pending.
   The existing Windows native acceptance workflow failed before invoking its
   installer test because its build selected Git's `/usr/bin/link` instead of
   MSVC `link.exe`; that workflow is unchanged by P044 and this is classified as

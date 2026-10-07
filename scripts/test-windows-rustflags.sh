@@ -49,15 +49,15 @@ if command -v cygpath >/dev/null 2>&1; then
     : "${USERPROFILE:?USERPROFILE is required for the Windows Cargo-home test}"
     CARGO_HOME="${USERPROFILE}\\.cargo"
     export CARGO_HOME
+    MSYS2_ENV_CONV_EXCL="${MSYS2_ENV_CONV_EXCL:+${MSYS2_ENV_CONV_EXCL};}SYNVEIL_TEST_SENTINEL"
+    export MSYS2_ENV_CONV_EXCL
     unset CARGO_ENCODED_RUSTFLAGS RUSTFLAGS
     synveil_prepare_reproducible_rust_build "$repo_root"
     python3 - <<'PY'
 import os
 import subprocess
 
-profile = os.environ["USERPROFILE"]
-posix_profile = subprocess.check_output(["cygpath", "-u", profile], text=True).strip()
-cargo_home = posix_profile.rstrip("/\\") + "/.cargo"
+cargo_home = os.environ["CARGO_HOME"]
 forms = [cargo_home]
 forms.extend(subprocess.check_output(["cygpath", mode, cargo_home], text=True).strip() for mode in ("-m", "-w"))
 flags = os.environ["CARGO_ENCODED_RUSTFLAGS"].split("\x1f")
@@ -65,6 +65,10 @@ required = {f"--remap-path-prefix={form}=/usr/local/cargo" for form in forms}
 missing = required - set(flags)
 if missing:
     raise SystemExit(f"explicit native Cargo home remap missing: {sorted(missing)!r}; flags={flags!r}")
+if "CARGO_ENCODED_RUSTFLAGS" not in os.environ.get("MSYS2_ENV_CONV_EXCL", "").split(";"):
+    raise SystemExit("MSYS2_ENV_CONV_EXCL does not preserve CARGO_ENCODED_RUSTFLAGS")
+if "SYNVEIL_TEST_SENTINEL" not in os.environ.get("MSYS2_ENV_CONV_EXCL", "").split(";"):
+    raise SystemExit("MSYS2_ENV_CONV_EXCL overwrote its prior exclusions")
 PY
 
     # Cargo defaults to USERPROFILE\\.cargo when CARGO_HOME is absent.
@@ -84,6 +88,8 @@ required = {f"--remap-path-prefix={form}=/usr/local/cargo" for form in forms}
 missing = required - set(flags)
 if missing:
     raise SystemExit(f"default native Cargo home remap missing: {sorted(missing)!r}; flags={flags!r}")
+if "CARGO_ENCODED_RUSTFLAGS" not in os.environ.get("MSYS2_ENV_CONV_EXCL", "").split(";"):
+    raise SystemExit("MSYS2_ENV_CONV_EXCL does not preserve CARGO_ENCODED_RUSTFLAGS")
 PY
 else
     # Simulate native Windows spellings on hosts without Git Bash/cygpath.
@@ -115,21 +121,32 @@ SH
     chmod +x "$fixture_root/bin/cygpath"
     PATH="$fixture_root/bin:$PATH"
     export PATH
+    MSYSTEM=MINGW64
+    export MSYSTEM
+    USERPROFILE='C:\Users\Test User'
+    export USERPROFILE
     CARGO_HOME="$fixture_root/cargo-home/.cargo"
     export CARGO_HOME
+    MSYS2_ENV_CONV_EXCL="${MSYS2_ENV_CONV_EXCL:+${MSYS2_ENV_CONV_EXCL};}SYNVEIL_TEST_SENTINEL"
+    export MSYS2_ENV_CONV_EXCL
     unset CARGO_ENCODED_RUSTFLAGS RUSTFLAGS
     synveil_prepare_reproducible_rust_build "$repo_root"
     python3 - <<'PY'
 import os
+import subprocess
 
+cargo_home = os.environ["CARGO_HOME"]
+forms = [cargo_home]
+forms.extend(subprocess.check_output(["cygpath", mode, cargo_home], text=True).strip() for mode in ("-m", "-w"))
 flags = os.environ["CARGO_ENCODED_RUSTFLAGS"].split("\x1f")
-required = {
-    "--remap-path-prefix=C:/Users/Test User/.cargo=/usr/local/cargo",
-    r"--remap-path-prefix=C:\Users\Test User\.cargo=/usr/local/cargo",
-}
+required = {f"--remap-path-prefix={form}=/usr/local/cargo" for form in forms}
 missing = required - set(flags)
 if missing:
     raise SystemExit(f"native Cargo home remap missing: {sorted(missing)!r}; flags={flags!r}")
+if "CARGO_ENCODED_RUSTFLAGS" not in os.environ.get("MSYS2_ENV_CONV_EXCL", "").split(";"):
+    raise SystemExit("MSYS2_ENV_CONV_EXCL does not preserve CARGO_ENCODED_RUSTFLAGS")
+if "SYNVEIL_TEST_SENTINEL" not in os.environ.get("MSYS2_ENV_CONV_EXCL", "").split(";"):
+    raise SystemExit("MSYS2_ENV_CONV_EXCL overwrote its prior exclusions")
 PY
 
     # Exercise Cargo's default Windows home when CARGO_HOME is unset.
@@ -141,9 +158,16 @@ PY
 import os
 
 flags = os.environ["CARGO_ENCODED_RUSTFLAGS"].split("\x1f")
-required = r"--remap-path-prefix=C:\Users\Test User\.cargo=/usr/local/cargo"
-if required not in flags:
-    raise SystemExit(f"default Windows Cargo home remap missing: {required!r}; flags={flags!r}")
+required = {
+    "--remap-path-prefix=/c/Users/Test User/.cargo=/usr/local/cargo",
+    "--remap-path-prefix=C:/Users/Test User/.cargo=/usr/local/cargo",
+    r"--remap-path-prefix=C:\Users\Test User\.cargo=/usr/local/cargo",
+}
+missing = required - set(flags)
+if missing:
+    raise SystemExit(f"default Windows Cargo home remap missing: {sorted(missing)!r}; flags={flags!r}")
+if "CARGO_ENCODED_RUSTFLAGS" not in os.environ.get("MSYS2_ENV_CONV_EXCL", "").split(";"):
+    raise SystemExit("MSYS2_ENV_CONV_EXCL does not preserve CARGO_ENCODED_RUSTFLAGS")
 PY
 fi
 
