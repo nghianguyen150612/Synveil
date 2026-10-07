@@ -34,7 +34,9 @@ Concrete gaps fixed:
 
 1. P006/P011 had only injected detached-signature callbacks. Added the maintained
    Ed25519 backend, bounded exact-byte verification and explicit local public
-   policy. Unknown/malformed/unavailable verification has no weaker fallback.
+   policy. Unknown/malformed/unavailable verification has no weaker fallback. Local public inputs
+   reject link/device/writable-policy objects and bind the opened regular file;
+   P006 owns this bounded reader.
 2. Quick-install supplied no persistent high-water. Added caller-owned private,
    locked compare/update through P011's existing rollback/equivocation owner;
    unknown state remains untouched.
@@ -114,7 +116,7 @@ Observed local validation on the reviewed source:
 - `cargo clippy -p synveil-client --all-targets --locked -- -D warnings`: pass
   using the same scratch D-Bus development metadata.
 - Python offline suites: manifest 34, acquisition 69, channel 101,
-  focused security 21, quick-install 12, platform detection 11, Windows model 6:
+  focused security 22, quick-install 12, platform detection 11, Windows model 6:
   all pass.
 - `cargo deny check`: advisories, bans, licenses and sources pass; no ignores.
 - `python3 -m pip_audit -r scripts/requirements-installer-security.txt`: no
@@ -223,7 +225,11 @@ Initial publication observed:
   process-completion boundary. Explicit interpreter and structured .NET argv/
   wait fixes preserve security. Later Windows evidence showed replacement of an
   open temp file is denied; the adversary now acts after handle closure on both
-  platforms, retaining the last-use assertion rather than skipping it.
+  platforms, retaining the last-use assertion rather than skipping it. The installed
+  compiler then exposed an inherited invalid PE-resource version check. Upstream
+  ISCC resources contain a placeholder; the producer now compiles a fixed
+  Output=no probe and checks the actual engine version without changing the
+  distribution hash pin.
 - Review also closed writable-ancestor relocation of private Linux staging,
   channel high-water, journal and AppImage ownership paths. Root-owned sticky
   temporary roots remain supported. Tests prove zero write/delete under an

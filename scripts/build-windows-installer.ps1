@@ -58,6 +58,32 @@ function Assert-Under([string]$Child, [string]$Parent, [string]$Kind) {
     $relative = [IO.Path]::GetRelativePath([IO.Path]::GetFullPath($Parent), [IO.Path]::GetFullPath($Child))
     try { Assert-SafeRelativeIdentity $relative } catch { Fail $Kind "path escapes its trusted root" }
 }
+function Assert-CompilerEngineVersion([string]$Compiler, [string]$TempRoot, [string]$Expected) {
+    # Upstream ISCC's PE resource is a placeholder, not the engine identity.
+    # Compile a fixed Output=no probe: ISCC reports ISCmplr's actual version.
+    $probe = Join-Path $TempRoot ('compiler-probe-' + [guid]::NewGuid().ToString('N') + '.iss')
+    [IO.File]::WriteAllText($probe, "[Setup]`nAppName=Synveil compiler identity probe`nAppVersion=0.1.0`nDefaultDirName={tmp}`nPrivilegesRequired=lowest`nOutput=no`n")
+    Assert-NoReparseAncestry (Join-Path (Split-Path $Compiler) 'ISCmplr.dll') $true
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = $Compiler; $info.UseShellExecute = $false
+    $info.RedirectStandardOutput = $true; $info.RedirectStandardError = $true
+    $info.ArgumentList.Add($probe)
+    $process = [Diagnostics.Process]::Start($info)
+    try {
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        if (!$process.WaitForExit(60000)) {
+            $process.Kill($true); $process.WaitForExit()
+            Fail "TOOLCHAIN_INTEGRITY_FAILURE" "compiler identity probe exceeded its bound"
+        }
+        $text = $stdout.GetAwaiter().GetResult()
+        $errors = $stderr.GetAwaiter().GetResult()
+        if ($process.ExitCode -ne 0 -or $text.Length -gt 16384 -or $errors.Length -gt 16384 -or
+            $text -notmatch ('(?m)^Compiler engine version: Inno Setup ' + [regex]::Escape($Expected) + '\s*$')) {
+            Fail "TOOLCHAIN_INTEGRITY_FAILURE" "compiler engine does not match the locked version"
+        }
+    } finally { $process.Dispose(); Remove-Item -LiteralPath $probe -Force }
+}
 function Get-InnoCompiler($Lock, [string]$Provided, [string]$TempRoot) {
     if ($Provided) {
         $dir = [IO.Path]::GetFullPath($Provided)
@@ -65,8 +91,7 @@ function Get-InnoCompiler($Lock, [string]$Provided, [string]$TempRoot) {
         Assert-Under $compiler $dir "TOOLCHAIN_INTEGRITY_FAILURE"
         if (!(Test-Path -LiteralPath $compiler -PathType Leaf)) { Fail "TOOLCHAIN_INTEGRITY_FAILURE" "offline compiler is missing" }
         Assert-NoReparseAncestry $compiler $true
-        $version = [Diagnostics.FileVersionInfo]::GetVersionInfo($compiler).ProductVersion
-        if ($version -notmatch '^6\.7\.3(?:\D|$)') { Fail "TOOLCHAIN_INTEGRITY_FAILURE" "offline compiler is not locked version 6.7.3" }
+        Assert-CompilerEngineVersion $compiler $TempRoot $Lock.version
         return $compiler
     }
     $distribution = Join-Path $TempRoot 'innosetup-6.7.3.exe'

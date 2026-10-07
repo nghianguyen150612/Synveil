@@ -18,8 +18,8 @@ class SignaturePolicyError(ValueError):
 
 
 def load_production_keys(path: Path) -> dict[str, bytes]:
-    with path.open("rb") as stream:
-        raw = stream.read(MAX_POLICY_BYTES + 1)
+    from release_download import read_bounded_regular_file
+    raw = read_bounded_regular_file(path, MAX_POLICY_BYTES)
     if len(raw) > MAX_POLICY_BYTES:
         raise SignaturePolicyError("public trust policy exceeds its limit")
     try:
@@ -86,6 +86,6 @@ def verifier(public_keys: Mapping[str, bytes], signatures: Mapping[str, bytes]):
 
 
 def read_signature(path: Path) -> bytes:
-    with path.open("rb") as stream:
-        # Bound even a malicious file or source; verifier rejects anything but 64.
-        return stream.read(65)
+    from release_download import read_bounded_regular_file
+    # Bound even a malicious file or source; verifier rejects anything but 64.
+    return read_bounded_regular_file(path, 64)

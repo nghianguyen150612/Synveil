@@ -146,7 +146,8 @@ The manifest CLI accepts either `--expected-manifest-sha256` or `--trust-policy`
 with a bounded detached descriptor/signature directory. Quick install accepts
 either its independent trusted channel pin or `--trust-policy`; signed channel
 bytes authenticate the exact manifest identity through P011. Local keys are
-established before downloads; descriptors provide only scheme/ID/signature name.
+established before downloads; their bounded local regular-file reader rejects
+links/devices/writable trust evidence and checks opened identity. Descriptors provide only scheme/ID/signature name.
 Both modes remain explicit, mutually exclusive and fail closed.
 
 Build a closed, deterministic bundle with

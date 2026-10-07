@@ -98,6 +98,18 @@ class SignatureSecurity(unittest.TestCase):
         for entries in (self.entries*9, [dict(self.entries[0], signature_filename='../evil')], [{'key_id':[]}], 'not-array'):
             with self.assertRaises(download.AcquisitionError): self.authenticate(self.keys, entries=entries)
 
+    def test_local_public_input_links_devices_and_writable_policy_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); public=root/'public.json'; public.write_bytes(b'{}')
+            link=root/'untrusted.json'; link.symlink_to(public)
+            with self.assertRaises(download.AcquisitionError): signatures.load_production_keys(link)
+            with self.assertRaises(download.AcquisitionError): signatures.read_signature(link)
+            with self.assertRaises(download.AcquisitionError): download.read_bounded_regular_file(root,64)
+            if os.name == 'posix':
+                public.chmod(0o666)
+                with self.assertRaises(download.AcquisitionError): signatures.load_production_keys(public)
+                with self.assertRaises(download.AcquisitionError): download.read_bounded_regular_file(Path('/dev/null'),64)
+
     def test_real_signature_channel_binding(self):
         document = {'schema_version':1,'product':'Synveil','channel':'stable','generation':42,'releases':[]}
         raw = json.dumps(document).encode()

@@ -381,6 +381,25 @@ def _matches(path: Path, size: int, digest: str) -> bool:
     return hmac.compare_digest(actual.hexdigest(), digest)
 
 
+def read_bounded_regular_file(path: Path, limit: int) -> bytes:
+    """Read local public metadata without following links or blocking on devices."""
+    require_safe_ancestry(path.parent)
+    info = path.lstat()
+    if (not stat.S_ISREG(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400
+            or (os.name == "posix" and (info.st_uid not in {0, os.getuid()} or info.st_mode & 0o022))):
+        raise AcquisitionError("UNSAFE_PATH", "ambiguous local public metadata")
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(fd, "rb") as stream:
+        opened = os.fstat(stream.fileno())
+        if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+            raise AcquisitionError("UNSAFE_PATH", "local public metadata identity changed")
+        raw = stream.read(limit + 1)
+        identity = lambda item: (item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns, item.st_ctime_ns, item.st_mode)
+        if identity(path.lstat()) != identity(info) or identity(os.fstat(stream.fileno())) != identity(opened):
+            raise AcquisitionError("UNSAFE_PATH", "local public metadata changed during reading")
+    return raw
+
+
 def _existing_result(root: Path, artifact: dict) -> tuple[Path, str | None]:
     _, target = _safe_target(root, artifact["filename"])
     if target.exists() or target.is_symlink():
@@ -519,8 +538,7 @@ def main() -> int:
     parser.add_argument("--expected-source-commit")
     args = parser.parse_args()
     try:
-        with args.manifest.open("rb") as stream:
-            raw = stream.read(MAX_MANIFEST_BYTES + 1)
+        raw = read_bounded_regular_file(args.manifest, MAX_MANIFEST_BYTES)
         policy = ReleaseTrustPolicy(frozenset(), frozenset(), expected_manifest_sha256=args.expected_manifest_sha256)
         descriptor, verify = None, None
         if args.trust_policy:
@@ -528,8 +546,7 @@ def main() -> int:
             keys = release_signature.load_production_keys(args.trust_policy)
             if args.signature_descriptor is None or args.signature_directory is None:
                 raise AcquisitionError("UNSUPPORTED_AUTHENTICATION", "signature inputs required")
-            with args.signature_descriptor.open("rb") as stream:
-                encoded = stream.read(MAX_MANIFEST_BYTES + 1)
+            encoded = read_bounded_regular_file(args.signature_descriptor, MAX_MANIFEST_BYTES)
             if len(encoded) > MAX_MANIFEST_BYTES:
                 raise AcquisitionError("MANIFEST_TOO_LARGE", "signature descriptor too large")
             descriptor = json.loads(encoded)
