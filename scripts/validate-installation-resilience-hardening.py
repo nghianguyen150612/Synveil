@@ -176,6 +176,11 @@ def main() -> int:
             and "CurrentManifestOwns" in windows_iss
             and "DelTree(" not in windows_iss,
             "Windows recovery cleanup must use trusted old-minus-new ownership")
+    require("procedure CommitInstalledManifestIdentity" in windows_iss
+            and "RegWriteStringValue(HKCU64, UninstallKey, 'SynveilManifestSha256'" in windows_iss
+            and "if CurStep = ssPostInstall then\n    CommitInstalledManifestIdentity;" in windows_iss
+            and "RaiseException('Synveil could not save its installed package identity." in windows_iss,
+            "Windows must durably register the target manifest identity after payload installation")
     windows_lifecycle = read("scripts/test-windows-installer-lifecycle.ps1")
     windows_workflow = read(".github/workflows/windows-installer.yml")
     require("Interrupt-UpgradeAfterOwnedPayloadCopy" in windows_lifecycle

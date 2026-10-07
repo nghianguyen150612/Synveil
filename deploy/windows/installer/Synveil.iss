@@ -531,6 +531,17 @@ begin
   WizardForm.StatusLabel.Caption := 'Installing Synveil...';
 end;
 
+procedure CommitInstalledManifestIdentity;
+begin
+  { Inno writes the standard uninstall registration during Setup. Commit this
+    ownership identity afterward so the registration always authenticates the
+    payload manifest that Setup has just installed. The [Registry] entry keeps
+    uninsdeletevalue ownership for ordinary uninstall. }
+  if not RegWriteStringValue(HKCU64, UninstallKey, 'SynveilManifestSha256',
+    '{#SynveilManifestSha256}') then
+    RaiseException('Synveil could not save its installed package identity. Setup did not complete.');
+end;
+
 function ShouldCreateDesktopIcon(): Boolean;
 begin
   Result := DesktopIconRequested;
@@ -541,6 +552,8 @@ var
   ResultCode: Integer;
   StartupState: String;
 begin
+  if CurStep = ssPostInstall then
+    CommitInstalledManifestIdentity;
   if (CurStep = ssPostInstall) and (not FreshInstall) then
     RemoveProvenObsoleteFiles;
   if (CurStep = ssPostInstall) and (FreshInstall or StartupChoiceExplicit) then begin

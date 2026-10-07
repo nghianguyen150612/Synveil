@@ -169,6 +169,9 @@ def main() -> int:
         require(evidence in iss, f"P027 installer lifecycle contract: {evidence}")
     require("Root: HKCU64;" in iss, "trusted manifest identity writes to the 64-bit HKCU uninstall registry view")
     require("RegQueryStringValue(HKCU64," in iss, "recovery reads the 64-bit HKCU uninstall registry view")
+    require("RegWriteStringValue(HKCU64, UninstallKey, 'SynveilManifestSha256'" in iss
+            and "CommitInstalledManifestIdentity" in iss,
+            "Setup must commit target ownership identity after installing payload")
     require("SetRegView(" not in iss, "installer does not call an unavailable registry-view function")
     require("DelTree(" not in iss and "{localappdata}\\Synveil" not in iss, "ordinary uninstall cannot recursively remove state")
     for evidence in ("Get-RegisteredUninstaller", "QuietUninstallString", "user-note.txt", "Snapshot-State",
