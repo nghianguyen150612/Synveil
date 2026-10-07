@@ -56,11 +56,11 @@ durability.
 | 15. During final installation verification | read-only verification failure/process loss | All effect checkpoints may be verified; completion absent | Rerun read-only final verification; yes if authoritative state passes | No new mutation required | Existing journal final-verification fixtures |
 | 16. After final verification, before `TransactionCompleted` | process loss or journal failure | Durable final verification, completion absent | Revalidate final state and append completion; no effect replay | User/server state preserved | Existing journal semantic-transition tests |
 | 17. During repair | process loss, partial owned-file restore | Same-version repair plan and exact ownership evidence; payload may be partial | Inspect then repair only trusted owned state; unknown ownership stops | No broader cleanup; config, credentials, libraries and server data survive | Lifecycle/AppImage fixtures; native Windows repair is ordinary lifecycle CI only |
-| 18. During upgrade | process loss or disk exhaustion | Verified target artifact; one or more package-owned files may be replaced | Inspect exact version/ownership; repair a supported compatible target; no blind older-binary rollback | Data schemas are not rolled back; all durable state and unknown files survive | Hosted Windows fixture forcibly terminates Inno after changed owned payload copy, then verifies compatible forward repair; no VM power-loss claim |
+| 18. During upgrade | process loss or disk exhaustion | Verified target artifact; one or more package-owned files may be replaced | Inspect exact version/ownership; repair a supported compatible target; no blind older-binary rollback | Data schemas are not rolled back; all durable state and unknown files survive | Focused real-Inno P044 fixture added with a bounded synthetic payload; hosted result pending, so no Windows interruption pass is claimed yet |
 | 19. During ordinary uninstall | process loss | Some owned integration/payload/registration may be removed | Reconcile remaining trusted owned state; resume ordinary removal only; never turn into purge | Application/server data and unknown neighbors survive | Existing lifecycle/AppImage uninstall fixtures; no native uninstall kill test |
 | 20. During native package-manager execution | process loss, signal, manager error | Native package state is authoritative and result may be unknown; absent package metadata with remaining owned payload is partial state | Inspect exact DEB/RPM package identity/version before disposition; absent metadata plus payload stops as `OutcomeUnknown`; never immediately rerun APT/DNF | Never delete dpkg/apt/rpm/dnf locks or user/server state | Quick-install interruption and partial-payload fixtures; ordinary Linux package CI is separate native lifecycle evidence |
 | 21. During AppImage integration | process loss, partial launcher/record, ENOSPC | Trusted record may be complete, incomplete, missing, or unknown/newer | Inspect record and owned integration; missing record with adjacent launcher is `Incomplete`, unknown/newer fails closed | Unknown launcher and user state preserved | AppImage partial-record and removal fixtures |
-| 22. During Windows Setup replacement | forced process termination after first changed owned payload copy; disk-full copy/registration | Test observes new target `LICENSE` bytes while the old ownership manifest and registration hash still agree; remaining payload may be old | Start a fresh compatible Setup, revalidate the old ownership boundary, finish the target payload, and verify the final registration/manifest/runtime closure; no binary rollback | P027 ownership scope, state, startup choice, and unknown files preserved | Hosted Windows process-interruption fixture; not power loss |
+| 22. During Windows Setup replacement | forced process termination after first changed owned payload copy; disk-full copy/registration | Fixture is designed to observe new target `LICENSE` bytes while the old ownership manifest and registration hash still agree; a later 16 MiB package-owned payload must remain incomplete | Start a fresh compatible Setup, revalidate the old ownership boundary, finish the target payload, and verify the final registration/manifest/payload hashes; no binary rollback | P027 ownership scope, state, disabled startup choice, and unknown files are asserted by the fixture | Native Windows CI result pending for actual Inno 6.7.3 with a synthetic closed payload; not full runtime closure or power-loss evidence |
 | 23. During obsolete owned-file cleanup | process loss or delete failure | Trusted previous and target manifests define old-minus-new set | Recompute scope from manifests; missing known obsolete files are no-op; never scan leftovers | Unknown adjacent files are never deleted | Windows ownership source contract and lifecycle fixture; interrupted native cleanup not executed |
 | 24. Disk exhaustion during download/staging | ENOSPC/quota at temp create, stream, flush, fsync, promotion, directory sync | Temp may be partial; final may be absent or complete but unreported | Return finite disk-full/staging error; clean only owned temp; reverify any final file; no manager invocation | Existing destination and unrelated files preserved | Deterministic Python ENOSPC fixtures |
 | 25. Disk exhaustion while writing journal state | injected ENOSPC at checkpoint boundaries | Before mutation-start: no apply. After mutation: earlier chain plus unmatched start remains | Before mutation, stop/replan; after mutation, stop and inspect; retain old checkpoints | Never delete earlier checkpoints to free space | Journal deterministic disk-full fault fixtures; not a real full filesystem |
@@ -72,25 +72,33 @@ durability.
 
 ## Platform and evidence limits
 
+Evidence classes are distinct: `source/unit`, `fixture`,
+`process-interruption`, `Native CI`, `VM reboot`, and `VM power-cycle`. The
+specific boundaries below name only evidence actually available for P044.
+
 The common engine's process-interruption harness starts a second test process
 after forcibly terminating the first. It validates restart reconstruction from
 durable files and authoritative adapter inspection. The controlled payload is a
 fixture, not a real package manager, Inno Setup, AppImage desktop environment,
 or physical disk.
 
-The current hosted Linux package workflow exercises normal APT and DNF
-installation, verification, removal, and preservation. The Windows installer
-workflow exercises real standard-user install, repair, supported upgrade,
-downgrade rejection, ordinary uninstall, and preservation. P044 also makes the
-Windows lifecycle fixture forcibly terminate Inno Setup after a changed owned
-payload file is copied, then starts a fresh Setup process and verifies the
-recovered target payload and trusted registration. AppImage CI exercises the
-real current-user integration lifecycle. These Native CI workflows show normal
-Linux package install/remove, Windows lifecycle, and AppImage integration; only
-the Windows workflow forcibly terminates an installer at a mutation boundary.
-Linux package-manager and AppImage mutation-boundary process termination are
-not exercised. A VM reboot, container restart, unit test, process kill, and
-graceful shutdown are distinct evidence classes; none is labeled `VM power-cycle`.
+P044 adds a focused Windows CI fixture that compiles the repository's actual
+`Synveil.iss` with pinned Inno Setup 6.7.3, then forcibly terminates Setup during
+a supported upgrade and launches a new Setup process to recover. The payload is
+synthetic and bounded (including a 16 MiB file); the startup handoff uses the
+real release `synveil-client.exe`. It does not qualify the Qt runtime closure
+or establish production Windows clean-machine behavior. Its first hosted result
+is pending. Preservation evidence uses fresh test-owned data sentinels; it does
+not access or claim preservation of pre-existing user data on that runner. The
+current full Windows installer run stopped before Inno because the runtime
+stage lacked `MSVCP140.dll` required by `Qt6Core.dll`.
+
+The common engine's separate-process SIGKILL fixture and deterministic
+fault-injection suites are not native package-manager or physical-storage
+evidence. Linux package-manager and AppImage mutation-boundary process
+termination are not exercised by P044. A VM reboot, container restart, unit
+test, process kill, and graceful shutdown are distinct evidence classes; none
+is labeled `VM power-cycle`.
 
 P004 `INSTALL-JOURNEY-8` keeps its `interruption-power-cycle` minimum and is not
 marked native-clean-machine PASS by P044's source, fixture, or process evidence.

@@ -78,7 +78,7 @@ change that acceptance rule.
 | Deterministic fault injection | Passed locally: 77 release-download tests include ENOSPC at temp create, stream write, file sync, promotion, and directory sync; install-engine journal tests inject write/sync/commit boundaries and disk-full before/after mutation |
 | Fixture tests | Passed locally: 15 Linux quick-install tests; 9 AppImage integration tests include partial-state and preservation cases |
 | Process interruption | Passed locally: Rust journal suite forcibly kills process A after a synced fixture payload mutation; a newly launched process B reloads the journal, reconciles from disk, verifies and completes without duplicate apply. This is `process-interruption`, not power loss. |
-| Native CI | Existing Linux package and AppImage workflows provide normal lifecycle evidence. The Windows installer workflow now includes a bounded forced-process-interruption upgrade fixture; final-head results are pending. Linux package-manager and AppImage mutation interruption remain untested natively. |
+| Native CI | The dedicated P044 workflow now builds the actual `Synveil.iss` with pinned Inno Setup 6.7.3 and runs a bounded synthetic-payload interruption/recovery fixture using the real release client. Its hosted result is pending; no native Inno interruption pass is claimed yet. Linux package-manager and AppImage mutation interruption remain untested natively. |
 | Container restart | Not run; would not establish filesystem/controller power-loss behavior |
 | VM reboot | Not available in the selected environment |
 | VM power-cycle | **BLOCKED / unavailable native power-cycle evidence**; no graceful shutdown, SIGKILL, or fixture is substituted |
@@ -101,7 +101,9 @@ change that acceptance rule.
 - `scripts/linux_quick_install.py`
 - `scripts/invoke-windows-standard-user-test.ps1`
 - `scripts/release_download.py`
+- `scripts/run-windows-installer-interruption-fixture.ps1`
 - `scripts/test-windows-installer-lifecycle.ps1`
+- `scripts/test-windows-installer-interruption.ps1`
 - `scripts/validate-docs.sh`
 - `scripts/validate-install-error-model.py`
 - `scripts/validate-installation-resilience-hardening.py`
@@ -133,6 +135,7 @@ change that acceptance rule.
 | `./scripts/validate-docs.sh` | Passed, including P043/P044 validators |
 | `./scripts/validate-install-acceptance.sh` | Passed: 11 scenarios; native execution not performed |
 | `git diff --check` | Passed |
+| Local PowerShell execution for the real Inno fixture | Not available: `pwsh` is absent on the Linux task host; the dedicated hosted Windows job runs the scripts natively |
 
 Windows follow-up local checks for the Cargo registry remap:
 
@@ -184,9 +187,18 @@ Observed GitHub state for the initial published head:
   The existing Windows native acceptance workflow failed before invoking its
   installer test because its build selected Git's `/usr/bin/link` instead of
   MSVC `link.exe`; that workflow is unchanged by P044 and this is classified as
-  an inherited Windows toolchain failure. Remaining hosted checks, including
-  the real Windows installer interruption fixture, are observed on the final
-  PR head before merge.
+  an inherited Windows toolchain failure. On head `77f53aaba97d936fbf53984d450cd042b928e80f`,
+  Windows installer run `37599455534` reached `Build runtime payload` and failed
+  because `MSVCP140.dll` was missing as a non-system import required by
+  `Qt6Core.dll`; the runtime closure implementation is unchanged by P044 and the
+  baseline Windows workflow also had a failure conclusion, although its
+  historical log could not be retrieved to confirm the exact cause. This is
+  classified as a Windows native runtime-closure qualification limitation / a
+  likely inherited unrelated failure, not a P044 Inno interruption result.
+  That run never reached Inno Setup. The focused P044 job now builds actual
+  `Synveil.iss` with pinned Inno 6.7.3 and uses a bounded synthetic manifest plus
+  the real release `synveil-client.exe`; its hosted result and all remaining
+  final-head P044 checks are pending before merge.
 - Merge/resulting-main SHA and post-merge clean worktree are intentionally
   recorded only after GitHub reports the real merge. VM power-cycle evidence
   remains **BLOCKED / unavailable native power-cycle evidence**.

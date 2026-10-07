@@ -182,6 +182,28 @@ def main() -> int:
             and "prior_manifest_and_registration_matched" in windows_lifecycle
             and "P044_NEWER_LICENSE_HASH" in windows_workflow,
             "Windows native partial-upgrade process-interruption harness missing")
+    p044_windows_workflow = read(".github/workflows/installation-resilience-hardening.yml")
+    p044_windows_runner = read("scripts/run-windows-installer-interruption-fixture.ps1")
+    p044_windows_test = read("scripts/test-windows-installer-interruption.ps1")
+    require("run-windows-installer-interruption-fixture.ps1" in p044_windows_workflow
+            and "Upload Windows process-interruption evidence" in p044_windows_workflow
+            and "cargo build --release --locked -p synveil-client" in p044_windows_workflow,
+            "focused P044 Windows job must run and retain the Inno interruption evidence")
+    require("-LifecycleFixtureVersion '1.0.0'" in p044_windows_runner
+            and "-LifecycleFixtureVersion '1.1.0'" in p044_windows_runner
+            and "real release synveil-client.exe" in p044_windows_runner,
+            "Windows interruption fixtures must use versioned manifest fixtures and the real client")
+    require("$process.Kill($true)" in p044_windows_test
+            and "prior ownership manifest" in p044_windows_test
+            and "Get-ManifestHashes" in p044_windows_test
+            and "NewerRuntimePayloadHash" in p044_windows_test
+            and "unknown adjacent file" in p044_windows_test
+            and "startup preference" in p044_windows_test,
+            "Windows process interruption must prove partial state, recovery and preservation")
+    require("native CI process-interruption" in p044_windows_test
+            and "BLOCKED / unavailable native VM power-cycle evidence" in p044_windows_test
+            and "synthetic package manifest" in p044_windows_test,
+            "Windows evidence must distinguish synthetic payload process interruption from power loss")
 
     resilience = read("docs/v0.2/INSTALLATION_RESILIENCE_HARDENING.md")
     manifest = read("docs/v0.2/PROMPT044_MANIFEST.md")

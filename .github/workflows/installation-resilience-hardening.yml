@@ -81,7 +81,7 @@ jobs:
       - run: python3 scripts/validate-appimage-build.py
 
   windows-lifecycle-boundaries:
-    name: Windows ownership and lifecycle preservation boundaries
+    name: Windows ownership lifecycle and Inno process interruption
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -93,12 +93,20 @@ jobs:
       - run: python -m unittest discover -s scripts -p test_windows_lifecycle.py -v
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - uses: ilammy/msvc-dev-cmd@v1
       - run: cargo test -p synveil-install-engine --test lifecycle_contract --test engine_contract --test error_model_contract --locked
-      - name: Record native interruption evidence boundary
+      - run: cargo build --release --locked -p synveil-client
+      - name: Run real Inno Setup interruption fixture with bounded synthetic payload
         shell: pwsh
-        run: |
-          Write-Output 'Native Windows interruption and lifecycle evidence is exercised by windows-installer.yml.'
-          Write-Output 'This focused source job alone makes no native Inno Setup claim.'
+        run: ./scripts/run-windows-installer-interruption-fixture.ps1
+      - name: Upload Windows process-interruption evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p044-windows-inno-process-interruption
+          if-no-files-found: warn
+          retention-days: 14
+          path: target/p044-windows-evidence
 
   preservation-regression:
     name: Preservation and recovery static regression
