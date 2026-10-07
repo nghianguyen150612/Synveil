@@ -1,9 +1,8 @@
 # Prompt044 manifest — Installation Resilience Hardening
 
-Status: **source and deterministic resilience coverage implemented; actual
-publication, hosted checks, and merge are recorded in the associated real PR
-and final completion report after observation. Native VM power-cycle evidence
-is unavailable and is not claimed.** P045 is explicitly deferred.
+Status: **P044 source and deterministic/process-interruption evidence
+implemented, published, hosted-validated, and merged. Native VM reboot and
+power-cycle evidence remain unavailable and are not claimed. P045 is explicitly deferred.**
 
 ## Repository and baseline
 
@@ -18,8 +17,9 @@ is unavailable and is not claimed.** P045 is explicitly deferred.
   checked before edits. Initial checkout was clean on `work`; no work was
   discarded.
 - Task branch: `feat/installation-resilience-hardening`, created from verified
-  `origin/main`. Its name was checked locally and does not start with `codex/`.
-  The actual remote ref must be queried again before PR creation.
+  `origin/main`. GitHub returned that exact remote ref and head
+  `b5f46b3fd9dfb4b5e7662cf5524e2faa559aaeb8`; the name does not start with
+  `codex/`.
 - No prior P044 branch or pull request was found at audit time.
 
 ## Ownership audit
@@ -78,7 +78,7 @@ change that acceptance rule.
 | Deterministic fault injection | Passed locally: 77 release-download tests include ENOSPC at temp create, stream write, file sync, promotion, and directory sync; install-engine journal tests inject write/sync/commit boundaries and disk-full before/after mutation |
 | Fixture tests | Passed locally: 15 Linux quick-install tests; 9 AppImage integration tests include partial-state and preservation cases |
 | Process interruption | Passed locally: Rust journal suite forcibly kills process A after a synced fixture payload mutation; a newly launched process B reloads the journal, reconciles from disk, verifies and completes without duplicate apply. This is `process-interruption`, not power loss. |
-| Native CI | The dedicated P044 workflow now builds the actual `Synveil.iss` with pinned Inno Setup 6.7.3 and runs a bounded synthetic-payload interruption/recovery fixture using the real release client. Its hosted result is pending; no native Inno interruption pass is claimed yet. Linux package-manager and AppImage mutation interruption remain untested natively. |
+| Native CI | P044 run `37614798072` passed all ten jobs on the final source head. Its Windows job built the actual `Synveil.iss` with pinned Inno Setup 6.7.3 and passed forced process termination/recovery for upgrade and repair using a bounded synthetic payload and real release client. Linux package-manager and AppImage mutation process termination remain untested natively. |
 | Container restart | Not run; would not establish filesystem/controller power-loss behavior |
 | VM reboot | Not available in the selected environment |
 | VM power-cycle | **BLOCKED / unavailable native power-cycle evidence**; no graceful shutdown, SIGKILL, or fixture is substituted |
@@ -147,9 +147,90 @@ Windows follow-up local checks for the Cargo registry remap:
 
 Local tests used Rust 1.99 installed into the task workspace after the initial
 toolchain check found no Rust commands. No repository toolchain or lockfile was
-changed. Hosted CI must still run final-head platform suites before merge.
+changed. Focused final-head P044 and P043 hosted workflows passed before merge.
+Separate broader repository workflows also ran; their outcomes and
+classifications are recorded below. Their clean-machine/release qualification
+scope remains outside P044.
 
 ## Publication record
+
+### Final P044 source publication and merge
+
+- Required branch: `feat/installation-resilience-hardening`; remote branch
+  lookup returned that exact name. No `codex/*` branch was created or used.
+- P044 source head and tree: commit
+  `b5f46b3fd9dfb4b5e7662cf5524e2faa559aaeb8`, tree
+  `ba79ebb661b212c22f4d0b951a73823b675142e4`. Local and remote commit/tree
+  identities matched at publication.
+- The head contains 16 P044-scoped commits from the baseline; the final diff
+  covered 31 reviewed files. The published commits retain the iteration trail
+  for focused fault and Windows fixture corrections.
+- PR [#75 — Synveil v0.2 P044: Installation Resilience
+  Hardening](https://github.com/nghianguyen150612/Synveil/pull/75) targeted
+  `main` from exactly `feat/installation-resilience-hardening` and was merged.
+- GitHub reported merge commit and immediate resulting `origin/main`:
+  `631d448773598d789a49d4a7f078d2d66a94e2c2`. Its tree is
+  `ba79ebb661b212c22f4d0b951a73823b675142e4`; both P043 baseline and P044 head
+  are ancestors.
+- The worktree was clean after the source merge verification. No v0.2.0 tag or
+  release was created.
+
+### Final-head hosted results and classification
+
+- Focused P044 PR run `37614798072`: all ten jobs passed on
+  `b5f46b3fd9dfb4b5e7662cf5524e2faa559aaeb8`. The matching push run
+  `37614790430` also passed all ten jobs.
+- P043 regression run `37614798197`: all seven security jobs passed on the same
+  P044 head, including signature/channel/downgrade, path/reparse, native
+  invocation, lifecycle, AppImage, Windows ownership and crypto-policy checks.
+- Windows interruption artifact: `p044-windows-inno-process-interruption`,
+  GitHub artifact ID `11478824525`, SHA-256
+  `f79475dad6fd2286bfe16cb26d294e9e239d8aee83e6797131c45a953fd69b55`. The
+  fixture used Windows Server 2025 build `10.0.26100`, pinned Inno Setup 6.7.3,
+  the actual installer source, a bounded synthetic manifest/payload and the
+  actual release `synveil-client.exe`. Forced Setup termination during upgrade
+  and repair was followed by fresh Setup recovery; full target hashes,
+  registration, shortcut/unknown-neighbor preservation, test-owned user/server
+  sentinels, disabled startup, downgrade rejection and ordinary uninstall all
+  passed. This is `native CI process-interruption`, not VM power-loss evidence.
+- Broader automatic workflow failures were read from their current-head logs
+  and are classified as outside P044's focused source gate:
+  - Windows native acceptance run `37614798046`: Git Bash `link.exe` was chosen
+    instead of MSVC before installer qualification; inherited toolchain
+    qualification limitation.
+  - Windows installer run `37614797883`: runtime staging lacked non-system
+    import `MSVCP140.dll` required by `Qt6Core.dll` and stopped before Inno;
+    inherited Windows runtime-closure qualification limitation.
+  - Linux AppImage run `37614797677` and Linux clean-machine artifact run
+    `37614797912`: APPIMAGE-8 reported `AppRun does not exec packaged desktop`;
+    broader AppImage/clean-machine qualification limitation. Focused P044
+    AppImage partial-recovery tests passed.
+  - Rust CI run `37614797700`: Windows workspace test/check compilation found
+    Unix-only test imports in unchanged
+    `crates/api/src/runtime_rebaseline_credential.rs`; Windows/macOS client
+    suites also reported unrelated failures in unchanged client source. The
+    Ubuntu full-test job failed its Linux notify watcher scenario in unchanged
+    `crates/client-sync/src/observation.rs` because the expected move intent was
+    not observed; the Linux desktop UI job passed. These are cross-platform
+    workspace qualification failures, not P044 regressions.
+  - Linux native packages run `37614798099`: package build steps completed,
+    but the broad reproducibility gate found `synveil-desktop` build-b differed
+    from build-a at byte offset `1378759` with identical section layout. The
+    separate Qt reproducibility job passed; the byte difference's root cause
+    was not established. This is a broader native/release qualification
+    limitation, not claimed as P044 evidence or as a P044 regression.
+  - Server self-host acceptance run `37614797855`: artifact identity failed
+    because the checkout lacked `acceptance/p036/production-artifacts.json`, a
+    separate P036 acceptance prerequisite.
+  - PostgreSQL 17 scheduled-maintenance run `37614797830`: the unrelated
+    `live_pg17_adversarial_crash_restart_handoff` test failed its assertion;
+    other logged live PG tests passed. This does not touch P044 code or state.
+- No failure in the focused P044 or P043 workflows remained unresolved. No
+  bounded real-filesystem ENOSPC run, native package-manager process kill,
+  container restart, VM reboot, or actual VM power-cycle was available.
+
+The publication history below preserves the initial push and the hosted
+failures that drove corrections before the final head.
 
 Observed GitHub state for the initial published head:
 
@@ -174,8 +255,9 @@ Observed GitHub state for the initial published head:
   mocked `cygpath` output was transformed by Git Bash path conversion before
   assertion. The runtime build and Inno interruption fixture did not run. The
   test now uses the actual Windows `cygpath` on Git Bash runners and retains a
-  mock only on hosts without `cygpath`; hosted rerun is pending. This is a
-  P044 test-harness failure, not Windows interruption evidence.
+  mock only on hosts without `cygpath`; that hosted rerun was pending at this
+  historical publication point. This was a P044 test-harness failure, not
+  Windows interruption evidence.
   The next Windows installer run, `37598501246` on head
   `bdeed9c6faf841a0f498c370c11c33dc87534896`, confirmed that MSYS path
   conversion also rewrote path fragments in `CARGO_ENCODED_RUSTFLAGS`; the
@@ -183,7 +265,7 @@ Observed GitHub state for the initial published head:
   excludes that one encoded variable from MSYS conversion while preserving
   existing exclusions, and its fixtures check all three path spellings. This
   hosted failure identified a P044 Windows build-path resilience gap; final-head
-  hosted verification remains pending.
+  verification is recorded above.
   The existing Windows native acceptance workflow failed before invoking its
   installer test because its build selected Git's `/usr/bin/link` instead of
   MSVC `link.exe`; that workflow is unchanged by P044 and this is classified as
@@ -197,11 +279,10 @@ Observed GitHub state for the initial published head:
   likely inherited unrelated failure, not a P044 Inno interruption result.
   That run never reached Inno Setup. The focused P044 job now builds actual
   `Synveil.iss` with pinned Inno 6.7.3 and uses a bounded synthetic manifest plus
-  the real release `synveil-client.exe`; its hosted result and all remaining
-  final-head P044 checks are pending before merge.
-- Merge/resulting-main SHA and post-merge clean worktree are intentionally
-  recorded only after GitHub reports the real merge. VM power-cycle evidence
-  remains **BLOCKED / unavailable native power-cycle evidence**.
+  the real release `synveil-client.exe`; at this historical point its hosted
+  result and final-head P044 checks were pending. Their final results and the
+  real merge are recorded above. VM power-cycle evidence remains
+  **BLOCKED / unavailable native power-cycle evidence**.
 
 No ADR is added: this change validates/enforces the existing P008/P008A,
 P009/P010, P006 and platform ownership architecture. ADR-074 was checked as
