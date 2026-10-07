@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+
 @testable import Synveil
 
 final class EnrollmentTests: XCTestCase {
@@ -20,8 +21,10 @@ final class EnrollmentTests: XCTestCase {
     }
 
     // MARK: - Test Helpers & Synthetic Values
-    private let validSyntheticToken = "sve1_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-    private let validSyntheticCredential = "svd1_abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+    private let validSyntheticToken =
+        "sve1_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    private let validSyntheticCredential =
+        "svd1_abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
     private let validOwnerUserId = "11111111-2222-3333-4444-555555555555"
     private let validDeviceId = "66666666-7777-8888-9999-000000000000"
     private let validCredentialId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -41,11 +44,11 @@ final class EnrollmentTests: XCTestCase {
                 "device_id": deviceId ?? validDeviceId,
                 "credential_id": credentialId ?? validCredentialId,
                 "device_credential": credential ?? validSyntheticCredential,
-                "created_at": createdAt ?? validCreatedAt
+                "created_at": createdAt ?? validCreatedAt,
             ],
             "meta": [
                 "request_id": requestId as Any
-            ]
+            ],
         ]
         return try! JSONSerialization.data(withJSONObject: json, options: [])
     }
@@ -102,7 +105,13 @@ final class EnrollmentTests: XCTestCase {
         try? await Task.sleep(nanoseconds: 50_000_000)
 
         XCTAssertEqual(mockTransport.sentRequests.count, 0)
-        XCTAssertEqual(viewModel.state, .invalidToken("Enrollment token format is invalid. It must begin with 'sve1_' followed by 64 lowercase hex characters."))
+        XCTAssertEqual(
+            viewModel.state,
+            .invalidToken(
+                "Enrollment token format is invalid. It must begin with 'sve1_' followed by 64 "
+                    + "lowercase hex characters."
+            )
+        )
     }
 
     // 7. Correct endpoint path is used
@@ -119,7 +128,10 @@ final class EnrollmentTests: XCTestCase {
         _ = await service.exchange(endpoint: mockEndpoint, token: token)
 
         XCTAssertEqual(mockTransport.sentRequests.count, 1)
-        XCTAssertEqual(mockTransport.sentRequests.first?.url.path, "/api/v1/device-enrollment/exchange")
+        XCTAssertEqual(
+            mockTransport.sentRequests.first?.url.path,
+            "/api/v1/device-enrollment/exchange"
+        )
     }
 
     // 8. POST method is used
@@ -223,11 +235,15 @@ final class EnrollmentTests: XCTestCase {
         let service = EnrollmentExchangeService(transport: mockTransport)
         let token = EnrollmentToken.parse(validSyntheticToken)!
 
-        mockTransport.stubbedError = SynveilTransportError.bodyLimitExceeded
+        let oversizedBody = Data(repeating: 0x41, count: 16 * 1024 + 1)
+        mockTransport.stubbedResponse = HTTPTransportResponse(
+            statusCode: 201,
+            headers: ["content-type": "application/json"],
+            body: oversizedBody
+        )
 
         let result = await service.exchange(endpoint: mockEndpoint, token: token)
         XCTAssertEqual(result, .recoveryRequired(.oversizedResponse))
-        XCTAssertEqual(mockTransport.lastMaxResponseBodyBytes, 16 * 1024)
     }
 
     // 15. Wrong Content-Type rejected
@@ -333,9 +349,11 @@ final class EnrollmentTests: XCTestCase {
         let service = EnrollmentExchangeService(transport: mockTransport)
         let token = EnrollmentToken.parse(validSyntheticToken)!
 
-        let errorJson = try! JSONSerialization.data(withJSONObject: [
-            "error": ["code": "invalid_enrollment", "message": "Grant invalid"]
-        ])
+        let errorJson = try! JSONSerialization.data(
+            withJSONObject: [
+                "error": ["code": "invalid_enrollment", "message": "Grant invalid"]
+            ]
+        )
 
         mockTransport.stubbedResponse = HTTPTransportResponse(
             statusCode: 400,
@@ -463,7 +481,7 @@ final class EnrollmentTests: XCTestCase {
 
         viewModel.rawTokenInput = validSyntheticToken
         viewModel.submitEnrollment()
-        viewModel.submitEnrollment() // Immediate duplicate
+        viewModel.submitEnrollment()  // Immediate duplicate
 
         try? await Task.sleep(nanoseconds: 100_000_000)
 
@@ -507,7 +525,12 @@ final class EnrollmentTests: XCTestCase {
         try? await Task.sleep(nanoseconds: 100_000_000)
 
         XCTAssertEqual(mockTransport.sentRequests.count, 0)
-        XCTAssertEqual(viewModel.state, .secureStoreUnavailable("Secure credential storage is unavailable. No enrollment request was sent."))
+        XCTAssertEqual(
+            viewModel.state,
+            .secureStoreUnavailable(
+                "Secure credential storage is unavailable. No enrollment request was sent."
+            )
+        )
     }
 
     // 30. Retry behavior never silently replays an ambiguous single-shot exchange
@@ -529,7 +552,13 @@ final class EnrollmentTests: XCTestCase {
 
         try? await Task.sleep(nanoseconds: 100_000_000)
 
-        XCTAssertEqual(viewModel.state, .recoveryRequired("The enrollment result is unknown. Use the trusted owner recovery workflow before trying again."))
+        XCTAssertEqual(
+            viewModel.state,
+            .recoveryRequired(
+                "The enrollment result is unknown. Use the trusted owner recovery workflow before "
+                    + "trying again."
+            )
+        )
         XCTAssertEqual(mockTransport.sentRequests.count, 1)
     }
 }
@@ -537,13 +566,11 @@ final class EnrollmentTests: XCTestCase {
 // MARK: - Mock HTTP Transport
 private class MockEnrollmentHTTPTransport: HTTPTransportProtocol, @unchecked Sendable {
     var sentRequests: [HTTPTransportRequest] = []
-    var lastMaxResponseBodyBytes: Int?
     var stubbedResponse: HTTPTransportResponse?
     var stubbedError: Error?
 
-    func send(request: HTTPTransportRequest, maxResponseBodyBytes: Int) async throws -> HTTPTransportResponse {
+    func send(_ request: HTTPTransportRequest) async throws -> HTTPTransportResponse {
         sentRequests.append(request)
-        lastMaxResponseBodyBytes = maxResponseBodyBytes
 
         if let error = stubbedError {
             throw error

@@ -98,11 +98,14 @@ private struct HeaderView: View {
                 .font(.title2)
                 .bold()
 
-            Text("Enter your high-entropy one-time enrollment token (sve1_...) to activate this device.")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
+            Text(
+                "Enter your high-entropy one-time enrollment token (sve1_...) to activate "
+                    + "this device."
+            )
+            .font(.subheadline)
+            .foregroundColor(.secondary)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal)
         }
     }
 }

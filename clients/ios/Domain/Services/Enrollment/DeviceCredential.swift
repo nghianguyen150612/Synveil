@@ -5,8 +5,11 @@ private let deviceCredentialRegex = try! NSRegularExpression(pattern: "^svd1_[0-
 /// Strongly typed encapsulation of a device bearer credential secret (`svd1_<64 hex chars>`).
 ///
 /// # Security Invariants
-/// - Output of `description` and `debugDescription` is explicitly redacted to prevent secret leakage in logs.
-public struct DeviceCredential: Sendable, Equatable, CustomStringConvertible, CustomDebugStringConvertible {
+/// - Output of `description` and `debugDescription` is explicitly redacted to prevent secret
+///   leakage in logs.
+public struct DeviceCredential: Sendable, Equatable, CustomStringConvertible,
+    CustomDebugStringConvertible
+{
     public let rawValue: String
 
     public var description: String {

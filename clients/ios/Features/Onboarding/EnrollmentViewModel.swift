@@ -56,13 +56,17 @@ public final class EnrollmentViewModel {
             self.exchangeService = service
         } else {
             let transport = URLSessionHTTPTransport()
-            self.exchangeService = EnrollmentExchangeService(transport: transport, rustBridge: rustBridge)
+            self.exchangeService = EnrollmentExchangeService(
+                transport: transport,
+                rustBridge: rustBridge
+            )
         }
     }
 
     /// Submits the current enrollment token for exchange.
     ///
-    /// Prevents duplicate concurrent exchange submissions and performs local token validation prior to network calls.
+    /// Prevents duplicate concurrent exchange submissions and performs local token validation prior to
+    /// network calls.
     public func submitEnrollment() {
         guard !isSubmitting else { return }
 
@@ -95,7 +99,10 @@ public final class EnrollmentViewModel {
             }
 
             guard isValidToken, let token = EnrollmentToken.parse(trimmedInput) else {
-                self.state = .invalidToken("Enrollment token format is invalid. It must begin with 'sve1_' followed by 64 lowercase hex characters.")
+                self.state = .invalidToken(
+                    "Enrollment token format is invalid. It must begin with 'sve1_' followed by 64 "
+                        + "lowercase hex characters."
+                )
                 self.isSubmitting = false
                 return
             }
@@ -104,7 +111,9 @@ public final class EnrollmentViewModel {
             do {
                 try await credentialSink.preflight()
             } catch {
-                self.state = .secureStoreUnavailable("Secure credential storage is unavailable. No enrollment request was sent.")
+                self.state = .secureStoreUnavailable(
+                    "Secure credential storage is unavailable. No enrollment request was sent."
+                )
                 self.isSubmitting = false
                 return
             }
@@ -131,7 +140,9 @@ public final class EnrollmentViewModel {
                     // NOTE: In Prompt024, successful exchange alone does NOT transition to .authenticated
                     // because durable Keychain persistence and session restoration are owned by Prompt025+.
                 } catch {
-                    self.state = .recoveryRequired("Credential storage failed following exchange. Recovery is required.")
+                    self.state = .recoveryRequired(
+                        "Credential storage failed following exchange. Recovery is required."
+                    )
                     self.isSubmitting = false
                 }
 
@@ -140,7 +151,10 @@ public final class EnrollmentViewModel {
                 self.isSubmitting = false
 
             case .recoveryRequired:
-                self.state = .recoveryRequired("The enrollment result is unknown. Use the trusted owner recovery workflow before trying again.")
+                self.state = .recoveryRequired(
+                    "The enrollment result is unknown. Use the trusted owner recovery workflow before "
+                        + "trying again."
+                )
                 self.isSubmitting = false
 
             case .failed(let reason):

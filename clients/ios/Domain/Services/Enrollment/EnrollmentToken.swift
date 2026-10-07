@@ -5,8 +5,11 @@ private let enrollmentTokenRegex = try! NSRegularExpression(pattern: "^sve1_[0-9
 /// Strongly typed encapsulation of a single-use enrollment token (`sve1_<64 hex chars>`).
 ///
 /// # Security Invariants
-/// - Output of `description` and `debugDescription` is explicitly redacted to prevent secret leakage in logs.
-public struct EnrollmentToken: Sendable, Equatable, CustomStringConvertible, CustomDebugStringConvertible {
+/// - Output of `description` and `debugDescription` is explicitly redacted to prevent secret
+///   leakage in logs.
+public struct EnrollmentToken: Sendable, Equatable, CustomStringConvertible,
+    CustomDebugStringConvertible
+{
     public let rawValue: String
 
     public var description: String {

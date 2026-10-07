@@ -26,10 +26,16 @@ public final class EnrollmentExchangeService: EnrollmentExchangeServiceProtocol,
         token: EnrollmentToken
     ) async -> EnrollmentExchangeResult {
         // Construct target URL for POST /api/v1/device-enrollment/exchange
-        let baseString = endpoint.url.absoluteString.hasSuffix("/")
+        let baseString =
+            endpoint.url.absoluteString.hasSuffix("/")
             ? endpoint.url.absoluteString
             : endpoint.url.absoluteString + "/"
-        guard let exchangeURL = URL(string: "api/v1/device-enrollment/exchange", relativeTo: URL(string: baseString))?.absoluteURL else {
+        guard
+            let exchangeURL = URL(
+                string: "api/v1/device-enrollment/exchange",
+                relativeTo: URL(string: baseString)
+            )?.absoluteURL
+        else {
             return .failed(.invalidConfiguration)
         }
 
@@ -54,17 +60,19 @@ public final class EnrollmentExchangeService: EnrollmentExchangeServiceProtocol,
             body: requestBodyData
         )
 
-        // Single-shot HTTP transport call with 16 KiB response bound
+        // Single-shot HTTP transport call
         let response: HTTPTransportResponse
         do {
-            response = try await transport.send(
-                request: transportRequest,
-                maxResponseBodyBytes: maxEnrollmentResponseBodyBytes
-            )
+            response = try await transport.send(transportRequest)
         } catch let transportError as SynveilTransportError {
             return mapTransportErrorToExchangeResult(transportError)
         } catch {
-            return .failed(.transport(.protocolError(.invalidHeaderValue)))
+            return .failed(.transport(.protocolError(.invalidErrorEnvelope)))
+        }
+
+        // Check response body size limit (16 KiB)
+        guard response.body.count <= maxEnrollmentResponseBodyBytes else {
+            return .recoveryRequired(.oversizedResponse)
         }
 
         let statusCode = response.statusCode
@@ -75,7 +83,8 @@ public final class EnrollmentExchangeService: EnrollmentExchangeServiceProtocol,
         } else if statusCode == 400 || statusCode == 401 || statusCode == 422 {
             // Invalid/rejected enrollment
             let (code, reqId) = parseErrorDetails(from: response.body)
-            let finalReqId = response.requestId ?? reqId
+            let headerReqId = extractHeaderValue(key: "x-request-id", from: response.headers)
+            let finalReqId = headerReqId ?? reqId
             return .rejected(code: code ?? "invalid_enrollment", requestId: finalReqId)
         } else if statusCode == 503 {
             return .recoveryRequired(.http503)
@@ -86,10 +95,14 @@ public final class EnrollmentExchangeService: EnrollmentExchangeServiceProtocol,
         }
     }
 
-    private func parseSuccessResponse(response: HTTPTransportResponse) async -> EnrollmentExchangeResult {
+    private func parseSuccessResponse(response: HTTPTransportResponse) async
+        -> EnrollmentExchangeResult
+    {
         // Validate Content-Type
-        guard let contentType = response.contentType?.lowercased(),
-              contentType.contains("application/json") else {
+        let contentType = extractHeaderValue(key: "content-type", from: response.headers)
+        guard let contentTypeLower = contentType?.lowercased(),
+            contentTypeLower.contains("application/json")
+        else {
             return .recoveryRequired(.wrongContentType)
         }
 
@@ -121,7 +134,8 @@ public final class EnrollmentExchangeService: EnrollmentExchangeServiceProtocol,
         }
 
         let credential = DeviceCredential(validatedRawValue: rawCredential)
-        let reqId = response.requestId ?? dto.meta?.requestId
+        let headerReqId = extractHeaderValue(key: "x-request-id", from: response.headers)
+        let reqId = headerReqId ?? dto.meta?.requestId
 
         do {
             let record = try DeviceCredentialRecord(
@@ -138,7 +152,9 @@ public final class EnrollmentExchangeService: EnrollmentExchangeServiceProtocol,
         }
     }
 
-    private func mapTransportErrorToExchangeResult(_ error: SynveilTransportError) -> EnrollmentExchangeResult {
+    private func mapTransportErrorToExchangeResult(_ error: SynveilTransportError)
+        -> EnrollmentExchangeResult
+    {
         switch error {
         case .timeout:
             return .recoveryRequired(.timeout)
@@ -177,5 +193,15 @@ public final class EnrollmentExchangeService: EnrollmentExchangeServiceProtocol,
         } catch {
             return (nil, nil)
         }
+    }
+
+    private func extractHeaderValue(key: String, from headers: [String: String]) -> String? {
+        let lowerKey = key.lowercased()
+        for (hKey, hVal) in headers {
+            if hKey.lowercased() == lowerKey {
+                return hVal
+            }
+        }
+        return nil
     }
 }
