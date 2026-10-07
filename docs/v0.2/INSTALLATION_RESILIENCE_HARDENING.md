@@ -55,7 +55,7 @@ durability.
 | 14. After compensation, before `CompensationVerified` | process loss or checkpoint failure | Compensation may have completed but lacks durable verification | Inspection required; never assume installed state or replay inverse | Protected state remains protected | Existing P008A journal tests; injected post-compensation ENOSPC not separately exercised |
 | 15. During final installation verification | read-only verification failure/process loss | All effect checkpoints may be verified; completion absent | Rerun read-only final verification; yes if authoritative state passes | No new mutation required | Existing journal final-verification fixtures |
 | 16. After final verification, before `TransactionCompleted` | process loss or journal failure | Durable final verification, completion absent | Revalidate final state and append completion; no effect replay | User/server state preserved | Existing journal semantic-transition tests |
-| 17. During repair | process loss, partial owned-file restore | Same-version repair plan and exact ownership evidence; payload may be partial | Inspect then repair only trusted owned state; unknown ownership stops | No broader cleanup; config, credentials, libraries and server data survive | Lifecycle/AppImage fixtures; native Windows repair is ordinary lifecycle CI only |
+| 17. During repair | forced process termination after restoring the first damaged owned file | Trusted same-version manifest and registration remain; a later owned payload may still be damaged or partial | Start a new same-version `/REPAIR=1` Setup, validate all target-owned file hashes and integration, and continue only within the prior manifest scope | Test-owned configuration, credential, client, library, server-state sentinels, disabled startup, and unknown neighbor are asserted | Focused real-Inno P044 repair-interruption fixture added; hosted result pending, so no repair-interruption pass is claimed yet |
 | 18. During upgrade | process loss or disk exhaustion | Verified target artifact; one or more package-owned files may be replaced | Inspect exact version/ownership; repair a supported compatible target; no blind older-binary rollback | Data schemas are not rolled back; all durable state and unknown files survive | Focused real-Inno P044 fixture added with a bounded synthetic payload; hosted result pending, so no Windows interruption pass is claimed yet |
 | 19. During ordinary uninstall | process loss | Some owned integration/payload/registration may be removed | Reconcile remaining trusted owned state; resume ordinary removal only; never turn into purge | Application/server data and unknown neighbors survive | Existing lifecycle/AppImage uninstall fixtures; no native uninstall kill test |
 | 20. During native package-manager execution | process loss, signal, manager error | Native package state is authoritative and result may be unknown; absent package metadata with remaining owned payload is partial state | Inspect exact DEB/RPM package identity/version before disposition; absent metadata plus payload stops as `OutcomeUnknown`; never immediately rerun APT/DNF | Never delete dpkg/apt/rpm/dnf locks or user/server state | Quick-install interruption and partial-payload fixtures; ordinary Linux package CI is separate native lifecycle evidence |
@@ -84,14 +84,15 @@ or physical disk.
 
 P044 adds a focused Windows CI fixture that compiles the repository's actual
 `Synveil.iss` with pinned Inno Setup 6.7.3, then forcibly terminates Setup during
-a supported upgrade and launches a new Setup process to recover. The payload is
-synthetic and bounded (including a 16 MiB file); the startup handoff uses the
-real release `synveil-client.exe`. It does not qualify the Qt runtime closure
-or establish production Windows clean-machine behavior. Its first hosted result
-is pending. Preservation evidence uses fresh test-owned data sentinels; it does
-not access or claim preservation of pre-existing user data on that runner. The
-current full Windows installer run stopped before Inno because the runtime
-stage lacked `MSVCP140.dll` required by `Qt6Core.dll`.
+a supported upgrade and during same-version repair, then launches new Setup
+processes to recover both states. The payload is synthetic and bounded
+(including a 16 MiB file); the startup handoff uses the real release
+`synveil-client.exe`. It does not qualify the Qt runtime closure or establish
+production Windows clean-machine behavior. Its first hosted result is pending.
+Preservation evidence uses fresh test-owned data sentinels; it does not access
+or claim preservation of pre-existing user data on that runner. The current
+full Windows installer run stopped before Inno because the runtime stage lacked
+`MSVCP140.dll` required by `Qt6Core.dll`.
 
 The common engine's separate-process SIGKILL fixture and deterministic
 fault-injection suites are not native package-manager or physical-storage

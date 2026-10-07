@@ -103,9 +103,9 @@ function Invoke-Setup([string]$Path, [string[]]$Extra, [int]$Expected, [string]$
     } finally { $process.Dispose() }
 }
 
-function Interrupt-UpgradeAfterLicenseCopy([string]$Path) {
-    $log = Join-Path $logRoot 'upgrade-interrupted.log'
-    $arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/LAUNCH=0', ('/LOG=' + $log))
+function Interrupt-SetupAfterLicenseCopy([string]$Path, [string[]]$Extra, [string]$Name) {
+    $log = Join-Path $logRoot "$Name.log"
+    $arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/LAUNCH=0') + $Extra + @(('/LOG=' + $log))
     $info = [Diagnostics.ProcessStartInfo]::new()
     $info.FileName = [IO.Path]::GetFullPath($Path)
     $info.WorkingDirectory = $env:RUNNER_TEMP
@@ -168,7 +168,7 @@ $oldManifestHash = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).H
 $oldOwned = Join-Path $root 'p044-obsolete-owned.txt'
 Assert-True (Test-Path -LiteralPath $oldOwned -PathType Leaf) 'P044_WINDOWS_FIXTURE_FAILURE: old owned file is absent.'
 
-Interrupt-UpgradeAfterLicenseCopy $NewerFixtureSetup
+Interrupt-SetupAfterLicenseCopy $NewerFixtureSetup @() 'upgrade-interrupted'
 Assert-True ((Get-FileHash -LiteralPath (Join-Path $root 'LICENSE') -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $NewerLicenseHash) 'P044_WINDOWS_INTERRUPTION_FAILURE: target LICENSE was not copied.'
 Assert-True ((Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $oldManifestHash) 'P044_WINDOWS_INTERRUPTION_FAILURE: prior ownership manifest changed during partial copy.'
 $registration = Get-Registration
@@ -203,10 +203,32 @@ Assert-True (((Get-ManifestHashes | ConvertTo-Json -Compress)) -ceq $verifiedBef
 Assert-True ((Get-StateSnapshot) -ceq $stateBefore) 'P044_WINDOWS_DOWNGRADE_FAILURE: durable user-state sentinels changed.'
 Assert-StartupDisabled
 
-# Same-version Repair remains a scoped operation after an interrupted upgrade.
+# Damage only manifest-owned files, then interrupt real Inno during same-version
+# repair. The trusted manifest and registration remain the scope authority.
+$repairManifestHash = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$repairRegistration = Get-Registration
+Assert-True ($repairRegistration.version -ceq '1.1.0' -and $repairRegistration.manifestHash -ceq $repairManifestHash) 'P044_WINDOWS_REPAIR_FAILURE: trusted repair identity is not established.'
+$repairLicense = Join-Path $root 'LICENSE'
+$repairPayload = Join-Path $root 'runtime-payload.bin'
+[IO.File]::WriteAllText($repairLicense, 'P044 damaged owned license fixture', [Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText($repairPayload, 'P044 damaged owned large payload fixture', [Text.UTF8Encoding]::new($false))
 $damagedOwned = Join-Path $root 'platforms\qwindows.dll'
 Remove-Item -LiteralPath $damagedOwned -Force
 Remove-Item -LiteralPath $startMenu -Force
+
+Interrupt-SetupAfterLicenseCopy $NewerFixtureSetup @('/REPAIR=1') 'repair-interrupted'
+Assert-True ((Get-FileHash -LiteralPath $repairLicense -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $NewerLicenseHash) 'P044_WINDOWS_REPAIR_INTERRUPTION_FAILURE: owned license was not restored before termination.'
+Assert-True ((Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $repairManifestHash) 'P044_WINDOWS_REPAIR_INTERRUPTION_FAILURE: trusted manifest changed.'
+$registration = Get-Registration
+Assert-True ($registration.version -ceq '1.1.0' -and $registration.manifestHash -ceq $repairManifestHash) 'P044_WINDOWS_REPAIR_INTERRUPTION_FAILURE: trusted registration changed.'
+$interruptedRepairPayloadHash = (Get-FileHash -LiteralPath $repairPayload -Algorithm SHA256).Hash.ToLowerInvariant()
+Assert-True ($interruptedRepairPayloadHash -cne $NewerRuntimePayloadHash) 'P044_WINDOWS_REPAIR_INTERRUPTION_FAILURE: fixture did not stop before full owned payload restoration.'
+Assert-True (Test-Path -LiteralPath $unknown -PathType Leaf) 'P044_WINDOWS_REPAIR_INTERRUPTION_FAILURE: unknown adjacent file was removed.'
+Assert-True ((Get-StateSnapshot) -ceq $stateBefore) 'P044_WINDOWS_REPAIR_INTERRUPTION_FAILURE: durable user-state sentinels changed.'
+Assert-StartupDisabled
+
+# A fresh same-version Setup process completes the scoped repair and verifies
+# every target-owned file before treating the installation as ready.
 Invoke-Setup $NewerFixtureSetup @('/REPAIR=1') 0 'same-version-repair'
 $null = Get-ManifestHashes
 Assert-True (Test-Path -LiteralPath $unknown -PathType Leaf) 'P044_WINDOWS_REPAIR_FAILURE: unknown adjacent file was removed.'
@@ -257,7 +279,7 @@ $evidence = [ordered]@{
     }
     forward_upgrade=[ordered]@{ target_version='1.1.0'; obsolete_owned_file_removed=$true; unknown_adjacent_file_preserved=$true }
     downgrade=[ordered]@{ older_setup_rejected=$true; installed_manifest_and_state_unchanged=$true }
-    same_version_repair=[ordered]@{ owned_payload_restored=$true; owned_shortcut_restored=$true; unknown_adjacent_file_preserved=$true; durable_state_preserved=$true }
+    same_version_repair=[ordered]@{ process_termination='forced during owned payload restoration'; prior_manifest_and_registration_retained=$true; fresh_setup_recovery_verified=$true; owned_payload_and_shortcut_restored=$true; unknown_adjacent_file_preserved=$true; durable_state_preserved=$true }
     ordinary_uninstall=[ordered]@{ package_registration_removed=$true; unknown_adjacent_file_preserved=$true; durable_state_and_startup_preference_preserved=$true }
 }
 New-Item -ItemType Directory -Path (Split-Path -Parent $EvidencePath) -Force | Out-Null
