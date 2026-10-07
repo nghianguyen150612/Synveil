@@ -166,6 +166,13 @@ Observed GitHub state for the initial published head:
   A broader Rust CI quality job also found the bridge unit test still expected
   19 codes after adding the disk-full code; its expected count is corrected to
   20 in the current follow-up.
+  On head `88e1aba8828a6a8d47599737ef810a43b4823d24`, Windows installer run
+  `37597912610` stopped in `Validate reviewed installer sources`: the test's
+  mocked `cygpath` output was transformed by Git Bash path conversion before
+  assertion. The runtime build and Inno interruption fixture did not run. The
+  test now uses the actual Windows `cygpath` on Git Bash runners and retains a
+  mock only on hosts without `cygpath`; hosted rerun is pending. This is a
+  P044 test-harness failure, not Windows interruption evidence.
   The existing Windows native acceptance workflow failed before invoking its
   installer test because its build selected Git's `/usr/bin/link` instead of
   MSVC `link.exe`; that workflow is unchanged by P044 and this is classified as

@@ -43,11 +43,52 @@ if actual[:len(expected)] != expected:
     raise SystemExit(f"direct rustc flags changed: {actual!r}")
 PY
 
-# Simulate Git Bash's POSIX view and both native spellings of Cargo's default
-# Windows home. This ensures a Windows release build remaps the registry path
-# whose backslash form appears in compiled source locations.
-mkdir -p "$fixture_root/bin" "$fixture_root/cargo-home/.cargo"
-cat > "$fixture_root/bin/cygpath" <<'SH'
+# Exercise explicit and default Windows Cargo homes. On a Windows host, use
+# the real cygpath executable so MSYS argument conversion is part of the test.
+if command -v cygpath >/dev/null 2>&1; then
+    : "${USERPROFILE:?USERPROFILE is required for the Windows Cargo-home test}"
+    CARGO_HOME="${USERPROFILE}\\.cargo"
+    export CARGO_HOME
+    unset CARGO_ENCODED_RUSTFLAGS RUSTFLAGS
+    synveil_prepare_reproducible_rust_build "$repo_root"
+    python3 - <<'PY'
+import os
+import subprocess
+
+profile = os.environ["USERPROFILE"]
+posix_profile = subprocess.check_output(["cygpath", "-u", profile], text=True).strip()
+cargo_home = posix_profile.rstrip("/\\") + "/.cargo"
+forms = [cargo_home]
+forms.extend(subprocess.check_output(["cygpath", mode, cargo_home], text=True).strip() for mode in ("-m", "-w"))
+flags = os.environ["CARGO_ENCODED_RUSTFLAGS"].split("\x1f")
+required = {f"--remap-path-prefix={form}=/usr/local/cargo" for form in forms}
+missing = required - set(flags)
+if missing:
+    raise SystemExit(f"explicit native Cargo home remap missing: {sorted(missing)!r}; flags={flags!r}")
+PY
+
+    # Cargo defaults to USERPROFILE\\.cargo when CARGO_HOME is absent.
+    unset CARGO_HOME CARGO_ENCODED_RUSTFLAGS RUSTFLAGS
+    synveil_prepare_reproducible_rust_build "$repo_root"
+    python3 - <<'PY'
+import os
+import subprocess
+
+profile = os.environ["USERPROFILE"]
+posix_profile = subprocess.check_output(["cygpath", "-u", profile], text=True).strip()
+cargo_home = posix_profile.rstrip("/\\") + "/.cargo"
+forms = [cargo_home]
+forms.extend(subprocess.check_output(["cygpath", mode, cargo_home], text=True).strip() for mode in ("-m", "-w"))
+flags = os.environ["CARGO_ENCODED_RUSTFLAGS"].split("\x1f")
+required = {f"--remap-path-prefix={form}=/usr/local/cargo" for form in forms}
+missing = required - set(flags)
+if missing:
+    raise SystemExit(f"default native Cargo home remap missing: {sorted(missing)!r}; flags={flags!r}")
+PY
+else
+    # Simulate native Windows spellings on hosts without Git Bash/cygpath.
+    mkdir -p "$fixture_root/bin" "$fixture_root/cargo-home/.cargo"
+    cat > "$fixture_root/bin/cygpath" <<'SH'
 #!/usr/bin/env bash
 case "$1" in
     -u)
@@ -71,14 +112,14 @@ case "$1" in
     *) exit 2 ;;
 esac
 SH
-chmod +x "$fixture_root/bin/cygpath"
-PATH="$fixture_root/bin:$PATH"
-export PATH
-CARGO_HOME="$fixture_root/cargo-home/.cargo"
-export CARGO_HOME
-unset CARGO_ENCODED_RUSTFLAGS RUSTFLAGS
-synveil_prepare_reproducible_rust_build "$repo_root"
-python3 - <<'PY'
+    chmod +x "$fixture_root/bin/cygpath"
+    PATH="$fixture_root/bin:$PATH"
+    export PATH
+    CARGO_HOME="$fixture_root/cargo-home/.cargo"
+    export CARGO_HOME
+    unset CARGO_ENCODED_RUSTFLAGS RUSTFLAGS
+    synveil_prepare_reproducible_rust_build "$repo_root"
+    python3 - <<'PY'
 import os
 
 flags = os.environ["CARGO_ENCODED_RUSTFLAGS"].split("\x1f")
@@ -91,13 +132,12 @@ if missing:
     raise SystemExit(f"native Cargo home remap missing: {sorted(missing)!r}; flags={flags!r}")
 PY
 
-# Exercise Cargo's default Windows home when CARGO_HOME is unset, as in hosted
-# GitHub Actions. USERPROFILE must win over an unrelated MSYS getent result.
-unset CARGO_HOME CARGO_ENCODED_RUSTFLAGS RUSTFLAGS
-USERPROFILE='C:\Users\Test User'
-export USERPROFILE
-synveil_prepare_reproducible_rust_build "$repo_root"
-python3 - <<'PY'
+    # Exercise Cargo's default Windows home when CARGO_HOME is unset.
+    unset CARGO_HOME CARGO_ENCODED_RUSTFLAGS RUSTFLAGS
+    USERPROFILE='C:\Users\Test User'
+    export USERPROFILE
+    synveil_prepare_reproducible_rust_build "$repo_root"
+    python3 - <<'PY'
 import os
 
 flags = os.environ["CARGO_ENCODED_RUSTFLAGS"].split("\x1f")
@@ -105,5 +145,6 @@ required = r"--remap-path-prefix=C:\Users\Test User\.cargo=/usr/local/cargo"
 if required not in flags:
     raise SystemExit(f"default Windows Cargo home remap missing: {required!r}; flags={flags!r}")
 PY
+fi
 
 echo "windows Rust flag transport: PASS"
