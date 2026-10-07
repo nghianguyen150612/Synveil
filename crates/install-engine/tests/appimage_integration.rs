@@ -188,3 +188,16 @@ fn generated_integration_treats_expansion_characters_as_data() {
     );
     assert!(unit.contains("$$HOME") && unit.contains("%%u"));
 }
+
+#[test]
+fn writable_parent_cannot_authorize_appimage_mutation_or_removal() {
+    let _env_guard = ENV_LOCK.lock().unwrap();
+    let (root, engine, app, icon) = fixture();
+    let installed = engine.install(&app, &icon).unwrap();
+    let original = fs::read(&installed.desktop_entry_path).unwrap();
+    fs::set_permissions(root.path().join("data"), fs::Permissions::from_mode(0o777)).unwrap();
+    assert!(engine.repair(&app, &icon).is_err());
+    assert!(engine.remove().is_err());
+    assert_eq!(fs::read(&installed.desktop_entry_path).unwrap(), original);
+    assert!(installed.icon_path.exists());
+}

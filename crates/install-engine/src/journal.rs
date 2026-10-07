@@ -487,6 +487,16 @@ fn reject_symlink(path: &Path) -> Result<(), JournalError> {
     for ancestor in path.ancestors() {
         match fs::symlink_metadata(ancestor) {
             Ok(meta) => {
+                #[cfg(target_os = "linux")]
+                if meta.is_dir() {
+                    use std::os::unix::fs::MetadataExt;
+                    let trusted_owner =
+                        meta.uid() == 0 || meta.uid() == nix::unistd::getuid().as_raw();
+                    let protected_temporary_root = meta.uid() == 0 && meta.mode() & 0o1000 != 0;
+                    if !trusted_owner || (meta.mode() & 0o022 != 0 && !protected_temporary_root) {
+                        return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+                    }
+                }
                 #[cfg(windows)]
                 {
                     use std::os::windows::fs::MetadataExt;
@@ -494,7 +504,10 @@ fn reject_symlink(path: &Path) -> Result<(), JournalError> {
                         return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
                     }
                 }
-                if meta.file_type().is_symlink() || (ancestor != path && !meta.is_dir()) {
+                let link = meta.file_type().is_symlink();
+                #[cfg(target_os = "macos")]
+                let link = link && !trusted_macos_root_alias(ancestor, &meta);
+                if link || (ancestor != path && !meta.is_dir() && !meta.file_type().is_symlink()) {
                     return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
                 }
             }
@@ -503,6 +516,22 @@ fn reject_symlink(path: &Path) -> Result<(), JournalError> {
         }
     }
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn trusted_macos_root_alias(path: &Path, metadata: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    // Preserve the OS-owned /var and /tmp aliases used by native temporary
+    // directories. User-controlled links remain rejected; this is no native
+    // qualification claim and does not relax Linux/Windows ancestry checks.
+    let target = match path.to_str() {
+        Some("/var") => Path::new("/private/var"),
+        Some("/tmp") => Path::new("/private/tmp"),
+        _ => return false,
+    };
+    metadata.uid() == 0
+        && fs::read_link(path).is_ok_and(|actual| actual == target)
+        && fs::metadata("/").is_ok_and(|root| root.uid() == 0 && root.mode() & 0o022 == 0)
 }
 
 fn secure_open(options: &mut OpenOptions) {

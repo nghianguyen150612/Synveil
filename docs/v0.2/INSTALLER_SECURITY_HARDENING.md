@@ -60,7 +60,7 @@ W native execution is reported only after a real hosted result.
 | URL credentials | P006 rejects userinfo | Already sufficient; diagnostics do not include URL | D credentials; S URL table |
 | Malicious filename | P005 basename semantics | Normalization aliases, controls, ADS, devices and option-leading basenames were accepted; now rejected | S portable basename property table; M |
 | Absolute/traversal paths | P005/P006 relative basename and ownership scopes | Reject separators explicitly before normalization, plus Win32 aliases | S Unix/Windows path table; W |
-| Symlink escape | Private download root and target link checks | Ancestor links were not checked consistently; now checked before creation/deletion | D parent replacement; S ancestor; E AppImage/journal |
+| Symlink escape | Private download root and target link checks | Ancestor links/writable ownership were not checked consistently; now checked before creation/deletion (root-owned sticky temp roots remain supported) | D parent replacement; S ancestor; E AppImage/journal |
 | Windows junction/reparse escape | Existing final-object attribute check | Ancestor junctions could redirect payload/cleanup; reject every component, including root | W actual junction fixture; source `RequireNoReparseAncestry` |
 | Destination race | Atomic create-if-absent hard link | Preserve; POSIX promotion and cleanup use anchored directory descriptor | D no-clobber/parent race |
 | Temporary-file race | P006 unpredictable create-new temp | AppImage used predictable PID temp; now RAII unpredictable tempfile. Journal create-new remains inside owned state | D temporary replacement/cleanup; E AppImage/journal |

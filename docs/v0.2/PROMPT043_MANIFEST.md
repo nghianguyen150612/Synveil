@@ -49,7 +49,7 @@ Concrete gaps fixed:
    malformed-field failures.
 6. P006 ancestry/temp identity and P008 journal ancestry/lock object checks were
    incomplete. Added ancestor link/reparse, regular-object, owned-state and
-   no-follow checks; POSIX promotion/cleanup is directory-descriptor anchored.
+   no-follow and non-writable trusted ancestry checks; POSIX promotion/cleanup is directory-descriptor anchored.
 7. AppImage swallowed invalid/newer record errors, used a predictable PID temp,
    did not check deletion ancestors, and left desktop/systemd expansion chars
    active. Preflight now preserves unknown ownership/version, schema 2 binds
@@ -104,7 +104,7 @@ upgrade is introduced, and quick-xml remains 0.41.0. No advisory ignore is added
 Observed local validation on the reviewed source:
 
 - `cargo fmt --all -- --check`: pass.
-- `cargo test -p synveil-install-engine --locked`: 508 tests pass, including
+- `cargo test -p synveil-install-engine --locked`: 510 tests pass, including
   lifecycle, engine, error model, journal, native reconciliation and AppImage.
 - `cargo clippy -p synveil-install-engine --all-targets --locked -- -D warnings`:
   pass.
@@ -199,14 +199,50 @@ now checks the actual valid policy. Staged paths are explicitly reviewed. No P04
 - `scripts/windows-security.ps1`
 - `scripts/windows_lifecycle.py`
 - `tests/installer_security/test_security.py`
+- `tests/release_manifest/test_release_manifest.py`
 - `tests/linux_quick_install/test_linux_quick_install.py`
 - `tests/release_download/test_release_download.py`
 
 ## Publication and hosted evidence
 
-Local commit/tree, remote commit/tree, actual remote branch, tree equivalence,
-PR number/URL, same-head hosted CI, merge confirmation and resulting main are
-recorded only after the actual events. A commit cannot contain its own immutable
+Initial publication observed:
+
+- Ordinary Git push succeeded; Git Data API publication was unnecessary.
+- Local and remote initial commit: `bc623154044ea41f56e59096e1375b32b4afe6f5`.
+- Local and remote initial tree: `b98684ff5e79b375a4638470e3aa8b6395264b75`:
+  exact tree equivalence verified through GitHub before PR creation.
+- GitHub verified actual branch `feat/installer-security-hardening`, base `main`,
+  baseline parent, one intended initial commit/51 reviewed files and no unrelated
+  commits. No `codex/*` ref was created or published.
+- Real [PR #74](https://github.com/nghianguyen150612/Synveil/pull/74),
+  **Synveil v0.2 P043: Installer Security Hardening**, is open.
+- Initial focused run [37563255442](https://github.com/nghianguyen150612/Synveil/actions/runs/37563255442)
+  passed Linux acquisition/invocation/engine, static/docs and crypto policy.
+  Windows failures were handled as P043 gate blockers: tests launched Python
+  scripts directly, and GUI toolchain installation was consumed without a
+  process-completion boundary. Explicit interpreter and structured .NET argv/
+  wait fixes preserve security. Later Windows evidence showed replacement of an
+  open temp file is denied; the adversary now acts after handle closure on both
+  platforms, retaining the last-use assertion rather than skipping it.
+- Review also closed writable-ancestor relocation of private Linux staging,
+  channel high-water, journal and AppImage ownership paths. Root-owned sticky
+  temporary roots remain supported. Tests prove zero write/delete under an
+  unsafe ancestor. MacOS keeps only its fixed root-owned OS temporary aliases;
+  user links remain rejected and no native qualification is claimed.
+- Follow-up commits preserve published history; no forced rewrite. Superseded
+  task-head CI runs were cancelled; final-head results remain required.
+
+The actual baseline Rust CI run 37555904738 had a passing strict quality and
+cargo-deny gate, but failed Ubuntu `package_unit_6_upgrade_preserves_state`,
+macOS Unix-socket tests, Windows Unix-API compilation and Windows config/pipe
+parity. Baseline native runs failed Windows payload private-path inspection
+(37555904743), Windows candidate linker setup (37555904754), Linux desktop
+reproducibility (37555904827), AppImage AppRun inspection (37555904765), and
+PostgreSQL `d.daticulocale` (37555904835). These were read from actual baseline
+job/log archives. They do not substitute for comparison with final-head failures.
+
+Final-head hosted CI, merge confirmation and resulting main are pending actual
+observation; they are not yet claimed. A commit cannot contain its own immutable
 SHA/tree or future CI/merge identifiers: the final publication/head identifiers
 and post-merge verification are also reported in the real PR and final handoff.
 No planned push, PR, CI result or merge is called completed evidence.

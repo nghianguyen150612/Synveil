@@ -375,7 +375,17 @@ fn reject_symlink_ancestors(path: &Path) -> Result<(), AppImageIntegrationError>
             Ok(metadata) if metadata.file_type().is_symlink() => {
                 return Err(AppImageIntegrationError::UnsafePath);
             }
-            Ok(_) => {}
+            Ok(metadata) => {
+                if current != path && !metadata.is_dir() {
+                    return Err(AppImageIntegrationError::UnsafePath);
+                }
+                let trusted_owner = metadata.uid() == 0 || metadata.uid() == unsafe_uid();
+                let protected_temporary_root =
+                    metadata.is_dir() && metadata.uid() == 0 && metadata.mode() & 0o1000 != 0;
+                if !trusted_owner || (metadata.mode() & 0o022 != 0 && !protected_temporary_root) {
+                    return Err(AppImageIntegrationError::UnsafePath);
+                }
+            }
             Err(e) if e.kind() == io::ErrorKind::NotFound => break,
             Err(e) => return Err(e.into()),
         }

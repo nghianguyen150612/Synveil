@@ -174,6 +174,8 @@ class PathAndCommandSecurity(unittest.TestCase):
             self.assertFalse((outside/'nested').exists())
             shared=root/'shared'; shared.mkdir(mode=0o777); shared.chmod(0o777)
             with self.assertRaises(download.AcquisitionError): download._safe_target(shared,'safe.deb')
+            private=shared/'private'; private.mkdir(mode=0o700)
+            with self.assertRaises(download.AcquisitionError): download._safe_target(private,'safe.deb')
 
     @unittest.skipUnless(os.name == 'posix', 'Linux durable high-water')
     def test_high_water_persistence_rollback_equivocation_unknown_schema(self):
@@ -192,6 +194,9 @@ class PathAndCommandSecurity(unittest.TestCase):
             state.write_text('{"schema_version":2}')
             with self.assertRaises(channel.ChannelError): quick.persist_channel_high_water(root,context(43))
             self.assertEqual('{"schema_version":2}',state.read_text())
+            shared=Path(directory)/'shared'; shared.mkdir(); shared.chmod(0o777)
+            with self.assertRaises(download.AcquisitionError): quick.persist_channel_high_water(shared/'private',context(43))
+            self.assertFalse((shared/'private').exists())
 
     def test_deb_preunpack_gate_has_zero_mutation(self):
         if os.name != 'posix': self.skipTest('POSIX hook')

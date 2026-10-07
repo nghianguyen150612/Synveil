@@ -1286,3 +1286,26 @@ fn journal_ancestor_link_refuses_execution_before_effects() {
     assert!(!adapter.calls.iter().any(|call| call.starts_with("apply:")));
     assert!(!outside.join("journal").exists());
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn journal_writable_ancestor_cannot_relocate_private_evidence() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::tempdir().unwrap();
+    let shared = temp.path().join("shared");
+    fs::create_dir(&shared).unwrap();
+    fs::set_permissions(&shared, fs::Permissions::from_mode(0o777)).unwrap();
+    let p = plan();
+    let mut adapter = Adapter::default();
+    let result = InstallerEngine.execute_journaled_with_options(
+        &request(&p),
+        &p,
+        &mut adapter,
+        &shared.join("private"),
+        JournalMode::StartNew,
+        JournalOptions::default(),
+    );
+    assert!(!result.completed);
+    assert!(!adapter.calls.iter().any(|call| call.starts_with("apply:")));
+    assert!(!shared.join("private").exists());
+}

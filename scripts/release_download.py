@@ -348,6 +348,12 @@ def require_safe_ancestry(path: Path) -> None:
                 or getattr(info, "st_file_attributes", 0) & 0x400
                 or not stat.S_ISDIR(info.st_mode)):
             raise AcquisitionError("UNSAFE_PATH", "ambiguous staging ancestry")
+        if os.name == "posix":
+            trusted_owner = info.st_uid in {0, os.getuid()}
+            # Root-owned sticky temporary roots protect entries owned by us.
+            protected_temporary_root = info.st_uid == 0 and info.st_mode & stat.S_ISVTX
+            if not trusted_owner or (info.st_mode & 0o022 and not protected_temporary_root):
+                raise AcquisitionError("UNSAFE_PATH", "untrusted writable path ancestry")
 
 
 def _matches(path: Path, size: int, digest: str) -> bool:
