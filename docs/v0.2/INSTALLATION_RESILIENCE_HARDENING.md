@@ -55,12 +55,12 @@ durability.
 | 14. After compensation, before `CompensationVerified` | process loss or checkpoint failure | Compensation may have completed but lacks durable verification | Inspection required; never assume installed state or replay inverse | Protected state remains protected | Existing P008A journal tests; injected post-compensation ENOSPC not separately exercised |
 | 15. During final installation verification | read-only verification failure/process loss | All effect checkpoints may be verified; completion absent | Rerun read-only final verification; yes if authoritative state passes | No new mutation required | Existing journal final-verification fixtures |
 | 16. After final verification, before `TransactionCompleted` | process loss or journal failure | Durable final verification, completion absent | Revalidate final state and append completion; no effect replay | User/server state preserved | Existing journal semantic-transition tests |
-| 17. During repair | forced process termination after restoring the first damaged owned file | Trusted same-version manifest and registration remain; a later owned payload may still be damaged or partial | Start a new same-version `/REPAIR=1` Setup, validate all target-owned file hashes and integration, and continue only within the prior manifest scope | Test-owned configuration, credential, client, library, server-state sentinels, disabled startup, and unknown neighbor are asserted | Focused real-Inno P044 repair-interruption fixture added; hosted result pending, so no repair-interruption pass is claimed yet |
-| 18. During upgrade | process loss or disk exhaustion | Verified target artifact; one or more package-owned files may be replaced | Inspect exact version/ownership; repair a supported compatible target; no blind older-binary rollback | Data schemas are not rolled back; all durable state and unknown files survive | Focused real-Inno P044 fixture added with a bounded synthetic payload; hosted result pending, so no Windows interruption pass is claimed yet |
+| 17. During repair | forced process termination after restoring the first damaged owned file | Trusted same-version manifest and registration remain; a later owned payload may still be damaged or partial | Start a new same-version `/REPAIR=1` Setup, validate all target-owned file hashes and integration, and continue only within the prior manifest scope | Test-owned configuration, credential, client, library, server-state sentinels, disabled startup, and unknown neighbor are asserted | Focused real-Inno P044 repair-interruption fixture passed in run `37614798072`; process-interruption evidence only |
+| 18. During upgrade | process loss or disk exhaustion | Verified target artifact; one or more package-owned files may be replaced | Inspect exact version/ownership; repair a supported compatible target; no blind older-binary rollback | Data schemas are not rolled back; all durable state and unknown files survive | Focused real-Inno P044 upgrade-interruption fixture passed in run `37614798072` with a bounded synthetic payload; process-interruption evidence only |
 | 19. During ordinary uninstall | process loss | Some owned integration/payload/registration may be removed | Reconcile remaining trusted owned state; resume ordinary removal only; never turn into purge | Application/server data and unknown neighbors survive | Existing lifecycle/AppImage uninstall fixtures; no native uninstall kill test |
 | 20. During native package-manager execution | process loss, signal, manager error | Native package state is authoritative and result may be unknown; absent package metadata with remaining owned payload is partial state | Inspect exact DEB/RPM package identity/version before disposition; absent metadata plus payload stops as `OutcomeUnknown`; never immediately rerun APT/DNF | Never delete dpkg/apt/rpm/dnf locks or user/server state | Quick-install interruption and partial-payload fixtures; ordinary Linux package CI is separate native lifecycle evidence |
 | 21. During AppImage integration | process loss, partial launcher/record, ENOSPC | Trusted record may be complete, incomplete, missing, or unknown/newer | Inspect record and owned integration; missing record with adjacent launcher is `Incomplete`, unknown/newer fails closed | Unknown launcher and user state preserved | AppImage partial-record and removal fixtures |
-| 22. During Windows Setup replacement | forced process termination after first changed owned payload copy; disk-full copy/registration | Fixture observes new target `LICENSE` bytes while the old ownership manifest and registration hash still agree; a later 64 MiB package-owned payload remains incomplete | Start fresh compatible Setup, revalidate old ownership, finish the target payload, and verify registration/manifest/payload hashes; no binary rollback | P027 ownership scope, state, disabled startup and unknown files are asserted by the fixture | Run `37612041579` proved the new post-install identity write and exercised forced termination/recovery for upgrade and repair; the subsequent full-manifest and preservation assertions passed. It then failed on an incorrect fixture expectation that the previously created desktop shortcut should be absent. The expectation is corrected to require that explicit shortcut to remain; a new hosted run is required. This is not a complete Windows gate or power-loss evidence |
+| 22. During Windows Setup replacement | forced process termination after first changed owned payload copy; disk-full copy/registration | Fixture observes new target `LICENSE` bytes while the old ownership manifest and registration hash still agree; a later 64 MiB package-owned payload remains incomplete | Start fresh compatible Setup, revalidate old ownership, finish the target payload, and verify registration/manifest/payload hashes; no binary rollback | P027 ownership scope, state, disabled startup and unknown files are asserted by the fixture | Run `37614798072`, job `Windows ownership lifecycle and Inno process interruption`, passed forced termination/recovery for upgrade and repair, full payload manifest/hash checks, registration, shortcut preservation, unknown neighbor, test-owned data sentinels, disabled startup, downgrade rejection, and ordinary uninstall. Artifact `11478824525` SHA-256 `f79475dad6fd2286bfe16cb26d294e9e239d8aee83e6797131c45a953fd69b55`; synthetic payload and process-interruption evidence only, not power-loss evidence |
 | 23. During obsolete owned-file cleanup | process loss or delete failure | Trusted previous and target manifests define old-minus-new set | Recompute scope from manifests; missing known obsolete files are no-op; never scan leftovers | Unknown adjacent files are never deleted | Windows ownership source contract and lifecycle fixture; interrupted native cleanup not executed |
 | 24. Disk exhaustion during download/staging | ENOSPC/quota at temp create, stream, flush, fsync, promotion, directory sync | Temp may be partial; final may be absent or complete but unreported | Return finite disk-full/staging error; clean only owned temp; reverify any final file; no manager invocation | Existing destination and unrelated files preserved | Deterministic Python ENOSPC fixtures |
 | 25. Disk exhaustion while writing journal state | injected ENOSPC at checkpoint boundaries | Before mutation-start: no apply. After mutation: earlier chain plus unmatched start remains | Before mutation, stop/replan; after mutation, stop and inspect; retain old checkpoints | Never delete earlier checkpoints to free space | Journal deterministic disk-full fault fixtures; not a real full filesystem |
@@ -87,24 +87,26 @@ P044 adds a focused Windows CI fixture that compiles the repository's actual
 a supported upgrade and during same-version repair, then launches new Setup
 processes to recover both states. The payload is synthetic and bounded
 (including a 64 MiB file); the startup handoff uses the real release
-`synveil-client.exe`. Earlier hosted attempts either missed the copy boundary,
-failed their identity preflight, or stopped at Inno compilation because the
-`64bit` registry-entry flag and `SetRegView` are unavailable in the pinned
-Inno version. Run `37610709603` installed the old fixture but showed that
-`SynveilManifestSha256` was empty in its HKCU uninstall registration, so it
-stopped before interruption. The current source explicitly writes the target
-manifest hash at `ssPostInstall` and aborts if that write fails. On run
-`37612041579`, real Setup compiled and the fixture killed/recovered both a
-forward upgrade and same-version repair, then verified the complete manifest
-payload and preservation state. It failed afterward because the test expected
-the explicitly created desktop shortcut to be absent. The assertion is fixed
-to require the shortcut to remain; a rerun is required before claiming the
-Windows gate. This fixture does not qualify the Qt runtime closure or establish
-production Windows clean-machine behavior.
+`synveil-client.exe`. Hosted run `37614798072` passed both recovery paths and
+verified the complete payload manifest and hashes, registration, preserved
+shortcut and unknown neighbor, test-owned configuration/credential/client/
+library/server sentinels, disabled startup, downgrade rejection, ordinary
+uninstall, and registration removal. The run retained artifact
+`p044-windows-inno-process-interruption` (ID `11478824525`, SHA-256
+`f79475dad6fd2286bfe16cb26d294e9e239d8aee83e6797131c45a953fd69b55`). Earlier
+hosted attempts exposed and corrected Inno version incompatibilities, missing
+registered ownership identity, interruption-boundary setup, and an incorrect
+shortcut assertion. The final source writes the target manifest hash at
+`ssPostInstall` and aborts if that write fails. This is native CI
+process-interruption evidence with a synthetic bounded payload; it does not
+establish power-loss durability, qualify the full Qt runtime closure, or claim
+preservation of pre-existing user data on the runner.
 Preservation evidence uses fresh test-owned data sentinels; it does not access
-or claim preservation of pre-existing user data on that runner. The current
-full Windows installer run stopped before Inno because the runtime stage lacked
-`MSVCP140.dll` required by `Qt6Core.dll`.
+or claim preservation of pre-existing user data on that runner. The separate
+broad Windows installer run `37614797883` stopped before Inno because its
+runtime stage lacked non-system import `MSVCP140.dll` required by `Qt6Core.dll`.
+This is a runtime-closure qualification limitation outside the focused P044
+Inno interruption job.
 
 The common engine's separate-process SIGKILL fixture and deterministic
 fault-injection suites are not native package-manager or physical-storage
@@ -116,3 +118,29 @@ is labeled `VM power-cycle`.
 P004 `INSTALL-JOURNEY-8` keeps its `interruption-power-cycle` minimum and is not
 marked native-clean-machine PASS by P044's source, fixture, or process evidence.
 P045 remains the owner of the cross-platform clean-machine matrix.
+
+## Hosted P044 and P043 results
+
+All ten jobs in P044 PR run `37614798072` passed on source head
+`b5f46b3fd9dfb4b5e7662cf5524e2faa559aaeb8`: journal durability/process restart,
+preservation regression, acquisition and deterministic ENOSPC on Ubuntu and
+Windows, Linux APT/DNF reconciliation, lifecycle/common-engine interruption,
+AppImage partial integration recovery, Windows Inno process interruption,
+docs/static validation, and strict format/engine quality. The same ten jobs
+passed in push run `37614790430`. All seven P043 security regression jobs in
+run `37614798197` also passed on that source head.
+
+Broader automatic repository workflows on the P044 head are not P044 evidence
+and had these logged outcomes: Windows native acceptance selected Git Bash's
+`link.exe` rather than MSVC; the broad Windows installer stopped before Inno
+because `MSVCP140.dll` was absent from the runtime stage; Linux AppImage and
+Linux clean-machine artifact validation failed APPIMAGE-8 (`AppRun does not
+exec packaged desktop`); workspace Windows compilation found Unix-only API
+test code in unchanged `crates/api/src/runtime_rebaseline_credential.rs` and
+Windows/macOS client suites reported failures in unchanged client source; the
+server self-host artifact job lacked `acceptance/p036/production-artifacts.json`;
+and PostgreSQL 17 scheduled-maintenance run `37614797830` failed
+`live_pg17_adversarial_crash_restart_handoff`. These are inherited or separate
+qualification/workflow failures outside the focused P044 source gates. The
+P044 and P043 workflows passed; no broad clean-machine or release claim follows
+from those results.
