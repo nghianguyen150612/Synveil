@@ -25,13 +25,15 @@ $ncryptFile = Get-Item -LiteralPath $ncryptPath
 $ncryptVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($ncryptPath)
 $ncryptSignature = Get-AuthenticodeSignature -LiteralPath $ncryptPath
 New-Item (Split-Path $EvidencePath -Parent) -ItemType Directory -Force | Out-Null
-$ncryptObservation = [ordered]@{name='ncrypt.dll';path=$ncryptPath;company=$ncryptVersion.CompanyName;original_filename=$ncryptVersion.OriginalFilename;signature_status=[string]$ncryptSignature.Status;signer=$ncryptSignature.SignerCertificate.Subject;version=$ncryptVersion.FileVersion;sha256=(Get-FileHash -LiteralPath $ncryptPath -Algorithm SHA256).Hash.ToLowerInvariant()}
+$ncryptObservation = [ordered]@{name='ncrypt.dll';path=$ncryptPath;link_type=$ncryptFile.LinkType;attributes=[string]$ncryptFile.Attributes;company=$ncryptVersion.CompanyName;original_filename=$ncryptVersion.OriginalFilename;signature_status=[string]$ncryptSignature.Status;signer=$ncryptSignature.SignerCertificate.Subject;version=$ncryptVersion.FileVersion;sha256=(Get-FileHash -LiteralPath $ncryptPath -Algorithm SHA256).Hash.ToLowerInvariant()}
 [ordered]@{schema_version=1;status='preflight';source_commit=(git rev-parse HEAD);compiler=$compiler;linker=$linker;system_dlls=@($ncryptObservation)} | ConvertTo-Json -Depth 6 | Set-Content $EvidencePath -Encoding utf8
 Write-Host ("Observed OS NCrypt identity: " + ($ncryptObservation | ConvertTo-Json -Compress))
 # Windows' signed version resource names its localized source ncrypt.dll.mui;
 # ownership is established by the fixed OS path, trusted Microsoft signature
 # and AMD64 PE identity, not by treating that resource name as a payload path.
-if ($null -ne $ncryptFile.LinkType -or $ncryptVersion.CompanyName -cne 'Microsoft Corporation' -or $ncryptVersion.OriginalFilename -inotmatch '^ncrypt\.dll(?:\.mui)?$' -or $ncryptSignature.Status -ne 'Valid' -or $ncryptSignature.SignerCertificate.Subject -notmatch 'CN=Microsoft (Windows|Corporation)(,|$)') { throw 'WINDOWS_SYSTEM_NCRYPT_IDENTITY_FAILURE' }
+# Serviced Windows components may be hard-linked to WinSxS. A hard link is
+# the same signed file, not a path redirection; reject reparse points instead.
+if (($ncryptFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $ncryptVersion.CompanyName -cne 'Microsoft Corporation' -or $ncryptVersion.OriginalFilename -inotmatch '^ncrypt\.dll(?:\.mui)?$' -or $ncryptSignature.Status -ne 'Valid' -or $ncryptSignature.SignerCertificate.Subject -notmatch 'CN=Microsoft (Windows|Corporation)(,|$)') { throw 'WINDOWS_SYSTEM_NCRYPT_IDENTITY_FAILURE' }
 $ncryptBytes = [IO.File]::ReadAllBytes($ncryptPath)
 $ncryptOffset = [BitConverter]::ToInt32($ncryptBytes, 0x3c)
 if ($ncryptOffset -lt 0 -or $ncryptOffset + 6 -ge $ncryptBytes.Length -or [BitConverter]::ToUInt32($ncryptBytes, $ncryptOffset) -ne 0x00004550 -or [BitConverter]::ToUInt16($ncryptBytes, $ncryptOffset + 4) -ne 0x8664) { throw 'WINDOWS_SYSTEM_NCRYPT_ARCHITECTURE_FAILURE' }
