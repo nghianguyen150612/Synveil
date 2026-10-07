@@ -107,6 +107,8 @@ change that acceptance rule.
 - `scripts/validate-installation-resilience-hardening.py`
 - `scripts/validate-installer-security-hardening.py`
 - `scripts/validate-windows-installer.py`
+- `deploy/packages/common/reproducible.sh`
+- `scripts/test-windows-rustflags.sh`
 - `tests/install-error-model/p006-acquisition-codes.json`
 - `tests/install-error-model/test_acquisition_bridge.py`
 - `tests/linux_quick_install/test_linux_quick_install.py`
@@ -131,6 +133,14 @@ change that acceptance rule.
 | `./scripts/validate-docs.sh` | Passed, including P043/P044 validators |
 | `./scripts/validate-install-acceptance.sh` | Passed: 11 scenarios; native execution not performed |
 | `git diff --check` | Passed |
+
+Windows follow-up local checks for the Cargo registry remap:
+
+| Command | Result |
+|---|---|
+| `bash -n deploy/packages/common/reproducible.sh scripts/test-windows-rustflags.sh` | Passed |
+| `./scripts/test-windows-rustflags.sh` | Passed: encoded transport and native Cargo-home remaps for both explicit `CARGO_HOME` and default `USERPROFILE` |
+| `python3 scripts/validate-windows-installer.py` | Passed |
 
 Local tests used Rust 1.99 installed into the task workspace after the initial
 toolchain check found no Rust commands. No repository toolchain or lockfile was
