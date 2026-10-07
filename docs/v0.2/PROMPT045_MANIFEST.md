@@ -53,6 +53,17 @@ packaged NCRYPT.dll. The native producer observes only the OS-selected System32
 file's Microsoft signature, version, hash and AMD64 identity, separately from
 app-local CRT provenance. This is producer diagnostics, not Windows 11 acceptance.
 
+The first NCrypt ownership preflight on source `1a2d7c6` rejected the legitimate
+OS version resource's OriginalFilename. The diagnostic rerun on `064e9eb5`,
+Windows native push run `37702883042`, job `113070262847`, observed fixed path
+`C:\Windows\system32\ncrypt.dll`, company Microsoft Corporation, Valid signature
+from Microsoft Windows, version `10.0.26100.1591`, OriginalFilename
+`ncrypt.dll.mui`, SHA-256
+`b0faca7d27c9bea959d6494372bb24daa594f3727e9319af5d0ac67cde530e55`.
+The predicate now accepts only the two explicit NCrypt resource names; all fixed
+path/signature/company/PE requirements remain. The producer is Windows Server,
+not a tested Windows 11 build, and no Setup identity is inferred from preflight.
+
 Status: **infrastructure/source implemented; acceptance checkpoint withheld.**
 
 | Field | Observed value |
