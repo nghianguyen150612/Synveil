@@ -1,0 +1,92 @@
+name: Installer security hardening
+on:
+  pull_request:
+  push:
+    branches: [feat/installer-security-hardening]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: installer-security-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  acquisition:
+    name: Acquisition, channel, and downgrade security (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r scripts/requirements-installer-security.txt
+      - run: python -m unittest discover -s tests/release_manifest -v
+      - run: python -m unittest discover -s tests/release_download -v
+      - run: python -m unittest discover -s tests/release_channel -v
+      - run: python -m unittest discover -s tests/installer_security -v
+  engine-linux:
+    name: Installer lifecycle, journal, AppImage security (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p synveil-install-engine --locked
+      - run: cargo clippy -p synveil-install-engine --all-targets --locked -- -D warnings
+  linux-invocation:
+    name: Linux invocation, path, hook security
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest discover -s tests/linux_quick_install -v
+      - run: python3 -m unittest discover -s tests/linux_platform_detection -v
+      - run: python3 scripts/validate-debian-package-ux.py
+      - run: python3 scripts/validate-rpm-package-ux.py
+      - run: shellcheck -S warning deploy/install/quick-install.sh deploy/packages/debian/preinst deploy/packages/debian/postinst deploy/packages/debian/prerm deploy/packages/debian/postrm
+  windows-security:
+    name: Windows ownership, options, reparse and compiler security
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: python scripts/validate-windows-installer.py
+      - run: python -m unittest discover -s scripts -p test_windows_lifecycle.py -v
+      - name: Compile actual Inno source and exercise rejection fixtures
+        shell: pwsh
+        run: ./scripts/test-windows-installer-security.ps1
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Windows common engine policy tests (no native filesystem claim)
+        run: cargo test -p synveil-install-engine --test lifecycle_contract --test engine_contract --test error_model_contract --locked
+  static-docs:
+    name: Security structural and documentation gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - run: python3 scripts/validate-installer-security-hardening.py
+      - run: python3 -m py_compile scripts/validate-installer-security-hardening.py
+      - run: ./scripts/validate-docs.sh
+      - run: ./scripts/validate-install-acceptance.sh
+      - run: git diff --check
+  python-dependency-policy:
+    name: Installer crypto dependency policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pip-audit
+      - run: python -m pip_audit -r scripts/requirements-installer-security.txt
+  # Whole-workspace format/strict Clippy and cargo-deny remain in ci.yml. They
+  # are observed on this same final head; do not duplicate that entire CI here.

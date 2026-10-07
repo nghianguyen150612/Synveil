@@ -5,17 +5,20 @@
 # No network downloads. Idempotent. POSIX sh.
 # SPDX-License-Identifier: MIT
 set -e
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+unset ENV BASH_ENV CDPATH LD_PRELOAD LD_LIBRARY_PATH PYTHONPATH
 
 log() {
     printf '[synveil] %s\n' "$*" >&2
 }
 
-log "postinst configure (args: $*)"
+log "postinst configure"
 
 # 1. Service account via systemd-sysusers (accepted Prompt 75 contract; never useradd).
 if command -v systemd-sysusers >/dev/null 2>&1; then
     log "applying sysusers (systemd-sysusers)"
-    systemd-sysusers
+    systemd-sysusers /usr/lib/sysusers.d/synveil.conf
 else
     log "ERROR: systemd-sysusers not found; cannot create synveil account" >&2
     exit 1
@@ -24,7 +27,7 @@ fi
 # 2. Persistent state via tmpfiles (do not duplicate paths manually).
 if command -v systemd-tmpfiles >/dev/null 2>&1; then
     log "applying tmpfiles (systemd-tmpfiles --create)"
-    systemd-tmpfiles --create
+    systemd-tmpfiles --create /usr/lib/tmpfiles.d/synveil.conf
 else
     log "ERROR: systemd-tmpfiles not found; cannot create /var/lib/synveil" >&2
     exit 1
@@ -35,7 +38,9 @@ fi
 # synveil group now exists. Directories only (no recursion into admin files,
 # no secret creation, no numeric UID/GID).
 log "ensuring config skeleton ownership (root:synveil 0750, root:root 0700)"
+[ ! -L /etc/synveil ] && [ ! -L /etc/synveil/credentials ] || exit 1
 mkdir -p /etc/synveil /etc/synveil/credentials
+[ -d /etc/synveil ] && [ -d /etc/synveil/credentials ] || exit 1
 chown root:synveil /etc/synveil
 chmod 0750 /etc/synveil
 chown root:root /etc/synveil/credentials

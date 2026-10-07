@@ -1,0 +1,21 @@
+#!/bin/sh
+# P043: pre-unpack native version gate. This hook never writes user/system data.
+set -eu
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+unset ENV BASH_ENV CDPATH LD_PRELOAD LD_LIBRARY_PATH PYTHONPATH
+case "${1:-}" in
+    install|upgrade)
+        old=${2:-}
+        [ -z "$old" ] && exit 0
+        # Only the current release's exact stable native version is a supported
+        # repair source. Newer, unknown and unapproved older sources stop before
+        # dpkg unpacks payload. No --force-downgrade escape exists.
+        if [ "$old" != '@SYNVEIL_DEB_VERSION@' ]; then
+            printf '[synveil] incompatible native transition; no unpack authorized\n' >&2
+            exit 1
+        fi
+        ;;
+    abort-upgrade) ;;
+    *) printf '[synveil] unsupported pre-install action\n' >&2; exit 1 ;;
+esac

@@ -209,6 +209,14 @@ impl InstallationJournal {
             _ => {}
         }
         reject_symlink(root)?;
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let metadata = fs::metadata(root).map_err(io_error)?;
+            if metadata.uid() != nix::unistd::getuid().as_raw() || metadata.mode() & 0o022 != 0 {
+                return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+            }
+        }
         let directory = root.join(&plan.plan_id);
         reject_symlink(&directory)?;
         if directory.exists() {
@@ -223,13 +231,17 @@ impl InstallationJournal {
         }
         let lock_path = directory.join("lock");
         reject_symlink(&lock_path)?;
-        let lock = OpenOptions::new()
+        let mut lock_options = OpenOptions::new();
+        lock_options
             .read(true)
             .write(true)
             .create(true)
-            .truncate(false)
-            .open(&lock_path)
-            .map_err(io_error)?;
+            .truncate(false);
+        secure_open(&mut lock_options);
+        let lock = lock_options.open(&lock_path).map_err(io_error)?;
+        if !lock.metadata().map_err(io_error)?.is_file() {
+            return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+        }
         lock.try_lock_exclusive()
             .map_err(|_| JournalError::new(JournalErrorCode::JournalBusy))?;
         let fingerprint = plan_fingerprint(plan)?;
@@ -255,6 +267,7 @@ impl InstallationJournal {
     }
 
     pub fn append(&mut self, record: JournalRecord) -> Result<(), JournalError> {
+        reject_symlink(&self.directory)?;
         if self.records.len() >= MAX_CHECKPOINT_RECORDS {
             return Err(JournalError::new(JournalErrorCode::JournalLimitExceeded));
         }
@@ -300,11 +313,10 @@ impl InstallationJournal {
             .join(format!("checkpoint-{generation:016}.json"));
         reject_symlink(&temp)?;
         reject_symlink(&final_path)?;
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)
-            .map_err(io_error)?;
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        secure_open(&mut options);
+        let mut file = options.open(&temp).map_err(io_error)?;
         file.write_all(&bytes)
             .and_then(|_| file.flush())
             .map_err(io_error)?;
@@ -394,6 +406,9 @@ fn load_records(
             return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
         }
         let metadata = fs::symlink_metadata(&path).map_err(io_error)?;
+        if !metadata.is_file() {
+            return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+        }
         if metadata.len() > MAX_CHECKPOINT_BYTES {
             return Err(JournalError::new(JournalErrorCode::JournalLimitExceeded));
         }
@@ -463,12 +478,48 @@ fn validate_id(id: &str) -> Result<(), JournalError> {
 }
 
 fn reject_symlink(path: &Path) -> Result<(), JournalError> {
-    if let Ok(meta) = fs::symlink_metadata(path)
-        && meta.file_type().is_symlink()
+    if path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
     {
         return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
     }
+    for ancestor in path.ancestors() {
+        match fs::symlink_metadata(ancestor) {
+            Ok(meta) => {
+                #[cfg(windows)]
+                {
+                    use std::os::windows::fs::MetadataExt;
+                    if meta.file_attributes() & 0x400 != 0 {
+                        return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+                    }
+                }
+                if meta.file_type().is_symlink() || (ancestor != path && !meta.is_dir()) {
+                    return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(io_error(e)),
+        }
+    }
     Ok(())
+}
+
+fn secure_open(options: &mut OpenOptions) {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options
+            .mode(0o600)
+            .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(0x00200000); // FILE_FLAG_OPEN_REPARSE_POINT
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    let _ = options;
 }
 
 fn sync_directory(path: &Path) -> Result<(), JournalError> {

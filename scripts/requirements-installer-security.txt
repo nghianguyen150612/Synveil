@@ -1,0 +1,2 @@
+# Reviewed maintained Ed25519/OpenSSL verification backend; no private keys.
+cryptography==50.0.2

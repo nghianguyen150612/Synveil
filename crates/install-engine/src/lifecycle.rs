@@ -280,6 +280,16 @@ fn validate_upgrade(
     if installed != &upgrade.compatibility.source {
         return Err(LifecycleError::UnsupportedSource);
     }
+    // Compatibility is explicit policy, never permission to downgrade or repair
+    // through an Upgrade intent. Compare independently before any effects.
+    let source = stable_version(&installed.version)?;
+    let target = stable_version(&upgrade.compatibility.target.version)?;
+    if target < source {
+        return Err(LifecycleError::DowngradeRejected);
+    }
+    if target == source {
+        return Err(LifecycleError::IntentMismatch);
+    }
     match upgrade.compatibility.disposition {
         CompatibilityDisposition::Supported => {}
         CompatibilityDisposition::UnsupportedSource => {
@@ -323,6 +333,7 @@ fn validate_repair(
     if plan.intent != InstallationIntent::Repair {
         return Err(LifecycleError::IntentMismatch);
     }
+    stable_version(&repair.expected.version)?;
     if state.product.as_ref() != Some(&repair.expected) {
         return Err(LifecycleError::VersionMismatch);
     }
@@ -344,6 +355,25 @@ fn validate_repair(
     } else {
         Ok(LifecycleDecision::Repairable)
     }
+}
+
+fn stable_version(value: &str) -> Result<[u32; 3], LifecycleError> {
+    let parts: Vec<_> = value.split('.').collect();
+    if parts.len() != 3 {
+        return Err(LifecycleError::UnknownState);
+    }
+    let mut version = [0; 3];
+    for (index, part) in parts.iter().enumerate() {
+        if part.is_empty()
+            || part.len() > 10
+            || (part.len() > 1 && part.starts_with('0'))
+            || !part.bytes().all(|b| b.is_ascii_digit())
+        {
+            return Err(LifecycleError::UnknownState);
+        }
+        version[index] = part.parse().map_err(|_| LifecycleError::UnknownState)?;
+    }
+    Ok(version)
 }
 
 fn validate_effect(

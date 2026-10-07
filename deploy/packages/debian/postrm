@@ -6,13 +6,16 @@
 # administrative layer (deploy/install/uninstall.sh --purge). POSIX sh.
 # SPDX-License-Identifier: MIT
 set -e
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+unset ENV BASH_ENV CDPATH LD_PRELOAD LD_LIBRARY_PATH PYTHONPATH
 
 log() {
     printf '[synveil] %s\n' "$*" >&2
 }
 
 ACTION="${1:-}"
-log "postrm action: $ACTION (args: $*)"
+log "postrm action inspected"
 
 daemon_reload_if_running() {
     if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
@@ -48,7 +51,7 @@ case "$ACTION" in
         log "upgrade postrm complete; timer enablement preserved, no maintenance run triggered"
         ;;
     *)
-        log "unknown postrm action: $ACTION; refusing to guess (no state change)" >&2
+        log "unknown postrm action; refusing to guess (no state change)" >&2
         exit 1
         ;;
 esac

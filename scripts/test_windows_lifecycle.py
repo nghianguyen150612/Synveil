@@ -17,7 +17,7 @@ class WindowsLifecycleTests(unittest.TestCase):
         with self.assertRaises(ValueError): lifecycle("0.1.0", "0.1.0", False)
 
     def test_upgrade_and_downgrade(self):
-        self.assertEqual(lifecycle("1.0.0", "1.1.0", False), "upgrade")
+        self.assertEqual(lifecycle("1.0.0", "1.1.0", False, compatible_sources=frozenset({"1.0.0"})), "upgrade")
         with self.assertRaises(ValueError): lifecycle("1.1.0", "1.0.0", False)
         with self.assertRaises(ValueError): lifecycle("unknown", "1.0.0", False)
 

@@ -5,12 +5,12 @@ use sha2::{Digest, Sha256};
 use std::{
     env, fs,
     io::{self, Read, Write},
-    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    os::unix::fs::{MetadataExt, PermissionsExt},
     path::{Component, Path, PathBuf},
     process::Command,
 };
 
-pub const APPIMAGE_INTEGRATION_SCHEMA_VERSION: u32 = 1;
+pub const APPIMAGE_INTEGRATION_SCHEMA_VERSION: u32 = 2;
 const DESKTOP_NAME: &str = "synveil-appimage.desktop";
 const ICON_RELATIVE: &str = "icons/hicolor/scalable/apps/synveil.svg";
 const UNIT_NAME: &str = "synveil-appimage-client.service";
@@ -29,6 +29,7 @@ pub enum AppImageIntegrationStatus {
 #[serde(deny_unknown_fields)]
 pub struct AppImageIntegrationRecord {
     pub schema_version: u32,
+    pub product_version: String,
     pub appimage_path: PathBuf,
     pub artifact_sha256: String,
     pub desktop_entry_path: PathBuf,
@@ -64,6 +65,9 @@ pub struct AppImageIntegration {
 
 impl AppImageIntegration {
     pub fn from_environment() -> Result<Self, AppImageIntegrationError> {
+        if nix::unistd::geteuid().is_root() {
+            return Err(AppImageIntegrationError::InvalidEnvironment);
+        }
         let home = env::var_os("HOME")
             .map(PathBuf::from)
             .ok_or(AppImageIntegrationError::InvalidEnvironment)?;
@@ -130,15 +134,16 @@ impl AppImageIntegration {
             return Err(AppImageIntegrationError::InvalidArtifact);
         }
         let (desktop, icon_path, record_path, unit) = self.paths();
+        // Unknown/missing ownership evidence never authorizes overwriting an
+        // adjacent surface. Validate before the first integration mutation.
+        let previous = self.existing_record()?;
         atomic_owned_write(&desktop, desktop_entry(&artifact)?.as_bytes(), 0o644)?;
         atomic_owned_write(&icon_path, &icon, 0o644)?;
         atomic_owned_write(&unit, user_unit(&artifact)?.as_bytes(), 0o644)?;
-        let enabled = self
-            .read_record()
-            .map(|r| r.startup_enabled)
-            .unwrap_or(false);
+        let enabled = previous.is_some_and(|r| r.startup_enabled);
         let record = AppImageIntegrationRecord {
             schema_version: APPIMAGE_INTEGRATION_SCHEMA_VERSION,
+            product_version: env!("CARGO_PKG_VERSION").into(),
             artifact_sha256: sha256(&artifact)?,
             appimage_path: artifact,
             desktop_entry_path: desktop,
@@ -168,6 +173,9 @@ impl AppImageIntegration {
 
     pub fn remove(&self) -> Result<(), AppImageIntegrationError> {
         let (desktop, icon, record, unit) = self.paths();
+        if self.existing_record()?.is_none() {
+            return Ok(());
+        }
         for path in [&desktop, &icon, &unit, &record] {
             remove_owned(path)?;
         }
@@ -180,7 +188,7 @@ impl AppImageIntegration {
             return Err(AppImageIntegrationError::UserSystemdUnavailable);
         }
         let action = if enable { "enable" } else { "disable" };
-        let status = Command::new("systemctl")
+        let status = Command::new(systemctl()?)
             .args(["--user", action, UNIT_NAME])
             .status()?;
         if !status.success() {
@@ -204,7 +212,7 @@ impl AppImageIntegration {
         if !user_systemd_available() {
             return Err(AppImageIntegrationError::UserSystemdUnavailable);
         }
-        let status = Command::new("systemctl")
+        let status = Command::new(systemctl()?)
             .args(["--user", "is-enabled", UNIT_NAME])
             .status()?;
         Ok(status.success())
@@ -212,12 +220,36 @@ impl AppImageIntegration {
 
     fn read_record(&self) -> Result<AppImageIntegrationRecord, AppImageIntegrationError> {
         let (_, _, path, _) = self.paths();
+        reject_symlink_ancestors(&path)?;
+        let metadata = fs::symlink_metadata(&path)?;
+        if !metadata.is_file() || metadata.uid() != unsafe_uid() || metadata.len() > 16384 {
+            return Err(AppImageIntegrationError::InvalidRecord);
+        }
         let record: AppImageIntegrationRecord = serde_json::from_slice(&fs::read(path)?)
             .map_err(|_| AppImageIntegrationError::InvalidRecord)?;
-        if record.schema_version != APPIMAGE_INTEGRATION_SCHEMA_VERSION {
+        let (desktop, icon, _, unit) = self.paths();
+        if record.schema_version != APPIMAGE_INTEGRATION_SCHEMA_VERSION
+            || record.product_version != env!("CARGO_PKG_VERSION")
+            || record.desktop_entry_path != desktop
+            || record.icon_path != icon
+            || record.user_unit_path != unit
+        {
             return Err(AppImageIntegrationError::InvalidRecord);
         }
         Ok(record)
+    }
+
+    fn existing_record(
+        &self,
+    ) -> Result<Option<AppImageIntegrationRecord>, AppImageIntegrationError> {
+        let (desktop, icon, record, unit) = self.paths();
+        if [&desktop, &icon, &record, &unit]
+            .iter()
+            .all(|p| fs::symlink_metadata(p).is_err_and(|e| e.kind() == io::ErrorKind::NotFound))
+        {
+            return Ok(None);
+        }
+        self.read_record().map(Some)
     }
 }
 
@@ -253,7 +285,7 @@ fn validate_artifact(path: &Path) -> Result<PathBuf, AppImageIntegrationError> {
 
 fn quote_exec(path: &Path) -> Result<String, AppImageIntegrationError> {
     let value = path.to_str().ok_or(AppImageIntegrationError::UnsafePath)?;
-    if value.chars().any(|c| c == '\n' || c == '\r' || c == '\0') {
+    if value.chars().any(|c| c.is_control()) {
         return Err(AppImageIntegrationError::UnsafePath);
     }
     Ok(format!(
@@ -262,6 +294,8 @@ fn quote_exec(path: &Path) -> Result<String, AppImageIntegrationError> {
             .replace('%', "%%")
             .replace('\\', "\\\\")
             .replace('"', "\\\"")
+            .replace('$', "\\$")
+            .replace('`', "\\`")
     ))
 }
 
@@ -290,6 +324,7 @@ fn quote_systemd(path: &Path) -> Result<String, AppImageIntegrationError> {
             .replace('%', "%%")
             .replace('\\', "\\\\")
             .replace('"', "\\\"")
+            .replace('$', "$$")
     ))
 }
 
@@ -305,6 +340,7 @@ fn atomic_owned_write(
     mode: u32,
 ) -> Result<(), AppImageIntegrationError> {
     let parent = path.parent().ok_or(AppImageIntegrationError::UnsafePath)?;
+    reject_symlink_ancestors(parent)?;
     fs::create_dir_all(parent)?;
     reject_symlink_ancestors(parent)?;
     let meta = fs::symlink_metadata(parent)?;
@@ -316,18 +352,14 @@ fn atomic_owned_write(
     {
         return Err(AppImageIntegrationError::UnownedSurface);
     }
-    let tmp = parent.join(format!(
-        ".{}.tmp-{}",
-        path.file_name().unwrap().to_string_lossy(),
-        std::process::id()
-    ));
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create_new(true).mode(mode);
-    let mut file = options.open(&tmp)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    let file = temporary.as_file_mut();
+    file.set_permissions(fs::Permissions::from_mode(mode))?;
     file.write_all(bytes)?;
     file.sync_all()?;
-    drop(file);
-    fs::rename(&tmp, path)?;
+    temporary
+        .persist(path)
+        .map_err(|e| AppImageIntegrationError::Io(e.error))?;
     fs::File::open(parent)?.sync_all()?;
     if fs::read(path)? != bytes {
         return Err(AppImageIntegrationError::InvalidRecord);
@@ -339,14 +371,20 @@ fn reject_symlink_ancestors(path: &Path) -> Result<(), AppImageIntegrationError>
     let mut current = PathBuf::new();
     for component in path.components() {
         current.push(component.as_os_str());
-        if fs::symlink_metadata(&current)?.file_type().is_symlink() {
-            return Err(AppImageIntegrationError::UnsafePath);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(AppImageIntegrationError::UnsafePath);
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => break,
+            Err(e) => return Err(e.into()),
         }
     }
     Ok(())
 }
 
 fn remove_owned(path: &Path) -> Result<(), AppImageIntegrationError> {
+    reject_symlink_ancestors(path)?;
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_file() && meta.uid() == unsafe_uid() => {
             fs::remove_file(path).map_err(Into::into)
@@ -355,6 +393,20 @@ fn remove_owned(path: &Path) -> Result<(), AppImageIntegrationError> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e.into()),
     }
+}
+
+fn systemctl() -> Result<PathBuf, AppImageIntegrationError> {
+    for path in ["/usr/bin/systemctl", "/bin/systemctl"] {
+        if let Ok(path) = fs::canonicalize(path)
+            && let Ok(metadata) = fs::metadata(&path)
+            && metadata.is_file()
+            && metadata.uid() == 0
+            && metadata.mode() & 0o022 == 0
+        {
+            return Ok(path);
+        }
+    }
+    Err(AppImageIntegrationError::UserSystemdUnavailable)
 }
 
 fn unsafe_uid() -> u32 {

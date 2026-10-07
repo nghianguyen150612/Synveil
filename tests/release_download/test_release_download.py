@@ -182,3 +182,31 @@ class ReleaseDownloadTests(unittest.TestCase):
         self.error("NETWORK_ERROR",download.fetch_https,"https://release.example/x",self.policy.allowed_manifest_origins,20,transport=Failed())
 
 if __name__ == "__main__": unittest.main()
+
+class StageRaceSecurityTests(unittest.TestCase):
+    setUp = ReleaseDownloadTests.setUp
+    tearDown = ReleaseDownloadTests.tearDown
+    error = ReleaseDownloadTests.error
+    def test_68_parent_replacement_is_rejected_and_owned_temp_cleaned(self):
+        if sys.platform == 'win32': self.skipTest('Unix directory descriptor race; Windows reparse tests are separate')
+        import os
+        stage=self.root/'stage'; stage.mkdir(mode=0o700); outside=self.root/'outside'; outside.mkdir(); moved=self.root/'moved'
+        class Racing(io.BytesIO):
+            def read(inner, size=-1):
+                value=super().read(size)
+                if not value and stage.is_dir() and not stage.is_symlink():
+                    stage.rename(moved); stage.symlink_to(outside, target_is_directory=True)
+                return value
+        self.error('UNSAFE_PATH',download.stage_artifact,Racing(self.payload),stage,self.selection)
+        self.assertEqual([],list(outside.iterdir())); self.assertEqual([],list(moved.iterdir()))
+
+    def test_69_temporary_path_replacement_never_promotes_other_bytes(self):
+        class Racing(io.BytesIO):
+            def read(inner, size=-1):
+                value=super().read(size)
+                if not value:
+                    for temporary in self.root.glob('.synveil-download-*'):
+                        temporary.unlink(); temporary.write_bytes(b'evil')
+                return value
+        self.error('UNSAFE_PATH',download.stage_artifact,Racing(self.payload),self.root,self.selection)
+        self.assertFalse((self.root/'synveil.deb').exists()); self.assertEqual([],list(self.root.glob('.synveil-download-*')))

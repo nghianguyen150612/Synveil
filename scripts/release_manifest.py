@@ -31,7 +31,13 @@ def fail(message: str) -> None:
 
 
 def safe_filename(value: object) -> bool:
-    if not isinstance(value, str) or not value or "\0" in value or "\\" in value:
+    # One portable basename, without Win32 aliases, ADS or option syntax.
+    if (not isinstance(value, str) or not 1 <= len(value) <= 255
+            or value != value.strip() or value.endswith(".") or value.startswith("-")
+            or any(ord(c) < 32 or 127 <= ord(c) <= 159 or c in '/\\:<>"|?*' for c in value)
+            or value.split(".")[0].upper() in {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
+                                                *(f"COM{i}" for i in range(1, 10)),
+                                                *(f"LPT{i}" for i in range(1, 10))}):
         return False
     path = PurePosixPath(value)
     return not path.is_absolute() and len(path.parts) == 1 and value not in {".", ".."} and ".." not in path.parts and not PureWindowsPath(value).is_absolute()
@@ -60,16 +66,16 @@ def validate_artifact(item: object, product_version: str, artifact_root: Path | 
     identity = item.get("id", "<unknown>")
     where = f"artifact {identity}"
     require_fields(item, REQUIRED_ARTIFACT_FIELDS, ARTIFACT_FIELDS, where)
-    if not isinstance(identity, str) or not re.fullmatch(r"[a-z0-9]+(?:[a-z0-9_-]*[a-z0-9])?", identity):
+    if not isinstance(identity, str) or len(identity) > 128 or not re.fullmatch(r"[a-z0-9]+(?:[a-z0-9_-]*[a-z0-9])?", identity):
         fail(f"{where}: invalid id")
     kind = item["artifact_type"]
-    if kind not in TYPES:
+    if not isinstance(kind, str) or kind not in TYPES:
         fail(f"{where}: unknown artifact_type: {kind}")
-    if item["platform"] not in PLATFORMS:
+    if not isinstance(item["platform"], str) or item["platform"] not in PLATFORMS:
         fail(f"{where}: invalid platform")
-    if item["architecture"] not in ARCHITECTURES:
+    if not isinstance(item["architecture"], str) or item["architecture"] not in ARCHITECTURES:
         fail(f"{where}: invalid architecture")
-    if item["role"] not in ROLES:
+    if not isinstance(item["role"], str) or item["role"] not in ROLES:
         fail(f"{where}: invalid role")
     expected_platform = "windows" if kind.startswith("windows_") else "linux"
     if item["platform"] != expected_platform:
@@ -81,7 +87,12 @@ def validate_artifact(item: object, product_version: str, artifact_root: Path | 
         fail(f"{where}: server bundle requires server_runtime role")
     if kind == "postgresql_runtime_bundle" and item["role"] != "database_runtime":
         fail(f"{where}: PostgreSQL bundle requires database_runtime role")
-    if kind == "server_runtime_bundle" and set(item["components"]) != {"synveil-api", "synveil-worker", "synveil-server-migrate"}:
+    components = item["components"]
+    if (not isinstance(components, list) or len(components) > len(COMPONENTS)
+            or any(not isinstance(x, str) or x not in COMPONENTS for x in components)
+            or len(set(components)) != len(components)):
+        fail(f"{where}: invalid components")
+    if kind == "server_runtime_bundle" and set(components) != {"synveil-api", "synveil-worker", "synveil-server-migrate"}:
         fail(f"{where}: server bundle has incomplete closed component inventory")
     if kind == "postgresql_runtime_bundle" and item["components"] != ["postgresql-17"]:
         fail(f"{where}: PostgreSQL bundle must identify PostgreSQL 17")
@@ -93,9 +104,6 @@ def validate_artifact(item: object, product_version: str, artifact_root: Path | 
         fail(f"{where}: invalid size_bytes")
     if not isinstance(item["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", item["sha256"]):
         fail(f"{where}: invalid sha256")
-    components = item["components"]
-    if not isinstance(components, list) or len(set(map(str, components))) != len(components) or any(x not in COMPONENTS for x in components):
-        fail(f"{where}: invalid components")
     package = item.get("package_metadata")
     if kind in {"deb", "rpm"}:
         if not isinstance(package, dict) or package.get("format") != kind:

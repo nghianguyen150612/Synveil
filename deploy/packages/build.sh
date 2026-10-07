@@ -372,8 +372,8 @@ build_deb() {
         -e "s/@SYNVEIL_DEPENDS@/${DEB_DEPENDS}/g" \
         "${SCRIPT_DIR}/debian/control.tmpl" > "${deb_stage}/DEBIAN/control"
     # Maintainer scripts (must be executable, no extension inside DEBIAN).
-    for script in postinst prerm postrm; do
-        cp -a "${SCRIPT_DIR}/debian/${script}" "${deb_stage}/DEBIAN/${script}"
+    for script in preinst postinst prerm postrm; do
+        sed "s/@SYNVEIL_DEB_VERSION@/${DEB_VERSION}/g" "${SCRIPT_DIR}/debian/${script}" > "${deb_stage}/DEBIAN/${script}"
         chmod 0755 "${deb_stage}/DEBIAN/${script}"
         # Syntax check now (fail fast, no masking).
         sh -n "${deb_stage}/DEBIAN/${script}"
@@ -411,7 +411,7 @@ build_deb() {
         (
             cd "${deb_stage}/DEBIAN"
             tar "${tar_owner_flags[@]}" -cf "${work}/control.tar" \
-                control postinst prerm postrm
+                control preinst postinst prerm postrm
             gzip -n -f "${work}/control.tar"
         )
         printf '2.0\n' > "${work}/debian-binary"

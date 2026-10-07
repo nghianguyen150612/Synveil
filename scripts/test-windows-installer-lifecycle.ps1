@@ -7,6 +7,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'windows-security.ps1')
 $appId = '{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1'
 $uninstallKey = "Software\Microsoft\Windows\CurrentVersion\Uninstall\$appId"
 $root = Join-Path $env:LOCALAPPDATA 'Programs\Synveil'
@@ -33,13 +34,8 @@ function Get-RegisteredUninstaller {
     $registration = Get-Registration
     $command = if ($registration.uninstall) { $registration.uninstall } else { $registration.fallback }
     Assert-True (![string]::IsNullOrWhiteSpace($command)) 'LIFECYCLE_IDENTITY_FAILURE: registered uninstall command absent'
-    if ($command -match '^\s*"([^"]+)"') { $executable = $Matches[1] }
-    elseif ($command -match '^\s*([^\s]+)') { $executable = $Matches[1] }
-    else { throw 'LIFECYCLE_IDENTITY_FAILURE: malformed registered uninstall command' }
-    $executable = [IO.Path]::GetFullPath($executable)
-    $prefix = [IO.Path]::GetFullPath($root).TrimEnd('\') + '\'
-    Assert-True ($executable.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)) 'LIFECYCLE_IDENTITY_FAILURE: registered uninstaller outside package root'
-    Assert-True (Test-Path -LiteralPath $executable -PathType Leaf) 'LIFECYCLE_IDENTITY_FAILURE: registered uninstaller missing'
+    Assert-True ([IO.Path]::GetFullPath($registration.location).TrimEnd('\') -eq [IO.Path]::GetFullPath($root).TrimEnd('\')) 'LIFECYCLE_IDENTITY_FAILURE: install root mismatch'
+    $executable = Get-OwnedRegisteredUninstaller $command $root
     return $executable
 }
 function Manifest-Hashes {

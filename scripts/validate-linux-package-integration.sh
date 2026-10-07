@@ -56,9 +56,9 @@ if formats['DEB']['architectures'] != ['amd64', 'arm64'] or not all(x in arch fo
     raise SystemExit('DEB architecture contract drift')
 if formats['RPM']['architectures'] != ['x86_64', 'aarch64'] or not all(x in arch for x in ('x86_64', 'aarch64')):
     raise SystemExit('RPM architecture contract drift')
-if formats['DEB']['hooks'] != ['postinst', 'prerm', 'postrm']:
+if formats['DEB']['hooks'] != ['preinst', 'postinst', 'prerm', 'postrm']:
     raise SystemExit('DEB hook contract drift')
-if formats['RPM']['hooks'] != ['post', 'preun', 'postun']:
+if formats['RPM']['hooks'] != ['pre', 'post', 'preun', 'postun']:
     raise SystemExit('RPM hook contract drift')
 
 files = [root/'deploy/packages/debian/postinst', root/'deploy/packages/debian/prerm',

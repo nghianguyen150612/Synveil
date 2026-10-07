@@ -90,7 +90,7 @@ fn plan(
     }
 }
 fn upgrade() -> LifecycleRequest {
-    let a = art("0.2.0-test", "2222222222222222222222222222222222222222");
+    let a = art("0.2.0", "2222222222222222222222222222222222222222");
     LifecycleRequest::Upgrade(UpgradeRequest {
         compatibility: UpgradeCompatibility {
             source: id("0.1.0", OLD),
@@ -162,7 +162,7 @@ fn repair_noop() {
 fn different_repair_version() {
     let mut r = repair();
     if let LifecycleRequest::Repair(x) = &mut r {
-        x.expected.version = "9".into()
+        x.expected.version = "9.0.0".into()
     }
     assert_eq!(
         LifecyclePolicy.validate(
@@ -783,4 +783,35 @@ fn credential_absent_with_identity_is_unknown() {
 #[test]
 fn historical_fixture() {
     assert_eq!(state().product.unwrap().source_commit.as_deref(), Some(OLD));
+}
+
+#[test]
+fn supported_label_cannot_authorize_downgrade_or_same_version_upgrade() {
+    for (version, expected) in [
+        ("0.0.9", LifecycleError::DowngradeRejected),
+        ("0.1.0", LifecycleError::IntentMismatch),
+        ("0.2.0-beta", LifecycleError::UnknownState),
+        ("01.2.0", LifecycleError::UnknownState),
+        ("4294967296.0.0", LifecycleError::UnknownState),
+    ] {
+        let a = art(version, "2222222222222222222222222222222222222222");
+        let request = LifecycleRequest::Upgrade(UpgradeRequest {
+            compatibility: UpgradeCompatibility {
+                source: id("0.1.0", OLD),
+                target: id(version, &a.source_commit),
+                disposition: CompatibilityDisposition::Supported,
+            },
+            target_artifact: a.clone(),
+        });
+        assert_eq!(
+            LifecyclePolicy.validate(
+                &request,
+                &state(),
+                &plan(InstallationIntent::Upgrade, vec![], Some(a)),
+                &[],
+            ),
+            Err(expected),
+            "version {version} must be refused before entering execution/journal"
+        );
+    }
 }

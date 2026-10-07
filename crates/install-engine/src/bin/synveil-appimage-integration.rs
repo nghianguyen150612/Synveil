@@ -34,6 +34,10 @@ fn main() -> ExitCode {
         .next()
         .and_then(|s| s.into_string().ok())
         .unwrap_or_default();
+    if args.next().is_some() {
+        eprintln!("synveil-appimage-integration: unexpected argument");
+        return ExitCode::from(2);
+    }
     let engine = match AppImageIntegration::from_environment() {
         Ok(v) => v,
         Err(e) => return fail(e),
@@ -70,7 +74,17 @@ fn main() -> ExitCode {
 }
 
 #[cfg(target_os = "linux")]
-fn fail(error: impl std::fmt::Debug) -> ExitCode {
-    eprintln!("synveil-appimage-integration: {error:?}");
+fn fail(error: AppImageIntegrationError) -> ExitCode {
+    let category = match error {
+        AppImageIntegrationError::InvalidEnvironment => "invalid-environment",
+        AppImageIntegrationError::InvalidArtifact => "invalid-artifact",
+        AppImageIntegrationError::UnsafePath => "unsafe-path",
+        AppImageIntegrationError::UnownedSurface => "unknown-ownership",
+        AppImageIntegrationError::Io(_) => "filesystem-error",
+        AppImageIntegrationError::InvalidRecord => "unknown-state",
+        AppImageIntegrationError::UserSystemdUnavailable => "user-supervisor-unavailable",
+        AppImageIntegrationError::SystemctlFailed => "user-supervisor-failed",
+    };
+    eprintln!("synveil-appimage-integration: {category}");
     ExitCode::FAILURE
 }

@@ -273,8 +273,8 @@ const EXPECTED_SURFACES: &[(&str, &str)] = &[
 
 const DEB_ARCHITECTURES: &[&str] = &["amd64", "arm64"];
 const RPM_ARCHITECTURES: &[&str] = &["x86_64", "aarch64"];
-const DEB_HOOKS: &[&str] = &["postinst", "prerm", "postrm"];
-const RPM_HOOKS: &[&str] = &["post", "preun", "postun"];
+const DEB_HOOKS: &[&str] = &["preinst", "postinst", "prerm", "postrm"];
+const RPM_HOOKS: &[&str] = &["pre", "post", "preun", "postun"];
 const DEB_RUNTIME_DEPENDENCIES: &[&str] = &[
     "systemd",
     "dbus-user-session",

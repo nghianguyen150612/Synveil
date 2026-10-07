@@ -57,22 +57,47 @@ cp -a "$staged"/. "%{buildroot}"/
 %dir %attr(0750,root,synveil) /etc/synveil
 %dir %attr(0700,root,root) /etc/synveil/credentials
 
+%pre
+# P043 native pre-transaction gate: only an exact known repair is supported by
+# the current packaging policy. Explicit future upgrade sources need review.
+set -eu
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+LC_ALL=C
+export LC_ALL
+unset ENV BASH_ENV CDPATH LD_PRELOAD LD_LIBRARY_PATH PYTHONPATH
+old=$(rpm -q --qf '%%{VERSION}-%%{RELEASE}' synveil) || {
+  result=$?
+  [ "$result" = 1 ] && [ "$old" = "package synveil is not installed" ] && exit 0
+  exit 1
+}
+if [ "$old" != '@SYNVEIL_VERSION@-@SYNVEIL_RELEASE@%{?dist}' ]; then
+  printf '[synveil] incompatible native transition; no unpack authorized\n' >&2
+  exit 1
+fi
+exit 0
+
 %post
 # $1 == 1 fresh install, $1 == 2 upgrade. Both: sysusers + tmpfiles +
 # daemon-reload. NEVER auto-enable timer, NEVER auto-start service,
 # NEVER run maintenance. No network. No failure masking.
 set -e
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+LC_ALL=C
+export LC_ALL
+unset ENV BASH_ENV CDPATH LD_PRELOAD LD_LIBRARY_PATH PYTHONPATH
 printf '[synveil] %%post synveil (arg: %s)\n' "$1" >&2
 if command -v systemd-sysusers >/dev/null 2>&1; then
   printf '[synveil] applying sysusers (systemd-sysusers)\n' >&2
-  systemd-sysusers
+  systemd-sysusers /usr/lib/sysusers.d/synveil.conf
 else
   printf '[synveil] ERROR: systemd-sysusers not found\n' >&2
   exit 1
 fi
 if command -v systemd-tmpfiles >/dev/null 2>&1; then
   printf '[synveil] applying tmpfiles (systemd-tmpfiles --create)\n' >&2
-  systemd-tmpfiles --create
+  systemd-tmpfiles --create /usr/lib/tmpfiles.d/synveil.conf
 else
   printf '[synveil] ERROR: systemd-tmpfiles not found\n' >&2
   exit 1
@@ -80,7 +105,9 @@ fi
 # Config skeleton ownership via symbolic identity (after sysusers).
 # Directories only: no recursion, no secret creation, no numeric UID/GID.
 printf '[synveil] ensuring config skeleton ownership (root:synveil 0750, root:root 0700)\n' >&2
+[ ! -L /etc/synveil ] && [ ! -L /etc/synveil/credentials ] || exit 1
 mkdir -p /etc/synveil /etc/synveil/credentials
+[ -d /etc/synveil ] && [ -d /etc/synveil/credentials ] || exit 1
 chown root:synveil /etc/synveil
 chmod 0750 /etc/synveil
 chown root:root /etc/synveil/credentials
@@ -98,6 +125,11 @@ exit 0
 # $1 == 0 final erase, $1 == 1 upgrade. Only erase disables the timer.
 # Never deletes /var/lib/synveil, /etc/synveil, credentials, or external storage.
 set -e
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+LC_ALL=C
+export LC_ALL
+unset ENV BASH_ENV CDPATH LD_PRELOAD LD_LIBRARY_PATH PYTHONPATH
 printf '[synveil] %%preun synveil (arg: %s)\n' "$1" >&2
 if [ "$1" = "0" ]; then
   if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
@@ -117,6 +149,11 @@ exit 0
 # $1 == 0 final erase, $1 == 1 upgrade. Both reload the manager.
 # Data-preserving in both cases (parity with DEB purge decision).
 set -e
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+LC_ALL=C
+export LC_ALL
+unset ENV BASH_ENV CDPATH LD_PRELOAD LD_LIBRARY_PATH PYTHONPATH
 printf '[synveil] %%postun synveil (arg: %s)\n' "$1" >&2
 if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
   printf '[synveil] reloading systemd manager (daemon-reload)\n' >&2

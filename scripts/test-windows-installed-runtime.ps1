@@ -4,8 +4,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'windows-security.ps1')
 $root = [IO.Path]::GetFullPath($RuntimeRoot).TrimEnd([IO.Path]::DirectorySeparatorChar)
 $manifestPath = [IO.Path]::GetFullPath($Manifest)
+Assert-NoReparseAncestry $root
+Assert-NoReparseAncestry $manifestPath $true
 if (!(Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw 'RUNTIME_MANIFEST_FAILURE: manifest is missing' }
 
 $seen = @{}
@@ -15,12 +18,14 @@ foreach ($line in [IO.File]::ReadAllLines($manifestPath)) {
     if (!$inFiles) { continue }
     if ($line -notmatch '^([0-9a-f]{64}) ([0-9]+) (.+)$') { throw 'RUNTIME_MANIFEST_FAILURE: malformed inventory entry' }
     $relative = $Matches[3].Replace('\','/')
+    Assert-SafeRelativeIdentity $relative
     if ([IO.Path]::IsPathRooted($relative) -or $relative.Split('/') -contains '..') { throw 'RUNTIME_MANIFEST_FAILURE: unsafe inventory path' }
     $key = $relative.ToLowerInvariant()
     if ($seen.ContainsKey($key)) { throw 'RUNTIME_MANIFEST_FAILURE: duplicate or case-colliding path' }
     $seen[$key] = $true
     $file = [IO.Path]::GetFullPath((Join-Path $root $relative))
-    if (!$file.StartsWith($root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'RUNTIME_MANIFEST_FAILURE: inventory path escaped package root' }
+    Assert-SafeRelativeIdentity ([IO.Path]::GetRelativePath($root, $file))
+    Assert-NoReparseAncestry $file $true
     if (!(Test-Path -LiteralPath $file -PathType Leaf) -or (Get-Item -LiteralPath $file).LinkType) { throw "RUNTIME_MANIFEST_FAILURE: missing or linked file $relative" }
     if ((Get-Item -LiteralPath $file).Length -ne [int64]$Matches[2] -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() -cne $Matches[1]) { throw "RUNTIME_MANIFEST_FAILURE: size or digest mismatch $relative" }
 }

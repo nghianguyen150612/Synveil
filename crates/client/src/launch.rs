@@ -667,6 +667,9 @@ pub fn packaged_client_path_from(
     if !client.is_file() || !is_expected_client_name(&client) {
         return Err(BackgroundLaunchError::NotInstalled);
     }
+    if client.parent() != desktop.parent() {
+        return Err(BackgroundLaunchError::NotInstalled);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -2049,6 +2052,29 @@ mod tests {
         let _ = manager.ensure_running().await;
         assert_eq!(manager.stats().launch_attempts, 0);
         assert_eq!(backend.starts.load(Ordering::Relaxed), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn p043_client_link_outside_owned_siblings_is_rejected() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let root = std::env::temp_dir().join(format!("synveil-p043-{}", ServerProfileId::new()));
+        fs::create_dir(&root).unwrap();
+        let owned = root.join("owned");
+        let outside = root.join("outside");
+        fs::create_dir(&owned).unwrap();
+        fs::create_dir(&outside).unwrap();
+        let desktop = owned.join(SYNVEIL_DESKTOP_EXECUTABLE);
+        let substitute = outside.join(SYNVEIL_CLIENT_EXECUTABLE);
+        fs::write(&desktop, b"desktop").unwrap();
+        fs::write(&substitute, b"substitute").unwrap();
+        fs::set_permissions(&substitute, fs::Permissions::from_mode(0o755)).unwrap();
+        symlink(&substitute, owned.join(SYNVEIL_CLIENT_EXECUTABLE)).unwrap();
+        assert!(matches!(
+            packaged_client_path_from(&desktop),
+            Err(BackgroundLaunchError::NotInstalled)
+        ));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
