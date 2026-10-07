@@ -208,8 +208,11 @@ scope remains outside P044.
   - Rust CI run `37614797700`: Windows workspace test/check compilation found
     Unix-only test imports in unchanged
     `crates/api/src/runtime_rebaseline_credential.rs`; Windows/macOS client
-    suites also reported unrelated failures in unchanged client source. These
-    are cross-platform workspace qualification failures, not P044 regressions.
+    suites also reported unrelated failures in unchanged client source. The
+    Ubuntu full-test job failed its Linux notify watcher scenario in unchanged
+    `crates/client-sync/src/observation.rs` because the expected move intent was
+    not observed; the Linux desktop UI job passed. These are cross-platform
+    workspace qualification failures, not P044 regressions.
   - Server self-host acceptance run `37614797855`: artifact identity failed
     because the checkout lacked `acceptance/p036/production-artifacts.json`, a
     separate P036 acceptance prerequisite.

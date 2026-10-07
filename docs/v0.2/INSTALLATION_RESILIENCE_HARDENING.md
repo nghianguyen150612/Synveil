@@ -137,10 +137,13 @@ because `MSVCP140.dll` was absent from the runtime stage; Linux AppImage and
 Linux clean-machine artifact validation failed APPIMAGE-8 (`AppRun does not
 exec packaged desktop`); workspace Windows compilation found Unix-only API
 test code in unchanged `crates/api/src/runtime_rebaseline_credential.rs` and
-Windows/macOS client suites reported failures in unchanged client source; the
-server self-host artifact job lacked `acceptance/p036/production-artifacts.json`;
-and PostgreSQL 17 scheduled-maintenance run `37614797830` failed
-`live_pg17_adversarial_crash_restart_handoff`. These are inherited or separate
-qualification/workflow failures outside the focused P044 source gates. The
-P044 and P043 workflows passed; no broad clean-machine or release claim follows
-from those results.
+Windows/macOS client suites reported failures in unchanged client source. Its
+Ubuntu full-test job also failed the Linux notify watcher scenario in unchanged
+`crates/client-sync/src/observation.rs` after a move notification did not reach
+the expected intent; the Linux desktop UI job passed. The server self-host
+artifact job lacked `acceptance/p036/production-artifacts.json`; PostgreSQL 17
+scheduled-maintenance run `37614797830` failed
+`live_pg17_adversarial_crash_restart_handoff`. These are unrelated workspace,
+native qualification, or separate workflow failures outside the focused P044
+source gates. The P044 and P043 workflows passed; no broad clean-machine or
+release claim follows from those results.
