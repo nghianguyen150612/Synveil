@@ -40,5 +40,6 @@ $dllIdentities = @($runtime | ForEach-Object {
 "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$($linker.path)" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
 "SYNVEIL_MSVC_CRT_DIR=$crt" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
 New-Item (Split-Path $EvidencePath -Parent) -ItemType Directory -Force | Out-Null
-[ordered]@{schema_version=1;compiler=$compiler;linker=$linker;msvc_tools=$env:VCToolsVersion;crt_directory=$crtDirectories[0].Name;runtime=$dllIdentities} | ConvertTo-Json -Depth 6 | Set-Content $EvidencePath -Encoding utf8
+$os = Get-CimInstance Win32_OperatingSystem
+[ordered]@{schema_version=1;source_commit=(git rev-parse HEAD);compiler=$compiler;linker=$linker;msvc_tools=$env:VCToolsVersion;crt_directory=$crtDirectories[0].Name;runtime=$dllIdentities;producer_os=@{caption=$os.Caption;version=$os.Version;build=$os.BuildNumber;architecture=$env:PROCESSOR_ARCHITECTURE}} | ConvertTo-Json -Depth 6 | Set-Content $EvidencePath -Encoding utf8
 Write-Host "Selected MSVC compiler $($compiler.version), linker $($linker.version); app-local CRT files: $($runtime.Count)"

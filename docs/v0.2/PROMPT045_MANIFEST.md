@@ -147,3 +147,27 @@ remain unavailable until actual hosted producers pass.
 
 Acceptance remains withheld. No Windows 11 build, candidate hash, native
 journey, power-cycle, merge or resulting main is inferred from these runs.
+
+## Runtime import-audit correction
+
+On corrected source `9c9580cc2ca17c65db6696f9bb1d4d9cb9d23bb6`, Windows native
+push run `37632560247`, job `112830314309`, selected the active toolchain,
+compiled the runtime, staged the app-local CRT and reached the exhaustive import
+audit. The remaining failure was `UIAutomationCore.DLL` imported by the Qt
+Windows platform plugin. Microsoft's
+[UiaReturnRawElementProvider API requirements](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationcoreapi/nf-uiautomationcoreapi-uiareturnrawelementprovider)
+identify this as the OS UI Automation DLL. It is now classified as a Windows
+system API; MSVCP140/VCRUNTIME140 remain non-system and must be shipped. A focused
+classifier regression checks that boundary. This is a corrected audit defect,
+not a claim that the complete installed product or Windows 11 journey passed.
+
+Toolchain diagnostics now retain observed source, compiler/linker versions and
+hashes, active CRT generation/DLL hashes, and detected producer OS caption,
+version/build/architecture even after a later candidate build failure. Producer
+Windows Server identity cannot qualify the Windows 11 target. Subsequent exact
+candidate builds and final-head reruns remain required.
+
+Broad workspace strict Clippy subsequently passed locally using scenario-owned
+DBus development metadata and Qt 6.7.3 staged under work/. The earlier missing
+local dependency result is preserved above. This remains source evidence on
+Debian 13, not native acceptance.

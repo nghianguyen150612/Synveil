@@ -87,6 +87,14 @@ jobs:
             target/windows-installer/p028-candidate.json
             target/windows-toolchain.json
             target/p027-fixture-*/SynveilSetup.exe
+      - name: Preserve observed producer identities even after a build failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-p045-build-diagnostics
+          path: target/windows-toolchain.json
+          if-no-files-found: warn
+          retention-days: 30
 
   standard-user-native:
     needs: build-windows-candidate

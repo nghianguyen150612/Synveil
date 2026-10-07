@@ -5,6 +5,7 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+import subprocess
 import tempfile
 import unittest
 
@@ -130,6 +131,16 @@ class MatrixGateTests(unittest.TestCase):
         matrix["unsupported"]["debian"] = "qualified"
         with self.assertRaises(ValueError):
             p045.validate_matrix(matrix)
+
+    def test_windows_system_api_does_not_exempt_vc_runtime(self):
+        # Execute the reviewed classifier alone, never the package builder.
+        source = (ROOT / "deploy/packages/build-windows.sh").read_text()
+        begin = source.index("is_system_dll() {")
+        end = source.index("\n}\n", begin) + 3
+        classifier = source[begin:end]
+        command = classifier + "\nis_system_dll UIAutomationCore.DLL && ! is_system_dll MSVCP140.dll && ! is_system_dll VCRUNTIME140.dll && ! is_system_dll unrelated.dll\n"
+        result = subprocess.run(["bash", "-c", command], capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
         matrix = json.loads(p045.MATRIX.read_text())
         matrix["p046"] = "implemented"
         with self.assertRaises(ValueError):
