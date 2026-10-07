@@ -1,0 +1,102 @@
+name: Cross-platform clean-machine matrix
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: p045-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Validate matrix and adversarial evidence tests
+        run: |
+          python3 scripts/validate-cross-platform-clean-machine-matrix.py
+          python3 -m unittest discover -s tests/install-acceptance -p 'test_p045_*.py' -v
+          python3 scripts/install_acceptance.py inventory
+          ./scripts/validate-docs.sh
+  source-gates:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install native source-check prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libdbus-1-dev qt6-base-dev qt6-declarative-dev qt6-tools-dev-tools
+      - name: Strict format, workspace Clippy, and dependency policy
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo install cargo-deny --locked
+          cargo deny --locked check
+      - name: Record only completed source gates
+        run: |
+          mkdir -p target/p045-source-gates
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          identity = {"schema_version": 1, "status": "PASS", "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(), "workflow_run_id": os.environ["GITHUB_RUN_ID"], "job": os.environ["GITHUB_JOB"], "gates": ["format", "strict-workspace-clippy", "cargo-deny"]}
+          Path("target/p045-source-gates/p045-source-gates.json").write_text(json.dumps(identity, indent=2) + "\n")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: p045-source-gates
+          path: target/p045-source-gates
+          if-no-files-found: error
+  windows:
+    needs: [contract, source-gates]
+    uses: ./.github/workflows/windows-native-acceptance.yml
+    with:
+      source_commit: ${{ github.event.pull_request.head.sha || github.sha }}
+  linux:
+    needs: [contract, source-gates]
+    uses: ./.github/workflows/linux-clean-machine.yml
+    with:
+      source_commit: ${{ github.event.pull_request.head.sha || github.sha }}
+      run_native: true
+  evidence-gate:
+    needs: [contract, source-gates, windows, linux]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Download exact producer bytes and consumer records
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          path: target/p045-inputs
+      - name: Aggregate without upgrading scoped or unavailable evidence
+        env:
+          SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          mkdir -p target/p045-inputs target/p045-evidence
+          python3 scripts/validate-cross-platform-clean-machine-matrix.py \
+            --aggregate target/p045-inputs --artifact-root target/p045-inputs \
+            --source-commit "$SOURCE_COMMIT" \
+            --output target/p045-evidence/matrix-result.json --require-pass
+      - name: Preserve every required result, including missing-journey blockers
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p045-matrix-result-v1
+          path: target/p045-evidence
+          if-no-files-found: error
+          retention-days: 30

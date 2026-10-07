@@ -205,7 +205,8 @@ start_vm() {
         -device virtio-net-pci,netdev=net0 \
         -qmp "unix:${monitor},server=on,wait=off" \
         -serial "file:${serial}" \
-        -display none -vga virtio -no-reboot &
+        -display none -vga virtio -no-reboot \
+        </dev/null >"${serial}.qemu.log" 2>&1 &
     printf '%s' "$!"
 }
 
@@ -414,13 +415,19 @@ main() {
             [[ $# -ge 3 && $# -le 7 ]] || fail "guest-exec NAME COMMAND [ARGS]"
             require_tools ssh scp timeout
             load_vm_metadata "$2"
-            timeout "$EXEC_TIMEOUT_SECONDS" "$0" _guest-exec-loaded "$3" "${4:-}" "${5:-}" "${6:-}" "${7:-}"
+            timeout "$EXEC_TIMEOUT_SECONDS" "$0" _guest-exec-loaded "$2" "$3" "${4:-}" "${5:-}" "${6:-}" "${7:-}"
             ;;
         _guest-exec-loaded)
-            [[ $# -ge 2 && $# -le 6 ]] || fail "internal guest-control invocation"
-            guest_exec "$ssh_port" "$key" "$2" "${3:-}" "${4:-}" "${5:-}" "${6:-}"
+            [[ $# -ge 3 && $# -le 7 ]] || fail "internal guest-control invocation"
+            load_vm_metadata "$2"
+            guest_exec "$ssh_port" "$key" "$3" "${4:-}" "${5:-}" "${6:-}" "${7:-}"
             ;;
-        stage)       [[ $# -eq 3 ]] || fail "stage NAME REPO_ROOT"; require_tools ssh scp; stage_acceptance "$2" "$3" ;;
+        stage)
+            [[ $# -eq 3 ]] || fail "stage NAME REPO_ROOT"
+            require_tools ssh scp timeout
+            timeout "$EXEC_TIMEOUT_SECONDS" "$0" _stage "$2" "$3"
+            ;;
+        _stage)      [[ $# -eq 3 ]] || fail "internal staging invocation"; stage_acceptance "$2" "$3" ;;
         power-cut)   [[ $# -eq 2 ]] || fail "power-cut NAME"; power_cut "$2" ;;
         snapshot)    [[ $# -eq 3 ]] || fail "snapshot NAME TAG"; load_vm_metadata "$2"; snapshot "$monitor" "$3" ;;
         restore)     [[ $# -eq 3 ]] || fail "restore NAME TAG"; load_vm_metadata "$2"; restore_snapshot "$monitor" "$3" ;;

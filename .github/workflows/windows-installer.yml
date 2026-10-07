@@ -57,6 +57,9 @@ jobs:
           Write-Host "Authenticated MSVC linker: $linker"
           Write-Host "Version: $($identity.FileVersion)"
           Write-Host "SHA-256: $((Get-FileHash -LiteralPath $linker -Algorithm SHA256).Hash.ToLowerInvariant())"
+      - name: Record compiler, linker, and app-local CRT identities
+        shell: pwsh
+        run: ./scripts/prepare-windows-candidate-tools.ps1
       - name: Validate reviewed installer sources
         shell: bash
         run: |

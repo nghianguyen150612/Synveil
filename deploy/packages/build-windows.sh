@@ -248,6 +248,22 @@ if [[ "$native_windows" -eq 1 ]]; then
         --no-system-d3d-compiler \
         --qmldir "${REPO_ROOT}/crates/desktop/qml" \
         "${STAGE_ROOT}/synveil-desktop.exe"
+    # windeployqt may ship a redistributable installer rather than app-local
+    # DLLs. A per-user Setup cannot depend on running that elevated installer.
+    # Consume the reviewed x64 CRT from the active Visual C++ toolchain and
+    # retain the exhaustive non-system import audit below.
+    [[ -n "${SYNVEIL_MSVC_CRT_DIR:-}" ]] || {
+        echo '[synveil-windows-package] ERROR: authenticated app-local MSVC CRT directory is required' >&2
+        exit 1
+    }
+    crt_dir="$(cygpath -u "$SYNVEIL_MSVC_CRT_DIR")"
+    [[ -d "$crt_dir" && -f "$crt_dir/msvcp140.dll" ]] || {
+        echo '[synveil-windows-package] ERROR: x64 app-local MSVC CRT is missing' >&2
+        exit 1
+    }
+    while IFS= read -r -d '' runtime_dll; do
+        copy_file "$runtime_dll" "${STAGE_ROOT}/$(basename "$runtime_dll")"
+    done < <(find "$crt_dir" -maxdepth 1 -type f -iname '*.dll' -print0)
 else
     if [[ -z "$QT_PREFIX" || ! -d "$QT_PREFIX" ]]; then
         printf '[synveil-windows-package] ERROR: Linux cross packaging requires --qt-prefix=DIR\n' >&2
@@ -392,6 +408,7 @@ sha256_file() {
 # Windows; every other imported DLL must be in this ZIP. This catches Linux
 # shared-library leakage and incomplete Qt/C++ runtime closure.
 while IFS= read -r pe_file; do
+    assert_pe "$pe_file"
     while IFS= read -r imported; do
         [[ -z "$imported" ]] && continue
         if is_system_dll "$imported"; then
