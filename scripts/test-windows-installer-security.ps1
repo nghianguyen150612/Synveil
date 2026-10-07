@@ -34,6 +34,17 @@ try {
         if (!$process.WaitForExit(30000)) { $process.Kill(); throw 'P043_FIXTURE_TIMEOUT' }
         if ($process.ExitCode -eq 0 -or (Test-Path -LiteralPath $ownedRoot)) { throw 'P043_SECURITY_FAILURE: override reached mutation' }
     }
+    New-Item -ItemType Directory -Path $ownedRoot -Force | Out-Null
+    try {
+        Set-Content (Join-Path $ownedRoot 'SYNVEIL-MANIFEST.txt') 'unknown adjacent manifest'
+        $process=Start-Process -FilePath $setup -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /STARTUP=0 /LAUNCH=0' -PassThru
+        if (!$process.WaitForExit(30000)) { $process.Kill(); throw 'P043_FIXTURE_TIMEOUT' }
+        if ($process.ExitCode -eq 0 -or
+            (Get-Content (Join-Path $ownedRoot 'SYNVEIL-MANIFEST.txt') -Raw).Trim() -cne 'unknown adjacent manifest' -or
+            @(Get-ChildItem -LiteralPath $ownedRoot).Count -ne 1) {
+            throw 'P043_SECURITY_FAILURE: fresh install claimed an unowned manifest'
+        }
+    } finally { Remove-Item -LiteralPath $ownedRoot -Recurse -Force }
     # Trusted prior inventory must authorize every existing copy destination,
     # including Repair. A new payload filename cannot claim an adjacent file.
     $key='HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1'
@@ -48,6 +59,16 @@ try {
         New-ItemProperty $key -Name DisplayVersion -Value '1.0.0' -PropertyType String | Out-Null
         New-ItemProperty $key -Name InstallLocation -Value $ownedRoot -PropertyType String | Out-Null
         New-ItemProperty $key -Name SynveilManifestSha256 -Value (Get-FileHash $manifest -Algorithm SHA256).Hash.ToLowerInvariant() -PropertyType String | Out-Null
+        foreach ($version in @('2.0.0','0.9.0','1.0.0-beta','4294967295.0.0')) {
+            Set-ItemProperty $key -Name DisplayVersion -Value $version
+            $process=Start-Process -FilePath $setup -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /STARTUP=0 /LAUNCH=0' -PassThru
+            if (!$process.WaitForExit(30000)) { $process.Kill(); throw 'P043_FIXTURE_TIMEOUT' }
+            if ($process.ExitCode -eq 0 -or @(Get-ChildItem -LiteralPath $ownedRoot).Count -ne 2 -or
+                (Get-Content (Join-Path $ownedRoot 'qt.conf') -Raw).Trim() -cne 'unknown adjacent file') {
+                throw 'P043_SECURITY_FAILURE: rejected version reached payload mutation'
+            }
+        }
+        Set-ItemProperty $key -Name DisplayVersion -Value '1.0.0'
         $process=Start-Process -FilePath $setup -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /REPAIR=1 /STARTUP=0 /LAUNCH=0' -PassThru
         if (!$process.WaitForExit(30000)) { $process.Kill(); throw 'P043_FIXTURE_TIMEOUT' }
         if ($process.ExitCode -eq 0 -or (Get-Content (Join-Path $ownedRoot 'qt.conf') -Raw).Trim() -cne 'unknown adjacent file') {

@@ -386,6 +386,10 @@ var
 begin
   Result := '';
   RequireInstallRoot;
+  RequireNoReparseAncestry(PackageRoot() + '\SYNVEIL-MANIFEST.txt', True);
+  if FreshInstall and
+     (GetFileAttributes(PackageRoot() + '\SYNVEIL-MANIFEST.txt') <> $FFFFFFFF) then
+    RaiseException('Installation conflicts with an unowned package manifest.');
   ExtractTemporaryFile('SYNVEIL-MANIFEST.txt');
   if CompareText(GetSHA256OfFile(ExpandConstant('{tmp}\SYNVEIL-MANIFEST.txt')),
        '{#SynveilManifestSha256}') <> 0 then
