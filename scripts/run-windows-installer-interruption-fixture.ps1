@@ -62,7 +62,9 @@ function New-FixtureStage([string]$Path, [string]$Version, [string]$LicenseText,
     [IO.File]::WriteAllText((Join-Path $Path 'platforms\qwindows.dll'), 'P044 synthetic Qt platform placeholder', [Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText((Join-Path $Path 'LICENSE'), $LicenseText, [Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText((Join-Path $Path 'NOTICE'), 'P044 synthetic notices payload', [Text.UTF8Encoding]::new($false))
-    Write-RandomFixtureFile (Join-Path $Path 'runtime-payload.bin') 16
+    # Keep a later owned copy in flight long enough for the parent process to
+    # observe the first changed file and terminate Setup at that boundary.
+    Write-RandomFixtureFile (Join-Path $Path 'runtime-payload.bin') 64
     if ($Obsolete) {
         [IO.File]::WriteAllText((Join-Path $Path 'p044-obsolete-owned.txt'), 'P044 obsolete owned fixture', [Text.UTF8Encoding]::new($false))
     }

@@ -118,7 +118,12 @@ function Interrupt-SetupAfterLicenseCopy([string]$Path, [string[]]$Extra, [strin
         while ([DateTime]::UtcNow -lt $deadline) {
             $process.Refresh()
             if ($process.HasExited) {
-                throw 'P044_WINDOWS_INTERRUPTION_FAILURE: Setup completed before the changed payload boundary was observed.'
+                $detail = "Setup exited with code $($process.ExitCode) before the changed payload boundary was observed."
+                if (Test-Path -LiteralPath $log -PathType Leaf) {
+                    $tail = @(Get-Content -LiteralPath $log -Tail 24)
+                    if ($tail.Count -gt 0) { $detail += "`nInno log tail:`n" + ($tail -join "`n") }
+                }
+                throw "P044_WINDOWS_INTERRUPTION_FAILURE: $detail"
             }
             if ((Test-Path -LiteralPath (Join-Path $root 'LICENSE') -PathType Leaf) -and
                 (Get-FileHash -LiteralPath (Join-Path $root 'LICENSE') -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $NewerLicenseHash) {
