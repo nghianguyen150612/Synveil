@@ -14,7 +14,7 @@ VersionInfoProductVersion={#SynveilWindowsVersion}
 DefaultDirName={localappdata}\Programs\Synveil
 DefaultGroupName=Synveil
 PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=none
+; No PrivilegesRequiredOverridesAllowed: Inno's blank default disables overrides.
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
 OutputDir={#SynveilOutputDir}
@@ -30,7 +30,7 @@ SetupLogging=yes
 Uninstallable=yes
 UninstallDisplayName=Synveil
 UninstallDisplayIcon={app}\synveil-desktop.exe
-UsePreviousAppDir=yes
+UsePreviousAppDir=no
 RestartIfNeededByRun=no
 CloseApplications=yes
 
@@ -43,7 +43,7 @@ Name: "{userprograms}\Synveil"; Filename: "{app}\synveil-desktop.exe"; WorkingDi
 Name: "{userdesktop}\Synveil"; Filename: "{app}\synveil-desktop.exe"; WorkingDir: "{app}"; Check: ShouldCreateDesktopIcon
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1"; ValueType: string; ValueName: "SynveilManifestSha256"; ValueData: "{#SynveilManifestSha256}"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\{{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1"; ValueType: string; ValueName: "SynveilManifestSha256"; ValueData: "{#SynveilManifestSha256}"; Flags: uninsdeletevalue
 
 [Code]
 var
@@ -88,17 +88,98 @@ end;
 function GetFileAttributes(lpFileName: String): LongWord;
   external 'GetFileAttributesW@kernel32.dll stdcall';
 
+function GetLastError(): LongWord;
+  external 'GetLastError@kernel32.dll stdcall';
+
+procedure RequireNoReparseAncestry(const Path: String; const RegularFile: Boolean);
+var
+  Current, Parent: String;
+  Attributes, ErrorCode: LongWord;
+  First: Boolean;
+begin
+  Current := RemoveBackslashUnlessRoot(ExpandFileName(Path));
+  First := True;
+  repeat
+    Attributes := GetFileAttributes(Current);
+    if Attributes = $FFFFFFFF then begin
+      ErrorCode := GetLastError();
+      if (ErrorCode <> 2) and (ErrorCode <> 3) then
+        RaiseException('Package path identity cannot be inspected.');
+    end else begin
+      if (Attributes and FileAttributeReparsePoint) <> 0 then
+        RaiseException('Package path has an ambiguous reparse-point ancestor.');
+      if First and RegularFile then begin
+        if (Attributes and $10) <> 0 then
+          RaiseException('Package payload must be a regular file.');
+      end else if (Attributes and $10) = 0 then
+        RaiseException('Package ancestor must be a directory.');
+    end;
+    First := False;
+    Parent := RemoveBackslashUnlessRoot(ExtractFileDir(Current));
+    if CompareText(Parent, Current) = 0 then break;
+    Current := Parent;
+  until Current = '';
+end;
+
+function PackageRoot(): String;
+begin
+  Result := ExpandConstant('{localappdata}\Programs\Synveil');
+end;
+
+procedure RequireInstallRoot;
+var
+  Expected, Actual: String;
+begin
+  Expected := RemoveBackslashUnlessRoot(ExpandFileName(ExpandConstant('{localappdata}\Programs\Synveil')));
+  Actual := RemoveBackslashUnlessRoot(ExpandFileName(ExpandConstant('{app}')));
+  if CompareText(Expected, Actual) <> 0 then
+    RaiseException('Setup requires the exact current-user Synveil install root.');
+  RequireNoReparseAncestry(Expected, False);
+end;
+
+procedure ValidateSecurityOptions;
+var
+  I, J: Integer;
+  Value, Name: String;
+  Seen: TStringList;
+begin
+  Seen := TStringList.Create;
+  try
+    for I := 1 to ParamCount do begin
+      Value := Uppercase(ParamStr(I));
+      if (Pos('/DIR', Value) = 1) or (Pos('/ALLUSERS', Value) = 1) or (Pos('/LOADINF', Value) = 1) then
+        RaiseException('Install-root and privilege overrides are not supported.');
+      for J := 0 to 3 do begin
+        case J of
+          0: Name := 'REPAIR';
+          1: Name := 'STARTUP';
+          2: Name := 'DESKTOPICON';
+          3: Name := 'LAUNCH';
+        end;
+        if Pos('/' + Name, Value) = 1 then begin
+          if (Pos('/' + Name + '=', Value) <> 1) or (Seen.IndexOf(Name) >= 0) then
+            RaiseException('Malformed or duplicate installer option.');
+          Seen.Add(Name);
+        end;
+      end;
+    end;
+  finally
+    Seen.Free;
+  end;
+end;
+
 function ParseVersionPart(const Value: String): Integer;
 var
   I: Integer;
 begin
-  if Value = '' then RaiseException('Installed Synveil version is malformed.');
+  if (Value = '') or (Length(Value) > 10) then RaiseException('Installed Synveil version is malformed.');
   if (Length(Value) > 1) and (Value[1] = '0') then
     RaiseException('Installed Synveil version is malformed.');
   for I := 1 to Length(Value) do
     if (Value[I] < '0') or (Value[I] > '9') then
       RaiseException('Installed Synveil version is malformed.');
-  Result := StrToInt(Value);
+  Result := StrToIntDef(Value, -1);
+  if Result < 0 then RaiseException('Installed Synveil version is malformed.');
 end;
 
 procedure ParseStrictVersion(const Value: String; var Major, Minor, Patch: Integer);
@@ -130,27 +211,54 @@ end;
 
 function IsSafeRelativeManifestPath(const Value: String): Boolean;
 var
-  Normalized: String;
+  Normalized, Part, DeviceName: String;
+  I, Separator: Integer;
 begin
+  Result := False;
+  if (Value = '') or (Length(Value) > 240) then exit;
+  for I := 1 to Length(Value) do
+    if (Ord(Value[I]) < 32) or ((Ord(Value[I]) >= 127) and (Ord(Value[I]) <= 159)) or
+       (Pos(Value[I], ':<>"|?*{}') > 0) then exit;
   Normalized := Value;
   StringChangeEx(Normalized, '\', '/', True);
-  Result := (Value <> '') and (Value[1] <> '\') and (Value[1] <> '/') and
-    (Pos(':', Value) = 0) and (Pos('../', Normalized) = 0) and
-    (Pos('/..', Normalized) = 0);
+  repeat
+    Separator := Pos('/', Normalized);
+    if Separator = 0 then Part := Normalized
+    else Part := Copy(Normalized, 1, Separator - 1);
+    if (Part = '') or (Part = '.') or (Part = '..') or (Part <> Trim(Part)) then exit;
+    if Part[Length(Part)] = '.' then exit;
+    DeviceName := Uppercase(Part);
+    I := Pos('.', DeviceName);
+    if I > 0 then DeviceName := Copy(DeviceName, 1, I - 1);
+    if (DeviceName = 'CON') or (DeviceName = 'PRN') or (DeviceName = 'AUX') or
+       (DeviceName = 'NUL') or (DeviceName = 'CONIN$') or (DeviceName = 'CONOUT$') then exit;
+    if (Length(DeviceName) = 4) and
+       ((Copy(DeviceName, 1, 3) = 'COM') or (Copy(DeviceName, 1, 3) = 'LPT')) and
+       (DeviceName[4] >= '1') and (DeviceName[4] <= '9') then exit;
+    if Separator = 0 then break;
+    Normalized := Copy(Normalized, Separator + 1, MaxInt);
+  until False;
+  Result := True;
 end;
 
 function ManifestEntryPath(const Line: String): String;
 var
-  FirstSpace, SecondSpace: Integer;
+  FirstSpace, SecondSpace, I: Integer;
 begin
   Result := '';
   FirstSpace := Pos(' ', Line);
   if FirstSpace <> 65 then exit;
+  for I := 1 to 64 do
+    if Pos(Line[I], '0123456789abcdef') = 0 then exit;
   SecondSpace := Pos(' ', Copy(Line, FirstSpace + 1, MaxInt));
   if SecondSpace = 0 then exit;
   SecondSpace := SecondSpace + FirstSpace;
+  if (SecondSpace <= FirstSpace + 1) or (SecondSpace - FirstSpace > 20) then exit;
+  for I := FirstSpace + 1 to SecondSpace - 1 do
+    if (Line[I] < '0') or (Line[I] > '9') then exit;
   Result := Copy(Line, SecondSpace + 1, MaxInt);
-  if not IsSafeRelativeManifestPath(Result) then Result := '';
+  if not IsSafeRelativeManifestPath(Result) then Result := ''
+  else StringChangeEx(Result, '\', '/', True);
 end;
 
 procedure LoadTrustedPreviousManifest(const Path, ExpectedVersion, ExpectedHash: String);
@@ -159,6 +267,7 @@ var
   I, Marker: Integer;
   Relative: String;
 begin
+  RequireNoReparseAncestry(Path, True);
   if not FileExists(Path) then
     RaiseException('The installed package ownership manifest is missing.');
   if (ExpectedHash = '') or
@@ -176,7 +285,10 @@ begin
     for I := Marker + 1 to Lines.Count - 1 do begin
       Relative := ManifestEntryPath(Lines[I]);
       if Relative = '' then RaiseException('The installed package ownership manifest is malformed.');
-      PreviousManifest.Add(Relative);
+      if PreviousManifest.IndexOf(Uppercase(Relative)) >= 0 then
+        RaiseException('The installed package ownership manifest has duplicate identities.');
+      RequireNoReparseAncestry(AddBackslash(PackageRoot()) + Relative, True);
+      PreviousManifest.Add(Uppercase(Relative));
     end;
   finally
     Lines.Free;
@@ -189,12 +301,12 @@ var
   I, Marker: Integer;
 begin
   Result := False;
-  if CompareText(GetSHA256OfFile(ExpandConstant('{app}\SYNVEIL-MANIFEST.txt')),
+  if CompareText(GetSHA256OfFile(PackageRoot() + '\SYNVEIL-MANIFEST.txt'),
        '{#SynveilManifestSha256}') <> 0 then
     RaiseException('The target package manifest identity is not trusted.');
   Lines := TStringList.Create;
   try
-    Lines.LoadFromFile(ExpandConstant('{app}\SYNVEIL-MANIFEST.txt'));
+    Lines.LoadFromFile(PackageRoot() + '\SYNVEIL-MANIFEST.txt');
     Marker := Lines.IndexOf('files=sha256 size path');
     if Marker < 0 then RaiseException('The target package manifest is incomplete.');
     for I := Marker + 1 to Lines.Count - 1 do
@@ -218,8 +330,10 @@ begin
     Relative := PreviousManifest[I];
     if not CurrentManifestOwns(Relative) then begin
       Candidate := ExpandFileName(Root + Relative);
-      if Pos(Uppercase(Root), Uppercase(Candidate)) <> 1 then
-        RaiseException('Obsolete package path escapes the installation root.');
+      if not IsSafeRelativeManifestPath(Relative) then
+        RaiseException('Obsolete package identity is unsafe.');
+      RequireInstallRoot;
+      RequireNoReparseAncestry(Candidate, True);
       if FileExists(Candidate) then begin
         Attributes := GetFileAttributes(Candidate);
         if (Attributes = $FFFFFFFF) or ((Attributes and FileAttributeReparsePoint) <> 0) then
@@ -231,11 +345,80 @@ begin
   end;
 end;
 
+function IsExplicitUpgradeSource(const Value: String): Boolean;
+begin
+  Result := Pos(';' + Value + ';', '{#SynveilCompatibleSources}') > 0;
+end;
+
+procedure RequireOwnedExecutable(const Name: String);
+var
+  Lines: TStringList;
+  I: Integer;
+  Path: String;
+begin
+  RequireInstallRoot;
+  Path := AddBackslash(PackageRoot()) + Name;
+  RequireNoReparseAncestry(Path, True);
+  RequireNoReparseAncestry(PackageRoot() + '\SYNVEIL-MANIFEST.txt', True);
+  if CompareText(GetSHA256OfFile(PackageRoot() + '\SYNVEIL-MANIFEST.txt'),
+       '{#SynveilManifestSha256}') <> 0 then
+    RaiseException('The package execution manifest is not trusted.');
+  Lines := TStringList.Create;
+  try
+    Lines.LoadFromFile(PackageRoot() + '\SYNVEIL-MANIFEST.txt');
+    for I := 0 to Lines.Count - 1 do
+      if CompareText(ManifestEntryPath(Lines[I]), Name) = 0 then begin
+        if CompareText(GetSHA256OfFile(Path), Copy(Lines[I], 1, 64)) <> 0 then
+          RaiseException('The owned executable changed before use.');
+        exit;
+      end;
+    RaiseException('The executable is not owned by this package.');
+  finally
+    Lines.Free;
+  end;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Lines: TStringList;
+  I, Marker: Integer;
+  Relative: String;
+begin
+  Result := '';
+  RequireInstallRoot;
+  RequireNoReparseAncestry(PackageRoot() + '\SYNVEIL-MANIFEST.txt', True);
+  if FreshInstall and
+     (GetFileAttributes(PackageRoot() + '\SYNVEIL-MANIFEST.txt') <> $FFFFFFFF) then
+    RaiseException('Installation conflicts with an unowned package manifest.');
+  ExtractTemporaryFile('SYNVEIL-MANIFEST.txt');
+  if CompareText(GetSHA256OfFile(ExpandConstant('{tmp}\SYNVEIL-MANIFEST.txt')),
+       '{#SynveilManifestSha256}') <> 0 then
+    RaiseException('The staged package manifest is not trusted.');
+  Lines := TStringList.Create;
+  try
+    Lines.LoadFromFile(ExpandConstant('{tmp}\SYNVEIL-MANIFEST.txt'));
+    Marker := Lines.IndexOf('files=sha256 size path');
+    if Marker < 0 then RaiseException('The staged package manifest is malformed.');
+    for I := Marker + 1 to Lines.Count - 1 do begin
+      Relative := ManifestEntryPath(Lines[I]);
+      if Relative = '' then RaiseException('The staged package identity is unsafe.');
+      RequireNoReparseAncestry(AddBackslash(PackageRoot()) + Relative, True);
+      if (GetFileAttributes(AddBackslash(PackageRoot()) + Relative) <> $FFFFFFFF) and
+         (FreshInstall or (PreviousManifest.IndexOf(Uppercase(Relative)) < 0)) then
+        RaiseException('Installation conflicts with an unowned payload file.');
+    end;
+  finally
+    Lines.Free;
+  end;
+end;
+
 function InitializeSetup(): Boolean;
 var
   StartupValue, RepairValue, InstalledVersion, InstalledLocation, InstalledManifestHash: String;
   VersionComparison: Integer;
 begin
+  ValidateSecurityOptions;
+  RequireNoReparseAncestry(PackageRoot(), False);
   { Registry identity, not a writable directory, is the installed-product authority. }
   FreshInstall := not RegQueryStringValue(HKCU, UninstallKey, 'DisplayVersion', InstalledVersion);
   RepairValue := ExpandConstant('{param:REPAIR|__MISSING__}');
@@ -248,7 +431,7 @@ begin
   if not FreshInstall then begin
     if (not RegQueryStringValue(HKCU, UninstallKey, 'InstallLocation', InstalledLocation)) or
        (not RegQueryStringValue(HKCU, UninstallKey, 'SynveilManifestSha256', InstalledManifestHash)) or
-       (CompareText(RemoveBackslashUnlessRoot(InstalledLocation), RemoveBackslashUnlessRoot(ExpandConstant('{app}'))) <> 0) then
+       (CompareText(RemoveBackslashUnlessRoot(InstalledLocation), RemoveBackslashUnlessRoot(PackageRoot())) <> 0) then
       RaiseException('The installed Synveil identity is incomplete or conflicts with this Setup.');
     VersionComparison := CompareStrictVersion(InstalledVersion, '{#SynveilVersion}');
     if VersionComparison > 0 then
@@ -259,6 +442,8 @@ begin
       RaiseException('Silent same-version Setup requires /REPAIR=1.');
     RepairMode := VersionComparison = 0;
     UpgradeMode := VersionComparison < 0;
+    if UpgradeMode and (not IsExplicitUpgradeSource(InstalledVersion)) then
+      RaiseException('This source version is not explicitly compatible with this Setup.');
   end;
   StartupValue := ExpandConstant('{param:STARTUP|__MISSING__}');
   StartupChoiceExplicit := StartupValue <> '__MISSING__';
@@ -270,7 +455,7 @@ begin
   LaunchRequested := ParseBooleanOption('LAUNCH', not WizardSilent);
   PreviousManifest := TStringList.Create;
   if not FreshInstall then
-    LoadTrustedPreviousManifest(ExpandConstant('{app}\SYNVEIL-MANIFEST.txt'), InstalledVersion,
+    LoadTrustedPreviousManifest(PackageRoot() + '\SYNVEIL-MANIFEST.txt', InstalledVersion,
       InstalledManifestHash);
   Result := True;
 end;
@@ -356,6 +541,7 @@ begin
   if (CurStep = ssPostInstall) and (not FreshInstall) then
     RemoveProvenObsoleteFiles;
   if (CurStep = ssPostInstall) and (FreshInstall or StartupChoiceExplicit) then begin
+    RequireOwnedExecutable('synveil-client.exe');
     if StartupRequested then
       StartupState := 'enabled'
     else
@@ -366,6 +552,7 @@ begin
       RaiseException('Synveil could not save the sign-in startup preference. Try again from Settings.');
   end;
   if (CurStep = ssPostInstall) and LaunchRequested and (not WizardSilent) then begin
+    RequireOwnedExecutable('synveil-desktop.exe');
     if not Exec(ExpandConstant('{app}\synveil-desktop.exe'), '', ExpandConstant('{app}'),
       SW_SHOWNORMAL, ewNoWait, ResultCode) then
       MsgBox('Synveil was installed, but could not be opened. You can open it from the Start menu.', mbError, MB_OK);
@@ -383,6 +570,16 @@ var
 begin
   { Runtime owner removes only its authoritative profile task; preference remains durable. }
   if CurUninstallStep = usUninstall then begin
+    RequireInstallRoot;
+    PreviousManifest := TStringList.Create;
+    try
+      LoadTrustedPreviousManifest(PackageRoot() + '\SYNVEIL-MANIFEST.txt',
+        '{#SynveilVersion}', '{#SynveilManifestSha256}');
+    finally
+      PreviousManifest.Free;
+    end;
+    if FileExists(ExpandConstant('{app}\synveil-client.exe')) then
+      RequireOwnedExecutable('synveil-client.exe');
     if FileExists(ExpandConstant('{app}\synveil-client.exe')) and
        ((not Exec(ExpandConstant('{app}\synveil-client.exe'),
          '--cleanup-startup-integration', ExpandConstant('{app}'), SW_HIDE,

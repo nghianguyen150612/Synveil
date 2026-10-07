@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -82,12 +83,12 @@ class ReleaseManifestTests(unittest.TestCase):
         spec=json.dumps({k:v for k,v in self.artifact().items() if k not in {"product_version","size_bytes","sha256"}})
         outputs=[]
         for name in ("one.json","two.json"):
-            subprocess.run([str(ROOT/"scripts/release_manifest.py"),"create","--artifact-root",str(self.root),"--product-version","0.1.0","--source-commit",COMMIT,"--output",str(self.root/name),"--artifact",spec],check=True); outputs.append((self.root/name).read_bytes())
+            subprocess.run([sys.executable,str(ROOT/"scripts/release_manifest.py"),"create","--artifact-root",str(self.root),"--product-version","0.1.0","--source-commit",COMMIT,"--output",str(self.root/name),"--artifact",spec],check=True); outputs.append((self.root/name).read_bytes())
         self.assertEqual(outputs[0],outputs[1])
     def test_28_merge_mismatched_version(self):
         a=self.document(); b=self.document(); b["product_version"]="0.2.0"
         for name,data in (("a.json",a),("b.json",b)): (self.root/name).write_text(json.dumps(data))
-        result=subprocess.run([str(ROOT/"scripts/release_manifest.py"),"merge","--output",str(self.root/"out"),str(self.root/"a.json"),str(self.root/"b.json")],capture_output=True,text=True)
+        result=subprocess.run([sys.executable,str(ROOT/"scripts/release_manifest.py"),"merge","--output",str(self.root/"out"),str(self.root/"a.json"),str(self.root/"b.json")],capture_output=True,text=True)
         self.assertNotEqual(result.returncode,0); self.assertIn("mismatched product_version",result.stderr)
     def test_29_merge_mismatched_source(self):
         a=self.document(); b=self.document(); b["source_commit"]="b"*40; self._merge_rejected(a,b,"mismatched source_commit")
@@ -95,7 +96,7 @@ class ReleaseManifestTests(unittest.TestCase):
         a=self.document([self.artifact()]); self._merge_rejected(a,a,"duplicate artifact id")
     def _merge_rejected(self,a,b,text):
         for name,data in (("a.json",a),("b.json",b)): (self.root/name).write_text(json.dumps(data))
-        result=subprocess.run([str(ROOT/"scripts/release_manifest.py"),"merge","--output",str(self.root/"out"),str(self.root/"a.json"),str(self.root/"b.json")],capture_output=True,text=True)
+        result=subprocess.run([sys.executable,str(ROOT/"scripts/release_manifest.py"),"merge","--output",str(self.root/"out"),str(self.root/"a.json"),str(self.root/"b.json")],capture_output=True,text=True)
         self.assertNotEqual(result.returncode,0); self.assertIn(text,result.stderr)
     def test_31_schema_drift_guard(self):
         schema=json.loads((ROOT/"deploy/release/release-manifest-v1.schema.json").read_text())

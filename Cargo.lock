@@ -2824,6 +2824,7 @@ dependencies = [
  "synveil-client-sync",
  "synveil-core",
  "synveil-platform",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",

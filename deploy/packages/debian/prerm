@@ -4,13 +4,16 @@
 # credentials, or external storage. POSIX sh. No failure masking.
 # SPDX-License-Identifier: MIT
 set -e
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+unset ENV BASH_ENV CDPATH LD_PRELOAD LD_LIBRARY_PATH PYTHONPATH
 
 log() {
     printf '[synveil] %s\n' "$*" >&2
 }
 
 ACTION="${1:-}"
-log "prerm action: $ACTION (args: $*)"
+log "prerm action inspected"
 
 case "$ACTION" in
     remove|deconfigure)
@@ -38,7 +41,7 @@ case "$ACTION" in
         log "upgrade in progress; preserving timer enablement, not stopping running one-shot"
         ;;
     *)
-        log "unknown prerm action: $ACTION; refusing to guess (no state change)" >&2
+        log "unknown prerm action; refusing to guess (no state change)" >&2
         exit 1
         ;;
 esac

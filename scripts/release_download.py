@@ -11,6 +11,7 @@ import os
 import re
 import sys
 import tempfile
+import stat
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -31,6 +32,12 @@ class AcquisitionError(ValueError):
     def __init__(self, code: str, message: str):
         super().__init__(message)
         self.code = code
+
+
+class BoundedArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        # argparse's default includes raw invalid/unknown argument values.
+        self.exit(2, "INVALID_ARGUMENTS: use the documented installer arguments.\n")
 
 
 @dataclass(frozen=True)
@@ -103,7 +110,12 @@ class UrllibNoRedirectTransport(RawHttpsTransport):
 
 
 def origin(url: str) -> str:
-    parsed = urllib.parse.urlsplit(url)
+    if not isinstance(url, str) or any(ord(c) <= 32 or 127 <= ord(c) <= 159 for c in url) or "\\" in url:
+        raise AcquisitionError("UNTRUSTED_ORIGIN", "invalid release URL")
+    try:
+        parsed = urllib.parse.urlsplit(url)
+    except ValueError as error:
+        raise AcquisitionError("UNTRUSTED_ORIGIN", "invalid release URL") from error
     if parsed.scheme != "https":
         raise AcquisitionError("UNTRUSTED_ORIGIN", "release URLs must use HTTPS")
     if parsed.username is not None or parsed.password is not None:
@@ -193,6 +205,13 @@ def authenticate_manifest(raw: bytes, policy: ReleaseTrustPolicy, *,
         return ManifestAuthentication("AUTHENTICATED_PINNED_DIGEST", "pinned_sha256", digest, len(raw))
     if policy.authentication_method == "detached_signature":
         entries = signature_descriptor.get("signatures", []) if isinstance(signature_descriptor, dict) else []
+        if (not isinstance(entries, list) or not 1 <= len(entries) <= 16
+                or any(not isinstance(entry, dict)
+                       or not all(isinstance(entry.get(k), str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", entry[k])
+                                  for k in ("scheme", "key_id", "signature_filename"))
+                       or not release_manifest.safe_filename(entry["signature_filename"])
+                       for entry in entries)):
+            raise AcquisitionError("UNSUPPORTED_AUTHENTICATION", "invalid detached signature descriptor")
         eligible = [entry for entry in entries if isinstance(entry, dict)
                     and entry.get("scheme") in policy.allowed_signature_schemes
                     and entry.get("key_id") in policy.trusted_key_ids]
@@ -309,9 +328,12 @@ def _safe_target(root: Path, filename: str) -> tuple[Path, Path]:
             or PurePosixPath(filename).is_absolute()):
         raise AcquisitionError("UNSAFE_PATH", "unsafe artifact filename")
     supplied = Path(root)
-    if supplied.is_symlink():
-        raise AcquisitionError("UNSAFE_PATH", "destination root may not be a symlink")
-    supplied.mkdir(parents=True, exist_ok=True)
+    require_safe_ancestry(supplied)
+    supplied.mkdir(parents=True, exist_ok=True, mode=0o700)
+    require_safe_ancestry(supplied)
+    info = supplied.stat()
+    if os.name == "posix" and (info.st_uid != os.getuid() or info.st_mode & 0o077):
+        raise AcquisitionError("UNSAFE_PATH", "staging root must be private to its owner")
     root = supplied.resolve()
     target = root / filename
     if target.is_symlink() or target.parent.resolve() != root:
@@ -319,14 +341,71 @@ def _safe_target(root: Path, filename: str) -> tuple[Path, Path]:
     return root, target
 
 
+def require_safe_ancestry(path: Path) -> None:
+    supplied = Path(path).absolute()
+    if any(part == ".." for part in supplied.parts):
+        raise AcquisitionError("UNSAFE_PATH", "path traversal is forbidden")
+    for candidate in reversed((supplied, *supplied.parents)):
+        try:
+            info = candidate.lstat()
+        except FileNotFoundError:
+            continue
+        if (stat.S_ISLNK(info.st_mode)
+                or getattr(info, "st_file_attributes", 0) & 0x400
+                or not stat.S_ISDIR(info.st_mode)):
+            raise AcquisitionError("UNSAFE_PATH", "ambiguous staging ancestry")
+        if os.name == "posix":
+            trusted_owner = info.st_uid in {0, os.getuid()}
+            # Root-owned sticky temporary roots protect entries owned by us.
+            protected_temporary_root = info.st_uid == 0 and info.st_mode & stat.S_ISVTX
+            if not trusted_owner or (info.st_mode & 0o022 and not protected_temporary_root):
+                raise AcquisitionError("UNSAFE_PATH", "untrusted writable path ancestry")
+
+
 def _matches(path: Path, size: int, digest: str) -> bool:
-    if not path.is_file() or path.is_symlink() or path.stat().st_size != size:
-        return False
     actual = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(CHUNK_SIZE), b""):
-            actual.update(chunk)
+    try:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400 or info.st_size != size:
+            return False
+        if os.name == "posix" and (info.st_uid not in {0, os.getuid()} or info.st_mode & 0o022):
+            return False
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(fd, "rb") as stream:
+            opened = os.fstat(stream.fileno())
+            if not stat.S_ISREG(opened.st_mode) or (info.st_dev, info.st_ino) != (opened.st_dev, opened.st_ino):
+                return False
+            count = 0
+            while chunk := stream.read(min(CHUNK_SIZE, size - count + 1)):
+                count += len(chunk)
+                if count > size:
+                    return False
+                actual.update(chunk)
+            identity = lambda item: (item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns, item.st_ctime_ns, item.st_mode)
+            if count != size or identity(path.lstat()) != identity(info) or identity(os.fstat(stream.fileno())) != identity(opened):
+                return False
+    except OSError:
+        return False
     return hmac.compare_digest(actual.hexdigest(), digest)
+
+
+def read_bounded_regular_file(path: Path, limit: int) -> bytes:
+    """Read local public metadata without following links or blocking on devices."""
+    require_safe_ancestry(path.parent)
+    info = path.lstat()
+    if (not stat.S_ISREG(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400
+            or (os.name == "posix" and (info.st_uid not in {0, os.getuid()} or info.st_mode & 0o022))):
+        raise AcquisitionError("UNSAFE_PATH", "ambiguous local public metadata")
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(fd, "rb") as stream:
+        opened = os.fstat(stream.fileno())
+        if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+            raise AcquisitionError("UNSAFE_PATH", "local public metadata identity changed")
+        raw = stream.read(limit + 1)
+        identity = lambda item: (item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns, item.st_ctime_ns, item.st_mode)
+        if identity(path.lstat()) != identity(info) or identity(os.fstat(stream.fileno())) != identity(opened):
+            raise AcquisitionError("UNSAFE_PATH", "local public metadata changed during reading")
+    return raw
 
 
 def _existing_result(root: Path, artifact: dict) -> tuple[Path, str | None]:
@@ -348,11 +427,20 @@ def stage_artifact(stream: BinaryIO, destination_root: Path,
             return acquisition_result("NOOP_ALREADY_VERIFIED", target, selection)
         raise AcquisitionError("DESTINATION_CONFLICT", "existing destination does not match authenticated artifact")
     temp_path: Path | None = None
+    directory_fd = None
+    if os.name == "posix":
+        directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    root_identity = root.stat()
     try:
+        if directory_fd is not None:
+            anchored = os.fstat(directory_fd)
+            if (anchored.st_dev, anchored.st_ino) != (root_identity.st_dev, root_identity.st_ino):
+                raise AcquisitionError("UNSAFE_PATH", "staging root changed before acquisition")
         fd, name = tempfile.mkstemp(prefix=".synveil-download-", dir=root)
         temp_path = Path(name)
         digest, count = hashlib.sha256(), 0
         with os.fdopen(fd, "wb") as output:
+            temporary_identity = os.fstat(output.fileno())
             while count <= expected_size:
                 chunk = stream.read(min(CHUNK_SIZE, expected_size - count + 1))
                 if not chunk:
@@ -368,26 +456,53 @@ def stage_artifact(stream: BinaryIO, destination_root: Path,
             raise AcquisitionError("ARTIFACT_TRUNCATED", "artifact ended before authenticated size")
         if not hmac.compare_digest(digest.hexdigest(), expected_digest):
             raise AcquisitionError("ARTIFACT_DIGEST_MISMATCH", "artifact digest mismatch")
+        require_safe_ancestry(root)
+        current = temp_path.lstat()
+        latest_root = root.stat()
+        if ((latest_root.st_dev, latest_root.st_ino, latest_root.st_mode) !=
+                (root_identity.st_dev, root_identity.st_ino, root_identity.st_mode)
+                or not stat.S_ISREG(current.st_mode)
+                or (current.st_dev, current.st_ino) != (temporary_identity.st_dev, temporary_identity.st_ino)
+                or not _matches(temp_path, expected_size, expected_digest)):
+            raise AcquisitionError("UNSAFE_PATH", "staging identity changed before promotion")
         try:
-            os.link(temp_path, target)
+            if directory_fd is None:
+                os.link(temp_path, target)
+            else:
+                os.link(temp_path.name, target.name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd,
+                        follow_symlinks=False)
         except FileExistsError as error:
             raise AcquisitionError("DESTINATION_CONFLICT", "destination appeared during download") from error
         except OSError as error:
             raise AcquisitionError("STAGING_ERROR", "atomic no-clobber promotion is unavailable") from error
-        temp_path.unlink()
+        if directory_fd is None:
+            temp_path.unlink()
+        else:
+            os.unlink(temp_path.name, dir_fd=directory_fd)
         temp_path = None
         try:
-            directory_fd = os.open(root, os.O_RDONLY)
-            try:
+            if directory_fd is not None:
                 os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+            else:
+                sync_fd = os.open(root, os.O_RDONLY)
+                try:
+                    os.fsync(sync_fd)
+                finally:
+                    os.close(sync_fd)
         except OSError:
             pass
         return acquisition_result("VERIFIED", target, selection)
     finally:
         if temp_path is not None:
-            temp_path.unlink(missing_ok=True)
+            if directory_fd is None:
+                temp_path.unlink(missing_ok=True)
+            else:
+                try:
+                    os.unlink(temp_path.name, dir_fd=directory_fd)
+                except FileNotFoundError:
+                    pass
+        if directory_fd is not None:
+            os.close(directory_fd)
 
 
 def download_artifact(base_url: str, destination_root: Path,
@@ -420,22 +535,51 @@ def acquisition_result(result: str, path: Path, selection: SelectedArtifact) -> 
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = BoundedArgumentParser(description=__doc__)
     parser.add_argument("manifest", type=Path)
-    parser.add_argument("--expected-manifest-sha256", required=True)
+    trust = parser.add_mutually_exclusive_group(required=True)
+    trust.add_argument("--expected-manifest-sha256")
+    trust.add_argument("--trust-policy", type=Path)
+    parser.add_argument("--signature-descriptor", type=Path)
+    parser.add_argument("--signature-directory", type=Path)
     parser.add_argument("--expected-version", required=True)
     parser.add_argument("--expected-source-commit")
     args = parser.parse_args()
     try:
-        raw = args.manifest.read_bytes()
+        raw = read_bounded_regular_file(args.manifest, MAX_MANIFEST_BYTES)
         policy = ReleaseTrustPolicy(frozenset(), frozenset(), expected_manifest_sha256=args.expected_manifest_sha256)
-        authentication = authenticate_manifest(raw, policy)
+        descriptor, verify = None, None
+        if args.trust_policy:
+            import release_signature
+            keys = release_signature.load_production_keys(args.trust_policy)
+            if args.signature_descriptor is None or args.signature_directory is None:
+                raise AcquisitionError("UNSUPPORTED_AUTHENTICATION", "signature inputs required")
+            encoded = read_bounded_regular_file(args.signature_descriptor, MAX_MANIFEST_BYTES)
+            if len(encoded) > MAX_MANIFEST_BYTES:
+                raise AcquisitionError("MANIFEST_TOO_LARGE", "signature descriptor too large")
+            descriptor = json.loads(encoded)
+            signatures = {}
+            entries = descriptor.get("signatures", []) if isinstance(descriptor, dict) else []
+            if not isinstance(entries, list) or not 1 <= len(entries) <= release_signature.MAX_SIGNATURES:
+                raise AcquisitionError("UNSUPPORTED_AUTHENTICATION", "invalid signature count")
+            for entry in entries:
+                name = entry.get("signature_filename") if isinstance(entry, dict) else None
+                if (not release_manifest.safe_filename(name)
+                        or not all(isinstance(entry.get(k), str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", entry[k])
+                                   for k in ("key_id", "scheme"))):
+                    raise AcquisitionError("UNSAFE_PATH", "unsafe signature path")
+                if entry.get("key_id") in keys and entry.get("scheme") == release_signature.SCHEME:
+                    signatures[name] = release_signature.read_signature(args.signature_directory / name)
+            policy = ReleaseTrustPolicy(frozenset(), frozenset(), authentication_method="detached_signature",
+                                        trusted_key_ids=frozenset(keys), allowed_signature_schemes=frozenset({release_signature.SCHEME}))
+            verify = release_signature.verifier(keys, signatures)
+        authentication = authenticate_manifest(raw, policy, signature_descriptor=descriptor, verifier=verify)
         context = parse_authenticated_manifest(raw, authentication, args.expected_version,
                                                args.expected_source_commit)
         print(json.dumps({"authentication": authentication.__dict__,
                           "manifest": context.document}, sort_keys=True))
         return 0
-    except (OSError, AcquisitionError) as error:
+    except (OSError, ValueError) as error:
         code = getattr(error, "code", "ERROR")
         print(json.dumps({"result": "FAILED", "error": code,
                           "diagnostics_redacted": []}), file=sys.stderr)

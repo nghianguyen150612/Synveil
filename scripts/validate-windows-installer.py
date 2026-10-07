@@ -93,7 +93,7 @@ def main() -> int:
     lower = iss.lower()
     require(f"AppId={{{APP_ID}" in iss, "stable AppId")
     require("DefaultDirName={localappdata}\\Programs\\Synveil" in iss, "per-user path")
-    require("PrivilegesRequired=lowest" in iss and "PrivilegesRequiredOverridesAllowed=none" in iss, "no elevation override")
+    require("PrivilegesRequired=lowest" in iss and not re.search(r"(?m)^PrivilegesRequiredOverridesAllowed=", iss), "no elevation override (Inno blank default)")
     require("ArchitecturesAllowed=x64" in iss and "ArchitecturesInstallIn64BitMode=x64" in iss, "x86_64 constraint")
     require('Filename: "{app}\\synveil-desktop.exe"' in iss, "absolute installed shortcut target")
     for directive in ("DisableWelcomePage=no", "DisableDirPage=yes", "DisableProgramGroupPage=yes", "DisableReadyPage=yes"):
@@ -150,7 +150,8 @@ def main() -> int:
         require(evidence in workflow, f"P025 hosted workflow evidence: {evidence}")
     for evidence in (r"\Synveil\BackgroundClient\profile-", "InteractiveToken", "LeastPrivilege", "<LogonTrigger>",
                      "MultipleInstancesPolicy>IgnoreNew", "windows_task_xml_is_authoritative", "UnsafeState",
-                     "System32", "schtasks.exe", "create_new(true)", "file.sync_all()"):
+                     "GetSystemDirectoryW", "SHGetKnownFolderPath", "share_mode(1)",
+                     "schtasks.exe", "create_new(true)", "file.sync_all()"):
         require(evidence in launch, f"P026 Task Scheduler authority: {evidence}")
     for forbidden in ("cmd.exe", "powershell.exe", "CurrentVersion\\Run"):
         require(forbidden.lower() not in launch.lower(), f"P026 forbidden startup mechanism: {forbidden}")

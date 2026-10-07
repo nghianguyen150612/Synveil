@@ -124,6 +124,9 @@ python3 scripts/validate-installation-to-sync-progress.py || failures=$((failure
 echo "DOC-UNIT-20: checking Prompt042 repair and recovery"
 python3 scripts/validate-repair-recovery-ux.py || failures=$((failures + 1))
 
+echo "DOC-UNIT-21: checking Prompt043 installer security"
+python3 scripts/validate-installer-security-hardening.py || failures=$((failures + 1))
+
 if [[ "$failures" -ne 0 ]]; then
     echo "documentation validation failed: $failures issue(s)" >&2
     exit 1

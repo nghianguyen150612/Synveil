@@ -26,12 +26,17 @@ verify the bundle against a digest/signature obtained from the trusted
 ```
 
 Do not execute the first step's output unless the independent comparison
-succeeds. Production signing/key provisioning and the final public command are
-later release-engineering/distribution-readiness work.
+succeeds. P043 adds `scripts/build-quick-install-bundle.py` as a closed deterministic
+bundle producer, including the platform policy. Authenticate its exact digest
+independently before extraction/execution. Production signing/key provisioning
+and the final public command remain release-engineering/distribution-readiness
+work. No key is downloaded from the artifact host and trusted implicitly.
 
 ## Bootstrap and invocation
 
-Pinned-digest mode is the supported deterministic P017 bootstrap. All values
+P043 preserves pinned-digest bootstrap and adds the production-capable Ed25519
+mode using an independently provisioned local `--trust-policy`; see
+[installer security](INSTALLER_SECURITY_HARDENING.md). All values
 below are reviewed local inputs, never values copied out of the remote channel:
 
 ```bash
@@ -54,15 +59,16 @@ The trust chain is:
 1. P006 HTTPS-only, allowlisted-origin, explicitly checked redirect and bounded
    transport fetches the channel;
 2. P011 authenticates its exact bytes against the locally trusted pin, enforces
-   the minimum generation, and selects the highest fresh-install release;
+   the minimum generation and persistent caller-owned high-water, and selects
+   the highest fresh-install release;
 3. the selected release binds the exact manifest size, SHA-256, version and
    source commit, and P006 authenticates and parses precisely those bytes;
 4. P006 requires exactly one `linux/x86_64/native_package` DEB or RPM match,
    downloads it into a private `0700` staging directory, bounds its size,
    verifies SHA-256, fsyncs it, and atomically promotes without clobbering;
 5. the installer re-hashes the staged file immediately before mutation;
-6. only then does visible `sudo apt-get install -y PATH` or
-   `sudo dnf install -y PATH` request privilege.
+6. only then does visible sudo for the absolute OS-owned APT/DNF executable with
+   `install -y -- VERIFIED_ABSOLUTE_PATH` request privilege.
 
 Downloaded bytes are never piped into a shell or package manager. The complete
 installer is not run as root. It never reads, stores, logs, or pipes a password,
@@ -81,7 +87,7 @@ It contains no credentials.
 
 After the manager returns, `dpkg-query` or `rpm` must confirm the expected
 version and every launcher, client, desktop entry, icon and user unit must
-exist. Manager exit status alone is insufficient. A correctly installed same
+exist. Native `dpkg --verify` or `rpm -V` must also verify the package payload. Manager exit status alone is insufficient. A correctly installed same
 version returns `ALREADY_INSTALLED_VERIFIED` without mutation. Incomplete or a
 different installed state is not blindly reinstalled; native P009 upgrade or
 repair owns that lifecycle. Ordinary package removal remains native and

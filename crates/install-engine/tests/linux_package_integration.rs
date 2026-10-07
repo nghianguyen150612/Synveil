@@ -168,14 +168,14 @@ fn desktop_identity_consistent() {
 fn deb_hooks_declared() {
     assert_eq!(
         LinuxPackageContract::from_json(&source()).unwrap().formats[0].hooks,
-        ["postinst", "prerm", "postrm"]
+        ["preinst", "postinst", "prerm", "postrm"]
     );
 }
 #[test]
 fn rpm_hooks_declared() {
     assert_eq!(
         LinuxPackageContract::from_json(&source()).unwrap().formats[1].hooks,
-        ["post", "preun", "postun"]
+        ["pre", "post", "preun", "postun"]
     );
 }
 
@@ -610,11 +610,11 @@ metadata_mutation_test!(dependency_order_rejected, |v: &mut Value| {
 });
 metadata_mutation_test!(
     duplicate_hook_rejected,
-    |v: &mut Value| v["formats"][0]["hooks"][1] = json!("postinst")
+    |v: &mut Value| v["formats"][0]["hooks"][1] = json!("preinst")
 );
 metadata_mutation_test!(
     unknown_hook_rejected,
-    |v: &mut Value| v["formats"][0]["hooks"][1] = json!("preinst")
+    |v: &mut Value| v["formats"][0]["hooks"][1] = json!("unknown-hook")
 );
 metadata_mutation_test!(missing_hook_rejected, |v: &mut Value| {
     v["formats"][1]["hooks"].as_array_mut().unwrap().pop();

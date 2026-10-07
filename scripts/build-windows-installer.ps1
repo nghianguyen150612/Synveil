@@ -9,6 +9,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'windows-security.ps1')
 
 function Fail([string]$Kind, [string]$Message) { throw "${Kind}: ${Message}" }
 function Full-RepoPath([string]$Path, [string]$Root) {
@@ -17,8 +18,17 @@ function Full-RepoPath([string]$Path, [string]$Root) {
     return [IO.Path]::GetFullPath($Path)
 }
 function Invoke-Checked([string]$File, [string[]]$Arguments, [string]$Kind) {
-    & $File @Arguments
-    if ($LASTEXITCODE -ne 0) { Fail $Kind "process exited $LASTEXITCODE" }
+    # GUI toolchain installers must finish before their output is consumed.
+    # ArgumentList preserves each argument without shell/string interpolation.
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = $File
+    $info.UseShellExecute = $false
+    foreach ($argument in $Arguments) { $info.ArgumentList.Add($argument) }
+    $process = [Diagnostics.Process]::Start($info)
+    try {
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) { Fail $Kind "process exited $($process.ExitCode)" }
+    } finally { $process.Dispose() }
 }
 function Get-WorkspaceVersion([string]$CargoToml) {
     $text = [IO.File]::ReadAllText($CargoToml)
@@ -45,8 +55,35 @@ function Read-ToolchainLock([string]$Path) {
     return $lock
 }
 function Assert-Under([string]$Child, [string]$Parent, [string]$Kind) {
-    $prefix = [IO.Path]::GetFullPath($Parent).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
-    if (![IO.Path]::GetFullPath($Child).StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { Fail $Kind "path escapes its trusted root" }
+    $relative = [IO.Path]::GetRelativePath([IO.Path]::GetFullPath($Parent), [IO.Path]::GetFullPath($Child))
+    try { Assert-SafeRelativeIdentity $relative } catch { Fail $Kind "path escapes its trusted root" }
+}
+function Assert-CompilerEngineVersion([string]$Compiler, [string]$TempRoot, [string]$Expected) {
+    # Upstream ISCC's PE resource is a placeholder, not the engine identity.
+    # Compile a fixed Output=no probe: ISCC reports ISCmplr's actual version.
+    $probe = Join-Path $TempRoot ('compiler-probe-' + [guid]::NewGuid().ToString('N') + '.iss')
+    [IO.File]::WriteAllText($probe, "#define EngineVersionProbe 1`n[Setup]`nAppName=Synveil compiler identity probe`nAppVersion=0.1.0`nDefaultDirName={tmp}`nPrivilegesRequired=lowest`nOutput=no`n")
+    Assert-NoReparseAncestry (Join-Path (Split-Path $Compiler) 'ISCmplr.dll') $true
+    Assert-NoReparseAncestry (Join-Path (Split-Path $Compiler) 'ISPP.dll') $true
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = $Compiler; $info.UseShellExecute = $false
+    $info.RedirectStandardOutput = $true; $info.RedirectStandardError = $true
+    $info.ArgumentList.Add($probe)
+    $process = [Diagnostics.Process]::Start($info)
+    try {
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        if (!$process.WaitForExit(60000)) {
+            $process.Kill($true); $process.WaitForExit()
+            Fail "TOOLCHAIN_INTEGRITY_FAILURE" "compiler identity probe exceeded its bound"
+        }
+        $text = $stdout.GetAwaiter().GetResult()
+        $errors = $stderr.GetAwaiter().GetResult()
+        if ($process.ExitCode -ne 0 -or $text.Length -gt 16384 -or $errors.Length -gt 16384 -or
+            $text -notmatch ('(?m)^Compiler engine version: Inno Setup ' + [regex]::Escape($Expected) + '\s*$')) {
+            Fail "TOOLCHAIN_INTEGRITY_FAILURE" "compiler engine does not match the locked version"
+        }
+    } finally { $process.Dispose(); Remove-Item -LiteralPath $probe -Force }
 }
 function Get-InnoCompiler($Lock, [string]$Provided, [string]$TempRoot) {
     if ($Provided) {
@@ -54,8 +91,8 @@ function Get-InnoCompiler($Lock, [string]$Provided, [string]$TempRoot) {
         $compiler = Join-Path $dir $Lock.compiler
         Assert-Under $compiler $dir "TOOLCHAIN_INTEGRITY_FAILURE"
         if (!(Test-Path -LiteralPath $compiler -PathType Leaf)) { Fail "TOOLCHAIN_INTEGRITY_FAILURE" "offline compiler is missing" }
-        $version = [Diagnostics.FileVersionInfo]::GetVersionInfo($compiler).ProductVersion
-        if ($version -notmatch '^6\.7\.3(?:\D|$)') { Fail "TOOLCHAIN_INTEGRITY_FAILURE" "offline compiler is not locked version 6.7.3" }
+        Assert-NoReparseAncestry $compiler $true
+        Assert-CompilerEngineVersion $compiler $TempRoot $Lock.version
         return $compiler
     }
     $distribution = Join-Path $TempRoot 'innosetup-6.7.3.exe'
@@ -77,7 +114,9 @@ function Get-InnoCompiler($Lock, [string]$Provided, [string]$TempRoot) {
     return Get-InnoCompiler $Lock $install $TempRoot
 }
 function Read-Payload([string]$Stage, [string]$Generated) {
+    Assert-NoReparseAncestry $Stage
     $manifest = Join-Path $Stage 'SYNVEIL-MANIFEST.txt'
+    Assert-NoReparseAncestry $manifest $true
     if (!(Test-Path -LiteralPath $manifest -PathType Leaf)) { Fail "PAYLOAD_IDENTITY_FAILURE" "runtime manifest is missing" }
     $entries = @(); $seen = @{}; $inFiles = $false
     foreach ($line in [IO.File]::ReadAllLines($manifest)) {
@@ -85,16 +124,21 @@ function Read-Payload([string]$Stage, [string]$Generated) {
         if (!$inFiles) { continue }
         if ($line -notmatch '^([0-9a-f]{64}) ([0-9]+) (.+)$') { Fail "PAYLOAD_IDENTITY_FAILURE" "malformed runtime inventory" }
         $relative = $Matches[3].Replace('\','/')
+        Assert-SafeRelativeIdentity $relative
         if ([IO.Path]::IsPathRooted($relative) -or $relative.Split('/') -contains '..') { Fail "PAYLOAD_IDENTITY_FAILURE" "payload traversal" }
         if ($relative.EndsWith('.exe',[StringComparison]::OrdinalIgnoreCase) -and $relative -notin @('synveil-desktop.exe','synveil-client.exe')) { Fail "PAYLOAD_IDENTITY_FAILURE" "unexpected payload executable" }
         $key = $relative.ToLowerInvariant(); if ($seen.ContainsKey($key)) { Fail "PAYLOAD_IDENTITY_FAILURE" "duplicate/case-colliding payload path" }; $seen[$key] = $true
         $file = [IO.Path]::GetFullPath((Join-Path $Stage $relative)); Assert-Under $file $Stage "PAYLOAD_IDENTITY_FAILURE"
+        Assert-NoReparseAncestry $file $true
         if (!(Test-Path -LiteralPath $file -PathType Leaf) -or (Get-Item -LiteralPath $file).LinkType) { Fail "PAYLOAD_IDENTITY_FAILURE" "missing or linked payload file" }
         if ((Get-Item -LiteralPath $file).Length -ne [int64]$Matches[2] -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() -cne $Matches[1]) { Fail "PAYLOAD_IDENTITY_FAILURE" "payload digest/size mismatch" }
         $entries += [pscustomobject]@{ Path=$relative; Size=[int64]$Matches[2]; Sha256=$Matches[1] }
     }
     foreach ($required in @('synveil-desktop.exe','synveil-client.exe','qt.conf','platforms/qwindows.dll','LICENSE','NOTICE')) { if (!$seen.ContainsKey($required.ToLowerInvariant())) { Fail "PAYLOAD_IDENTITY_FAILURE" "required payload omitted: $required" } }
     $actualFiles = @(Get-ChildItem -LiteralPath $Stage -File -Recurse | ForEach-Object { [IO.Path]::GetRelativePath($Stage,$_.FullName).Replace('\','/') } | Where-Object { $_ -cne 'SYNVEIL-MANIFEST.txt' })
+    foreach ($object in Get-ChildItem -LiteralPath $Stage -Recurse -Force) {
+        if (($object.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { Fail "PAYLOAD_IDENTITY_FAILURE" "runtime closure contains a reparse object" }
+    }
     if ($actualFiles.Count -ne $entries.Count) { Fail "PAYLOAD_IDENTITY_FAILURE" "unmanifested payload file" }
     $inventory = $entries | Sort-Object Path | ConvertTo-Json -Depth 3
     [IO.File]::WriteAllText((Join-Path $Generated 'payload-inventory.json'), $inventory + "`n", [Text.UTF8Encoding]::new($false))
@@ -115,7 +159,8 @@ if (!(Test-Path (Join-Path $repo 'Cargo.toml')) -or !(Test-Path (Join-Path $repo
 $revision = (& git -C $repo rev-parse HEAD).Trim(); if ($LASTEXITCODE -ne 0 -or $revision -cnotmatch '^[0-9a-f]{40}$') { Fail "PAYLOAD_IDENTITY_FAILURE" "invalid source revision" }
 $sourceEpoch = (& git -C $repo show -s --format=%ct HEAD).Trim(); if ($LASTEXITCODE -ne 0 -or $sourceEpoch -cnotmatch '^[0-9]+$') { Fail "PAYLOAD_IDENTITY_FAILURE" "invalid source timestamp" }; $env:SOURCE_DATE_EPOCH = $sourceEpoch
 $output = Full-RepoPath $OutputDirectory $repo; $target = Join-Path $repo 'target'; Assert-Under $output $target "INSTALLER_VERIFY_FAILURE"
-$generated = Join-Path $target 'windows-installer-generated'; Remove-Item $generated -Recurse -Force -ErrorAction SilentlyContinue; New-Item $generated,$output -ItemType Directory -Force | Out-Null
+Assert-NoReparseAncestry $output
+$generated = Join-Path $target 'windows-installer-generated'; Assert-NoReparseAncestry $generated; Remove-Item $generated -Recurse -Force -ErrorAction SilentlyContinue; New-Item $generated,$output -ItemType Directory -Force | Out-Null
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('synveil-inno-' + [guid]::NewGuid().ToString('N')); New-Item $temp -ItemType Directory | Out-Null
 try {
     $version = Get-WorkspaceVersion (Join-Path $repo 'Cargo.toml')
@@ -135,12 +180,36 @@ try {
     }
     Read-Payload $stage $generated
     $manifestHash = (Get-FileHash -LiteralPath (Join-Path $stage 'SYNVEIL-MANIFEST.txt') -Algorithm SHA256).Hash.ToLowerInvariant()
+    $upgradePolicy = Get-Content -LiteralPath (Join-Path $repo 'deploy/release/windows-upgrade-policy.json') -Raw | ConvertFrom-Json
+    if ($upgradePolicy.schema_version -ne 1 -or $upgradePolicy.product_version -cne (Get-WorkspaceVersion (Join-Path $repo 'Cargo.toml')).Product) { Fail "PAYLOAD_IDENTITY_FAILURE" "unknown Windows upgrade policy" }
+    $sources = @($upgradePolicy.upgrade_from)
+    foreach ($source in $sources) {
+        if ($source -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' -or [version]$source -ge [version]$version.Product) { Fail "PAYLOAD_IDENTITY_FAILURE" "invalid upgrade source" }
+    }
+    if ($LifecycleFixtureVersion) {
+        $sources = @()
+        if ($LifecycleFixtureVersion -ceq '1.1.0') { $sources = @('1.0.0') }
+    }
+    $compatibleSources = ';' + (($sources | Sort-Object -Unique) -join ';') + ';'
     $escapedStage = $stage.Replace('"','""'); $escapedOutput = $output.Replace('"','""')
-    $defines = @('#define SynveilVersion "' + $version.Product + '"','#define SynveilWindowsVersion "' + $version.Windows + '"','#define SynveilSourceRevision "' + $revision + '"','#define SynveilManifestSha256 "' + $manifestHash + '"','#define SynveilPayloadDir "' + $escapedStage + '"','#define SynveilOutputDir "' + $escapedOutput + '"')
+    $defines = @(
+        ('#define SynveilVersion "' + $version.Product + '"')
+        ('#define SynveilWindowsVersion "' + $version.Windows + '"')
+        ('#define SynveilSourceRevision "' + $revision + '"')
+        ('#define SynveilManifestSha256 "' + $manifestHash + '"')
+        ('#define SynveilPayloadDir "' + $escapedStage + '"')
+        ('#define SynveilOutputDir "' + $escapedOutput + '"')
+    )
+    $defines += '#define SynveilCompatibleSources "' + $compatibleSources + '"'
     [IO.File]::WriteAllLines((Join-Path $generated 'version.iss'), $defines, [Text.UTF8Encoding]::new($false))
     $escapedGenerated = $generated.Replace('"','""')
     $sourceScript = (Join-Path $repo 'deploy/windows/installer/Synveil.iss').Replace('"','""')
-    [IO.File]::WriteAllLines((Join-Path $generated 'build.iss'), @('#define GeneratedDir "' + $escapedGenerated + '"','#include "' + $sourceScript + '"'), [Text.UTF8Encoding]::new($false))
+    $buildLines = @(
+        ('#define GeneratedDir "' + $escapedGenerated + '"')
+        ('#include "' + $sourceScript + '"')
+    )
+    if ($defines.Count -ne 7 -or $buildLines.Count -ne 2) { Fail "INSTALLER_COMPILE_FAILURE" "generated directive boundaries are invalid" }
+    [IO.File]::WriteAllLines((Join-Path $generated 'build.iss'), $buildLines, [Text.UTF8Encoding]::new($false))
     $lock = Read-ToolchainLock (Join-Path $repo 'deploy/windows/installer/toolchain.lock'); $compiler = Get-InnoCompiler $lock $InnoToolchainDirectory $temp
     Remove-Item (Join-Path $output 'SynveilSetup.exe') -Force -ErrorAction SilentlyContinue
     Invoke-Checked $compiler @('/Q',(Join-Path $generated 'build.iss')) "INSTALLER_COMPILE_FAILURE"

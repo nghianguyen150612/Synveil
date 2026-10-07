@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from pathlib import PureWindowsPath
 
 APP_ID = "{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}"
@@ -23,12 +24,12 @@ class StableVersion:
     @classmethod
     def parse(cls, value: str) -> "StableVersion":
         parts = value.split(".")
-        if len(parts) != 3 or any(not p.isdigit() or (len(p) > 1 and p[0] == "0") for p in parts):
+        if len(value) > 32 or len(parts) != 3 or any(not re.fullmatch(r"0|[1-9][0-9]{0,9}", p) or int(p) > 2**32 - 1 for p in parts):
             raise ValueError("unknown version")
         return cls(*(int(part) for part in parts))
 
 
-def lifecycle(installed: str | None, target: str, repair: bool, silent: bool = True) -> str:
+def lifecycle(installed: str | None, target: str, repair: bool, silent: bool = True, compatible_sources: frozenset[str] = frozenset()) -> str:
     target_version = StableVersion.parse(target)
     if installed is None:
         if repair:
@@ -43,6 +44,8 @@ def lifecycle(installed: str | None, target: str, repair: bool, silent: bool = T
         return "repair"
     if repair:
         raise ValueError("repair version mismatch")
+    if installed not in compatible_sources:
+        raise ValueError("unknown upgrade compatibility")
     return "upgrade"
 
 
@@ -51,7 +54,13 @@ def obsolete_owned(previous: set[str], target: set[str], reparse: set[str] = fro
     for value in previous - target:
         normalized = value.replace("/", "\\")
         path = PureWindowsPath(normalized)
-        if path.is_absolute() or ".." in path.parts or path.drive or value in reparse:
+        if (path.is_absolute() or path.drive or not value or len(value) > 240
+                or any(ord(c) < 32 or 127 <= ord(c) <= 159 or c in ":<>\"|?*" for c in value)
+                or any(not part or part in {".", ".."} or part != part.strip() or part.endswith(".")
+                       or re.fullmatch(r"(?i:CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9]|LPT[1-9])", part.split(".")[0])
+                       for part in normalized.split("\\"))
+                or any(str(parent).casefold() in {v.replace("/", "\\").casefold() for v in reparse}
+                       for parent in (path, *path.parents))):
             raise ValueError("unsafe obsolete identity")
         result.add(str(path))
     return result

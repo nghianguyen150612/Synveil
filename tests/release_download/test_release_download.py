@@ -2,6 +2,7 @@
 import copy, hashlib, importlib.util, io, json, sys, tempfile, unittest
 import urllib.error
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -182,3 +183,31 @@ class ReleaseDownloadTests(unittest.TestCase):
         self.error("NETWORK_ERROR",download.fetch_https,"https://release.example/x",self.policy.allowed_manifest_origins,20,transport=Failed())
 
 if __name__ == "__main__": unittest.main()
+
+class StageRaceSecurityTests(unittest.TestCase):
+    setUp = ReleaseDownloadTests.setUp
+    tearDown = ReleaseDownloadTests.tearDown
+    error = ReleaseDownloadTests.error
+    def test_68_parent_replacement_is_rejected_and_owned_temp_cleaned(self):
+        if sys.platform == 'win32': self.skipTest('Unix directory descriptor race; Windows reparse tests are separate')
+        import os
+        stage=self.root/'stage'; stage.mkdir(mode=0o700); outside=self.root/'outside'; outside.mkdir(); moved=self.root/'moved'
+        class Racing(io.BytesIO):
+            def read(inner, size=-1):
+                value=super().read(size)
+                if not value and stage.is_dir() and not stage.is_symlink():
+                    stage.rename(moved); stage.symlink_to(outside, target_is_directory=True)
+                return value
+        self.error('UNSAFE_PATH',download.stage_artifact,Racing(self.payload),stage,self.selection)
+        self.assertEqual([],list(outside.iterdir())); self.assertEqual([],list(moved.iterdir()))
+
+    def test_69_temporary_path_replacement_never_promotes_other_bytes(self):
+        # Replace after the download handle closes: Windows correctly prevents
+        # replacing an open file, while both platforms need this last-use guard.
+        original_matches = download._matches
+        def replace_before_last_use(path, size, digest):
+            path.unlink(); path.write_bytes(b'evil')
+            return original_matches(path, size, digest)
+        with mock.patch.object(download, '_matches', side_effect=replace_before_last_use):
+            self.error('UNSAFE_PATH',download.stage_artifact,io.BytesIO(self.payload),self.root,self.selection)
+        self.assertFalse((self.root/'synveil.deb').exists()); self.assertEqual([],list(self.root.glob('.synveil-download-*')))

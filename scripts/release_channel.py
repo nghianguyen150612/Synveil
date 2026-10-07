@@ -95,8 +95,10 @@ def fail(code: str, message: str):
 
 
 def parse_stable_version(value: object) -> tuple[int, int, int]:
-    if not isinstance(value, str) or not (match := VERSION_RE.fullmatch(value)):
+    if not isinstance(value, str) or len(value) > 32 or not (match := VERSION_RE.fullmatch(value)):
         fail("INVALID_VERSION", "version must be stable MAJOR.MINOR.PATCH without leading zeroes")
+    if any(len(part) > 10 or int(part) > 2**32 - 1 for part in match.groups()):
+        fail("INVALID_VERSION", "version components exceed supported bounds")
     return tuple(map(int, match.groups()))
 
 
@@ -116,12 +118,14 @@ def validate_auth_descriptor(value: object) -> dict:
         fail("INVALID_CHANNEL", "invalid authenticated channel size")
     if not isinstance(data["channel_sha256"], str) or not HEX64_RE.fullmatch(data["channel_sha256"]):
         fail("INVALID_CHANNEL", "invalid authenticated channel digest")
-    if not isinstance(data["signatures"], list) or not data["signatures"]:
+    if not isinstance(data["signatures"], list) or not 1 <= len(data["signatures"]) <= 16:
         fail("INVALID_CHANNEL", "at least one signature is required")
     for entry in data["signatures"]:
         entry = _fields(entry, SIGNATURE_FIELDS, "signature")
         if any(not isinstance(entry[k], str) or not TOKEN_RE.fullmatch(entry[k]) for k in SIGNATURE_FIELDS):
             fail("INVALID_CHANNEL", "unsafe signature metadata")
+        if not release_manifest.safe_filename(entry["signature_filename"]):
+            fail("INVALID_CHANNEL", "unsafe signature filename")
     return data
 
 

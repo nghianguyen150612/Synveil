@@ -114,3 +114,4 @@ Migration and review trigger / Điều kiện di chuyển và xem xét lại
 ```
 
 - [ADR-072: v0.2 repair and recovery UX](ADR-072-v0.2-repair-recovery-ux.md)
+- [ADR-073: v0.2 installer security hardening](ADR-073-v0.2-installer-security-hardening.md)

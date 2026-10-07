@@ -10,15 +10,13 @@ fs2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+tempfile = "3"
 
 # `nix` only supplies getuid() to the AppImage ownership checks. It has no
 # Windows or macOS implementation, so it is declared for Linux targets only
 # instead of breaking the whole crate's cross-platform build.
 [target.'cfg(target_os = "linux")'.dependencies]
 nix.workspace = true
-
-[dev-dependencies]
-tempfile = "3"
 
 # The helper is invoked by deploy/packages/appimage/AppRun and built explicitly
 # by deploy/packages/build-appimage.sh, both of which are Linux-only. Cargo

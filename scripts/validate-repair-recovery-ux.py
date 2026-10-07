@@ -56,6 +56,6 @@ require("no destructive product reset/relocation", all(s not in (qml + presentat
 require("first-sync evidence untouched", "first_sync_completion_proven" in presentation and "record_quiescent" in runtime)
 require("pause/attention/setup keep existing owners", all(s in bridge for s in ("controller.pause_sync()", "controller.resolve_conflict", "resume_pending_setup")))
 require("P043 explicitly deferred", "P043 is explicitly deferred" in contract)
-require("P043 work is absent", not (ROOT / "docs/v0.2/PROMPT043_MANIFEST.md").exists())
+require("P042 retains its bounded ownership after P043", "Desktop performs no repair mutation." in contract)
 require("focused behavioral coverage", "p042_unknown_stop" in launch and "p042_unknown_start" in launch and "p042_same_root_restore" in presentation)
 print("repair and recovery UX validation passed")

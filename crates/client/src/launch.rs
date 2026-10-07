@@ -667,6 +667,9 @@ pub fn packaged_client_path_from(
     if !client.is_file() || !is_expected_client_name(&client) {
         return Err(BackgroundLaunchError::NotInstalled);
     }
+    if client.parent() != desktop.parent() {
+        return Err(BackgroundLaunchError::NotInstalled);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -1508,18 +1511,104 @@ enum WindowsTaskAction {
 }
 
 #[cfg(target_os = "windows")]
-fn schtasks_path() -> PathBuf {
-    std::env::var_os("SystemRoot")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
-        .join("System32")
-        .join("schtasks.exe")
+fn schtasks_path() -> Result<PathBuf, BackgroundLaunchError> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
+    let mut buffer = [0_u16; 32768];
+    // The OS supplies this directory; PATH and SystemRoot cannot select a tool.
+    let length = unsafe { GetSystemDirectoryW(buffer.as_mut_ptr(), buffer.len() as u32) } as usize;
+    if length == 0 || length >= buffer.len() {
+        return Err(BackgroundLaunchError::SupervisorUnavailable);
+    }
+    let path = PathBuf::from(std::ffi::OsString::from_wide(&buffer[..length])).join("schtasks.exe");
+    windows_owned_ancestry(&path)?;
+    if !path.is_file() {
+        return Err(BackgroundLaunchError::SupervisorUnavailable);
+    }
+    Ok(path)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_owned_ancestry(path: &Path) -> Result<(), BackgroundLaunchError> {
+    use std::os::windows::fs::MetadataExt;
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(BackgroundLaunchError::LaunchDenied);
+    }
+    for ancestor in path.ancestors() {
+        match fs::symlink_metadata(ancestor) {
+            Ok(metadata)
+                if metadata.file_attributes() & 0x400 != 0
+                    || (ancestor != path && !metadata.is_dir()) =>
+            {
+                return Err(BackgroundLaunchError::LaunchDenied);
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(BackgroundLaunchError::LaunchDenied),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn windows_startup_staging() -> Result<tempfile::TempDir, BackgroundLaunchError> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::{
+        System::Com::CoTaskMemFree,
+        UI::Shell::{FOLDERID_LocalAppData, SHGetKnownFolderPath},
+    };
+    let mut pointer = std::ptr::null_mut();
+    // This per-user OS authority is independent of HOME/TMP/TEMP/LOCALAPPDATA.
+    let result = unsafe {
+        SHGetKnownFolderPath(
+            &FOLDERID_LocalAppData,
+            0,
+            std::ptr::null_mut(),
+            &mut pointer,
+        )
+    };
+    if result < 0 || pointer.is_null() {
+        if !pointer.is_null() {
+            unsafe {
+                CoTaskMemFree(pointer.cast());
+            }
+        }
+        return Err(BackgroundLaunchError::SupervisorUnavailable);
+    }
+    let mut length = 0;
+    // The API owns a terminated UTF-16 string; release its allocation on every path.
+    while length < 32768 && unsafe { *pointer.add(length) } != 0 {
+        length += 1;
+    }
+    let root = if length < 32768 {
+        Some(PathBuf::from(std::ffi::OsString::from_wide(unsafe {
+            std::slice::from_raw_parts(pointer, length)
+        })))
+    } else {
+        None
+    };
+    unsafe {
+        CoTaskMemFree(pointer.cast());
+    }
+    let parent = root
+        .ok_or(BackgroundLaunchError::SupervisorUnavailable)?
+        .join("Synveil/startup-staging");
+    windows_owned_ancestry(&parent)?;
+    fs::create_dir_all(&parent).map_err(|_| BackgroundLaunchError::Failed)?;
+    windows_owned_ancestry(&parent)?;
+    tempfile::Builder::new()
+        .prefix("task-")
+        .tempdir_in(parent)
+        .map_err(|_| BackgroundLaunchError::Failed)
 }
 
 #[cfg(target_os = "windows")]
 fn schtasks_command(args: &[String]) -> Result<std::process::Output, BackgroundLaunchError> {
-    Command::new(schtasks_path())
+    Command::new(schtasks_path()?)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -1541,7 +1630,11 @@ fn windows_task_state(profile_id: ServerProfileId) -> WindowsTaskState {
         task_name,
         "/XML".to_string(),
     ];
-    let mut child = match Command::new(schtasks_path())
+    let executable = match schtasks_path() {
+        Ok(path) => path,
+        Err(_) => return WindowsTaskState::Unavailable,
+    };
+    let mut child = match Command::new(executable)
         .args(&args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -1733,24 +1826,19 @@ fn windows_task_action(
 #[cfg(target_os = "windows")]
 fn windows_register_task(definition: &WindowsTaskDefinition) -> Result<(), BackgroundLaunchError> {
     use std::fs::OpenOptions;
-    use std::io::Write;
+    use std::io::{Read, Write};
+    use std::os::windows::fs::OpenOptionsExt;
 
-    let temporary = std::env::temp_dir().join(format!(
-        "synveil-task-{}-{}.xml",
-        std::process::id(),
-        definition
-            .task_name()
-            .rsplit('-')
-            .next()
-            .unwrap_or("profile")
-    ));
+    let staging = windows_startup_staging()?;
+    let temporary = staging.path().join("task.xml");
+    let expected = definition.to_xml().into_bytes();
     let mut file = OpenOptions::new()
         .create_new(true)
         .write(true)
         .open(&temporary)
         .map_err(|_| BackgroundLaunchError::Failed)?;
     if file
-        .write_all(definition.to_xml().as_bytes())
+        .write_all(&expected)
         .and_then(|()| file.sync_all())
         .is_err()
     {
@@ -1759,6 +1847,30 @@ fn windows_register_task(definition: &WindowsTaskDefinition) -> Result<(), Backg
         return Err(BackgroundLaunchError::Failed);
     }
     drop(file);
+
+    windows_owned_ancestry(&temporary)?;
+    // FILE_SHARE_READ permits the native reader, while denying all replacement,
+    // deletion and writes until consumption finishes. Verify this held handle.
+    let mut guard = OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .open(&temporary)
+        .map_err(|_| BackgroundLaunchError::Failed)?;
+    if !guard
+        .metadata()
+        .map_err(|_| BackgroundLaunchError::Failed)?
+        .is_file()
+    {
+        return Err(BackgroundLaunchError::LaunchDenied);
+    }
+    let mut actual = Vec::new();
+    (&mut guard)
+        .take(expected.len() as u64 + 1)
+        .read_to_end(&mut actual)
+        .map_err(|_| BackgroundLaunchError::Failed)?;
+    if actual != expected {
+        return Err(BackgroundLaunchError::LaunchDenied);
+    }
 
     let args = vec![
         "/Create".to_string(),
@@ -1769,6 +1881,7 @@ fn windows_register_task(definition: &WindowsTaskDefinition) -> Result<(), Backg
         "/F".to_string(),
     ];
     let command_result = schtasks_command(&args);
+    drop(guard);
     let cleanup_result = fs::remove_file(&temporary);
     if cleanup_result.is_err() {
         return Err(BackgroundLaunchError::Failed);
@@ -2049,6 +2162,76 @@ mod tests {
         let _ = manager.ensure_running().await;
         assert_eq!(manager.stats().launch_attempts, 0);
         assert_eq!(backend.starts.load(Ordering::Relaxed), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn p043_client_link_outside_owned_siblings_is_rejected() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let root = std::env::temp_dir().join(format!("synveil-p043-{}", ServerProfileId::new()));
+        fs::create_dir(&root).unwrap();
+        let owned = root.join("owned");
+        let outside = root.join("outside");
+        fs::create_dir(&owned).unwrap();
+        fs::create_dir(&outside).unwrap();
+        let desktop = owned.join(SYNVEIL_DESKTOP_EXECUTABLE);
+        let substitute = outside.join(SYNVEIL_CLIENT_EXECUTABLE);
+        fs::write(&desktop, b"desktop").unwrap();
+        fs::write(&substitute, b"substitute").unwrap();
+        fs::set_permissions(&substitute, fs::Permissions::from_mode(0o755)).unwrap();
+        symlink(&substitute, owned.join(SYNVEIL_CLIENT_EXECUTABLE)).unwrap();
+        assert!(matches!(
+            packaged_client_path_from(&desktop),
+            Err(BackgroundLaunchError::NotInstalled)
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn p043_windows_native_directories_ignore_environment_substitution() {
+        const CHILD: &str = "SYNVEIL_P043_OS_DIRECTORY_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let fake = PathBuf::from(std::env::var_os("SystemRoot").unwrap());
+            assert!(!schtasks_path().unwrap().starts_with(&fake));
+            let staging = windows_startup_staging().unwrap();
+            assert!(!staging.path().starts_with(&fake));
+            return;
+        }
+        // Isolate hostile environment values in a child, keeping other tests safe.
+        let fake = tempfile::tempdir().unwrap();
+        let status = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "launch::tests::p043_windows_native_directories_ignore_environment_substitution",
+            ])
+            .env(CHILD, "1")
+            .env("SystemRoot", fake.path())
+            .env("TEMP", fake.path())
+            .env("TMP", fake.path())
+            .env("LOCALAPPDATA", fake.path())
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn p043_windows_read_guard_prevents_native_xml_handoff_replacement() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let staging = windows_startup_staging().unwrap();
+        let path = staging.path().join("task.xml");
+        fs::write(&path, b"verified owned XML").unwrap();
+        let guard = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(&path)
+            .unwrap();
+        assert!(fs::write(&path, b"attacker replacement").is_err());
+        assert!(fs::remove_file(&path).is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"verified owned XML");
+        drop(guard);
+        fs::remove_file(path).unwrap();
     }
 
     #[test]

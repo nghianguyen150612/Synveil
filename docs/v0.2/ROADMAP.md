@@ -463,7 +463,7 @@ validation gates passed on PR #73's source head. The [Prompt042A manifest](PROMP
 records the branch, hosted workflow evidence, and inherited unrelated CI
 failures. This checkpoint marks first-run UX readiness only; it does not claim
 a v0.2 release, P043 completion, native Windows acceptance, or a clean-machine
-matrix. P043 has not begun.
+matrix. P043 evidence is tracked separately below.
 
 ## PHASE G — RELEASE PRODUCTIZATION (P043–048)
 
@@ -471,6 +471,16 @@ matrix. P043 has not begun.
 
 Harden privilege boundaries, path handling, download integrity, installer
 injection defenses and downgrade safety.
+
+**Implemented (Prompt043 source; publication/hosted gates tracked in manifest):**
+[installer security hardening](INSTALLER_SECURITY_HARDENING.md),
+[ADR-073](../adr/ADR-073-v0.2-installer-security-hardening.md), and
+[Prompt043 evidence](PROMPT043_MANIFEST.md) preserve the existing owners while
+adding real Ed25519 verification, local trust policy and persistent channel
+freshness, strict downgrade/compatibility checks, safer staging/ownership paths,
+scoped native commands and adversarial tests. Production key provisioning,
+native clean-machine qualification and release remain open. P044 is explicitly
+deferred.
 
 ### P044 — Installation Resilience Hardening
 

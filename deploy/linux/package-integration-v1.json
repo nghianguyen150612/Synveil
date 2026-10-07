@@ -41,6 +41,7 @@
         "qml6-module-qtquick-window"
       ],
       "hooks": [
+        "preinst",
         "postinst",
         "prerm",
         "postrm"
@@ -69,6 +70,7 @@
         "qt6-qtquickcontrols2"
       ],
       "hooks": [
+        "pre",
         "post",
         "preun",
         "postun"

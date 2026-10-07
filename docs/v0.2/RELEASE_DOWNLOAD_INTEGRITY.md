@@ -125,7 +125,7 @@ payload.
 
 - Pinned trusted-manifest digest authentication: implemented.
 - Detached-signature descriptor and verifier boundary: defined and fail-closed.
-- Production detached-signature backend: pending approved implementation.
+- Production detached-signature backend: Ed25519 through the maintained cryptography/OpenSSL implementation, added by P043; see [installer security](INSTALLER_SECURITY_HARDENING.md).
 - Production signing key provisioning: pending.
-- Current produced artifacts remain DEB, RPM, and Windows portable ZIP;
-  AppImage and Windows installer are schema-supported but not yet produced.
+- Current source producers include DEB, RPM, AppImage, Windows portable ZIP
+  and Windows Setup. Producer presence is not native/release qualification.

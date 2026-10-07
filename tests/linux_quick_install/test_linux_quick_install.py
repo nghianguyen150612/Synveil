@@ -106,6 +106,21 @@ class QuickInstallTests(unittest.TestCase):
         self.assertEqual(quick.EXIT_PACKAGE_MANAGER, status)
         self.assertEqual([], FakeManager.install_calls)
 
+    def test_newer_installed_version_rejects_downgrade_before_mutation(self):
+        FakeManager.installed = "0.3.0"
+        status, _, error = self.execute()
+        self.assertEqual(quick.EXIT_PACKAGE_MANAGER, status)
+        self.assertEqual([], FakeManager.install_calls)
+        self.assertIn("downgrade is rejected", error)
+
+    def test_unexpected_error_after_mutation_requires_reconciliation_without_secret(self):
+        with mock.patch.object(FakeManager, "install", side_effect=OSError("secret-token=private")):
+            status, _, error = self.execute()
+        self.assertEqual(quick.EXIT_UNKNOWN, status)
+        self.assertIn("OutcomeUnknown", error)
+        self.assertNotIn("private", error)
+        self.assertIn("before any retry", error)
+
     def test_post_install_verification_required(self):
         FakeManager.verified = False
         status, _, error = self.execute()

@@ -1263,3 +1263,49 @@ fn duplicate_completion_and_records_after_completion_are_rejected() {
         .is_err()
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn journal_ancestor_link_refuses_execution_before_effects() {
+    let temp = tempfile::tempdir().unwrap();
+    let outside = temp.path().join("outside");
+    fs::create_dir(&outside).unwrap();
+    let alias = temp.path().join("alias");
+    std::os::unix::fs::symlink(&outside, &alias).unwrap();
+    let p = plan();
+    let mut adapter = Adapter::default();
+    let result = InstallerEngine.execute_journaled_with_options(
+        &request(&p),
+        &p,
+        &mut adapter,
+        &alias.join("journal"),
+        JournalMode::StartNew,
+        JournalOptions::default(),
+    );
+    assert!(!result.completed);
+    assert!(!adapter.calls.iter().any(|call| call.starts_with("apply:")));
+    assert!(!outside.join("journal").exists());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn journal_writable_ancestor_cannot_relocate_private_evidence() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::tempdir().unwrap();
+    let shared = temp.path().join("shared");
+    fs::create_dir(&shared).unwrap();
+    fs::set_permissions(&shared, fs::Permissions::from_mode(0o777)).unwrap();
+    let p = plan();
+    let mut adapter = Adapter::default();
+    let result = InstallerEngine.execute_journaled_with_options(
+        &request(&p),
+        &p,
+        &mut adapter,
+        &shared.join("private"),
+        JournalMode::StartNew,
+        JournalOptions::default(),
+    );
+    assert!(!result.completed);
+    assert!(!adapter.calls.iter().any(|call| call.starts_with("apply:")));
+    assert!(!shared.join("private").exists());
+}

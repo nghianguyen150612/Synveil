@@ -124,3 +124,80 @@ fn stale_partial_relocation_repair_and_remove_preserve_data() {
     assert!(replacement.exists() && root.path().join("config/synveil/keep").exists());
     assert!(!first.desktop_entry_path.exists());
 }
+
+#[test]
+fn unknown_record_and_newer_version_never_authorize_repair_or_removal() {
+    let _env_guard = ENV_LOCK.lock().unwrap();
+    let (root, engine, app, icon) = fixture();
+    let installed = engine.install(&app, &icon).unwrap();
+    let (_, _, record_path, _) = engine.paths();
+    let original = fs::read(&record_path).unwrap();
+    for field in ["schema_version", "product_version"] {
+        let mut record: serde_json::Value = serde_json::from_slice(&original).unwrap();
+        record[field] = if field == "schema_version" {
+            serde_json::json!(99)
+        } else {
+            serde_json::json!("9.0.0")
+        };
+        fs::write(&record_path, serde_json::to_vec(&record).unwrap()).unwrap();
+        let before = fs::read(&record_path).unwrap();
+        assert!(engine.repair(&app, &icon).is_err());
+        assert!(engine.remove().is_err());
+        assert_eq!(fs::read(&record_path).unwrap(), before);
+        assert!(installed.desktop_entry_path.exists());
+    }
+    fs::write(&record_path, b"unknown schema / secret").unwrap();
+    assert!(engine.install(&app, &icon).is_err());
+    assert!(
+        root.path()
+            .join("data/applications/synveil-appimage.desktop")
+            .exists()
+    );
+}
+
+#[test]
+fn missing_record_cannot_claim_adjacent_file_and_symlink_ancestor_cannot_delete() {
+    let _env_guard = ENV_LOCK.lock().unwrap();
+    let (root, engine, app, icon) = fixture();
+    let (desktop, _, _, _) = engine.paths();
+    fs::create_dir_all(desktop.parent().unwrap()).unwrap();
+    fs::write(&desktop, b"unrelated user launcher").unwrap();
+    assert!(engine.install(&app, &icon).is_err());
+    assert!(engine.remove().is_err());
+    assert_eq!(fs::read(&desktop).unwrap(), b"unrelated user launcher");
+    fs::remove_file(&desktop).unwrap();
+    let record = engine.install(&app, &icon).unwrap();
+    let external = root.path().join("outside");
+    fs::rename(desktop.parent().unwrap(), &external).unwrap();
+    std::os::unix::fs::symlink(&external, desktop.parent().unwrap()).unwrap();
+    assert!(engine.remove().is_err());
+    assert!(external.join("synveil-appimage.desktop").exists());
+    assert!(record.icon_path.exists());
+}
+
+#[test]
+fn generated_integration_treats_expansion_characters_as_data() {
+    let _env_guard = ENV_LOCK.lock().unwrap();
+    let (root, engine, _, icon) = fixture();
+    let app = artifact(root.path(), "Downloads/$HOME `command` %u.AppImage");
+    let record = engine.install(&app, &icon).unwrap();
+    let desktop = fs::read_to_string(record.desktop_entry_path).unwrap();
+    let unit = fs::read_to_string(record.user_unit_path).unwrap();
+    assert!(
+        desktop.contains("\\$HOME") && desktop.contains("\\`command\\`") && desktop.contains("%%u")
+    );
+    assert!(unit.contains("$$HOME") && unit.contains("%%u"));
+}
+
+#[test]
+fn writable_parent_cannot_authorize_appimage_mutation_or_removal() {
+    let _env_guard = ENV_LOCK.lock().unwrap();
+    let (root, engine, app, icon) = fixture();
+    let installed = engine.install(&app, &icon).unwrap();
+    let original = fs::read(&installed.desktop_entry_path).unwrap();
+    fs::set_permissions(root.path().join("data"), fs::Permissions::from_mode(0o777)).unwrap();
+    assert!(engine.repair(&app, &icon).is_err());
+    assert!(engine.remove().is_err());
+    assert_eq!(fs::read(&installed.desktop_entry_path).unwrap(), original);
+    assert!(installed.icon_path.exists());
+}
