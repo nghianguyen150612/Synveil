@@ -417,11 +417,10 @@ var
   StartupValue, RepairValue, InstalledVersion, InstalledLocation, InstalledManifestHash: String;
   VersionComparison: Integer;
 begin
-  SetRegView(64);
   ValidateSecurityOptions;
   RequireNoReparseAncestry(PackageRoot(), False);
   { Registry identity, not a writable directory, is the installed-product authority. }
-  FreshInstall := not RegQueryStringValue(HKCU, UninstallKey, 'DisplayVersion', InstalledVersion);
+  FreshInstall := not RegQueryStringValue(HKCU64, UninstallKey, 'DisplayVersion', InstalledVersion);
   RepairValue := ExpandConstant('{param:REPAIR|__MISSING__}');
   if (RepairValue <> '__MISSING__') and (RepairValue <> '1') then
     RaiseException('/REPAIR accepts only 1');
@@ -430,9 +429,9 @@ begin
   if RepairMode and FreshInstall then
     RaiseException('Synveil is not installed for this Windows account; Repair cannot continue.');
   if not FreshInstall then begin
-    if not RegQueryStringValue(HKCU, UninstallKey, 'InstallLocation', InstalledLocation) then
+    if not RegQueryStringValue(HKCU64, UninstallKey, 'InstallLocation', InstalledLocation) then
       RaiseException('The installed Synveil identity has no registered install location.');
-    if (not RegQueryStringValue(HKCU, UninstallKey, 'SynveilManifestSha256', InstalledManifestHash)) or
+    if (not RegQueryStringValue(HKCU64, UninstallKey, 'SynveilManifestSha256', InstalledManifestHash)) or
        (InstalledManifestHash = '') then
       RaiseException('The installed Synveil identity has no trusted package manifest hash.');
     if CompareText(RemoveBackslashUnlessRoot(InstalledLocation), RemoveBackslashUnlessRoot(PackageRoot())) <> 0 then
