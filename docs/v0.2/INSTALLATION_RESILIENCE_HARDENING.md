@@ -140,7 +140,13 @@ test code in unchanged `crates/api/src/runtime_rebaseline_credential.rs` and
 Windows/macOS client suites reported failures in unchanged client source. Its
 Ubuntu full-test job also failed the Linux notify watcher scenario in unchanged
 `crates/client-sync/src/observation.rs` after a move notification did not reach
-the expected intent; the Linux desktop UI job passed. The server self-host
+the expected intent; the Linux desktop UI job passed. Linux native packages
+run `37614798099` built successfully but its broader reproducibility gate found
+the `synveil-desktop` build-b binary differed from build-a at byte offset
+`1378759` while the section layout matched; its separate Qt reproducibility job
+passed. The cause of that broader DEB/RPM release-qualification mismatch was
+not established, so it remains a native/release qualification limitation and
+is not represented as a P044 pass or P044 regression. The server self-host
 artifact job lacked `acceptance/p036/production-artifacts.json`; PostgreSQL 17
 scheduled-maintenance run `37614797830` failed
 `live_pg17_adversarial_crash_restart_handoff`. These are unrelated workspace,

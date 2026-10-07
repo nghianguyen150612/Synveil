@@ -213,6 +213,12 @@ scope remains outside P044.
     `crates/client-sync/src/observation.rs` because the expected move intent was
     not observed; the Linux desktop UI job passed. These are cross-platform
     workspace qualification failures, not P044 regressions.
+  - Linux native packages run `37614798099`: package build steps completed,
+    but the broad reproducibility gate found `synveil-desktop` build-b differed
+    from build-a at byte offset `1378759` with identical section layout. The
+    separate Qt reproducibility job passed; the byte difference's root cause
+    was not established. This is a broader native/release qualification
+    limitation, not claimed as P044 evidence or as a P044 regression.
   - Server self-host acceptance run `37614797855`: artifact identity failed
     because the checkout lacked `acceptance/p036/production-artifacts.json`, a
     separate P036 acceptance prerequisite.
