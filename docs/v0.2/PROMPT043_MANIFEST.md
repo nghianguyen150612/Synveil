@@ -1,7 +1,8 @@
 # Prompt043 manifest — Installer Security Hardening
 
-Status: **SOURCE IMPLEMENTED; final validation/publication evidence is recorded
-only after observation**. P044 is explicitly deferred.
+Status: **SOURCE IMPLEMENTED; real PR #74 published**. Final-head CI, merge and
+post-merge identifiers are recorded in the authoritative PR completion record
+after observation, as explained below. P044 is explicitly deferred.
 
 ## Baseline and branch discipline
 
@@ -51,7 +52,8 @@ Concrete gaps fixed:
    malformed-field failures.
 6. P006 ancestry/temp identity and P008 journal ancestry/lock object checks were
    incomplete. Added ancestor link/reparse, regular-object, owned-state and
-   no-follow and non-writable trusted ancestry checks; POSIX promotion/cleanup is directory-descriptor anchored.
+   no-follow and non-writable trusted ancestry/file checks; POSIX
+   promotion/cleanup is directory-descriptor anchored.
 7. AppImage swallowed invalid/newer record errors, used a predictable PID temp,
    did not check deletion ancestors, and left desktop/systemd expansion chars
    active. Preflight now preserves unknown ownership/version, schema 2 binds
@@ -68,7 +70,8 @@ Concrete gaps fixed:
     per-user root, pre-copy collision checks, explicit option parsing and
     manifest-bound helper rehashing protect mutation/deletion/execution. Existing
     copy destinations also require prior ownership during repair/upgrade; a newly
-    added payload cannot overwrite an unknown adjacent file.
+    added payload cannot overwrite an unknown adjacent file. Fresh installation
+    also preserves an unregistered adjacent ownership manifest.
 11. Client sibling resolution could follow a client link outside the desktop's
     canonical directory. It now requires the same canonical parent. Registered
     Windows uninstall discovery is a bounded owned executable identity.
@@ -146,8 +149,11 @@ The local ordinary-user container has no sudo or Qt development installation.
 Initial whole-workspace Clippy stopped at missing D-Bus metadata; after the
 scratch sysroot enabled client validation, it stopped at missing Qt. Neither
 attempt establishes a whole-workspace strict quality pass. Existing same-head
-CI owns that gate. Native Windows compilation/options/junction evidence is
-pending hosted CI; it is not native runtime or clean-machine qualification.
+CI owns that gate. Actual Windows compilation/options/junction fixtures passed
+on source snapshot `17e9ab8` in run 37566844281, job 112616402915. The latest
+source adds manifest-collision and native version rejection cases; their final
+result belongs to the final-head checks. This is not native runtime or
+clean-machine qualification.
 A Windows cross-check was attempted locally but stops at the unavailable MinGW
 C toolchain; actual Windows fixtures remain hosted evidence. Linux clean-machine,
 full native package/AppImage, server/PostgreSQL and wider
@@ -250,6 +256,19 @@ Initial publication observed:
   distribution hash pin. The next actual compiler result exposed inherited
   PowerShell array-expression grouping that merged generated directives; each
   directive is now separately grouped, with explicit count assertions.
+- Actual compilation subsequently exposed an unescaped literal GUID in the
+  registry section. Its corrected literal compiled successfully, and real
+  setup rejection fixtures passed in job 112616402915 (source `17e9ab8`).
+- Windows native Task Scheduler directory/locked-XML tests both passed in Rust
+  run 37565951082, job 112613579596 (source `a72785b`). Its six other config/pipe
+  failures match the actual baseline; they are not suppressed.
+- Whole-workspace format/strict Clippy and Cargo dependency policy passed in
+  the same Rust run (jobs 112613579636 and 112613579388).
+- Latest source snapshot before this manifest's evidence seal:
+  local/remote commit `13e6d77d3fa8cedba04f482c2879644c5ef78861`,
+  local/remote tree `1ae49ba0f766ee3c560ee763e564129af0445dca`. Exact equality
+  and the conventional remote branch were verified through GitHub. Ordinary
+  authenticated Git push remains sufficient; no Git Data API publication.
 - Review also closed writable-ancestor relocation of private Linux staging,
   channel high-water, journal and AppImage ownership paths. Root-owned sticky
   temporary roots remain supported. Tests prove zero write/delete under an
@@ -267,11 +286,17 @@ reproducibility (37555904827), AppImage AppRun inspection (37555904765), and
 PostgreSQL `d.daticulocale` (37555904835). These were read from actual baseline
 job/log archives. They do not substitute for comparison with final-head failures.
 
-Final-head hosted CI, merge confirmation and resulting main are pending actual
-observation; they are not yet claimed. A commit cannot contain its own immutable
-SHA/tree or future CI/merge identifiers: the final publication/head identifiers
-and post-merge verification are also reported in the real PR and final handoff.
-No planned push, PR, CI result or merge is called completed evidence.
+### Final completion record
+
+The immutable source manifest cannot contain its own SHA/tree or a future merge
+commit identifier. The live authoritative completion record is
+[PR #74](https://github.com/nghianguyen150612/Synveil/pull/74): its final head,
+checks and merge event, together with the recorded post-merge verification and
+final handoff, supply the final local/remote commit/tree, hosted results, merge
+commit, resulting main and clean-worktree result. Final checks are required on
+the published final head, including this documentation seal; prior-head passes
+do not replace them. Completion must not be inferred from source status alone.
+No unobserved CI result or merge is called completed evidence here.
 
 P044 is explicitly deferred. Native clean-machine qualification, final URLs,
 production signing-key operations, P045–P048 and the v0.2.0 release/tag remain
