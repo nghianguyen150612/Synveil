@@ -43,7 +43,7 @@ Name: "{userprograms}\Synveil"; Filename: "{app}\synveil-desktop.exe"; WorkingDi
 Name: "{userdesktop}\Synveil"; Filename: "{app}\synveil-desktop.exe"; WorkingDir: "{app}"; Check: ShouldCreateDesktopIcon
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\{{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1"; ValueType: string; ValueName: "SynveilManifestSha256"; ValueData: "{#SynveilManifestSha256}"; Flags: 64bit uninsdeletevalue
+Root: HKCU64; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\{{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1"; ValueType: string; ValueName: "SynveilManifestSha256"; ValueData: "{#SynveilManifestSha256}"; Flags: uninsdeletevalue
 
 [Code]
 var
