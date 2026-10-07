@@ -24,6 +24,10 @@ $ncryptPath = [IO.Path]::GetFullPath((Join-Path $systemDirectory 'ncrypt.dll'))
 $ncryptFile = Get-Item -LiteralPath $ncryptPath
 $ncryptVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($ncryptPath)
 $ncryptSignature = Get-AuthenticodeSignature -LiteralPath $ncryptPath
+New-Item (Split-Path $EvidencePath -Parent) -ItemType Directory -Force | Out-Null
+$ncryptObservation = [ordered]@{name='ncrypt.dll';path=$ncryptPath;company=$ncryptVersion.CompanyName;original_filename=$ncryptVersion.OriginalFilename;signature_status=[string]$ncryptSignature.Status;signer=$ncryptSignature.SignerCertificate.Subject;version=$ncryptVersion.FileVersion;sha256=(Get-FileHash -LiteralPath $ncryptPath -Algorithm SHA256).Hash.ToLowerInvariant()}
+[ordered]@{schema_version=1;status='preflight';source_commit=(git rev-parse HEAD);compiler=$compiler;linker=$linker;system_dlls=@($ncryptObservation)} | ConvertTo-Json -Depth 6 | Set-Content $EvidencePath -Encoding utf8
+Write-Host ("Observed OS NCrypt identity: " + ($ncryptObservation | ConvertTo-Json -Compress))
 if ($null -ne $ncryptFile.LinkType -or $ncryptVersion.CompanyName -cne 'Microsoft Corporation' -or $ncryptVersion.OriginalFilename -ine 'ncrypt.dll' -or $ncryptSignature.Status -ne 'Valid' -or $ncryptSignature.SignerCertificate.Subject -notmatch 'CN=Microsoft (Windows|Corporation)(,|$)') { throw 'WINDOWS_SYSTEM_NCRYPT_IDENTITY_FAILURE' }
 $ncryptBytes = [IO.File]::ReadAllBytes($ncryptPath)
 $ncryptOffset = [BitConverter]::ToInt32($ncryptBytes, 0x3c)
