@@ -274,6 +274,28 @@ fn t021_journal_io_failed() {
     );
 }
 #[test]
+fn t021a_journal_disk_full_before_mutation_is_actionable() {
+    let mut context = ctx(PresentationStage::Install);
+    context.recovery_disposition = Some(RecoveryDisposition::ReplanRequired);
+    assert_shape(
+        map_journal(JournalErrorCode::JournalDiskFull, &context),
+        InstallerErrorCategory::InsufficientDiskSpace,
+        UserRetryPolicy::AfterUserAction,
+        RecommendedAction::FreeDiskSpace,
+    );
+}
+#[test]
+fn t021b_journal_disk_full_after_mutation_requires_reconciliation() {
+    let mut context = ctx(PresentationStage::Recovery);
+    context.recovery_disposition = Some(RecoveryDisposition::InspectionRequired);
+    assert_shape(
+        map_journal(JournalErrorCode::JournalDiskFull, &context),
+        InstallerErrorCategory::RecoveryRequired,
+        UserRetryPolicy::ReconcileFirst,
+        RecommendedAction::InspectRecovery,
+    );
+}
+#[test]
 fn t022_journal_limit_exceeded() {
     assert_shape(
         map_journal(
@@ -759,6 +781,18 @@ fn t079_acquisition_fixture_has_no_duplicates() {
     .unwrap();
     let unique: BTreeSet<_> = fixture.iter().collect();
     assert_eq!(fixture.len(), unique.len());
+}
+#[test]
+fn t079a_acquisition_disk_full_is_actionable_before_mutation() {
+    assert_shape(
+        map_acquisition(
+            AcquisitionFailureCode::InsufficientDiskSpace,
+            &ctx(PresentationStage::Acquire),
+        ),
+        InstallerErrorCategory::InsufficientDiskSpace,
+        UserRetryPolicy::AfterUserAction,
+        RecommendedAction::FreeDiskSpace,
+    );
 }
 
 // 080-086: platform/preflight bridge.

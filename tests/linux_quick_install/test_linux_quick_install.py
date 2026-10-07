@@ -63,14 +63,19 @@ class QuickInstallTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def execute(self, *, evidence=None):
+    def execute(self, *, evidence=None, acquire_error=None, required_paths=None):
         release = self.evidence if evidence is None else evidence
+        paths = quick.REQUIRED_PATHS if required_paths is None else required_paths
         output, error = io.StringIO(), io.StringIO()
         detected = quick.linux_platform_detection.DetectionResult(
             os_id="ubuntu", version_id="24.04", architecture="x86_64", qualification_status="QUALIFIED",
             target_id="ubuntu-24.04-x86_64", profile="debian-x86_64", artifact_type="deb",
             package_manager="APT", reason_code="qualified_exact_policy_match")
-        with mock.patch.object(quick, "acquire", return_value=release), \
+        acquisition_patch = (mock.patch.object(quick, "acquire", side_effect=acquire_error)
+                             if acquire_error is not None
+                             else mock.patch.object(quick, "acquire", return_value=release))
+        with acquisition_patch, \
+             mock.patch.object(quick, "REQUIRED_PATHS", paths), \
              mock.patch.object(quick.tempfile, "mkdtemp", return_value=str(self.root / "stage")), \
              mock.patch.object(quick.os, "chmod"), mock.patch.object(quick.os, "geteuid", return_value=1000), \
              mock.patch.object(quick.shutil, "rmtree"), contextlib.redirect_stdout(output), contextlib.redirect_stderr(error):
@@ -91,6 +96,14 @@ class QuickInstallTests(unittest.TestCase):
         self.assertEqual(quick.EXIT_INTEGRITY, status)
         self.assertEqual([], FakeManager.install_calls)
         self.assertIn("IntegrityVerificationFailed", error)
+
+    def test_acquisition_disk_full_is_actionable_before_native_mutation(self):
+        error = quick.release_download.AcquisitionError("INSUFFICIENT_DISK_SPACE", "full")
+        status, _, message = self.execute(acquire_error=error)
+        self.assertEqual(quick.EXIT_DISK_SPACE, status)
+        self.assertEqual([], FakeManager.install_calls)
+        self.assertIn("InsufficientDiskSpace", message)
+        self.assertIn("No package change was made", message)
 
     def test_same_version_is_verified_noop(self):
         FakeManager.installed = "0.2.0"
@@ -120,6 +133,29 @@ class QuickInstallTests(unittest.TestCase):
         self.assertIn("OutcomeUnknown", error)
         self.assertNotIn("private", error)
         self.assertIn("before any retry", error)
+
+    def test_native_process_interruption_requires_inspection_and_never_replays(self):
+        manager = quick.NativeManager(quick.PROFILES["debian-x86_64"])
+        manager.artifact_evidence = self.evidence
+        with mock.patch.object(quick.os, "geteuid", return_value=1000), \
+             mock.patch.object(quick, "system_executable", side_effect=lambda name: "/usr/bin/" + name), \
+             mock.patch.object(quick.subprocess, "run", side_effect=KeyboardInterrupt) as invoke:
+            with self.assertRaises(quick.QuickInstallError) as caught:
+                manager.install(self.package, "0.2.0")
+        self.assertEqual("OutcomeUnknown", caught.exception.category)
+        self.assertIn("Inspect native package state", caught.exception.action)
+        invoke.assert_called_once()
+
+    def test_partial_payload_with_absent_package_metadata_stops_before_retry(self):
+        partial = self.root / "partial-owned-payload"
+        partial.write_bytes(b"interrupted package copy")
+        status, _, error = self.execute(required_paths=(str(partial),))
+        self.assertEqual(quick.EXIT_UNKNOWN, status)
+        self.assertEqual([], FakeManager.install_calls)
+        self.assertIn("OutcomeUnknown", error)
+        self.assertIn("Package state may have changed", error)
+        self.assertIn("Inspect or repair partial native package state", error)
+        self.assertNotIn("No package change was made", error)
 
     def test_post_install_verification_required(self):
         FakeManager.verified = False

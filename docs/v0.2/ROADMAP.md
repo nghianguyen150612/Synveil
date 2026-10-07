@@ -479,13 +479,23 @@ injection defenses and downgrade safety.
 adding real Ed25519 verification, local trust policy and persistent channel
 freshness, strict downgrade/compatibility checks, safer staging/ownership paths,
 scoped native commands and adversarial tests. Production key provisioning,
-native clean-machine qualification and release remain open. P044 is explicitly
-deferred.
+native clean-machine qualification and release remain open. P044 was deferred
+at the P043 checkpoint and is tracked separately below.
 
 ### P044 — Installation Resilience Hardening
 
 Exercise power loss, interrupted upgrades, partial installs, resumability and
 disk-full behavior while preserving user data.
+
+**Implemented (Prompt044 source and fault/process-interruption tests; native
+power-cycle evidence unavailable):**
+[installation resilience evidence](INSTALLATION_RESILIENCE_HARDENING.md) and
+[Prompt044 manifest](PROMPT044_MANIFEST.md) extend the P008 journal and
+acquisition boundaries with typed disk-full handling, deterministic durability
+fault points, fail-closed partial-state inspection, and a fresh-process
+reconciliation test. Hosted normal lifecycle checks do not establish
+interruption resilience. No VM reboot or actual power-cycle is claimed;
+`INSTALL-JOURNEY-8` retains its power-cycle minimum. P045 remains open.
 
 ### P045 — Cross-Platform Clean-Machine Matrix
 

@@ -13,9 +13,25 @@ synveil_cargo_home() {
         return 0
     fi
 
+    # Git Bash exposes the Windows account home as USERPROFILE, while Cargo's
+    # default registry lives below that native Windows path. Prefer that
+    # authority when cygpath is available; `getent` may otherwise return an
+    # unrelated MSYS account path or no account entry at all.
+    if [[ -n "${USERPROFILE:-}" ]] && command -v cygpath >/dev/null 2>&1; then
+        local windows_profile=""
+        windows_profile="$(cygpath -u "$USERPROFILE" 2>/dev/null || true)"
+        if [[ -n "$windows_profile" ]]; then
+            printf '%s/.cargo' "${windows_profile%/}"
+            return 0
+        fi
+    fi
+
     local account_home=""
     if command -v getent >/dev/null 2>&1; then
         account_home="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6 || true)"
+    fi
+    if [[ -z "$account_home" ]]; then
+        account_home="${HOME:-}"
     fi
     if [[ -n "$account_home" ]]; then
         printf '%s/.cargo' "$account_home"
@@ -87,6 +103,23 @@ synveil_export_encoded_rustflags() {
     done
     export CARGO_ENCODED_RUSTFLAGS="$encoded"
     unset RUSTFLAGS
+
+    # MSYS converts path-like environment values when starting native
+    # executables. Cargo decodes this variable into individual rustc argv
+    # entries, so preserve the encoded value exactly across the Bash boundary.
+    if [[ -n "${MSYSTEM:-}" ]]; then
+        local env_conversion_exclusions="${MSYS2_ENV_CONV_EXCL:-}"
+        case ";${env_conversion_exclusions};" in
+            *";CARGO_ENCODED_RUSTFLAGS;"*) ;;
+            *)
+                if [[ -n "$env_conversion_exclusions" ]]; then
+                    env_conversion_exclusions+=";"
+                fi
+                env_conversion_exclusions+="CARGO_ENCODED_RUSTFLAGS"
+                export MSYS2_ENV_CONV_EXCL="$env_conversion_exclusions"
+                ;;
+        esac
+    fi
 }
 
 # CXX-Qt's QML-module build asks Qt's rcc tool to embed a generated qmldir and
@@ -310,8 +343,27 @@ synveil_prepare_reproducible_rust_build() {
     fi
 
     cargo_home="$(synveil_cargo_home || true)"
-    if [[ -n "$cargo_home" && -d "$cargo_home" ]]; then
-        remap_flags+=("--remap-path-prefix=${cargo_home}=/usr/local/cargo")
+    if [[ -n "$cargo_home" ]]; then
+        if command -v cygpath >/dev/null 2>&1 && { [[ -n "${USERPROFILE:-}" ]] || [[ "$cargo_home" =~ ^[A-Za-z]:[/\\] ]]; }; then
+            # Remap every lexical spelling rustc may embed. The encoded
+            # environment value is excluded from MSYS conversion above, so
+            # drive, POSIX, and backslash prefixes remain intact.
+            if [[ "$cargo_home" =~ ^[A-Za-z]:[/\\] ]]; then
+                cargo_home="$(cygpath -u "$cargo_home" 2>/dev/null || printf '%s' "$cargo_home")"
+            fi
+            remap_flags+=("--remap-path-prefix=${cargo_home}=/usr/local/cargo")
+            local native_cargo_home=""
+            native_cargo_home="$(cygpath -m "$cargo_home" 2>/dev/null || true)"
+            if [[ -n "$native_cargo_home" && "$native_cargo_home" != "$cargo_home" ]]; then
+                remap_flags+=("--remap-path-prefix=${native_cargo_home}=/usr/local/cargo")
+            fi
+            native_cargo_home="$(cygpath -w "$cargo_home" 2>/dev/null || true)"
+            if [[ -n "$native_cargo_home" && "$native_cargo_home" != "$cargo_home" ]]; then
+                remap_flags+=("--remap-path-prefix=${native_cargo_home}=/usr/local/cargo")
+            fi
+        else
+            remap_flags+=("--remap-path-prefix=${cargo_home}=/usr/local/cargo")
+        fi
     fi
 
     # RUSTUP_HOME holds the active toolchain. A CI runner installs rustup under

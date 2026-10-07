@@ -162,6 +162,10 @@ fn missing_record_cannot_claim_adjacent_file_and_symlink_ancestor_cannot_delete(
     let (desktop, _, _, _) = engine.paths();
     fs::create_dir_all(desktop.parent().unwrap()).unwrap();
     fs::write(&desktop, b"unrelated user launcher").unwrap();
+    assert_eq!(
+        engine.inspect().unwrap(),
+        AppImageIntegrationStatus::Incomplete
+    );
     assert!(engine.install(&app, &icon).is_err());
     assert!(engine.remove().is_err());
     assert_eq!(fs::read(&desktop).unwrap(), b"unrelated user launcher");
@@ -173,6 +177,62 @@ fn missing_record_cannot_claim_adjacent_file_and_symlink_ancestor_cannot_delete(
     assert!(engine.remove().is_err());
     assert!(external.join("synveil-appimage.desktop").exists());
     assert!(record.icon_path.exists());
+}
+
+#[test]
+fn partial_launcher_without_record_is_not_reported_installed_or_replayed() {
+    let _env_guard = ENV_LOCK.lock().unwrap();
+    let (root, engine, app, icon) = fixture();
+    let (desktop, _, record, _) = engine.paths();
+    fs::create_dir_all(desktop.parent().unwrap()).unwrap();
+    fs::write(&desktop, b"partial owned launcher fixture").unwrap();
+    fs::create_dir_all(root.path().join("config/synveil")).unwrap();
+    let durable = root.path().join("config/synveil/keep");
+    fs::write(&durable, b"credential and library sentinel").unwrap();
+
+    assert_eq!(
+        engine.inspect().unwrap(),
+        AppImageIntegrationStatus::Incomplete
+    );
+    assert!(engine.repair(&app, &icon).is_err());
+    assert!(engine.install(&app, &icon).is_err());
+    assert!(!record.exists());
+    assert_eq!(
+        fs::read(&desktop).unwrap(),
+        b"partial owned launcher fixture"
+    );
+    assert_eq!(
+        fs::read(&durable).unwrap(),
+        b"credential and library sentinel"
+    );
+}
+
+#[test]
+fn interrupted_owned_integration_removal_is_idempotent_and_scoped() {
+    let _env_guard = ENV_LOCK.lock().unwrap();
+    let (root, engine, app, icon) = fixture();
+    let record = engine.install(&app, &icon).unwrap();
+    fs::create_dir_all(root.path().join("config/synveil")).unwrap();
+    let durable = root.path().join("config/synveil/keep");
+    fs::write(&durable, b"server and user data sentinel").unwrap();
+
+    fs::remove_file(&record.desktop_entry_path).unwrap();
+    fs::remove_file(&record.icon_path).unwrap();
+    assert_eq!(
+        engine.inspect().unwrap(),
+        AppImageIntegrationStatus::NeedsRepair
+    );
+    engine.remove().unwrap();
+    engine.remove().unwrap();
+    assert_eq!(
+        engine.inspect().unwrap(),
+        AppImageIntegrationStatus::NotIntegrated
+    );
+    assert!(app.exists());
+    assert_eq!(
+        fs::read(&durable).unwrap(),
+        b"server and user data sentinel"
+    );
 }
 
 #[test]

@@ -37,7 +37,7 @@ class AcquisitionBridgeTests(unittest.TestCase):
         values = fixture()
         self.assertEqual(values, sorted(values))
         self.assertEqual(len(values), len(set(values)))
-        self.assertEqual(len(values), 19)
+        self.assertEqual(len(values), 20)
 
     def test_p006_source_matches_fixture(self) -> None:
         codes, _ = acquisition_calls()

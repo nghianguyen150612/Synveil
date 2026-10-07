@@ -21,8 +21,8 @@ def load_fixture() -> list[str]:
         raise SystemExit("P006 acquisition fixture must be sorted")
     if len(values) != len(set(values)):
         raise SystemExit("P006 acquisition fixture contains duplicates")
-    if len(values) != 19:
-        raise SystemExit(f"expected 19 P006 acquisition codes, found {len(values)}")
+    if len(values) != 20:
+        raise SystemExit(f"expected 20 P006 acquisition codes, found {len(values)}")
     return values
 
 
@@ -66,7 +66,7 @@ def main() -> None:
             f"source={source!r} fixture={fixture!r}"
         )
     rust_codes()
-    print("installer error model acquisition bridge valid: 19 exact P006 codes")
+    print("installer error model acquisition bridge valid: 20 exact P006 codes")
 
 
 if __name__ == "__main__":

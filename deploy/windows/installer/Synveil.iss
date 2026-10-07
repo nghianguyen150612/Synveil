@@ -43,7 +43,7 @@ Name: "{userprograms}\Synveil"; Filename: "{app}\synveil-desktop.exe"; WorkingDi
 Name: "{userdesktop}\Synveil"; Filename: "{app}\synveil-desktop.exe"; WorkingDir: "{app}"; Check: ShouldCreateDesktopIcon
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\{{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1"; ValueType: string; ValueName: "SynveilManifestSha256"; ValueData: "{#SynveilManifestSha256}"; Flags: uninsdeletevalue
+Root: HKCU64; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\{{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1"; ValueType: string; ValueName: "SynveilManifestSha256"; ValueData: "{#SynveilManifestSha256}"; Flags: uninsdeletevalue
 
 [Code]
 var
@@ -420,7 +420,7 @@ begin
   ValidateSecurityOptions;
   RequireNoReparseAncestry(PackageRoot(), False);
   { Registry identity, not a writable directory, is the installed-product authority. }
-  FreshInstall := not RegQueryStringValue(HKCU, UninstallKey, 'DisplayVersion', InstalledVersion);
+  FreshInstall := not RegQueryStringValue(HKCU64, UninstallKey, 'DisplayVersion', InstalledVersion);
   RepairValue := ExpandConstant('{param:REPAIR|__MISSING__}');
   if (RepairValue <> '__MISSING__') and (RepairValue <> '1') then
     RaiseException('/REPAIR accepts only 1');
@@ -429,10 +429,13 @@ begin
   if RepairMode and FreshInstall then
     RaiseException('Synveil is not installed for this Windows account; Repair cannot continue.');
   if not FreshInstall then begin
-    if (not RegQueryStringValue(HKCU, UninstallKey, 'InstallLocation', InstalledLocation)) or
-       (not RegQueryStringValue(HKCU, UninstallKey, 'SynveilManifestSha256', InstalledManifestHash)) or
-       (CompareText(RemoveBackslashUnlessRoot(InstalledLocation), RemoveBackslashUnlessRoot(PackageRoot())) <> 0) then
-      RaiseException('The installed Synveil identity is incomplete or conflicts with this Setup.');
+    if not RegQueryStringValue(HKCU64, UninstallKey, 'InstallLocation', InstalledLocation) then
+      RaiseException('The installed Synveil identity has no registered install location.');
+    if (not RegQueryStringValue(HKCU64, UninstallKey, 'SynveilManifestSha256', InstalledManifestHash)) or
+       (InstalledManifestHash = '') then
+      RaiseException('The installed Synveil identity has no trusted package manifest hash.');
+    if CompareText(RemoveBackslashUnlessRoot(InstalledLocation), RemoveBackslashUnlessRoot(PackageRoot())) <> 0 then
+      RaiseException('The registered Synveil install location conflicts with this Setup.');
     VersionComparison := CompareStrictVersion(InstalledVersion, '{#SynveilVersion}');
     if VersionComparison > 0 then
       RaiseException('A newer Synveil version is already installed. Downgrade is not supported.');
@@ -528,6 +531,17 @@ begin
   WizardForm.StatusLabel.Caption := 'Installing Synveil...';
 end;
 
+procedure CommitInstalledManifestIdentity;
+begin
+  { Inno writes the standard uninstall registration during Setup. Commit this
+    ownership identity afterward so the registration always authenticates the
+    payload manifest that Setup has just installed. The [Registry] entry keeps
+    uninsdeletevalue ownership for ordinary uninstall. }
+  if not RegWriteStringValue(HKCU64, UninstallKey, 'SynveilManifestSha256',
+    '{#SynveilManifestSha256}') then
+    RaiseException('Synveil could not save its installed package identity. Setup did not complete.');
+end;
+
 function ShouldCreateDesktopIcon(): Boolean;
 begin
   Result := DesktopIconRequested;
@@ -538,6 +552,8 @@ var
   ResultCode: Integer;
   StartupState: String;
 begin
+  if CurStep = ssPostInstall then
+    CommitInstalledManifestIdentity;
   if (CurStep = ssPostInstall) and (not FreshInstall) then
     RemoveProvenObsoleteFiles;
   if (CurStep = ssPostInstall) and (FreshInstall or StartupChoiceExplicit) then begin
@@ -561,7 +577,10 @@ end;
 
 procedure DeinitializeSetup();
 begin
-  PreviousManifest.Free;
+  if Assigned(PreviousManifest) then begin
+    PreviousManifest.Free;
+    PreviousManifest := nil;
+  end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import hmac
 import json
@@ -32,6 +33,98 @@ class AcquisitionError(ValueError):
     def __init__(self, code: str, message: str):
         super().__init__(message)
         self.code = code
+
+
+def _is_disk_full(error: OSError) -> bool:
+    return error.errno in {errno.ENOSPC, getattr(errno, "EDQUOT", -1)} or getattr(
+        error, "winerror", None
+    ) in {39, 112, 1816}
+
+
+def _raise_staging_error(error: OSError) -> None:
+    if _is_disk_full(error):
+        raise AcquisitionError(
+            "INSUFFICIENT_DISK_SPACE",
+            "Not enough local storage is available to stage the verified artifact.",
+        ) from error
+    raise AcquisitionError("STAGING_ERROR", "The artifact could not be staged safely.") from error
+
+
+def _sync_windows_directory(path: Path, expected_identity: os.stat_result) -> None:
+    """Flush the promoted directory entry through an identity-checked handle."""
+    import ctypes
+    from ctypes import wintypes
+
+    class FileTime(ctypes.Structure):
+        _fields_ = [("low", wintypes.DWORD), ("high", wintypes.DWORD)]
+
+    class FileInformation(ctypes.Structure):
+        _fields_ = [
+            ("attributes", wintypes.DWORD),
+            ("creation_time", FileTime),
+            ("access_time", FileTime),
+            ("write_time", FileTime),
+            ("volume_serial", wintypes.DWORD),
+            ("size_high", wintypes.DWORD),
+            ("size_low", wintypes.DWORD),
+            ("links", wintypes.DWORD),
+            ("index_high", wintypes.DWORD),
+            ("index_low", wintypes.DWORD),
+        ]
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_file = kernel.CreateFileW
+    create_file.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                            wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD,
+                            wintypes.HANDLE]
+    create_file.restype = wintypes.HANDLE
+    get_information = kernel.GetFileInformationByHandle
+    get_information.argtypes = [wintypes.HANDLE, ctypes.POINTER(FileInformation)]
+    get_information.restype = wintypes.BOOL
+    flush = kernel.FlushFileBuffers
+    flush.argtypes = [wintypes.HANDLE]
+    flush.restype = wintypes.BOOL
+    close = kernel.CloseHandle
+    close.argtypes = [wintypes.HANDLE]
+    close.restype = wintypes.BOOL
+
+    generic_read_write = 0x80000000 | 0x40000000
+    share_all = 0x1 | 0x2 | 0x4
+    open_existing = 3
+    open_reparse_point_and_directory = 0x00200000 | 0x02000000
+    handle = create_file(str(path), generic_read_write, share_all, None,
+                         open_existing, open_reparse_point_and_directory, None)
+    if handle == ctypes.c_void_p(-1).value:
+        _raise_staging_error(ctypes.WinError(ctypes.get_last_error()))
+    try:
+        information = FileInformation()
+        if not get_information(handle, ctypes.byref(information)):
+            _raise_staging_error(ctypes.WinError(ctypes.get_last_error()))
+        current = path.stat()
+        file_index = (int(information.index_high) << 32) | int(information.index_low)
+        if (information.attributes & 0x400 or not information.attributes & 0x10
+                or file_index != expected_identity.st_ino
+                or (current.st_dev, current.st_ino, current.st_mode)
+                != (expected_identity.st_dev, expected_identity.st_ino, expected_identity.st_mode)):
+            raise AcquisitionError("UNSAFE_PATH", "staging directory identity changed before durability sync")
+        if not flush(handle):
+            _raise_staging_error(ctypes.WinError(ctypes.get_last_error()))
+    finally:
+        close(handle)
+
+
+def _sync_staging_parent(root: Path, root_identity: os.stat_result, directory_fd: int | None) -> None:
+    """Platform boundary for committing the promoted name to its parent."""
+    if directory_fd is not None:
+        os.fsync(directory_fd)
+    elif os.name == "nt":
+        _sync_windows_directory(root, root_identity)
+    else:
+        sync_fd = os.open(root, os.O_RDONLY)
+        try:
+            os.fsync(sync_fd)
+        finally:
+            os.close(sync_fd)
 
 
 class BoundedArgumentParser(argparse.ArgumentParser):
@@ -474,33 +567,30 @@ def stage_artifact(stream: BinaryIO, destination_root: Path,
         except FileExistsError as error:
             raise AcquisitionError("DESTINATION_CONFLICT", "destination appeared during download") from error
         except OSError as error:
-            raise AcquisitionError("STAGING_ERROR", "atomic no-clobber promotion is unavailable") from error
+            _raise_staging_error(error)
         if directory_fd is None:
             temp_path.unlink()
         else:
             os.unlink(temp_path.name, dir_fd=directory_fd)
         temp_path = None
         try:
-            if directory_fd is not None:
-                os.fsync(directory_fd)
-            else:
-                sync_fd = os.open(root, os.O_RDONLY)
-                try:
-                    os.fsync(sync_fd)
-                finally:
-                    os.close(sync_fd)
-        except OSError:
-            pass
+            _sync_staging_parent(root, root_identity, directory_fd)
+        except OSError as error:
+            _raise_staging_error(error)
         return acquisition_result("VERIFIED", target, selection)
+    except OSError as error:
+        _raise_staging_error(error)
     finally:
         if temp_path is not None:
-            if directory_fd is None:
-                temp_path.unlink(missing_ok=True)
-            else:
-                try:
+            try:
+                if directory_fd is None:
+                    temp_path.unlink(missing_ok=True)
+                else:
                     os.unlink(temp_path.name, dir_fd=directory_fd)
-                except FileNotFoundError:
-                    pass
+            except FileNotFoundError:
+                pass
+            except OSError as error:
+                _raise_staging_error(error)
         if directory_fd is not None:
             os.close(directory_fd)
 

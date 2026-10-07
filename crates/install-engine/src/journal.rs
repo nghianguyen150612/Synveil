@@ -95,6 +95,7 @@ pub enum JournalErrorCode {
     JournalUnsupportedSchema,
     JournalPlanMismatch,
     JournalIoFailed,
+    JournalDiskFull,
     JournalLimitExceeded,
     ActiveTransactionExists,
     RecoveryInspectionRequired,
@@ -125,9 +126,16 @@ impl JournalError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum JournalFaultPoint {
     Write,
+    AfterWrite,
     FileSync,
+    AfterFileSync,
     Commit,
+    AfterCommit,
+    CommittedObjectSync,
+    AfterCommittedObjectSync,
     DirectorySync,
+    AfterDirectorySync,
+    DiskFull,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -200,9 +208,12 @@ impl InstallationJournal {
         options: JournalOptions,
     ) -> Result<Self, JournalError> {
         validate_id(&plan.plan_id)?;
+        if root.as_os_str().is_empty() {
+            return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+        }
         reject_symlink(root)?;
         match mode {
-            JournalMode::StartNew => fs::create_dir_all(root).map_err(io_error)?,
+            JournalMode::StartNew => create_directory_durable(root)?,
             JournalMode::ResumeExisting if !root.exists() => {
                 return Err(JournalError::new(JournalErrorCode::JournalMissing));
             }
@@ -219,15 +230,16 @@ impl InstallationJournal {
         }
         let directory = root.join(&plan.plan_id);
         reject_symlink(&directory)?;
-        if directory.exists() {
-            if mode == JournalMode::StartNew {
-                return Err(JournalError::new(JournalErrorCode::ActiveTransactionExists));
-            }
-        } else if mode == JournalMode::ResumeExisting {
+        if !directory.exists() && mode == JournalMode::ResumeExisting {
             return Err(JournalError::new(JournalErrorCode::JournalMissing));
-        } else {
+        }
+        if !directory.exists() {
             fs::create_dir(&directory).map_err(io_error)?;
             sync_directory(root)?;
+        }
+        let directory_metadata = fs::symlink_metadata(&directory).map_err(io_error)?;
+        if !directory_metadata.is_dir() || directory_metadata.file_type().is_symlink() {
+            return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
         }
         let lock_path = directory.join("lock");
         reject_symlink(&lock_path)?;
@@ -246,6 +258,9 @@ impl InstallationJournal {
             .map_err(|_| JournalError::new(JournalErrorCode::JournalBusy))?;
         let fingerprint = plan_fingerprint(plan)?;
         let records = load_records(&directory, &fingerprint, plan)?;
+        if mode == JournalMode::StartNew && !records.is_empty() {
+            return Err(JournalError::new(JournalErrorCode::ActiveTransactionExists));
+        }
         if mode == JournalMode::ResumeExisting && records.is_empty() {
             return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
         }
@@ -317,20 +332,26 @@ impl InstallationJournal {
         options.write(true).create_new(true);
         secure_open(&mut options);
         let mut file = options.open(&temp).map_err(io_error)?;
+        self.maybe_fail(class, JournalFaultPoint::DiskFull)?;
         file.write_all(&bytes)
             .and_then(|_| file.flush())
             .map_err(io_error)?;
+        self.maybe_fail(class, JournalFaultPoint::AfterWrite)?;
         self.maybe_fail(class, JournalFaultPoint::FileSync)?;
         file.sync_all().map_err(io_error)?;
+        self.maybe_fail(class, JournalFaultPoint::AfterFileSync)?;
         self.maybe_fail(class, JournalFaultPoint::Commit)?;
-        fs::hard_link(&temp, &final_path)
-            .map_err(|_| JournalError::new(JournalErrorCode::JournalCorrupt))?;
+        fs::hard_link(&temp, &final_path).map_err(io_error)?;
         fs::remove_file(&temp).map_err(io_error)?;
+        self.maybe_fail(class, JournalFaultPoint::AfterCommit)?;
+        self.maybe_fail(class, JournalFaultPoint::CommittedObjectSync)?;
         File::open(&final_path)
             .and_then(|f| f.sync_all())
             .map_err(io_error)?;
+        self.maybe_fail(class, JournalFaultPoint::AfterCommittedObjectSync)?;
         self.maybe_fail(class, JournalFaultPoint::DirectorySync)?;
         sync_directory(&self.directory)?;
+        self.maybe_fail(class, JournalFaultPoint::AfterDirectorySync)?;
         self.records.push(envelope);
         Ok(())
     }
@@ -341,7 +362,12 @@ impl InstallationJournal {
         point: JournalFaultPoint,
     ) -> Result<(), JournalError> {
         if self.options.fail_at == Some((class, point)) {
-            Err(JournalError::new(JournalErrorCode::JournalIoFailed))
+            let code = if point == JournalFaultPoint::DiskFull {
+                JournalErrorCode::JournalDiskFull
+            } else {
+                JournalErrorCode::JournalIoFailed
+            };
+            Err(JournalError::new(code))
         } else {
             Ok(())
         }
@@ -387,7 +413,7 @@ fn load_records(
             continue;
         }
         if !name.starts_with("checkpoint-") || !name.ends_with(".json") {
-            continue;
+            return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
         }
         reject_symlink(&path)?;
         let digits = &name[11..name.len() - 5];
@@ -556,8 +582,62 @@ fn sync_directory(path: &Path) -> Result<(), JournalError> {
         .and_then(|f| f.sync_all())
         .map_err(io_error)
 }
-fn io_error(_: std::io::Error) -> JournalError {
-    JournalError::new(JournalErrorCode::JournalIoFailed)
+fn create_directory_durable(path: &Path) -> Result<(), JournalError> {
+    let parent = path
+        .parent()
+        .filter(|candidate| !candidate.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.is_dir() && !metadata.file_type().is_symlink() {
+                return sync_directory(parent);
+            }
+            return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(io_error(error)),
+    }
+    create_directory_durable(parent)?;
+    match fs::create_dir(path) {
+        Ok(()) => sync_directory(parent),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let metadata = fs::symlink_metadata(path).map_err(io_error)?;
+            if metadata.is_dir() && !metadata.file_type().is_symlink() {
+                Ok(())
+            } else {
+                Err(JournalError::new(JournalErrorCode::JournalCorrupt))
+            }
+        }
+        Err(error) => Err(io_error(error)),
+    }
+}
+
+fn io_error(error: std::io::Error) -> JournalError {
+    let raw_code = error.raw_os_error();
+    let platform_disk_full = {
+        #[cfg(target_os = "linux")]
+        {
+            matches!(raw_code, Some(28 | 122)) // ENOSPC / EDQUOT
+        }
+        #[cfg(target_os = "macos")]
+        {
+            matches!(raw_code, Some(28 | 69)) // ENOSPC / EDQUOT
+        }
+        #[cfg(windows)]
+        {
+            matches!(raw_code, Some(39 | 112 | 1816)) // disk full / quota exceeded
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+        {
+            false
+        }
+    };
+    let disk_full = error.kind() == std::io::ErrorKind::StorageFull || platform_disk_full;
+    JournalError::new(if disk_full {
+        JournalErrorCode::JournalDiskFull
+    } else {
+        JournalErrorCode::JournalIoFailed
+    })
 }
 fn hex_hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
@@ -659,7 +739,7 @@ impl InstallerEngine {
                             effect_id: effect.effect_id.clone(),
                             result: JournalVerifiedResult::VerifiedSuccess,
                         }) {
-                            return journal_stop(e.code);
+                            return journal_recovery_stop(e.code);
                         }
                         disposition = RecoveryDisposition::ReconciledApplied;
                         applied.push(effect);
@@ -722,7 +802,7 @@ impl InstallerEngine {
                             effect_id: effect.effect_id.clone(),
                             outcome: EffectResultState::KnownPartialMutation,
                         }) {
-                            return journal_stop(e.code);
+                            return journal_recovery_stop(e.code);
                         }
                         return journal_fail_with_compensation(
                             &mut journal,
@@ -740,7 +820,7 @@ impl InstallerEngine {
                         effect_id: effect.effect_id.clone(),
                         result,
                     }) {
-                        return journal_stop(e.code);
+                        return journal_recovery_stop(e.code);
                     }
                     applied.push(effect);
                 }
@@ -749,7 +829,7 @@ impl InstallerEngine {
                         effect_id: effect.effect_id.clone(),
                         outcome: EffectResultState::FailureBeforeMutation,
                     }) {
-                        return journal_stop(e.code);
+                        return journal_recovery_stop(e.code);
                     }
                     return journal_fail_with_compensation(
                         &mut journal,
@@ -763,7 +843,7 @@ impl InstallerEngine {
                         effect_id: effect.effect_id.clone(),
                         outcome: EffectResultState::KnownPartialMutation,
                     }) {
-                        return journal_stop(e.code);
+                        return journal_recovery_stop(e.code);
                     }
                     return journal_fail_with_compensation(
                         &mut journal,
@@ -778,7 +858,7 @@ impl InstallerEngine {
                             effect_id: effect.effect_id.clone(),
                             result: JournalVerifiedResult::VerifiedSuccess,
                         }) {
-                            return journal_stop(e.code);
+                            return journal_recovery_stop(e.code);
                         }
                         disposition = RecoveryDisposition::ReconciledApplied;
                         applied.push(effect);
@@ -807,10 +887,10 @@ impl InstallerEngine {
         if !state.final_verified
             && let Err(e) = journal.append(JournalRecord::FinalVerificationSucceeded)
         {
-            return journal_stop(e.code);
+            return journal_recovery_stop(e.code);
         }
         if let Err(e) = journal.append(JournalRecord::TransactionCompleted) {
-            return journal_stop(e.code);
+            return journal_recovery_stop(e.code);
         }
         JournalExecutionResult {
             disposition,
@@ -979,7 +1059,7 @@ fn journal_fail_with_compensation<A: InstallationAdapter>(
         if let Err(error) = journal.append(JournalRecord::CompensationStarted {
             effect_id: effect.effect_id.clone(),
         }) {
-            return journal_stop(error.code);
+            return journal_recovery_stop(error.code);
         }
         if !adapter.compensate_effect(effect) || !adapter.verify_compensation(effect) {
             return inspection();
@@ -987,7 +1067,7 @@ fn journal_fail_with_compensation<A: InstallationAdapter>(
         if let Err(error) = journal.append(JournalRecord::CompensationVerified {
             effect_id: effect.effect_id.clone(),
         }) {
-            return journal_stop(error.code);
+            return journal_recovery_stop(error.code);
         }
     }
     JournalExecutionResult {
@@ -1014,11 +1094,19 @@ fn journal_stop(code: JournalErrorCode) -> JournalExecutionResult {
     JournalExecutionResult {
         disposition: match code {
             JournalErrorCode::JournalBusy => RecoveryDisposition::JournalBusy,
+            JournalErrorCode::JournalDiskFull => RecoveryDisposition::ReplanRequired,
             JournalErrorCode::JournalCorrupt
             | JournalErrorCode::JournalUnsupportedSchema
             | JournalErrorCode::JournalLimitExceeded => RecoveryDisposition::JournalCorrupt,
             _ => RecoveryDisposition::InspectionRequired,
         },
+        completed: false,
+        error: Some(code),
+    }
+}
+fn journal_recovery_stop(code: JournalErrorCode) -> JournalExecutionResult {
+    JournalExecutionResult {
+        disposition: RecoveryDisposition::InspectionRequired,
         completed: false,
         error: Some(code),
     }

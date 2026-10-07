@@ -34,6 +34,7 @@ ARTIFACT_DIGEST_MISMATCH
 ARTIFACT_TOO_LARGE
 ARTIFACT_TRUNCATED
 DESTINATION_CONFLICT
+INSUFFICIENT_DISK_SPACE
 INVALID_MANIFEST
 MANIFEST_AUTH_FAILED
 MANIFEST_TOO_LARGE
@@ -66,7 +67,7 @@ Every P009 `PurgeError` maps fail closed to ProtectedStateBlocked. No purge erro
 
 ## Platform/preflight bridge
 
-Prompt010 defines, but does not execute, typed future failures for UnsupportedPlatform, UnsupportedArchitecture, InsufficientDiskSpace, NativePackageTransactionFailed, RuntimeDependencyFailed, IntegrationFailed, and LaunchFailed. Later Linux and Windows prompts may emit these facts without adding raw strings to the presentation boundary.
+Prompt010 defines typed failures for UnsupportedPlatform, UnsupportedArchitecture, InsufficientDiskSpace, NativePackageTransactionFailed, RuntimeDependencyFailed, IntegrationFailed, and LaunchFailed. P044 emits InsufficientDiskSpace for proven acquisition/journal disk exhaustion before mutation. If journal state may already follow mutation, the same disk-full cause is presented as RecoveryRequired with ReconcileFirst. Later Linux and Windows prompts may emit these facts without adding raw strings to the presentation boundary.
 
 ## Diagnostics
 

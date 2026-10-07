@@ -2,6 +2,7 @@ param(
     [Parameter(Mandatory=$true)][string]$Setup,
     [Parameter(Mandatory=$true)][string]$OlderFixtureSetup,
     [Parameter(Mandatory=$true)][string]$NewerFixtureSetup,
+    [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{64}$')][string]$NewerLicenseHash,
     [Parameter(Mandatory=$true)][string]$RepositoryRoot,
     [Parameter(Mandatory=$true)][string]$EvidencePath
 )
@@ -27,7 +28,7 @@ function Get-Registration {
     $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($uninstallKey)
     Assert-True ($null -ne $key) 'LIFECYCLE_IDENTITY_FAILURE: HKCU registration absent'
     try {
-        return [ordered]@{ version=[string]$key.GetValue('DisplayVersion'); location=[string]$key.GetValue('InstallLocation'); uninstall=[string]$key.GetValue('QuietUninstallString'); fallback=[string]$key.GetValue('UninstallString') }
+        return [ordered]@{ version=[string]$key.GetValue('DisplayVersion'); location=[string]$key.GetValue('InstallLocation'); manifestHash=[string]$key.GetValue('SynveilManifestSha256'); uninstall=[string]$key.GetValue('QuietUninstallString'); fallback=[string]$key.GetValue('UninstallString') }
     } finally { $key.Dispose() }
 }
 function Get-RegisteredUninstaller {
@@ -67,6 +68,30 @@ function Invoke-RegisteredUninstall([string]$Name) {
     Assert-True ($process.ExitCode -eq 0) "LIFECYCLE_UNINSTALL_FAILURE: $Name exit $($process.ExitCode)"
     Assert-True ($null -eq [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($uninstallKey)) 'LIFECYCLE_UNINSTALL_FAILURE: registration remains'
 }
+function Interrupt-UpgradeAfterOwnedPayloadCopy([string]$Path, [string]$ExpectedLicenseHash) {
+    $log = Join-Path $logRoot 'upgrade-interrupted.log'
+    $arguments = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LAUNCH=0',('/LOG=' + $log))
+    $process = Start-Process -FilePath $Path -ArgumentList $arguments -WorkingDirectory $env:TEMP -PassThru
+    $deadline = [DateTime]::UtcNow.AddSeconds(90)
+    $license = Join-Path $root 'LICENSE'
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if ($process.HasExited) {
+            throw 'LIFECYCLE_INTERRUPTION_FAILURE: Setup completed before the target payload boundary was observed.'
+        }
+        if ((Test-Path -LiteralPath $license -PathType Leaf) -and
+            (Get-FileHash -LiteralPath $license -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $ExpectedLicenseHash) {
+            $process.Kill()
+            if (!$process.WaitForExit(30000)) {
+                throw 'LIFECYCLE_INTERRUPTION_FAILURE: terminated Setup did not exit.'
+            }
+            return
+        }
+        Start-Sleep -Milliseconds 10
+    }
+    $process.Kill()
+    $null = $process.WaitForExit(30000)
+    throw 'LIFECYCLE_INTERRUPTION_FAILURE: target payload copy boundary was not reached.'
+}
 
 New-Item $logRoot -ItemType Directory -Force | Out-Null
 foreach ($name in @('config','startup-preference','client-state','library','external')) {
@@ -94,9 +119,21 @@ Remove-Item -LiteralPath $unknown; Remove-Item -LiteralPath $root -Force -ErrorA
 Invoke-Setup $OlderFixtureSetup @('/STARTUP=0','/DESKTOPICON=1') 0 'install-fixture-old'
 $unknown = Join-Path $root 'user-note.txt'; Set-Content -LiteralPath $unknown -Value 'unknown adjacent user file'
 Assert-True (Test-Path (Join-Path $root 'p027-obsolete-owned.txt')) 'LIFECYCLE_FIXTURE_FAILURE: old owned file missing'
+Assert-True ((Get-Registration).version -ceq '1.0.0') 'LIFECYCLE_FIXTURE_FAILURE: old registration version missing'
+$oldManifestPath = Join-Path $root 'SYNVEIL-MANIFEST.txt'
+$oldManifestHash = (Get-FileHash -LiteralPath $oldManifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+Interrupt-UpgradeAfterOwnedPayloadCopy $NewerFixtureSetup $NewerLicenseHash
+Assert-True ((Get-FileHash -LiteralPath (Join-Path $root 'LICENSE') -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $NewerLicenseHash) 'LIFECYCLE_INTERRUPTION_FAILURE: target payload was not partially copied'
+Assert-True ((Get-FileHash -LiteralPath $oldManifestPath -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $oldManifestHash) 'LIFECYCLE_INTERRUPTION_FAILURE: prior ownership manifest changed before payload completion'
+$registration = Get-Registration
+Assert-True ($registration.version -ceq '1.0.0' -and $registration.manifestHash -ceq $oldManifestHash) 'LIFECYCLE_INTERRUPTION_FAILURE: prior registration no longer authenticates recovery scope'
+Assert-True (Test-Path $unknown -PathType Leaf) 'LIFECYCLE_INTERRUPTION_FAILURE: unknown adjacent file was removed'
+Assert-True ((Snapshot-State) -ceq $stateBefore) 'LIFECYCLE_INTERRUPTION_FAILURE: durable user state changed'
 Invoke-Setup $NewerFixtureSetup @() 0 'upgrade-fixture'
 $registration = Get-Registration
 Assert-True ($registration.version -ceq '1.1.0') 'LIFECYCLE_UPGRADE_FAILURE: target version not registered'
+Assert-True ($registration.manifestHash -ceq (Get-FileHash -LiteralPath (Join-Path $root 'SYNVEIL-MANIFEST.txt') -Algorithm SHA256).Hash.ToLowerInvariant()) 'LIFECYCLE_UPGRADE_FAILURE: target ownership registration mismatch'
+Assert-True ((Get-FileHash -LiteralPath (Join-Path $root 'LICENSE') -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $NewerLicenseHash) 'LIFECYCLE_UPGRADE_FAILURE: target payload verification failed after recovery'
 Assert-True (!(Test-Path (Join-Path $root 'p027-obsolete-owned.txt'))) 'LIFECYCLE_UPGRADE_FAILURE: obsolete owned file remains'
 Assert-True ((Test-Path $unknown) -and (Test-Path $desktop)) 'LIFECYCLE_UPGRADE_FAILURE: adjacent file or desktop choice lost'
 Assert-True ((Snapshot-State) -ceq $stateBefore) 'LIFECYCLE_UPGRADE_FAILURE: durable state changed'
@@ -116,7 +153,7 @@ $evidence = [ordered]@{
     schema_version=1; source_commit=$env:GITHUB_SHA; artifact_sha256=(Get-FileHash $Setup -Algorithm SHA256).Hash.ToLowerInvariant()
     windows_version=(Get-CimInstance Win32_OperatingSystem).Version
     repair=[ordered]@{ installed_version_before='production'; repair_result='pass'; payload_restored=$true; unknown_adjacent_preserved=$true; state_preserved=$true; startup_preference_preserved=$true }
-    upgrade_fixture=[ordered]@{ fixture_old_version='1.0.0'; fixture_new_version='1.1.0'; upgrade_result='pass'; obsolete_owned_removed=$true; unknown_adjacent_preserved=$true; state_preserved=$true; registration_count=1; startup_preserved=$true }
+    upgrade_fixture=[ordered]@{ fixture_old_version='1.0.0'; fixture_new_version='1.1.0'; interruption=[ordered]@{ process_termination='forced'; partial_target_payload_observed=$true; prior_manifest_and_registration_matched=$true; unknown_adjacent_preserved=$true; durable_state_preserved=$true; recovery_result='pass' }; upgrade_result='pass'; obsolete_owned_removed=$true; unknown_adjacent_preserved=$true; state_preserved=$true; registration_count=1; startup_preserved=$true }
     downgrade_fixture=[ordered]@{ downgrade_rejected=$true; package_unchanged=$true; state_unchanged=$true }
     uninstall=[ordered]@{ cleanup_startup_result='pass'; package_removed=$true; registration_removed=$true; state_preserved=$true; unknown_adjacent_preserved=$true; reinstall_result='pass' }
     purge=[ordered]@{ separate_boundary=$true; confirmation_required=$true; authorized_scope=@('APPLICATION_CONFIG') }
