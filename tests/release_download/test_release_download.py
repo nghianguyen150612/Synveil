@@ -2,6 +2,7 @@
 import copy, hashlib, importlib.util, io, json, sys, tempfile, unittest
 import urllib.error
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -201,12 +202,12 @@ class StageRaceSecurityTests(unittest.TestCase):
         self.assertEqual([],list(outside.iterdir())); self.assertEqual([],list(moved.iterdir()))
 
     def test_69_temporary_path_replacement_never_promotes_other_bytes(self):
-        class Racing(io.BytesIO):
-            def read(inner, size=-1):
-                value=super().read(size)
-                if not value:
-                    for temporary in self.root.glob('.synveil-download-*'):
-                        temporary.unlink(); temporary.write_bytes(b'evil')
-                return value
-        self.error('UNSAFE_PATH',download.stage_artifact,Racing(self.payload),self.root,self.selection)
+        # Replace after the download handle closes: Windows correctly prevents
+        # replacing an open file, while both platforms need this last-use guard.
+        original_matches = download._matches
+        def replace_before_last_use(path, size, digest):
+            path.unlink(); path.write_bytes(b'evil')
+            return original_matches(path, size, digest)
+        with mock.patch.object(download, '_matches', side_effect=replace_before_last_use):
+            self.error('UNSAFE_PATH',download.stage_artifact,io.BytesIO(self.payload),self.root,self.selection)
         self.assertFalse((self.root/'synveil.deb').exists()); self.assertEqual([],list(self.root.glob('.synveil-download-*')))
