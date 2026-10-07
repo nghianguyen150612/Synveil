@@ -167,6 +167,8 @@ def main() -> int:
                      "RemoveProvenObsoleteFiles", "FileAttributeReparsePoint",
                      "--cleanup-startup-integration", "CurUninstallStepChanged"):
         require(evidence in iss, f"P027 installer lifecycle contract: {evidence}")
+    require("Flags: 64bit uninsdeletevalue" in iss, "trusted manifest identity uses the 64-bit HKCU uninstall registry view")
+    require("SetRegView(64);" in iss, "recovery reads the 64-bit HKCU uninstall registry view")
     require("DelTree(" not in iss and "{localappdata}\\Synveil" not in iss, "ordinary uninstall cannot recursively remove state")
     for evidence in ("Get-RegisteredUninstaller", "QuietUninstallString", "user-note.txt", "Snapshot-State",
                      "p027-obsolete-owned.txt", "downgrade-fixture", "reinstall-production",

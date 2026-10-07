@@ -43,7 +43,7 @@ Name: "{userprograms}\Synveil"; Filename: "{app}\synveil-desktop.exe"; WorkingDi
 Name: "{userdesktop}\Synveil"; Filename: "{app}\synveil-desktop.exe"; WorkingDir: "{app}"; Check: ShouldCreateDesktopIcon
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\{{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1"; ValueType: string; ValueName: "SynveilManifestSha256"; ValueData: "{#SynveilManifestSha256}"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\{{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1"; ValueType: string; ValueName: "SynveilManifestSha256"; ValueData: "{#SynveilManifestSha256}"; Flags: 64bit uninsdeletevalue
 
 [Code]
 var
@@ -417,6 +417,7 @@ var
   StartupValue, RepairValue, InstalledVersion, InstalledLocation, InstalledManifestHash: String;
   VersionComparison: Integer;
 begin
+  SetRegView(64);
   ValidateSecurityOptions;
   RequireNoReparseAncestry(PackageRoot(), False);
   { Registry identity, not a writable directory, is the installed-product authority. }
@@ -429,10 +430,13 @@ begin
   if RepairMode and FreshInstall then
     RaiseException('Synveil is not installed for this Windows account; Repair cannot continue.');
   if not FreshInstall then begin
-    if (not RegQueryStringValue(HKCU, UninstallKey, 'InstallLocation', InstalledLocation)) or
-       (not RegQueryStringValue(HKCU, UninstallKey, 'SynveilManifestSha256', InstalledManifestHash)) or
-       (CompareText(RemoveBackslashUnlessRoot(InstalledLocation), RemoveBackslashUnlessRoot(PackageRoot())) <> 0) then
-      RaiseException('The installed Synveil identity is incomplete or conflicts with this Setup.');
+    if not RegQueryStringValue(HKCU, UninstallKey, 'InstallLocation', InstalledLocation) then
+      RaiseException('The installed Synveil identity has no registered install location.');
+    if (not RegQueryStringValue(HKCU, UninstallKey, 'SynveilManifestSha256', InstalledManifestHash)) or
+       (InstalledManifestHash = '') then
+      RaiseException('The installed Synveil identity has no trusted package manifest hash.');
+    if CompareText(RemoveBackslashUnlessRoot(InstalledLocation), RemoveBackslashUnlessRoot(PackageRoot())) <> 0 then
+      RaiseException('The registered Synveil install location conflicts with this Setup.');
     VersionComparison := CompareStrictVersion(InstalledVersion, '{#SynveilVersion}');
     if VersionComparison > 0 then
       RaiseException('A newer Synveil version is already installed. Downgrade is not supported.');

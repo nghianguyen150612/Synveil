@@ -168,9 +168,10 @@ Invoke-Setup $OlderFixtureSetup @('/STARTUP=0', '/DESKTOPICON=1') 0 'install-old
 $oldRegistration = Get-Registration
 Write-Host ("P044 prior registration after old Setup: " + ($oldRegistration | ConvertTo-Json -Compress))
 Assert-True ($oldRegistration.version -ceq '1.0.0') 'P044_WINDOWS_FIXTURE_FAILURE: prior version is not registered.'
+$oldManifestHash = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+Assert-True ($oldRegistration.manifestHash -ceq $oldManifestHash) 'P044_WINDOWS_FIXTURE_FAILURE: trusted ownership hash is absent from HKCU registration.'
 Assert-StartupDisabled
 $stateBefore = Get-StateSnapshot
-$oldManifestHash = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
 [IO.File]::WriteAllText($unknown, 'P044 unknown adjacent user file', [Text.UTF8Encoding]::new($false))
 $oldOwned = Join-Path $root 'p044-obsolete-owned.txt'
 Assert-True (Test-Path -LiteralPath $oldOwned -PathType Leaf) 'P044_WINDOWS_FIXTURE_FAILURE: old owned file is absent.'
