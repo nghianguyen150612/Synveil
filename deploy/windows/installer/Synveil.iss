@@ -561,7 +561,10 @@ end;
 
 procedure DeinitializeSetup();
 begin
-  PreviousManifest.Free;
+  if Assigned(PreviousManifest) then begin
+    PreviousManifest.Free;
+    PreviousManifest := nil;
+  end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

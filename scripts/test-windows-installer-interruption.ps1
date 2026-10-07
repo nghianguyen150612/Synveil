@@ -165,7 +165,9 @@ foreach ($name in @('application-config', 'credentials', 'client-state', 'librar
 }
 
 Invoke-Setup $OlderFixtureSetup @('/STARTUP=0', '/DESKTOPICON=1') 0 'install-old'
-Assert-True ((Get-Registration).version -ceq '1.0.0') 'P044_WINDOWS_FIXTURE_FAILURE: prior version is not registered.'
+$oldRegistration = Get-Registration
+Write-Host ("P044 prior registration after old Setup: " + ($oldRegistration | ConvertTo-Json -Compress))
+Assert-True ($oldRegistration.version -ceq '1.0.0') 'P044_WINDOWS_FIXTURE_FAILURE: prior version is not registered.'
 Assert-StartupDisabled
 $stateBefore = Get-StateSnapshot
 $oldManifestHash = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
