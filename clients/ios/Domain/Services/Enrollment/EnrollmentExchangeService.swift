@@ -5,6 +5,10 @@ private let maxEnrollmentResponseBodyBytes: Int = 16 * 1024
 
 /// Production implementation of `EnrollmentExchangeServiceProtocol`.
 public final class EnrollmentExchangeService: EnrollmentExchangeServiceProtocol, Sendable {
+    private static let requestIdRegex = try! NSRegularExpression(
+        pattern: "^[A-Za-z0-9._~-]{8,128}$"
+    )
+
     private let transport: HTTPTransportProtocol
     private let rustBridge: RustBridgeProtocol?
 
@@ -83,8 +87,8 @@ public final class EnrollmentExchangeService: EnrollmentExchangeServiceProtocol,
         } else if statusCode == 400 || statusCode == 401 || statusCode == 422 {
             // Invalid/rejected enrollment
             let (code, reqId) = parseErrorDetails(from: response.body)
-            let headerReqId = extractHeaderValue(key: "x-request-id", from: response.headers)
-            let finalReqId = headerReqId ?? reqId
+            let headerReqId = extractSafeRequestId(from: response.headers)
+            let finalReqId = headerReqId ?? reqId.flatMap(sanitizeRequestId)
             return .rejected(code: code ?? "invalid_enrollment", requestId: finalReqId)
         } else if statusCode == 503 {
             return .recoveryRequired(.http503)
@@ -99,10 +103,7 @@ public final class EnrollmentExchangeService: EnrollmentExchangeServiceProtocol,
         -> EnrollmentExchangeResult
     {
         // Validate Content-Type
-        let contentType = extractHeaderValue(key: "content-type", from: response.headers)
-        guard let contentTypeLower = contentType?.lowercased(),
-            contentTypeLower.contains("application/json")
-        else {
+        guard isJSONContentType(response.headers) else {
             return .recoveryRequired(.wrongContentType)
         }
 
@@ -134,8 +135,8 @@ public final class EnrollmentExchangeService: EnrollmentExchangeServiceProtocol,
         }
 
         let credential = DeviceCredential(validatedRawValue: rawCredential)
-        let headerReqId = extractHeaderValue(key: "x-request-id", from: response.headers)
-        let reqId = headerReqId ?? dto.meta?.requestId
+        let headerReqId = extractSafeRequestId(from: response.headers)
+        let reqId = headerReqId ?? dto.meta?.requestId.flatMap(sanitizeRequestId)
 
         do {
             let record = try DeviceCredentialRecord(
@@ -193,6 +194,38 @@ public final class EnrollmentExchangeService: EnrollmentExchangeServiceProtocol,
         } catch {
             return (nil, nil)
         }
+    }
+
+    private func isJSONContentType(_ headers: [String: String]) -> Bool {
+        guard let rawValue = extractHeaderValue(key: "content-type", from: headers) else {
+            return false
+        }
+        let mimeType = rawValue.components(separatedBy: ";").first?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return mimeType == "application/json"
+    }
+
+    private func extractSafeRequestId(from headers: [String: String]) -> String? {
+        guard let value = extractHeaderValue(key: "x-request-id", from: headers) else {
+            return nil
+        }
+        return sanitizeRequestId(value)
+    }
+
+    private func sanitizeRequestId(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let range = NSRange(location: 0, length: trimmed.utf16.count)
+        guard
+            Self.requestIdRegex.firstMatch(
+                in: trimmed,
+                options: [],
+                range: range
+            ) != nil
+        else {
+            return nil
+        }
+        return trimmed
     }
 
     private func extractHeaderValue(key: String, from headers: [String: String]) -> String? {
