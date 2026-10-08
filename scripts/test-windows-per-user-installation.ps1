@@ -155,7 +155,8 @@ $broadWrite = @($acl.Access | Where-Object {
 Assert-True ($broadWrite.Count -eq 0) 'PER_USER_ACL_FAILURE: broad local-user principal can write package root'
 
 foreach ($name in @('QT_ROOT_DIR','QT_PLUGIN_PATH','QML2_IMPORT_PATH','QML_IMPORT_PATH')) { Remove-Item "Env:$name" -ErrorAction SilentlyContinue }
-$env:QT_QPA_PLATFORM='offscreen'; $env:QT_DEBUG_PLUGINS='1'; $env:PATH="$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem"
+# The installed Windows runtime ships qwindows.dll, not Qt's offscreen plugin.
+$env:QT_QPA_PLATFORM='windows'; $env:QT_DEBUG_PLUGINS='1'; $env:PATH="$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem"
 $desktopOut=Join-Path $logRoot 'desktop.stdout.log'; $desktopErr=Join-Path $logRoot 'desktop.stderr.log'
 Invoke-Bounded (Join-Path $root 'synveil-desktop.exe') @('--qml-smoke-test') $unrelatedCwd 0 'desktop smoke' $desktopOut $desktopErr
 $diagnostics = Get-Content $desktopErr -Raw

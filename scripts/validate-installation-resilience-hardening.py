@@ -199,6 +199,9 @@ def main() -> int:
             and "real release synveil-client.exe" in p044_windows_runner,
             "Windows interruption fixtures must use versioned manifest fixtures and the real client")
     require("$process.Kill($true)" in p044_windows_test
+            and "catch [System.IO.IOException]" in p044_windows_test
+            and "-band 0xFFFF) -ne 32" in p044_windows_test
+            and "Start-Sleep -Milliseconds 5" in p044_windows_test
             and "prior ownership manifest" in p044_windows_test
             and "Get-ManifestHashes" in p044_windows_test
             and "NewerRuntimePayloadHash" in p044_windows_test

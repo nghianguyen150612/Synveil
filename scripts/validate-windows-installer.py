@@ -133,6 +133,7 @@ def main() -> int:
     require("Get-FileHash" in build and "-cne $Lock.sha256" in build, "digest before execution")
     require("windows-x86_64-installer" in build and '"windows_installer"' in build and '"SynveilSetup.exe"' in build and '"primary_installer"' in build, "artifact manifest entry")
     require("windows-latest" in workflow and "/VERYSILENT" in per_user_test and "state-sentinel" in per_user_test, "native smoke contract")
+    require("$env:QT_QPA_PLATFORM='windows'" in per_user_test and "$env:QT_QPA_PLATFORM='offscreen'" not in per_user_test, "P025 installed smoke uses the packaged Windows Qt platform plugin")
     for evidence in ("test-windows-installed-runtime.ps1", "QT_PLUGIN_PATH", "QML2_IMPORT_PATH", "unrelatedCwd", "client probe", "missing-qwindows", "corrupt-dll", "unexpected-dll", "developer-file"):
         require(evidence in workflow or evidence in per_user_test, f"P024 hosted runtime evidence: {evidence}")
     require("VCToolsInstallDir" in workflow and "CompanyName" in workflow and "OriginalFilename" in workflow, "authenticated MSVC linker selection")
