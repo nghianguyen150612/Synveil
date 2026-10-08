@@ -252,7 +252,11 @@ repo_root="$2"
 export CARGO_TARGET_DIR="$3"
 synveil_prepare_reproducible_rust_build "$repo_root"
 read -r -a cxx_flags <<< "$CXXFLAGS"
-read -r -a rust_flags <<< "$RUSTFLAGS"
+[[ -n "${CARGO_ENCODED_RUSTFLAGS:-}" ]] || {
+    printf 'reproducible build helper did not export encoded Rust flags\n' >&2
+    exit 1
+}
+IFS=$'\x1f' read -r -a rust_flags <<< "$CARGO_ENCODED_RUSTFLAGS"
 c++ "${cxx_flags[@]}" -c "$CARGO_TARGET_DIR/prefix.cpp" -o "$CARGO_TARGET_DIR/prefix.o"
 rustc "${rust_flags[@]}" --edition=2021 --crate-name p113_path_probe \
     "$CARGO_TARGET_DIR/prefix.rs" -o "$CARGO_TARGET_DIR/rust-prefix"

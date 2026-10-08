@@ -2117,6 +2117,7 @@ enum BoundControlTransport {
     #[cfg(windows)]
     Windows {
         server: Option<tokio::net::windows::named_pipe::NamedPipeServer>,
+        next: Option<tokio::net::windows::named_pipe::NamedPipeServer>,
         name: String,
     },
 }
@@ -2184,20 +2185,26 @@ impl BoundControlTransport {
                 })
             }
             #[cfg(windows)]
-            Self::Windows { server, name } => {
+            Self::Windows { server, next, name } => {
+                if next.is_none() {
+                    *next = Some(create_windows_pipe(name, false)?);
+                }
                 let current = server
-                    .take()
+                    .as_mut()
                     .ok_or(DesktopControlServerError::ListenerFailed)?;
-                // Arm the next instance before exposing the connected one to
-                // its client. If CreateNamedPipe fails here, no accepted
-                // connection is dropped without receiving a response.
-                let next = create_windows_pipe(name, false)?;
+                // Keep both instances in the transport while connect() is
+                // pending: run_server selects this future against other
+                // events, so cancellation must not drop either pipe handle.
                 current
                     .connect()
                     .await
                     .map_err(|_| DesktopControlServerError::ListenerFailed)?;
-                let connected = current;
-                *server = Some(next);
+                let connected = server
+                    .take()
+                    .ok_or(DesktopControlServerError::ListenerFailed)?;
+                *server = next
+                    .take()
+                    .ok_or(DesktopControlServerError::ListenerFailed)?;
                 Ok(AcceptedControlConnection {
                     io: Box::new(connected),
                 })
@@ -3440,6 +3447,7 @@ fn bind_windows_transport(name: &str) -> Result<BoundControlTransport, DesktopCo
     validate_pipe_name(name)?;
     Ok(BoundControlTransport::Windows {
         server: Some(create_windows_pipe(name, true)?),
+        next: None,
         name: name.to_owned(),
     })
 }
@@ -3567,8 +3575,11 @@ mod tests {
 
     #[cfg(unix)]
     fn secure_test_root(prefix: &str) -> PathBuf {
-        std::fs::canonicalize(std::env::temp_dir())
-            .expect("canonical temporary directory")
+        // macOS's per-user TMPDIR is deeply nested. IPC socket paths are
+        // limited to 108 bytes, so keep these disposable fixtures under the
+        // canonical short system temporary root.
+        std::fs::canonicalize("/tmp")
+            .expect("canonical short temporary directory")
             .join(format!("{prefix}-{}", uuid::Uuid::now_v7()))
     }
 

@@ -1179,8 +1179,9 @@ mod tests {
     #[test]
     fn network_hint_interval_is_bounded() {
         let profile_id = ServerProfileId::new();
-        let library = DesktopClientLibrary::new(LibraryId::new(), test_library_root("synveil-root"))
-            .expect("library manifest");
+        let library =
+            DesktopClientLibrary::new(LibraryId::new(), test_library_root("synveil-root"))
+                .expect("library manifest");
         let config = DesktopClientConfig::new(profile_id, [library]).expect("config");
         assert!(matches!(
             config.with_network_hint_interval(Duration::ZERO),

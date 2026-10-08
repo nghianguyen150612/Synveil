@@ -138,10 +138,12 @@ fn has_legacy_configuration_inputs() -> bool {
 mod tests {
     use std::env;
 
+    #[cfg(unix)]
     use synveil_server_config::{
         ConfigInspection, DeploymentProfile, ExistingServerEvidence, ExternalDatabaseCredential,
         NewServerConfig, StorageId, StorageRootIdentity,
     };
+    #[cfg(unix)]
     use synveil_storage::{
         CapabilityEvidence, CapabilitySupport, StorageAvailability, StorageBackendKind,
         StorageCapabilities, StorageCapability,
@@ -149,8 +151,10 @@ mod tests {
 
     use super::{
         RuntimeServerConfiguration, RuntimeServerConfigurationError, SERVER_CONFIG_FILE_ENV,
-        select_server_configuration, server_configuration_from_runtime,
+        server_configuration_from_runtime,
     };
+    #[cfg(unix)]
+    use super::select_server_configuration;
 
     fn clear_env(f: impl FnOnce()) {
         let _guard = crate::runtime_test_support::environment_lock();
@@ -183,6 +187,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     fn fixture_layout(temp: &tempfile::TempDir) -> synveil_server_config::LinuxConfigLayout {
         // macOS exposes temporary directories through `/var`, which is an
         // intentional system symlink to `/private/var`. Resolve that fixture
@@ -194,6 +199,7 @@ mod tests {
         .unwrap()
     }
 
+    #[cfg(unix)]
     fn ready_storage_capabilities() -> StorageCapabilities {
         [
             StorageCapability::ExclusiveCreate,
@@ -228,6 +234,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn explicit_managed_authority_rejects_mixed_operator_environment() {
         clear_env(|| {
             let temp = tempfile::tempdir().unwrap();
@@ -284,6 +291,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn advanced_external_config_uses_read_only_shared_authority() {
         clear_env(|| {
             let temp = tempfile::tempdir().unwrap();
@@ -371,6 +379,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn preparing_storage_is_not_runtime_ready() {
         clear_env(|| {
             let temp = tempfile::tempdir().unwrap();
