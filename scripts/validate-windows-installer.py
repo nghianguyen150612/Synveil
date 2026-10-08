@@ -8,6 +8,7 @@ import json
 import re
 import sys
 import tempfile
+import uuid
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -150,6 +151,12 @@ def main() -> int:
         require(evidence in per_user_invoker, f"P025 disposable-account harness: {evidence}")
     for evidence in ("SHGetKnownFolderPath", "ExactSpelling=true", "KF_FLAG_DONT_VERIFY", "LocalApplicationData", "Programs", "DesktopDirectory", "CommonPrograms", "CommonDesktopDirectory"):
         require(evidence in known_folders, f"P025 token-owned Windows folders: {evidence}")
+    known_folder_ids = re.findall(r"^\s+\w+\s*=\s*'([^']+)'$", known_folders, flags=re.MULTILINE)
+    require(len(known_folder_ids) == 5, "P025 all five Windows known-folder IDs are present")
+    require(all(str(uuid.UUID(value)) == value.lower() for value in known_folder_ids),
+            "P025 Windows known-folder IDs are valid GUIDs")
+    require("CommonDesktopDirectory = 'C4AA340D-F20F-4863-AFEF-F87EF2E6BA25'" in known_folders,
+            "P025 CommonDesktopDirectory uses FOLDERID_PublicDesktop")
     require("Environment]::GetFolderPath" not in known_folders, "P025 known folders do not trust inherited runner environment")
     for evidence in ("Inspect compiled Setup execution level", "requestedExecutionLevel", "asInvoker", "invoke-windows-standard-user-test.ps1", "windows-per-user-evidence"):
         require(evidence in workflow, f"P025 hosted workflow evidence: {evidence}")
@@ -215,6 +222,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except (AssertionError, OSError, UnicodeError, json.JSONDecodeError) as error:
+    except (AssertionError, OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
         print(f"windows installer contract: FAIL: {error}", file=sys.stderr)
         sys.exit(1)

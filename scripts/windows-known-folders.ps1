@@ -26,7 +26,7 @@ function Get-WindowsKnownFolderPath([string]$Folder) {
         Programs = 'A77F5D77-2E2B-44C3-A6A2-ABA601054A51'
         DesktopDirectory = 'B4BFCC3A-DB2C-424C-B029-7FE99A87C641'
         CommonPrograms = '0139D44E-6AFE-49F2-8690-3DAFCAE6FFB8'
-        CommonDesktopDirectory = 'C4AA340D-F20F-4863-AFEF-F87B8E6BA3B'
+        CommonDesktopDirectory = 'C4AA340D-F20F-4863-AFEF-F87EF2E6BA25'
     }
     if (!$folderIds.ContainsKey($Folder)) {
         throw "WINDOWS_PROFILE_FAILURE: unsupported Windows known folder $Folder"
