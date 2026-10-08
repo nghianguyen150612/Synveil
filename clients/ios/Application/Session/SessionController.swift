@@ -31,6 +31,13 @@ public final class SessionController {
     /// Observable only so the root retry action can disable itself while a probe is in flight.
     public private(set) var isRestorationRetryInProgress = false
 
+    /// Typed non-secret failure context; cleared on every authoritative transition.
+    public private(set) var restorationFailure: SessionRestorationVerificationFailure?
+    public private(set) var secureStorageFailure: SessionSecureStorageFailure?
+
+    /// Used by phase view models to discard callbacks after any newer lifecycle transition.
+    var lifecycleRevision: UInt64 { transitionRevision }
+
     /// Non-secret cleanup failure retained while the user retries secure deletion.
     public private(set) var logoutFailure: SessionLogoutError?
 
@@ -331,12 +338,17 @@ public final class SessionController {
                 pendingRestorationSession = nil
                 transition(to: .recoveryRequired(.protocolFailure))
             }
-        case .keychainUnavailable, .keychainReadFailure, .keychainFailure:
-            pendingRestorationSession = nil
-            transition(to: .recoveryRequired(.secureStore))
-        case .corruptedKeychainSession, .unsupportedKeychainFormat:
-            pendingRestorationSession = nil
-            transition(to: .recoveryRequired(.secureStore))
+            restorationFailure = verification
+        case .keychainUnavailable:
+            applyStorageFailure(.unavailable)
+        case .keychainReadFailure:
+            applyStorageFailure(.readFailure)
+        case .keychainFailure:
+            applyStorageFailure(.failure)
+        case .corruptedKeychainSession:
+            applyStorageFailure(.corruptRecord)
+        case .unsupportedKeychainFormat:
+            applyStorageFailure(.unsupportedRecord)
         case .serverOriginScopeMismatch:
             pendingRestorationSession = nil
             transition(to: .recoveryRequired(.scopeMismatch))
@@ -351,6 +363,12 @@ public final class SessionController {
             pendingRestorationSession = nil
             transition(to: .restorationVerificationPending)
         }
+    }
+
+    private func applyStorageFailure(_ failure: SessionSecureStorageFailure) {
+        pendingRestorationSession = nil
+        transition(to: .recoveryRequired(.secureStore))
+        secureStorageFailure = failure
     }
 
     private func applyNoStoredSession(configuredEndpoint: ServerEndpoint?) {
@@ -430,6 +448,8 @@ public final class SessionController {
 
     private func transition(to newState: AppStartupState) {
         transitionRevision &+= 1
+        restorationFailure = nil
+        secureStorageFailure = nil
         state = newState
     }
 }

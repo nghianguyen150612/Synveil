@@ -14,6 +14,11 @@ public enum AppRecoveryReason: Equatable, Hashable, Sendable {
     case transport
 }
 
+/// Non-secret storage context retained for accurate recovery copy, not a second lifecycle state.
+public enum SessionSecureStorageFailure: Equatable, Sendable {
+    case unavailable, readFailure, corruptRecord, unsupportedRecord, failure
+}
+
 /// Root application startup and lifecycle state representation.
 ///
 /// Pure domain/application state enum driving top-level UI routing.

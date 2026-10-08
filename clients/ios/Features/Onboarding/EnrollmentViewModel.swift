@@ -20,8 +20,11 @@ public final class EnrollmentViewModel {
     public var rawTokenInput: String = "" {
         didSet {
             // Clear validation feedback when user modifies input
-            if case .invalidToken = state {
+            switch state {
+            case .invalidToken, .rejected:
                 state = .idle
+                recoveryRequestID = nil
+            default: break
             }
         }
     }
@@ -33,6 +36,8 @@ public final class EnrollmentViewModel {
     private let exchangeService: EnrollmentExchangeServiceProtocol?
     private let credentialSink: SecureCredentialSinkProtocol
     private let rustBridge: RustBridgeProtocol?
+
+    public private(set) var recoveryRequestID: String?
 
     private var submitTask: Task<Void, Never>?
 
@@ -87,15 +92,21 @@ public final class EnrollmentViewModel {
 
         isSubmitting = true
         state = .submitting
+        recoveryRequestID = nil
+        let revision = sessionController.lifecycleRevision
 
         submitTask = Task {
+            defer {
+                self.isSubmitting = false
+                self.submitTask = nil
+            }
+            guard self.isCurrentEnrollment(revision, endpoint: endpoint) else { return }
             // Rust shared-core validation is authoritative for production grant consumption.
             guard let bridge = rustBridge else {
                 self.state = .securityServicesUnavailable(
                     "Authoritative enrollment validation is unavailable. "
                         + "No enrollment request was sent."
                 )
-                self.isSubmitting = false
                 return
             }
 
@@ -103,20 +114,22 @@ public final class EnrollmentViewModel {
             do {
                 isValidToken = try await bridge.validateEnrollmentToken(trimmedInput)
             } catch {
+                guard self.isCurrentEnrollment(revision, endpoint: endpoint) else { return }
+                guard !Task.isCancelled else { self.state = .idle; return }
                 self.state = .securityServicesUnavailable(
                     "Authoritative enrollment validation is unavailable. "
                         + "No enrollment request was sent."
                 )
-                self.isSubmitting = false
                 return
             }
 
+            guard self.isCurrentEnrollment(revision, endpoint: endpoint) else { return }
+            guard !Task.isCancelled else { self.state = .idle; return }
             guard isValidToken, let token = EnrollmentToken.parse(trimmedInput) else {
                 self.state = .invalidToken(
                     "Enrollment token format is invalid. It must begin with 'sve1_' followed by 64 "
                         + "lowercase hex characters."
                 )
-                self.isSubmitting = false
                 return
             }
 
@@ -124,7 +137,6 @@ public final class EnrollmentViewModel {
                 self.state = .securityServicesUnavailable(
                     "Enrollment security services are unavailable. No enrollment request was sent."
                 )
-                self.isSubmitting = false
                 return
             }
 
@@ -132,29 +144,30 @@ public final class EnrollmentViewModel {
             do {
                 try await credentialSink.preflight()
             } catch {
+                guard self.isCurrentEnrollment(revision, endpoint: endpoint) else { return }
+                guard !Task.isCancelled else { self.state = .idle; return }
                 self.state = .secureStoreUnavailable(
                     "Secure credential storage is unavailable. No enrollment request was sent."
                 )
-                self.isSubmitting = false
                 return
             }
 
+            guard self.isCurrentEnrollment(revision, endpoint: endpoint) else { return }
             guard !Task.isCancelled else {
                 self.state = .idle
-                self.isSubmitting = false
                 return
             }
 
             // Perform single-shot exchange request
             let result = await exchangeService.exchange(endpoint: endpoint, token: token)
 
+            guard self.isCurrentEnrollment(revision, endpoint: endpoint) else { return }
             guard !Task.isCancelled else {
                 self.sessionController.requireRecovery(.enrollmentAmbiguous)
                 self.state = .recoveryRequired(
                     "The enrollment result is unknown. Use the trusted owner recovery workflow "
                         + "before trying again."
                 )
-                self.isSubmitting = false
                 return
             }
 
@@ -162,23 +175,28 @@ public final class EnrollmentViewModel {
             case .success(let record):
                 do {
                     let receipt = try await credentialSink.store(record, for: endpoint)
+                    guard self.isCurrentEnrollment(revision, endpoint: endpoint) else { return }
+                    guard !Task.isCancelled else {
+                        self.sessionController.requireRecovery(.enrollmentAmbiguous)
+                        return
+                    }
                     self.sessionController.markAuthenticated(after: receipt)
                     guard self.sessionController.state == .authenticated else {
                         throw SecureCredentialSinkError.verificationFailure
                     }
                     self.state = .succeeded
-                    self.isSubmitting = false
-                } catch {
+                    } catch {
+                    guard self.isCurrentEnrollment(revision, endpoint: endpoint) else { return }
                     self.sessionController.requireRecovery(.secureStore)
                     self.state = .recoveryRequired(
                         "Credential storage failed following exchange. Recovery is required."
                     )
-                    self.isSubmitting = false
-                }
+                    }
 
-            case .rejected:
+            case .rejected(_, let requestID):
+                self.recoveryRequestID = AuthenticationRecoveryPresenter.safeRequestID(requestID)
+                self.rawTokenInput = ""
                 self.state = .rejected("The enrollment grant was rejected by the server.")
-                self.isSubmitting = false
 
             case .recoveryRequired:
                 self.sessionController.requireRecovery(.enrollmentAmbiguous)
@@ -186,7 +204,6 @@ public final class EnrollmentViewModel {
                     "The enrollment result is unknown. Use the trusted owner recovery workflow "
                         + "before trying again."
                 )
-                self.isSubmitting = false
 
             case .failed(let reason):
                 switch reason {
@@ -210,7 +227,6 @@ public final class EnrollmentViewModel {
                     self.sessionController.requireRecovery(.enrollmentAmbiguous)
                     self.state = .recoveryRequired("Enrollment could not be completed safely.")
                 }
-                self.isSubmitting = false
             }
         }
     }
@@ -220,15 +236,26 @@ public final class EnrollmentViewModel {
         submitTask?.cancel()
     }
 
-    /// User-friendly message for UI display.
+    /// Awaits the owned single-shot operation without submitting a grant.
+    func waitForCurrentSubmission() async {
+        await submitTask?.value
+    }
+
+    private func isCurrentEnrollment(_ revision: UInt64, endpoint: ServerEndpoint) -> Bool {
+        sessionController.lifecycleRevision == revision
+            && sessionController.state == .needsEnrollment
+            && sessionController.serverEndpoint == endpoint
+    }
+
+    var recoveryPresentation: AuthenticationRecoveryPresentation? {
+        AuthenticationRecoveryPresenter.enrollment(
+            state, inputIsEmpty: rawTokenInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            requestID: recoveryRequestID)
+    }
+
+    /// User-friendly message for UI display; stored strings never supply presentation copy.
     public var errorMessage: String? {
-        switch state {
-        case .invalidToken(let msg): return msg
-        case .rejected(let msg): return msg
-        case .recoveryRequired(let msg): return msg
-        case .secureStoreUnavailable(let msg): return msg
-        case .securityServicesUnavailable(let msg): return msg
-        case .idle, .submitting, .succeeded: return nil
-        }
+        guard let presentation = recoveryPresentation else { return nil }
+        return presentation.message + " " + presentation.nextStep
     }
 }

@@ -19,6 +19,7 @@ public final class ServerValidationViewModel {
 
     private let sessionController: SessionController
     private let validationService: ServerValidationServiceProtocol
+    private var operationRevision: UInt64 = 0
     private var validationTask: Task<Void, Never>?
 
     /// Initializes ViewModel with SessionController and ServerValidationService.
@@ -43,7 +44,7 @@ public final class ServerValidationViewModel {
     ///
     /// Idempotent while validation is currently running.
     public func validateServer() {
-        guard !isChecking else {
+        guard !isChecking, sessionController.state == .readyForServerValidation else {
             return
         }
 
@@ -54,10 +55,21 @@ public final class ServerValidationViewModel {
 
         isChecking = true
         state = .checking
+        operationRevision &+= 1
+        let operation = operationRevision
+        let revision = sessionController.lifecycleRevision
 
         validationTask = Task {
             let result = await validationService.validateServer(endpoint: endpoint)
 
+            guard operation == self.operationRevision else { return }
+            guard sessionController.lifecycleRevision == revision,
+                sessionController.state == .readyForServerValidation,
+                sessionController.serverEndpoint == endpoint
+            else {
+                self.isChecking = false
+                return
+            }
             guard !Task.isCancelled else {
                 self.isChecking = false
                 return
@@ -85,92 +97,36 @@ public final class ServerValidationViewModel {
         }
     }
 
-    /// Retries server validation by cancelling any ongoing task and starting a fresh probe sequence.
+    /// Retries server validation once the preceding probe sequence has completed.
     public func retry() {
-        cancelValidation()
+        guard !isChecking else { return }
         validateServer()
     }
 
     /// Cancels active validation task safely without advancing session state.
     public func cancelValidation() {
+        operationRevision &+= 1
         validationTask?.cancel()
         validationTask = nil
         isChecking = false
+        if case .checking = state { state = .idle }
     }
 
-    /// Returns concise, user-friendly failure title and message for UI display.
+    /// Read-only completion handle for deterministic lifecycle observers.
+    var currentValidationTask: Task<Void, Never>? { validationTask }
+
+    /// Awaits the owned operation without creating or retrying a request.
+    func waitForCurrentValidation() async {
+        await validationTask?.value
+    }
+
+    var recoveryPresentation: AuthenticationRecoveryPresentation? {
+        AuthenticationRecoveryPresenter.serverValidation(state)
+    }
+
+    /// Compatibility accessor, backed by the centralized safe presentation.
     public var userFacingErrorMessage: (title: String, message: String) {
-        switch state {
-        case .idle, .checking, .ready:
-            return ("", "")
-        case .aliveButNotReady(_, let code):
-            let details = code != nil ? " (Code: \(code!))" : ""
-            return (
-                "Server Not Ready",
-                "The server was reached but is currently undergoing maintenance or "
-                    + "initialization\(details). Please try again in a few moments."
-            )
-        case .failed(let error):
-            switch error {
-            case .offline:
-                return (
-                    "Connection Error",
-                    "Unable to connect to the server. Please check your network connection "
-                        + "and server address."
-                )
-            case .dnsFailure:
-                return (
-                    "Server Not Found",
-                    "Could not resolve the server address. Please verify the host name."
-                )
-            case .timeout:
-                return (
-                    "Request Timed Out",
-                    "The server did not respond in time. Please try again."
-                )
-            case .tlsError:
-                return (
-                    "Security Failure",
-                    "A secure TLS connection could not be established with the server."
-                )
-            case .redirectRejected:
-                return (
-                    "Redirect Rejected",
-                    "The server attempted an unexpected redirect, which is prohibited "
-                        + "for security."
-                )
-            case .unexpectedContentType:
-                return (
-                    "Incompatible Service",
-                    "The server responded with an invalid payload format. Please ensure "
-                        + "the URL points to a Synveil server."
-                )
-            case .bodyLimitExceeded:
-                return (
-                    "Response Too Large",
-                    "The server health response exceeded the expected maximum size limit."
-                )
-            case .malformedResponse, .protocolError:
-                return (
-                    "Incompatible Server",
-                    "The endpoint responded but does not appear to run a compatible "
-                        + "Synveil service."
-                )
-            case .httpError(let statusCode, let code, _):
-                let codeDetail = code != nil ? " (\(code!))" : ""
-                return (
-                    "Server Error",
-                    "Server returned HTTP error status \(statusCode)\(codeDetail)."
-                )
-            case .configurationError:
-                return (
-                    "Configuration Error",
-                    "Invalid server configuration or transport policy."
-                )
-            case .cancelled:
-                return ("Cancelled", "Validation was cancelled.")
-            }
-        }
+        guard let presentation = recoveryPresentation else { return ("", "") }
+        return (presentation.title, presentation.message + " " + presentation.nextStep)
     }
-
 }

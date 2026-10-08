@@ -43,7 +43,10 @@ struct RootView: View {
         case .logoutCleanupRequired:
             LogoutCleanupRecoveryView(sessionController: sessionController)
         case .recoveryRequired(let reason):
-            RecoveryPlaceholderView(reason: reason)
+            AuthenticationRecoveryView(
+                presentation: AuthenticationRecoveryPresenter.recovery(
+                    reason, storageFailure: sessionController.secureStorageFailure)
+            )
         }
     }
 }
@@ -70,33 +73,18 @@ struct RestorationVerificationPendingView: View {
     @State private var isShowingLogoutConfirmation = false
 
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "network")
-                .font(.system(size: 40))
-                .foregroundColor(.accentColor)
-                .accessibilityHidden(true)
-            Text("Session verification pending")
-                .font(.title2)
-                .bold()
-            Text("Connect to the server to verify the saved device session.")
-                .font(.body)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
-            Button {
-                Task {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                AuthenticationRecoveryMessageView(
+                    presentation: AuthenticationRecoveryPresenter.restoration(
+                        sessionController.restorationFailure)
+                )
+                AuthenticationRecoveryRetryButton(
+                    action: .retryVerification,
+                    isInProgress: sessionController.isRestorationRetryInProgress
+                ) {
                     await sessionController.retrySessionRestoration()
                 }
-            } label: {
-                if sessionController.isRestorationRetryInProgress {
-                    ProgressView("Retrying verification…")
-                } else {
-                    Text("Retry verification")
-                }
-            }
-            .disabled(sessionController.isRestorationRetryInProgress)
-            .accessibilityIdentifier("synveil.root.restoration-retry")
-            .accessibilityHint("Checks the saved device session with its server.")
 
             Button("Forget saved session", role: .destructive) {
                 isShowingLogoutConfirmation = true
@@ -104,6 +92,7 @@ struct RestorationVerificationPendingView: View {
             .accessibilityIdentifier("synveil.session.forget-pending")
         }
         .padding()
+        }
         .accessibilityIdentifier("synveil.root.verification-pending")
         .confirmationDialog(
             "Forget this device session?",
@@ -270,80 +259,21 @@ struct LogoutCleanupRecoveryView: View {
     let sessionController: SessionController
 
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "lock.trianglebadge.exclamationmark")
-                .font(.system(size: 40))
-                .foregroundColor(.orange)
-                .accessibilityHidden(true)
-            Text("Secure cleanup needs attention")
-                .font(.title2)
-                .bold()
-            Text(
-                "Authenticated work is stopped, but Synveil could not verify that the saved "
-                    + "credential was deleted. Retry secure cleanup."
-            )
-            .font(.body)
-            .foregroundColor(.secondary)
-            .multilineTextAlignment(.center)
-            .padding(.horizontal)
-            Button("Retry Cleanup") {
-                Task { await sessionController.requestLogout() }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                AuthenticationRecoveryMessageView(
+                    presentation: AuthenticationRecoveryPresenter.logoutCleanup
+                )
+                AuthenticationRecoveryRetryButton(
+                    action: .retryCleanup,
+                    isInProgress: sessionController.state == .logoutInProgress
+                ) {
+                    await sessionController.requestLogout()
+                }
             }
-            .buttonStyle(.borderedProminent)
-            .accessibilityIdentifier(SessionLogoutAccessibility.logoutRetry)
-            .accessibilityHint("Retries local credential deletion. No network request is made.")
+            .padding(24)
         }
-        .padding()
         .accessibilityIdentifier("synveil.logout.recovery")
-    }
-}
-
-/// Placeholder surface for recovery situations.
-struct RecoveryPlaceholderView: View {
-    let reason: AppRecoveryReason
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 48))
-                .foregroundColor(.orange)
-            Text("Recovery Required")
-                .font(.title2)
-                .bold()
-            Text(description(for: reason))
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
-        }
-        .padding()
-        .accessibilityIdentifier("synveil.root.recovery")
-    }
-
-    private func description(for reason: AppRecoveryReason) -> String {
-        switch reason {
-        case .configuration:
-            return "Configuration error encountered. Please verify app setup."
-        case .authentication:
-            return "Authentication failure encountered. Please re-authenticate."
-        case .deviceRevoked:
-            return "This device authorization has been revoked."
-        case .secureStore:
-            return "Secure storage error encountered on device."
-        case .credential:
-            return "The saved device credential could not be validated locally."
-        case .scopeMismatch:
-            return "The saved session belongs to a different server. "
-                + "Return to that server to continue."
-        case .tls:
-            return "A secure connection to the server could not be verified."
-        case .protocolFailure:
-            return "The server returned a response Synveil could not verify."
-        case .enrollmentAmbiguous:
-            return "Enrollment state is ambiguous. Re-enrollment may be required."
-        case .transport:
-            return "Network transport failure encountered."
-        }
     }
 }
 

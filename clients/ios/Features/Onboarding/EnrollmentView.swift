@@ -9,7 +9,8 @@ public struct EnrollmentView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 24) {
+        ScrollView {
+            VStack(spacing: 24) {
             HeaderView()
 
             VStack(alignment: .leading, spacing: 16) {
@@ -29,11 +30,8 @@ public struct EnrollmentView: View {
                 .accessibilityIdentifier("synveil.enrollment.token-input")
                 .accessibilityLabel("One-time enrollment token input")
 
-                if let errorMessage = viewModel.errorMessage {
-                    Text(errorMessage)
-                        .font(.footnote)
-                        .foregroundColor(.red)
-                        .multilineTextAlignment(.leading)
+                if let presentation = viewModel.recoveryPresentation {
+                    AuthenticationRecoveryMessageView(presentation: presentation)
                         .accessibilityIdentifier("synveil.enrollment.error-message")
                 }
             }
@@ -76,13 +74,14 @@ public struct EnrollmentView: View {
                 .foregroundColor(.white)
                 .cornerRadius(10)
             }
-            .disabled(viewModel.isSubmitting)
+            .disabled(viewModel.isSubmitting || viewModel.rawTokenInput.isEmpty)
+            .accessibilityHint("Validates and exchanges one enrollment grant once.")
             .padding(.horizontal)
             .accessibilityIdentifier("synveil.enrollment.submit-button")
 
-            Spacer()
+            }
+            .padding(.vertical, 24)
         }
-        .padding(.top, 32)
         .accessibilityIdentifier("synveil.enrollment.view")
     }
 }

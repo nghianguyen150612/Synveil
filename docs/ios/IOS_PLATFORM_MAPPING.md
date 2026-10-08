@@ -193,3 +193,15 @@ All subsequent implementation prompts must strictly obey these concrete architec
 4. **Credential Isolation**: Bearer tokens (`svd1_`) must reside strictly in Keychain Services and in-memory HTTP header formatters. Never log, serialize, or persist bearer tokens in `UserDefaults`, SQLite database tables, or UI state models.
 5. **Conflict Preservation**: Never implement automatic client-side conflict resolution or DeviceBearer conflict resolution API calls. Conflicts must remain represented as local summary banners directing users to web review.
 6. **No Preempting Deferred Features**: Do not introduce `FileProvider` or `PhotoKit` framework imports into early v0.1 foundational prompts.
+
+### Prompt028 Authentication Recovery Presentation
+
+`AuthenticationRecoveryPresenter` maps existing typed application/domain results to
+native SwiftUI recovery content. Shared message, diagnostic disclosure, and retry
+components serve root recovery, restoration, cleanup, enrollment, and server
+validation. `SessionController` remains the sole lifecycle authority; retained
+non-secret context supplies distinct storage and connection guidance. Owner recovery
+is informational because owner-session/revocation operations remain deferred.
+Scrollable system typography, header/status/action labels, and stable accessibility
+identifiers support VoiceOver and Dynamic Type. Deterministic XCTest coverage plus
+presentation-boundary static checks protect existing P024–P027 action gates.

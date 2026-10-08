@@ -302,3 +302,15 @@ To achieve feature parity with Android v0.1, the iOS client must satisfy this co
 
 ### 7.4 Simulator vs Physical Device Keychain Gaps
 * The iOS Simulator Keychain behaves differently from physical device Secure Enclave hardware (e.g. simulator Keychain persists across app re-installs unless reset). Automated tests on simulators must account for this behavior.
+
+### Prompt028 — Authentication Error UX
+
+Native recovery surfaces explain what failed, how saved authorization is protected,
+and the available next step. Typed presentation distinguishes rejected authorization,
+revocation, secure-storage unavailability, corrupt/unsupported storage, invalid
+credentials, origin mismatch, TLS/protocol failures, and ambiguous enrollment.
+Permanent recovery provides trusted-owner guidance without an enrollment replay or
+credential-reset action. Transient restoration retains the credential and uses the
+existing read-only verification retry; local logout cleanup uses verified deletion.
+Diagnostics expose only bounded, allowlisted request identifiers, never server text,
+secret-shaped identifiers, bearer/grant values, envelopes, or OSStatus details.
