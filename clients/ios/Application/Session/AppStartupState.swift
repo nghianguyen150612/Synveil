@@ -6,6 +6,10 @@ public enum AppRecoveryReason: Equatable, Hashable, Sendable {
     case authentication
     case deviceRevoked
     case secureStore
+    case credential
+    case scopeMismatch
+    case tls
+    case protocolFailure
     case enrollmentAmbiguous
     case transport
 }
@@ -26,6 +30,9 @@ public enum AppStartupState: Equatable, Hashable, Sendable {
 
     /// Server profile exists and is reachable, but device enrollment is required.
     case needsEnrollment
+
+    /// A locally valid stored session is waiting for a successful remote authorization check.
+    case restorationVerificationPending
 
     /// Device is enrolled and authenticated session is active.
     case authenticated
