@@ -86,12 +86,12 @@ struct RestorationVerificationPendingView: View {
                     await sessionController.retrySessionRestoration()
                 }
 
-            Button("Forget saved session", role: .destructive) {
-                isShowingLogoutConfirmation = true
+                Button("Forget saved session", role: .destructive) {
+                    isShowingLogoutConfirmation = true
+                }
+                .accessibilityIdentifier("synveil.session.forget-pending")
             }
-            .accessibilityIdentifier("synveil.session.forget-pending")
-        }
-        .padding()
+            .padding()
         }
         .accessibilityIdentifier("synveil.root.verification-pending")
         .confirmationDialog(

@@ -58,7 +58,7 @@ confirmation remain on pending verification. Cleanup never claims server revocat
 - Retry Cleanup invokes only `requestLogout()`; its controller-owned cleanup survives caller disappearance/cancellation and only verified absence opens an unauthenticated route.
 - Pre-auth retry invokes the existing health validation operation and is gated to `.readyForServerValidation`; no new unauthenticated operation is added.
 - Enrollment retains Rust validation, secure-storage preflight, one-shot exchange, verified persistence receipt and exact endpoint gates. Rejected server text is never displayed. Ambiguous outcomes leave enrollment through controlled recovery and cannot be replayed by reconstruction/resubmission.
-- Root transition revisions clear presentation context. Existing P026/P027 task IDs, identity revalidation and cancellation safeguards remain intact.
+- Root transition revisions and the start of a newer verification retry clear presentation context. Existing P026/P027 task IDs, identity revalidation and cancellation safeguards remain intact.
 - Phase view models capture controller lifecycle revision and endpoint; callbacks after newer transitions are discarded. Server validation uses an operation revision so an old cancelled callback cannot overwrite a newer check or its progress.
 - The shared retry button owns its caller task and cancels it on disappearance; the controller preserves P027 cleanup ownership. No decorative progress or success animation is added.
 
@@ -73,7 +73,7 @@ confirmation remain on pending verification. Cleanup never claims server revocat
 
 ## Tests and Local Validation
 
-- Added `AuthenticationRecoveryTests`: deterministic presentation, storage context, successful restoration context clearing, cleanup-service retry/readiness routing, owner-only recovery, no UI replay, local correction and generic rejection, stale/cancelled phase results, duplicate retries, safe diagnostics, status/action accessibility and native Dynamic Type sizing.
+- Added 37 `AuthenticationRecoveryTests`: deterministic presentation, storage context, successful restoration context clearing, cleanup-service retry/readiness routing, owner-only recovery, no UI replay, local correction and generic rejection, stale/cancelled phase results, duplicate retries, safe diagnostics, status/action accessibility and native Dynamic Type sizing.
 - Added five Python presentation-boundary regressions: no UI authentication/enrollment/deletion, existing controller action allowlist, no error dumps, scalable accessible content, correct PBX targets.
 - Existing P024 enrollment, P025 Keychain, P026 restoration and P027 logout suites remain in the native test target, including wrong-origin rejection, transient credential retention, duplicate probes, stale callbacks and verified cleanup.
 - Linux source validator: passed.
@@ -81,13 +81,16 @@ confirmation remain on pending verification. Cleanup never claims server revocat
 - Documentation validator: passed.
 - PBX integrity: passed, 168 unique objects, no unresolved IDs, balanced delimiters; new production/test membership validated.
 - `git diff --check`: passed.
-- Swift formatting/parser/typecheck: pending toolchain availability and hosted validation. Native Xcode/iOS tests are unavailable on Linux; none claimed locally.
-- iOS Rust Apple Build: no Rust/FFI/header change; applicability will be checked against workflow path filters.
+- Official Swift 6.2 formatting and strict recursive lint: passed in `swift:6.2`.
+- Swift parser: passed for all iOS Swift source files using `swiftc -frontend -parse`.
+- Swift 6 language-mode compilation/typechecking and Linux XCTest harness: passed, 79 tests (36 platform-independent recovery tests and 43 restoration regressions), zero failures. Harness copies production Foundation/Observation code, substitutes only the native transport constructor with an offline stub, and excludes SwiftUI/UIKit rendering assertions. This is not native iOS, Simulator or real Keychain execution.
+- Native Xcode and SwiftLint are unavailable locally; native build, Apple-framework rendering and Simulator XCTest remain hosted gates.
+- iOS Rust Apple Build: not triggered/applicable; no Rust/core/FFI/generated-header or matching build-script/workflow paths changed. Native iOS Build and Simulator workflows still prepare their Rust artifacts.
 
 ## Hosted Validation and Delivery
 
 - Final feature commit SHA: pending commit.
-- PR targeting `ios-app`: pending hosted creation.
+- PR targeting `ios-app`: [PR #84](https://github.com/nghianguyen150612/Synveil/pull/84), opened as draft pending final-head validation.
 - Final-head iOS Static Validation: pending.
 - Final-head iOS Build: pending.
 - Final-head iOS Simulator Tests and total results: pending.
@@ -110,6 +113,7 @@ confirmation remain on pending verification. Cleanup never claims server revocat
 - `clients/ios/Support/tests/test_authentication_recovery_safety.py`
 - `clients/ios/Synveil.xcodeproj/project.pbxproj`
 - `clients/ios/Tests/SynveilTests/AuthenticationRecoveryTests.swift`
+- `clients/ios/Tests/SynveilTests/SessionRestorationTests.swift`
 - `docs/ios/IOS_PLATFORM_MAPPING.md`
 - `docs/ios/IOS_V0_1_PRODUCT_CONTRACT.md`
 - `docs/ios/manifests/PROMPT028_MANIFEST.md`

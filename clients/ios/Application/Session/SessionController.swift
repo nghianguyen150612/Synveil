@@ -156,6 +156,7 @@ public final class SessionController {
 
         isStartupInProgress = true
         isRestorationRetryInProgress = true
+        restorationFailure = nil
         defer {
             isRestorationRetryInProgress = false
             isStartupInProgress = false

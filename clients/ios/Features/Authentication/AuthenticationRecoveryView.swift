@@ -70,15 +70,19 @@ struct AuthenticationRecoveryRetryButton: View {
             }
         } label: {
             if isInProgress || isInvoking {
-                ProgressView(action == .retryCleanup ? "Retrying cleanup…" : "Retrying verification…")
-                    .accessibilityIdentifier("synveil.recovery.retry-progress")
+                ProgressView(
+                    action == .retryCleanup ? "Retrying cleanup…" : "Retrying verification…"
+                )
+                .accessibilityIdentifier("synveil.recovery.retry-progress")
             } else {
                 Text(action.label)
             }
         }
         .buttonStyle(.borderedProminent)
         .disabled(isInProgress || isInvoking)
-        .accessibilityLabel(isInProgress || isInvoking ? "\(action.label) in progress" : action.label)
+        .accessibilityLabel(
+            isInProgress || isInvoking ? "\(action.label) in progress" : action.label
+        )
         .accessibilityHint(action.hint)
         .accessibilityIdentifier(action.accessibilityIdentifier)
         .onDisappear {

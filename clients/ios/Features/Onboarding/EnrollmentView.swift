@@ -11,73 +11,74 @@ public struct EnrollmentView: View {
     public var body: some View {
         ScrollView {
             VStack(spacing: 24) {
-            HeaderView()
+                HeaderView()
 
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Enrollment Token")
-                    .font(.headline)
-                    .foregroundColor(.primary)
-
-                TextField(
-                    "sve1_...",
-                    text: $viewModel.rawTokenInput
-                )
-                .textFieldStyle(.roundedBorder)
-                .font(.system(.body, design: .monospaced))
-                .autocapitalization(.none)
-                .disableAutocorrection(true)
-                .disabled(viewModel.isSubmitting)
-                .accessibilityIdentifier("synveil.enrollment.token-input")
-                .accessibilityLabel("One-time enrollment token input")
-
-                if let presentation = viewModel.recoveryPresentation {
-                    AuthenticationRecoveryMessageView(presentation: presentation)
-                        .accessibilityIdentifier("synveil.enrollment.error-message")
-                }
-            }
-            .padding(.horizontal)
-
-            if viewModel.isSubmitting {
-                VStack(spacing: 8) {
-                    ProgressView()
-                    Text("Exchanging enrollment token…")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .accessibilityIdentifier("synveil.enrollment.status")
-            } else if viewModel.state == .succeeded {
-                VStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 32))
-                        .foregroundColor(.green)
-                    Text("Enrollment Exchange Succeeded")
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Enrollment Token")
                         .font(.headline)
-                        .foregroundColor(.green)
-                    Text("Secure credential handoff complete.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .accessibilityIdentifier("synveil.enrollment.status")
-            }
+                        .foregroundColor(.primary)
 
-            Button(action: {
-                viewModel.submitEnrollment()
-            }) {
-                HStack {
-                    Spacer()
-                    Text("Enroll Device")
-                        .bold()
-                    Spacer()
+                    TextField(
+                        "sve1_...",
+                        text: $viewModel.rawTokenInput
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+                    .autocapitalization(.none)
+                    .disableAutocorrection(true)
+                    .disabled(viewModel.isSubmitting)
+                    .accessibilityIdentifier("synveil.enrollment.token-input")
+                    .accessibilityLabel("One-time enrollment token input")
+
+                    if let presentation = viewModel.recoveryPresentation {
+                        AuthenticationRecoveryMessageView(presentation: presentation)
+                            .accessibilityIdentifier("synveil.enrollment.error-message")
+                    }
                 }
-                .padding()
-                .background(viewModel.isSubmitting ? Color.gray : Color.accentColor)
-                .foregroundColor(.white)
-                .cornerRadius(10)
-            }
-            .disabled(viewModel.isSubmitting || viewModel.rawTokenInput.isEmpty)
-            .accessibilityHint("Validates and exchanges one enrollment grant once.")
-            .padding(.horizontal)
-            .accessibilityIdentifier("synveil.enrollment.submit-button")
+                .padding(.horizontal)
+
+                if viewModel.isSubmitting {
+                    VStack(spacing: 8) {
+                        ProgressView()
+                            .accessibilityLabel("Enrollment exchange in progress")
+                        Text("Exchanging enrollment token…")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .accessibilityIdentifier("synveil.enrollment.status")
+                } else if viewModel.state == .succeeded {
+                    VStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 32))
+                            .foregroundColor(.green)
+                        Text("Enrollment Exchange Succeeded")
+                            .font(.headline)
+                            .foregroundColor(.green)
+                        Text("Secure credential handoff complete.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .accessibilityIdentifier("synveil.enrollment.status")
+                }
+
+                Button(action: {
+                    viewModel.submitEnrollment()
+                }) {
+                    HStack {
+                        Spacer()
+                        Text("Enroll Device")
+                            .bold()
+                        Spacer()
+                    }
+                    .padding()
+                    .background(viewModel.isSubmitting ? Color.gray : Color.accentColor)
+                    .foregroundColor(.white)
+                    .cornerRadius(10)
+                }
+                .disabled(viewModel.isSubmitting || viewModel.rawTokenInput.isEmpty)
+                .accessibilityHint("Validates and exchanges one enrollment grant once.")
+                .padding(.horizontal)
+                .accessibilityIdentifier("synveil.enrollment.submit-button")
 
             }
             .padding(.vertical, 24)
@@ -98,8 +99,8 @@ private struct HeaderView: View {
                 .bold()
 
             Text(
-                "Enter your high-entropy one-time enrollment token (sve1_...) to activate "
-                    + "this device."
+                "Enter the one-time enrollment token provided by your trusted server owner "
+                    + "to authorize this device."
             )
             .font(.subheadline)
             .foregroundColor(.secondary)

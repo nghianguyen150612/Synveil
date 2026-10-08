@@ -11,16 +11,16 @@ public struct ServerValidationView: View {
     public var body: some View {
         ScrollView {
             VStack(spacing: 24) {
-            Spacer()
+                Spacer()
 
-            statusHeaderView
+                statusHeaderView
 
-            contentAreaView
+                contentAreaView
 
-            Spacer()
+                Spacer()
 
-            actionAreaView
-        }
+                actionAreaView
+            }
             .padding(24)
         }
         .accessibilityIdentifier("synveil.server-validation.container")
@@ -40,6 +40,7 @@ public struct ServerValidationView: View {
             switch viewModel.state {
             case .idle, .checking:
                 ProgressView()
+                    .accessibilityLabel("Checking server reachability and readiness")
                     .scaleEffect(1.5)
                     .padding(.bottom, 8)
                     .accessibilityIdentifier("synveil.server-validation.progress")
@@ -107,7 +108,9 @@ public struct ServerValidationView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(viewModel.isChecking)
-                .accessibilityIdentifier(AuthenticationRecoveryAction.retryServerValidation.accessibilityIdentifier)
+                .accessibilityIdentifier(
+                    AuthenticationRecoveryAction.retryServerValidation.accessibilityIdentifier
+                )
                 .accessibilityHint(AuthenticationRecoveryAction.retryServerValidation.hint)
 
             case .idle, .checking, .ready:

@@ -115,7 +115,10 @@ public final class EnrollmentViewModel {
                 isValidToken = try await bridge.validateEnrollmentToken(trimmedInput)
             } catch {
                 guard self.isCurrentEnrollment(revision, endpoint: endpoint) else { return }
-                guard !Task.isCancelled else { self.state = .idle; return }
+                guard !Task.isCancelled else {
+                    self.state = .idle
+                    return
+                }
                 self.state = .securityServicesUnavailable(
                     "Authoritative enrollment validation is unavailable. "
                         + "No enrollment request was sent."
@@ -124,7 +127,10 @@ public final class EnrollmentViewModel {
             }
 
             guard self.isCurrentEnrollment(revision, endpoint: endpoint) else { return }
-            guard !Task.isCancelled else { self.state = .idle; return }
+            guard !Task.isCancelled else {
+                self.state = .idle
+                return
+            }
             guard isValidToken, let token = EnrollmentToken.parse(trimmedInput) else {
                 self.state = .invalidToken(
                     "Enrollment token format is invalid. It must begin with 'sve1_' followed by 64 "
@@ -145,7 +151,10 @@ public final class EnrollmentViewModel {
                 try await credentialSink.preflight()
             } catch {
                 guard self.isCurrentEnrollment(revision, endpoint: endpoint) else { return }
-                guard !Task.isCancelled else { self.state = .idle; return }
+                guard !Task.isCancelled else {
+                    self.state = .idle
+                    return
+                }
                 self.state = .secureStoreUnavailable(
                     "Secure credential storage is unavailable. No enrollment request was sent."
                 )
@@ -185,13 +194,13 @@ public final class EnrollmentViewModel {
                         throw SecureCredentialSinkError.verificationFailure
                     }
                     self.state = .succeeded
-                    } catch {
+                } catch {
                     guard self.isCurrentEnrollment(revision, endpoint: endpoint) else { return }
                     self.sessionController.requireRecovery(.secureStore)
                     self.state = .recoveryRequired(
                         "Credential storage failed following exchange. Recovery is required."
                     )
-                    }
+                }
 
             case .rejected(_, let requestID):
                 self.recoveryRequestID = AuthenticationRecoveryPresenter.safeRequestID(requestID)
@@ -249,7 +258,8 @@ public final class EnrollmentViewModel {
 
     var recoveryPresentation: AuthenticationRecoveryPresentation? {
         AuthenticationRecoveryPresenter.enrollment(
-            state, inputIsEmpty: rawTokenInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            state,
+            inputIsEmpty: rawTokenInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             requestID: recoveryRequestID)
     }
 

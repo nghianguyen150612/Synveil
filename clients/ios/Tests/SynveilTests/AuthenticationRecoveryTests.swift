@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import XCTest
+
 @testable import Synveil
 
 final class AuthenticationRecoveryTests: XCTestCase {
@@ -25,8 +26,10 @@ final class AuthenticationRecoveryTests: XCTestCase {
     }
 
     func testEmptyAndMalformedTokenHaveDistinctCorrectableLocalFeedback() {
-        let empty = AuthenticationRecoveryPresenter.enrollment(.invalidToken("ignored"), inputIsEmpty: true)!
-        let malformed = AuthenticationRecoveryPresenter.enrollment(.invalidToken("ignored"), inputIsEmpty: false)!
+        let empty = AuthenticationRecoveryPresenter.enrollment(
+            .invalidToken("ignored"), inputIsEmpty: true)!
+        let malformed = AuthenticationRecoveryPresenter.enrollment(
+            .invalidToken("ignored"), inputIsEmpty: false)!
         XCTAssertEqual(empty.category, .emptyToken)
         XCTAssertEqual(malformed.category, .malformedToken)
         XCTAssertTrue(malformed.nextStep.contains("64 lowercase hexadecimal"))
@@ -35,7 +38,8 @@ final class AuthenticationRecoveryTests: XCTestCase {
     }
 
     func testServerRejectedGrantUsesGenericOwnerGuidance() {
-        let result = AuthenticationRecoveryPresenter.enrollment(.rejected("untrusted typo detail"), inputIsEmpty: false)!
+        let result = AuthenticationRecoveryPresenter.enrollment(
+            .rejected("untrusted typo detail"), inputIsEmpty: false)!
         XCTAssertEqual(result.category, .enrollmentRejected)
         XCTAssertTrue(result.nextStep.contains("new grant"))
         XCTAssertFalse(result.accessibilityDescription.contains("typo"))
@@ -89,7 +93,8 @@ final class AuthenticationRecoveryTests: XCTestCase {
     }
 
     func testKeychainUnavailableExplainsDeviceUnlockAndActualRelaunchBoundary() {
-        let result = AuthenticationRecoveryPresenter.recovery(.secureStore, storageFailure: .unavailable)
+        let result = AuthenticationRecoveryPresenter.recovery(
+            .secureStore, storageFailure: .unavailable)
         XCTAssertEqual(result.category, .secureStoreUnavailable)
         XCTAssertTrue(result.nextStep.contains("Unlock the device"))
         XCTAssertTrue(result.nextStep.contains("reopen Synveil"))
@@ -97,7 +102,8 @@ final class AuthenticationRecoveryTests: XCTestCase {
     }
 
     func testCorruptRecordFailsClosedAndDoesNotSuggestOverwrite() {
-        let result = AuthenticationRecoveryPresenter.recovery(.secureStore, storageFailure: .corruptRecord)
+        let result = AuthenticationRecoveryPresenter.recovery(
+            .secureStore, storageFailure: .corruptRecord)
         XCTAssertEqual(result.category, .corruptRecord)
         XCTAssertTrue(result.nextStep.contains("will not be silently replaced"))
         XCTAssertTrue(result.sessionProtection.contains("blocked"))
@@ -105,7 +111,8 @@ final class AuthenticationRecoveryTests: XCTestCase {
     }
 
     func testUnsupportedRecordHasDistinctFailClosedPresentation() {
-        let result = AuthenticationRecoveryPresenter.recovery(.secureStore, storageFailure: .unsupportedRecord)
+        let result = AuthenticationRecoveryPresenter.recovery(
+            .secureStore, storageFailure: .unsupportedRecord)
         XCTAssertEqual(result.category, .unsupportedRecord)
         XCTAssertTrue(result.nextStep.contains("up to date"))
         XCTAssertNil(result.primaryAction)
@@ -133,7 +140,8 @@ final class AuthenticationRecoveryTests: XCTestCase {
             .invalidToken(secret), .rejected(secret), .recoveryRequired(secret),
             .secureStoreUnavailable(secret), .securityServicesUnavailable(secret),
         ] as [EnrollmentUIState] {
-            let result = AuthenticationRecoveryPresenter.enrollment(state, inputIsEmpty: false, requestID: secret)!
+            let result = AuthenticationRecoveryPresenter.enrollment(
+                state, inputIsEmpty: false, requestID: secret)!
             XCTAssertFalse(result.accessibilityDescription.contains(secret))
             XCTAssertNil(result.requestID)
         }
@@ -142,8 +150,10 @@ final class AuthenticationRecoveryTests: XCTestCase {
     func testUntrustedRequestIDsAreNotDisplayed() {
         for value in [
             "svd1_" + String(repeating: "f", count: 64),
-            "request-sve1_12345678", "Authorization", "Bearer-secret", String(repeating: "a", count: 64), "request\n1234",
-            "<script>request</script>", "https://private.example/token", String(repeating: "x", count: 129), "tiny",
+            "request-sve1_12345678", "Authorization", "Bearer-secret",
+            String(repeating: "a", count: 64), "request\n1234",
+            "<script>request</script>", "https://private.example/token",
+            String(repeating: "x", count: 129), "tiny",
         ] {
             XCTAssertNil(AuthenticationRecoveryPresenter.safeRequestID(value))
         }
@@ -189,7 +199,9 @@ final class AuthenticationRecoveryTests: XCTestCase {
             XCTAssertTrue(result.accessibilityDescription.contains(result.title))
             XCTAssertTrue(ids.insert(result.accessibilityIdentifier).inserted)
         }
-        for action in [.retryVerification, .retryCleanup, .retryServerValidation] as [AuthenticationRecoveryAction] {
+        for action in [.retryVerification, .retryCleanup, .retryServerValidation]
+            as [AuthenticationRecoveryAction]
+        {
             XCTAssertFalse(action.label.isEmpty)
             XCTAssertFalse(action.hint.isEmpty)
             XCTAssertTrue(action.accessibilityIdentifier.hasPrefix("synveil."))
@@ -222,7 +234,8 @@ final class AuthenticationRecoveryTests: XCTestCase {
         ]
         for (result, expected) in cases {
             let service = RecoveryRestorationStub(results: [result])
-            let controller = SessionController(configuration: .init(serverEndpoint: nil), restorationService: service)
+            let controller = SessionController(
+                configuration: .init(serverEndpoint: nil), restorationService: service)
             await controller.start()
             XCTAssertEqual(controller.state, .recoveryRequired(.secureStore))
             XCTAssertEqual(controller.secureStorageFailure, expected)
@@ -261,7 +274,9 @@ final class AuthenticationRecoveryTests: XCTestCase {
         let controller = SessionController(
             configuration: .init(serverEndpoint: nil), restorationService: service,
             logoutService: SessionLogoutService(credentialStore: store))
-        for reason in [.authentication, .deviceRevoked, .enrollmentAmbiguous, .scopeMismatch] as [AppRecoveryReason] {
+        for reason in [.authentication, .deviceRevoked, .enrollmentAmbiguous, .scopeMismatch]
+            as [AppRecoveryReason]
+        {
             controller.requireRecovery(reason)
             XCTAssertNotNil(RootView(sessionController: controller).body)
             await controller.retrySessionRestoration()
@@ -282,7 +297,8 @@ final class AuthenticationRecoveryTests: XCTestCase {
             .locallyValidStoredSession(session, verification: .timeout),
             .remotelyVerifiedAuthorizedSession(session),
         ])
-        let controller = SessionController(configuration: .init(serverEndpoint: nil), restorationService: service)
+        let controller = SessionController(
+            configuration: .init(serverEndpoint: nil), restorationService: service)
         await controller.start()
         XCTAssertEqual(controller.restorationFailure, .timeout)
         await controller.retrySessionRestoration()
@@ -296,7 +312,9 @@ final class AuthenticationRecoveryTests: XCTestCase {
         let session = try makeSession()
         let controller = SessionController(
             configuration: .init(serverEndpoint: nil),
-            restorationService: RecoveryRestorationStub(results: [.locallyValidStoredSession(session, verification: .dnsFailure)]))
+            restorationService: RecoveryRestorationStub(results: [
+                .locallyValidStoredSession(session, verification: .dnsFailure)
+            ]))
         await controller.start()
         XCTAssertEqual(controller.restorationFailure, .dnsFailure)
         await controller.requestLogout()
@@ -308,7 +326,8 @@ final class AuthenticationRecoveryTests: XCTestCase {
     func testCancelledOrStaleServerCheckCannotReplaceNewerRetry() async {
         let service = RecoveryServerStub()
         let controller = configuredController()
-        let model = ServerValidationViewModel(sessionController: controller, validationService: service)
+        let model = ServerValidationViewModel(
+            sessionController: controller, validationService: service)
         model.validateServer()
         await service.waitForCalls(1)
         let firstCompletion = model.currentValidationTask
@@ -329,7 +348,8 @@ final class AuthenticationRecoveryTests: XCTestCase {
     func testStaleFailureCannotOverwriteSuccessfulNewerServerCheck() async {
         let service = RecoveryServerStub()
         let controller = configuredController()
-        let model = ServerValidationViewModel(sessionController: controller, validationService: service)
+        let model = ServerValidationViewModel(
+            sessionController: controller, validationService: service)
         model.validateServer()
         await service.waitForCalls(1)
         let firstTask = model.currentValidationTask
@@ -349,7 +369,8 @@ final class AuthenticationRecoveryTests: XCTestCase {
     @MainActor
     func testDuplicateServerRetryCannotStartAnotherOperation() async {
         let service = RecoveryServerStub()
-        let model = ServerValidationViewModel(sessionController: configuredController(), validationService: service)
+        let model = ServerValidationViewModel(
+            sessionController: configuredController(), validationService: service)
         model.validateServer()
         await service.waitForCalls(1)
         model.retry()
@@ -364,7 +385,8 @@ final class AuthenticationRecoveryTests: XCTestCase {
     func testLateServerFailureCannotOverwriteNewerRootRecovery() async {
         let service = RecoveryServerStub()
         let controller = configuredController()
-        let model = ServerValidationViewModel(sessionController: controller, validationService: service)
+        let model = ServerValidationViewModel(
+            sessionController: controller, validationService: service)
         model.validateServer()
         await service.waitForCalls(1)
         controller.requireRecovery(.tls)
@@ -379,7 +401,8 @@ final class AuthenticationRecoveryTests: XCTestCase {
         let service = RecoveryServerStub()
         let controller = configuredController()
         controller.requireRecovery(.authentication)
-        let model = ServerValidationViewModel(sessionController: controller, validationService: service)
+        let model = ServerValidationViewModel(
+            sessionController: controller, validationService: service)
         model.retry()
         let calls = await service.callCount()
         XCTAssertEqual(calls, 0)
@@ -388,12 +411,14 @@ final class AuthenticationRecoveryTests: XCTestCase {
 
     @MainActor
     func testMalformedEnrollmentAllowsCorrectionWithoutNetworkRequest() async {
-        let service = RecoveryExchangeStub(result: .rejected(code: "invalid_enrollment", requestId: nil))
+        let service = RecoveryExchangeStub(
+            result: .rejected(code: "invalid_enrollment", requestId: nil))
         let controller = configuredController()
         controller.requireEnrollment()
         let model = EnrollmentViewModel(
             sessionController: controller, exchangeService: service,
-            credentialSink: StubSecureCredentialSink(isAvailable: true), rustBridge: RecoveryRustStub())
+            credentialSink: StubSecureCredentialSink(isAvailable: true),
+            rustBridge: RecoveryRustStub())
         model.rawTokenInput = "malformed"
         model.submitEnrollment()
         await model.waitForCurrentSubmission()
@@ -417,7 +442,8 @@ final class AuthenticationRecoveryTests: XCTestCase {
         controller.requireEnrollment()
         let model = EnrollmentViewModel(
             sessionController: controller, exchangeService: service,
-            credentialSink: StubSecureCredentialSink(isAvailable: true), rustBridge: RecoveryRustStub())
+            credentialSink: StubSecureCredentialSink(isAvailable: true),
+            rustBridge: RecoveryRustStub())
         model.rawTokenInput = "sve1_" + String(repeating: "a", count: 64)
         model.submitEnrollment()
         await model.waitForCurrentSubmission()
@@ -436,7 +462,8 @@ final class AuthenticationRecoveryTests: XCTestCase {
         controller.requireEnrollment()
         let model = EnrollmentViewModel(
             sessionController: controller, exchangeService: service,
-            credentialSink: StubSecureCredentialSink(isAvailable: true), rustBridge: RecoveryRustStub())
+            credentialSink: StubSecureCredentialSink(isAvailable: true),
+            rustBridge: RecoveryRustStub())
         model.rawTokenInput = "sve1_" + String(repeating: "a", count: 64)
         model.submitEnrollment()
         await service.waitForCall()
@@ -454,7 +481,8 @@ final class AuthenticationRecoveryTests: XCTestCase {
         let controller = configuredController()
         let model = EnrollmentViewModel(
             sessionController: controller, exchangeService: service,
-            credentialSink: StubSecureCredentialSink(isAvailable: true), rustBridge: RecoveryRustStub())
+            credentialSink: StubSecureCredentialSink(isAvailable: true),
+            rustBridge: RecoveryRustStub())
         model.rawTokenInput = "sve1_" + String(repeating: "a", count: 64)
         model.submitEnrollment()
         let calls = await service.callCount()
@@ -462,7 +490,9 @@ final class AuthenticationRecoveryTests: XCTestCase {
         XCTAssertEqual(controller.state, .readyForServerValidation)
     }
 
-    private func assertTransient(_ failure: SessionRestorationVerificationFailure, category: AuthenticationRecoveryCategory) {
+    private func assertTransient(
+        _ failure: SessionRestorationVerificationFailure, category: AuthenticationRecoveryCategory
+    ) {
         let result = AuthenticationRecoveryPresenter.restoration(failure)
         XCTAssertEqual(result.category, category)
         XCTAssertEqual(result.primaryAction, .retryVerification)
@@ -476,20 +506,22 @@ final class AuthenticationRecoveryTests: XCTestCase {
             ownerUserId: "11111111-2222-3333-4444-555555555555",
             deviceId: "66666666-7777-8888-9999-000000000000",
             credentialId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-            credential: DeviceCredential(validatedRawValue: "svd1_" + String(repeating: "a", count: 64)),
+            credential: DeviceCredential(
+                validatedRawValue: "svd1_" + String(repeating: "a", count: 64)),
             createdAt: "2026-10-07T12:00:00Z")
         return DeviceCredentialSession(
-            serverEndpoint: try ServerEndpoint(validating: "https://recovery.synveil.example"), record: record)
+            serverEndpoint: try ServerEndpoint(validating: "https://recovery.synveil.example"),
+            record: record)
     }
 
     @MainActor
     private func configuredController() -> SessionController {
         let controller = SessionController(configuration: .init(serverEndpoint: nil))
         controller.showServerProfileSetup()
-        controller.configureServerEndpoint(try! ServerEndpoint(validating: "https://recovery.synveil.example"))
+        controller.configureServerEndpoint(
+            try! ServerEndpoint(validating: "https://recovery.synveil.example"))
         return controller
     }
-
 
 }
 
@@ -501,7 +533,9 @@ private actor RecoveryRestorationStub: SessionRestorationServiceProtocol {
         calls += 1
         return results.removeFirst()
     }
-    func retryVerification(of session: DeviceCredentialSession, expectedServerEndpoint: ServerEndpoint) async -> SessionRestorationResult {
+    func retryVerification(
+        of session: DeviceCredentialSession, expectedServerEndpoint: ServerEndpoint
+    ) async -> SessionRestorationResult {
         await restore(configuredServerEndpoint: expectedServerEndpoint)
     }
     func callCount() -> Int { calls }
@@ -510,10 +544,14 @@ private actor RecoveryRestorationStub: SessionRestorationServiceProtocol {
 private actor RecoveryCleanupStore: SecureCredentialSinkProtocol {
     var deletes = 0
     func preflight() async throws {}
-    func store(_ record: DeviceCredentialRecord, for serverEndpoint: ServerEndpoint) async throws -> SecureCredentialPersistenceReceipt {
+    func store(_ record: DeviceCredentialRecord, for serverEndpoint: ServerEndpoint) async throws
+        -> SecureCredentialPersistenceReceipt
+    {
         throw SecureCredentialSinkError.writeFailure
     }
-    func update(_ record: DeviceCredentialRecord, for serverEndpoint: ServerEndpoint) async throws -> SecureCredentialPersistenceReceipt {
+    func update(_ record: DeviceCredentialRecord, for serverEndpoint: ServerEndpoint) async throws
+        -> SecureCredentialPersistenceReceipt
+    {
         throw SecureCredentialSinkError.writeFailure
     }
     func load(expectedServerEndpoint: ServerEndpoint?) async throws -> DeviceCredentialSession {
@@ -561,7 +599,9 @@ private actor RecoveryExchangeStub: EnrollmentExchangeServiceProtocol {
         self.result = result
         self.suspended = suspended
     }
-    func exchange(endpoint: ServerEndpoint, token: EnrollmentToken) async -> EnrollmentExchangeResult {
+    func exchange(endpoint: ServerEndpoint, token: EnrollmentToken) async
+        -> EnrollmentExchangeResult
+    {
         calls += 1
         if suspended {
             await withCheckedContinuation { continuation in
@@ -576,15 +616,22 @@ private actor RecoveryExchangeStub: EnrollmentExchangeServiceProtocol {
         if calls > 0 { return }
         await withCheckedContinuation { waiter = $0 }
     }
-    func complete() { continuation?.resume(); continuation = nil }
+    func complete() {
+        continuation?.resume()
+        continuation = nil
+    }
     func callCount() -> Int { calls }
 }
 
 private struct RecoveryRustStub: RustBridgeProtocol {
     func parseSHA256(_ canonical: String) async throws -> Data { Data() }
     func formatSHA256(_ digest: Data) async throws -> String { "" }
-    func validateEnrollmentToken(_ token: String) async throws -> Bool { EnrollmentToken.isValid(token) }
-    func validateDeviceBearerToken(_ token: String) async throws -> Bool { DeviceCredential.isValid(token) }
+    func validateEnrollmentToken(_ token: String) async throws -> Bool {
+        EnrollmentToken.isValid(token)
+    }
+    func validateDeviceBearerToken(_ token: String) async throws -> Bool {
+        DeviceCredential.isValid(token)
+    }
     func validateLibraryID(_ value: String) async throws -> Bool { false }
     func validateNodeID(_ value: String) async throws -> Bool { false }
     func validateLogicalName(_ value: String) async throws -> Bool { !value.isEmpty }
