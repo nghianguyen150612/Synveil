@@ -21,7 +21,7 @@ final class SessionLogoutTests: XCTestCase {
         let absenceCheckCount = await store.absenceCheckCount()
         let isAbsent = try await store.isActiveCredentialAbsent()
         XCTAssertEqual(deleteCount, 1)
-        XCTAssertEqual(absenceCheckCount, 2)
+        XCTAssertEqual(absenceCheckCount, 1)
         XCTAssertTrue(isAbsent)
         do {
             _ = try await store.load(expectedServerEndpoint: endpoint)
