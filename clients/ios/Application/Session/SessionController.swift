@@ -83,11 +83,15 @@ public final class SessionController {
         state = .needsEnrollment
     }
 
-    /// Transitions from enrollment-required state to `.authenticated`.
+    /// Transitions from enrollment-required state to `.authenticated` after verified persistence.
     ///
-    /// Authentication cannot be entered directly from recovery or unrelated root states.
-    public func markAuthenticated() {
-        guard state == .needsEnrollment else {
+    /// The receipt is returned by the secure credential boundary only after read-back verification.
+    /// Its endpoint must still match the configured server.
+    public func markAuthenticated(after receipt: SecureCredentialPersistenceReceipt) {
+        guard
+            state == .needsEnrollment,
+            serverEndpoint?.urlString == receipt.canonicalServerEndpoint
+        else {
             return
         }
         state = .authenticated

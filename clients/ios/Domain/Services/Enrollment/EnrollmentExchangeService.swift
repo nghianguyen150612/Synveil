@@ -10,16 +10,16 @@ public final class EnrollmentExchangeService: EnrollmentExchangeServiceProtocol,
     )
 
     private let transport: HTTPTransportProtocol
-    private let rustBridge: RustBridgeProtocol?
+    private let rustBridge: any RustBridgeProtocol
 
     /// Initializes `EnrollmentExchangeService`.
     ///
     /// - Parameters:
     ///   - transport: `HTTPTransportProtocol` network client.
-    ///   - rustBridge: Optional `RustBridgeProtocol` instance for credential validation.
+    ///   - rustBridge: Authoritative shared-core validator. Exchange is fail-closed without it.
     public init(
         transport: HTTPTransportProtocol,
-        rustBridge: RustBridgeProtocol? = nil
+        rustBridge: any RustBridgeProtocol
     ) {
         self.transport = transport
         self.rustBridge = rustBridge
@@ -29,6 +29,16 @@ public final class EnrollmentExchangeService: EnrollmentExchangeServiceProtocol,
         endpoint: ServerEndpoint,
         token: EnrollmentToken
     ) async -> EnrollmentExchangeResult {
+        let isValidToken: Bool
+        do {
+            isValidToken = try await rustBridge.validateEnrollmentToken(token.rawValue)
+        } catch {
+            return .failed(.authoritativeValidationUnavailable)
+        }
+        guard isValidToken else {
+            return .failed(.invalidConfiguration)
+        }
+
         // Construct target URL for POST /api/v1/device-enrollment/exchange
         let baseString =
             endpoint.url.absoluteString.hasSuffix("/")
@@ -118,20 +128,14 @@ public final class EnrollmentExchangeService: EnrollmentExchangeServiceProtocol,
         let dataDTO = dto.data
         let rawCredential = dataDTO.deviceCredential
 
-        // Validate returned svd1_ credential using Rust shared core if bridge available, or fallback to regex
-        if let bridge = rustBridge {
-            do {
-                let isValid = try await bridge.validateDeviceBearerToken(rawCredential)
-                guard isValid else {
-                    return .recoveryRequired(.malformedResponse)
-                }
-            } catch {
+        // Validate returned svd1_ credentials using the authoritative Rust shared core.
+        do {
+            let isValid = try await rustBridge.validateDeviceBearerToken(rawCredential)
+            guard isValid else {
                 return .recoveryRequired(.malformedResponse)
             }
-        } else {
-            guard DeviceCredential.isValid(rawCredential) else {
-                return .recoveryRequired(.malformedResponse)
-            }
+        } catch {
+            return .recoveryRequired(.malformedResponse)
         }
 
         let credential = DeviceCredential(validatedRawValue: rawCredential)

@@ -18,6 +18,7 @@ public enum EnrollmentFailureReason: Sendable, Equatable {
     case cancelled
     case transport(SynveilTransportError)
     case secureStorageUnavailable
+    case authoritativeValidationUnavailable
 }
 
 /// Typed result returned by device enrollment exchange logic.
