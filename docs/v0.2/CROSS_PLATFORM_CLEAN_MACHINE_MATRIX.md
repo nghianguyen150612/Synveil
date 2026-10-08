@@ -60,6 +60,17 @@ and Linux packages `37717057722` failed; failures remain scoped to their
 observed jobs. These results never qualify Windows 11 GUI/logon/IPC, Linux
 installed journeys, first-run dependencies, or power-cycle recovery.
 
+## First recovery publication attempt on `fa72483910e17a296d99f0f5326cf486a682f28b`
+
+The first publication triggered P045 run `37751023429` and direct Linux clean-
+machine run `37751016329`. Both ended before creating any jobs, so they produced
+no source-gate, package, consumer, or matrix evidence. Actionlint identified
+the workflow-definition error: `runner.temp` was used in the reusable Linux
+workflow's job-level `env`, where the `runner` context is unavailable. The
+workflow now exports `$RUNNER_TEMP/vm` inside each VM-control step. This
+correction is validated locally by actionlint; new hosted runs on the next
+head must establish the actual workflow and native outcomes.
+
 Completed hosted evidence on source `931736c9be13230bf7c3389462c084bedde6a227`
 is diagnostic until the required native rows qualify. P045 run `37635214022`
 passed source gates but failed docs validation because ripgrep was absent; its

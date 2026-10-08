@@ -165,7 +165,6 @@ jobs:
     env:
       BOOT_TIMEOUT_SECONDS: 900
       EXEC_TIMEOUT_SECONDS: 300
-      SYNVEIL_VM_STATE_DIR: ${{ runner.temp }}/vm
     strategy:
       fail-fast: false
       matrix:
@@ -265,6 +264,7 @@ jobs:
       - name: Boot the disposable native guest and establish readiness
         run: |
           set -euo pipefail
+          export SYNVEIL_VM_STATE_DIR="$RUNNER_TEMP/vm"
           mkdir -p "$RUNNER_TEMP/vm" "$RUNNER_TEMP/images"
           ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/vm/id_ed25519"
           if ! scripts/linux-acceptance-vm.sh prepare \
@@ -305,6 +305,7 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
+          export SYNVEIL_VM_STATE_DIR="$RUNNER_TEMP/vm"
           mkdir -p acceptance-evidence
           if [[ "$(cat "$RUNNER_TEMP/vm/${{ matrix.image }}.boot-status" 2>/dev/null || printf 'not-ready')" != "ready" ]]; then
             echo "guest did not reach the scenario adapter; the cleanup step will write BLOCKED result-v1 records"
@@ -354,6 +355,7 @@ jobs:
         if: always()
         run: |
           set +e
+          export SYNVEIL_VM_STATE_DIR="$RUNNER_TEMP/vm"
           if [[ "$(cat "$RUNNER_TEMP/vm/${{ matrix.image }}.boot-status" 2>/dev/null || printf 'not-ready')" == "ready" ]]; then
             scripts/linux-acceptance-vm.sh guest-exec \
               "${{ matrix.image }}" screenshot \

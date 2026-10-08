@@ -23,6 +23,13 @@ not reach the scenario adapter. Local P045, Linux adapter, Windows structural,
 formatting, shell syntax, and shell lint checks pass. These local checks do not
 replace the required exact-head hosted producer, consumer, and aggregate runs.
 
+The first recovery publication was `fa72483910e17a296d99f0f5326cf486a682f28b`.
+P045 run `37751023429` and direct Linux run `37751016329` failed before
+creating jobs, so neither produced acceptance evidence. Actionlint identified
+an invalid `runner.temp` context at reusable-workflow job scope. The state
+directory is now exported from `$RUNNER_TEMP` inside the VM steps; the next
+published head requires fresh hosted validation.
+
 ## Continuation: observed hosted outcomes on 931736c9
 
 The existing four P045 commits and PR #78 are preserved. Source
