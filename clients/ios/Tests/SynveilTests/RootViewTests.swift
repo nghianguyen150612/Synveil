@@ -67,6 +67,8 @@ final class RootViewTests: XCTestCase {
             controller.configureServerEndpoint(endpoint)
             controller.requireEnrollment()
             controller.markAuthenticated(after: makeReceipt(for: endpoint))
+        case .logoutInProgress, .logoutCleanupRequired:
+            break
         case .recoveryRequired(let reason):
             controller.requireRecovery(reason)
         }

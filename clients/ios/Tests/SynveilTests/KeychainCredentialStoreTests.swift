@@ -401,6 +401,37 @@ final class KeychainCredentialStoreTests: XCTestCase {
         XCTAssertNil(client.data(for: KeychainCredentialItemIdentity.production))
     }
 
+    func testDeleteVerifiesAbsenceWithoutRequestingCredentialData() async throws {
+        let client = FakeSecurityKeychainClient()
+        let store = makeStore(client: client)
+        _ = try await store.store(try makeRecord(), for: endpoint)
+        client.resetOperations()
+
+        try await store.delete()
+
+        XCTAssertEqual(client.operations, ["delete", "copy"])
+        let verificationQuery = try XCTUnwrap(client.copiedQueries.last)
+        XCTAssertEqual(verificationQuery[kSecReturnAttributes as String] as? Bool, true)
+        XCTAssertNil(verificationQuery[kSecReturnData as String])
+        XCTAssertNil(client.data(for: KeychainCredentialItemIdentity.production))
+    }
+
+    func testDeleteStatusSuccessWithRemainingItemFailsVerification() async throws {
+        let client = FakeSecurityKeychainClient()
+        let store = makeStore(client: client)
+        _ = try await store.store(try makeRecord(), for: endpoint)
+        client.deleteStatusOverride = errSecSuccess
+
+        do {
+            try await store.delete()
+            XCTFail("A successful delete status is not sufficient when the item remains.")
+        } catch let error as SecureCredentialSinkError {
+            XCTAssertEqual(error, .verificationFailure)
+        }
+
+        XCTAssertNotNil(client.data(for: KeychainCredentialItemIdentity.production))
+    }
+
     func testDeleteFailureIsTyped() async throws {
         let client = FakeSecurityKeychainClient()
         let store = makeStore(client: client)
@@ -604,6 +635,7 @@ private final class FakeSecurityKeychainClient:
     private var operationLog: [String] = []
     private var addLog: [[String: Any]] = []
     private var updateLog: [[String: Any]] = []
+    private var copyLog: [[String: Any]] = []
     private var writes = 0
 
     var addStatusOverride: OSStatus?
@@ -631,12 +663,19 @@ private final class FakeSecurityKeychainClient:
         return updateLog
     }
 
+    var copiedQueries: [[String: Any]] {
+        lock.lock()
+        defer { lock.unlock() }
+        return copyLog
+    }
+
     func resetOperations() {
         lock.lock()
         defer { lock.unlock() }
         operationLog.removeAll()
         addLog.removeAll()
         updateLog.removeAll()
+        copyLog.removeAll()
     }
 
     func add(_ attributes: [String: Any]) -> OSStatus {
@@ -679,6 +718,7 @@ private final class FakeSecurityKeychainClient:
         lock.lock()
         defer { lock.unlock() }
         operationLog.append("copy")
+        copyLog.append(query)
         if let copyStatusOverride {
             return KeychainReadResult(status: copyStatusOverride, data: nil)
         }
@@ -686,15 +726,28 @@ private final class FakeSecurityKeychainClient:
             return KeychainReadResult(status: errSecParam, data: nil)
         }
         if let readbackOverrideAfterWrite, writes > 0 {
-            return KeychainReadResult(status: errSecSuccess, data: readbackOverrideAfterWrite)
+            return KeychainReadResult(
+                status: errSecSuccess,
+                data: (query[kSecReturnData as String] as? Bool == true)
+                    ? readbackOverrideAfterWrite
+                    : nil
+            )
         }
         if let readbackOverride {
-            return KeychainReadResult(status: errSecSuccess, data: readbackOverride)
+            return KeychainReadResult(
+                status: errSecSuccess,
+                data: (query[kSecReturnData as String] as? Bool == true)
+                    ? readbackOverride
+                    : nil
+            )
         }
         guard let data = items[key] else {
             return KeychainReadResult(status: errSecItemNotFound, data: nil)
         }
-        return KeychainReadResult(status: errSecSuccess, data: data)
+        return KeychainReadResult(
+            status: errSecSuccess,
+            data: (query[kSecReturnData as String] as? Bool == true) ? data : nil
+        )
     }
 
     func delete(_ query: [String: Any]) -> OSStatus {

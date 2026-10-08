@@ -37,6 +37,12 @@ public enum AppStartupState: Equatable, Hashable, Sendable {
     /// Device is enrolled and authenticated session is active.
     case authenticated
 
+    /// Explicit local credential cleanup is running; authenticated work is blocked.
+    case logoutInProgress
+
+    /// Local credential cleanup failed or could not be verified; explicit retry is available.
+    case logoutCleanupRequired
+
     /// Application encountered an error requiring explicit user recovery action.
     case recoveryRequired(AppRecoveryReason)
 }

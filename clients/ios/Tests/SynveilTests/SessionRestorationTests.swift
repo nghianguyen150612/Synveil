@@ -337,11 +337,12 @@ final class SessionRestorationTests: XCTestCase {
     @MainActor
     func testHTTP503IsServerUnavailableNotRevoked() async throws {
         let session = try makeSession(endpoint: makeEndpoint())
+        let store = MockSecureCredentialSink(session: session)
         let transport = StubHTTPTransport(
             response: errorResponse(status: 503, code: "service_unavailable")
         )
         let service = SessionRestorationService(
-            credentialStore: MockSecureCredentialSink(session: session),
+            credentialStore: store,
             authorizationValidator: AuthenticatedSessionValidationService(transport: transport)
         )
 
@@ -351,6 +352,8 @@ final class SessionRestorationTests: XCTestCase {
             result,
             .locallyValidStoredSession(session, verification: .serverUnavailable)
         )
+        let deletes = await store.deleteCount()
+        XCTAssertEqual(deletes, 0)
     }
 
     func testTLSFailureFailsClosed() async throws {

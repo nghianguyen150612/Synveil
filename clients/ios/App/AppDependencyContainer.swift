@@ -23,6 +23,9 @@ public final class AppDependencyContainer {
     /// Startup restoration service, composed from the same Rust-validated Keychain store.
     public private(set) var restorationService: SessionRestorationServiceProtocol?
 
+    /// Local logout service, composed from the same active Keychain store.
+    public private(set) var logoutService: SessionLogoutServiceProtocol?
+
     private var enrollmentSecurityPrepared = false
     private var securityPreparationTask: Task<Void, Never>?
 
@@ -69,15 +72,19 @@ public final class AppDependencyContainer {
                 credentialStore: store,
                 authorizationValidator: authenticatedProbe
             )
+            let logout = SessionLogoutService(credentialStore: store)
 
             rustBridge = bridge
             credentialSink = store
             restorationService = service
+            logoutService = logout
             sessionController.installRestorationService(service)
+            sessionController.installLogoutService(logout)
         } catch {
             rustBridge = nil
             credentialSink = nil
             restorationService = nil
+            logoutService = nil
             sessionController.markRestorationDependenciesUnavailable()
         }
     }

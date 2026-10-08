@@ -18,14 +18,21 @@ public final class SessionController {
     private let configuration: AppConfiguration
 
     @ObservationIgnored private var restorationService: (any SessionRestorationServiceProtocol)?
+    @ObservationIgnored private var logoutService: (any SessionLogoutServiceProtocol)?
     @ObservationIgnored private var restorationSetupFailed = false
     @ObservationIgnored private var hasCompletedStartup = false
     @ObservationIgnored private var isStartupInProgress = false
     @ObservationIgnored private var transitionRevision: UInt64 = 0
     @ObservationIgnored private var pendingRestorationSession: DeviceCredentialSession?
+    @ObservationIgnored private var activeRestorationTask: Task<SessionRestorationResult, Never>?
+    @ObservationIgnored private var activeRestorationOperationID: UUID?
+    @ObservationIgnored private var logoutTask: Task<Void, Never>?
 
     /// Observable only so the root retry action can disable itself while a probe is in flight.
     public private(set) var isRestorationRetryInProgress = false
+
+    /// Non-secret cleanup failure retained while the user retries secure deletion.
+    public private(set) var logoutFailure: SessionLogoutError?
 
     /// Initializes `SessionController` with application configuration and optional test service.
     ///
@@ -33,14 +40,17 @@ public final class SessionController {
     ///   - configuration: App configuration containing non-secret bootstrap settings.
     ///   - restorationService: Injectable restoration service. Production composition installs it
     ///     after Rust validation and Keychain dependencies initialize.
+    ///   - logoutService: Injectable local credential cleanup service.
     public init(
         configuration: AppConfiguration = AppConfiguration.load(),
-        restorationService: (any SessionRestorationServiceProtocol)? = nil
+        restorationService: (any SessionRestorationServiceProtocol)? = nil,
+        logoutService: (any SessionLogoutServiceProtocol)? = nil
     ) {
         self.configuration = configuration
         self.serverEndpoint = configuration.serverEndpoint
         self.state = .initializing
         self.restorationService = restorationService
+        self.logoutService = logoutService
     }
 
     /// Installs the production restoration service before startup begins.
@@ -52,6 +62,14 @@ public final class SessionController {
         }
         restorationService = service
         restorationSetupFailed = false
+    }
+
+    /// Installs local credential cleanup before startup begins.
+    public func installLogoutService(_ service: any SessionLogoutServiceProtocol) {
+        guard state == .initializing, !isStartupInProgress else {
+            return
+        }
+        logoutService = service
     }
 
     /// Records fail-closed startup when Rust validation or secure storage could not initialize.
@@ -91,14 +109,28 @@ public final class SessionController {
             return
         }
 
-        var result = await restorationService.restore(
-            configuredServerEndpoint: serverEndpoint
-        )
-        result = cancellationSafeResult(result)
+        let operationID = UUID()
+        let task = Task {
+            await restorationService.restore(configuredServerEndpoint: serverEndpoint)
+        }
+        activeRestorationOperationID = operationID
+        activeRestorationTask = task
+        let result = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        guard activeRestorationOperationID == operationID else {
+            return
+        }
+        activeRestorationOperationID = nil
+        activeRestorationTask = nil
+
+        let safeResult = cancellationSafeResult(result)
         guard isCurrent(capturedRevision, expectedState: .initializing) else {
             return
         }
-        apply(result)
+        apply(safeResult)
         hasCompletedStartup = true
     }
 
@@ -123,17 +155,32 @@ public final class SessionController {
         }
         let capturedRevision = transitionRevision
 
-        let result: SessionRestorationResult
+        let operationID = UUID()
+        let task: Task<SessionRestorationResult, Never>
         if let pendingRestorationSession, let serverEndpoint {
-            result = await restorationService.retryVerification(
-                of: pendingRestorationSession,
-                expectedServerEndpoint: serverEndpoint
-            )
+            task = Task {
+                await restorationService.retryVerification(
+                    of: pendingRestorationSession,
+                    expectedServerEndpoint: serverEndpoint
+                )
+            }
         } else {
-            result = await restorationService.restore(
-                configuredServerEndpoint: serverEndpoint
-            )
+            task = Task {
+                await restorationService.restore(configuredServerEndpoint: serverEndpoint)
+            }
         }
+        activeRestorationOperationID = operationID
+        activeRestorationTask = task
+        let result = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        guard activeRestorationOperationID == operationID else {
+            return
+        }
+        activeRestorationOperationID = nil
+        activeRestorationTask = nil
 
         let safeResult = cancellationSafeResult(result)
         guard isCurrent(capturedRevision, expectedState: .restorationVerificationPending) else {
@@ -146,6 +193,7 @@ public final class SessionController {
 
     /// Transitions root state to `.needsServerProfile`.
     public func showServerProfileSetup() {
+        guard state == .initializing || state == .needsServerProfile else { return }
         transition(to: .needsServerProfile)
     }
 
@@ -198,8 +246,56 @@ public final class SessionController {
     ///
     /// - Parameter reason: High-level classification of the recovery requirement.
     public func requireRecovery(_ reason: AppRecoveryReason) {
+        guard !isLogoutTransitionActive else { return }
         pendingRestorationSession = nil
         transition(to: .recoveryRequired(reason))
+    }
+
+    /// Starts explicit local logout or retries a previously failed secure cleanup.
+    ///
+    /// The authenticated state is invalidated before cleanup starts. The cleanup task is owned by
+    /// this controller and deliberately outlives cancellation or disappearance of the SwiftUI
+    /// caller. Concurrent requests await the same operation.
+    public func requestLogout() async {
+        if let logoutTask {
+            await logoutTask.value
+            return
+        }
+
+        guard
+            state == .authenticated
+                || state == .restorationVerificationPending
+                || state == .logoutCleanupRequired
+        else {
+            return
+        }
+
+        transition(to: .logoutInProgress)
+        logoutFailure = nil
+        hasCompletedStartup = true
+        pendingRestorationSession = nil
+        isStartupInProgress = false
+        isRestorationRetryInProgress = false
+
+        activeRestorationTask?.cancel()
+        activeRestorationTask = nil
+        activeRestorationOperationID = nil
+
+        let capturedRevision = transitionRevision
+        let service = logoutService
+        let task = Task { @MainActor [weak self, service] in
+            let result: SessionLogoutResult
+            if let service {
+                result = await service.logoutLocally()
+            } else {
+                result = .failed(.serviceUnavailable)
+            }
+            guard let self else { return }
+            self.finishLogout(result, capturedRevision: capturedRevision)
+            self.logoutTask = nil
+        }
+        logoutTask = task
+        await task.value
     }
 
     private func apply(_ result: SessionRestorationResult) {
@@ -302,6 +398,34 @@ public final class SessionController {
 
     private func isCurrent(_ revision: UInt64, expectedState: AppStartupState) -> Bool {
         transitionRevision == revision && state == expectedState
+    }
+
+    private var isLogoutTransitionActive: Bool {
+        state == .logoutInProgress || state == .logoutCleanupRequired
+    }
+
+    private func finishLogout(
+        _ result: SessionLogoutResult,
+        capturedRevision: UInt64
+    ) {
+        guard isCurrent(capturedRevision, expectedState: .logoutInProgress) else {
+            return
+        }
+
+        switch result {
+        case .credentialAbsent:
+            logoutFailure = nil
+            pendingRestorationSession = nil
+            if serverEndpoint == nil {
+                transition(to: .needsServerProfile)
+            } else {
+                transition(to: .readyForServerValidation)
+            }
+        case .failed(let error):
+            logoutFailure = error
+            pendingRestorationSession = nil
+            transition(to: .logoutCleanupRequired)
+        }
     }
 
     private func transition(to newState: AppStartupState) {
