@@ -138,6 +138,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -152,6 +154,17 @@ jobs:
           arch: win64_msvc2022_64
           cache: true
 
+      - name: Record compiler, linker, and app-local CRT identities
+        shell: pwsh
+        run: ./scripts/prepare-windows-candidate-tools.ps1
+      - name: Install reproducible ZIP prerequisite
+        shell: pwsh
+        run: |
+          choco install zip --version=3.0 --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'WINDOWS_ZIP_PREREQUISITE_FAILURE' }
+      - name: Verify ZIP prerequisite before compiling
+        shell: bash
+        run: zip -v
       - name: Verify Qt 6.4 minimum
         shell: pwsh
         run: |

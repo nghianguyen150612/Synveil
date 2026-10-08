@@ -124,6 +124,24 @@ closure policy rather than requiring the obsolete bootstrapper option. No
 global CRT installer or elevation dependency substitutes for ordinary install.
 Actual candidate creation, byte comparison and native consumption must rerun.
 
+On source `9b8cebcd`, Windows native push run `37705499583`, producer job
+`113078759532`, the real desktop/client build, NCrypt system identity,
+app-local CRT closure and exhaustive AMD64 PE/import audit passed. Runtime
+staging was exported, but archive creation failed because the hosted runner
+lacked `zip`; Setup and standard-user consumption were not reached. The
+Windows producer workflows now install the observed Chocolatey Info-ZIP 3.0
+package and verify `zip -v` before compiling. The existing sorted file list,
+`zip -X`, fixed timestamps and byte-equality gates remain unchanged. Producer
+checkouts bind the actual source head; Rust CI's Windows packaging path also
+records the same compiler/linker/CRT identities before use.
+
+AppImage PR run `37705503526`, job `113078773574`, passed on `9b8cebcd`.
+Its validated payload is `Synveil-0.1.0-x86_64.AppImage`, 48,638,456 bytes,
+SHA-256 `b98ca6f6ae5f97cc819864390afff49f827b8a9cc32a2e62db34b5d3c82467d0`;
+uploaded artifact `11519273954` is the ZIP envelope, not that payload size.
+This source is superseded by the ZIP prerequisite fix; it remains producer
+history and does not qualify either native AppImage matrix row.
+
 Status: **infrastructure/source implemented; acceptance checkpoint withheld.**
 
 | Field | Observed value |

@@ -44,6 +44,14 @@ jobs:
           python3 scripts/validate-windows-installer.py
           python3 scripts/validate-windows-native-acceptance.py
           ./scripts/validate-install-acceptance.sh
+      - name: Install reproducible ZIP prerequisite
+        shell: pwsh
+        run: |
+          choco install zip --version=3.0 --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'WINDOWS_ZIP_PREREQUISITE_FAILURE' }
+      - name: Verify ZIP prerequisite before compiling
+        shell: bash
+        run: zip -v
       - name: Build runtime once
         shell: bash
         run: |

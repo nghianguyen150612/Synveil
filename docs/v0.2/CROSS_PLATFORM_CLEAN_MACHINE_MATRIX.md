@@ -14,6 +14,17 @@ execution and was prevented by contract failure. None is a native row PASS.
 
 Status: **infrastructure/source implemented; acceptance checkpoint withheld.**
 
+Continuation on `9b8cebcd`: Windows native run `37705499583`, producer job
+`113078759532`, passed actual runtime closure and AMD64 checks, then failed
+archive creation because `zip` was absent. The Windows producers now install
+and verify Info-ZIP 3.0 before building; no archive audit is removed.
+AppImage PR run `37705503526`, job `113078773574`, passed producer checks:
+48,638,456-byte payload, SHA-256
+`b98ca6f6ae5f97cc819864390afff49f827b8a9cc32a2e62db34b5d3c82467d0`.
+Those attempts remain historical after the prerequisite fix. Exact rerun
+identities and subsequent native results are recorded in PR #78; no earlier
+producer PASS is promoted into a final-head native PASS.
+
 This is the current P045 target ledger. No target is newly accepted by this
 document. The scenario JSON and result-v1 schema remain normative. P020/P028
 historical records are preserved; P044 process interruption cannot close a
