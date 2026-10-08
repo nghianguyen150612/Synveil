@@ -1,6 +1,6 @@
 # Prompt045 manifest — Cross-platform clean-machine matrix
 
-## Continuation record: e236 cancellation-safety compile correction
+## Continuation record: e236 cross-platform test corrections
 
 GitHub's branch API and `git ls-remote` verified the existing branch and PR #78
 at source `3964937acd0b2342fe5c41693be13fbcd8cf49f1`, tree
@@ -27,6 +27,43 @@ At the last status check, P045 aggregate run `37775940330` and Rust CI run
 run `37775939792` were building against the superseded source. No final-source
 candidate, Windows standard-user result, qualified Linux guest result, or native
 result-v1 row was available from those attempts.
+
+Rust CI run `37776691298`, job `113309338375`, then failed on source
+`4e4482b609caa1d0c23be55f140570a001132794`: 96 tests passed, but
+`launch::tests::platform_supervised_stop_requests_canonical_shutdown_over_ipc`
+failed with `BindFailed` at `crates/client/src/launch.rs:2393`. The fixture
+used the macOS per-user temporary directory before appending
+`runtime/control/client.sock`, exceeding the 108-byte Unix-domain socket path
+limit. Its root now uses canonical `/tmp`, matching the other IPC fixtures.
+The targeted Linux test passes; hosted macOS verification is pending. This is a
+test-fixture path failure and does not demonstrate an installed-product defect.
+
+Before the fixture correction, the branch was fast-forwarded from `3964937` to
+`4e4482b609caa1d0c23be55f140570a001132794`, tree
+`61ecebc3a240b055363165163463453c34d9f10e`. On that intermediate source,
+AppImage run `37776691186`, job `113309236658`, passed independent reproduction,
+inspection, bundled-runtime smoke and the real current-user lifecycle. Its
+payload `Synveil-0.1.0-x86_64.AppImage` is 48,638,456 bytes,
+SHA-256 `3338734b3f778ca50137dc74aeb0b3118039964f846fd95d6174da89e1ee86dc`;
+artifact `11550412951` is a 48,029,789-byte ZIP with SHA-256
+`70bba19841882a2a35fc633b258f5ee1ad0004f6c36250f04846c7aa93386e35`. This is
+producer/runtime evidence only; no clean-guest INSTALL-JOURNEY-4 ran. Rust CI
+format and Clippy job `113309338178` passed on `4e4482b`. P043 run `37776691189`
+Windows ownership/security job `113309236886` passed, but other P043 jobs were
+still queued, so the full regression workflow was pending. The current P045
+aggregate run `37776691741` had no allocated jobs; Windows candidate run
+`37776691262`, Linux package/repro run `37776691392`, and P044 run
+`37776691156` were still in progress. These intermediate-source results cannot
+qualify the later final-source candidate.
+
+P044 run `37776691156`, Windows job `113309238101`, completed successfully on
+source `4e4482b`. It built the release client and passed the real Inno Setup
+synthetic-payload process-interruption fixture on Windows Server 2025. Evidence
+artifact `11551236988` is 1,124 bytes, SHA-256
+`119c4388c02edfd56042956d9c97b0ed64334a9bdf39225a327d8ea6bca474e0`. This
+qualifies only that scoped Windows process-interruption scenario. It does not
+establish VM power-cycle recovery; the complete P044 run and a rerun at the
+subsequent source are not yet proven.
 
 ## Continuation record: e235 Windows/Linux diagnostics and source-gate correction
 

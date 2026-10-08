@@ -1,8 +1,8 @@
 # Cross-platform clean-machine matrix (P045)
 
-## Continuation record: e236 cancellation-safety compile correction
+## Continuation record: e236 cross-platform test corrections
 
-The published branch and PR #78 were both verified at
+At the first e236 status check, the published branch and PR #78 were verified at
 `3964937acd0b2342fe5c41693be13fbcd8cf49f1`, tree
 `aa80ecd3483446c745535a7466d6539cb11d1d9c`; base `main` remained
 `a560a40c8f2fe5b91db27c1b63fa0b0ab87173bc`. The local `origin/*` tracking ref
@@ -18,6 +18,42 @@ This is a source compile failure, not a product or interruption-test result.
 The follow-up wraps the promoted handle in `Some` while preserving both pipe
 handles across the cancellable `connect()` await. The same formatter pass also
 reorders the Unix-gated import in `crates/api/src/runtime_server_configuration.rs`.
+
+Rust CI run `37776691298`, job `113309338375`, then exposed a separate macOS
+fixture failure on source `4e4482b609caa1d0c23be55f140570a001132794`: 96 tests
+passed and `launch::tests::platform_supervised_stop_requests_canonical_shutdown_over_ipc`
+failed with `BindFailed` at `crates/client/src/launch.rs:2393`. The test used
+the deeply nested per-user temporary directory and then appended the runtime,
+control and socket path; the resulting Unix-domain socket pathname exceeded the
+108-byte limit. The fixture now uses canonical `/tmp`, matching the short-root
+correction already used by the control IPC fixtures. Its targeted Linux test
+passes; the exact macOS rerun is pending. No product failure is inferred from
+the fixture bind error.
+
+The branch was fast-forwarded from `3964937` to
+`4e4482b609caa1d0c23be55f140570a001132794`, tree
+`61ecebc3a240b055363165163463453c34d9f10e`, before this macOS fixture failure
+was corrected. On that intermediate source, AppImage run `37776691186`, job
+`113309236658`, passed independent reproduction, inspection, bundled-runtime
+smoke and the real current-user lifecycle. The payload was
+`Synveil-0.1.0-x86_64.AppImage`, 48,638,456 bytes, SHA-256
+`3338734b3f778ca50137dc74aeb0b3118039964f846fd95d6174da89e1ee86dc`; artifact
+`11550412951` is a 48,029,789-byte ZIP with SHA-256
+`70bba19841882a2a35fc633b258f5ee1ad0004f6c36250f04846c7aa93386e35`. This is
+producer/runtime evidence, not clean-guest INSTALL-JOURNEY-4. P045 aggregate
+run `37776691741` remained pending without allocated jobs. The same-source
+Windows candidate (`37776691262`), Linux package/repro jobs (`37776691392`) and
+P044 interruption job (`37776691156`) had not finished; P045 cannot consume
+these superseded-source bytes as final candidate evidence.
+
+P044 run `37776691156` then passed its Windows job `113309238101` on source
+`4e4482b`. The job built the release client and ran the real Inno Setup
+synthetic-payload process-interruption fixture on Windows Server 2025. Evidence
+artifact `11551236988` is 1,124 bytes, SHA-256
+`119c4388c02edfd56042956d9c97b0ed64334a9bdf39225a327d8ea6bca474e0`. This is
+scoped Windows process-interruption evidence; it is not a VM hard-power-cycle
+result. The rest of the P044 workflow and the exact-source rerun remain
+pending.
 
 On source `3964937`, P045 aggregate run `37775940330` and Rust CI run
 `37775939981` were queued at the last status check; Windows candidate run
