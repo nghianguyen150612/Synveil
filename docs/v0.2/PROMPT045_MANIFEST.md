@@ -196,6 +196,49 @@ artifact `11521976987`. P045 contract `113095898112` and strict source gates
 and source observations after the subsequent harness changes, not native PASS.
 Final rerun identities and every required matrix record remain in PR #78.
 
+On source `fbb76557`, Linux packages run `37712282029`, main job
+`113100952811`, completed independent clean-target-root A/B release builds:
+desktop 8,496,328 bytes, SHA-256
+`b720de2090de069178d47371577cb282a342726dad617ba0e2942231ed6f2bf1`;
+client 18,514,776 bytes,
+`c001fedc50768fad53af7bf67d9540db7d21f3b1e479d0ec77e55ba45c2cc02b`;
+maintenance 10,142,656 bytes,
+`63d4429bd17f3e80d84b71b44be1b6211d88af37f6553692a68cd4e41c9b7c51`.
+DEB (8,470,980 bytes, `cb2d2cd3aebaa0446283161af9489840338b2d51109ed18a5c492ae185d10c8a`)
+and RPM (12,126,571 bytes, `01f09ffc82e4d7a7bdf2b9ad77165dc2968e25199b91a3d3962d72dfca38073c`)
+also matched their rebuilds exactly, as did both manifests. The job then
+failed provenance parsing: the pre-existing link policy omits GNU build IDs,
+but its manifest wrote an empty third field while the validator required hex.
+The writer now records `none`; validation verifies actual absence through the
+existing ELF audit and retains exact hash, size and source-fingerprint checks.
+Three bounded ELF-format regressions cover round-trip, byte mutation, false
+identity and rejection of an actual GNU build ID. These fixtures are not
+product/native evidence. Downstream APT/DNF scope jobs were skipped on this
+failed producer; no qualification is inferred from the package byte equality.
+
+Windows producer `113100709238` in run `37712282003` passed on the same source:
+Setup 32,890,891 bytes, SHA-256
+`88cc746f3ef894e62539bfcf2f23004c8eeb862db884691a1bdd9205e03b93a4`,
+artifact `11522592387`. Consumer `113106210706` authenticated it and started
+the ordinary-user child, then failed before installation with an empty Path.
+Its downloaded bounded logs (`11522407812`, verified ZIP digest
+`894764259d6491edc121f2c306de862e10f54704d8aed17f157638b5ff2b1f61`)
+preserve that error. The harness now resolves current-token Windows known
+folders without requiring newly loaded Desktop/Start Menu directories to
+exist, uses an owned unrelated working directory, and passes the actual Git
+checkout identity to both child evidence scripts. The PowerShell runtime
+verifier still throws on failure; an unset native LASTEXITCODE is no longer
+misinterpreted as that script's result. No GUI/logon qualification is added.
+
+Installer run `37712281987`, job `113100709176`, confirmed all negative
+rejections and reproducible Setup/lifecycle builds, then failed the same
+standard-user qualification. Linux Rust CI `113100921360` passed desktop and
+client units but exposed the legacy CRT-policy test expecting
+`--compiler-runtime`. It now requires `--no-compiler-runtime`, authenticated
+app-local CRT, missing-runtime rejection and bootstrapper rejection. All three
+existing packaging tests pass locally. These subsequent corrections supersede
+the source-specific candidates above and require another exact-head rerun.
+
 Status: **infrastructure/source implemented; acceptance checkpoint withheld.**
 
 | Field | Observed value |

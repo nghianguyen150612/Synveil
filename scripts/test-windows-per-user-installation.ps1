@@ -1,19 +1,22 @@
 param(
     [Parameter(Mandatory=$true)][string]$Setup,
     [Parameter(Mandatory=$true)][string]$RepositoryRoot,
-    [Parameter(Mandatory=$true)][string]$EvidencePath
+    [Parameter(Mandatory=$true)][string]$EvidencePath,
+    [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{40}$')][string]$SourceCommit
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'windows-known-folders.ps1')
+$localAppData = Get-WindowsKnownFolderPath LocalApplicationData
 $appId = '{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1'
 $uninstallSubkey = "Software\Microsoft\Windows\CurrentVersion\Uninstall\$appId"
-$root = Join-Path $env:LOCALAPPDATA 'Programs\Synveil'
-$startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Synveil.lnk'
-$desktop = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Synveil.lnk'
-$commonStartMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Synveil.lnk'
-$publicDesktop = Join-Path $env:PUBLIC 'Desktop\Synveil.lnk'
-$logRoot = Join-Path $env:LOCALAPPDATA 'Synveil\installer'
-$sentinel = Join-Path $env:LOCALAPPDATA 'Synveil\state-sentinel\p025.txt'
+$root = Join-Path $localAppData 'Programs\Synveil'
+$startMenu = Join-Path (Get-WindowsKnownFolderPath Programs) 'Synveil.lnk'
+$desktop = Join-Path (Get-WindowsKnownFolderPath DesktopDirectory) 'Synveil.lnk'
+$commonStartMenu = Join-Path (Get-WindowsKnownFolderPath CommonPrograms) 'Synveil.lnk'
+$publicDesktop = Join-Path (Get-WindowsKnownFolderPath CommonDesktopDirectory) 'Synveil.lnk'
+$logRoot = Join-Path $localAppData 'Synveil\installer'
+$sentinel = Join-Path $localAppData 'Synveil\state-sentinel\p025.txt'
 
 Add-Type -TypeDefinition @'
 using System;
@@ -86,7 +89,7 @@ New-Item $logRoot -ItemType Directory -Force | Out-Null
 New-Item (Split-Path $sentinel) -ItemType Directory -Force | Out-Null
 Set-Content -LiteralPath $sentinel -Value 'P025 synthetic non-secret state sentinel'
 $setupHash = (Get-FileHash -LiteralPath $Setup -Algorithm SHA256).Hash.ToLowerInvariant()
-$unrelatedCwd = Join-Path $env:TEMP 'synveil-p025-unrelated-cwd'
+$unrelatedCwd = Join-Path $logRoot 'unrelated-cwd'
 New-Item $unrelatedCwd -ItemType Directory -Force | Out-Null
 
 Invoke-Bounded $Setup @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/STARTUP=0','/DESKTOPICON=0','/LAUNCH=0',('/LOG=' + (Join-Path $logRoot 'install.log'))) $unrelatedCwd 0 'installer'
@@ -101,7 +104,8 @@ $uninstaller = $hkcu.GetValue('UninstallString').Trim('"'); $hkcu.Dispose()
 Assert-True (Test-Path $uninstaller -PathType Leaf) 'PER_USER_REGISTRY_FAILURE: registered uninstaller missing'
 
 & (Join-Path $RepositoryRoot 'scripts\test-windows-installed-runtime.ps1') -RuntimeRoot $root -Manifest (Join-Path $root 'SYNVEIL-MANIFEST.txt')
-if ($LASTEXITCODE -ne 0) { throw 'PER_USER_RUNTIME_FAILURE: installed manifest verifier failed' }
+# The PowerShell verifier throws on failure under Stop. LASTEXITCODE describes
+# native executables, not this script invocation, and can be unset here.
 $acl = Get-Acl -LiteralPath $root
 $broadWrite = @($acl.Access | Where-Object {
     $_.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
@@ -138,7 +142,7 @@ Assert-True (!(Test-Path $desktop) -and (Test-Path $sentinel)) 'PER_USER_UNINSTA
 
 $os = Get-CimInstance Win32_OperatingSystem
 $evidence = [ordered]@{
-    schema_version=1; source_commit=$env:GITHUB_SHA; artifact_sha256=$setupHash
+    schema_version=1; source_commit=$SourceCommit; artifact_sha256=$setupHash
     windows_version=$os.Version; windows_build=$os.BuildNumber; architecture=$env:PROCESSOR_ARCHITECTURE
     test_account_category='synthetic_standard_user'; administrator_member=$isAdmin
     installer_elevated=$script:observedTokens['installer'].elevated; installer_token=$script:observedTokens['installer']

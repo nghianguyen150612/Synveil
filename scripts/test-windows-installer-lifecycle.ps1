@@ -4,23 +4,26 @@ param(
     [Parameter(Mandatory=$true)][string]$NewerFixtureSetup,
     [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{64}$')][string]$NewerLicenseHash,
     [Parameter(Mandatory=$true)][string]$RepositoryRoot,
-    [Parameter(Mandatory=$true)][string]$EvidencePath
+    [Parameter(Mandatory=$true)][string]$EvidencePath,
+    [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{40}$')][string]$SourceCommit
 )
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'windows-security.ps1')
+. (Join-Path $PSScriptRoot 'windows-known-folders.ps1')
+$localAppData = Get-WindowsKnownFolderPath LocalApplicationData
 $appId = '{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1'
 $uninstallKey = "Software\Microsoft\Windows\CurrentVersion\Uninstall\$appId"
-$root = Join-Path $env:LOCALAPPDATA 'Programs\Synveil'
-$stateRoot = Join-Path $env:LOCALAPPDATA 'Synveil'
+$root = Join-Path $localAppData 'Programs\Synveil'
+$stateRoot = Join-Path $localAppData 'Synveil'
 $logRoot = Join-Path $stateRoot 'installer\p027'
-$startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Synveil.lnk'
-$desktop = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Synveil.lnk'
+$startMenu = Join-Path (Get-WindowsKnownFolderPath Programs) 'Synveil.lnk'
+$desktop = Join-Path (Get-WindowsKnownFolderPath DesktopDirectory) 'Synveil.lnk'
 
 function Assert-True([bool]$Condition, [string]$Message) { if (!$Condition) { throw $Message } }
 function Invoke-Setup([string]$Path, [string[]]$Extra, [int]$Expected, [string]$Name) {
     $arguments = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LAUNCH=0') + $Extra + @(('/LOG=' + (Join-Path $logRoot "$Name.log")))
-    $process = Start-Process -FilePath $Path -ArgumentList $arguments -WorkingDirectory $env:TEMP -PassThru
+    $process = Start-Process -FilePath $Path -ArgumentList $arguments -WorkingDirectory $logRoot -PassThru
     if (!$process.WaitForExit(120000)) { $process.Kill(); throw "LIFECYCLE_TIMEOUT: $Name" }
     Assert-True ($process.ExitCode -eq $Expected) "LIFECYCLE_EXIT_FAILURE: $Name exit $($process.ExitCode), expected $Expected"
 }
@@ -71,7 +74,7 @@ function Invoke-RegisteredUninstall([string]$Name) {
 function Interrupt-UpgradeAfterOwnedPayloadCopy([string]$Path, [string]$ExpectedLicenseHash) {
     $log = Join-Path $logRoot 'upgrade-interrupted.log'
     $arguments = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LAUNCH=0',('/LOG=' + $log))
-    $process = Start-Process -FilePath $Path -ArgumentList $arguments -WorkingDirectory $env:TEMP -PassThru
+    $process = Start-Process -FilePath $Path -ArgumentList $arguments -WorkingDirectory $logRoot -PassThru
     $deadline = [DateTime]::UtcNow.AddSeconds(90)
     $license = Join-Path $root 'LICENSE'
     while ([DateTime]::UtcNow -lt $deadline) {
@@ -150,7 +153,7 @@ $null = Manifest-Hashes
 Invoke-RegisteredUninstall 'uninstall-reinstalled'
 
 $evidence = [ordered]@{
-    schema_version=1; source_commit=$env:GITHUB_SHA; artifact_sha256=(Get-FileHash $Setup -Algorithm SHA256).Hash.ToLowerInvariant()
+    schema_version=1; source_commit=$SourceCommit; artifact_sha256=(Get-FileHash $Setup -Algorithm SHA256).Hash.ToLowerInvariant()
     windows_version=(Get-CimInstance Win32_OperatingSystem).Version
     repair=[ordered]@{ installed_version_before='production'; repair_result='pass'; payload_restored=$true; unknown_adjacent_preserved=$true; state_preserved=$true; startup_preference_preserved=$true }
     upgrade_fixture=[ordered]@{ fixture_old_version='1.0.0'; fixture_new_version='1.1.0'; interruption=[ordered]@{ process_termination='forced'; partial_target_payload_observed=$true; prior_manifest_and_registration_matched=$true; unknown_adjacent_preserved=$true; durable_state_preserved=$true; recovery_result='pass' }; upgrade_result='pass'; obsolete_owned_removed=$true; unknown_adjacent_preserved=$true; state_preserved=$true; registration_count=1; startup_preserved=$true }

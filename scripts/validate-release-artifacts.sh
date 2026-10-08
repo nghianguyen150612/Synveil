@@ -88,7 +88,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     fi
     [[ "$in_artifacts" -eq 1 ]] || continue
     read -r expected_sha expected_size expected_build_id relative_path extra <<< "$line"
-    if [[ -n "$extra" || ! "$expected_sha" =~ ^[0-9a-fA-F]{64}$ || ! "$expected_size" =~ ^[0-9]+$ || ! "$expected_build_id" =~ ^[0-9a-fA-F]+$ || -z "$relative_path" ]]; then
+    if [[ -n "$extra" || ! "$expected_sha" =~ ^[0-9a-fA-F]{64}$ || ! "$expected_size" =~ ^[0-9]+$ || ( "$expected_build_id" != none && ! "$expected_build_id" =~ ^[0-9a-fA-F]+$ ) || -z "$relative_path" ]]; then
         printf '[synveil-artifact] ERROR: malformed artifact manifest entry: %s\n' "$line" >&2
         exit 1
     fi
@@ -108,6 +108,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     actual_sha="$(synveil_artifact_sha256 "$artifact")"
     actual_size="$(synveil_artifact_size "$artifact")"
     actual_build_id="$(synveil_artifact_build_id "$artifact")"
+    [[ -n "$actual_build_id" ]] || actual_build_id=none
     if [[ "$actual_sha" != "${expected_sha,,}" || "$actual_size" != "$expected_size" || "$actual_build_id" != "$expected_build_id" ]]; then
         printf '[synveil-artifact] ERROR: release artifact manifest mismatch: %s\n' "$relative_path" >&2
         printf '[synveil-artifact]   expected: size=%s sha256=%s build_id=%s\n' "$expected_size" "$expected_sha" "$expected_build_id" >&2

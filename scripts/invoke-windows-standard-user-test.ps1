@@ -7,6 +7,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$sourceCommit = [string](git -C $repositoryRoot rev-parse HEAD)
+if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[0-9a-f]{40}$') {
+    throw 'STANDARD_USER_SOURCE_FAILURE: checkout identity unavailable'
+}
 # Local SAM account names must fit within 20 characters (16 here).
 $user = 'sv_p025_' + [Guid]::NewGuid().ToString('N').Substring(0,8)
 $password = [Guid]::NewGuid().ToString('N') + '!aA7'
@@ -34,7 +39,7 @@ try {
     $stdout = Join-Path $EvidenceDirectory 'standard-user.stdout.log'
     $stderr = Join-Path $EvidenceDirectory 'standard-user.stderr.log'
     $script = Join-Path $PSScriptRoot 'test-windows-per-user-installation.ps1'
-    $arguments = @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$script,'-Setup',([IO.Path]::GetFullPath($Setup)),'-RepositoryRoot',([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))),'-EvidencePath',$childEvidence)
+    $arguments = @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$script,'-Setup',([IO.Path]::GetFullPath($Setup)),'-RepositoryRoot',$repositoryRoot,'-EvidencePath',$childEvidence,'-SourceCommit',$sourceCommit)
     $process = Start-Process (Get-Command pwsh).Source -Credential $credential -LoadUserProfile -ArgumentList $arguments -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
     if (!$process.WaitForExit(300000)) { $process.Kill(); throw 'STANDARD_USER_TEST_FAILURE: child exceeded five-minute bound' }
     if ($process.ExitCode -ne 0) { throw "STANDARD_USER_TEST_FAILURE: child exit $($process.ExitCode); see bounded logs" }
@@ -46,8 +51,8 @@ try {
         $lifecycleArgs = @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$lifecycleScript,
             '-Setup',([IO.Path]::GetFullPath($Setup)),'-OlderFixtureSetup',([IO.Path]::GetFullPath($OlderFixtureSetup)),
             '-NewerFixtureSetup',([IO.Path]::GetFullPath($NewerFixtureSetup)),'-NewerLicenseHash',$NewerLicenseHash,
-            '-RepositoryRoot',([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))),
-            '-EvidencePath',$lifecycleEvidence)
+            '-RepositoryRoot',$repositoryRoot,
+            '-EvidencePath',$lifecycleEvidence,'-SourceCommit',$sourceCommit)
         $lifecycle = Start-Process (Get-Command pwsh).Source -Credential $credential -LoadUserProfile -ArgumentList $lifecycleArgs `
             -RedirectStandardOutput (Join-Path $EvidenceDirectory 'lifecycle.stdout.log') -RedirectStandardError (Join-Path $EvidenceDirectory 'lifecycle.stderr.log') -PassThru
         if (!$lifecycle.WaitForExit(600000)) { $lifecycle.Kill(); throw 'STANDARD_USER_TEST_FAILURE: lifecycle child exceeded ten-minute bound' }

@@ -53,6 +53,18 @@ The exact-head AppImage producer passed (48,638,456 bytes, SHA-256
 These attempts are superseded after the harness fixes; final consumer and
 aggregate observations in PR #78 control acceptance.
 
+Linux system-Qt fresh A/B builds on `fbb76557` passed exact whole-binary and
+DEB/RPM equality (`37712282029`, `113100952811`). The producer then failed on
+the absent GNU build-ID manifest field; it now records verified absence as
+`none` while retaining all ELF/source/byte checks. Windows candidate production
+also passed (`37712282003`, `113100709238`), but its ordinary-user child failed
+early on an empty profile-folder path. Current-token OS known-folder resolution
+and explicit checkout provenance correct that harness failure; Windows 11
+graphical/logon acceptance remains withheld. The legacy CRT-policy test is
+aligned with authenticated app-local deployment and still requires rejection
+of missing runtime and elevated bootstrapper payloads. These fixes supersede
+the earlier producer attempts; PR #78 records final reruns and the full matrix.
+
 This is the current P045 target ledger. No target is newly accepted by this
 document. The scenario JSON and result-v1 schema remain normative. P020/P028
 historical records are preserved; P044 process interruption cannot close a
