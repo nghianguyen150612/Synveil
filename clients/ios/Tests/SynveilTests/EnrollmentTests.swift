@@ -477,7 +477,8 @@ final class EnrollmentTests: XCTestCase {
 
         let viewModel = EnrollmentViewModel(
             sessionController: controller,
-            exchangeService: EnrollmentExchangeService(transport: mockTransport)
+            exchangeService: EnrollmentExchangeService(transport: mockTransport),
+            credentialSink: StubSecureCredentialSink(isAvailable: true)
         )
 
         viewModel.rawTokenInput = validSyntheticToken
@@ -513,11 +514,9 @@ final class EnrollmentTests: XCTestCase {
             body: makeValidResponseBody()
         )
 
-        let failingSink = StubSecureCredentialSink(isAvailable: false)
         let viewModel = EnrollmentViewModel(
             sessionController: controller,
-            exchangeService: EnrollmentExchangeService(transport: mockTransport),
-            credentialSink: failingSink
+            exchangeService: EnrollmentExchangeService(transport: mockTransport)
         )
 
         viewModel.rawTokenInput = validSyntheticToken
@@ -545,7 +544,8 @@ final class EnrollmentTests: XCTestCase {
 
         let viewModel = EnrollmentViewModel(
             sessionController: controller,
-            exchangeService: EnrollmentExchangeService(transport: mockTransport)
+            exchangeService: EnrollmentExchangeService(transport: mockTransport),
+            credentialSink: StubSecureCredentialSink(isAvailable: true)
         )
 
         viewModel.rawTokenInput = validSyntheticToken
