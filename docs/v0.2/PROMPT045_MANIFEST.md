@@ -1,5 +1,33 @@
 # Prompt045 manifest — Cross-platform clean-machine matrix
 
+## Continuation record: e236 cancellation-safety compile correction
+
+GitHub's branch API and `git ls-remote` verified the existing branch and PR #78
+at source `3964937acd0b2342fe5c41693be13fbcd8cf49f1`, tree
+`aa80ecd3483446c745535a7466d6539cb11d1d9c`; `main` remained
+`a560a40c8f2fe5b91db27c1b63fa0b0ab87173bc`. PR #78 remains OPEN, DRAFT, and
+unmerged. The local remote-tracking ref was stale and was not treated as
+authoritative.
+
+P044 run `37775939901` is bound to that source. Windows job `113306661371`
+failed with Rust E0308 in `crates/client/src/control.rs` when the named-pipe
+transport promoted its pending instance: the destination was
+`Option<NamedPipeServer>` but the expression returned `NamedPipeServer`. The
+job stopped before running the Inno interruption fixture and emitted no
+acceptance artifact. The source correction retains the cancellation-safe
+current/next pipe ownership and stores the promoted instance as `Some(server)`;
+it does not weaken the runtime test or acceptance gate.
+
+Local Rustfmt 1.10 check passes after the formatter's import-order correction.
+`cargo test -p synveil-client --lib --locked --offline` passed all 98 tests on
+Linux, including the portable control/server tests. The Windows-only named-pipe
+path still requires hosted Windows compilation and native regression evidence.
+At the last status check, P045 aggregate run `37775940330` and Rust CI run
+`37775939981` were queued; Windows candidate run `37775939977` and installer
+run `37775939792` were building against the superseded source. No final-source
+candidate, Windows standard-user result, qualified Linux guest result, or native
+result-v1 row was available from those attempts.
+
 ## Continuation record: e235 Windows/Linux diagnostics and source-gate correction
 
 The uploaded checkpoint cited `1215abe92af4d23936607f8f602d6a928d133bcf` as

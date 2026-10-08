@@ -2202,9 +2202,10 @@ impl BoundControlTransport {
                 let connected = server
                     .take()
                     .ok_or(DesktopControlServerError::ListenerFailed)?;
-                *server = next
-                    .take()
-                    .ok_or(DesktopControlServerError::ListenerFailed)?;
+                *server = Some(
+                    next.take()
+                        .ok_or(DesktopControlServerError::ListenerFailed)?,
+                );
                 Ok(AcceptedControlConnection {
                     io: Box::new(connected),
                 })

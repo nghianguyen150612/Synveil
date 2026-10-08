@@ -149,12 +149,12 @@ mod tests {
         StorageCapabilities, StorageCapability,
     };
 
+    #[cfg(unix)]
+    use super::select_server_configuration;
     use super::{
         RuntimeServerConfiguration, RuntimeServerConfigurationError, SERVER_CONFIG_FILE_ENV,
         server_configuration_from_runtime,
     };
-    #[cfg(unix)]
-    use super::select_server_configuration;
 
     fn clear_env(f: impl FnOnce()) {
         let _guard = crate::runtime_test_support::environment_lock();

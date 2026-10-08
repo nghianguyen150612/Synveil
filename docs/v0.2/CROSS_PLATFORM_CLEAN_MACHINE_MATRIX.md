@@ -1,5 +1,31 @@
 # Cross-platform clean-machine matrix (P045)
 
+## Continuation record: e236 cancellation-safety compile correction
+
+The published branch and PR #78 were both verified at
+`3964937acd0b2342fe5c41693be13fbcd8cf49f1`, tree
+`aa80ecd3483446c745535a7466d6539cb11d1d9c`; base `main` remained
+`a560a40c8f2fe5b91db27c1b63fa0b0ab87173bc`. The local `origin/*` tracking ref
+was stale, so GitHub's branch API and `git ls-remote` were used as authority.
+PR #78 remains OPEN, DRAFT, and unmerged.
+
+The first fresh P044 run, `37775939901`, is tied to that exact head. Its Windows
+job `113306661371` failed while compiling `crates/client/src/control.rs` before
+the installer interruption fixture ran. Rust reported E0308 at the promotion
+of the next named-pipe instance: the enum field is `Option<NamedPipeServer>`,
+but the cancellation-safety correction assigned a bare `NamedPipeServer`.
+This is a source compile failure, not a product or interruption-test result.
+The follow-up wraps the promoted handle in `Some` while preserving both pipe
+handles across the cancellable `connect()` await. The same formatter pass also
+reorders the Unix-gated import in `crates/api/src/runtime_server_configuration.rs`.
+
+On source `3964937`, P045 aggregate run `37775940330` and Rust CI run
+`37775939981` were queued at the last status check; Windows candidate run
+`37775939977` and installer run `37775939792` were still building. These are
+superseded by the follow-up source publication and provide no final candidate,
+standard-user, Linux guest, or native result-v1 evidence. The existing native
+journey, power-cycle and first-run blockers remain open.
+
 ## Continuation record: e235 Windows/Linux diagnostics and source-gate correction
 
 The uploaded checkpoint cited `1215abe92af4d23936607f8f602d6a928d133bcf` as
