@@ -35,7 +35,7 @@ This section provides an exhaustive feature inventory of the Android v0.1 client
   * *Files*: `clients/android/app/src/main/java/com/synveil/android/data/enrollment/CredentialVault.kt`, `clients/android/app/src/main/java/com/synveil/android/data/enrollment/EnrollmentMetadataStore.kt`
 * **DeviceBearer Authentication**: Sends `Authorization: Bearer svd1_...` header on profile-scoped API calls. Keeps secret lifetime bounded to memory; never logs, serializes, or exposes bearer credentials in UI or navigation states.
   * *Files*: `clients/android/app/src/main/java/com/synveil/android/data/session/DeviceSessionManager.kt`, `clients/android/app/src/main/java/com/synveil/android/data/network/SynveilHttpTransport.kt`
-* **Credential Fence & Safe Local Cleanup**: "Forget on this device" removes local Android Keystore keys and DataStore secrets without claiming server revocation. Origin changes or profile deletions enforce credential cleanup first.
+* **Credential Fence & Safe Local Cleanup**: "Forget on this device" removes local Android Keystore keys and DataStore secrets without claiming server revocation. Origin changes or profile deletions enforce credential cleanup first. Explicit logout is local-only; transient network failures never delete the credential.
   * *Files*: `clients/android/app/src/main/java/com/synveil/android/data/enrollment/CredentialVault.kt`, `clients/android/app/src/main/java/com/synveil/android/data/profile/ServerProfileRepository.kt`
 
 ### 1.4 Account & Session Handling
@@ -263,7 +263,9 @@ To achieve feature parity with Android v0.1, the iOS client must satisfy this co
    * Preflights local credential generation, stores encrypted `svd1_` credential securely in iOS Keychain.
    * Sends `Authorization: Bearer svd1_...` on all authenticated calls.
    * Restores a locally validated Keychain session at startup, recovers its canonical server endpoint when no bootstrap endpoint is configured, and enters `.authenticated` only after a successful DeviceBearer `GET /api/v1/libraries?limit=1`. Temporary network failure retains the session for explicit retry.
-   * Provides confirmable "Forget on this device" local credential cleanup.
+   * Provides confirmable local logout from the authenticated shell. Authenticated work is blocked first; restoration work is invalidated; the active Keychain credential is deleted and its absence verified before unauthenticated navigation.
+   * If secure deletion fails or cannot be verified, keeps the app unauthenticated in a typed secure-storage recovery state and offers explicit retry. A failed timeout, HTTP 503, DNS lookup, backgrounding, or ordinary restoration cancellation never initiates cleanup.
+   * Local logout does not revoke the bearer at the server. Device revocation remains a separate owner-authorized server operation; the local UI must say the server may continue accepting the credential until it is revoked.
 
 3. **Browsing & Metadata Operations**:
    * Displays paginated library list and logical folder hierarchy.

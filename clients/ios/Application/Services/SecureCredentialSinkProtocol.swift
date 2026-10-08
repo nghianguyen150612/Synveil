@@ -21,8 +21,8 @@ public struct SecureCredentialPersistenceReceipt: Equatable, Sendable {
 /// Application boundary for the active device credential stored in Keychain.
 ///
 /// The v0.1 contract supports one active device session per app installation. The protocol exposes
-/// no Security.framework types, and `load` is a primitive for future restoration; it does not drive
-/// startup routing.
+/// no Security.framework types. Enrollment, session restoration, and local logout share this
+/// boundary; production absence verification does not return the stored payload.
 public protocol SecureCredentialSinkProtocol: Sendable {
     /// Checks that secure storage can add, read, verify, and delete a temporary probe item.
     func preflight() async throws
@@ -51,6 +51,25 @@ public protocol SecureCredentialSinkProtocol: Sendable {
 
     /// Deletes the active local Keychain item. Deleting a missing item is successful.
     func delete() async throws
+
+    /// Checks for the active item without returning its credential-bearing payload.
+    ///
+    /// Returns `true` only when the active item is absent. Storage errors remain typed so callers
+    /// cannot confuse an unreadable Keychain with successful deletion.
+    func isActiveCredentialAbsent() async throws -> Bool
+}
+
+public extension SecureCredentialSinkProtocol {
+    /// Compatibility implementation for injected stores that do not expose a native existence
+    /// query. Production Keychain storage overrides this to inspect attributes only.
+    func isActiveCredentialAbsent() async throws -> Bool {
+        do {
+            _ = try await load(expectedServerEndpoint: nil)
+            return false
+        } catch let error as SecureCredentialSinkError where error == .itemNotFound {
+            return true
+        }
+    }
 }
 
 /// Typed failures raised by the secure credential boundary.
@@ -119,5 +138,12 @@ struct StubSecureCredentialSink: SecureCredentialSinkProtocol {
         guard isAvailable else {
             throw SecureCredentialSinkError.deletionFailure
         }
+    }
+
+    public func isActiveCredentialAbsent() async throws -> Bool {
+        guard isAvailable else {
+            throw SecureCredentialSinkError.readFailure
+        }
+        return true
     }
 }

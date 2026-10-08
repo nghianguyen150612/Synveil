@@ -41,6 +41,13 @@ struct KeychainCredentialItemIdentity: Equatable, Sendable {
         return query
     }
 
+    func existenceQuery() -> [String: Any] {
+        var query = baseQuery()
+        query[kSecReturnAttributes as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        return query
+    }
+
     func updateQuery(account overrideAccount: String? = nil) -> [String: Any] {
         baseQuery(account: overrideAccount)
     }
@@ -91,6 +98,7 @@ private enum KeychainOperation: String {
     case read
     case update
     case delete
+    case deleteVerificationRead
 }
 
 /// Maps Security.framework statuses once at the infrastructure boundary.
@@ -120,6 +128,8 @@ private enum KeychainStatusMapper {
             case .preflightWrite, .add, .update:
                 return .writeFailure
             case .preflightRead, .read:
+                return .readFailure
+            case .deleteVerificationRead:
                 return .readFailure
             case .preflightDelete, .delete:
                 return .deletionFailure
@@ -280,10 +290,36 @@ public actor KeychainCredentialStore: SecureCredentialSinkProtocol {
         defer { releaseLifecycleLock() }
 
         let status = client.delete(identity.updateQuery())
-        if KeychainStatusMapper.isSuccess(status) || KeychainStatusMapper.isItemNotFound(status) {
-            return
+        guard
+            KeychainStatusMapper.isSuccess(status)
+                || KeychainStatusMapper.isItemNotFound(status)
+        else {
+            throw KeychainStatusMapper.error(for: status, operation: .delete)
         }
-        throw KeychainStatusMapper.error(for: status, operation: .delete)
+
+        guard try activeCredentialIsAbsentWhileLocked() else {
+            throw SecureCredentialSinkError.verificationFailure
+        }
+    }
+
+    public func isActiveCredentialAbsent() async throws -> Bool {
+        await acquireLifecycleLock()
+        defer { releaseLifecycleLock() }
+        return try activeCredentialIsAbsentWhileLocked()
+    }
+
+    private func activeCredentialIsAbsentWhileLocked() throws -> Bool {
+        let result = client.copyMatching(identity.existenceQuery())
+        if KeychainStatusMapper.isItemNotFound(result.status) {
+            return true
+        }
+        guard KeychainStatusMapper.isSuccess(result.status) else {
+            throw KeychainStatusMapper.error(
+                for: result.status,
+                operation: .deleteVerificationRead
+            )
+        }
+        return false
     }
 
     private func acquireLifecycleLock() async {

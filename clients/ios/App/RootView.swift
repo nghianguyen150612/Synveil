@@ -1,5 +1,13 @@
 import SwiftUI
 
+enum SessionLogoutAccessibility {
+    static let logoutButton = "synveil.session.logout"
+    static let logoutConfirmation = "synveil.session.logout-confirm"
+    static let logoutCancellation = "synveil.session.logout-cancel"
+    static let logoutProgress = "synveil.logout.progress"
+    static let logoutRetry = "synveil.logout.retry"
+}
+
 /// Root application shell router driven by `SessionController.state`.
 ///
 /// Observes the authoritative session state and renders the appropriate root application surface.
@@ -29,7 +37,11 @@ struct RootView: View {
         case .restorationVerificationPending:
             RestorationVerificationPendingView(sessionController: sessionController)
         case .authenticated:
-            AuthenticatedShellPlaceholderView()
+            AuthenticatedShellPlaceholderView(sessionController: sessionController)
+        case .logoutInProgress:
+            LogoutInProgressView()
+        case .logoutCleanupRequired:
+            LogoutCleanupRecoveryView(sessionController: sessionController)
         case .recoveryRequired(let reason):
             RecoveryPlaceholderView(reason: reason)
         }
@@ -55,6 +67,7 @@ struct LaunchView: View {
 /// Minimal retry surface for a locally valid session whose server status is not yet known.
 struct RestorationVerificationPendingView: View {
     let sessionController: SessionController
+    @State private var isShowingLogoutConfirmation = false
 
     var body: some View {
         VStack(spacing: 16) {
@@ -84,9 +97,31 @@ struct RestorationVerificationPendingView: View {
             .disabled(sessionController.isRestorationRetryInProgress)
             .accessibilityIdentifier("synveil.root.restoration-retry")
             .accessibilityHint("Checks the saved device session with its server.")
+
+            Button("Forget saved session", role: .destructive) {
+                isShowingLogoutConfirmation = true
+            }
+            .accessibilityIdentifier("synveil.session.forget-pending")
         }
         .padding()
         .accessibilityIdentifier("synveil.root.verification-pending")
+        .confirmationDialog(
+            "Forget this device session?",
+            isPresented: $isShowingLogoutConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Forget Session on This Device", role: .destructive) {
+                Task { await sessionController.requestLogout() }
+            }
+            .accessibilityIdentifier(SessionLogoutAccessibility.logoutConfirmation)
+            Button("Cancel", role: .cancel) {}
+                .accessibilityIdentifier(SessionLogoutAccessibility.logoutCancellation)
+        } message: {
+            Text(
+                "This deletes the saved credential from this device. It does not revoke "
+                    + "the credential on the server."
+            )
+        }
     }
 }
 
@@ -155,6 +190,9 @@ struct EnrollmentPlaceholderView: View {
 
 /// Placeholder surface for authenticated application home shell.
 struct AuthenticatedShellPlaceholderView: View {
+    let sessionController: SessionController
+    @State private var isShowingLogoutConfirmation = false
+
     var body: some View {
         VStack(spacing: 16) {
             Image(systemName: "lock.shield.fill")
@@ -166,9 +204,97 @@ struct AuthenticatedShellPlaceholderView: View {
             Text("Authenticated Shell Placeholder")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
+
+            Button("Log Out / Forget Session", role: .destructive) {
+                isShowingLogoutConfirmation = true
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier(SessionLogoutAccessibility.logoutButton)
+            .accessibilityLabel("Log out and forget this device session")
+            .accessibilityHint(
+                "Deletes the saved credential from this device. Server authorization is unchanged."
+            )
+
+            Text(
+                "Local logout removes this device's saved credential. The server may continue "
+                    + "to accept it until an owner revokes it."
+            )
+            .font(.footnote)
+            .foregroundColor(.secondary)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal)
         }
         .padding()
         .accessibilityIdentifier("synveil.root.authenticated")
+        .confirmationDialog(
+            "Forget this device session?",
+            isPresented: $isShowingLogoutConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Log Out and Forget Session", role: .destructive) {
+                Task { await sessionController.requestLogout() }
+            }
+            .accessibilityIdentifier(SessionLogoutAccessibility.logoutConfirmation)
+            Button("Cancel", role: .cancel) {}
+                .accessibilityIdentifier(SessionLogoutAccessibility.logoutCancellation)
+        } message: {
+            Text(
+                "This deletes the saved credential from this device. It does not revoke "
+                    + "the credential on the server."
+            )
+        }
+    }
+}
+
+/// Visible while verified local credential cleanup is running.
+struct LogoutInProgressView: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .accessibilityLabel("Removing saved device credential")
+            Text("Forgetting this device session…")
+                .font(.headline)
+            Text("Authenticated work is paused while secure storage is checked.")
+                .font(.body)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+        }
+        .padding()
+        .accessibilityIdentifier(SessionLogoutAccessibility.logoutProgress)
+    }
+}
+
+/// Retry surface retained when Keychain cleanup fails or cannot be verified.
+struct LogoutCleanupRecoveryView: View {
+    let sessionController: SessionController
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "lock.trianglebadge.exclamationmark")
+                .font(.system(size: 40))
+                .foregroundColor(.orange)
+                .accessibilityHidden(true)
+            Text("Secure cleanup needs attention")
+                .font(.title2)
+                .bold()
+            Text(
+                "Authenticated work is stopped, but Synveil could not verify that the saved "
+                    + "credential was deleted. Retry secure cleanup."
+            )
+            .font(.body)
+            .foregroundColor(.secondary)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal)
+            Button("Retry Cleanup") {
+                Task { await sessionController.requestLogout() }
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier(SessionLogoutAccessibility.logoutRetry)
+            .accessibilityHint("Retries local credential deletion. No network request is made.")
+        }
+        .padding()
+        .accessibilityIdentifier("synveil.logout.recovery")
     }
 }
 
