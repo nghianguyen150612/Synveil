@@ -55,7 +55,7 @@ public final class EnrollmentViewModel {
         if let service = exchangeService {
             self.exchangeService = service
         } else {
-            let transport = URLSessionHTTPTransport()
+            let transport = URLSessionHTTPTransport(maxResponseBodyBytes: 16 * 1024)
             self.exchangeService = EnrollmentExchangeService(
                 transport: transport,
                 rustBridge: rustBridge
