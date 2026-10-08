@@ -76,17 +76,17 @@
 - **New deterministic logout tests**: 15 `SessionLogoutTests`, covering local/offline cleanup, missing item, deletion and verification failures, retry state, endpoint routing, duplicate requests, cancellation, stale authorization results including a delayed HTTP 200, UI routing/accessibility identifiers, state-transition gating, and cold-start restoration after deletion.
 - **New Keychain tests**: 2 additions verify attribute-only absence checking and reject a successful delete status when the item remains retrievable.
 - **Existing regression coverage**: Prompt024 enrollment, Prompt025 Keychain, and Prompt026 restoration test suites remain included in the configured iOS test target. Existing timeout/503 restoration tests assert credentials are not deleted.
-- **iOS XCTest source method count**: 219 at the current implementation revision; final Simulator result pending macOS CI.
+- **iOS XCTest source method count**: 219 on final implementation head `147caa2c98b29b09baeae367602ab1660fe80c58`.
 - **Linux iOS source validator**: passed (`python3 clients/ios/Support/validate_ios_sources.py`).
 - **Static validator unit tests**: passed (17 tests; `python3 -m unittest discover -s clients/ios/Support/tests`).
 - **Documentation validation**: passed (`bash scripts/validate-docs.sh`).
 - **PBX project structure**: passed local structural check (162 unique objects, no unresolved 24-character references, balanced delimiters). Native Xcode project loading remains a macOS CI check.
 - **Diff whitespace validation**: passed (`git diff --check`).
-- **Swift formatting and syntax**: native Swift tooling is unavailable in the Linux environment. A `swift:6.2` Docker image pull stalled after partial downloads and was stopped; no Swift formatter, parser, typecheck, or concurrency result is claimed locally. Final iOS Static Validation and Build remain required.
-- **Rust regression tests**: no Rust/FFI source changed and `cargo` is unavailable locally; iOS Rust Apple Build applicability will be checked against its workflow path filters.
-- **macOS CI on final P027 head**: pending GitHub Actions. Required gates: iOS Static Validation, iOS Build, iOS Simulator Tests, and iOS Rust Apple Build if applicable.
-- **Simulator Keychain evidence**: pending final Simulator run. Do not infer real Keychain execution if the existing unsigned-Simulator entitlement test skips.
-- **Physical-device validation**: `NOT_AVAILABLE` unless a physical iPhone run is obtained.
+- **Swift formatting and syntax**: native Swift tooling is unavailable in the Linux environment. A `swift:6.2` Docker image pull stalled after partial downloads and was stopped; no Swift formatter, parser, typecheck, or concurrency result is claimed locally. GitHub iOS Static Validation (including strict Swift formatting) and iOS Build passed on the final P027 head.
+- **Rust regression tests**: no Rust/FFI source changed and `cargo` is unavailable locally. The iOS Rust Apple Build path filter was checked; it was not triggered because no generated Rust bridge header changed.
+- **macOS CI on final P027 head `147caa2c98b29b09baeae367602ab1660fe80c58`**: iOS Static Validation passed (run `37805905925`); iOS Build passed (run `37805905944`); iOS Simulator Tests passed (run `37805905898`). iOS Rust Apple Build was not triggered: its path filter requires the generated Rust bridge header, which Prompt027 did not change.
+- **Simulator XCTest result**: 219 tests executed, 218 passed, 1 skipped, 0 failed. The skipped test is `KeychainCredentialStoreTests.testSimulatorKeychainRoundTripUsesUniqueTestService`; GitHub Actions reported: “The unsigned Simulator test process has no Keychain access entitlement.” Deterministic injected Keychain tests all ran. This is not evidence of a successful real Keychain round trip.
+- **Physical-device validation**: `NOT_AVAILABLE`.
 
 ## Files Modified
 
@@ -107,8 +107,9 @@
 
 ## Delivery
 
-- **Feature commit SHA**: pending.
-- **PR targeting `ios-app`**: pending.
-- **Merge status**: pending GitHub verification.
-- **Resulting `ios-app` SHA**: pending GitHub verification.
-- **Unrelated failures**: pending final workflow inspection.
+- **Final P027 feature branch head**: `147caa2c98b29b09baeae367602ab1660fe80c58` (`fix(ios): assert logout verification once`).
+- **PR targeting `ios-app`**: [PR #82](https://github.com/nghianguyen150612/Synveil/pull/82), merged by squash.
+- **Hosted merge status**: GitHub confirmed `merged=true` on 2026-10-08 16:17:07 UTC.
+- **P027 feature merge SHA / resulting `ios-app` SHA**: `ece9cf998b5087d675802fbd14c3c79100fa4687` (verified from both the GitHub PR record and fetched `origin/ios-app`).
+- **Unrelated failures at final-head inspection**: Linux AppImage and PostgreSQL 17 scheduled-maintenance failed; both were also failing on the verified Prompt026 base and are outside Prompt027's iOS changes. Linux native packages was still running and Rust CI remained queued at the final workflow inspection. These unrelated workflows were not modified.
+- **Manifest finalization**: this post-merge, documentation-only update records the hosted PR and merge evidence; it does not change the tested P027 source head.
