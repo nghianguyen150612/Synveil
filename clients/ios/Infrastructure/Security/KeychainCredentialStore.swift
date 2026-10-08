@@ -166,7 +166,7 @@ public actor KeychainCredentialStore: SecureCredentialSinkProtocol {
 
         let probeAccount = Self.probeAccountPrefix + UUID().uuidString.lowercased()
         let identityQuery = identity.updateQuery(account: probeAccount)
-        var operationError: Error?
+        var operationError: SecureCredentialSinkError?
 
         let probeQuery = identity.addQuery(valueData: Self.probeValue, account: probeAccount)
         let writeStatus = client.add(probeQuery)
