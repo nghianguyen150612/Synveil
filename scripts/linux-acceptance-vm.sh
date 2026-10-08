@@ -238,6 +238,18 @@ wait_for_guest_readiness() {
     return 1
 }
 
+record_boot_diagnostics() {
+    local name="$1" serial="$2" stage="$3"
+    printf '%s\n' "$stage" >"${VM_STATE_DIR}/${name}.boot-status"
+    log "guest boot did not reach readiness: ${stage}"
+    for file in "$serial" "${serial}.qemu.log"; do
+        if [[ -f "$file" ]]; then
+            log "last 120 lines of ${file}"
+            tail -n 120 "$file" >&2
+        fi
+    done
+}
+
 guest_exec() {
     local port="$1" key="$2" command_name="$3"
     case "$command_name" in
@@ -319,7 +331,10 @@ wait_for_boot() {
 
 qmp_cmd() {
     local monitor="$1"; shift
-    local execute="$1" arguments="${2:-{}}"
+    # A brace inside a parameter-expansion default closes it early and appends
+    # an extra '}' to supplied JSON. Keep the empty object outside the expansion.
+    local execute="$1" arguments="${2:-}"
+    [[ -n "$arguments" ]] || arguments='{}'
     python3 - "$monitor" "$execute" "$arguments" <<'PY'
 import json
 import socket
@@ -408,8 +423,15 @@ main() {
             mkdir -p "$(dirname "$monitor")" "$(dirname "$serial")"
             pid="$(start_vm "$disk" "$seed" "$monitor" "$serial" "$ssh_port")"
             write_vm_metadata "$name" "$pid" "$monitor" "$serial" "$ssh_port" "$key" "$disk"
-            wait_for_ssh "$ssh_port" "$key"
-            wait_for_guest_readiness "$ssh_port" "$key"
+            if ! wait_for_ssh "$ssh_port" "$key"; then
+                record_boot_diagnostics "$name" "$serial" "ssh-timeout"
+                return 1
+            fi
+            if ! wait_for_guest_readiness "$ssh_port" "$key"; then
+                record_boot_diagnostics "$name" "$serial" "readiness-timeout"
+                return 1
+            fi
+            printf '%s\n' ready >"${VM_STATE_DIR}/${name}.boot-status"
             ;;
         guest-exec)
             [[ $# -ge 3 && $# -le 7 ]] || fail "guest-exec NAME COMMAND [ARGS]"

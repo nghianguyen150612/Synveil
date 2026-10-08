@@ -30,6 +30,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 from dataclasses import dataclass, field
@@ -783,6 +784,75 @@ def execute(scenario: dict[str, Any], source: Path, *, manifest: Path, artifact_
     }
 
 
+def blocked_guest_record(
+    scenario_id: str, *, manifest: Path, artifact_type: str, os_id: str,
+    version: str, image_name: str, image_sha256: str, source_commit: str,
+    reason: str, diagnostic_references: list[str], cleanup_status: str,
+) -> dict[str, Any]:
+    """Record a verified VM image that never reached the guest acceptance adapter."""
+    if not re.fullmatch(r"[0-9a-f]{64}", image_sha256):
+        raise AdapterError("pinned VM image identity is not a SHA-256 value")
+    if image_name != f"{os_id}-{version}-x86_64":
+        raise AdapterError("VM image name does not match the declared platform")
+    locked_digest = None
+    for line in (ROOT / "deploy/acceptance/images.lock").read_text(encoding="utf-8").splitlines():
+        fields = line.split()
+        if fields and fields[0] == image_name:
+            locked_digest = next((field.removeprefix("sha256:") for field in fields[1:] if field.startswith("sha256:")), None)
+            break
+    if locked_digest is None or locked_digest != image_sha256:
+        raise AdapterError("VM image digest does not match the reviewed image lock")
+    if cleanup_status not in {"not-run", "complete", "incomplete", "failed"}:
+        raise AdapterError("invalid VM cleanup status")
+    scenarios = {item["id"]: item for _, item in contract.discover()}
+    if scenario_id not in scenarios:
+        raise AdapterError(f"unknown scenario: {scenario_id}")
+    scenario = scenarios[scenario_id]
+    identity = ArtifactIdentity.from_manifest(manifest, artifact_type)
+    if identity.source_commit != source_commit:
+        raise ArtifactMismatch("candidate source does not match the requested VM run")
+    family = "ubuntu" if os_id == "ubuntu" else "fedora" if os_id == "fedora" else os_id
+    facts = {
+        "family": family, "os_id": os_id, "version_id": version, "version": version,
+        "id_like": [], "architecture": "x86_64", "kernel": "unknown",
+        "session_type": "unknown", "desktop_session": "unavailable",
+        "package_manager": None, "native_gui_package_handler": None,
+        "guest_identity_status": "pinned-image-not-booted",
+        "image_name": image_name, "image_sha256": image_sha256,
+        "source_commit": source_commit, "execution_method": "guest-not-reached",
+        "workflow_run_id": os.environ.get("GITHUB_RUN_ID"),
+        "job_id": os.environ.get("GITHUB_JOB"),
+        "machine_identity": f"qemu-image:{image_name}:{image_sha256}",
+    }
+    capabilities = [
+        {"name": name, "status": "unknown"}
+        for name in contract.required_capabilities_for_host(scenario, facts)
+    ]
+    timestamp = _utcnow()
+    record = {
+        "schema_version": RESULT_SCHEMA_VERSION,
+        "scenario_id": scenario_id,
+        "execution_class": scenario["execution_class"],
+        "scenario_definition_digest": contract.definition_digest(scenario),
+        "runner_version": RUNNER_VERSION,
+        "start_time": timestamp,
+        "end_time": timestamp,
+        "platform_facts": facts,
+        "capability_results": capabilities,
+        "artifact_identity": identity.to_result(),
+        "result": "BLOCKED",
+        "completed_steps": [],
+        "assertion_results": [],
+        "evidence_classification": "contract-valid",
+        "reason": redact(reason)[:1000],
+        "diagnostics_redacted": True,
+        "diagnostic_references": diagnostic_references,
+        "cleanup_result": {"status": cleanup_status, "details": "VM power-cut/cleanup outcome is recorded by the owning workflow step."},
+    }
+    contract.validate_result_record(record)
+    return record
+
+
 class AdapterTests(unittest.TestCase):
     def test_qualified_matrix_is_exactly_p018(self) -> None:
         self.assertEqual(sorted(QUALIFIED_PLATFORMS), [("fedora", "42"), ("ubuntu", "24.04")])
@@ -867,6 +937,39 @@ class AdapterTests(unittest.TestCase):
         self.assertIn(result["result"], {"PASS", "FAIL", "SKIPPED", "BLOCKED", "ERROR"})
         self.assertTrue(result["diagnostics_redacted"])
 
+    def test_unbooted_pinned_guest_produces_attributed_blocked_record(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="p020-blocked-guest-") as tmp:
+            root = Path(tmp)
+            payload = b"pinned synthetic candidate"
+            candidate = root / "synveil.deb"
+            candidate.write_bytes(payload)
+            digest = hashlib.sha256(payload).hexdigest()
+            manifest = root / "SYNVEIL-RELEASE-MANIFEST.json"
+            manifest.write_text(json.dumps({
+                "schema_version": 1, "product_version": "0.1.0", "source_commit": "c" * 40,
+                "artifacts": [{"artifact_type": "DEB", "filename": candidate.name,
+                               "sha256": digest, "size_bytes": len(payload),
+                               "platform": "linux", "architecture": "x86_64"}],
+            }))
+            record = blocked_guest_record(
+                "INSTALL-JOURNEY-2", manifest=manifest, artifact_type="DEB",
+                os_id="ubuntu", version="24.04", image_name="ubuntu-24.04-x86_64",
+                image_sha256=next(
+                    field.removeprefix("sha256:")
+                    for line in (ROOT / "deploy/acceptance/images.lock").read_text().splitlines()
+                    if line.split() and line.split()[0] == "ubuntu-24.04-x86_64"
+                    for field in line.split()[1:]
+                    if field.startswith("sha256:")
+                ), source_commit="c" * 40,
+                reason="QEMU TCG guest SSH timeout", diagnostic_references=["serial.log"],
+                cleanup_status="complete",
+            )
+            contract.validate_result_record(record)
+            self.assertEqual(record["result"], "BLOCKED")
+            self.assertEqual(record["artifact_identity"]["sha256"], digest)
+            self.assertEqual(record["platform_facts"]["guest_identity_status"], "pinned-image-not-booted")
+            self.assertEqual(record["cleanup_result"]["status"], "complete")
+
     def test_missing_manifest_blocks_rather_than_passes(self) -> None:
         source, scenario = contract.discover()[0]
         result = execute(scenario, source, manifest=Path("/nonexistent/m.json"), artifact_type="DEB", evidence="native-clean-machine")
@@ -908,11 +1011,19 @@ class AdapterTests(unittest.TestCase):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["self-test", "run", "matrix", "validate-result"])
+    parser.add_argument("command", choices=["self-test", "run", "matrix", "validate-result", "blocked-guest"])
     parser.add_argument("scenario_id", nargs="?")
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--artifact-type", default="AUTO")
     parser.add_argument("--evidence", default="native-clean-machine")
+    parser.add_argument("--os-id")
+    parser.add_argument("--version")
+    parser.add_argument("--image-name")
+    parser.add_argument("--image-sha256")
+    parser.add_argument("--source-commit")
+    parser.add_argument("--reason")
+    parser.add_argument("--diagnostic-reference", action="append", default=[])
+    parser.add_argument("--cleanup-status", choices=["not-run", "complete", "incomplete", "failed"], default="not-run")
     args = parser.parse_args()
 
     if args.command == "self-test":
@@ -945,6 +1056,26 @@ def main() -> int:
             print(f"invalid acceptance result: {exc}", file=sys.stderr)
             return 1
         print(f"valid acceptance result: {result.get('scenario_id')} ({result.get('result')})")
+        return 0
+
+    if args.command == "blocked-guest":
+        required = (args.manifest, args.artifact_type, args.os_id, args.version,
+                    args.image_name, args.image_sha256, args.source_commit, args.reason)
+        if not args.scenario_id or any(value is None for value in required):
+            print("blocked-guest requires a scenario, pinned platform/image, candidate manifest and reason", file=sys.stderr)
+            return 2
+        try:
+            record = blocked_guest_record(
+                args.scenario_id, manifest=args.manifest, artifact_type=args.artifact_type,
+                os_id=args.os_id, version=args.version, image_name=args.image_name,
+                image_sha256=args.image_sha256, source_commit=args.source_commit,
+                reason=args.reason, diagnostic_references=args.diagnostic_reference,
+                cleanup_status=args.cleanup_status,
+            )
+        except (AdapterError, ArtifactMismatch) as exc:
+            print(f"cannot record blocked guest: {redact(str(exc))}", file=sys.stderr)
+            return 1
+        print(json.dumps(record, sort_keys=True, indent=2))
         return 0
 
     if args.scenario_id not in items:

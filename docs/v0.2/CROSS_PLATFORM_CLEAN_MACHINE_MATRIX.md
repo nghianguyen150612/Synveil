@@ -1,5 +1,65 @@
 # Cross-platform clean-machine matrix (P045)
 
+## Recovery observations on published head `1215abe92af4d23936607f8f602d6a928d133bcf`
+
+PR #78 and all prior commits were recovered from the existing branch. The
+latest P045 aggregate, [run 37717057981](https://github.com/nghianguyen150612/Synveil/actions/runs/37717057981),
+passed contract job `113116960452` and source gates `113116960722`; Windows
+producer `113118564763` and Linux artifact producer `113118565076` passed.
+The aggregate artifact `11525427650` records 32 BLOCKED preflight rows and no
+PASS rows. Its producer identities are Windows Setup `SynveilSetup.exe`
+(32,889,807 bytes, SHA-256
+`87c183deba8d82f9dcade890022a2cded66550db6b18eaab6bc179da4f2dcc31`),
+Ubuntu 24.04 DEB (8,452,068 bytes, `aa803751016a1c95479146d0ebc3a5c35b1882a778b8690f30d3da9088f6d510`),
+Fedora 42 RPM (12,104,648 bytes, `12a89a4b6ee4837a0f98450c6e6389ad759c52199e426fdfed77e520e3b4f982`),
+and AppImage (48,871,928 bytes,
+`dbaf4b78d4d8b47ee81c765c946818b69e6448d3de3976fd3d9f000ebb89ea1d`).
+The manifest digest is
+`acda01e006cf075712a414532d1aa25e2bc94749d53001d81174a6f481039355`.
+
+Windows standard-user job `113123725250` failed in run `37717057981`; bounded
+child artifact `11524998665` identifies the first assertion failure: the
+standard-user child attempted to create `C:\Users\runneradmin\AppData` and
+received Access Denied at `test-windows-per-user-installation.ps1:88`. The
+child inherited the runner profile environment despite `-Credential
+-LoadUserProfile`. Known-folder resolution now calls `SHGetKnownFolderPath`
+for the current process token, retaining per-user token, ACL, registry,
+runtime, and preservation assertions. This fix has local structural validation;
+the next hosted consumer must establish its actual result.
+
+Linux package run `37717057722`, job `113115833800`, built both native packages
+and then failed 7 of 26 `linux_native_packaging_units` assertions because the
+test helper assumed `control.tar.gz` and `data.tar.gz`. The real deterministic
+DEB members were `debian-binary`, `control.tar.zst`, and `data.tar.zst` from
+the installed dpkg-deb. The tests and package extraction helpers now delegate
+compression handling to dpkg-deb and continue to enforce the exact three-member
+order, recognized compression suffixes, package paths, metadata, modes, and
+payload parity. The separate full desktop reproducibility job `113115833805`
+passed. This package-test fix still requires the next hosted full-suite result.
+
+All four Linux consumers in run `37717057981` authenticated the pinned image
+and frozen producer artifact, then failed before a scenario adapter result:
+Ubuntu DEB `113124991887`, Ubuntu AppImage `113124991930`, Fedora RPM
+`113124991905`, Fedora AppImage `113124991959`. QEMU logged that KVM was
+unavailable and selected TCG. Each job spent exactly the 900-second SSH boot
+bound before later probes received connection refused. The uploaded bundles
+omitted the serial console and QEMU process logs, so the boot cause cannot be
+assigned to the image, cloud-init, networking, or TCG performance from this
+attempt. A separate `JSONDecodeError: Extra data` came from Bash expanding
+`${2:-{}}` into supplied QMP JSON with an extra closing brace; direct shell
+reproduction confirmed the framing defect. QMP default parsing is corrected,
+and the workflow now preserves bounded serial/QEMU logs and writes schema-valid
+BLOCKED records when a guest never reaches the adapter. No VM scenario passed.
+
+Other same-head results: installer security run `37717057661` PASS; resilience
+run `37717057849` PASS; standalone AppImage build/smoke `37717057696` PASS;
+ordinary Linux clean-machine run `37717057837` succeeded at workflow level,
+with job-level native evidence still requiring inspection. Rust CI
+`37717057800`, Windows installer `37717057758`, Windows native `37717057729`,
+and Linux packages `37717057722` failed; failures remain scoped to their
+observed jobs. These results never qualify Windows 11 GUI/logon/IPC, Linux
+installed journeys, first-run dependencies, or power-cycle recovery.
+
 Completed hosted evidence on source `931736c9be13230bf7c3389462c084bedde6a227`
 is diagnostic until the required native rows qualify. P045 run `37635214022`
 passed source gates but failed docs validation because ripgrep was absent; its

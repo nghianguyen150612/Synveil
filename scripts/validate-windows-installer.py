@@ -19,6 +19,7 @@ PACKAGE = ROOT / "deploy/packages/build-windows.sh"
 INSTALLED_RUNTIME_TEST = ROOT / "scripts/test-windows-installed-runtime.ps1"
 PER_USER_TEST = ROOT / "scripts/test-windows-per-user-installation.ps1"
 PER_USER_INVOKER = ROOT / "scripts/invoke-windows-standard-user-test.ps1"
+KNOWN_FOLDERS = ROOT / "scripts/windows-known-folders.ps1"
 LIFECYCLE_TEST = ROOT / "scripts/test-windows-installer-lifecycle.ps1"
 LIFECYCLE_MODEL = ROOT / "scripts/windows_lifecycle.py"
 CLIENT_LAUNCH = ROOT / "crates/client/src/launch.rs"
@@ -84,6 +85,7 @@ def main() -> int:
     installed_test = INSTALLED_RUNTIME_TEST.read_text(encoding="utf-8")
     per_user_test = PER_USER_TEST.read_text(encoding="utf-8")
     per_user_invoker = PER_USER_INVOKER.read_text(encoding="utf-8")
+    known_folders = KNOWN_FOLDERS.read_text(encoding="utf-8")
     lifecycle_test = LIFECYCLE_TEST.read_text(encoding="utf-8")
     lifecycle_model = LIFECYCLE_MODEL.read_text(encoding="utf-8")
     launch = CLIENT_LAUNCH.read_text(encoding="utf-8")
@@ -146,6 +148,9 @@ def main() -> int:
         require(evidence in per_user_test, f"P025 per-user evidence: {evidence}")
     for evidence in ("SetPassword", "-Credential", "-LoadUserProfile", "WaitForExit(300000)", ".Delete('user'", "Remove-CimInstance", "::add-mask::"):
         require(evidence in per_user_invoker, f"P025 disposable-account harness: {evidence}")
+    for evidence in ("SHGetKnownFolderPath", "ExactSpelling=true", "KF_FLAG_DONT_VERIFY", "LocalApplicationData", "Programs", "DesktopDirectory", "CommonPrograms", "CommonDesktopDirectory"):
+        require(evidence in known_folders, f"P025 token-owned Windows folders: {evidence}")
+    require("Environment]::GetFolderPath" not in known_folders, "P025 known folders do not trust inherited runner environment")
     for evidence in ("Inspect compiled Setup execution level", "requestedExecutionLevel", "asInvoker", "invoke-windows-standard-user-test.ps1", "windows-per-user-evidence"):
         require(evidence in workflow, f"P025 hosted workflow evidence: {evidence}")
     for evidence in (r"\Synveil\BackgroundClient\profile-", "InteractiveToken", "LeastPrivilege", "<LogonTrigger>",

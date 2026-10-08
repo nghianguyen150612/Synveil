@@ -1,5 +1,28 @@
 # Prompt045 manifest — Cross-platform clean-machine matrix
 
+## Recovery from the existing published branch
+
+This continuation recovered `feat/cross-platform-clean-machine-matrix` at
+`1215abe92af4d23936607f8f602d6a928d133bcf` (tree
+`ed058edc0a493668be05cea116d37e3437d5a2a3`), preserving the initial four P045
+commits and twelve linear continuation commits. Main remains
+`a560a40c8f2fe5b91db27c1b63fa0b0ab87173bc`.
+
+On that head, P045 run `37717057981` passed contract and source gates but
+failed its required native evidence gate. Its artifact `11525427650` contains
+32 BLOCKED rows, four exact producer identities, and no consumer PASS. Linux
+source and package results, the Windows child failure, the VM SSH timeout, and
+the QMP JSON framing cause are recorded with job identities in
+[CROSS_PLATFORM_CLEAN_MACHINE_MATRIX.md](CROSS_PLATFORM_CLEAN_MACHINE_MATRIX.md).
+
+Targeted corrections from those observed failures are under review in this
+continuation: current-token Windows known folders; dpkg-deb extraction for its
+valid zstd-compressed three-member package; QMP argument parsing; bounded guest
+console logs; and attributable BLOCKED result-v1 records for guests that do
+not reach the scenario adapter. Local P045, Linux adapter, Windows structural,
+formatting, shell syntax, and shell lint checks pass. These local checks do not
+replace the required exact-head hosted producer, consumer, and aggregate runs.
+
 ## Continuation: observed hosted outcomes on 931736c9
 
 The existing four P045 commits and PR #78 are preserved. Source

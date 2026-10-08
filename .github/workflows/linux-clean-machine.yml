@@ -165,6 +165,7 @@ jobs:
     env:
       BOOT_TIMEOUT_SECONDS: 900
       EXEC_TIMEOUT_SECONDS: 300
+      SYNVEIL_VM_STATE_DIR: ${{ runner.temp }}/vm
     strategy:
       fail-fast: false
       matrix:
@@ -266,30 +267,49 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/vm" "$RUNNER_TEMP/images"
           ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/vm/id_ed25519"
-          scripts/linux-acceptance-vm.sh prepare \
+          if ! scripts/linux-acceptance-vm.sh prepare \
             "${{ matrix.image }}" \
             "$RUNNER_TEMP/images/${{ matrix.image }}.qcow2" \
             "${{ matrix.platform }}" \
             "$RUNNER_TEMP/vm/id_ed25519" \
-            "$RUNNER_TEMP/vm"
-          scripts/linux-acceptance-vm.sh boot \
+            "$RUNNER_TEMP/vm"; then
+            echo prepare-failed > "$RUNNER_TEMP/vm/${{ matrix.image }}.boot-status"
+            exit 1
+          fi
+          if ! scripts/linux-acceptance-vm.sh boot \
             "${{ matrix.image }}" \
             "$RUNNER_TEMP/vm/${{ matrix.image }}.qcow2" \
             "$RUNNER_TEMP/vm/${{ matrix.image }}-seed.iso" \
             "$RUNNER_TEMP/vm/${{ matrix.image }}.qmp" \
             "$RUNNER_TEMP/vm/${{ matrix.image }}.serial" \
             2222 \
-            "$RUNNER_TEMP/vm/id_ed25519"
-          scripts/linux-acceptance-vm.sh guest-exec \
-            "${{ matrix.image }}" facts | tee "acceptance-evidence/guest-facts.txt"
-          scripts/linux-acceptance-vm.sh snapshot "${{ matrix.image }}" clean
-          scripts/linux-acceptance-vm.sh stage "${{ matrix.image }}" "$GITHUB_WORKSPACE"
+            "$RUNNER_TEMP/vm/id_ed25519"; then
+            exit 1
+          fi
+          if ! scripts/linux-acceptance-vm.sh guest-exec \
+            "${{ matrix.image }}" facts | tee "acceptance-evidence/guest-facts.txt"; then
+            echo guest-facts-failed > "$RUNNER_TEMP/vm/${{ matrix.image }}.boot-status"
+            exit 1
+          fi
+          if ! scripts/linux-acceptance-vm.sh snapshot "${{ matrix.image }}" clean; then
+            echo clean-snapshot-failed > "$RUNNER_TEMP/vm/${{ matrix.image }}.boot-status"
+            exit 1
+          fi
+          if ! scripts/linux-acceptance-vm.sh stage "${{ matrix.image }}" "$GITHUB_WORKSPACE"; then
+            echo workspace-stage-failed > "$RUNNER_TEMP/vm/${{ matrix.image }}.boot-status"
+            exit 1
+          fi
+          echo ready > "$RUNNER_TEMP/vm/${{ matrix.image }}.boot-status"
 
       - name: Execute typed acceptance scenarios and preserve non-PASS evidence
         if: always()
         run: |
           set -euo pipefail
           mkdir -p acceptance-evidence
+          if [[ "$(cat "$RUNNER_TEMP/vm/${{ matrix.image }}.boot-status" 2>/dev/null || printf 'not-ready')" != "ready" ]]; then
+            echo "guest did not reach the scenario adapter; the cleanup step will write BLOCKED result-v1 records"
+            exit 0
+          fi
           password="$(cat "$RUNNER_TEMP/vm/${{ matrix.image }}.password")"
           setup_scenario="${{ matrix.setup_scenario }}"
           set +e
@@ -334,10 +354,52 @@ jobs:
         if: always()
         run: |
           set +e
-          scripts/linux-acceptance-vm.sh guest-exec \
-            "${{ matrix.image }}" screenshot \
-            "acceptance-evidence/${{ matrix.image }}-failure.png"
-          scripts/linux-acceptance-vm.sh power-cut "${{ matrix.image }}"
+          if [[ "$(cat "$RUNNER_TEMP/vm/${{ matrix.image }}.boot-status" 2>/dev/null || printf 'not-ready')" == "ready" ]]; then
+            scripts/linux-acceptance-vm.sh guest-exec \
+              "${{ matrix.image }}" screenshot \
+              "acceptance-evidence/${{ matrix.image }}-failure.png"
+          fi
+          state="$RUNNER_TEMP/vm/${{ matrix.image }}"
+          if [[ -f "${state}.boot-status" ]]; then
+            cp "${state}.boot-status" "acceptance-evidence/${{ matrix.image }}-boot-status.txt"
+          fi
+          if [[ -f "${state}.serial" ]]; then
+            tail -c 65536 "${state}.serial" > "acceptance-evidence/${{ matrix.image }}-serial.log"
+          fi
+          if [[ -f "${state}.serial.qemu.log" ]]; then
+            tail -c 65536 "${state}.serial.qemu.log" > "acceptance-evidence/${{ matrix.image }}-qemu.log"
+          fi
+          cleanup_status=failed
+          if scripts/linux-acceptance-vm.sh power-cut "${{ matrix.image }}"; then
+            cleanup_status=complete
+          fi
+          if [[ "$(cat "${state}.boot-status" 2>/dev/null || printf 'not-ready')" != "ready" ]]; then
+            image_digest="$(awk -v name='${{ matrix.image }}' '$1 == name { for (i=2;i<=NF;i++) if ($i ~ /^sha256:/) { sub(/^sha256:/, "", $i); print $i; exit } }' deploy/acceptance/images.lock)"
+            boot_status="$(cat "${state}.boot-status" 2>/dev/null || printf 'guest-not-ready')"
+            case "$boot_status" in
+              ssh-timeout|readiness-timeout)
+                reason="${{ matrix.platform }} ${{ matrix.version }} pinned guest did not reach the acceptance adapter (${boot_status}); QEMU used TCG because KVM was unavailable; no product journey ran."
+                ;;
+              prepare-failed)
+                reason="${{ matrix.platform }} ${{ matrix.version }} VM preparation failed before guest launch; no product journey ran."
+                ;;
+              *)
+                reason="${{ matrix.platform }} ${{ matrix.version }} VM control failed before the acceptance adapter (${boot_status}); no product journey ran."
+                ;;
+            esac
+            for scenario in ${{ join(matrix.scenarios, ' ') }}; do
+              python3 scripts/linux_acceptance.py blocked-guest "$scenario" \
+                --manifest target/packages/SYNVEIL-RELEASE-MANIFEST.json \
+                --artifact-type "${{ matrix.artifact_type }}" \
+                --os-id "${{ matrix.platform }}" --version "${{ matrix.version }}" \
+                --image-name "${{ matrix.image }}" --image-sha256 "$image_digest" \
+                --source-commit "${{ inputs.source_commit || github.event.pull_request.head.sha || github.sha }}" \
+                --reason "$reason" --diagnostic-reference "${{ matrix.image }}-serial.log" \
+                --diagnostic-reference "${{ matrix.image }}-qemu.log" \
+                --cleanup-status "$cleanup_status" \
+                > "acceptance-evidence/${scenario}.json"
+            done
+          fi
           set -e
 
       - uses: actions/upload-artifact@v4
