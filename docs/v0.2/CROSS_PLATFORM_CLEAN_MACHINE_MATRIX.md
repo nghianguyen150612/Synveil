@@ -1,5 +1,47 @@
 # Cross-platform clean-machine matrix (P045)
 
+## Continuation record: e234 portability run and Windows profile diagnostics
+
+This task resumed on the existing branch
+`feat/cross-platform-clean-machine-matrix` at remote head
+`6bde285334d1fdb057126e924d47c09629bc7469`, tree
+`786ea75b0635b66c076fcca89a7cadb35ceb889f`; local and remote refs matched.
+PR #78 remains OPEN, DRAFT, and unmerged. `main` remains
+`a560a40c8f2fe5b91db27c1b63fa0b0ab87173bc`.
+
+The child from e233 Windows native run `37765484348`, job `113278758080`,
+completed FAIL. Bounded artifact `11546750732` is 634 bytes, SHA-256
+`d8c1a9bca53ea34830ab0ebba55e775c24ccceebb921a3555efedcbe1114e3c8`; it
+contains only `standard-user.stdout.log` and `standard-user.stderr.log`. The
+child verified the expected disposable SID and `administrator=false`, then
+reported `USERPROFILE_matches_token_profile=False` and
+`LOCALAPPDATA_matches_token_profile=False`. The first thrown condition was
+`installer exit 1, expected 0` at `test-windows-per-user-installation.ps1:78`.
+The preflight mismatch was diagnostic output, not itself an assertion. No Inno
+Setup log was captured, so the product-side cause of exit 1 remains unproven.
+
+The controller previously searched a fixed
+`C:\Users\<account>\AppData\Local\Synveil\installer` path, while the child
+resolves its profile from the process token. The follow-up now resolves the
+loaded `Win32_UserProfile.LocalPath`, copies only allowlisted diagnostics under
+262,144 bytes each, and writes evidence beneath the child token profile. The
+child records the inherited-profile mismatch, then sets profile-scoped
+environment variables from its token profile before starting Setup. This
+addresses a confirmed harness environment/evidence defect; whether it explains
+the installer exit remains pending an exact-candidate hosted rerun and its
+captured `install.log`.
+
+At the 2026-10-08 11:15 UTC status check, e234 source `6bde285` had P045
+aggregate run `37768137891` pending without jobs; Windows candidate run
+`37768137606` was building its runtime (`113280716579`); Windows installer
+`37768137540` was queued (`113281169231`); Linux clean-machine artifact
+production `37768137473` was in progress after its contract/adapters job passed;
+Linux package Qt reproducibility `113281027805` was in progress, with package
+build `113281027510` queued; AppImage run `37768137642` was building; P043 run
+`37768137523` had four of seven jobs passed and three queued; all ten P044 jobs
+and all eleven Rust CI jobs were queued. These are source/producer observations,
+not native matrix PASS results. Newer status is recorded below when observed.
+
 ## Current continuation: e233 Userenv import rerun
 
 At the e233 observation recorded here, the existing branch was at

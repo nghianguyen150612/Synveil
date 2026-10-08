@@ -147,9 +147,13 @@ def main() -> int:
         require(required in installed_test, f"installed runtime verification: {required}")
     for evidence in ("synthetic_standard_user", "administrator_member", "installer_elevated", "integrity_sid", "RegistryView]::Registry64", "RegistryView]::Registry32", "machine PATH changed", "Synveil service created", "Synveil scheduled task created", "PER_USER_ACL_FAILURE", "second uninstaller", "state_preservation"):
         require(evidence in per_user_test, f"P025 per-user evidence: {evidence}")
-    for evidence in ("SetPassword", "-Credential", "-LoadUserProfile", "WaitForExit(300000)", "-ExpectedSid", ".Delete('user'", "Remove-CimInstance", "::add-mask::"):
+    for evidence in ("SetPassword", "-Credential", "-LoadUserProfile", "WaitForExit(300000)", "-ExpectedSid", ".Delete('user'", "Remove-CimInstance", "::add-mask::",
+                     "Win32_UserProfile", "loadedProfile.LocalPath", "262144", "install.log"):
         require(evidence in per_user_invoker, f"P025 disposable-account harness: {evidence}")
-    for evidence in ("ExpectedSid", "STANDARD_USER_IDENTITY_FAILURE", "STANDARD_USER_PREFLIGHT"):
+    for evidence in ("ExpectedSid", "STANDARD_USER_IDENTITY_FAILURE", "STANDARD_USER_PREFLIGHT",
+                     "STANDARD_USER_ENVIRONMENT_FAILURE", "STANDARD_USER_ENVIRONMENT", "$env:LOCALAPPDATA = $tokenLocalAppData",
+                     "$env:USERPROFILE = $profileRoot", "Split-Path $EvidencePath -Leaf",
+                     "STANDARD_USER_EVIDENCE_FAILURE"):
         require(evidence in per_user_test, f"P025 child identity proof: {evidence}")
     for evidence in ("SHGetKnownFolderPath", "ExactSpelling=true", "OpenProcessToken", "GetCurrentProcess", "GetUserProfileDirectory", "CurrentUserProfile", "TOKEN_QUERY", "TOKEN_IMPERSONATE", "TOKEN_DUPLICATE", "KF_FLAG_DONT_VERIFY", "LocalApplicationData", "Programs", "DesktopDirectory", "CommonPrograms", "CommonDesktopDirectory"):
         require(evidence in known_folders, f"P025 token-owned Windows folders: {evidence}")

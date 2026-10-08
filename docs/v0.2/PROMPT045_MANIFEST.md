@@ -1,5 +1,39 @@
 # Prompt045 manifest — Cross-platform clean-machine matrix
 
+## Continuation record: e234 Windows child failure investigation
+
+The task resumed on the existing P045 branch at remote head
+`6bde285334d1fdb057126e924d47c09629bc7469` (tree
+`786ea75b0635b66c076fcca89a7cadb35ceb889f`), matching the local checkout.
+PR #78 remains OPEN, DRAFT, and unmerged; `main` is
+`a560a40c8f2fe5b91db27c1b63fa0b0ab87173bc`.
+
+On e233 Windows native run `37765484348`, standard-user child job
+`113278758080` failed after confirming the expected disposable SID and a
+non-administrator token. Artifact `11546750732` (634 bytes, SHA-256
+`d8c1a9bca53ea34830ab0ebba55e775c24ccceebb921a3555efedcbe1114e3c8`)
+contains only child stdout/stderr. It records both inherited profile variables
+as mismatched against the token profile; the first thrown condition is Setup
+exit code 1 at `test-windows-per-user-installation.ps1:78`. The mismatch was
+not an assertion and there is no captured Inno log, so the exact Setup failure
+cause is not yet established.
+
+The next harness revision derives the child profile from
+`Win32_UserProfile.LocalPath`, captures only allowlisted files up to 262,144
+bytes, stores evidence under that actual profile, and sets profile-scoped
+environment variables from the token profile before Setup runs. This fixes the
+observed harness environment/evidence gap. A fresh exact-candidate Windows run
+must confirm whether it also resolves Setup exit 1; no standard-user PASS is
+claimed until its installer log and acceptance record support that result.
+
+At 2026-10-08 11:15 UTC, e234 P045 aggregate run `37768137891` had no jobs yet;
+Windows candidate build `37768137606` was in progress, Windows installer run
+`37768137540` was queued, Linux clean-machine artifact production
+`37768137473` and AppImage run `37768137642` were in progress, Linux package
+Qt reproducibility was in progress, P043 had four of seven jobs passed and
+P044/Rust CI jobs remained queued. These hosted statuses are pending or source
+evidence only; no native matrix row passes as a result.
+
 ## Current continuation: e233 Userenv import rerun
 
 At the e233 observation recorded here, the existing branch was at

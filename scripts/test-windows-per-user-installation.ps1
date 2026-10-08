@@ -24,6 +24,28 @@ if (![string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
     $localAppDataEnvMatches = [string]::Equals([IO.Path]::GetFullPath($env:LOCALAPPDATA).TrimEnd('\'), (Join-Path $profileRoot 'AppData\Local').TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)
 }
 Write-Output "STANDARD_USER_PREFLIGHT: expected SID matched; administrator=false; USERPROFILE_matches_token_profile=$profileEnvMatches; LOCALAPPDATA_matches_token_profile=$localAppDataEnvMatches"
+# Start-Process -Credential can inherit the caller's environment even when it
+# loads the target profile. Rebuild the profile-scoped variables from the
+# process token before invoking Setup so this child models a normal user
+# environment instead of runneradmin's profile paths.
+$tokenLocalAppData = Join-Path $profileRoot 'AppData\Local'
+$tokenRoamingAppData = Join-Path $profileRoot 'AppData\Roaming'
+$tokenTemp = Join-Path $tokenLocalAppData 'Temp'
+New-Item $tokenTemp -ItemType Directory -Force | Out-Null
+$homeDrive = Split-Path -Qualifier $profileRoot
+$env:USERPROFILE = $profileRoot
+$env:LOCALAPPDATA = $tokenLocalAppData
+$env:APPDATA = $tokenRoamingAppData
+$env:HOMEDRIVE = $homeDrive
+$env:HOMEPATH = $profileRoot.Substring($homeDrive.Length)
+$env:TEMP = $tokenTemp
+$env:TMP = $tokenTemp
+$env:USERNAME = $identity.Name.Substring($identity.Name.LastIndexOf('\') + 1)
+$env:USERDOMAIN = $env:COMPUTERNAME
+if (![string]::Equals([IO.Path]::GetFullPath($env:LOCALAPPDATA).TrimEnd('\'), $tokenLocalAppData.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'STANDARD_USER_ENVIRONMENT_FAILURE: process LocalAppData does not match its token profile'
+}
+Write-Output 'STANDARD_USER_ENVIRONMENT: profile-scoped variables now match the non-administrator token'
 $localAppData = Get-WindowsKnownFolderPath LocalApplicationData
 $appId = '{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1'
 $uninstallSubkey = "Software\Microsoft\Windows\CurrentVersion\Uninstall\$appId"
@@ -34,6 +56,10 @@ $commonStartMenu = Join-Path (Get-WindowsKnownFolderPath CommonPrograms) 'Synvei
 $publicDesktop = Join-Path (Get-WindowsKnownFolderPath CommonDesktopDirectory) 'Synveil.lnk'
 $logRoot = Join-Path $localAppData 'Synveil\installer'
 $sentinel = Join-Path $localAppData 'Synveil\state-sentinel\p025.txt'
+$evidencePath = Join-Path $logRoot (Split-Path $EvidencePath -Leaf)
+if ((Split-Path $evidencePath -Leaf) -cne 'windows-per-user-evidence.json') {
+    throw 'STANDARD_USER_EVIDENCE_FAILURE: unexpected child evidence filename'
+}
 
 Add-Type -TypeDefinition @'
 using System;
@@ -167,6 +193,6 @@ $evidence = [ordered]@{
     machine_path_unchanged=$true; user_path_unchanged=$true; service_created=$false; scheduled_task_created=$false
     uninstall='pass'; reinstall='pass'; state_preservation='pass'; cleanup='pending_controller'
 }
-New-Item (Split-Path $EvidencePath) -ItemType Directory -Force | Out-Null
-$evidence | ConvertTo-Json | Set-Content -LiteralPath $EvidencePath -Encoding utf8
+New-Item (Split-Path $evidencePath) -ItemType Directory -Force | Out-Null
+$evidence | ConvertTo-Json | Set-Content -LiteralPath $evidencePath -Encoding utf8
 Write-Host 'Windows standard-user installation: PASS'
