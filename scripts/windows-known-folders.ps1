@@ -35,7 +35,7 @@ public static class SynveilKnownFolders {
         }
         try {
             uint size = 0;
-            GetUserProfileDirectory(token, null, ref size);
+            GetUserProfileDirectory(token, IntPtr.Zero, ref size);
             int error = Marshal.GetLastWin32Error();
             if (size == 0 || error != 122) {
                 throw new Win32Exception(error, "GetUserProfileDirectory did not provide a profile path size");
