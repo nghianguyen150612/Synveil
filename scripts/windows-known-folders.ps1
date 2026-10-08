@@ -19,7 +19,7 @@ public static class SynveilKnownFolders {
     [DllImport("advapi32.dll", SetLastError=true)]
     private static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
 
-    [DllImport("advapi32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
+    [DllImport("userenv.dll", EntryPoint="GetUserProfileDirectoryW", ExactSpelling=true, SetLastError=true)]
     private static extern bool GetUserProfileDirectory(IntPtr token, IntPtr path, ref uint size);
 
     [DllImport("shell32.dll", EntryPoint="SHGetKnownFolderPath", ExactSpelling=true)]

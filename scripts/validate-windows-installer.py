@@ -153,6 +153,8 @@ def main() -> int:
         require(evidence in per_user_test, f"P025 child identity proof: {evidence}")
     for evidence in ("SHGetKnownFolderPath", "ExactSpelling=true", "OpenProcessToken", "GetCurrentProcess", "GetUserProfileDirectory", "CurrentUserProfile", "TOKEN_QUERY", "TOKEN_IMPERSONATE", "TOKEN_DUPLICATE", "KF_FLAG_DONT_VERIFY", "LocalApplicationData", "Programs", "DesktopDirectory", "CommonPrograms", "CommonDesktopDirectory"):
         require(evidence in known_folders, f"P025 token-owned Windows folders: {evidence}")
+    require('[DllImport("userenv.dll", EntryPoint="GetUserProfileDirectoryW", ExactSpelling=true, SetLastError=true)]' in known_folders,
+            "P025 profile lookup imports the Unicode Userenv entry point")
     require("SHGetKnownFolderPath(ref folder, KF_FLAG_DONT_VERIFY, token, out path)" in known_folders,
             "P025 machine-wide known folders use the explicit current process token")
     require("GetUserProfileDirectory(token, path, ref size)" in known_folders,
