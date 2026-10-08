@@ -12,7 +12,7 @@ final class EnrollmentTests: XCTestCase {
     override func setUp() {
         super.setUp()
         mockTransport = MockEnrollmentHTTPTransport()
-        mockEndpoint = try! ServerEndpoint("https://example.synveil.com")
+        mockEndpoint = try! ServerEndpoint(validating: "https://example.synveil.com")
     }
 
     override func tearDown() {
