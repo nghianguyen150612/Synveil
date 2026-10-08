@@ -105,6 +105,25 @@ bundled Qt 6.7.3 after native packages are frozen. Package workflow checkouts bi
 the true source head. Actual release manifests are printed only after validation
 to retain source/version/size/hash identities in the producer logs.
 
+## Windows runtime audit after NCrypt authentication
+
+Source `927ccff5c418b413c1c91a2187fcb870ddfb9e20`, Windows native push run
+`37703460923`, producer job `113072153986`, observed the serviced NCrypt file
+as a HardLink with Archive attributes (not a reparse point). Microsoft signature,
+canonical System32 path and AMD64 identity passed. Active compiler version
+`19.51.36260.0`, linker `14.51.36260.0`, and ten authenticated x64 CRT DLLs were
+selected. The real runtime build then reached the exhaustive PE audit and failed
+on `vc_redist.x64.exe`: Microsoft's redistributable uses a 32-bit bootstrapper.
+No Setup was produced; standard-user job `113076190027` was skipped.
+
+Qt deployment now explicitly disables the compiler-runtime bootstrapper while
+the builder stages authenticated app-local x64 CRT DLLs. Unexpected staged
+redistributable installers are rejected, and every shipped PE remains subject
+to the unchanged AMD64 audit. The source validator checks this actual app-local
+closure policy rather than requiring the obsolete bootstrapper option. No
+global CRT installer or elevation dependency substitutes for ordinary install.
+Actual candidate creation, byte comparison and native consumption must rerun.
+
 Status: **infrastructure/source implemented; acceptance checkpoint withheld.**
 
 | Field | Observed value |

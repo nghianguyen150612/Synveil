@@ -138,7 +138,7 @@ def main() -> int:
     require("CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" in reproducible and '"${rustc_linker_args[@]}"' in reproducible, "direct rustc uses selected MSVC linker")
     require("CARGO_ENCODED_RUSTFLAGS" in reproducible and "$'\\x1f'" in reproducible, "lossless Cargo flag transport")
     require('rustc "${SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS[@]}" "${rustc_linker_args[@]}"' in reproducible, "direct rustc receives discrete remaps")
-    for runtime_rule in ("--compiler-runtime", "--qmldir", "platforms/qwindows.dll", "QmlImports=qml", "Qml2Imports=qml", "is_system_dll", "missing non-system import", "development directory leaked", 'rm -rf -- "$STAGING_DIR"'):
+    for runtime_rule in ("--no-compiler-runtime", "SYNVEIL_MSVC_CRT_DIR", "msvcp140.dll", "unexpected elevated CRT bootstrapper", "--qmldir", "platforms/qwindows.dll", "QmlImports=qml", "Qml2Imports=qml", "is_system_dll", "missing non-system import", "development directory leaked", 'rm -rf -- "$STAGING_DIR"'):
         require(runtime_rule in package, f"authoritative runtime rule: {runtime_rule}")
     for required in ("SYNVEIL-MANIFEST.txt", "unmanifested package file", "0x8664", "platforms/qwindows.dll"):
         require(required in installed_test, f"installed runtime verification: {required}")

@@ -243,15 +243,15 @@ if [[ "$native_windows" -eq 1 ]]; then
     log "deploying the Qt closure with windeployqt"
     "$WINDEPLOYQT" \
         --release \
-        --compiler-runtime \
+        --no-compiler-runtime \
         --no-translations \
         --no-system-d3d-compiler \
         --qmldir "${REPO_ROOT}/crates/desktop/qml" \
         "${STAGE_ROOT}/synveil-desktop.exe"
-    # windeployqt may ship a redistributable installer rather than app-local
-    # DLLs. A per-user Setup cannot depend on running that elevated installer.
-    # Consume the reviewed x64 CRT from the active Visual C++ toolchain and
-    # retain the exhaustive non-system import audit below.
+    # The CRT is supplied app-locally below, so do not ask windeployqt to stage
+    # the unused elevated redistributable bootstrapper (which is a 32-bit PE
+    # even when named vc_redist.x64.exe). Every shipped PE remains AMD64-audited.
+    # Consume only the authenticated active toolchain's x64 runtime DLLs.
     [[ -n "${SYNVEIL_MSVC_CRT_DIR:-}" ]] || {
         echo '[synveil-windows-package] ERROR: authenticated app-local MSVC CRT directory is required' >&2
         exit 1
@@ -433,6 +433,10 @@ sha256_file() {
 # Windows; every other imported DLL must be in this ZIP. This catches Linux
 # shared-library leakage and incomplete Qt/C++ runtime closure.
 assert_no_packaged_system_dlls
+if find "$STAGE_ROOT" -type f -iname 'vc_redist*.exe' -print -quit | grep -q .; then
+    echo '[synveil-windows-package] ERROR: unexpected elevated CRT bootstrapper in app-local runtime payload' >&2
+    exit 1
+fi
 while IFS= read -r pe_file; do
     assert_pe "$pe_file"
     while IFS= read -r imported; do
