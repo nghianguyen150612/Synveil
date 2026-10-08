@@ -1,5 +1,182 @@
 # Cross-platform clean-machine matrix (P045)
 
+## Continuation record: e235 Windows/Linux diagnostics and source-gate correction
+
+The uploaded checkpoint cited `1215abe92af4d23936607f8f602d6a928d133bcf` as
+its last verified remote head. Fresh GitHub branch/PR checks and `git ls-remote`
+showed the existing branch `feat/cross-platform-clean-machine-matrix` already
+at `0d5ba0c491a75cad2c423557179e4ea504532cdb`, tree
+`fb61ce7bc6e3ace8f036863d6bc56a102ba64a1d`; `1215abe` is an ancestor through
+the published continuation commits. No branch or PR was recreated. PR #78 is
+still OPEN,
+DRAFT, and unmerged. `main` is
+`a560a40c8f2fe5b91db27c1b63fa0b0ab87173bc`. The PR discussion's historical
+result comment remains unchanged and there are no open review threads.
+
+On source `0d5ba0c`, Linux package run `37769231153`, job `113284361044`, built
+and reproducibly rebuilt the DEB/RPM packages, then failed its static Rust
+units. `linux_native_packaging_units` passed 26/26. In
+`release_artifact_units`, six tests passed and
+`artifact_unit_7_nested_target_roots_use_stable_rust_and_cxx_prefixes` failed:
+the Bash probe used `set -u` and read `RUSTFLAGS` after
+`synveil_prepare_reproducible_rust_build` had correctly moved the flags to
+`CARGO_ENCODED_RUSTFLAGS` and unset `RUSTFLAGS`. The exact hosted error was
+`line 7: RUSTFLAGS: unbound variable`. The generated DEB was
+`synveil_0.1.0_amd64.deb` (8,465,348 bytes, SHA-256
+`cf26515ebe1d828078b07e279e0ccad78ed982ae5dbc85e7935a6caba13147be`) and
+`synveil-0.1.0-1.x86_64.rpm` (12,126,430 bytes, SHA-256
+`85f889df1e2aeb30f1960d2c9db2484b8ffc92bb6e1a5fd749fd5ed21f63ee03`). Both
+package rebuilds were byte-identical. No package artifact was uploaded because
+the unit failure stopped the job.
+
+On the same source `0d5ba0c`, Windows native run `37769231206` candidate
+producer job `113284672931` passed; standard-user job `113297277961` failed.
+Candidate artifact `11547904865` is 32,361,965 bytes (ZIP SHA-256
+`b5e9c233dd398efe678f3097fe07b6e9a1dfb5420462d3275f2ca24da8f08817`). Its
+exact Setup is 32,901,915 bytes, SHA-256
+`d9ee5ce43418dfa99d8280dd465822ed102b9aa395ed28f5e916425e2db3646d`; release
+manifest SHA-256 is `b70445f5fcd91f75b24c4c4f4e56ea34f9c575c5780df3f329b6d9a3f38935fe`,
+and toolchain identity SHA-256 is
+`2ce09b2ad24d24b6ff6b22ecda0b7fc30d3455e46c1e924cb19c999433fdabd6`. The
+manifest binds it to source `0d5ba0c491a75cad2c423557179e4ea504532cdb`.
+Producer OS was Windows Server 2025 Datacenter 10.0.26100/build 26100, AMD64,
+so it does not qualify Windows 11.
+
+The bounded child artifact `11547564738` (1,786-byte ZIP, SHA-256
+`3cd91dedb6549ec06fa2f0053c2dc77d9811ebed4a4afc45d5c6619b58e115e1`) records
+expected SID matched, non-administrator token, profile variables normalized,
+and installed runtime manifest PASS for 1,363 files. The first failed assertion
+was desktop smoke exit `-1073740791` at `Invoke-Bounded`; captured Qt diagnostics
+show `qwindows.dll` found, `offscreen` unavailable, and `windows` as the only
+available platform plugin. The Setup command and runtime manifest checks had
+passed; `install.log` was omitted because it exceeded the 262,144-byte evidence
+bound. Source inspection confirms the harness itself set
+`QT_QPA_PLATFORM='offscreen'` even though this Windows payload ships only
+`qwindows.dll`. Separate installer run `37769231279`, job `113284462654`,
+failed the same smoke against its own source-bound candidate (32,900,918 bytes,
+SHA-256 `2eb9e35e1d68e5b39c2f475920ddc8511afa9a90d5f549771d911819e389a4ca`;
+artifact `11548199593`, 32,361,076-byte ZIP, SHA-256
+`45d6aa5aff71e2388685f64317e3b06607e83c7b39b6bb34f823bafb052d322d`). The
+separate PR-triggered native run `37769237829` also completed candidate
+producer job `113284814895` and failed child job `113298213409` on the same
+`offscreen` request. Its candidate artifact `11548349111` is 32,362,658 bytes
+(ZIP SHA-256 `c5ad8580ef075c011a11eadcba5f21b0a8d3b18176c9c8fb40a98001c69174ad`);
+Setup was 32,902,607 bytes, SHA-256
+`15ef708f045ebd70cb2e745307e9022a1caaf5a6601d70b6677f50d913b65693`, bound to
+source `0d5ba0c491a75cad2c423557179e4ea504532cdb`. Its child evidence artifact
+`11548499438` is a 1,787-byte ZIP with SHA-256
+`4aaf84673e08538f78f0a62ac2376df44a580d9cbde80c48f8560a2c3a435209`; its
+bounded logs repeat the same 1,363-file runtime PASS and unsupported-offscreen
+failure.
+
+This reproduces an acceptance-harness configuration failure; Setup and runtime
+checks passed, and the installed desktop smoke still needs a Windows-platform
+rerun. The local harness now selects the packaged `windows` plugin, and its
+validator rejects an `offscreen` selection; hosted confirmation is pending.
+
+The local correction now requires nonempty `CARGO_ENCODED_RUSTFLAGS`, decodes
+its unit-separator-delimited arguments into the direct `rustc` probe, and keeps
+the stable nested-prefix and two-target-root byte-equality assertions intact.
+A shell check against the real reproducibility helper verified the encoded
+flags and exact target-prefix remap. Cargo/Rust are unavailable in this
+workspace, so the corrected Rust test and hosted source gates have not yet run.
+
+The e235 P044 run `37769237733` also failed: format job `113284385017` found
+the same `crates/client/src/config.rs` formatting issue, and Windows interruption
+job `113284385039` stopped while hashing the in-progress target `LICENSE`.
+PowerShell reported that the file was in use during Inno's copy. The local
+probe now retries only `IOException` with Windows sharing-violation code 32,
+within its existing 90-second deadline; it still requires the exact new-file
+hash, force-terminates the Setup process tree, and checks the old manifest,
+registration, runtime payload and user-state sentinels. P044 remains unverified
+until a hosted rerun.
+
+Rust CI run `37769237896` exposed four additional test-harness/source issues.
+macOS job `113284384495` had three Unix IPC `BindFailed` tests because the
+canonical per-user temporary path plus `synveil/control.sock` exceeded the
+108-byte Unix socket limit; the shared test root now uses canonical `/tmp`.
+Windows job `113284384518` failed the named-pipe ping with `Frame(Closed)`. The
+accept future had removed the pipe instance from its transport before awaiting
+connection, so another ready branch in `run_server` could cancel the future
+and drop the instance. The transport now retains both current and next pipe
+instances across that await and promotes them only after connection. Windows
+Rust test job `113284384624` also ran three server-config fixtures against
+`LinuxConfigLayout` using Windows drive-root paths; those Unix filesystem
+fixtures are now gated to Unix targets, while Windows legacy-mode and relative
+override tests remain enabled. Linux test job `113284384750` found the
+packaging guard still expected client schema 7 even though commit `2c650c8`
+added migration `0008_first_sync_completion.sql` and set the current schema to
+8; the current-source expectation is now 8. The same-run quality job
+`113284384668` stopped at rustfmt on the already prepared `config.rs` fix.
+These source/test corrections await fresh hosted Rust CI; local Cargo, rustc,
+rustfmt and PowerShell are unavailable.
+
+Linux clean-machine run `37769237960` completed its source-`0d5ba0c` producer
+successfully after independent release-binary reproducibility passed. The exact
+candidate manifest records AppImage (48,871,928 bytes,
+`eebb1771cac95a33d7290cd1557b71305de2c7ad8db6d82898a6438960ab763f`), DEB
+(8,447,686 bytes, `46f462b2961f62cc035977224bd661df68920a58f54c0eb89388520a5918bacd`),
+and RPM (12,104,521 bytes,
+`31f52fb44eb2d7420007ffc1329ef0c46306c930b72e43581d24343ae408e208`). The
+packaged desktop, client, and maintenance binaries were also recorded and
+matched independent build A/build B byte-for-byte. The uploaded producer bundle
+`11549417455` is 68,718,487 bytes with SHA-256
+`f90b6a679cbab59b7c80a432ef947793c098847b156ab89cb91b05dc01e1e4df`. This
+direct PR workflow has no `run_native` input, so its Linux clean-machine and
+Phase-C consumer jobs were SKIPPED; it produces no guest evidence.
+
+The latest observed actual guest matrix remains historical run `37717057981`
+on source `1215abe`. Its Ubuntu DEB/AppImage and Fedora RPM/AppImage jobs
+(`113124991887`, `113124991930`, `113124991905`, `113124991959`) verified the
+locked image downloads (Ubuntu SHA-256
+`6a81c37564db9b1ee84e141922625e1d7c5b389b99bb3c572e0243607d5bb4d2`; Fedora
+`e401a4db2e5e04d1967b6729774faa96da629bcf3ba90b67d8d9cce9906bec0f`). Each
+runner reported no KVM and selected QEMU TCG. SSH on forwarded port 2222
+remained refused through the finite 900-second boot bound, so no guest reached
+readiness or ran a Synveil scenario. The four bounded consumer artifacts
+(`11526205749`, `11525976216`, `11525582046`, `11526031879`) contain verified
+image-download logs and empty setup diagnostics, but no serial or QEMU boot
+logs. The pinned URLs/digests make image corruption less likely; without the
+missing boot logs the evidence cannot distinguish image boot configuration,
+cloud-init, network readiness, or TCG performance. It does not establish a
+product install failure.
+
+Those same logs also report `JSONDecodeError: Extra data` at line 1, column 27
+in the QMP cleanup/evidence path. Commit `fa72483` fixed its concrete cause:
+`${2:-{}}` appended an extra closing brace to QMP arguments; the helper now
+constructs the default object separately and a socket-backed fixture checks
+that snapshot/restore send one valid JSON object. The commit also captures
+serial and QEMU tails and writes a schema-valid result-v1 BLOCKED record for
+guests that do not boot. These diagnostics fixes are present at current source
+`0d5ba0c`, but no current-source native guest ran: P045 run `37769239248`
+stopped at source gates and direct run `37769237960` skipped its guest matrix.
+One current-source native run is still needed to see whether TCG can boot the
+locked images within the existing bound; if it again times out, an accelerated
+KVM-enabled disposable runner is the remaining Linux guest capability needed.
+
+P045 aggregate run `37769239248` on `0d5ba0c` passed contract job
+`113284526828`; source-gates job `113284526960` failed at rustfmt before
+Clippy/cargo-deny, with the exact formatting correction prepared locally.
+Evidence-gate job `113294462792` emitted result-v1 artifact `11547423363`
+(2,798 bytes, SHA-256
+`d2eab543d53d45b5b0fb698de5e9258b55731254137287e6c20d80f63cbe96bf`),
+reporting all 32 required row/scenario records BLOCKED. Windows and Linux
+aggregate consumers `113294464469` and `113294464277` were skipped. The record
+does not contain native acceptance.
+
+At the earlier 11:49 UTC snapshot, the same-source Windows installer push job
+`113284462654` and candidate producer jobs `113284672931` (push) and
+`113284814895` (PR) were still building the runtime. Linux exact-artifact
+producer `113284548443` had completed DEB/RPM construction and was gating
+release-binary reproducibility. The standard-user child diagnostic had not
+completed at that snapshot.
+
+At 11:59 UTC, both source-`0d5ba0c` Windows standard-user child attempts and
+their bounded artifacts were captured; the PR-triggered native job
+`113298213409` reproduced the same offscreen-plugin failure. The e235 Linux
+clean-machine producer `113284548443` was still gating independent release
+binary reproducibility. No e235 Linux guest result was available at this check.
+
 ## Continuation record: e234 portability run and Windows profile diagnostics
 
 This task resumed on the existing branch
@@ -41,6 +218,91 @@ build `113281027510` queued; AppImage run `37768137642` was building; P043 run
 `37768137523` had four of seven jobs passed and three queued; all ten P044 jobs
 and all eleven Rust CI jobs were queued. These are source/producer observations,
 not native matrix PASS results. Newer status is recorded below when observed.
+
+### Completed e233 aggregate and superseded e234 jobs
+
+P045 aggregate run `37765484729` later completed its contract (`113273965143`)
+and source gates (`113273965560`) successfully, while Linux adapters
+(`113277693759`) passed. Its Windows candidate (`113277693547`) and Linux exact
+artifact producer (`113277693805`) were cancelled before completion. The
+aggregate Phase C job `113281136543` failed because it downloaded zero
+`acceptance-evidence-*` artifacts. Evidence gate `113283588362` emitted
+result-v1 artifact `11546513201` (2,874 bytes; ZIP SHA-256
+`e89ba4416ad1686cee8ff9a9728f19c14a23e8d2d515e26d7efb32795900e156`) with
+`P045 matrix: BLOCKED (32 required row/scenario records)`. It is a truthful
+preflight record, not native execution. The independent Windows native
+candidate/child outcome is recorded above; no e233 Linux guest reached its
+product journey.
+
+After `0d5ba0c` was published, remaining e234 jobs were cancelled: Windows
+candidate `113280716579`, Windows installer `113281169231`, Linux acceptance
+artifact producer `113280977135`, Linux package/Qt jobs `113281027510` and
+`113281027805`, AppImage `113280716367`, P044 jobs, and the remaining Rust CI
+jobs. The Linux contract/adapters job `113280976629` and four P043/security
+jobs did pass before cancellation, but those runs are bound to source
+`6bde285` and do not validate the newly changed standard-user harness. e235
+run IDs are listed in the continuation status below; their jobs were pending at
+the latest check.
+
+### e235 first Windows prerequisite attempt
+
+On source `0d5ba0c`, Windows installer run `37769237823`, job
+`113284382617`, failed before runtime or candidate construction. The
+Chocolatey ZIP package request to `community.chocolatey.org` returned HTTP 504;
+candidate build, standard-user acceptance, and artifact upload were skipped or
+failed for the missing candidate. This is a package-feed availability failure,
+not an installer or standard-user product result. The exact job rerun
+`113286438903` was canceled before execution after same-SHA push run
+`37769231279`, job `113284462654`, passed ZIP acquisition and entered runtime
+build. The candidate-bound PR Windows native run `37769237829`, job
+`113284814895`, remained queued, as did P045 aggregate `37769239248`, Linux
+packages `37769237978`, Linux clean-machine `37769237960`, AppImage
+`37769237747`, and Rust CI `37769237896`. No e235 candidate or native row had
+completed at this observation.
+
+### e235 P045 source-gates finding
+
+On commit `0d5ba0c`, P045 aggregate run `37769239248` source-gates job
+`113284526960` failed at `cargo fmt --all -- --check`. Rustfmt expected the
+`network_hint_interval_is_bounded` test assignment in
+`crates/client/src/config.rs` to wrap across lines. The shell step stopped at
+formatting, so strict Clippy and cargo-deny did not run and no source-gates
+artifact was emitted. The exact rustfmt-only correction is prepared locally
+but is not yet published; this hosted result remains a failure on `0d5ba0c`.
+
+At 11:44 UTC, the candidate-bound Windows native PR and push jobs
+(`113284814895`, `113284672931`) were building the runtime; the Windows
+installer push job `113284462654` was also building the runtime. Linux clean
+producer `113284548443` and Linux package job `113284361044` were building DEB
+and RPM payloads, while AppImage job `113284607149` was reproducing its build.
+P045 contract job `113284526828` remained queued. These are in-progress producer
+states, not native journey results.
+
+### e235 exact-source Linux reproducibility
+
+The same source `0d5ba0c` push-triggered Linux package run `37769231153`,
+reproducibility job `113284360798`, completed PASS. Independent clean target-root
+builds were byte-identical for `synveil-desktop` (8,438,216 bytes,
+`e96fd5fd892089c4b7e1c37f2e90d36caef138914d51fab6d4421d4593849fd3`),
+`synveil-client` (18,460,400 bytes,
+`bb2a4f134fcaeaf68481f19c95ab87d03cf040657645cbd42b087912400eadc7`), and
+`synveil-scheduled-maintenance-once` (10,142,632 bytes,
+`c95ee24c233f9fda2c0b66c253755b92e913fb01298add93ac76c02e237be26e`). This
+closes binary reproducibility on this source, not native Linux acceptance. At
+11:38 UTC, the same run's DEB/RPM job `113284361044` was still rebuilding
+release binaries; systemd check `113284361058` passed. AppImage push run
+`37769231205` (`113284607149`) was still reproducing its candidate. Windows
+runtime build was in progress; candidate-bound Windows native, Linux
+clean-machine, and P045 aggregate PR jobs remained queued.
+
+The same source's AppImage push run `37769231205`, job `113284607149`, then
+completed PASS for independent reproduction, manifest/runtime inspection,
+bounded QML smoke, and current-user lifecycle. Payload: 48,638,456 bytes, SHA-256
+`cff826fa67893e3ba1fbec6bde6815b89db19f4ce2bf92a7855232e8cc32e023`; artifact
+`11548127890` is a 48,029,808-byte ZIP with SHA-256
+`e0fa4a2aec8a57ad4527726ff6f705408c2c7739694e2a58f4c165e088f50a6b`. This is
+producer/runtime evidence, not clean graphical guest acceptance for either
+Ubuntu or Fedora.
 
 ## Current continuation: e233 Userenv import rerun
 
