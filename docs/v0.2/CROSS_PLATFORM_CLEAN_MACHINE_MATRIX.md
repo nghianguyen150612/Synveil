@@ -25,6 +25,12 @@ Those attempts remain historical after the prerequisite fix. Exact rerun
 identities and subsequent native results are recorded in PR #78; no earlier
 producer PASS is promoted into a final-head native PASS.
 
+Fedora image acquisition now uses the confirmed official archive because the
+active-release URL returned 404. The archived signed CHECKSUM was verified
+against the existing reviewed Fedora 42 fingerprint, and the actual downloaded
+532,217,856-byte image matched the unchanged locked SHA-256. The exact platform
+and image digest remain the same; acquisition does not prove a native journey.
+
 This is the current P045 target ledger. No target is newly accepted by this
 document. The scenario JSON and result-v1 schema remain normative. P020/P028
 historical records are preserved; P044 process interruption cannot close a

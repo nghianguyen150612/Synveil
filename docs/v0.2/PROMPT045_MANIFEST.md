@@ -142,6 +142,17 @@ uploaded artifact `11519273954` is the ZIP envelope, not that payload size.
 This source is superseded by the ZIP prerequisite fix; it remains producer
 history and does not qualify either native AppImage matrix row.
 
+Native-image preflight found that Fedora's active-release URL now returns 404.
+The official archive directory lists the exact same 42-1.1 cloud image. Its
+archived CHECKSUM has a valid signature from the already reviewed fingerprint
+`B0F4950458F69E1150C6C5EDC8AC4916105EF944`; the actual 532,217,856-byte
+download hashes to the unchanged locked digest
+`e401a4db2e5e04d1967b6729774faa96da629bcf3ba90b67d8d9cce9906bec0f`.
+Only the acquisition URL and checksum-reference URL change to that confirmed
+official archive. Neither image identity nor target qualification is broadened.
+Ubuntu's published checksum still matches its existing lock. URL reachability
+and verified image acquisition are prerequisites, not native journey evidence.
+
 Status: **infrastructure/source implemented; acceptance checkpoint withheld.**
 
 | Field | Observed value |
