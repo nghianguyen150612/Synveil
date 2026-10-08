@@ -567,6 +567,9 @@ fn symlink_resolves_to(path: &Path, target: &Path) -> bool {
     let Ok(link_target) = fs::read_link(path) else {
         return false;
     };
+    let Ok(expected) = fs::canonicalize(target) else {
+        return false;
+    };
     let resolved = if link_target.is_absolute() {
         link_target
     } else if let Some(parent) = path.parent() {
@@ -574,7 +577,7 @@ fn symlink_resolves_to(path: &Path, target: &Path) -> bool {
     } else {
         return false;
     };
-    fs::canonicalize(resolved).is_ok_and(|actual| actual == target)
+    fs::canonicalize(resolved).is_ok_and(|actual| actual == expected)
 }
 
 #[cfg(all(test, unix))]
