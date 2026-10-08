@@ -49,6 +49,19 @@
 		A10000012C00000000000028 /* ServerValidationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000028 /* ServerValidationView.swift */; };
 		B10000012C0000000000001B /* ServerSetupViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000001B /* ServerSetupViewModelTests.swift */; };
 		B10000012C0000000000001C /* ServerReachabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000001C /* ServerReachabilityTests.swift */; };
+		A10000012C00000000000029 /* EnrollmentToken.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000029 /* EnrollmentToken.swift */; };
+		A10000012C0000000000002A /* DeviceCredential.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000002A /* DeviceCredential.swift */; };
+		A10000012C0000000000002B /* DeviceCredentialRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000002B /* DeviceCredentialRecord.swift */; };
+		A10000012C0000000000002C /* EnrollmentExchangeResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000002C /* EnrollmentExchangeResult.swift */; };
+		A10000012C0000000000002D /* EnrollmentState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000002D /* EnrollmentState.swift */; };
+		A10000012C0000000000002E /* ExchangeDeviceEnrollmentRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000002E /* ExchangeDeviceEnrollmentRequest.swift */; };
+		A10000012C0000000000002F /* DeviceCredentialResponseDTO.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000002F /* DeviceCredentialResponseDTO.swift */; };
+		A10000012C00000000000030 /* SecureCredentialSinkProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000030 /* SecureCredentialSinkProtocol.swift */; };
+		A10000012C00000000000031 /* EnrollmentExchangeServiceProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000031 /* EnrollmentExchangeServiceProtocol.swift */; };
+		A10000012C00000000000032 /* EnrollmentExchangeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000032 /* EnrollmentExchangeService.swift */; };
+		A10000012C00000000000033 /* EnrollmentViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000033 /* EnrollmentViewModel.swift */; };
+		A10000012C00000000000034 /* EnrollmentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000034 /* EnrollmentView.swift */; };
+		A10000012C00000000000035 /* EnrollmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000035 /* EnrollmentTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -106,6 +119,19 @@
 		A20000012C00000000000028 /* ServerValidationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Onboarding/ServerValidationView.swift; sourceTree = "<group>"; };
 		B20000012C0000000000001B /* ServerSetupViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/ServerSetupViewModelTests.swift; sourceTree = "<group>"; };
 		B20000012C0000000000001C /* ServerReachabilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/ServerReachabilityTests.swift; sourceTree = "<group>"; };
+		A20000012C00000000000029 /* EnrollmentToken.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Enrollment/EnrollmentToken.swift; sourceTree = "<group>"; };
+		A20000012C0000000000002A /* DeviceCredential.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Enrollment/DeviceCredential.swift; sourceTree = "<group>"; };
+		A20000012C0000000000002B /* DeviceCredentialRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Enrollment/DeviceCredentialRecord.swift; sourceTree = "<group>"; };
+		A20000012C0000000000002C /* EnrollmentExchangeResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Enrollment/EnrollmentExchangeResult.swift; sourceTree = "<group>"; };
+		A20000012C0000000000002D /* EnrollmentState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Enrollment/EnrollmentState.swift; sourceTree = "<group>"; };
+		A20000012C0000000000002E /* ExchangeDeviceEnrollmentRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Enrollment/ExchangeDeviceEnrollmentRequest.swift; sourceTree = "<group>"; };
+		A20000012C0000000000002F /* DeviceCredentialResponseDTO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Enrollment/DeviceCredentialResponseDTO.swift; sourceTree = "<group>"; };
+		A20000012C00000000000030 /* SecureCredentialSinkProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Services/SecureCredentialSinkProtocol.swift; sourceTree = "<group>"; };
+		A20000012C00000000000031 /* EnrollmentExchangeServiceProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Enrollment/EnrollmentExchangeServiceProtocol.swift; sourceTree = "<group>"; };
+		A20000012C00000000000032 /* EnrollmentExchangeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Enrollment/EnrollmentExchangeService.swift; sourceTree = "<group>"; };
+		A20000012C00000000000033 /* EnrollmentViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Onboarding/EnrollmentViewModel.swift; sourceTree = "<group>"; };
+		A20000012C00000000000034 /* EnrollmentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Onboarding/EnrollmentView.swift; sourceTree = "<group>"; };
+		A20000012C00000000000035 /* EnrollmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/EnrollmentTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -155,6 +181,8 @@
 				A20000012C00000000000022 /* ServerSetupView.swift */,
 				A20000012C00000000000027 /* ServerValidationViewModel.swift */,
 				A20000012C00000000000028 /* ServerValidationView.swift */,
+				A20000012C00000000000033 /* EnrollmentViewModel.swift */,
+				A20000012C00000000000034 /* EnrollmentView.swift */,
 			);
 			name = Onboarding;
 			sourceTree = "<group>";
@@ -181,6 +209,15 @@
 				A20000012C00000000000018 /* HTTPTransportProtocol.swift */,
 				A20000012C00000000000023 /* SynveilTransportError.swift */,
 				A20000012C00000000000024 /* ServerProbeResult.swift */,
+				A20000012C00000000000029 /* EnrollmentToken.swift */,
+				A20000012C0000000000002A /* DeviceCredential.swift */,
+				A20000012C0000000000002B /* DeviceCredentialRecord.swift */,
+				A20000012C0000000000002C /* EnrollmentExchangeResult.swift */,
+				A20000012C0000000000002D /* EnrollmentState.swift */,
+				A20000012C0000000000002E /* ExchangeDeviceEnrollmentRequest.swift */,
+				A20000012C0000000000002F /* DeviceCredentialResponseDTO.swift */,
+				A20000012C00000000000031 /* EnrollmentExchangeServiceProtocol.swift */,
+				A20000012C00000000000032 /* EnrollmentExchangeService.swift */,
 				A20000012C00000000000025 /* ServerValidationService.swift */,
 			);
 			name = Domain;
@@ -194,6 +231,7 @@
 				A20000012C0000000000001F /* AppStartupState.swift */,
 				A20000012C00000000000020 /* SessionController.swift */,
 				A20000012C0000000000001E /* RustBridgeProtocol.swift */,
+				A20000012C00000000000030 /* SecureCredentialSinkProtocol.swift */,
 			);
 			name = Application;
 			sourceTree = "<group>";
@@ -260,6 +298,7 @@
 				B20000012C0000000000001A /* RootViewTests.swift */,
 				B20000012C0000000000001B /* ServerSetupViewModelTests.swift */,
 				B20000012C0000000000001C /* ServerReachabilityTests.swift */,
+				A20000012C00000000000035 /* EnrollmentTests.swift */,
 			);
 			name = SynveilTests;
 			sourceTree = "<group>";
@@ -383,6 +422,18 @@
 				A10000012C00000000000026 /* URLSessionHTTPTransport.swift in Sources */,
 				A10000012C00000000000027 /* ServerValidationViewModel.swift in Sources */,
 				A10000012C00000000000028 /* ServerValidationView.swift in Sources */,
+				A10000012C00000000000029 /* EnrollmentToken.swift in Sources */,
+				A10000012C0000000000002A /* DeviceCredential.swift in Sources */,
+				A10000012C0000000000002B /* DeviceCredentialRecord.swift in Sources */,
+				A10000012C0000000000002C /* EnrollmentExchangeResult.swift in Sources */,
+				A10000012C0000000000002D /* EnrollmentState.swift in Sources */,
+				A10000012C0000000000002E /* ExchangeDeviceEnrollmentRequest.swift in Sources */,
+				A10000012C0000000000002F /* DeviceCredentialResponseDTO.swift in Sources */,
+				A10000012C00000000000030 /* SecureCredentialSinkProtocol.swift in Sources */,
+				A10000012C00000000000031 /* EnrollmentExchangeServiceProtocol.swift in Sources */,
+				A10000012C00000000000032 /* EnrollmentExchangeService.swift in Sources */,
+				A10000012C00000000000033 /* EnrollmentViewModel.swift in Sources */,
+				A10000012C00000000000034 /* EnrollmentView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -403,6 +454,7 @@
 				B10000012C0000000000001A /* RootViewTests.swift in Sources */,
 				B10000012C0000000000001B /* ServerSetupViewModelTests.swift in Sources */,
 				B10000012C0000000000001C /* ServerReachabilityTests.swift in Sources */,
+				A10000012C00000000000035 /* EnrollmentTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
