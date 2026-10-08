@@ -31,6 +31,15 @@ against the existing reviewed Fedora 42 fingerprint, and the actual downloaded
 532,217,856-byte image matched the unchanged locked SHA-256. The exact platform
 and image digest remain the same; acquisition does not prove a native journey.
 
+Windows producer job `113086975910` in run `37707975218` passed on `e2afbc75`
+and produced a reproducible 32,891,794-byte Setup, SHA-256
+`ea3b707ae73e429ba3638b13493e34820400a6d5288afb2a8933418256004608`.
+The actual downloaded archive confirms all producer identity bindings and
+`asInvoker`, but consumer `113093002782` failed on a stripped directory prefix
+before running acceptance. Its download destination now restores `target/`
+without weakening authentication. Windows Server producer/silent scope remains
+separate from the required Windows 11 graphical/logon/IPC qualification.
+
 This is the current P045 target ledger. No target is newly accepted by this
 document. The scenario JSON and result-v1 schema remain normative. P020/P028
 historical records are preserved; P044 process interruption cannot close a

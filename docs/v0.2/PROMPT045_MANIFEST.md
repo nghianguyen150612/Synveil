@@ -153,6 +153,23 @@ official archive. Neither image identity nor target qualification is broadened.
 Ubuntu's published checksum still matches its existing lock. URL reachability
 and verified image acquisition are prerequisites, not native journey evidence.
 
+Source `e2afbc75`, Windows native PR run `37707975218`, producer job
+`113086975910`, passed complete runtime/ZIP closure, two byte-identical Setup
+builds and the compiled `asInvoker` manifest inspection. The real
+`SynveilSetup.exe` is 32,891,794 bytes, SHA-256
+`ea3b707ae73e429ba3638b13493e34820400a6d5288afb2a8933418256004608`.
+Artifact `11521500851` was downloaded and its actual payload, release-manifest
+and toolchain hashes independently verified against the producer identity.
+The producer reports Windows Server 2025 Datacenter build 26100, not Windows 11.
+
+Consumer job `113093002782` then failed before execution because it searched
+`candidate/target/windows-installer/p028-candidate.json`. The actual ZIP strips
+the shared `target/` prefix and contains `windows-installer/...` and
+`windows-toolchain.json`. Download now restores that prefix under
+`candidate/target`; the existing size/hash/source/manifest/toolchain checks
+remain unchanged. This workflow-wiring fix requires a fresh source-bound
+producer/consumer attempt; the successful candidate above is historical.
+
 Status: **infrastructure/source implemented; acceptance checkpoint withheld.**
 
 | Field | Observed value |

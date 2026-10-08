@@ -120,7 +120,9 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ${{ env.CANDIDATE_NAME }}
-          path: candidate
+          # Upload strips the common target/ prefix. Restore it at download
+          # so the existing authenticated manifest/payload paths stay exact.
+          path: candidate/target
       - name: Authenticate transferred candidate
         shell: pwsh
         run: |
