@@ -58,19 +58,20 @@
 
 - **Unit tests**: Added injectable Security client coverage for item attributes, preflight/cleanup, add/update semantics, verification, schema and scope validation, deletion, error mapping, metadata redaction, and transient request ID exclusion.
 - **Enrollment tests**: Cover fail-closed validation, zero calls after failed preflight, single-shot ambiguity, post-exchange store/verification failures, and authentication transition gating.
-- **Simulator Keychain test**: Added isolated unique-service round-trip test with cleanup; execution evidence pending Apple CI.
+- **Simulator Keychain test**: The isolated unique-service round-trip test ran in Apple CI and was skipped because the unsigned Simulator test process has no Keychain access entitlement. No real Simulator Keychain round-trip was verified.
 - **Linux source/static validation**: `validate_ios_sources.py` passed; its 17 static-validator unit tests passed; `scripts/validate-docs.sh` passed; `git diff --check` passed; changed Swift source line-length validation passed.
-- **PBX project validation**: OpenStep syntax and object-reference parser passed (152 objects, 217 references). `xcodebuild` project validation is delegated to fresh Apple CI because Xcode is unavailable in this Linux workspace.
-- **Swift formatting**: `swift-format`/`swift format` are unavailable in this Linux workspace; the required strict formatter check remains pending fresh Apple CI.
-- **Rust regression tests**: Not run locally because `cargo` is unavailable; the applicable iOS Rust Apple build remains pending fresh Apple CI.
-- **Simulator Keychain evidence**: Isolated Simulator Keychain round-trip test is implemented; execution is pending fresh Apple CI.
+- **PBX project validation**: OpenStep syntax and object-reference parser passed (152 objects, 217 references); the fresh Xcode Build passed on the final P025 code head.
+- **Swift formatting**: Not available locally; fresh iOS Static Validation, including strict Swift formatting, passed on the final P025 code head.
+- **Rust regression tests**: Not run locally because `cargo` is unavailable. No Rust/FFI source changed, so the dedicated iOS Rust Apple Build workflow was not triggered; the iOS Build and Simulator workflows both successfully prepared Rust static libraries for Xcode.
+- **Simulator test evidence**: Run `37776897010` passed on `f9b820a003f0c04c167a03cec0c749dcfcc8b789`: 158 tests, 0 failures, 1 skipped. The 33 `KeychainCredentialStoreTests` had 32 passes and 1 skip; the skipped test was the real Simulator Keychain round-trip, skipped for the missing Keychain entitlement.
+- **Final-head iOS CI**: All required gates passed on `f9b820a003f0c04c167a03cec0c749dcfcc8b789`: iOS Static Validation run `37776896998`, iOS Build run `37776897271`, and iOS Simulator Tests run `37776897010`.
 - **Physical-device Keychain validation**: `NOT_AVAILABLE` (no physical iPhone was available).
-- **Final-head iOS CI**: Pending; must be checked for the final Prompt025 SHA.
+- **Unrelated CI at merge time**: Linux AppImage run `37776897076` failed its artifact path check after finding `/home/` in `synveil-desktop`; the unrelated Rust CI run had failures in the Windows workspace/UI and macOS/Windows test jobs. Linux native packages and PostgreSQL checks were still running when Prompt025 merged. No unrelated workflows or components were changed.
 
 ## Delivery
 
-- **Final commit**: Pending.
-- **PR targeting `ios-app`**: Pending.
-- **Merge state**: Pending hosted GitHub verification.
-- **Resulting `ios-app` SHA**: Pending.
-- **Unrelated CI failures**: Pending final CI inspection.
+- **Final P025 code commit**: `f9b820a003f0c04c167a03cec0c749dcfcc8b789` (`test(ios): handle unsigned simulator Keychain access`).
+- **PR targeting `ios-app`**: [#79](https://github.com/nghianguyen150612/Synveil/pull/79).
+- **Merge state**: GitHub verified `merged = true`, `state = closed`, merged at `2026-10-08T12:52:49Z`.
+- **Merge commit / resulting `ios-app` SHA at P025 merge**: `cb00a182316705f292ae4cd5966feebd41972f0a`.
+- **Unrelated CI failures**: Recorded above; not addressed by Prompt025.
