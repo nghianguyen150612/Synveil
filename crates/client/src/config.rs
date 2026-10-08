@@ -1045,11 +1045,18 @@ mod tests {
 
     use super::*;
 
+    fn test_library_root(name: &str) -> String {
+        std::env::temp_dir()
+            .join(name)
+            .to_string_lossy()
+            .into_owned()
+    }
+
     #[test]
     fn parses_only_bounded_non_secret_profile_and_library_references() {
         let profile_id = ServerProfileId::new();
         let library_id = LibraryId::new();
-        let root = "/tmp/synveil-config-test-root";
+        let root = test_library_root("synveil-config-test-root");
         let config = DesktopClientConfig::parse(&format!(
             "# non-secret manifest\nprofile_id={profile_id}\nlibrary.{library_id}={root}\n"
         ))
@@ -1057,8 +1064,8 @@ mod tests {
         assert_eq!(config.profile_id(), profile_id);
         assert_eq!(config.libraries().len(), 1);
         assert_eq!(config.libraries()[0].library_id(), library_id);
-        assert_eq!(config.libraries()[0].root(), PathBuf::from(root).as_path());
-        assert!(!format!("{config:?}").contains(root));
+        assert_eq!(config.libraries()[0].root(), PathBuf::from(&root).as_path());
+        assert!(!format!("{config:?}").contains(&root));
     }
 
     #[test]
@@ -1073,13 +1080,15 @@ mod tests {
         ));
         assert!(matches!(
             DesktopClientConfig::parse(&format!(
-                "profile_id={profile_id}\nprofile_id={profile_id}\nlibrary.{library_id}=/tmp/root"
+                "profile_id={profile_id}\nprofile_id={profile_id}\nlibrary.{library_id}={}",
+                test_library_root("duplicate-root")
             )),
             Err(DesktopClientConfigError::DuplicateProfile)
         ));
         assert!(matches!(
             DesktopClientConfig::parse(&format!(
-                "profile_id={profile_id}\nlibrary.{library_id}=/tmp/root\ncredential=secret"
+                "profile_id={profile_id}\nlibrary.{library_id}={}\ncredential=secret",
+                test_library_root("credential-root")
             )),
             Err(DesktopClientConfigError::UnknownKey)
         ));
@@ -1111,8 +1120,9 @@ mod tests {
     fn pending_library_bindings_are_non_secret_and_bounded() {
         let profile_id = ServerProfileId::new();
         let library_id = LibraryId::new();
+        let root = test_library_root("synveil-pending-root");
         let config = DesktopClientConfig::parse(&format!(
-            "profile_id={profile_id}\npending.{library_id}=/tmp/synveil-pending-root\n"
+            "profile_id={profile_id}\npending.{library_id}={root}\n"
         ))
         .expect("pending manifest");
         assert!(config.libraries().is_empty());
@@ -1125,14 +1135,15 @@ mod tests {
     fn manifest_rejects_control_bearing_root_values() {
         let profile_id = ServerProfileId::new();
         let library_id = LibraryId::new();
+        let root = test_library_root("synveil-bad-root");
         assert!(matches!(
             DesktopClientConfig::parse(&format!(
-                "profile_id={profile_id}\nlibrary.{library_id}=/tmp/bad\nroot"
+                "profile_id={profile_id}\nlibrary.{library_id}={root}\nroot"
             )),
             Err(DesktopClientConfigError::MalformedLine(_))
         ));
         assert!(matches!(
-            DesktopClientLibrary::new(library_id, "/tmp/bad\nroot"),
+            DesktopClientLibrary::new(library_id, format!("{root}\nroot")),
             Err(DesktopClientConfigError::InvalidRootPath)
         ));
     }
@@ -1168,7 +1179,7 @@ mod tests {
     #[test]
     fn network_hint_interval_is_bounded() {
         let profile_id = ServerProfileId::new();
-        let library = DesktopClientLibrary::new(LibraryId::new(), "/tmp/synveil-root")
+        let library = DesktopClientLibrary::new(LibraryId::new(), test_library_root("synveil-root"))
             .expect("library manifest");
         let config = DesktopClientConfig::new(profile_id, [library]).expect("config");
         assert!(matches!(

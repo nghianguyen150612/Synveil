@@ -2188,12 +2188,16 @@ impl BoundControlTransport {
                 let current = server
                     .take()
                     .ok_or(DesktopControlServerError::ListenerFailed)?;
+                // Arm the next instance before exposing the connected one to
+                // its client. If CreateNamedPipe fails here, no accepted
+                // connection is dropped without receiving a response.
+                let next = create_windows_pipe(name, false)?;
                 current
                     .connect()
                     .await
                     .map_err(|_| DesktopControlServerError::ListenerFailed)?;
                 let connected = current;
-                *server = Some(create_windows_pipe(name, false)?);
+                *server = Some(next);
                 Ok(AcceptedControlConnection {
                     io: Box::new(connected),
                 })
@@ -3561,6 +3565,13 @@ mod tests {
         synveil_client_sync::ServerProfileId::new()
     }
 
+    #[cfg(unix)]
+    fn secure_test_root(prefix: &str) -> PathBuf {
+        std::fs::canonicalize(std::env::temp_dir())
+            .expect("canonical temporary directory")
+            .join(format!("{prefix}-{}", uuid::Uuid::now_v7()))
+    }
+
     #[test]
     fn framing_rejects_zero_and_oversized_payloads_before_body_allocation() {
         assert_eq!(encode_frame(&[]), Err(ControlFrameError::ZeroLength));
@@ -3908,7 +3919,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn active_socket_is_never_replaced_and_stale_socket_is_recovered() {
-        let root = std::env::temp_dir().join(format!("sv96-active-{}", uuid::Uuid::now_v7()));
+        let root = secure_test_root("sv96-active");
         fs::create_dir_all(&root).expect("fixture root");
         let path = root.join(CONTROL_ENDPOINT_DIRECTORY).join("control.sock");
         let endpoint = DesktopControlEndpoint::UnixSocket { path: path.clone() };
@@ -3954,7 +3965,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn symlink_regular_file_and_directory_endpoints_are_refused() {
-        let root = std::env::temp_dir().join(format!("sv96-unsafe-{}", uuid::Uuid::now_v7()));
+        let root = secure_test_root("sv96-unsafe");
         fs::create_dir_all(root.join(CONTROL_ENDPOINT_DIRECTORY)).expect("fixture directory");
         let path = root.join(CONTROL_ENDPOINT_DIRECTORY).join("control.sock");
         let target = root.join("target");
@@ -3993,8 +4004,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn secure_directory_and_socket_policy_is_explicit() {
-        let root =
-            std::env::temp_dir().join(format!("synveil-control-security-{}", uuid::Uuid::now_v7()));
+        let root = secure_test_root("synveil-control-security");
         fs::create_dir_all(&root).expect("fixture root");
         let control_dir = root.join(CONTROL_ENDPOINT_DIRECTORY);
         ensure_secure_control_directory(&control_dir, nix::unistd::geteuid().as_raw())
@@ -4009,8 +4019,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn local_server_and_client_share_one_host_control_surface() {
-        let root =
-            std::env::temp_dir().join(format!("synveil-control-local-{}", uuid::Uuid::now_v7()));
+        let root = secure_test_root("synveil-control-local");
         fs::create_dir_all(&root).expect("fixture root");
         let state = Arc::new(
             LocalStateStore::open(&LocalStateConfig::new(root.join("state.sqlite3")))

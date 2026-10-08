@@ -1,5 +1,228 @@
 # Prompt045 manifest — Cross-platform clean-machine matrix
 
+## Current continuation: e233 Userenv import rerun
+
+At the e233 observation recorded here, the existing branch was at
+`32a7f55cf4a5b754c0b5732a5339b07a51f1cb29`, tree
+`e3dba86a48dacdb112753dd48abf470352cb0a53`. PR #78 was OPEN, DRAFT, and
+unmerged; main was `a560a40c8f2fe5b91db27c1b63fa0b0ab87173bc`.
+
+P045 aggregate run `37765484729` passed contract (`113273965143`) and source
+gates (`113273965560`); its source-gates artifact `11544926493` binds PASS to
+e233. The aggregate Windows candidate (`113277693547`) and Linux artifact
+producer (`113277693805`) were running; Linux adapter/contract job
+`113277693759` passed. No e233 result-v1 matrix artifact existed yet.
+
+Windows candidate run `37765484348`, producer job `113271991216`, passed and
+produced `SynveilSetup.exe` at 32,889,573 bytes, SHA-256
+`1d603fe8d1aac7f983db21fc7bf50d38bdbdb39f4cd903756f8de9cde32f3115`, source
+`32a7f55`. Release-manifest SHA-256 is
+`09591e2c48d3a77ff8484ace4626e262004bc33850c16fc74fd24568487aa55c`; toolchain
+identity SHA-256 is
+`4bfc06ac04dcd026937e3f289cc7ccd1426d528ec9d818f92783716620c0769d`. Artifact
+`11545650446` is a 32,349,622-byte ZIP, SHA-256
+`dbe913f3695a8505e4a590eeb78bb794ceb889e93a1b2a09449cc19d8709a243`; its
+downloaded payload and metadata matched independently. Child
+`113278758080` was queued, so standard-user acceptance remains unproven.
+
+Linux clean-machine run `37765484365` passed contract/adapters job
+`113272145813`; artifact producer `113272145478` was still gating byte
+reproducibility. Linux package run `37765484360` had Qt reproducibility
+`113272565731` and package job `113272566080` in progress, with systemd job
+`113272566017` passed. AppImage run `37765484292`, job `113271991388`, passed
+reproduction, inspection, smoke, and lifecycle: payload 48,638,456 bytes,
+SHA-256 `349cf8ab0b085d1edb0f318d7aa8f192486567a4305f6c0a8cf40472bc289436`;
+artifact `11544284724` is 48,029,789 bytes with SHA-256
+`aed210c0b3d8a03763d08eacfb211f52bbda1d1bf973774498cabb5914729663`. Producer
+evidence does not qualify native Ubuntu/Fedora AppImage acceptance.
+
+P043 run `37765484343` completed all seven jobs successfully. P044 run
+`37765484302` had four jobs pass and six queued, so it remained incomplete.
+Rust CI run `37765484394` found Windows-only test compilation failures from
+Unix `server-config` test APIs, Windows fixture failures from `/tmp` paths, a
+Windows named-pipe `Frame(Closed)` at `ping`, and three macOS IPC fixture
+failures caused by symlinked temporary-directory ancestors. This follow-up
+gates the Unix-only test module, uses native temporary paths in Windows
+fixtures, canonicalizes the Unix IPC fixture roots, and arms the next named-pipe
+instance before awaiting a client. Hosted confirmation is pending; Cargo, rustc,
+and rustfmt are unavailable in this workspace.
+
+The older Linux packaging test failure was a valid zstd-compressed DEB
+(`control.tar.zst` and `data.tar.zst`) rejected by a gzip-only test assumption;
+commit `fa72483` now extracts through `dpkg-deb` and accepts `gz`, `xz`, or
+`zst`. The older QMP JSON `Extra data` failure was the extra closing brace from
+`${2:-{}}`; `fa72483` corrected the argument framing and added guest boot
+diagnostics. The prior VM jobs used TCG because KVM was unavailable, timed out
+before SSH/readiness, and did not preserve serial/QEMU output, so their boot
+cause remains unknown and no guest product journey ran. The e233 guest rerun is
+still pending.
+
+On e232 (`0765a9c`), Windows candidate production/reproducibility passed in run
+`37763335735`, job `113264846876`. Candidate `SynveilSetup.exe` is 32,889,202
+bytes, SHA-256
+`8cd3147214986f1a1ab125cffe06d1c51057466938413442d3cbb95146dcd5ea`; artifact
+`11543558488` is a 32,349,256-byte ZIP with SHA-256
+`6e50a4be6c312f32a92d0cfd921a4c076a0bb5ba4b994dcad1339a9fb8b16ff8`. The
+archive payload was independently verified. Its release-manifest and toolchain
+identity hashes are `612163222f56bc72ebdee28c93a911b6da77bb038e693ab034757a8ff6ac8129`
+and `db167c3ebaa3ae9c7cc0a52a60505c0e5f904d543329182aa1156b54180ec2f3`.
+
+The standard-user child `113270883106` failed before its profile/SID checks.
+Artifact `11544550956` records a missing `GetUserProfileDirectory` entry point
+in `advapi32.dll`. The Unicode API is exported by `Userenv.dll` as
+`GetUserProfileDirectoryW` ([Microsoft API reference](https://learn.microsoft.com/en-us/windows/win32/api/userenv/nf-userenv-getuserprofiledirectoryw)).
+Commit `32a7f55` fixes the import and adds a static contract check. Local
+Windows and P045 validators pass, with all 20 P045 unit tests passing. The
+authoring environment has no PowerShell/.NET/C# compiler.
+
+Exact e233 Windows native run `37765484348`, Windows installer run
+`37765484543`, Linux packages `37765484360`, Linux clean-machine `37765484365`,
+AppImage `37765484292`, P043 `37765484343`, P044 `37765484302`, and P045
+aggregate `37765484729` were queued or in progress at observation time. Windows
+candidate job `113271991216` and Linux clean-machine producer `113272145478`
+were running; its contract/adapters job `113272145813` passed. P045 then began:
+contract job `113273965143` and source-gates job `113273965560` were queued. No
+e233 standard-user or result-v1 outcome is claimed.
+
+On e232, Linux clean-machine contract/adapters passed but its exact artifact
+producer was still running; package and Qt reproducibility jobs also remained
+in progress. AppImage producer `37763335897` passed, with payload SHA-256
+`b36b26adfa05e73c4a3babf15e7d74a2dd9d90ff36bc629c9c338e6ec8c3920c` and
+artifact `11543577082` envelope SHA-256
+`cf78e0a6989eba485ab03c9fe52a21f3840849ac53eab68fb248361d5bf13ee4`. This is
+producer evidence only. P043 completed all seven e232 jobs; eight P044 jobs
+passed and two were canceled as e233 was published. P045 e232 contract passed,
+source-gates was canceled, Windows/Linux were skipped, and evidence gate
+`113272284297` failed. It uploaded result-v1 `11544328344` (SHA-256
+`284353f2919e4f22967440c4217b55acef7e8a8e0dacad8337caaa7e6a5cb2a0`) with
+overall `BLOCKED`, zero candidates, 32 `BLOCKED` rows, and no source-gates
+record. The e232 Linux clean-machine producer was canceled after
+contract/adapters passed.
+Native Windows 11 GUI/logon/IPC, Linux guest GUI, power-cycle, and first-run
+server evidence remain unestablished.
+
+## Current continuation: Windows child compile failure and focused correction
+
+The branch advanced linearly from its previously reported remote head
+`1215abe92af4d23936607f8f602d6a928d133bcf` to
+`e230f3bbe04276ef2b21d2cfe13473993c6f9b46`. On e230, Windows producer run
+`37760807332`, job `113256459800`, built two reproducible Setup candidates and
+passed manifest and `asInvoker` inspection. Exact candidate: 32,892,067 bytes,
+SHA-256 `cf4586beee88d4b37edc66f80c99494aa8817b1a6a5f0d6efa1bc34ac81c30fc`;
+release-manifest SHA-256
+`4d0d923e6b05fb4897df41b5cf9f6072edbbdef9c362ca18f3d68682a798935e`. Uploaded
+artifact `11543515153` is a 32,352,120-byte ZIP with SHA-256
+`fb35ae70226356dbfd4bc726e8cb8accffc437f839fe92ddf9d7806e697dae39`. Its
+payload hash and size were independently checked from the downloaded archive.
+
+The exact candidate's standard-user child, job `113263868099`, failed before
+product acceptance during C# `Add-Type` compilation. Bounded diagnostic
+artifact `11543445828` reports `CS1503`, because a null literal was passed to
+the `IntPtr` buffer parameter in
+`GetUserProfileDirectory(token, null, ref size)`. Thus the e230 run does not
+establish profile resolution or a product install result. Separate PR native
+run `37760812504` failed earlier at Chocolatey HTTP 504 and skipped its child;
+Windows installer run `37760812568` reached and reproduced the same C# compile
+failure.
+
+Focused source correction `0765a9c883c8f8f68be2ba978380d281c1e931b8` replaces
+the null pointer with `IntPtr.Zero`. It is published to the same branch, with
+tree `d3a0fa4c0f22949ef9c09c8f5f0e3110680afb0d`. Local Windows installer,
+Windows native, and P045 matrix validators pass; the P045 unit suite has 20
+passing tests. The local environment has no PowerShell/.NET/C# compiler.
+
+On e232, Windows native run `37763335735` (`113264846876`), Windows installer
+run `37763335943` (`113264848382`), Linux package run `37763335789`
+(`113265092444`), and Linux clean-machine run `37763335821` were active. Its
+adapter/contract job `113265198295` passed; exact-artifact producer
+`113265198542` was building DEB/RPM inputs. The Windows native and installer
+jobs were building runtime payloads; package job `113265092444` was running
+while systemd check `113265092896` passed. P043 run `37763335918` had passed
+Windows ownership/compiler security (`113264848340`), Windows acquisition
+security (`113264848398`), and Linux invocation security (`113264847940`), with
+remaining jobs pending. P044 run `37763335846` had passed docs/scope
+(`113264851826`) while Windows Inno interruption job `113264852062` ran.
+AppImage run `37763335897`, job `113264847498`, was building/reproducing. P045
+aggregate run `37763336484` still had no jobs while pending. No e232 standard-
+user, Linux native guest, or matrix result-v1 outcome is claimed.
+
+The e230 P045 aggregate `37760812819` passed contract, source gates, and Linux
+adapter/contract, but the artifact producers and standard-user/VM consumers
+were canceled after e232 was published. Phase C job `113265318915` failed with
+“No native clean-machine acceptance evidence was produced”; aggregate gate
+`113269729210` also failed. Its truthful result-v1 artifact `11544575509`,
+SHA-256 `31f383d976e8e7608db2712b27a69b975da24c1c74629794455d56e942812924`,
+binds to e230 and has overall `BLOCKED`, zero candidates, and 32 `BLOCKED`
+records. This superseded-head result is not an e232 result.
+P043 completed all seven e230 jobs successfully (`37760812344`). Eight e230
+P044 jobs passed, while its docs/scope and strict-format jobs were canceled as
+the e232 rerun began; the full e230 P044 workflow therefore remained
+incomplete. Neither run establishes the missing native GUI/logon/IPC, Linux
+guest, power-cycle, or first-run requirements.
+
+AppImage e230 producer run `37760812476`, job `113256476845`, passed build,
+independent reproduction, manifest/runtime inspection, bounded QML smoke, and
+current-user lifecycle. Its payload was 48,638,456 bytes, SHA-256
+`f514a4fe4ca682856ac96a5b643ba2e1296925d01e294dcd8cc3906ce319ce64`; artifact
+`11543110787` has envelope SHA-256
+`e486b283a867b8bf5c82f2186e6846f7ab2ae9b8cc07c3d1c1fc7f557001220d`. This is
+not clean graphical guest acceptance. The e232 AppImage producer also passed
+in run `37763335897`, job `113264847498`: payload size 48,638,456 bytes, SHA-256
+`b36b26adfa05e73c4a3babf15e7d74a2dd9d90ff36bc629c9c338e6ec8c3920c`; artifact
+`11543577082` is a 48,029,788-byte envelope with SHA-256
+`cf78e0a6989eba485ab03c9fe52a21f3840849ac53eab68fb248361d5bf13ee4`. Both are
+producer/smoke evidence, not Ubuntu/Fedora graphical guest results.
+
+## Historical e230 snapshot before bounded child diagnostics
+
+The existing `feat/cross-platform-clean-machine-matrix` branch was recovered
+without reset or history rewrite. The prompt's previously reported remote head
+was `1215abe92af4d23936607f8f602d6a928d133bcf`; the actual recovered remote
+head had advanced to `e230f3bbe04276ef2b21d2cfe13473993c6f9b46`, tree
+`0f310a02cb10de4ac4056baf52aa6d3c17f50cb8`. PR #78 remains OPEN, DRAFT, and
+unmerged. Main remains `a560a40c8f2fe5b91db27c1b63fa0b0ab87173bc`.
+
+The additional source commit `e230f3b` fixes the proven Windows standard-user
+profile resolution failure. The child now resolves its profile through the
+current process token, verifies the disposable account SID and non-admin status
+before file I/O, and derives user folders from that profile. Exact-head PR
+Windows native run `37760812504` stopped before compilation because Chocolatey
+returned HTTP 504 for the required ZIP package; its standard-user job
+`113259044192` was SKIPPED, and no child result is inferred. Same-head push run
+`37760807332` and Windows installer run `37760812568` were still building.
+
+P045 run `37760812819` passed contract (`113259813324`) and source gates
+(`113259813685`). It then queued Linux exact-artifact producer `113262657791`,
+Linux contract/adapters `113262657818`, and Windows candidate producer
+`113262657889`. Linux clean-machine run `37760812308` passed contract/adapters
+(`113256581969`), while its exact DEB/RPM artifact producer (`113256581934`)
+was still in progress. Native consumer results and matrix result-v1 records
+were still pending.
+
+AppImage PR run `37760812476`, job `113256476845`, passed build, independent
+reproduction, exact manifest/runtime inspection, bounded QML smoke, and
+current-user lifecycle. Payload size/hash: 48,638,456 bytes,
+`f514a4fe4ca682856ac96a5b643ba2e1296925d01e294dcd8cc3906ce319ce64`.
+Artifact `11543110787` is a 48,029,821-byte envelope with digest
+`e486b283a867b8bf5c82f2186e6846f7ab2ae9b8cc07c3d1c1fc7f557001220d`; this is
+not a clean graphical guest PASS. Linux native-package run `37760812392` and
+same-head push run `37760807307` had passed their systemd 249 checks, but
+package/static/reproducibility gates were still running.
+
+P043 run `37760812344` completed successfully with all seven Windows/Linux
+security and structural jobs passing. P044 run `37760812448` remained in
+progress: AppImage recovery, Windows ENOSPC, and Windows ownership/Inno
+interruption had passed; other jobs had not completed. Broad Rust CI run
+`37760807437` failed Windows compilation of Unix-only tests in
+`crates/server-config/src/store.rs` and three Windows client IPC/process tests.
+The store file is unchanged from main, so this remains an inherited general-CI
+failure rather than an unrelated change to the P045 profile fix.
+
+These are point-in-time status records. They preserve the semantic difference
+between PASS, FAIL, BLOCKED, ERROR, and SKIPPED. Later exact-head outcomes are
+appended below when observed; no pending job or unavailable native journey is
+promoted to PASS.
+
 ## Recovery from the existing published branch
 
 This continuation recovered `feat/cross-platform-clean-machine-matrix` at

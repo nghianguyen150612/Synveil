@@ -2358,7 +2358,10 @@ mod tests {
         use synveil_client_sync::{
             DesktopSyncHost, DesktopSyncHostConfig, LocalStateConfig, LocalStateStore,
         };
-        let root = std::env::temp_dir().join(format!("sv116-{}", ServerProfileId::new()));
+        let root = std::env::temp_dir()
+            .canonicalize()
+            .expect("canonical temporary directory")
+            .join(format!("sv116-{}", ServerProfileId::new()));
         fs::create_dir_all(root.join("runtime/control")).unwrap();
         fs::set_permissions(root.join("runtime"), fs::Permissions::from_mode(0o700)).unwrap();
         fs::set_permissions(
