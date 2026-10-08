@@ -141,7 +141,12 @@ ApplicationWindow {
 
     Component.onCompleted: {
         bridge.installTray()
-        bridge.startController()
+        // The bounded QML smoke test only checks that the installed UI can
+        // load its native Qt runtime. Do not start the background client or
+        // acquire a replica writer lock from this short-lived probe.
+        if (!bridge.smoke_test) {
+            bridge.startController()
+        }
         if (bridge.smoke_test) {
             smokeExitTimer.start()
         }

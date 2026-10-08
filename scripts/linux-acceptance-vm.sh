@@ -201,7 +201,7 @@ start_vm() {
         $accel -m 4096 -smp 2 \
         -drive "file=${disk},if=virtio,format=qcow2" \
         -drive "file=${seed_iso},if=virtio,format=raw,readonly=on" \
-        -netdev user,id=net0,hostfwd="127.0.0.1:${ssh_port}-:22" \
+        -netdev user,id=net0,hostfwd="tcp:127.0.0.1:${ssh_port}-:22" \
         -device virtio-net-pci,netdev=net0 \
         -qmp "unix:${monitor},server=on,wait=off" \
         -serial "file:${serial}" \
