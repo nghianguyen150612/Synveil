@@ -21,11 +21,11 @@ public protocol SecureCredentialSinkProtocol: Sendable {
 
 /// Stub implementation of `SecureCredentialSinkProtocol` used in Prompt024 when Keychain persistence is deferred to Prompt025.
 ///
-/// By default, this stub passes `preflight()` for testing/gating or fails if configured to simulate secure storage unavailability.
+/// This stub is fail-closed by default so production wiring cannot consume a one-time grant before Prompt025 provides Keychain storage.
 public struct StubSecureCredentialSink: SecureCredentialSinkProtocol {
     private let isAvailable: Bool
 
-    public init(isAvailable: Bool = true) {
+    public init(isAvailable: Bool = false) {
         self.isAvailable = isAvailable
     }
 
