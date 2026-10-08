@@ -32,7 +32,7 @@ final class SessionLogoutTests: XCTestCase {
         XCTAssertFalse(String(describing: result).contains(bearer))
     }
 
-    func testMissingCredentialIsSuccessfulIdempotentCleanup() async {
+    func testMissingCredentialIsSuccessfulIdempotentCleanup() async throws {
         let store = MemoryCredentialStore()
         let result = await SessionLogoutService(credentialStore: store).logoutLocally()
 
