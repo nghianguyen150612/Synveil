@@ -18,6 +18,7 @@ struct SynveilApp: App {
             )
             .task {
                 await container.prepareEnrollmentSecurity()
+                guard !Task.isCancelled else { return }
                 await container.sessionController.start()
             }
         }

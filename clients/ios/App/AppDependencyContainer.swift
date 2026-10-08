@@ -20,7 +20,11 @@ public final class AppDependencyContainer {
     /// Real Keychain store, available only after Rust validation initializes successfully.
     public private(set) var credentialSink: SecureCredentialSinkProtocol?
 
+    /// Startup restoration service, composed from the same Rust-validated Keychain store.
+    public private(set) var restorationService: SessionRestorationServiceProtocol?
+
     private var enrollmentSecurityPrepared = false
+    private var securityPreparationTask: Task<Void, Never>?
 
     /// Initializes application dependencies and constructs top-level services.
     ///
@@ -33,16 +37,48 @@ public final class AppDependencyContainer {
 
     /// Initializes production enrollment security dependencies. Failure leaves enrollment closed.
     public func prepareEnrollmentSecurity() async {
+        if let securityPreparationTask {
+            await securityPreparationTask.value
+            return
+        }
         guard !enrollmentSecurityPrepared else { return }
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.initializeEnrollmentSecurity()
+        }
+        securityPreparationTask = task
+        await task.value
+        securityPreparationTask = nil
+    }
+
+    private func initializeEnrollmentSecurity() async {
         enrollmentSecurityPrepared = true
 
         do {
             let bridge = try await RustBridgeAsyncAdapter()
+            let store = KeychainCredentialStore(rustBridge: bridge)
+            let authenticatedProbe = AuthenticatedSessionValidationService(
+                transport: URLSessionHTTPTransport(
+                    requestTimeout: 10,
+                    resourceTimeout: 15,
+                    maxResponseBodyBytes: 16 * 1024
+                )
+            )
+            let service = SessionRestorationService(
+                credentialStore: store,
+                authorizationValidator: authenticatedProbe
+            )
+
             rustBridge = bridge
-            credentialSink = KeychainCredentialStore(rustBridge: bridge)
+            credentialSink = store
+            restorationService = service
+            sessionController.installRestorationService(service)
         } catch {
             rustBridge = nil
             credentialSink = nil
+            restorationService = nil
+            sessionController.markRestorationDependenciesUnavailable()
         }
     }
 }

@@ -65,8 +65,11 @@
 		A10000012C00000000000036 /* DeviceCredentialSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000036 /* DeviceCredentialSession.swift */; };
 		A10000012C00000000000037 /* KeychainCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000037 /* KeychainCredentialStore.swift */; };
 		A10000012C00000000000038 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000038 /* Security.framework */; };
+		A10000012C00000000000039 /* SessionRestorationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000039 /* SessionRestorationService.swift */; };
+		A10000012C0000000000003A /* AuthenticatedSessionValidationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000003A /* AuthenticatedSessionValidationService.swift */; };
 		B10000012C0000000000001D /* KeychainCredentialStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000001D /* KeychainCredentialStoreTests.swift */; };
 		B10000012C0000000000001E /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000038 /* Security.framework */; };
+		B10000012C0000000000001F /* SessionRestorationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000001F /* SessionRestorationTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -140,6 +143,9 @@
 		A20000012C00000000000036 /* DeviceCredentialSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Enrollment/DeviceCredentialSession.swift; sourceTree = "<group>"; };
 		A20000012C00000000000037 /* KeychainCredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Security/KeychainCredentialStore.swift; sourceTree = "<group>"; };
 		A20000012C00000000000038 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		A20000012C00000000000039 /* SessionRestorationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Session/SessionRestorationService.swift; sourceTree = "<group>"; };
+		A20000012C0000000000003A /* AuthenticatedSessionValidationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Transport/AuthenticatedSessionValidationService.swift; sourceTree = "<group>"; };
+		B20000012C0000000000001F /* SessionRestorationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SessionRestorationTests.swift; sourceTree = "<group>"; };
 		B20000012C0000000000001D /* KeychainCredentialStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/KeychainCredentialStoreTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -220,6 +226,7 @@
 				A20000012C00000000000018 /* HTTPTransportProtocol.swift */,
 				A20000012C00000000000023 /* SynveilTransportError.swift */,
 				A20000012C00000000000024 /* ServerProbeResult.swift */,
+				A20000012C0000000000003A /* AuthenticatedSessionValidationService.swift */,
 				A20000012C00000000000029 /* EnrollmentToken.swift */,
 				A20000012C0000000000002A /* DeviceCredential.swift */,
 				A20000012C0000000000002B /* DeviceCredentialRecord.swift */,
@@ -242,6 +249,7 @@
 				A20000012C00000000000014 /* AppConfiguration.swift */,
 				A20000012C0000000000001F /* AppStartupState.swift */,
 				A20000012C00000000000020 /* SessionController.swift */,
+				A20000012C00000000000039 /* SessionRestorationService.swift */,
 				A20000012C0000000000001E /* RustBridgeProtocol.swift */,
 				A20000012C00000000000030 /* SecureCredentialSinkProtocol.swift */,
 			);
@@ -313,6 +321,7 @@
 				B20000012C0000000000001C /* ServerReachabilityTests.swift */,
 				A20000012C00000000000035 /* EnrollmentTests.swift */,
 				B20000012C0000000000001D /* KeychainCredentialStoreTests.swift */,
+				B20000012C0000000000001F /* SessionRestorationTests.swift */,
 			);
 			name = SynveilTests;
 			sourceTree = "<group>";
@@ -428,11 +437,13 @@
 				A10000012C0000000000001E /* RustBridgeProtocol.swift in Sources */,
 				A10000012C0000000000001F /* AppStartupState.swift in Sources */,
 				A10000012C00000000000020 /* SessionController.swift in Sources */,
+				A10000012C00000000000039 /* SessionRestorationService.swift in Sources */,
 				A10000012C00000000000021 /* ServerSetupViewModel.swift in Sources */,
 				A10000012C00000000000022 /* ServerSetupView.swift in Sources */,
 				A10000012C00000000000023 /* SynveilTransportError.swift in Sources */,
 				A10000012C00000000000024 /* ServerProbeResult.swift in Sources */,
 				A10000012C00000000000025 /* ServerValidationService.swift in Sources */,
+				A10000012C0000000000003A /* AuthenticatedSessionValidationService.swift in Sources */,
 				A10000012C00000000000026 /* URLSessionHTTPTransport.swift in Sources */,
 				A10000012C00000000000027 /* ServerValidationViewModel.swift in Sources */,
 				A10000012C00000000000028 /* ServerValidationView.swift in Sources */,
@@ -472,6 +483,7 @@
 				B10000012C0000000000001C /* ServerReachabilityTests.swift in Sources */,
 				A10000012C00000000000035 /* EnrollmentTests.swift in Sources */,
 				B10000012C0000000000001D /* KeychainCredentialStoreTests.swift in Sources */,
+				B10000012C0000000000001F /* SessionRestorationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

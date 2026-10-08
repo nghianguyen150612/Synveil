@@ -26,6 +26,8 @@ struct RootView: View {
                     rustBridge: rustBridge
                 )
             )
+        case .restorationVerificationPending:
+            RestorationVerificationPendingView(sessionController: sessionController)
         case .authenticated:
             AuthenticatedShellPlaceholderView()
         case .recoveryRequired(let reason):
@@ -41,12 +43,50 @@ struct LaunchView: View {
     var body: some View {
         VStack(spacing: 16) {
             ProgressView()
-            Text("Initializing Synveil…")
+            Text("Restoring session…")
                 .font(.headline)
                 .foregroundColor(.secondary)
         }
         .padding()
         .accessibilityIdentifier("synveil.root.initializing")
+    }
+}
+
+/// Minimal retry surface for a locally valid session whose server status is not yet known.
+struct RestorationVerificationPendingView: View {
+    let sessionController: SessionController
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "network")
+                .font(.system(size: 40))
+                .foregroundColor(.accentColor)
+                .accessibilityHidden(true)
+            Text("Session verification pending")
+                .font(.title2)
+                .bold()
+            Text("Connect to the server to verify the saved device session.")
+                .font(.body)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+            Button {
+                Task {
+                    await sessionController.retrySessionRestoration()
+                }
+            } label: {
+                if sessionController.isRestorationRetryInProgress {
+                    ProgressView("Retrying verification…")
+                } else {
+                    Text("Retry verification")
+                }
+            }
+            .disabled(sessionController.isRestorationRetryInProgress)
+            .accessibilityIdentifier("synveil.root.restoration-retry")
+            .accessibilityHint("Checks the saved device session with its server.")
+        }
+        .padding()
+        .accessibilityIdentifier("synveil.root.verification-pending")
     }
 }
 
@@ -164,6 +204,15 @@ struct RecoveryPlaceholderView: View {
             return "This device authorization has been revoked."
         case .secureStore:
             return "Secure storage error encountered on device."
+        case .credential:
+            return "The saved device credential could not be validated locally."
+        case .scopeMismatch:
+            return "The saved session belongs to a different server. "
+                + "Return to that server to continue."
+        case .tls:
+            return "A secure connection to the server could not be verified."
+        case .protocolFailure:
+            return "The server returned a response Synveil could not verify."
         case .enrollmentAmbiguous:
             return "Enrollment state is ambiguous. Re-enrollment may be required."
         case .transport:

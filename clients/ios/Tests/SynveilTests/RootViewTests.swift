@@ -15,6 +15,10 @@ final class RootViewTests: XCTestCase {
             .recoveryRequired(.authentication),
             .recoveryRequired(.deviceRevoked),
             .recoveryRequired(.secureStore),
+            .recoveryRequired(.credential),
+            .recoveryRequired(.scopeMismatch),
+            .recoveryRequired(.tls),
+            .recoveryRequired(.protocolFailure),
             .recoveryRequired(.enrollmentAmbiguous),
             .recoveryRequired(.transport),
         ]
@@ -26,6 +30,19 @@ final class RootViewTests: XCTestCase {
             let view = RootView(sessionController: controller)
             XCTAssertNotNil(view.body, "Failed to render RootView for state: \(state)")
         }
+    }
+
+    @MainActor
+    func testRestorationVerificationPendingSurfaceCanBeInstantiated() async {
+        let controller = SessionController(
+            restorationService: ImmediateRestorationService(result: .cancelled)
+        )
+
+        await controller.start()
+
+        XCTAssertEqual(controller.state, .restorationVerificationPending)
+        XCTAssertNotNil(RootView(sessionController: controller).body)
+        XCTAssertNotNil(RestorationVerificationPendingView(sessionController: controller).body)
     }
 
     @MainActor
@@ -42,6 +59,8 @@ final class RootViewTests: XCTestCase {
             controller.showServerProfileSetup()
             controller.markServerReadyForValidation()
             controller.requireEnrollment()
+        case .restorationVerificationPending:
+            controller.requireRecovery(.transport)
         case .authenticated:
             controller.showServerProfileSetup()
             let endpoint = try! ServerEndpoint(validating: "https://root.synveil.example")
@@ -68,5 +87,20 @@ final class RootViewTests: XCTestCase {
         return SecureCredentialPersistenceReceipt(
             session: DeviceCredentialSession(serverEndpoint: endpoint, record: record)
         )
+    }
+}
+
+private struct ImmediateRestorationService: SessionRestorationServiceProtocol {
+    let result: SessionRestorationResult
+
+    func restore(configuredServerEndpoint: ServerEndpoint?) async -> SessionRestorationResult {
+        result
+    }
+
+    func retryVerification(
+        of session: DeviceCredentialSession,
+        expectedServerEndpoint: ServerEndpoint
+    ) async -> SessionRestorationResult {
+        result
     }
 }

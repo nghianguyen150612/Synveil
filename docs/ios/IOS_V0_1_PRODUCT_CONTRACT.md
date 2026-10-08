@@ -262,6 +262,7 @@ To achieve feature parity with Android v0.1, the iOS client must satisfy this co
    * Accepts `sve1_` token (64 hex characters) and executes single-shot POST exchange.
    * Preflights local credential generation, stores encrypted `svd1_` credential securely in iOS Keychain.
    * Sends `Authorization: Bearer svd1_...` on all authenticated calls.
+   * Restores a locally validated Keychain session at startup, recovers its canonical server endpoint when no bootstrap endpoint is configured, and enters `.authenticated` only after a successful DeviceBearer `GET /api/v1/libraries?limit=1`. Temporary network failure retains the session for explicit retry.
    * Provides confirmable "Forget on this device" local credential cleanup.
 
 3. **Browsing & Metadata Operations**:
