@@ -548,16 +548,59 @@ fn reject_symlink(path: &Path) -> Result<(), JournalError> {
 fn trusted_macos_root_alias(path: &Path, metadata: &fs::Metadata) -> bool {
     use std::os::unix::fs::MetadataExt;
     // Preserve the OS-owned /var and /tmp aliases used by native temporary
-    // directories. User-controlled links remain rejected; this is no native
-    // qualification claim and does not relax Linux/Windows ancestry checks.
+    // directories. macOS commonly stores these as relative links ("private/var"
+    // and "private/tmp"), so compare their resolved targets. User-controlled
+    // links remain rejected; this does not relax Linux/Windows ancestry checks.
     let target = match path.to_str() {
         Some("/var") => Path::new("/private/var"),
         Some("/tmp") => Path::new("/private/tmp"),
         _ => return false,
     };
-    metadata.uid() == 0
-        && fs::read_link(path).is_ok_and(|actual| actual == target)
+    metadata.file_type().is_symlink()
+        && metadata.uid() == 0
+        && symlink_resolves_to(path, target)
         && fs::metadata("/").is_ok_and(|root| root.uid() == 0 && root.mode() & 0o022 == 0)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn symlink_resolves_to(path: &Path, target: &Path) -> bool {
+    let Ok(link_target) = fs::read_link(path) else {
+        return false;
+    };
+    let resolved = if link_target.is_absolute() {
+        link_target
+    } else if let Some(parent) = path.parent() {
+        parent.join(link_target)
+    } else {
+        return false;
+    };
+    fs::canonicalize(resolved).is_ok_and(|actual| actual == target)
+}
+
+#[cfg(all(test, unix))]
+mod macos_root_alias_tests {
+    use super::symlink_resolves_to;
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn resolves_relative_and_absolute_symlink_targets_without_trusting_other_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let expected = root.path().join("private/var");
+        let unexpected = root.path().join("private/tmp");
+        fs::create_dir_all(&expected).unwrap();
+        fs::create_dir_all(&unexpected).unwrap();
+
+        let relative_alias = root.path().join("var-relative");
+        symlink("private/var", &relative_alias).unwrap();
+        assert!(symlink_resolves_to(&relative_alias, &expected));
+
+        let absolute_alias = root.path().join("var-absolute");
+        symlink(&expected, &absolute_alias).unwrap();
+        assert!(symlink_resolves_to(&absolute_alias, &expected));
+
+        assert!(!symlink_resolves_to(&relative_alias, &unexpected));
+    }
 }
 
 fn secure_open(options: &mut OpenOptions) {
