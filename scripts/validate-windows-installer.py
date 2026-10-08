@@ -149,8 +149,12 @@ def main() -> int:
         require(evidence in per_user_test, f"P025 per-user evidence: {evidence}")
     for evidence in ("SetPassword", "-Credential", "-LoadUserProfile", "WaitForExit(300000)", ".Delete('user'", "Remove-CimInstance", "::add-mask::"):
         require(evidence in per_user_invoker, f"P025 disposable-account harness: {evidence}")
-    for evidence in ("SHGetKnownFolderPath", "ExactSpelling=true", "KF_FLAG_DONT_VERIFY", "LocalApplicationData", "Programs", "DesktopDirectory", "CommonPrograms", "CommonDesktopDirectory"):
+    for evidence in ("SHGetKnownFolderPath", "ExactSpelling=true", "OpenProcessToken", "GetCurrentProcess", "TOKEN_QUERY", "TOKEN_IMPERSONATE", "TOKEN_DUPLICATE", "KF_FLAG_DONT_VERIFY", "LocalApplicationData", "Programs", "DesktopDirectory", "CommonPrograms", "CommonDesktopDirectory"):
         require(evidence in known_folders, f"P025 token-owned Windows folders: {evidence}")
+    require("SHGetKnownFolderPath(ref folder, KF_FLAG_DONT_VERIFY, token, out path)" in known_folders,
+            "P025 known folders use the explicit current process token")
+    require("CloseHandle(token)" in known_folders and "IntPtr.Zero, out path" not in known_folders,
+            "P025 explicit known-folder token is closed and never falls back to the interactive user")
     known_folder_ids = re.findall(r"^\s+\w+\s*=\s*'([^']+)'$", known_folders, flags=re.MULTILINE)
     require(len(known_folder_ids) == 5, "P025 all five Windows known-folder IDs are present")
     require(all(str(uuid.UUID(value)) == value.lower() for value in known_folder_ids),

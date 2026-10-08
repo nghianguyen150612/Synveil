@@ -1,20 +1,46 @@
 # Resolve the current process token's Windows namespace even when its process
-# environment was inherited from the runner account. Do not create folders.
+# environment was inherited from the runner account. Passing the token is
+# required: the hosted -Credential child otherwise resolved the runner's
+# interactive profile. Do not create folders.
 if (-not ('SynveilKnownFolders' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 public static class SynveilKnownFolders {
+    private const uint TOKEN_DUPLICATE = 0x0002;
+    private const uint TOKEN_IMPERSONATE = 0x0004;
+    private const uint TOKEN_QUERY = 0x0008;
+    private const uint KF_FLAG_DONT_VERIFY = 0x00004000;
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GetCurrentProcess();
+
+    [DllImport("advapi32.dll", SetLastError=true)]
+    private static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+
     [DllImport("shell32.dll", EntryPoint="SHGetKnownFolderPath", ExactSpelling=true)]
     private static extern int SHGetKnownFolderPath(ref Guid folder, uint flags, IntPtr token, out IntPtr path);
 
+    [DllImport("kernel32.dll", SetLastError=true)]
+    private static extern bool CloseHandle(IntPtr handle);
+
     public static string Resolve(string folderId) {
         Guid folder = new Guid(folderId);
-        IntPtr path;
-        int result = SHGetKnownFolderPath(ref folder, 0x4000, IntPtr.Zero, out path); // KF_FLAG_DONT_VERIFY; current process token
-        Marshal.ThrowExceptionForHR(result);
-        try { return Marshal.PtrToStringUni(path); }
-        finally { Marshal.FreeCoTaskMem(path); }
+        IntPtr token;
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_IMPERSONATE | TOKEN_DUPLICATE, out token)) {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+        IntPtr path = IntPtr.Zero;
+        try {
+            int result = SHGetKnownFolderPath(ref folder, KF_FLAG_DONT_VERIFY, token, out path);
+            Marshal.ThrowExceptionForHR(result);
+            return Marshal.PtrToStringUni(path);
+        }
+        finally {
+            if (path != IntPtr.Zero) Marshal.FreeCoTaskMem(path);
+            CloseHandle(token);
+        }
     }
 }
 '@
