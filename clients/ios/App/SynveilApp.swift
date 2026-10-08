@@ -16,10 +16,10 @@ struct SynveilApp: App {
                 rustBridge: container.rustBridge,
                 credentialSink: container.credentialSink
             )
-                .task {
-                    await container.prepareEnrollmentSecurity()
-                    await container.sessionController.start()
-                }
+            .task {
+                await container.prepareEnrollmentSecurity()
+                await container.sessionController.start()
+            }
         }
     }
 }

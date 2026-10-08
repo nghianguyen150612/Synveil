@@ -101,9 +101,11 @@ final class SessionControllerTests: XCTestCase {
         XCTAssertEqual(controller.state, .needsServerProfile)
 
         controller.configureServerEndpoint(endpoint)
-        controller.markAuthenticated(after: makeReceipt(
-            for: try! ServerEndpoint(validating: "https://wrong.synveil.example")
-        ))
+        controller.markAuthenticated(
+            after: makeReceipt(
+                for: try! ServerEndpoint(validating: "https://wrong.synveil.example")
+            )
+        )
         XCTAssertEqual(controller.state, .readyForServerValidation)
         controller.requireEnrollment()
         controller.requireRecovery(.authentication)
