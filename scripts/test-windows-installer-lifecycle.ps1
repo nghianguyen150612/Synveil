@@ -5,12 +5,25 @@ param(
     [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{64}$')][string]$NewerLicenseHash,
     [Parameter(Mandatory=$true)][string]$RepositoryRoot,
     [Parameter(Mandatory=$true)][string]$EvidencePath,
-    [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{40}$')][string]$SourceCommit
+    [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{40}$')][string]$SourceCommit,
+    [Parameter(Mandatory=$true)][string]$ExpectedSid
 )
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'windows-security.ps1')
 . (Join-Path $PSScriptRoot 'windows-known-folders.ps1')
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = [Security.Principal.WindowsPrincipal]::new($identity)
+$isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if ($identity.User.Value -cne $ExpectedSid -or $isAdmin) {
+    throw 'STANDARD_USER_IDENTITY_FAILURE: lifecycle child token does not match the disposable non-administrator account'
+}
+$profileRoot = [SynveilKnownFolders]::CurrentUserProfile()
+$profileEnvMatches = $false
+if (![string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+    $profileEnvMatches = [string]::Equals([IO.Path]::GetFullPath($env:USERPROFILE).TrimEnd('\'), $profileRoot.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)
+}
+Write-Output "STANDARD_USER_LIFECYCLE_PREFLIGHT: expected SID matched; administrator=false; USERPROFILE_matches_token_profile=$profileEnvMatches"
 $localAppData = Get-WindowsKnownFolderPath LocalApplicationData
 $appId = '{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1'
 $uninstallKey = "Software\Microsoft\Windows\CurrentVersion\Uninstall\$appId"

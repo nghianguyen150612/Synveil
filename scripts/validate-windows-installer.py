@@ -147,12 +147,20 @@ def main() -> int:
         require(required in installed_test, f"installed runtime verification: {required}")
     for evidence in ("synthetic_standard_user", "administrator_member", "installer_elevated", "integrity_sid", "RegistryView]::Registry64", "RegistryView]::Registry32", "machine PATH changed", "Synveil service created", "Synveil scheduled task created", "PER_USER_ACL_FAILURE", "second uninstaller", "state_preservation"):
         require(evidence in per_user_test, f"P025 per-user evidence: {evidence}")
-    for evidence in ("SetPassword", "-Credential", "-LoadUserProfile", "WaitForExit(300000)", ".Delete('user'", "Remove-CimInstance", "::add-mask::"):
+    for evidence in ("SetPassword", "-Credential", "-LoadUserProfile", "WaitForExit(300000)", "-ExpectedSid", ".Delete('user'", "Remove-CimInstance", "::add-mask::"):
         require(evidence in per_user_invoker, f"P025 disposable-account harness: {evidence}")
-    for evidence in ("SHGetKnownFolderPath", "ExactSpelling=true", "OpenProcessToken", "GetCurrentProcess", "TOKEN_QUERY", "TOKEN_IMPERSONATE", "TOKEN_DUPLICATE", "KF_FLAG_DONT_VERIFY", "LocalApplicationData", "Programs", "DesktopDirectory", "CommonPrograms", "CommonDesktopDirectory"):
+    for evidence in ("ExpectedSid", "STANDARD_USER_IDENTITY_FAILURE", "STANDARD_USER_PREFLIGHT"):
+        require(evidence in per_user_test, f"P025 child identity proof: {evidence}")
+    for evidence in ("SHGetKnownFolderPath", "ExactSpelling=true", "OpenProcessToken", "GetCurrentProcess", "GetUserProfileDirectory", "CurrentUserProfile", "TOKEN_QUERY", "TOKEN_IMPERSONATE", "TOKEN_DUPLICATE", "KF_FLAG_DONT_VERIFY", "LocalApplicationData", "Programs", "DesktopDirectory", "CommonPrograms", "CommonDesktopDirectory"):
         require(evidence in known_folders, f"P025 token-owned Windows folders: {evidence}")
     require("SHGetKnownFolderPath(ref folder, KF_FLAG_DONT_VERIFY, token, out path)" in known_folders,
-            "P025 known folders use the explicit current process token")
+            "P025 machine-wide known folders use the explicit current process token")
+    require("GetUserProfileDirectory(token, path, ref size)" in known_folders,
+            "P025 user profile path is read from the current process token")
+    require("Join-Path $profile 'AppData\\Local'" in known_folders and "Join-Path $profile 'AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs'" in known_folders,
+            "P025 LocalAppData and Programs derive from the token profile")
+    require("Join-Path $profile 'Desktop'" in known_folders,
+            "P025 user Desktop derives from the token profile")
     require("CloseHandle(token)" in known_folders and "IntPtr.Zero, out path" not in known_folders,
             "P025 explicit known-folder token is closed and never falls back to the interactive user")
     known_folder_ids = re.findall(r"^\s+\w+\s*=\s*'([^']+)'$", known_folders, flags=re.MULTILINE)

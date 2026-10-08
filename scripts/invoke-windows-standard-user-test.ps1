@@ -39,7 +39,7 @@ try {
     $stdout = Join-Path $EvidenceDirectory 'standard-user.stdout.log'
     $stderr = Join-Path $EvidenceDirectory 'standard-user.stderr.log'
     $script = Join-Path $PSScriptRoot 'test-windows-per-user-installation.ps1'
-    $arguments = @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$script,'-Setup',([IO.Path]::GetFullPath($Setup)),'-RepositoryRoot',$repositoryRoot,'-EvidencePath',$childEvidence,'-SourceCommit',$sourceCommit)
+    $arguments = @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$script,'-Setup',([IO.Path]::GetFullPath($Setup)),'-RepositoryRoot',$repositoryRoot,'-EvidencePath',$childEvidence,'-SourceCommit',$sourceCommit,'-ExpectedSid',$sid)
     $process = Start-Process (Get-Command pwsh).Source -Credential $credential -LoadUserProfile -ArgumentList $arguments -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
     if (!$process.WaitForExit(300000)) { $process.Kill(); throw 'STANDARD_USER_TEST_FAILURE: child exceeded five-minute bound' }
     if ($process.ExitCode -ne 0) { throw "STANDARD_USER_TEST_FAILURE: child exit $($process.ExitCode); see bounded logs" }
@@ -51,7 +51,7 @@ try {
         $lifecycleArgs = @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$lifecycleScript,
             '-Setup',([IO.Path]::GetFullPath($Setup)),'-OlderFixtureSetup',([IO.Path]::GetFullPath($OlderFixtureSetup)),
             '-NewerFixtureSetup',([IO.Path]::GetFullPath($NewerFixtureSetup)),'-NewerLicenseHash',$NewerLicenseHash,
-            '-RepositoryRoot',$repositoryRoot,
+            '-RepositoryRoot',$repositoryRoot,'-ExpectedSid',$sid,
             '-EvidencePath',$lifecycleEvidence,'-SourceCommit',$sourceCommit)
         $lifecycle = Start-Process (Get-Command pwsh).Source -Credential $credential -LoadUserProfile -ArgumentList $lifecycleArgs `
             -RedirectStandardOutput (Join-Path $EvidenceDirectory 'lifecycle.stdout.log') -RedirectStandardError (Join-Path $EvidenceDirectory 'lifecycle.stderr.log') -PassThru

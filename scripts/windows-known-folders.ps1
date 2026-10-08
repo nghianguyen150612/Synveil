@@ -19,11 +19,42 @@ public static class SynveilKnownFolders {
     [DllImport("advapi32.dll", SetLastError=true)]
     private static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
 
+    [DllImport("advapi32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
+    private static extern bool GetUserProfileDirectory(IntPtr token, IntPtr path, ref uint size);
+
     [DllImport("shell32.dll", EntryPoint="SHGetKnownFolderPath", ExactSpelling=true)]
     private static extern int SHGetKnownFolderPath(ref Guid folder, uint flags, IntPtr token, out IntPtr path);
 
     [DllImport("kernel32.dll", SetLastError=true)]
     private static extern bool CloseHandle(IntPtr handle);
+
+    public static string CurrentUserProfile() {
+        IntPtr token;
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, out token)) {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+        try {
+            uint size = 0;
+            GetUserProfileDirectory(token, null, ref size);
+            int error = Marshal.GetLastWin32Error();
+            if (size == 0 || error != 122) {
+                throw new Win32Exception(error, "GetUserProfileDirectory did not provide a profile path size");
+            }
+            IntPtr path = Marshal.AllocHGlobal(checked((int)size * 2));
+            try {
+                if (!GetUserProfileDirectory(token, path, ref size)) {
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+                return Marshal.PtrToStringUni(path);
+            }
+            finally {
+                Marshal.FreeHGlobal(path);
+            }
+        }
+        finally {
+            CloseHandle(token);
+        }
+    }
 
     public static string Resolve(string folderId) {
         Guid folder = new Guid(folderId);
@@ -57,7 +88,17 @@ function Get-WindowsKnownFolderPath([string]$Folder) {
     if (!$folderIds.ContainsKey($Folder)) {
         throw "WINDOWS_PROFILE_FAILURE: unsupported Windows known folder $Folder"
     }
-    $path = [SynveilKnownFolders]::Resolve($folderIds[$Folder])
+    # The hosted -Credential child returned the launcher profile from
+    # SHGetKnownFolderPath. Resolve user-scoped folders from the process token's
+    # GetUserProfileDirectory result instead; the caller separately verifies
+    # that this token belongs to the disposable non-administrator account.
+    $profile = [SynveilKnownFolders]::CurrentUserProfile()
+    $path = switch ($Folder) {
+        'LocalApplicationData' { Join-Path $profile 'AppData\Local'; break }
+        'Programs' { Join-Path $profile 'AppData\Roaming\Microsoft\Windows\Start Menu\Programs'; break }
+        'DesktopDirectory' { Join-Path $profile 'Desktop'; break }
+        default { [SynveilKnownFolders]::Resolve($folderIds[$Folder]) }
+    }
     if ([string]::IsNullOrWhiteSpace($path) -or ![IO.Path]::IsPathFullyQualified($path)) {
         throw "WINDOWS_PROFILE_FAILURE: Windows known folder $Folder is unavailable"
     }
