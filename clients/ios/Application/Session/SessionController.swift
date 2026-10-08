@@ -126,12 +126,11 @@ public final class SessionController {
         activeRestorationOperationID = nil
         activeRestorationTask = nil
 
-        var result = result
-        result = cancellationSafeResult(result)
+        let safeResult = cancellationSafeResult(result)
         guard isCurrent(capturedRevision, expectedState: .initializing) else {
             return
         }
-        apply(result)
+        apply(safeResult)
         hasCompletedStartup = true
     }
 
