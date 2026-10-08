@@ -99,11 +99,15 @@ jobs:
             & $Mutation $fixture
             & pwsh -NoProfile -File ./scripts/build-windows-installer.ps1 -RuntimeStagingDirectory $fixture 2>$null
             if ($LASTEXITCODE -eq 0) { throw "NEGATIVE_RUNTIME_FAILURE: $Name fixture was accepted" }
+            Write-Host "Negative runtime fixture rejected: $Name (exit $LASTEXITCODE)"
           }
           Expect-Rejected 'missing-qwindows' { param($p) Remove-Item (Join-Path $p 'platforms/qwindows.dll') }
           Expect-Rejected 'corrupt-dll' { param($p) Add-Content -LiteralPath (Join-Path $p 'platforms/qwindows.dll') -Value 'corrupt' }
           Expect-Rejected 'unexpected-dll' { param($p) Copy-Item (Join-Path $p 'platforms/qwindows.dll') (Join-Path $p 'unexpected.dll') }
           Expect-Rejected 'developer-file' { param($p) Set-Content -LiteralPath (Join-Path $p 'leaked.lib') -Value 'not-runtime' }
+          # All four nonzero child exits are expected and checked above. The
+          # Actions pwsh wrapper otherwise propagates the last rejected exit.
+          exit 0
       - name: Build installer twice and require reproducibility
         shell: pwsh
         run: |

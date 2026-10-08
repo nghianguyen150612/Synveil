@@ -170,6 +170,32 @@ the shared `target/` prefix and contains `windows-installer/...` and
 remain unchanged. This workflow-wiring fix requires a fresh source-bound
 producer/consumer attempt; the successful candidate above is historical.
 
+Source `06f0e9b2`, Windows native run `37710195745`, producer `113094074992`,
+passed full runtime closure and two equal Setup builds. Its candidate is
+32,891,837 bytes, SHA-256
+`16adc0278fe5e6c9d744d84eb5d66265d91dab9d972e87ba401cee3892fb4e2b`,
+artifact `11521814347`. Consumer `113099513317` passed transferred candidate
+authentication, then failed before installation during disposable account
+creation. Cleanup masked the original error by deleting a nonexistent account.
+The generated name was 21 characters, exceeding the Windows SAM limit of 20.
+The harness now uses a 16-character name and deletes only after confirmed
+creation. No ordinary-user product result was established by this attempt.
+
+The separate Windows installer run `37710195662`, job `113094074238`, passed
+runtime production but stopped after expected negative fixture exits: the
+Actions PowerShell wrapper propagated the last rejected child's exit code.
+The step now logs each required rejection and exits successfully only after
+all four checks complete; accepting any fixture still throws. Positive Setup
+production and native acceptance remain separate mandatory subsequent steps.
+
+AppImage run `37710195685`, job `113094074560`, passed build, reproduction,
+runtime and smoke checks on `06f0e9b2`: 48,638,456 bytes, SHA-256
+`5dc033e0f4a6c1e90e7a16398069e224b2004c36ac73973490e0d2e8ba225400`,
+artifact `11521976987`. P045 contract `113095898112` and strict source gates
+`113095898287` in run `37710195944` also passed. These are superseded producer
+and source observations after the subsequent harness changes, not native PASS.
+Final rerun identities and every required matrix record remain in PR #78.
+
 Status: **infrastructure/source implemented; acceptance checkpoint withheld.**
 
 | Field | Observed value |

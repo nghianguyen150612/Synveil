@@ -40,6 +40,19 @@ before running acceptance. Its download destination now restores `target/`
 without weakening authentication. Windows Server producer/silent scope remains
 separate from the required Windows 11 graphical/logon/IPC qualification.
 
+On `06f0e9b2`, Windows producer `113094074992` in run `37710195745` passed and
+produced Setup (32,891,837 bytes, SHA-256
+`16adc0278fe5e6c9d744d84eb5d66265d91dab9d972e87ba401cee3892fb4e2b`).
+Consumer `113099513317` authenticated the transferred candidate but failed
+before product installation while creating its disposable account; cleanup
+masked the original error. The invalid 21-character account name is shortened
+to 16, and cleanup requires confirmed creation. The separate installer job's
+expected negative exit handling is also corrected without allowing any fixture.
+The exact-head AppImage producer passed (48,638,456 bytes, SHA-256
+`5dc033e0f4a6c1e90e7a16398069e224b2004c36ac73973490e0d2e8ba225400`).
+These attempts are superseded after the harness fixes; final consumer and
+aggregate observations in PR #78 control acceptance.
+
 This is the current P045 target ledger. No target is newly accepted by this
 document. The scenario JSON and result-v1 schema remain normative. P020/P028
 historical records are preserved; P044 process interruption cannot close a

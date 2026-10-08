@@ -7,10 +7,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$user = 'synveil_p025_' + [Guid]::NewGuid().ToString('N').Substring(0,8)
+# Local SAM account names must fit within 20 characters (16 here).
+$user = 'sv_p025_' + [Guid]::NewGuid().ToString('N').Substring(0,8)
 $password = [Guid]::NewGuid().ToString('N') + '!aA7'
 Write-Output "::add-mask::$password"
 $account = $null
+$accountCreated = $false
 $sid = $null
 $evidence = Join-Path ([IO.Path]::GetFullPath($EvidenceDirectory)) 'windows-per-user-evidence.json'
 $childEvidence = Join-Path $env:SystemDrive "Users\$user\AppData\Local\Synveil\installer\windows-per-user-evidence.json"
@@ -21,6 +23,7 @@ try {
     $account.SetPassword($password)
     $account.Put('Description','Disposable Synveil P025 standard-user acceptance account')
     $account.SetInfo()
+    $accountCreated = $true
     $sid = ([Security.Principal.NTAccount]::new($env:COMPUTERNAME,$user)).Translate([Security.Principal.SecurityIdentifier]).Value
     $admins = [ADSI]"WinNT://$env:COMPUTERNAME/Administrators,group"
     $isAdmin = @($admins.psbase.Invoke('Members')) | Where-Object { $_.GetType().InvokeMember('Name','GetProperty',$null,$_,$null) -eq $user }
@@ -56,7 +59,7 @@ try {
     if (Test-Path $childLogs -PathType Container) {
         Copy-Item -LiteralPath $childLogs -Destination (Join-Path $EvidenceDirectory 'standard-user-logs') -Recurse -Force
     }
-    if ($null -ne $account) {
+    if ($accountCreated) {
         ([ADSI]"WinNT://$env:COMPUTERNAME,computer").Delete('user',$user)
     }
     if ($sid) {
