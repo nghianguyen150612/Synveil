@@ -180,6 +180,19 @@ final class KeychainCredentialStoreTests: XCTestCase {
             XCTFail("Unexpected error: \(error)")
         }
 
+        let missingEntitlementClient = FakeSecurityKeychainClient()
+        missingEntitlementClient.addStatusOverride = errSecMissingEntitlement
+        let missingEntitlementStore = makeStore(client: missingEntitlementClient)
+        do {
+            try await missingEntitlementStore.preflight()
+            XCTFail("Expected missing entitlement to make Keychain unavailable")
+        } catch let error as SecureCredentialSinkError {
+            XCTAssertEqual(error, .unavailable)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+        XCTAssertEqual(missingEntitlementClient.operations, ["add", "delete"])
+
         let cleanupClient = FakeSecurityKeychainClient()
         cleanupClient.deleteStatusOverride = errSecIO
         let cleanupStore = makeStore(client: cleanupClient)
@@ -224,9 +237,10 @@ final class KeychainCredentialStoreTests: XCTestCase {
         let store = makeStore(client: client)
         let firstRecord = try makeRecord()
         let secondRecord = try makeRecord(credential: credentialB)
+        let storeEndpoint = endpoint
 
-        async let firstReceipt = store.store(firstRecord, for: endpoint)
-        async let secondReceipt = store.store(secondRecord, for: endpoint)
+        async let firstReceipt = store.store(firstRecord, for: storeEndpoint)
+        async let secondReceipt = store.store(secondRecord, for: storeEndpoint)
         let receipts = try await (firstReceipt, secondReceipt)
         let loaded = try await store.load(expectedServerEndpoint: endpoint)
 
@@ -499,6 +513,14 @@ final class KeychainCredentialStoreTests: XCTestCase {
                 client: SystemSecurityKeychainClient(),
                 identity: identity
             )
+
+            do {
+                try await store.preflight()
+            } catch SecureCredentialSinkError.unavailable {
+                throw XCTSkip(
+                    "The unsigned Simulator test process has no Keychain access entitlement."
+                )
+            }
 
             try await store.delete()
             do {

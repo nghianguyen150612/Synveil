@@ -108,7 +108,8 @@ private enum KeychainStatusMapper {
         operation: KeychainOperation
     ) -> SecureCredentialSinkError {
         switch status {
-        case errSecNotAvailable, errSecInteractionNotAllowed, errSecAuthFailed:
+        case errSecNotAvailable, errSecInteractionNotAllowed, errSecAuthFailed,
+            errSecMissingEntitlement:
             return .unavailable
         case errSecItemNotFound:
             return .itemNotFound
