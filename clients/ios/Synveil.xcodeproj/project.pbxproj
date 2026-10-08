@@ -62,6 +62,11 @@
 		A10000012C00000000000033 /* EnrollmentViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000033 /* EnrollmentViewModel.swift */; };
 		A10000012C00000000000034 /* EnrollmentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000034 /* EnrollmentView.swift */; };
 		A10000012C00000000000035 /* EnrollmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000035 /* EnrollmentTests.swift */; };
+		A10000012C00000000000036 /* DeviceCredentialSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000036 /* DeviceCredentialSession.swift */; };
+		A10000012C00000000000037 /* KeychainCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000037 /* KeychainCredentialStore.swift */; };
+		A10000012C00000000000038 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000038 /* Security.framework */; };
+		B10000012C0000000000001D /* KeychainCredentialStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000001D /* KeychainCredentialStoreTests.swift */; };
+		B10000012C0000000000001E /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000038 /* Security.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -132,6 +137,10 @@
 		A20000012C00000000000033 /* EnrollmentViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Onboarding/EnrollmentViewModel.swift; sourceTree = "<group>"; };
 		A20000012C00000000000034 /* EnrollmentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Onboarding/EnrollmentView.swift; sourceTree = "<group>"; };
 		A20000012C00000000000035 /* EnrollmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/EnrollmentTests.swift; sourceTree = "<group>"; };
+		A20000012C00000000000036 /* DeviceCredentialSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Enrollment/DeviceCredentialSession.swift; sourceTree = "<group>"; };
+		A20000012C00000000000037 /* KeychainCredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Security/KeychainCredentialStore.swift; sourceTree = "<group>"; };
+		A20000012C00000000000038 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		B20000012C0000000000001D /* KeychainCredentialStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/KeychainCredentialStoreTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -139,6 +148,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10000012C00000000000038 /* Security.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -146,6 +156,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B10000012C0000000000001E /* Security.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -212,6 +223,7 @@
 				A20000012C00000000000029 /* EnrollmentToken.swift */,
 				A20000012C0000000000002A /* DeviceCredential.swift */,
 				A20000012C0000000000002B /* DeviceCredentialRecord.swift */,
+				A20000012C00000000000036 /* DeviceCredentialSession.swift */,
 				A20000012C0000000000002C /* EnrollmentExchangeResult.swift */,
 				A20000012C0000000000002D /* EnrollmentState.swift */,
 				A20000012C0000000000002E /* ExchangeDeviceEnrollmentRequest.swift */,
@@ -241,6 +253,7 @@
 			children = (
 				A40000012C00000000000014 /* RustBridge */,
 				A20000012C00000000000026 /* URLSessionHTTPTransport.swift */,
+				A20000012C00000000000037 /* KeychainCredentialStore.swift */,
 			);
 			name = Infrastructure;
 			sourceTree = "<group>";
@@ -299,6 +312,7 @@
 				B20000012C0000000000001B /* ServerSetupViewModelTests.swift */,
 				B20000012C0000000000001C /* ServerReachabilityTests.swift */,
 				A20000012C00000000000035 /* EnrollmentTests.swift */,
+				B20000012C0000000000001D /* KeychainCredentialStoreTests.swift */,
 			);
 			name = SynveilTests;
 			sourceTree = "<group>";
@@ -425,6 +439,7 @@
 				A10000012C00000000000029 /* EnrollmentToken.swift in Sources */,
 				A10000012C0000000000002A /* DeviceCredential.swift in Sources */,
 				A10000012C0000000000002B /* DeviceCredentialRecord.swift in Sources */,
+				A10000012C00000000000036 /* DeviceCredentialSession.swift in Sources */,
 				A10000012C0000000000002C /* EnrollmentExchangeResult.swift in Sources */,
 				A10000012C0000000000002D /* EnrollmentState.swift in Sources */,
 				A10000012C0000000000002E /* ExchangeDeviceEnrollmentRequest.swift in Sources */,
@@ -434,6 +449,7 @@
 				A10000012C00000000000032 /* EnrollmentExchangeService.swift in Sources */,
 				A10000012C00000000000033 /* EnrollmentViewModel.swift in Sources */,
 				A10000012C00000000000034 /* EnrollmentView.swift in Sources */,
+				A10000012C00000000000037 /* KeychainCredentialStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -455,6 +471,7 @@
 				B10000012C0000000000001B /* ServerSetupViewModelTests.swift in Sources */,
 				B10000012C0000000000001C /* ServerReachabilityTests.swift in Sources */,
 				A10000012C00000000000035 /* EnrollmentTests.swift in Sources */,
+				B10000012C0000000000001D /* KeychainCredentialStoreTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

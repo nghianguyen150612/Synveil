@@ -1,31 +1,83 @@
 import Foundation
 
-/// Boundary protocol defining the Keychain credential storage preflight and handoff contract.
+/// Receipt proving a credential was persisted and verified by the secure credential store.
 ///
-/// # Prompt024 ↔ Prompt025 Security Invariant
-/// Prompt024 performs device enrollment exchange over the network. Prompt025 owns durable Keychain persistence.
-/// Before invoking single-shot `POST /api/v1/device-enrollment/exchange`, `SecureCredentialSinkProtocol.preflight()`
-/// must verify that secure storage is available so a single-shot token is never consumed without secure persistence readiness.
-public protocol SecureCredentialSinkProtocol: Sendable {
-    /// Checks whether secure storage (Keychain) is available and functional.
-    ///
-    /// - Throws: An error if secure storage is unavailable or failing preflight checks.
-    func preflight() async throws
+/// The initializer is module-internal so callers outside the application module can only obtain a
+/// receipt from a `SecureCredentialSinkProtocol` implementation. It contains no credential secret.
+public struct SecureCredentialPersistenceReceipt: Equatable, Sendable {
+    public let canonicalServerEndpoint: String
+    public let ownerUserId: String
+    public let deviceId: String
+    public let credentialId: String
 
-    /// Stores the newly exchanged device credential record securely.
-    ///
-    /// - Parameter record: Validated `DeviceCredentialRecord` returned from enrollment exchange.
-    /// - Throws: An error if storage fails.
-    func store(_ record: DeviceCredentialRecord) async throws
+    init(session: DeviceCredentialSession) {
+        canonicalServerEndpoint = session.serverEndpoint.urlString
+        ownerUserId = session.record.ownerUserId
+        deviceId = session.record.deviceId
+        credentialId = session.record.credentialId
+    }
 }
 
-/// Stub implementation of `SecureCredentialSinkProtocol` used in Prompt024 when Keychain persistence is deferred to Prompt025.
+/// Application boundary for the active device credential stored in Keychain.
 ///
-/// This stub is fail-closed by default so production wiring cannot consume a one-time grant before Prompt025 provides Keychain storage.
-public struct StubSecureCredentialSink: SecureCredentialSinkProtocol {
+/// The v0.1 contract supports one active device session per app installation. The protocol exposes
+/// no Security.framework types, and `load` is a primitive for future restoration; it does not drive
+/// startup routing.
+public protocol SecureCredentialSinkProtocol: Sendable {
+    /// Checks that secure storage can add, read, verify, and delete a temporary probe item.
+    func preflight() async throws
+
+    /// Adds a session or replaces the existing session after enforcing its server scope.
+    ///
+    /// Returns only after a read-back has verified the persisted session.
+    func store(
+        _ record: DeviceCredentialRecord,
+        for serverEndpoint: ServerEndpoint
+    ) async throws -> SecureCredentialPersistenceReceipt
+
+    /// Replaces an existing active session without deleting the old item first.
+    ///
+    /// Returns only after a read-back has verified the replacement.
+    func update(
+        _ record: DeviceCredentialRecord,
+        for serverEndpoint: ServerEndpoint
+    ) async throws -> SecureCredentialPersistenceReceipt
+
+    /// Loads and validates the stored session. If an expected endpoint is supplied, an origin
+    /// mismatch is reported as a typed scope failure. A missing item throws `itemNotFound`.
+    func load(
+        expectedServerEndpoint: ServerEndpoint?
+    ) async throws -> DeviceCredentialSession
+
+    /// Deletes the active local Keychain item. Deleting a missing item is successful.
+    func delete() async throws
+}
+
+/// Typed failures raised by the secure credential boundary.
+///
+/// These cases intentionally carry no credential or Keychain payload data.
+public enum SecureCredentialSinkError: Error, Equatable, Sendable {
+    case unavailable
+    case itemNotFound
+    case duplicateItem
+    case corruptPayload
+    case unsupportedFormat(Int)
+    case scopeMismatch
+    case invalidCredential
+    case writeFailure
+    case readFailure
+    case verificationFailure
+    case deletionFailure
+    case unexpectedOSStatus(operation: String, status: Int32)
+}
+
+/// Fail-closed test seam retained for enrollment unit tests and previews.
+///
+/// Production composition injects `KeychainCredentialStore` whenever Rust validation initializes.
+struct StubSecureCredentialSink: SecureCredentialSinkProtocol {
     private let isAvailable: Bool
 
-    public init(isAvailable: Bool = false) {
+    init(isAvailable: Bool = false) {
         self.isAvailable = isAvailable
     }
 
@@ -35,15 +87,37 @@ public struct StubSecureCredentialSink: SecureCredentialSinkProtocol {
         }
     }
 
-    public func store(_ record: DeviceCredentialRecord) async throws {
+    public func store(
+        _ record: DeviceCredentialRecord,
+        for serverEndpoint: ServerEndpoint
+    ) async throws -> SecureCredentialPersistenceReceipt {
         guard isAvailable else {
-            throw SecureCredentialSinkError.storageFailed
+            throw SecureCredentialSinkError.writeFailure
+        }
+        return SecureCredentialPersistenceReceipt(
+            session: DeviceCredentialSession(serverEndpoint: serverEndpoint, record: record)
+        )
+    }
+
+    public func update(
+        _ record: DeviceCredentialRecord,
+        for serverEndpoint: ServerEndpoint
+    ) async throws -> SecureCredentialPersistenceReceipt {
+        try await store(record, for: serverEndpoint)
+    }
+
+    public func load(
+        expectedServerEndpoint: ServerEndpoint?
+    ) async throws -> DeviceCredentialSession {
+        guard isAvailable else {
+            throw SecureCredentialSinkError.unavailable
+        }
+        throw SecureCredentialSinkError.itemNotFound
+    }
+
+    public func delete() async throws {
+        guard isAvailable else {
+            throw SecureCredentialSinkError.deletionFailure
         }
     }
-}
-
-/// Errors raised by `SecureCredentialSinkProtocol`.
-public enum SecureCredentialSinkError: Error, Equatable, Sendable {
-    case unavailable
-    case storageFailed
 }

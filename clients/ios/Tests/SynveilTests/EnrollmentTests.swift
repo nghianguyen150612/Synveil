@@ -8,6 +8,7 @@ final class EnrollmentTests: XCTestCase {
 
     private var mockTransport: MockEnrollmentHTTPTransport!
     private var mockEndpoint: ServerEndpoint!
+    private let testRustBridge = EnrollmentTestRustBridge()
 
     override func setUp() {
         super.setUp()
@@ -54,6 +55,13 @@ final class EnrollmentTests: XCTestCase {
         return try! JSONSerialization.data(withJSONObject: json, options: [])
     }
 
+    private func makeExchangeService() -> EnrollmentExchangeService {
+        EnrollmentExchangeService(
+            transport: mockTransport,
+            rustBridge: testRustBridge
+        )
+    }
+
     // 1. Empty token rejected locally
     func test1_emptyTokenRejectedLocally() {
         XCTAssertNil(EnrollmentToken.parse(""))
@@ -97,7 +105,8 @@ final class EnrollmentTests: XCTestCase {
 
         let viewModel = EnrollmentViewModel(
             sessionController: controller,
-            exchangeService: EnrollmentExchangeService(transport: mockTransport)
+            exchangeService: makeExchangeService(),
+            rustBridge: testRustBridge
         )
         viewModel.rawTokenInput = "invalid_token_value"
         viewModel.submitEnrollment()
@@ -117,7 +126,7 @@ final class EnrollmentTests: XCTestCase {
 
     // 7. Correct endpoint path is used
     func test7_correctEndpointPathIsUsed() async {
-        let service = EnrollmentExchangeService(transport: mockTransport)
+        let service = makeExchangeService()
         let token = EnrollmentToken.parse(validSyntheticToken)!
 
         mockTransport.stubbedResponse = HTTPTransportResponse(
@@ -137,7 +146,7 @@ final class EnrollmentTests: XCTestCase {
 
     // 8. POST method is used
     func test8_postMethodIsUsed() async {
-        let service = EnrollmentExchangeService(transport: mockTransport)
+        let service = makeExchangeService()
         let token = EnrollmentToken.parse(validSyntheticToken)!
 
         mockTransport.stubbedResponse = HTTPTransportResponse(
@@ -153,7 +162,7 @@ final class EnrollmentTests: XCTestCase {
 
     // 9. JSON request shape contains exactly enrollment_token
     func test9_jsonRequestShapeContainsExactField() async {
-        let service = EnrollmentExchangeService(transport: mockTransport)
+        let service = makeExchangeService()
         let token = EnrollmentToken.parse(validSyntheticToken)!
 
         mockTransport.stubbedResponse = HTTPTransportResponse(
@@ -176,7 +185,7 @@ final class EnrollmentTests: XCTestCase {
 
     // 10. Token is not placed in URL/query
     func test10_tokenIsNotInURLOrQuery() async {
-        let service = EnrollmentExchangeService(transport: mockTransport)
+        let service = makeExchangeService()
         let token = EnrollmentToken.parse(validSyntheticToken)!
 
         mockTransport.stubbedResponse = HTTPTransportResponse(
@@ -198,7 +207,7 @@ final class EnrollmentTests: XCTestCase {
 
     // 11. Redirects are rejected
     func test11_redirectsAreRejected() async {
-        let service = EnrollmentExchangeService(transport: mockTransport)
+        let service = makeExchangeService()
         let token = EnrollmentToken.parse(validSyntheticToken)!
 
         mockTransport.stubbedError = SynveilTransportError.redirectRejected(statusCode: 302)
@@ -209,7 +218,7 @@ final class EnrollmentTests: XCTestCase {
 
     // 12. No automatic retry after timeout
     func test12_noAutomaticRetryAfterTimeout() async {
-        let service = EnrollmentExchangeService(transport: mockTransport)
+        let service = makeExchangeService()
         let token = EnrollmentToken.parse(validSyntheticToken)!
 
         mockTransport.stubbedError = SynveilTransportError.timeout
@@ -221,7 +230,7 @@ final class EnrollmentTests: XCTestCase {
 
     // 13. No automatic retry after disconnect
     func test13_noAutomaticRetryAfterDisconnect() async {
-        let service = EnrollmentExchangeService(transport: mockTransport)
+        let service = makeExchangeService()
         let token = EnrollmentToken.parse(validSyntheticToken)!
 
         mockTransport.stubbedError = SynveilTransportError.offline
@@ -233,7 +242,7 @@ final class EnrollmentTests: XCTestCase {
 
     // 14. 16 KiB response bound
     func test14_16KiBResponseBound() async {
-        let service = EnrollmentExchangeService(transport: mockTransport)
+        let service = makeExchangeService()
         let token = EnrollmentToken.parse(validSyntheticToken)!
 
         let oversizedBody = Data(repeating: 0x41, count: 16 * 1024 + 1)
@@ -249,7 +258,7 @@ final class EnrollmentTests: XCTestCase {
 
     // 15. Wrong Content-Type rejected
     func test15_wrongContentTypeRejected() async {
-        let service = EnrollmentExchangeService(transport: mockTransport)
+        let service = makeExchangeService()
         let token = EnrollmentToken.parse(validSyntheticToken)!
 
         mockTransport.stubbedResponse = HTTPTransportResponse(
@@ -264,7 +273,7 @@ final class EnrollmentTests: XCTestCase {
 
     // 16. Malformed JSON rejected
     func test16_malformedJSONRejected() async {
-        let service = EnrollmentExchangeService(transport: mockTransport)
+        let service = makeExchangeService()
         let token = EnrollmentToken.parse(validSyntheticToken)!
 
         mockTransport.stubbedResponse = HTTPTransportResponse(
@@ -279,7 +288,7 @@ final class EnrollmentTests: XCTestCase {
 
     // 17. HTTP 201 valid credential response succeeds at API-client layer
     func test17_validCredentialResponseSucceeds() async {
-        let service = EnrollmentExchangeService(transport: mockTransport)
+        let service = makeExchangeService()
         let token = EnrollmentToken.parse(validSyntheticToken)!
 
         mockTransport.stubbedResponse = HTTPTransportResponse(
@@ -302,7 +311,7 @@ final class EnrollmentTests: XCTestCase {
 
     // 18. Malformed svd1_ credential rejected
     func test18_malformedCredentialRejected() async {
-        let service = EnrollmentExchangeService(transport: mockTransport)
+        let service = makeExchangeService()
         let token = EnrollmentToken.parse(validSyntheticToken)!
 
         mockTransport.stubbedResponse = HTTPTransportResponse(
@@ -317,7 +326,7 @@ final class EnrollmentTests: XCTestCase {
 
     // 19. Malformed owner/device/credential IDs rejected
     func test19_malformedOpaqueIDsRejected() async {
-        let service = EnrollmentExchangeService(transport: mockTransport)
+        let service = makeExchangeService()
         let token = EnrollmentToken.parse(validSyntheticToken)!
 
         mockTransport.stubbedResponse = HTTPTransportResponse(
@@ -332,7 +341,7 @@ final class EnrollmentTests: XCTestCase {
 
     // 20. Invalid timestamp rejected
     func test20_invalidTimestampRejected() async {
-        let service = EnrollmentExchangeService(transport: mockTransport)
+        let service = makeExchangeService()
         let token = EnrollmentToken.parse(validSyntheticToken)!
 
         mockTransport.stubbedResponse = HTTPTransportResponse(
@@ -347,7 +356,7 @@ final class EnrollmentTests: XCTestCase {
 
     // 21. invalid_enrollment mapped to rejected state
     func test21_invalidEnrollmentMappedToRejected() async {
-        let service = EnrollmentExchangeService(transport: mockTransport)
+        let service = makeExchangeService()
         let token = EnrollmentToken.parse(validSyntheticToken)!
 
         let errorJson = try! JSONSerialization.data(
@@ -372,7 +381,7 @@ final class EnrollmentTests: XCTestCase {
 
     // 22. HTTP 503 mapped to recovery-required/ambiguous state
     func test22_http503MappedToRecoveryRequired() async {
-        let service = EnrollmentExchangeService(transport: mockTransport)
+        let service = makeExchangeService()
         let token = EnrollmentToken.parse(validSyntheticToken)!
 
         mockTransport.stubbedResponse = HTTPTransportResponse(
@@ -387,7 +396,7 @@ final class EnrollmentTests: XCTestCase {
 
     // 23. Response loss mapped to recovery-required state
     func test23_responseLossMappedToRecoveryRequired() async {
-        let service = EnrollmentExchangeService(transport: mockTransport)
+        let service = makeExchangeService()
         let token = EnrollmentToken.parse(validSyntheticToken)!
 
         mockTransport.stubbedResponse = HTTPTransportResponse(
@@ -409,7 +418,8 @@ final class EnrollmentTests: XCTestCase {
 
         let viewModel = EnrollmentViewModel(
             sessionController: controller,
-            exchangeService: EnrollmentExchangeService(transport: mockTransport)
+            exchangeService: makeExchangeService(),
+            rustBridge: testRustBridge
         )
 
         viewModel.rawTokenInput = validSyntheticToken
@@ -419,8 +429,8 @@ final class EnrollmentTests: XCTestCase {
         XCTAssertEqual(controller.state, .needsEnrollment)
     }
 
-    // 25. Successful exchange alone does not produce .authenticated
-    func test25_successfulExchangeAloneDoesNotProduceAuthenticated() async {
+    // 25. Verified persistence permits the authenticated transition
+    func test25_verifiedPersistenceTransitionsToAuthenticated() async {
         let controller = SessionController()
         controller.showServerProfileSetup()
         controller.configureServerEndpoint(mockEndpoint)
@@ -434,8 +444,9 @@ final class EnrollmentTests: XCTestCase {
 
         let viewModel = EnrollmentViewModel(
             sessionController: controller,
-            exchangeService: EnrollmentExchangeService(transport: mockTransport),
-            credentialSink: StubSecureCredentialSink(isAvailable: true)
+            exchangeService: makeExchangeService(),
+            credentialSink: StubSecureCredentialSink(isAvailable: true),
+            rustBridge: testRustBridge
         )
 
         viewModel.rawTokenInput = validSyntheticToken
@@ -444,8 +455,7 @@ final class EnrollmentTests: XCTestCase {
         try? await Task.sleep(nanoseconds: 100_000_000)
 
         XCTAssertEqual(viewModel.state, .succeeded)
-        XCTAssertEqual(controller.state, .needsEnrollment)
-        XCTAssertNotEqual(controller.state, .authenticated)
+        XCTAssertEqual(controller.state, .authenticated)
     }
 
     // 26. Token/credential model descriptions are redacted
@@ -477,8 +487,9 @@ final class EnrollmentTests: XCTestCase {
 
         let viewModel = EnrollmentViewModel(
             sessionController: controller,
-            exchangeService: EnrollmentExchangeService(transport: mockTransport),
-            credentialSink: StubSecureCredentialSink(isAvailable: true)
+            exchangeService: makeExchangeService(),
+            credentialSink: StubSecureCredentialSink(isAvailable: true),
+            rustBridge: testRustBridge
         )
 
         viewModel.rawTokenInput = validSyntheticToken
@@ -516,7 +527,8 @@ final class EnrollmentTests: XCTestCase {
 
         let viewModel = EnrollmentViewModel(
             sessionController: controller,
-            exchangeService: EnrollmentExchangeService(transport: mockTransport)
+            exchangeService: makeExchangeService(),
+            rustBridge: testRustBridge
         )
 
         viewModel.rawTokenInput = validSyntheticToken
@@ -544,8 +556,9 @@ final class EnrollmentTests: XCTestCase {
 
         let viewModel = EnrollmentViewModel(
             sessionController: controller,
-            exchangeService: EnrollmentExchangeService(transport: mockTransport),
-            credentialSink: StubSecureCredentialSink(isAvailable: true)
+            exchangeService: makeExchangeService(),
+            credentialSink: StubSecureCredentialSink(isAvailable: true),
+            rustBridge: testRustBridge
         )
 
         viewModel.rawTokenInput = validSyntheticToken
@@ -560,6 +573,120 @@ final class EnrollmentTests: XCTestCase {
                     + "trying again."
             )
         )
+        XCTAssertEqual(mockTransport.sentRequests.count, 1)
+        XCTAssertEqual(controller.state, .recoveryRequired(.enrollmentAmbiguous))
+
+        viewModel.submitEnrollment()
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertEqual(mockTransport.sentRequests.count, 1)
+    }
+
+    func test31_exchangeSuccessAndKeychainWriteFailureRequiresRecovery() async {
+        await assertStorageFailureRequiresRecovery(.writeFailure)
+    }
+
+    func test32_readBackVerificationFailureRequiresRecovery() async {
+        await assertStorageFailureRequiresRecovery(.verificationFailure)
+    }
+
+    func test36And37ProductionExchangeUsesRustForBothSecretFormats() async {
+        let bridge = EnrollmentTestRustBridge()
+        let service = EnrollmentExchangeService(
+            transport: mockTransport,
+            rustBridge: bridge
+        )
+        let token = EnrollmentToken.parse(validSyntheticToken)!
+        mockTransport.stubbedResponse = HTTPTransportResponse(
+            statusCode: 201,
+            headers: ["content-type": "application/json"],
+            body: makeValidResponseBody()
+        )
+
+        let result = await service.exchange(endpoint: mockEndpoint, token: token)
+        let counts = await bridge.validationCounts()
+
+        if case .success = result {
+            XCTAssertEqual(counts.enrollmentTokens, 1)
+            XCTAssertEqual(counts.deviceCredentials, 1)
+        } else {
+            XCTFail("Expected validated exchange success, got \(result)")
+        }
+    }
+
+    func testRustValidationInitializationFailureSendsNoEnrollmentRequest() async {
+        let bridge = EnrollmentTestRustBridge(shouldFailValidation: true)
+        let service = EnrollmentExchangeService(
+            transport: mockTransport,
+            rustBridge: bridge
+        )
+        let token = EnrollmentToken.parse(validSyntheticToken)!
+
+        let result = await service.exchange(endpoint: mockEndpoint, token: token)
+
+        XCTAssertEqual(result, .failed(.authoritativeValidationUnavailable))
+        XCTAssertEqual(mockTransport.sentRequests.count, 0)
+    }
+
+    func testMissingRustBridgeFailsClosedBeforePreflightOrExchange() async {
+        let controller = SessionController()
+        controller.showServerProfileSetup()
+        controller.configureServerEndpoint(mockEndpoint)
+        controller.requireEnrollment()
+        let viewModel = EnrollmentViewModel(
+            sessionController: controller,
+            exchangeService: makeExchangeService(),
+            credentialSink: StubSecureCredentialSink(isAvailable: true)
+        )
+        viewModel.rawTokenInput = validSyntheticToken
+
+        viewModel.submitEnrollment()
+        try? await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(mockTransport.sentRequests.count, 0)
+        XCTAssertEqual(
+            viewModel.state,
+            .securityServicesUnavailable(
+                "Authoritative enrollment validation is unavailable. "
+                    + "No enrollment request was sent."
+            )
+        )
+        XCTAssertEqual(controller.state, .needsEnrollment)
+    }
+
+    private func assertStorageFailureRequiresRecovery(_ failure: SecureCredentialSinkError) async {
+        let controller = SessionController()
+        controller.showServerProfileSetup()
+        controller.configureServerEndpoint(mockEndpoint)
+        controller.requireEnrollment()
+        mockTransport.stubbedResponse = HTTPTransportResponse(
+            statusCode: 201,
+            headers: ["content-type": "application/json"],
+            body: makeValidResponseBody()
+        )
+
+        let viewModel = EnrollmentViewModel(
+            sessionController: controller,
+            exchangeService: EnrollmentExchangeService(
+                transport: mockTransport,
+                rustBridge: testRustBridge
+            ),
+            credentialSink: FailingCredentialSink(failure: failure),
+            rustBridge: testRustBridge
+        )
+        viewModel.rawTokenInput = validSyntheticToken
+        viewModel.submitEnrollment()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        XCTAssertEqual(mockTransport.sentRequests.count, 1)
+        XCTAssertEqual(controller.state, .recoveryRequired(.secureStore))
+        XCTAssertNotEqual(controller.state, .authenticated)
+        XCTAssertEqual(
+            viewModel.state,
+            .recoveryRequired("Credential storage failed following exchange. Recovery is required.")
+        )
+
+        viewModel.submitEnrollment()
+        try? await Task.sleep(nanoseconds: 20_000_000)
         XCTAssertEqual(mockTransport.sentRequests.count, 1)
     }
 }
@@ -583,4 +710,64 @@ private class MockEnrollmentHTTPTransport: HTTPTransportProtocol, @unchecked Sen
 
         return HTTPTransportResponse(statusCode: 200, headers: [:], body: Data())
     }
+}
+
+private actor EnrollmentTestRustBridge: RustBridgeProtocol {
+    private let shouldFailValidation: Bool
+    private var tokenValidationCount = 0
+    private var credentialValidationCount = 0
+
+    init(shouldFailValidation: Bool = false) {
+        self.shouldFailValidation = shouldFailValidation
+    }
+
+    func parseSHA256(_ canonical: String) async throws -> Data { Data() }
+    func formatSHA256(_ digest: Data) async throws -> String { "" }
+    func validateEnrollmentToken(_ token: String) async throws -> Bool {
+        if shouldFailValidation { throw RustBridgeError.internalError }
+        tokenValidationCount += 1
+        return EnrollmentToken.isValid(token)
+    }
+    func validateDeviceBearerToken(_ token: String) async throws -> Bool {
+        if shouldFailValidation { throw RustBridgeError.internalError }
+        credentialValidationCount += 1
+        return DeviceCredential.isValid(token)
+    }
+    func validateLibraryID(_ value: String) async throws -> Bool { false }
+    func validateNodeID(_ value: String) async throws -> Bool { false }
+    func validateLogicalName(_ value: String) async throws -> Bool { !value.isEmpty }
+
+    func validationCounts() -> (enrollmentTokens: Int, deviceCredentials: Int) {
+        (tokenValidationCount, credentialValidationCount)
+    }
+}
+
+private actor FailingCredentialSink: SecureCredentialSinkProtocol {
+    private let failure: SecureCredentialSinkError
+
+    init(failure: SecureCredentialSinkError) {
+        self.failure = failure
+    }
+
+    func preflight() async throws {}
+
+    func store(
+        _ record: DeviceCredentialRecord,
+        for serverEndpoint: ServerEndpoint
+    ) async throws -> SecureCredentialPersistenceReceipt {
+        throw failure
+    }
+
+    func update(
+        _ record: DeviceCredentialRecord,
+        for serverEndpoint: ServerEndpoint
+    ) async throws -> SecureCredentialPersistenceReceipt {
+        throw failure
+    }
+
+    func load(
+        expectedServerEndpoint: ServerEndpoint?
+    ) async throws -> DeviceCredentialSession { throw failure }
+
+    func delete() async throws {}
 }

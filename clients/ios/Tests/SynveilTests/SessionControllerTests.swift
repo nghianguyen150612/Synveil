@@ -73,13 +73,14 @@ final class SessionControllerTests: XCTestCase {
         controller.showServerProfileSetup()
         XCTAssertEqual(controller.state, .needsServerProfile)
 
-        controller.markServerReadyForValidation()
+        let endpoint = try! ServerEndpoint(validating: "https://session.synveil.example")
+        controller.configureServerEndpoint(endpoint)
         XCTAssertEqual(controller.state, .readyForServerValidation)
 
         controller.requireEnrollment()
         XCTAssertEqual(controller.state, .needsEnrollment)
 
-        controller.markAuthenticated()
+        controller.markAuthenticated(after: makeReceipt(for: endpoint))
         XCTAssertEqual(controller.state, .authenticated)
 
         controller.requireRecovery(.transport)
@@ -90,16 +91,39 @@ final class SessionControllerTests: XCTestCase {
     func testInvalidTransitionsCannotBypassLifecycleGates() {
         let controller = SessionController()
 
-        controller.markAuthenticated()
+        let endpoint = try! ServerEndpoint(validating: "https://session.synveil.example")
+        let receipt = makeReceipt(for: endpoint)
+        controller.markAuthenticated(after: receipt)
         XCTAssertEqual(controller.state, .initializing)
 
         controller.showServerProfileSetup()
-        controller.markAuthenticated()
+        controller.markAuthenticated(after: receipt)
         XCTAssertEqual(controller.state, .needsServerProfile)
 
-        controller.markServerReadyForValidation()
+        controller.configureServerEndpoint(endpoint)
+        controller.markAuthenticated(after: makeReceipt(
+            for: try! ServerEndpoint(validating: "https://wrong.synveil.example")
+        ))
+        XCTAssertEqual(controller.state, .readyForServerValidation)
+        controller.requireEnrollment()
         controller.requireRecovery(.authentication)
-        controller.markAuthenticated()
+        controller.markAuthenticated(after: receipt)
         XCTAssertEqual(controller.state, .recoveryRequired(.authentication))
+    }
+
+    private func makeReceipt(for endpoint: ServerEndpoint) -> SecureCredentialPersistenceReceipt {
+        let record = try! DeviceCredentialRecord(
+            ownerUserId: "11111111-2222-3333-4444-555555555555",
+            deviceId: "66666666-7777-8888-9999-000000000000",
+            credentialId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            credential: DeviceCredential(
+                validatedRawValue:
+                    "svd1_abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+            ),
+            createdAt: "2026-10-07T12:00:00Z"
+        )
+        return SecureCredentialPersistenceReceipt(
+            session: DeviceCredentialSession(serverEndpoint: endpoint, record: record)
+        )
     }
 }

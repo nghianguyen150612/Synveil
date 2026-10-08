@@ -5,6 +5,8 @@ import SwiftUI
 /// Observes the authoritative session state and renders the appropriate root application surface.
 struct RootView: View {
     var sessionController: SessionController
+    var rustBridge: (any RustBridgeProtocol)? = nil
+    var credentialSink: SecureCredentialSinkProtocol? = nil
 
     var body: some View {
         switch sessionController.state {
@@ -18,7 +20,11 @@ struct RootView: View {
             )
         case .needsEnrollment:
             EnrollmentView(
-                viewModel: EnrollmentViewModel(sessionController: sessionController)
+                viewModel: EnrollmentViewModel(
+                    sessionController: sessionController,
+                    credentialSink: credentialSink,
+                    rustBridge: rustBridge
+                )
             )
         case .authenticated:
             AuthenticatedShellPlaceholderView()
@@ -168,13 +174,4 @@ struct RecoveryPlaceholderView: View {
 
 #Preview("Needs Server Setup") {
     RootView(sessionController: SessionController())
-}
-
-#Preview("Authenticated Placeholder") {
-    let controller = SessionController()
-    controller.showServerProfileSetup()
-    controller.markServerReadyForValidation()
-    controller.requireEnrollment()
-    controller.markAuthenticated()
-    return RootView(sessionController: controller)
 }

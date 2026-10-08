@@ -11,8 +11,13 @@ struct SynveilApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView(sessionController: container.sessionController)
+            RootView(
+                sessionController: container.sessionController,
+                rustBridge: container.rustBridge,
+                credentialSink: container.credentialSink
+            )
                 .task {
+                    await container.prepareEnrollmentSecurity()
                     await container.sessionController.start()
                 }
         }

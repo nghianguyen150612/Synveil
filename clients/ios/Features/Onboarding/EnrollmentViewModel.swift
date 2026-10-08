@@ -9,6 +9,7 @@ public enum EnrollmentUIState: Sendable, Equatable {
     case rejected(String)
     case recoveryRequired(String)
     case secureStoreUnavailable(String)
+    case securityServicesUnavailable(String)
     case succeeded
 }
 
@@ -29,7 +30,7 @@ public final class EnrollmentViewModel {
     public private(set) var isSubmitting: Bool = false
 
     private let sessionController: SessionController
-    private let exchangeService: EnrollmentExchangeServiceProtocol
+    private let exchangeService: EnrollmentExchangeServiceProtocol?
     private let credentialSink: SecureCredentialSinkProtocol
     private let rustBridge: RustBridgeProtocol?
 
@@ -38,10 +39,10 @@ public final class EnrollmentViewModel {
     /// Initializes `EnrollmentViewModel`.
     ///
     /// - Parameters:
-    ///   - sessionController: Authoritative session controller holding the configured `serverEndpoint`.
+    ///   - sessionController: Authoritative controller holding the configured `serverEndpoint`.
     ///   - exchangeService: Device enrollment exchange HTTP service.
     ///   - credentialSink: Secure credential sink preflight and persistence boundary.
-    ///   - rustBridge: Optional `RustBridgeProtocol` for local shared-core token validation.
+    ///   - rustBridge: Authoritative validator. Production enrollment fails closed when absent.
     public init(
         sessionController: SessionController,
         exchangeService: EnrollmentExchangeServiceProtocol? = nil,
@@ -54,21 +55,23 @@ public final class EnrollmentViewModel {
 
         if let service = exchangeService {
             self.exchangeService = service
-        } else {
+        } else if let rustBridge {
             let transport = URLSessionHTTPTransport(maxResponseBodyBytes: 16 * 1024)
             self.exchangeService = EnrollmentExchangeService(
                 transport: transport,
                 rustBridge: rustBridge
             )
+        } else {
+            self.exchangeService = nil
         }
     }
 
     /// Submits the current enrollment token for exchange.
     ///
-    /// Prevents duplicate concurrent exchange submissions and performs local token validation prior to
-    /// network calls.
+    /// Prevents duplicate concurrent submissions and validates the token before any network call.
     public func submitEnrollment() {
         guard !isSubmitting else { return }
+        guard sessionController.state == .needsEnrollment else { return }
 
         let trimmedInput = rawTokenInput.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -86,16 +89,26 @@ public final class EnrollmentViewModel {
         state = .submitting
 
         submitTask = Task {
-            // Local token validation using Rust bridge if available, falling back to local domain validation
+            // Rust shared-core validation is authoritative for production grant consumption.
+            guard let bridge = rustBridge else {
+                self.state = .securityServicesUnavailable(
+                    "Authoritative enrollment validation is unavailable. "
+                        + "No enrollment request was sent."
+                )
+                self.isSubmitting = false
+                return
+            }
+
             let isValidToken: Bool
-            if let bridge = rustBridge {
-                do {
-                    isValidToken = try await bridge.validateEnrollmentToken(trimmedInput)
-                } catch {
-                    isValidToken = EnrollmentToken.isValid(trimmedInput)
-                }
-            } else {
-                isValidToken = EnrollmentToken.isValid(trimmedInput)
+            do {
+                isValidToken = try await bridge.validateEnrollmentToken(trimmedInput)
+            } catch {
+                self.state = .securityServicesUnavailable(
+                    "Authoritative enrollment validation is unavailable. "
+                        + "No enrollment request was sent."
+                )
+                self.isSubmitting = false
+                return
             }
 
             guard isValidToken, let token = EnrollmentToken.parse(trimmedInput) else {
@@ -107,7 +120,15 @@ public final class EnrollmentViewModel {
                 return
             }
 
-            // Secure storage preflight check before consuming token over the network
+            guard let exchangeService else {
+                self.state = .securityServicesUnavailable(
+                    "Enrollment security services are unavailable. No enrollment request was sent."
+                )
+                self.isSubmitting = false
+                return
+            }
+
+            // Secure storage preflight check before consuming token over the network.
             do {
                 try await credentialSink.preflight()
             } catch {
@@ -119,6 +140,7 @@ public final class EnrollmentViewModel {
             }
 
             guard !Task.isCancelled else {
+                self.state = .idle
                 self.isSubmitting = false
                 return
             }
@@ -127,6 +149,11 @@ public final class EnrollmentViewModel {
             let result = await exchangeService.exchange(endpoint: endpoint, token: token)
 
             guard !Task.isCancelled else {
+                self.sessionController.requireRecovery(.enrollmentAmbiguous)
+                self.state = .recoveryRequired(
+                    "The enrollment result is unknown. Use the trusted owner recovery workflow "
+                        + "before trying again."
+                )
                 self.isSubmitting = false
                 return
             }
@@ -134,12 +161,15 @@ public final class EnrollmentViewModel {
             switch result {
             case .success(let record):
                 do {
-                    try await credentialSink.store(record)
+                    let receipt = try await credentialSink.store(record, for: endpoint)
+                    self.sessionController.markAuthenticated(after: receipt)
+                    guard self.sessionController.state == .authenticated else {
+                        throw SecureCredentialSinkError.verificationFailure
+                    }
                     self.state = .succeeded
                     self.isSubmitting = false
-                    // NOTE: In Prompt024, successful exchange alone does NOT transition to .authenticated
-                    // because durable Keychain persistence and session restoration are owned by Prompt025+.
                 } catch {
+                    self.sessionController.requireRecovery(.secureStore)
                     self.state = .recoveryRequired(
                         "Credential storage failed following exchange. Recovery is required."
                     )
@@ -151,9 +181,10 @@ public final class EnrollmentViewModel {
                 self.isSubmitting = false
 
             case .recoveryRequired:
+                self.sessionController.requireRecovery(.enrollmentAmbiguous)
                 self.state = .recoveryRequired(
-                    "The enrollment result is unknown. Use the trusted owner recovery workflow before "
-                        + "trying again."
+                    "The enrollment result is unknown. Use the trusted owner recovery workflow "
+                        + "before trying again."
                 )
                 self.isSubmitting = false
 
@@ -161,11 +192,22 @@ public final class EnrollmentViewModel {
                 switch reason {
                 case .secureStorageUnavailable:
                     self.state = .secureStoreUnavailable("Secure storage unavailable.")
+                case .authoritativeValidationUnavailable:
+                    self.state = .securityServicesUnavailable(
+                        "Authoritative enrollment validation is unavailable. "
+                            + "No enrollment request was sent."
+                    )
                 case .invalidConfiguration:
+                    self.sessionController.requireRecovery(.configuration)
                     self.state = .recoveryRequired("Enrollment configuration error.")
                 case .cancelled:
-                    self.state = .idle
+                    self.sessionController.requireRecovery(.enrollmentAmbiguous)
+                    self.state = .recoveryRequired(
+                        "The enrollment result is unknown. Use the trusted owner recovery workflow "
+                            + "before trying again."
+                    )
                 case .transport:
+                    self.sessionController.requireRecovery(.enrollmentAmbiguous)
                     self.state = .recoveryRequired("Enrollment could not be completed safely.")
                 }
                 self.isSubmitting = false
@@ -176,8 +218,6 @@ public final class EnrollmentViewModel {
     /// Cancels active submission safely without advancing session state.
     public func cancel() {
         submitTask?.cancel()
-        submitTask = nil
-        isSubmitting = false
     }
 
     /// User-friendly message for UI display.
@@ -187,6 +227,7 @@ public final class EnrollmentViewModel {
         case .rejected(let msg): return msg
         case .recoveryRequired(let msg): return msg
         case .secureStoreUnavailable(let msg): return msg
+        case .securityServicesUnavailable(let msg): return msg
         case .idle, .submitting, .succeeded: return nil
         }
     }
