@@ -50,7 +50,7 @@ public final class EnrollmentViewModel {
     ) {
         self.sessionController = sessionController
         self.rustBridge = rustBridge
-        self.credentialSink = credentialSink ?? StubSecureCredentialSink(isAvailable: true)
+        self.credentialSink = credentialSink ?? StubSecureCredentialSink()
 
         if let service = exchangeService {
             self.exchangeService = service
