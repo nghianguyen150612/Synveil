@@ -173,7 +173,9 @@ def main() -> int:
     windows_iss = read("deploy/windows/installer/Synveil.iss")
     require("LoadTrustedPreviousManifest" in windows_iss
             and "RemoveProvenObsoleteFiles" in windows_iss
-            and "CurrentManifestOwns" in windows_iss
+            and "LoadCurrentManifest(CurrentPaths);" in windows_iss
+            and "if CurrentPaths.IndexOf(Relative) < 0 then begin" in windows_iss
+            and "The target package manifest identity changed before cleanup." in windows_iss
             and "DelTree(" not in windows_iss,
             "Windows recovery cleanup must use trusted old-minus-new ownership")
     require("procedure CommitInstalledManifestIdentity" in windows_iss

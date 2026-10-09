@@ -23,10 +23,20 @@ name: Linux clean-machine acceptance
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      native_runner:
+        description: 'JSON runner label or label array for disposable native consumers'
+        required: false
+        default: '"ubuntu-24.04"'
+        type: string
   workflow_call:
     inputs:
       source_commit:
         required: true
+        type: string
+      native_runner:
+        required: false
+        default: '"ubuntu-24.04"'
         type: string
       run_native:
         required: false
@@ -160,7 +170,7 @@ jobs:
     name: ${{ matrix.platform }} ${{ matrix.version }} ${{ matrix.artifact_type }} clean-machine acceptance
     needs: [static-gate, artifacts]
     if: github.event_name == 'workflow_dispatch' || inputs.run_native
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(inputs.native_runner || '"ubuntu-24.04"') }}
     timeout-minutes: 90
     env:
       BOOT_TIMEOUT_SECONDS: 900

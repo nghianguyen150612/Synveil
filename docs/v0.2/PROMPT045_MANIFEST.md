@@ -1017,3 +1017,31 @@ Recovered existing branch/PR #78 at `ff77ad5f6964b3022aca147a6256e164e171725b`, 
 Corrections address failed desktop provisioning marked ready, insufficient guest disk, DNF environment selection, exception/transport result serialization, missing installed baselines, AppImage/package-manager dispatch and false native promotion. Windows lifecycle now receives token-derived temporary/profile paths and preserves bounded Setup logs. SQLite test teardown explicitly awaits worker shutdown; hosted Windows repetitions verify it. Passing P043/P044, QMP framing, package builders, reproducibility policy and macOS canonicalization are preserved.
 
 New candidates and genuine native result-v1 evidence must bind the final source. Windows 11 interactive/logon/IPC, installed Linux graphical journeys and preservation, real mutation-boundary power-cycle recovery, controlled first-run Connect/Host and authenticated P036 production inventories remain required. The old artifacts do not qualify the new source. PR #78 stays draft and unmerged, acceptance is withheld, P046 deferred, and no v0.2.0 tag is created.
+
+## P045 resume: native failure investigation and worker handoff
+
+The recovered c4a872d checkpoint's exact-head matrix run 37925347518 contains
+32 BLOCKED records, zero PASS/FAIL/ERROR/SKIPPED and no invalid inputs. All four
+Linux guests failed before adapter execution. Fedora's first failure is DNF5
+rejecting `environment install`; Ubuntu was still unpacking desktop dependencies
+under TCG when its bound expired. Historical ff77ad5 Fedora provisioning also
+failed; its independent readiness marker did not establish a working desktop.
+
+The resume patch fixes DNF5 invocation, explicitly provisions Fedora X11,
+records nonzero provisioning status without waiting for a readiness timeout,
+bounds readiness SSH probes, and encodes cloud-init command scalars correctly.
+Windows target ownership reconciliation parses the authenticated target manifest
+once and reauthenticates before obsolete-file mutation; native post-install logs
+and repeated repair retain preservation/standard-user gates. Its relationship
+to the recorded repair timeout requires Windows execution, not inference from
+Linux. Migration failure teardown now awaits the owned SQLite connection's
+worker closure, with immediate database-rename regressions and explicit fixture
+teardown. Qualification thresholds and schema enums are unchanged.
+
+The existing matrix/Linux workflows now accept an optional dispatch runner label
+array for disposable KVM consumers. Default PR placement remains hosted. See
+[P045 native runner handoff](P045_NATIVE_RUNNER_HANDOFF.md) for verified failure
+references, resource/isolation requirements, dispatch invocation, Windows 11
+interactive/logon/IPC prerequisites, genuine persistent-disk power interruption,
+and P036 production/server dependencies. These additions are implementation and
+handoff work; they do not establish native acceptance or authorize merging #78.

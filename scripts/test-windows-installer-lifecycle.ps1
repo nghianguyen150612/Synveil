@@ -128,6 +128,10 @@ $unknown = Join-Path $root 'user-note.txt'; Set-Content -LiteralPath $unknown -V
 $damage = Join-Path $root 'platforms\qwindows.dll'; Remove-Item -LiteralPath $damage
 Remove-Item -LiteralPath $startMenu
 Invoke-Setup $Setup @('/REPAIR=1') 0 'repair-production'
+# Repeat real same-version repair while preserving the adjacent unknown file.
+# This exercises complete target membership reconciliation on the deployed DLL
+# inventory; source/fixture checks alone cannot validate the Pascal runtime.
+Invoke-Setup $Setup @('/REPAIR=1') 0 'repair-production-repeat'
 $null = Manifest-Hashes
 Assert-True (Test-Path $unknown -PathType Leaf) 'LIFECYCLE_REPAIR_FAILURE: unknown adjacent file removed'
 Assert-True (Test-Path $startMenu -PathType Leaf) 'LIFECYCLE_REPAIR_FAILURE: Start Menu shortcut not restored'

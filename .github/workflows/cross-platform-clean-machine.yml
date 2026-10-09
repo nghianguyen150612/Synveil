@@ -3,6 +3,12 @@ name: Cross-platform clean-machine matrix
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      linux_native_runner:
+        description: 'JSON runner label or label array for disposable Linux consumers'
+        required: false
+        default: '"ubuntu-24.04"'
+        type: string
 
 permissions:
   contents: read
@@ -76,6 +82,7 @@ jobs:
     with:
       source_commit: ${{ github.event.pull_request.head.sha || github.sha }}
       run_native: true
+      native_runner: ${{ inputs.linux_native_runner || '"ubuntu-24.04"' }}
   evidence-gate:
     needs: [contract, source-gates, windows, linux]
     if: always()

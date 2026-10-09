@@ -106,7 +106,7 @@ write_cloud_init() {
             ;;
         fedora)
             admin_group=wheel
-            setup_script='dnf -y environment install workstation-product-environment && dnf -y install gnome-software gnome-screenshot at-spi2-core xdotool dbus-x11 libsecret qemu-guest-agent && mkdir -p /etc/gdm && printf "[daemon]\\nAutomaticLoginEnable=True\\nAutomaticLogin=synveil-acceptance\\nWaylandEnable=false\\n" > /etc/gdm/custom.conf && systemctl enable gdm'
+            setup_script='dnf -y install @workstation-product-environment && dnf -y install gnome-session-xsession xorg-x11-server-Xorg gnome-software gnome-screenshot at-spi2-core xdotool dbus-x11 libsecret qemu-guest-agent && mkdir -p /etc/gdm && printf "[daemon]\\nAutomaticLoginEnable=True\\nAutomaticLogin=synveil-acceptance\\nWaylandEnable=false\\n" > /etc/gdm/custom.conf && systemctl enable gdm'
             ;;
         *)
             fail "unsupported guest platform for cloud-init: ${platform}"
@@ -116,6 +116,11 @@ write_cloud_init() {
     # Provisioning failures must not leave a readiness marker. Cloud-init runs
     # later runcmd entries even when an earlier entry exits nonzero.
     setup_script+=' && systemctl set-default graphical.target && systemctl start display-manager && command -v xdotool && mkdir -p /var/lib/synveil-acceptance && touch /var/lib/synveil-acceptance/desktop-ready'
+    # JSON strings are valid YAML flow scalars; shell @Q quoting is not a YAML
+    # escaping mechanism (notably for the EXIT trap's single quotes).
+    setup_script="mkdir -p /var/lib/synveil-acceptance; trap 'status=\$?; printf \"%s\\n\" \"\$status\" > /var/lib/synveil-acceptance/provision-exit' EXIT; ${setup_script}"
+    local setup_json
+    setup_json="$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$setup_script")"
     cat > "${seed_dir}/user-data" <<EOF
 #cloud-config
 users:
@@ -134,7 +139,7 @@ growpart:
   devices: ['/']
 resize_rootfs: true
 runcmd:
-  - [ bash, -lc, ${setup_script@Q} ]
+  - [ bash, -lc, ${setup_json} ]
 EOF
 
     cat > "${seed_dir}/meta-data" <<EOF
@@ -232,7 +237,14 @@ wait_for_ssh() {
 wait_for_guest_readiness() {
     local port="$1" key="$2" deadline
     deadline=$(( $(date +%s) + BOOT_TIMEOUT_SECONDS ))
+    GUEST_READINESS_FAILURE=readiness-timeout
+    local provision_status
     while (( $(date +%s) < deadline )); do
+        provision_status="$(guest_exec "$port" "$key" provisioning-status 2>/dev/null)" || provision_status=""
+        if [[ "$provision_status" =~ ^[1-9][0-9]*$ ]]; then
+            GUEST_READINESS_FAILURE="provisioning-failed-exit-${provision_status}"
+            return 1
+        fi
         if guest_exec "$port" "$key" readiness >/dev/null 2>&1; then
             log "guest graphical provisioning is ready"
             return 0
@@ -257,8 +269,14 @@ record_boot_diagnostics() {
 guest_exec() {
     local port="$1" key="$2" command_name="$3"
     case "$command_name" in
+        provisioning-status)
+            timeout 15 ssh -i "$key" -o BatchMode=yes -o ConnectTimeout=5 \
+                -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                -p "$port" synveil-acceptance@127.0.0.1 \
+                'if test -f /var/lib/synveil-acceptance/provision-exit; then cat /var/lib/synveil-acceptance/provision-exit; fi'
+            ;;
         readiness)
-            ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=no \
+            timeout 15 ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=no \
                 -o UserKnownHostsFile=/dev/null -p "$port" synveil-acceptance@127.0.0.1 \
                 'test -f /var/lib/synveil-acceptance/desktop-ready && test -S /run/user/$(id -u)/bus || exit 1; for session in $(loginctl show-user $(id -u) -p Sessions --value); do if test "$(loginctl show-session "$session" -p Type --value)" = x11 && test "$(loginctl show-session "$session" -p Active --value)" = yes; then DISPLAY=:0 XAUTHORITY=/run/user/$(id -u)/gdm/Xauthority xdotool getdisplaygeometry >/dev/null && exit 0; fi; done; exit 1'
             ;;
@@ -456,7 +474,7 @@ main() {
             ;;
         boot)
             [[ $# -eq 8 ]] || fail "boot NAME DISK SEED MONITOR SERIAL SSH_PORT KEY"
-            require_tools qemu-system-x86_64 ssh
+            require_tools qemu-system-x86_64 ssh timeout
             name="$2"; disk="$3"; seed="$4"; monitor="$5"; serial="$6"; ssh_port="$7"; key="$8"
             mkdir -p "$(dirname "$monitor")" "$(dirname "$serial")"
             pid="$(start_vm "$disk" "$seed" "$monitor" "$serial" "$ssh_port")"
@@ -466,7 +484,7 @@ main() {
                 return 1
             fi
             if ! wait_for_guest_readiness "$ssh_port" "$key"; then
-                record_boot_diagnostics "$name" "$serial" "readiness-timeout"
+                record_boot_diagnostics "$name" "$serial" "$GUEST_READINESS_FAILURE"
                 return 1
             fi
             printf '%s\n' ready >"${VM_STATE_DIR}/${name}.boot-status"
