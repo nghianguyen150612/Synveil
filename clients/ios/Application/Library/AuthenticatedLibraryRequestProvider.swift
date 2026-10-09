@@ -11,6 +11,26 @@ struct LibraryRequestScope: Sendable, CustomStringConvertible, CustomDebugString
             && session.record.deviceId == scope.deviceId.rawValue
     }
 
+    var credentialIdentifier: String { session.record.credentialId }
+
+    func sameSession(as other: LibraryRequestScope) -> Bool {
+        revision == other.revision && session == other.session
+    }
+
+    func mutationScope(libraryId: LibraryId, bridge: any RustBridgeProtocol) async throws
+        -> ClientMutationScope
+    {
+        let device = try await ClientMutationDeviceId.validated(
+            session.record.deviceId, using: bridge)
+        _ = try await LibraryId.validated(libraryId.rawValue, using: bridge)
+        guard try await bridge.validateNodeID(session.record.ownerUserId) else {
+            throw LibraryFailure.invalidCredential
+        }
+        return ClientMutationScope(
+            serverEndpoint: session.serverEndpoint, ownerUserId: session.record.ownerUserId,
+            deviceId: device, libraryId: libraryId)
+    }
+
     var description: String { "[REDACTED_LIBRARY_REQUEST_SCOPE]" }
     var debugDescription: String { description }
 }
@@ -40,7 +60,8 @@ protocol AuthenticatedNodeRequestProviderProtocol {
 
 @MainActor
 final class AuthenticatedLibraryRequestProvider: AuthenticatedLibraryRequestProviderProtocol,
-    AuthenticatedNodeRequestProviderProtocol, AuthenticatedClientMutationRequestProviderProtocol
+    AuthenticatedNodeRequestProviderProtocol, AuthenticatedClientMutationRequestProviderProtocol,
+    AuthenticatedSyncCheckpointRequestProviderProtocol
 {
     private let controller: SessionController
     private let store: any SecureCredentialSinkProtocol
@@ -109,6 +130,16 @@ final class AuthenticatedLibraryRequestProvider: AuthenticatedLibraryRequestProv
     {
         try await requestGET(
             path: "/api/v1/nodes/\(nodeId.rawValue)", queryItems: nil, scope: scope)
+    }
+
+    func requestCheckpoint(scope mutationScope: ClientMutationScope, session: LibraryRequestScope)
+        async throws -> HTTPTransportResponse
+    {
+        guard session.matches(mutationScope) else { throw MutationQueueFailure.scopeMismatch }
+        return try await requestGET(
+            path:
+                "/api/v1/devices/\(session.session.record.deviceId)/libraries/\(mutationScope.libraryId.rawValue)/checkpoint",
+            queryItems: nil, scope: session)
     }
 
     private func requestGET(
