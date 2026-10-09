@@ -26,6 +26,7 @@ public final class SessionController {
     @ObservationIgnored private var pendingRestorationSession: DeviceCredentialSession?
     @ObservationIgnored private var activeRestorationTask: Task<SessionRestorationResult, Never>?
     @ObservationIgnored private var activeRestorationOperationID: UUID?
+    @ObservationIgnored private var mutationSessionInvalidator: (@MainActor () -> Void)?
     @ObservationIgnored private var logoutTask: Task<Void, Never>?
 
     /// Observable only so the root retry action can disable itself while a probe is in flight.
@@ -460,7 +461,13 @@ public final class SessionController {
         }
     }
 
+    /// Internal durable-queue hook; no queue records or credentials enter observable session state.
+    func installMutationSessionInvalidator(_ invalidator: @escaping @MainActor () -> Void) {
+        mutationSessionInvalidator = invalidator
+    }
+
     private func transition(to newState: AppStartupState) {
+        if state == .authenticated { mutationSessionInvalidator?() }
         transitionRevision &+= 1
         restorationFailure = nil
         secureStorageFailure = nil

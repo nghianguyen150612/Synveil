@@ -99,6 +99,17 @@
 		A10000012C00000000000052 /* ClientMutationResponseDTO.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000052 /* ClientMutationResponseDTO.swift */; };
 		A10000012C00000000000053 /* AuthenticatedClientMutationRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000053 /* AuthenticatedClientMutationRepository.swift */; };
 		B10000012C00000000000029 /* ClientMutationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000029 /* ClientMutationTests.swift */; };
+		A10000012C00000000000054 /* SyncCheckpointModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000054 /* SyncCheckpointModels.swift */; };
+		A10000012C00000000000055 /* MutationQueueModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000055 /* MutationQueueModels.swift */; };
+		A10000012C00000000000056 /* SyncCheckpointResponseDTO.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000056 /* SyncCheckpointResponseDTO.swift */; };
+		A10000012C00000000000057 /* MutationPersistenceCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000057 /* MutationPersistenceCodec.swift */; };
+		A10000012C00000000000058 /* SyncCheckpointService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000058 /* SyncCheckpointService.swift */; };
+		A10000012C00000000000059 /* DurableMutationQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000059 /* DurableMutationQueue.swift */; };
+		A10000012C0000000000005A /* MutationQueueSQLiteStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000005A /* MutationQueueSQLiteStore.swift */; };
+		B10000012C0000000000002A /* MutationQueueTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000002A /* MutationQueueTestSupport.swift */; };
+		B10000012C0000000000002B /* MutationQueueSQLiteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000002B /* MutationQueueSQLiteTests.swift */; };
+		B10000012C0000000000002C /* SyncCheckpointTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000002C /* SyncCheckpointTests.swift */; };
+		B10000012C0000000000002D /* DurableMutationQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000002D /* DurableMutationQueueTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -205,6 +216,17 @@
 		A20000012C00000000000052 /* ClientMutationResponseDTO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Mutation/ClientMutationResponseDTO.swift; sourceTree = "<group>"; };
 		A20000012C00000000000053 /* AuthenticatedClientMutationRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Mutation/AuthenticatedClientMutationRepository.swift; sourceTree = "<group>"; };
 		B20000012C00000000000029 /* ClientMutationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/ClientMutationTests.swift; sourceTree = "<group>"; };
+		A20000012C00000000000054 /* SyncCheckpointModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Mutation/SyncCheckpointModels.swift; sourceTree = "<group>"; };
+		A20000012C00000000000055 /* MutationQueueModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Mutation/MutationQueueModels.swift; sourceTree = "<group>"; };
+		A20000012C00000000000056 /* SyncCheckpointResponseDTO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Mutation/SyncCheckpointResponseDTO.swift; sourceTree = "<group>"; };
+		A20000012C00000000000057 /* MutationPersistenceCodec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Mutation/MutationPersistenceCodec.swift; sourceTree = "<group>"; };
+		A20000012C00000000000058 /* SyncCheckpointService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Mutation/SyncCheckpointService.swift; sourceTree = "<group>"; };
+		A20000012C00000000000059 /* DurableMutationQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Mutation/DurableMutationQueue.swift; sourceTree = "<group>"; };
+		A20000012C0000000000005A /* MutationQueueSQLiteStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/MutationQueueSQLiteStore.swift; sourceTree = "<group>"; };
+		B20000012C0000000000002A /* MutationQueueTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/MutationQueueTestSupport.swift; sourceTree = "<group>"; };
+		B20000012C0000000000002B /* MutationQueueSQLiteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/MutationQueueSQLiteTests.swift; sourceTree = "<group>"; };
+		B20000012C0000000000002C /* SyncCheckpointTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SyncCheckpointTests.swift; sourceTree = "<group>"; };
+		B20000012C0000000000002D /* DurableMutationQueueTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/DurableMutationQueueTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -303,6 +325,10 @@
 		A40000012C00000000000011 /* Domain */ = {
 			isa = PBXGroup;
 			children = (
+				A20000012C00000000000057 /* MutationPersistenceCodec.swift */,
+				A20000012C00000000000056 /* SyncCheckpointResponseDTO.swift */,
+				A20000012C00000000000055 /* MutationQueueModels.swift */,
+				A20000012C00000000000054 /* SyncCheckpointModels.swift */,
 				A20000012C0000000000003F /* LibraryResponseDTO.swift */,
 				A20000012C0000000000003E /* LibraryModels.swift */,
 				A20000012C00000000000011 /* EndpointValidationError.swift */,
@@ -332,6 +358,8 @@
 		A40000012C00000000000012 /* Application */ = {
 			isa = PBXGroup;
 			children = (
+				A20000012C00000000000059 /* DurableMutationQueue.swift */,
+				A20000012C00000000000058 /* SyncCheckpointService.swift */,
 				A20000012C00000000000044 /* NodeModels.swift */,
 				A20000012C00000000000045 /* NodeResponseDTO.swift */,
 				A20000012C00000000000046 /* AuthenticatedNodeRepository.swift */,
@@ -352,6 +380,7 @@
 		A40000012C00000000000013 /* Infrastructure */ = {
 			isa = PBXGroup;
 			children = (
+				A20000012C0000000000005A /* MutationQueueSQLiteStore.swift */,
 				A40000012C00000000000014 /* RustBridge */,
 				A20000012C00000000000026 /* URLSessionHTTPTransport.swift */,
 				A20000012C00000000000037 /* KeychainCredentialStore.swift */,
@@ -400,6 +429,10 @@
 		B40000012C00000000000002 /* SynveilTests */ = {
 			isa = PBXGroup;
 			children = (
+				B20000012C0000000000002D /* DurableMutationQueueTests.swift */,
+				B20000012C0000000000002C /* SyncCheckpointTests.swift */,
+				B20000012C0000000000002B /* MutationQueueSQLiteTests.swift */,
+				B20000012C0000000000002A /* MutationQueueTestSupport.swift */,
 				B20000012C00000000000029 /* ClientMutationTests.swift */,
 				B20000012C00000000000023 /* LibraryCatalogViewModelTests.swift */,
 				B20000012C00000000000024 /* LibraryCatalogViewTests.swift */,
@@ -520,6 +553,13 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10000012C0000000000005A /* MutationQueueSQLiteStore.swift in Sources */,
+				A10000012C00000000000059 /* DurableMutationQueue.swift in Sources */,
+				A10000012C00000000000058 /* SyncCheckpointService.swift in Sources */,
+				A10000012C00000000000057 /* MutationPersistenceCodec.swift in Sources */,
+				A10000012C00000000000056 /* SyncCheckpointResponseDTO.swift in Sources */,
+				A10000012C00000000000055 /* MutationQueueModels.swift in Sources */,
+				A10000012C00000000000054 /* SyncCheckpointModels.swift in Sources */,
 				A10000012C00000000000053 /* AuthenticatedClientMutationRepository.swift in Sources */,
 				A10000012C00000000000052 /* ClientMutationResponseDTO.swift in Sources */,
 				A10000012C00000000000051 /* ClientMutationModels.swift in Sources */,
@@ -590,6 +630,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B10000012C0000000000002D /* DurableMutationQueueTests.swift in Sources */,
+				B10000012C0000000000002C /* SyncCheckpointTests.swift in Sources */,
+				B10000012C0000000000002B /* MutationQueueSQLiteTests.swift in Sources */,
+				B10000012C0000000000002A /* MutationQueueTestSupport.swift in Sources */,
 				B10000012C00000000000029 /* ClientMutationTests.swift in Sources */,
 				B10000012C00000000000023 /* LibraryCatalogViewModelTests.swift in Sources */,
 				B10000012C00000000000024 /* LibraryCatalogViewTests.swift in Sources */,
@@ -780,6 +824,7 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lsynveil_ios_ffi",
+					"-lsqlite3",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.synveil.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -827,6 +872,7 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lsynveil_ios_ffi",
+					"-lsqlite3",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.synveil.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -870,6 +916,7 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lsynveil_ios_ffi",
+					"-lsqlite3",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.synveil.ios.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -914,6 +961,7 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lsynveil_ios_ffi",
+					"-lsqlite3",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.synveil.ios.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";

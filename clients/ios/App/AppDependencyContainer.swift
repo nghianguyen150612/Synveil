@@ -35,6 +35,11 @@ public final class AppDependencyContainer {
     /// Foundation only: no durable authorizer is installed and no SwiftUI write interface is exposed.
     private(set) var clientMutationRepository: (any ClientMutationRepositoryProtocol)?
 
+    /// Infrastructure only. Database failure leaves read-only browsing available and POST gated.
+    private(set) var durableMutationQueue: DurableMutationQueue?
+    private(set) var syncCheckpointService: SyncCheckpointService?
+    private(set) var mutationQueueFailure: MutationQueueFailure?
+
     private var enrollmentSecurityPrepared = false
     private var securityPreparationTask: Task<Void, Never>?
 
@@ -102,6 +107,27 @@ public final class AppDependencyContainer {
                         requestTimeout: 10, resourceTimeout: 15,
                         maxResponseBodyBytes: ClientMutationPolicy.maximumResponseBytes)),
                 bridge: bridge)
+            do {
+                let database = try await Task.detached {
+                    try MutationQueueSQLiteStore(url: MutationQueueSQLiteStore.productionURL())
+                }.value
+                let queue = DurableMutationQueue(
+                    store: database, provider: browserProvider, bridge: bridge)
+                switch await queue.recoverInterruptedOperations() {
+                case .recovered: break
+                case .failed(let failure): throw failure
+                }
+                durableMutationQueue = queue
+                syncCheckpointService = SyncCheckpointService(
+                    provider: browserProvider, queue: queue, bridge: bridge)
+                sessionController.installMutationSessionInvalidator { [weak queue] in
+                    queue?.invalidateSession()
+                }
+            } catch {
+                durableMutationQueue = nil
+                syncCheckpointService = nil
+                mutationQueueFailure = DurableMutationQueue.classify(error)
+            }
             rustBridge = bridge
             credentialSink = store
             restorationService = service
