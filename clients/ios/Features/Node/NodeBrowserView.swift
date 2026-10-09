@@ -99,7 +99,7 @@ struct NodeBrowserView: View {
                     title: failure.title,
                     message:
                         "\(failure.message) Showing previously loaded items; they have not been "
-                            + "verified by this refresh.",
+                        + "verified by this refresh.",
                     symbol: "exclamationmark.triangle.fill",
                     style: .error,
                     actionTitle: failure.canRetry ? "Try Again" : nil,
