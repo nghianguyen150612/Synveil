@@ -1,28 +1,36 @@
 //! Fail-closed validation around the frozen SQLite migrations. Never repair,
 //! remove, or infer missing durable state from an incomplete migration ledger.
-use sqlx::{Row, SqlitePool, migrate::Migrator};
+use sqlx::{Row, SqliteConnection, SqlitePool, migrate::Migrator};
 
 use crate::{ClientSyncError, LOCAL_SCHEMA_VERSION};
 
 pub(crate) async fn run(pool: &SqlitePool, migrator: &Migrator) -> Result<(), ClientSyncError> {
-    let result = run_inner(pool, migrator).await;
+    // Keep the migration connection owned until failure teardown completes.
+    // Returning it through the pool spawns an asynchronous release task; that
+    // task can race a single-connection pool's close and retain Windows handles.
+    let mut connection = pool.acquire().await?;
+    let result = run_inner(&mut connection, migrator).await;
     if result.is_err() {
-        // Release SQLite/WAL handles before returning a startup failure.
+        // Await the SQLite worker acknowledgement before releasing the pool.
+        connection.close().await?;
         pool.close().await;
     }
     result
 }
 
-async fn run_inner(pool: &SqlitePool, migrator: &Migrator) -> Result<(), ClientSyncError> {
+async fn run_inner(
+    connection: &mut SqliteConnection,
+    migrator: &Migrator,
+) -> Result<(), ClientSyncError> {
     let ledger: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_schema WHERE name = '_sqlx_migrations' AND type = 'table'",
     )
-    .fetch_one(pool)
+    .fetch_one(&mut *connection)
     .await?;
     let version = if ledger == 0 {
         let objects: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'")
-                .fetch_one(pool)
+                .fetch_one(&mut *connection)
                 .await?;
         if objects != 0 {
             return Err(ClientSyncError::LocalSchemaInvalid);
@@ -33,7 +41,7 @@ async fn run_inner(pool: &SqlitePool, migrator: &Migrator) -> Result<(), ClientS
         // ledger cannot allocate an unbounded startup vector.
         let rows =
             sqlx::query("SELECT version, success FROM _sqlx_migrations ORDER BY version LIMIT 8")
-                .fetch_all(pool)
+                .fetch_all(&mut *connection)
                 .await
                 .map_err(|_| ClientSyncError::LocalSchemaInvalid)?;
         let mut version = 0;
@@ -54,15 +62,18 @@ async fn run_inner(pool: &SqlitePool, migrator: &Migrator) -> Result<(), ClientS
         }
         version
     };
-    validate_objects(pool, version).await?;
+    validate_objects(connection, version).await?;
     migrator
-        .run(pool)
+        .run(&mut *connection)
         .await
         .map_err(|_| ClientSyncError::LocalSchemaInvalid)?;
-    validate_objects(pool, LOCAL_SCHEMA_VERSION).await
+    validate_objects(connection, LOCAL_SCHEMA_VERSION).await
 }
 
-async fn validate_objects(pool: &SqlitePool, version: i64) -> Result<(), ClientSyncError> {
+async fn validate_objects(
+    connection: &mut SqliteConnection,
+    version: i64,
+) -> Result<(), ClientSyncError> {
     // Unreviewed tables or triggers can also participate in a table rebuild
     // through foreign-key cascades. Preserve the whole unknown schema rather
     // than executing migrations against it.
@@ -73,7 +84,7 @@ async fn validate_objects(pool: &SqlitePool, version: i64) -> Result<(), ClientS
         i64::try_from(REQUIRED_OBJECTS.len() + 3)
             .map_err(|_| ClientSyncError::LocalSchemaInvalid)?,
     )
-    .fetch_all(pool)
+    .fetch_all(&mut *connection)
     .await
     .map_err(|_| ClientSyncError::LocalSchemaInvalid)?;
     for object in objects {
@@ -112,7 +123,7 @@ async fn validate_objects(pool: &SqlitePool, version: i64) -> Result<(), ClientS
             sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_schema WHERE type = ? AND name = ?")
                 .bind(kind)
                 .bind(name)
-                .fetch_one(pool)
+                .fetch_one(&mut *connection)
                 .await
                 .map_err(|_| ClientSyncError::LocalSchemaInvalid)?;
         if count != 1 {
@@ -129,7 +140,7 @@ async fn validate_objects(pool: &SqlitePool, version: i64) -> Result<(), ClientS
             "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'trigger' AND name = ?",
         )
         .bind(trigger)
-        .fetch_one(pool)
+        .fetch_one(&mut *connection)
         .await
         .map_err(|_| ClientSyncError::LocalSchemaInvalid)?;
         if count != 1 {
@@ -149,7 +160,7 @@ async fn validate_objects(pool: &SqlitePool, version: i64) -> Result<(), ClientS
         }
         let actual: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pragma_table_xinfo(?)")
             .bind(table)
-            .fetch_one(pool)
+            .fetch_one(&mut *connection)
             .await
             .map_err(|_| ClientSyncError::LocalSchemaInvalid)?;
         if actual != expected {
@@ -159,7 +170,7 @@ async fn validate_objects(pool: &SqlitePool, version: i64) -> Result<(), ClientS
     for &(introduced, probe) in REQUIRED_COLUMNS {
         if introduced <= version {
             sqlx::query(probe)
-                .fetch_optional(pool)
+                .fetch_optional(&mut *connection)
                 .await
                 .map_err(|_| ClientSyncError::LocalSchemaInvalid)?;
         }
