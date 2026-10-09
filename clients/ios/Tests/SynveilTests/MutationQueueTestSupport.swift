@@ -179,6 +179,7 @@ func queueRawScalar(_ url: URL, _ sql: String) throws -> String {
 final class QueueFaultInjector: @unchecked Sendable {
     private let lock = NSLock()
     private var point: MutationQueueFaultPoint?
+    private var rollbackFailure = false
     private var failure: MutationQueueFailure = .diskFull
     private var action: (@Sendable () -> Void)?
     func arm(
@@ -191,8 +192,18 @@ final class QueueFaultInjector: @unchecked Sendable {
         self.failure = failure
         self.action = action
     }
+    func armRollbackFailure() {
+        lock.lock()
+        defer { lock.unlock() }
+        rollbackFailure = true
+    }
     func hit(_ point: MutationQueueFaultPoint) throws {
         lock.lock()
+        if point == .beforeRollback && rollbackFailure {
+            rollbackFailure = false
+            lock.unlock()
+            throw MutationQueueFailure.io
+        }
         guard self.point == point else {
             lock.unlock()
             return

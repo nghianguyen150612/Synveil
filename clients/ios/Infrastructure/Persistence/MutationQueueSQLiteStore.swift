@@ -3,7 +3,7 @@ import SQLite3
 
 /// Deterministic boundary injection for tests; absent in production composition.
 enum MutationQueueFaultPoint: Equatable, Sendable {
-    case migration, beforeInsert, afterInsert, beforeCommit, afterCommit
+    case migration, beforeInsert, afterInsert, beforeCommit, afterCommit, beforeRollback
     case afterSubmitting, afterDispatchOwnership, beforeResultPersistence, duringConflictPersistence
 }
 
@@ -19,6 +19,7 @@ private final class MutationSQLiteConnection: @unchecked Sendable {
 /// connections still use SQLite's writer lock, unique keys, and bounded busy timeout.
 actor MutationQueueSQLiteStore: MutationQueueStorageProtocol {
     private let connection: MutationSQLiteConnection
+    private var poisoned = false
     private let url: URL
     private let fault: (@Sendable (MutationQueueFaultPoint) throws -> Void)?
     private let maximumOutstanding: Int
@@ -599,7 +600,13 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol {
             return value
         } catch {
             if committed { throw MutationQueueFailure.commitAcknowledgementLost }
-            try? execute("ROLLBACK")
+            do {
+                try fault?(.beforeRollback)
+                try Self.execute(connection.handle, "ROLLBACK")
+            } catch {
+                // A failed cleanup must never let a later read expose uncommitted working rows.
+                poisoned = true
+            }
             throw error
         }
     }
@@ -679,13 +686,18 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol {
         return value
     }
     private func execute(_ sql: String, _ values: [SQLValue] = []) throws {
+        guard !poisoned else { throw MutationQueueFailure.io }
         try Self.execute(connection.handle, sql, values)
     }
     private func query<T>(
         _ sql: String, _ values: [SQLValue] = [], map: (OpaquePointer) throws -> T
-    ) throws -> [T] { try Self.query(connection.handle, sql, values, map: map) }
+    ) throws -> [T] {
+        guard !poisoned else { throw MutationQueueFailure.io }
+        return try Self.query(connection.handle, sql, values, map: map)
+    }
     private func scalar(_ sql: String, _ values: [SQLValue] = []) throws -> Int64 {
-        try Self.scalar(connection.handle, sql, values)
+        guard !poisoned else { throw MutationQueueFailure.io }
+        return try Self.scalar(connection.handle, sql, values)
     }
     private static func text(_ s: OpaquePointer, _ index: Int32) throws -> String {
         guard sqlite3_column_type(s, index) == SQLITE_TEXT, sqlite3_column_bytes(s, index) <= 16384,

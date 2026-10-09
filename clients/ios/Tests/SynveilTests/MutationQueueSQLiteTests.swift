@@ -71,6 +71,21 @@ final class MutationQueueSQLiteTests: XCTestCase {
         XCTAssertEqual(try queueRawScalar(f.url, "SELECT count(*) FROM mutations"), "0")
     }
 
+    func testRollbackFailurePoisonsConnectionAndHidesUncommittedRows() async throws {
+        let fault = QueueFaultInjector()
+        let f = try await queueFixture(self, fault: fault)
+        fault.arm(.afterInsert)
+        fault.armRollbackFailure()
+        let mutation = try await queuePrepared()
+        let result = await f.queue.enqueue(mutation)
+        XCTAssertEqual(result, .failed(.diskFull))
+        let lookup = await f.queue.get(scope: f.scope, mutationId: mutation.id)
+        XCTAssertEqual(lookup, .failed(.io))
+        // An independent WAL reader sees the last committed state while the poisoned writer is
+        // retained only for preservation/closure. It cannot publish its uncommitted INSERT.
+        XCTAssertEqual(try queueRawScalar(f.url, "SELECT count(*) FROM mutations"), "0")
+    }
+
     func testCommitAcknowledgementLossReadsBackCommittedIdentity() async throws {
         let fault = QueueFaultInjector()
         let f = try await queueFixture(self, fault: fault)
