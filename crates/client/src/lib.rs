@@ -105,7 +105,7 @@ pub fn main_entry() -> ExitCode {
     if !arguments.is_empty() {
         return startup_command_entry(platform, &arguments);
     }
-    let config = match DesktopClientConfig::from_platform(platform.as_ref()) {
+    let config = match DesktopClientConfig::from_existing_platform(platform.as_ref()) {
         Ok(config) => config,
         Err(error) => {
             error!(error = %error, "desktop process configuration failed");

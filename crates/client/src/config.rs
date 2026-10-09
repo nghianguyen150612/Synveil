@@ -352,7 +352,21 @@ impl DesktopClientConfig {
     /// override; it never carries a credential.
     pub fn from_platform(platform: &dyn PlatformRuntime) -> Result<Self, DesktopClientConfigError> {
         let path = ensure_profile_manifest(platform)?;
-        let mut config = Self::from_path(&path)?;
+        Self::from_config_path(&path)
+    }
+
+    /// Load a profile that already exists without initializing first-run
+    /// state. The background client uses this entry so launching it before the
+    /// desktop has created a profile cannot create one or start an empty host.
+    pub fn from_existing_platform(
+        platform: &dyn PlatformRuntime,
+    ) -> Result<Self, DesktopClientConfigError> {
+        let path = config_path(platform)?;
+        Self::from_config_path(&path)
+    }
+
+    fn from_config_path(path: &Path) -> Result<Self, DesktopClientConfigError> {
+        let mut config = Self::from_path(path)?;
         config.sync_paused = DesktopSyncPauseStore::from_manifest_path(path)?.is_paused()?;
         Ok(config)
     }
@@ -1218,6 +1232,25 @@ mod tests {
             "running\n"
         );
         fs::remove_dir_all(directory).expect("test state cleanup");
+    }
+
+    #[test]
+    fn loading_a_missing_existing_profile_does_not_create_first_run_state() {
+        let directory = std::env::temp_dir().join(format!(
+            "synveil-existing-profile-test-{}-{}",
+            std::process::id(),
+            ServerProfileId::new()
+        ));
+        fs::create_dir_all(&directory).expect("test state directory");
+        let manifest = directory.join(DEFAULT_DESKTOP_CLIENT_CONFIG_FILE);
+
+        assert!(matches!(
+            DesktopClientConfig::from_config_path(&manifest),
+            Err(DesktopClientConfigError::MissingConfiguration)
+        ));
+        assert!(!manifest.exists(), "a read must not initialize a profile");
+
+        fs::remove_dir_all(directory).expect("remove test state directory");
     }
 
     #[test]
