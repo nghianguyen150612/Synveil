@@ -362,6 +362,27 @@ fn fresh_journal_is_created() {
     assert!(j.transaction_directory().is_dir())
 }
 #[test]
+fn fresh_journal_commits_and_reopens_a_durable_checkpoint() {
+    let root = TempDir::new().unwrap();
+    let p = plan();
+    let mut journal = InstallationJournal::open(root.path(), &p, JournalMode::StartNew).unwrap();
+    journal
+        .append(JournalRecord::TransactionOpened {
+            plan_id: p.plan_id.clone(),
+            intent: p.intent,
+            target_scope: p.target_scope,
+        })
+        .unwrap();
+    drop(journal);
+    let reopened = InstallationJournal::open(root.path(), &p, JournalMode::ResumeExisting).unwrap();
+    assert_eq!(reopened.records().len(), 1);
+    assert!(matches!(
+        reopened.records()[0].record,
+        JournalRecord::TransactionOpened { .. }
+    ));
+}
+
+#[test]
 fn nested_journal_root_is_created_for_new_transaction() {
     let d = TempDir::new().unwrap();
     let root = d.path().join("new-parent").join("journal-root");

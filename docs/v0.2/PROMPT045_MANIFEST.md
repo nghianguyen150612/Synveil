@@ -1045,3 +1045,14 @@ references, resource/isolation requirements, dispatch invocation, Windows 11
 interactive/logon/IPC prerequisites, genuine persistent-disk power interruption,
 and P036 production/server dependencies. These additions are implementation and
 handoff work; they do not establish native acceptance or authorize merging #78.
+
+
+The first resume head also exposed a separate Windows workspace journal failure
+(run 37962021826, job 113926963813): 66 cases failed before mutation because
+Windows directory opens lacked backup semantics. Committed-object flushing also
+used read-only handles. The follow-up keeps all durability/fault boundaries,
+opens non-reparse checked directories with backup semantics and write access,
+and flushes committed checkpoint files through writable non-following handles.
+A fresh checkpoint append/reopen regression preserves the full fault suite.
+Native Windows results remain required; Linux success and cross-compilation do
+not establish Windows durability or genuine power-cycle acceptance.

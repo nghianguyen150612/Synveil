@@ -12,6 +12,7 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'windows-security.ps1')
 . (Join-Path $PSScriptRoot 'windows-known-folders.ps1')
+. (Join-Path $PSScriptRoot 'windows-uninstall-completion.ps1')
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -84,12 +85,17 @@ function Snapshot-State {
     }
     return ($result | ConvertTo-Json -Compress)
 }
-function Invoke-RegisteredUninstall([string]$Name) {
+function Invoke-RegisteredUninstall([string]$Name, [string[]]$PreservedNames = @()) {
     $uninstaller = Get-RegisteredUninstaller
     $process = Start-Process -FilePath $uninstaller -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG=' + (Join-Path $logRoot "$Name.log"))) -PassThru
     if (!$process.WaitForExit(120000)) { $process.Kill(); throw "LIFECYCLE_TIMEOUT: $Name" }
     Assert-True ($process.ExitCode -eq 0) "LIFECYCLE_UNINSTALL_FAILURE: $Name exit $($process.ExitCode)"
-    Assert-True ($null -eq [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($uninstallKey)) 'LIFECYCLE_UNINSTALL_FAILURE: registration remains'
+    Wait-WindowsPackageRemoval -PackageRoot $root -PreservedNames $PreservedNames -IsRegistered {
+        $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($uninstallKey)
+        if ($null -eq $key) { return $false }
+        $key.Dispose()
+        return $true
+    }
 }
 function Interrupt-UpgradeAfterOwnedPayloadCopy([string]$Path, [string]$ExpectedLicenseHash) {
     $log = Join-Path $logRoot 'upgrade-interrupted.log'
@@ -137,10 +143,10 @@ Assert-True (Test-Path $unknown -PathType Leaf) 'LIFECYCLE_REPAIR_FAILURE: unkno
 Assert-True (Test-Path $startMenu -PathType Leaf) 'LIFECYCLE_REPAIR_FAILURE: Start Menu shortcut not restored'
 Assert-True (!(Test-Path $desktop)) 'LIFECYCLE_REPAIR_FAILURE: desktop preference changed'
 Assert-True ((Snapshot-State) -ceq $stateBefore) 'LIFECYCLE_REPAIR_FAILURE: durable state changed'
-Invoke-RegisteredUninstall 'uninstall-production'
+Invoke-RegisteredUninstall 'uninstall-production' @('user-note.txt')
 Assert-True (Test-Path $unknown -PathType Leaf) 'LIFECYCLE_UNINSTALL_FAILURE: unknown adjacent file removed'
 Assert-True ((Snapshot-State) -ceq $stateBefore) 'LIFECYCLE_UNINSTALL_FAILURE: durable state changed'
-Remove-Item -LiteralPath $unknown; Remove-Item -LiteralPath $root -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $unknown; Remove-WindowsEmptyPackageRoot -PackageRoot $root
 
 # Real Setup execution with isolated numeric fixture identities; never release artifacts.
 Invoke-Setup $OlderFixtureSetup @('/STARTUP=0','/DESKTOPICON=1') 0 'install-fixture-old'
@@ -169,9 +175,9 @@ Invoke-Setup $OlderFixtureSetup @() 1 'downgrade-fixture'
 Assert-True (((Get-Registration).version -ceq '1.1.0')) 'LIFECYCLE_DOWNGRADE_FAILURE: installed version changed'
 Assert-True ((Manifest-Hashes | ConvertTo-Json -Compress) -ceq $beforeDowngrade) 'LIFECYCLE_DOWNGRADE_FAILURE: package changed'
 Assert-True ((Snapshot-State) -ceq $stateBefore) 'LIFECYCLE_DOWNGRADE_FAILURE: state changed'
-Invoke-RegisteredUninstall 'uninstall-fixture'
+Invoke-RegisteredUninstall 'uninstall-fixture' @('user-note.txt')
 Assert-True ((Test-Path $unknown) -and ((Snapshot-State) -ceq $stateBefore)) 'LIFECYCLE_UNINSTALL_FAILURE: preserved data changed'
-Remove-Item -LiteralPath $unknown; Remove-Item -LiteralPath $root -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $unknown; Remove-WindowsEmptyPackageRoot -PackageRoot $root
 Invoke-Setup $Setup @('/STARTUP=0','/DESKTOPICON=0') 0 'reinstall-production'
 $null = Manifest-Hashes
 Invoke-RegisteredUninstall 'uninstall-reinstalled'

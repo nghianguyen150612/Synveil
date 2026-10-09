@@ -345,7 +345,13 @@ impl InstallationJournal {
         fs::remove_file(&temp).map_err(io_error)?;
         self.maybe_fail(class, JournalFaultPoint::AfterCommit)?;
         self.maybe_fail(class, JournalFaultPoint::CommittedObjectSync)?;
-        File::open(&final_path)
+        // FlushFileBuffers on Windows requires a writable handle even though
+        // checkpoint content is immutable after promotion.
+        let mut committed_options = OpenOptions::new();
+        committed_options.read(true).write(true);
+        secure_open(&mut committed_options);
+        committed_options
+            .open(&final_path)
             .and_then(|f| f.sync_all())
             .map_err(io_error)?;
         self.maybe_fail(class, JournalFaultPoint::AfterCommittedObjectSync)?;
@@ -562,7 +568,7 @@ fn trusted_macos_root_alias(path: &Path, metadata: &fs::Metadata) -> bool {
         && fs::metadata("/").is_ok_and(|root| root.uid() == 0 && root.mode() & 0o022 == 0)
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", all(test, unix)))]
 fn symlink_resolves_to(path: &Path, target: &Path) -> bool {
     let Ok(link_target) = fs::read_link(path) else {
         return false;
@@ -624,9 +630,29 @@ fn secure_open(options: &mut OpenOptions) {
 }
 
 fn sync_directory(path: &Path) -> Result<(), JournalError> {
-    File::open(path)
-        .and_then(|f| f.sync_all())
-        .map_err(io_error)
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Windows cannot open directories through File::open, and flushing
+        // requires GENERIC_WRITE. Never follow a reparse point or ignore a
+        // failed directory durability operation.
+        options.write(true).custom_flags(0x02000000 | 0x00200000);
+    }
+    let directory = options.open(path).map_err(io_error)?;
+    let metadata = directory.metadata().map_err(io_error)?;
+    if !metadata.is_dir() {
+        return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if metadata.file_attributes() & 0x400 != 0 {
+            return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+        }
+    }
+    directory.sync_all().map_err(io_error)
 }
 fn create_directory_durable(path: &Path) -> Result<(), JournalError> {
     let parent = path
