@@ -26,6 +26,9 @@ public final class AppDependencyContainer {
     /// Local logout service, composed from the same active Keychain store.
     public private(set) var logoutService: SessionLogoutServiceProtocol?
 
+    /// Transient authenticated catalog boundary for future Library view models.
+    public private(set) var libraryCatalog: (any LibraryCatalogRepositoryProtocol)?
+
     private var enrollmentSecurityPrepared = false
     private var securityPreparationTask: Task<Void, Never>?
 
@@ -74,6 +77,18 @@ public final class AppDependencyContainer {
             )
             let logout = SessionLogoutService(credentialStore: store)
 
+            libraryCatalog = AuthenticatedLibraryCatalogRepository(
+                provider: AuthenticatedLibraryRequestProvider(
+                    controller: sessionController,
+                    store: store,
+                    transport: URLSessionHTTPTransport(
+                        requestTimeout: 10,
+                        resourceTimeout: 15,
+                        maxResponseBodyBytes: LibraryCatalogPolicy.maximumResponseBytes
+                    )
+                ),
+                bridge: bridge
+            )
             rustBridge = bridge
             credentialSink = store
             restorationService = service
@@ -81,6 +96,7 @@ public final class AppDependencyContainer {
             sessionController.installRestorationService(service)
             sessionController.installLogoutService(logout)
         } catch {
+            libraryCatalog = nil
             rustBridge = nil
             credentialSink = nil
             restorationService = nil
