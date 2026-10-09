@@ -29,6 +29,9 @@ public final class AppDependencyContainer {
     /// Authenticated catalog boundary injected into the native Library presentation.
     public private(set) var libraryCatalog: (any LibraryCatalogRepositoryProtocol)?
 
+    /// Read-only Node foundation for the future native folder browser.
+    public private(set) var nodeRepository: (any NodeRepositoryProtocol)?
+
     private var enrollmentSecurityPrepared = false
     private var securityPreparationTask: Task<Void, Never>?
 
@@ -77,18 +80,18 @@ public final class AppDependencyContainer {
             )
             let logout = SessionLogoutService(credentialStore: store)
 
-            libraryCatalog = AuthenticatedLibraryCatalogRepository(
-                provider: AuthenticatedLibraryRequestProvider(
-                    controller: sessionController,
-                    store: store,
-                    transport: URLSessionHTTPTransport(
-                        requestTimeout: 10,
-                        resourceTimeout: 15,
-                        maxResponseBodyBytes: LibraryCatalogPolicy.maximumResponseBytes
-                    )
-                ),
-                bridge: bridge
+            let browserProvider = AuthenticatedLibraryRequestProvider(
+                controller: sessionController,
+                store: store,
+                transport: URLSessionHTTPTransport(
+                    requestTimeout: 10,
+                    resourceTimeout: 15,
+                    maxResponseBodyBytes: LibraryCatalogPolicy.maximumResponseBytes
+                )
             )
+            libraryCatalog = AuthenticatedLibraryCatalogRepository(
+                provider: browserProvider, bridge: bridge)
+            nodeRepository = AuthenticatedNodeRepository(provider: browserProvider, bridge: bridge)
             rustBridge = bridge
             credentialSink = store
             restorationService = service
@@ -97,6 +100,7 @@ public final class AppDependencyContainer {
             sessionController.installLogoutService(logout)
         } catch {
             libraryCatalog = nil
+            nodeRepository = nil
             rustBridge = nil
             credentialSink = nil
             restorationService = nil
