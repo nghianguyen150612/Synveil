@@ -626,6 +626,8 @@ mod tests {
             Some(SyncRuntimeWakeResult::Queued)
         );
         assert!(notifier.intent_visible_at_wake());
+        drop(producer);
+        drop(notifier);
         close_fixture(directory, state).await;
     }
 

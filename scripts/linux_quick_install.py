@@ -60,6 +60,11 @@ REQUIRED_PATHS = (
     "/usr/share/icons/hicolor/scalable/apps/synveil.svg",
     "/usr/lib/systemd/user/synveil-client.service",
 )
+EXPECTED_NONROOT_VERIFY_RECORDS = frozenset({
+    "missing /etc/synveil/credentials (Permission denied)",
+    "missing /usr/share/doc/synveil/LICENSE",
+    "missing /usr/share/doc/synveil/NOTICE",
+})
 
 
 def resolve_profile(asserted_name: str | None, detection: linux_platform_detection.DetectionResult) -> Profile:
@@ -161,7 +166,7 @@ class NativeManager:
         # and a version label alone do not prove its bytes survived mutation.
         command = ["dpkg", "--verify", "synveil"] if self.profile.artifact_type == "deb" else ["rpm", "-V", "synveil"]
         result = self._run(command)
-        return result.returncode == 0 and not result.stdout.strip()
+        return package_verification_is_clean(result.returncode, result.stdout)
 
 
 def sha256_file(path: Path) -> tuple[int, str]:
@@ -194,6 +199,28 @@ def native_product_version(value: str) -> str:
 def package_payload_present() -> bool:
     """Treat leftover or ambiguous package-owned paths as partial native state."""
     return any(Path(item).exists() or Path(item).is_symlink() for item in REQUIRED_PATHS)
+
+
+def package_verification_is_clean(returncode: int, output: str) -> bool:
+    """Accept only the distribution's explicit exclusion of non-runtime docs.
+
+    Ubuntu ``dpkg`` path exclusions and Fedora ``tsflags=nodocs`` may omit
+    ``/usr/share/doc``. The P043 root-only credentials directory is also not
+    traversable by the
+    ordinary installer user that runs this check. Ignore only those exact
+    expected records; every other verification record, including modified
+    documents and missing runtime files, remains a failure.
+    """
+    if returncode != 0:
+        return False
+    for line in output.splitlines():
+        fields = line.split()
+        if not fields:
+            continue
+        if " ".join(fields) in EXPECTED_NONROOT_VERIFY_RECORDS:
+            continue
+        return False
+    return True
 
 
 def system_executable(name: str) -> str:

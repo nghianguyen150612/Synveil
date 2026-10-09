@@ -548,8 +548,17 @@ jobs:
             exit 1
           fi
           useradd --create-home --user-group synveil-installer
-          printf 'synveil-installer ALL=(root) NOPASSWD: /usr/bin/dnf\n' > /etc/sudoers.d/synveil-installer
+          # The production installer resolves the trusted executable through
+          # Path.resolve().  Fedora 42's /usr/bin/dnf is a symlink to dnf5, so
+          # authorize the exact resolved binary used by NativeManager.
+          DNF_EXECUTABLE="$(readlink -e /usr/bin/dnf)"
+          test "$DNF_EXECUTABLE" = /usr/bin/dnf5
+          printf 'Scoped DNF executable: %s\n' "$DNF_EXECUTABLE"
+          printf 'synveil-installer ALL=(root) NOPASSWD: %s\n' "$DNF_EXECUTABLE" > /etc/sudoers.d/synveil-installer
           chmod 0440 /etc/sudoers.d/synveil-installer
+          visudo -c -f /etc/sudoers.d/synveil-installer
+          runuser -u synveil-installer -- id
+          runuser -u synveil-installer -- sudo -n -- "$DNF_EXECUTABLE" --version
           chown -R synveil-installer:synveil-installer "$PWD"
           VERSION="$(rpm -qp --qf '%{VERSION}' "$RPM")"
           runuser -u synveil-installer -- ./scripts/run-linux-quick-install-acceptance.sh \

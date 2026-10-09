@@ -163,6 +163,26 @@ class QuickInstallTests(unittest.TestCase):
         self.assertEqual(quick.EXIT_VERIFICATION, status)
         self.assertIn("VerificationFailed", error)
 
+    def test_package_verifier_allows_only_expected_policy_and_visibility_records(self):
+        self.assertTrue(quick.package_verification_is_clean(
+            0,
+            "missing     /etc/synveil/credentials (Permission denied)\n"
+            "missing     /usr/share/doc/synveil/LICENSE\n"
+            "missing     /usr/share/doc/synveil/NOTICE\n",
+        ))
+        self.assertFalse(quick.package_verification_is_clean(
+            0, "missing     /usr/bin/synveil-client\n"
+        ))
+        self.assertFalse(quick.package_verification_is_clean(
+            0, "??5??????   /usr/share/doc/synveil/LICENSE\n"
+        ))
+        self.assertFalse(quick.package_verification_is_clean(
+            0, "missing     /etc/synveil/credentials/secret (Permission denied)\n"
+        ))
+        self.assertFalse(quick.package_verification_is_clean(
+            1, "missing     /usr/share/doc/synveil/LICENSE\n"
+        ))
+
     def test_explicit_profile_cannot_override_detection(self):
         detected = quick.linux_platform_detection.DetectionResult(
             os_id="fedora", version_id="42", architecture="x86_64", qualification_status="QUALIFIED",

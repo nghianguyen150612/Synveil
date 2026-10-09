@@ -1502,8 +1502,8 @@ mod tests {
 
     fn fixture_store() -> (tempfile::TempDir, ServerConfigStore) {
         let temp = tempfile::tempdir().unwrap();
-        let layout = LinuxConfigLayout::at_root(canonical_fixture_root(&temp).join("etc/synveil"))
-            .unwrap();
+        let layout =
+            LinuxConfigLayout::at_root(canonical_fixture_root(&temp).join("etc/synveil")).unwrap();
         (temp, ServerConfigStore::new(layout))
     }
 
@@ -2255,8 +2255,7 @@ mod tests {
 
         let temp = tempfile::tempdir().unwrap();
         let layout =
-            LinuxConfigLayout::at_root(canonical_fixture_root(&temp).join("etc/synveil"))
-                .unwrap();
+            LinuxConfigLayout::at_root(canonical_fixture_root(&temp).join("etc/synveil")).unwrap();
         let store = ServerConfigStore {
             layout,
             failure_point: Some(WriteFailurePoint::AfterSecretFileSync),

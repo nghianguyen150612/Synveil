@@ -161,6 +161,8 @@ $desktopOut=Join-Path $logRoot 'desktop.stdout.log'; $desktopErr=Join-Path $logR
 Invoke-Bounded (Join-Path $root 'synveil-desktop.exe') @('--qml-smoke-test') $unrelatedCwd 0 'desktop smoke' $desktopOut $desktopErr
 $diagnostics = Get-Content $desktopErr -Raw
 Assert-True ($diagnostics -notmatch [regex]::Escape($RepositoryRoot) -and $diagnostics -notmatch 'hostedtoolcache.*Qt') 'PER_USER_RUNTIME_FAILURE: desktop used checkout/Qt SDK path'
+$clientProfileManifest = Join-Path $env:APPDATA 'Synveil\client.conf'
+Assert-True (!(Test-Path $clientProfileManifest -PathType Leaf)) 'PER_USER_SMOKE_FAILURE: QML smoke created a first-run profile manifest'
 $env:QT_DEBUG_PLUGINS='0'
 Invoke-Bounded (Join-Path $root 'synveil-client.exe') @() $unrelatedCwd 78 'client probe' (Join-Path $logRoot 'client.stdout.log') (Join-Path $logRoot 'client.stderr.log')
 Assert-True ([Environment]::GetEnvironmentVariable('Path','Machine') -ceq $machinePathBefore) 'PER_USER_MUTATION_FAILURE: machine PATH changed'

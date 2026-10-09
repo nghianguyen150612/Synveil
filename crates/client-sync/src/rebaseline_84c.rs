@@ -1908,7 +1908,7 @@ mod tests {
         );
         store.close_pool().await;
         drop(store);
-        fs::remove_dir_all(dir).unwrap();
+        crate::test_support::remove_dir_all_bounded(&dir).unwrap();
     }
 
     // -----------------------------------------------------------------------

@@ -1,5 +1,46 @@
 # Prompt045 manifest — Cross-platform clean-machine matrix
 
+## Continuation record: P045 resume from `6575d27`
+
+Fresh fetch on 2026-10-09 confirmed branch
+`feat/cross-platform-clean-machine-matrix` at
+`6575d2791185cca980599895c232506df1b4e3c8`, tree
+`ff2e0775b008f5748d2c1e406abc4c19f36ac8e6`; `main` remained
+`a560a40c8f2fe5b91db27c1b63fa0b0ab87173bc`. Existing PR #78 remained OPEN,
+DRAFT, and unmerged.
+
+The exact-head P045 aggregate (`37860745265`) passed its contract, failed
+formatting in source gates, and skipped dependent Windows/Linux consumers.
+Linux package run `37860745051` built packages but APT verification exited 60
+and Fedora authorization exited 40. Windows candidate production passed in
+`37860745113`, while its standard-user consumer and the Windows Installer
+qualification failed after QML smoke caused first-run profile creation. These
+are the defects addressed by this continuation; their pre-fix artifact hashes
+are not final-source identities.
+
+The source corrections are narrowly scoped: avoid creating the profile
+manifest in QML smoke mode; reject every package-manager verification output
+except the three exactly reproduced visibility/doc-exclusion records; authorize
+Fedora's resolved DNF5 binary only for its test account; and release Windows
+client-sync test owners before deleting their SQLite fixtures. P043 secret
+directory permissions, native-user authorization, and P044 recovery behavior
+remain unchanged. Rust formatting and the focused P043, P044, P045, Linux
+quick-install, install-engine, documentation, and acceptance-contract checks
+were run locally. Hosted Windows/Linux candidate and native evidence must be
+bound to the resulting commit; no result-v1 PASS, first-run PASS, or power-cycle
+PASS is inferred from the previous head.
+
+This continuation records the investigation and implementation against the
+published checkpoint. Consult the final reported exact-head workflow IDs for
+subsequent hosted outcomes; previous candidate hashes and BLOCKED records stay
+attached to their original source commits.
+
+Self-host run `37860744984` on that checkpoint also lacks the required
+`acceptance/p036/production-artifacts.json`: job `113595599031` stopped at its
+artifact-identity check before server acceptance. This remains an explicit
+FIRST-RUN-2 prerequisite, not a reason to synthesize production identities or
+configure PostgreSQL by hand.
+
 ## Continuation record: e236 cross-platform test corrections
 
 GitHub's branch API and `git ls-remote` verified the existing branch and PR #78

@@ -3849,6 +3849,7 @@ mod tests {
         assert!(first.is_ok(), "one caller must start the host: {first:?}");
         assert!(matches!(second, Err(DesktopSyncHostError::AlreadyStarted)));
         host.shutdown().await.expect("host shutdown");
+        drop(host);
         fixture.close().await;
     }
 
@@ -3924,6 +3925,7 @@ mod tests {
             host.handle().network_available()[0].1,
             SyncRuntimeWakeResult::RuntimeStopped
         );
+        drop(host);
         fixture.close().await;
     }
 
@@ -3951,6 +3953,10 @@ mod tests {
             .await
             .expect("lifecycle shutdown");
         assert_eq!(host.lifecycle(), DesktopSyncHostLifecycle::Stopped);
+        drop(linux);
+        drop(windows);
+        drop(handle);
+        drop(host);
         fixture.close().await;
     }
 
@@ -3978,6 +3984,7 @@ mod tests {
             host.unregister_library(fixture.scope.library_id()).await,
             Err(DesktopSyncHostError::Stopped)
         ));
+        drop(host);
         fixture.close().await;
     }
 
@@ -4096,6 +4103,7 @@ mod tests {
         host.join().await.expect("host join");
         host.join().await.expect("idempotent host join");
         assert_eq!(host.lifecycle(), DesktopSyncHostLifecycle::Stopped);
+        drop(host);
         fixture.close().await;
     }
 
@@ -4144,6 +4152,7 @@ mod tests {
             .expect("graceful shutdown");
         assert_eq!(executor.calls(), 1);
         assert_eq!(host.lifecycle(), DesktopSyncHostLifecycle::Stopped);
+        drop(host);
         fixture.close().await;
     }
 
@@ -4447,6 +4456,7 @@ mod tests {
         );
         assert_eq!(host.statuses().len(), 2);
         host.shutdown().await.expect("host shutdown");
+        drop(host);
         fixture.close().await;
     }
 
@@ -4553,6 +4563,8 @@ mod tests {
             "root restoration must resume runtime work"
         );
         host.shutdown().await.expect("missing-root host shutdown");
+        drop(events);
+        drop(host);
         fixture.close().await;
     }
 

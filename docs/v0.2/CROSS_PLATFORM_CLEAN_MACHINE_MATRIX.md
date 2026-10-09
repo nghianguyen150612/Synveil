@@ -1,5 +1,60 @@
 # Cross-platform clean-machine matrix (P045)
 
+## Continuation record: P045 resume from `6575d27`
+
+On 2026-10-09, `git fetch origin --prune` confirmed the existing branch at
+`6575d2791185cca980599895c232506df1b4e3c8` (tree
+`ff2e0775b008f5748d2c1e406abc4c19f36ac8e6`). `main` remained
+`a560a40c8f2fe5b91db27c1b63fa0b0ab87173bc`; PR #78 was OPEN, DRAFT, and
+unmerged. No branch or PR was recreated.
+
+Exact-head P045 run `37860745265` passed contract job `113598446278`, failed
+source gates `113598446463` on `cargo fmt --check`, and failed evidence gate
+`113606181304`; Windows/Linux aggregate consumers were skipped. The same-head
+Linux package run `37860745051` built its exact DEB/RPM candidates but its APT
+consumer `113609856333` exited 60 during package verification and Fedora 42
+consumer `113609856382` exited 40 because sudo authorized `/usr/bin/dnf` while
+the installer executed the resolved `/usr/bin/dnf5`. Windows native run
+`37860745113` passed candidate production (`113595604241`) and failed its
+standard-user child (`113605400178`); installer run `37860745099`, job
+`113595763840`, failed the same qualification.
+
+The Windows child artifact shows that identity, non-admin status, normalized
+profile paths, and the 1,363-file runtime manifest passed. The QML smoke then
+created `%APPDATA%\\Synveil\\client.conf`; the following no-profile client
+probe consequently started the long-running client and timed out. The smoke
+bridge now avoids first-run profile creation, and the child asserts that the
+manifest remains absent before launching the client probe.
+
+The APT failure was reproduced against the exact DEB in a disposable Ubuntu
+24.04 container. The runtime payload and package identity were intact; as the
+ordinary user, `dpkg --verify` also reported the P043 root-only credentials
+directory as inaccessible and Ubuntu's configured documentation exclusions
+as missing LICENSE/NOTICE. Verification now permits only those exact records;
+every other record or nonzero status remains a failure. Fedora's test policy
+now authorizes only the resolved `/usr/bin/dnf5` path for its disposable
+installer account and preflights that path with `sudo -n`.
+
+Rust CI `37860745112` passed Ubuntu and macOS tests and dependency policy. Its
+Windows client-sync suites failed during teardown with Windows sharing
+violation 32: live test hosts/notifiers retained SQLite writer-lock handles
+when fixtures were removed, and one rebaseline test bypassed bounded cleanup.
+The test fixtures now release those owners before cleanup and use the existing
+bounded Windows cleanup helper. The separate web recovery-focus assertion in
+job `113595941014` remains outside P045 scope. Linux clean-machine run
+`37860745619` passed its producer and adapter gates, but native guests and the
+Phase-C gate were skipped because this PR event did not request `run_native`.
+These prior-head results are diagnostic only; the new source revision must
+produce its own exact-head artifacts and evidence. No native acceptance PASS is
+carried forward from this record.
+
+The same-head self-host run `37860744984` also failed its source job
+`113595598975` on the formatter issue. Its artifact-identity job
+`113595599031` exited before server acceptance because
+`acceptance/p036/production-artifacts.json` is absent. This is an unmet Host
+first-run identity prerequisite; no PostgreSQL was manually provisioned and no
+FIRST-RUN-2 PASS is inferred.
+
 ## Continuation record: e236 cross-platform test corrections
 
 At the first e236 status check, the published branch and PR #78 were verified at
