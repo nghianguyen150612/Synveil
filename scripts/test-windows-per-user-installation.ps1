@@ -28,20 +28,8 @@ Write-Output "STANDARD_USER_PREFLIGHT: expected SID matched; administrator=false
 # loads the target profile. Rebuild the profile-scoped variables from the
 # process token before invoking Setup so this child models a normal user
 # environment instead of runneradmin's profile paths.
+Set-WindowsTokenProfileEnvironment
 $tokenLocalAppData = Join-Path $profileRoot 'AppData\Local'
-$tokenRoamingAppData = Join-Path $profileRoot 'AppData\Roaming'
-$tokenTemp = Join-Path $tokenLocalAppData 'Temp'
-New-Item $tokenTemp -ItemType Directory -Force | Out-Null
-$homeDrive = Split-Path -Qualifier $profileRoot
-$env:USERPROFILE = $profileRoot
-$env:LOCALAPPDATA = $tokenLocalAppData
-$env:APPDATA = $tokenRoamingAppData
-$env:HOMEDRIVE = $homeDrive
-$env:HOMEPATH = $profileRoot.Substring($homeDrive.Length)
-$env:TEMP = $tokenTemp
-$env:TMP = $tokenTemp
-$env:USERNAME = $identity.Name.Substring($identity.Name.LastIndexOf('\') + 1)
-$env:USERDOMAIN = $env:COMPUTERNAME
 if (![string]::Equals([IO.Path]::GetFullPath($env:LOCALAPPDATA).TrimEnd('\'), $tokenLocalAppData.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) {
     throw 'STANDARD_USER_ENVIRONMENT_FAILURE: process LocalAppData does not match its token profile'
 }

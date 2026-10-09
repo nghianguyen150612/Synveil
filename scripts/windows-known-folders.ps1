@@ -104,3 +104,23 @@ function Get-WindowsKnownFolderPath([string]$Folder) {
     }
     return $path
 }
+
+function Set-WindowsTokenProfileEnvironment {
+    # -Credential loads the token's profile but inherits the launcher environment.
+    # Setup and its temporary extraction must use the verified child's namespace.
+    $profileRoot = [SynveilKnownFolders]::CurrentUserProfile()
+    $localAppData = Join-Path $profileRoot 'AppData\Local'
+    $tokenTemp = Join-Path $localAppData 'Temp'
+    New-Item $tokenTemp -ItemType Directory -Force | Out-Null
+    $profileDrive = Split-Path -Qualifier $profileRoot
+    $env:USERPROFILE = $profileRoot
+    $env:LOCALAPPDATA = $localAppData
+    $env:APPDATA = Join-Path $profileRoot 'AppData\Roaming'
+    $env:HOMEDRIVE = $profileDrive
+    $env:HOMEPATH = $profileRoot.Substring($profileDrive.Length)
+    $env:TEMP = $tokenTemp
+    $env:TMP = $tokenTemp
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $env:USERNAME = $identity.Name.Substring($identity.Name.LastIndexOf('\') + 1)
+    $env:USERDOMAIN = $env:COMPUTERNAME
+}

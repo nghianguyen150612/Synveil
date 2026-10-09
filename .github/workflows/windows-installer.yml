@@ -173,6 +173,9 @@ jobs:
           ./scripts/build-windows-installer.ps1 -RuntimeStagingDirectory target/p027-runtime-old -OutputDirectory target/p027-fixture-old -LifecycleFixtureVersion 1.0.0
           ./scripts/build-windows-installer.ps1 -RuntimeStagingDirectory target/p027-runtime-new -OutputDirectory target/p027-fixture-new -LifecycleFixtureVersion 1.1.0
           "P044_NEWER_LICENSE_HASH=$newerLicenseHash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Test token profile environment reconstruction
+        shell: pwsh
+        run: ./scripts/test-windows-token-profile-environment.ps1
       - name: Qualify installation as a disposable standard user
         shell: pwsh
         run: |

@@ -24,6 +24,13 @@ if (![string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
     $profileEnvMatches = [string]::Equals([IO.Path]::GetFullPath($env:USERPROFILE).TrimEnd('\'), $profileRoot.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)
 }
 Write-Output "STANDARD_USER_LIFECYCLE_PREFLIGHT: expected SID matched; administrator=false; USERPROFILE_matches_token_profile=$profileEnvMatches"
+Set-WindowsTokenProfileEnvironment
+if (![string]::Equals($env:USERPROFILE, $profileRoot, [StringComparison]::OrdinalIgnoreCase) -or
+    ![string]::Equals($env:LOCALAPPDATA, (Join-Path $profileRoot 'AppData\Local'), [StringComparison]::OrdinalIgnoreCase) -or
+    ![string]::Equals($env:TEMP, (Join-Path $profileRoot 'AppData\Local\Temp'), [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'STANDARD_USER_ENVIRONMENT_FAILURE: lifecycle environment differs from its verified token profile'
+}
+Write-Output 'STANDARD_USER_LIFECYCLE_ENVIRONMENT: profile and temporary paths match the non-administrator token'
 $localAppData = Get-WindowsKnownFolderPath LocalApplicationData
 $appId = '{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1'
 $uninstallKey = "Software\Microsoft\Windows\CurrentVersion\Uninstall\$appId"

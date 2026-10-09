@@ -90,6 +90,22 @@ try {
                 }
             }
         }
+        # Lifecycle diagnostics live in their own child directory. Preserve the
+        # first failing Setup/uninstall log, rather than only its parent's exit.
+        $lifecycleLogs = Join-Path $childLogs 'p027'
+        if (Test-Path -LiteralPath $lifecycleLogs -PathType Container) {
+            $lifecycleDestination = Join-Path $boundedLogs 'p027'
+            New-Item $lifecycleDestination -ItemType Directory -Force | Out-Null
+            foreach ($item in Get-ChildItem -LiteralPath $lifecycleLogs -Filter '*.log' -File) {
+                if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) {
+                    if ($item.Length -le 262144) {
+                        Copy-Item -LiteralPath $item.FullName -Destination $lifecycleDestination -Force
+                    } else {
+                        Set-Content -LiteralPath (Join-Path $lifecycleDestination ($item.Name + '.omitted')) -Value 'Diagnostic omitted because it exceeded the 262144-byte evidence bound.'
+                    }
+                }
+            }
+        }
     }
     if ($accountCreated) {
         ([ADSI]"WinNT://$env:COMPUTERNAME,computer").Delete('user',$user)

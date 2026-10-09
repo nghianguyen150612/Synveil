@@ -537,9 +537,20 @@ mod tests {
     }
 
     async fn close_fixture(directory: PathBuf, state: Arc<LocalStateStore>) {
+        // The store has one pooled SQLite connection. Acquire it after callback
+        // completion and explicitly await its worker shutdown before pool teardown.
+        // Pool return/drop can otherwise leave asynchronous worker cleanup pending.
+        state
+            .pool
+            .acquire()
+            .await
+            .expect("fixture connection returned")
+            .close()
+            .await
+            .expect("fixture SQLite worker shutdown");
         state.close_pool().await;
         drop(state);
-        fs::remove_dir_all(directory).expect("fixture cleanup");
+        crate::test_support::remove_dir_all_bounded(&directory).expect("fixture cleanup");
     }
 
     #[tokio::test]
