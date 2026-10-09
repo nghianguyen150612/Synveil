@@ -259,6 +259,19 @@ public final class SessionController {
         transition(to: .recoveryRequired(reason))
     }
 
+    /// Catalog authorization failures use the existing recovery owner and the captured lifecycle.
+    /// Generic transport failures do not change authentication or delete secure credentials.
+    func handleLibraryAuthenticationFailure(_ failure: LibraryFailure, revision: UInt64) {
+        guard state == .authenticated, transitionRevision == revision, !Task.isCancelled else {
+            return
+        }
+        switch failure {
+        case .authenticationRejected: requireRecovery(.authentication)
+        case .deviceRevoked: requireRecovery(.deviceRevoked)
+        default: break
+        }
+    }
+
     /// Starts explicit local logout or retries a previously failed secure cleanup.
     ///
     /// The authenticated state is invalidated before cleanup starts. The cleanup task is owned by
