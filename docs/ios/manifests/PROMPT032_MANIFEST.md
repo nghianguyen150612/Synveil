@@ -67,21 +67,23 @@ The production `AppDependencyContainer.nodeRepository` and P031 authenticated re
 - `python3 -m unittest discover -s clients/ios/Support/tests`: **33 passed**.
 - `bash scripts/validate-docs.sh`: **PASS**.
 - `git diff --check`: **PASS**.
-- Local environment is Linux and has no Swift compiler, `swift-format`, Xcode, or iOS Simulator. Swift formatting, parsing, compilation, XCTest, Simulator, and Apple Rust build are therefore not claimed locally; hosted checks remain pending.
-- Real Simulator Keychain round-trip status: **PENDING hosted Simulator evidence**. Physical-device validation: **NOT_AVAILABLE**.
+- Local environment is Linux and has no Swift compiler, `swift-format`, Xcode, or iOS Simulator. Swift formatting, parsing, compilation, XCTest, Simulator, and Apple Rust build are not claimed locally; those results are recorded below from GitHub Actions.
+- Real Simulator Keychain round-trip status: **SKIPPED** because the unsigned hosted Simulator test process has no Keychain access entitlement. Deterministic injected Keychain tests passed. Physical-device validation: **NOT_AVAILABLE**.
 
 ## Hosted Delivery Evidence
 
-This section will be completed from GitHub after the feature branch is pushed and its exact-head workflows, pull request, and merge are verified. No hosted evidence is claimed yet.
+- Final feature SHA: **`cdc82a16cdc3cb85732e4d48f96617d786a9f29f`** (`fix(ios): initialize node test repository`).
+- Feature PR: [#92](https://github.com/nghianguyen150612/Synveil/pull/92), targeting **`ios-app`**. GitHub confirms **merged and closed**, merged at **2026-10-09 11:41:45 UTC**. Merge commit and resulting feature integration SHA: **`7a9b7de76359af18bdcf0a1a505d9bf163936d47`**. A fresh `origin/ios-app` fetch matched that SHA, and its tree contains the Node Browser source, its XCTest files, and this manifest.
+- iOS Static Validation: push run [37924137995](https://github.com/nghianguyen150612/Synveil/actions/runs/37924137995) and PR run [37924143729](https://github.com/nghianguyen150612/Synveil/actions/runs/37924143729): **PASS** on the exact final feature SHA.
+- iOS Build: push run [37924137933](https://github.com/nghianguyen150612/Synveil/actions/runs/37924137933) and PR run [37924143715](https://github.com/nghianguyen150612/Synveil/actions/runs/37924143715): **PASS** on the exact final feature SHA.
+- iOS Simulator Tests: push run [37924137927](https://github.com/nghianguyen150612/Synveil/actions/runs/37924137927) and PR run [37924143723](https://github.com/nghianguyen150612/Synveil/actions/runs/37924143723): **PASS** on the exact final feature SHA. Each result bundle reports **518 tests total: 517 passed, 1 skipped, 0 failed**. All **31 `NodeBrowserViewModelTests`** and **10 `NodeBrowserViewTests`** passed. The skipped test is `KeychainCredentialStoreTests.testSimulatorKeychainRoundTripUsesUniqueTestService`; the hosted log says the unsigned Simulator process lacks a Keychain access entitlement. Existing deterministic injected Keychain tests passed.
+- iOS Rust Apple Build: explicitly dispatched run [37924147906](https://github.com/nghianguyen150612/Synveil/actions/runs/37924147906): **PASS** on the exact final feature SHA. Apple target checks, C header/export alignment, device and Simulator static library builds, staged artifact validation, and upload completed successfully. No Rust source was changed; the workflow was still dispatched as requested.
+- Physical-device validation: **NOT_AVAILABLE**.
+- Finalization note: this manifest's hosted evidence was added in a documentation-only follow-up PR after the feature merge. The SHA above is the verified `ios-app` integration commit containing P032. A documentation-only follow-up has its own separate merge record; its commit cannot be embedded in itself.
+- Prompt033 readiness: **READY_FOR_PROMPT033** after GitHub confirmed P032 merged into `ios-app` and the required exact-head iOS workflows passed.
 
-- Final feature SHA: **PENDING**.
-- Pull request targeting `ios-app`: **PENDING**.
-- iOS Static Validation: **PENDING exact-head GitHub Actions evidence**.
-- iOS Build: **PENDING exact-head GitHub Actions evidence**.
-- iOS Simulator Tests and test counts: **PENDING exact-head GitHub Actions evidence**.
-- iOS Rust Apple Build: **PENDING exact-head GitHub Actions evidence or confirmed applicability**.
-- Real Keychain round-trip: **PENDING hosted Simulator log**.
-- Physical-device status: **NOT_AVAILABLE**.
-- Hosted merge state and resulting `ios-app` SHA: **PENDING GitHub confirmation**.
-- Unrelated CI failures: **PENDING inspection; no unrelated work is included in P032**.
-- Prompt033 readiness: **PENDING hosted merge confirmation**.
+## Unrelated CI Evidence
+
+- Rust CI push run [37924137978](https://github.com/nghianguyen150612/Synveil/actions/runs/37924137978) and PR run [37924143807](https://github.com/nghianguyen150612/Synveil/actions/runs/37924143807) failed in non-P032 Rust, packaging, and desktop jobs. Clippy reports `double_must_use` in unchanged `crates/object-store/src/types.rs` (`into_parts` and `into_stream`); cross-platform Rust checks/tests and desktop UI jobs also failed in this workflow. P032 changes no Rust, client, or desktop source.
+- Linux AppImage push run [37924138039](https://github.com/nghianguyen150612/Synveil/actions/runs/37924138039) and PR run [37924143727](https://github.com/nghianguyen150612/Synveil/actions/runs/37924143727) failed artifact inspection because it found the `/home/` private or temporary build-path marker in `synveil-desktop`. P032 changes no desktop or AppImage source.
+- Linux native package and PostgreSQL 17 scheduled-maintenance runs were still in progress at the feature-merge inspection; no pass/fail result is claimed for them. No unrelated CI issues were changed as part of P032.
