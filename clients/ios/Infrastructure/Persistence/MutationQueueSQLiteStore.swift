@@ -726,12 +726,13 @@ enum MutationQueueFilePolicy {
             try rejectSymbolicLink(parent)
             try FileManager.default.createDirectory(
                 at: parent, withIntermediateDirectories: true,
-                attributes: attributes(directory: true))
+                attributes: requestedAttributes(directory: true))
             try rejectSymbolicLink(url)
             if !FileManager.default.fileExists(atPath: url.path) {
                 guard
                     FileManager.default.createFile(
-                        atPath: url.path, contents: Data(), attributes: attributes(directory: false)
+                        atPath: url.path, contents: Data(),
+                        attributes: requestedAttributes(directory: false)
                     )
                 else { throw MutationQueueFailure.databaseOpen }
             }
@@ -745,7 +746,8 @@ enum MutationQueueFilePolicy {
             let parent = url.deletingLastPathComponent()
             try rejectSymbolicLink(parent)
             try FileManager.default.setAttributes(
-                attributes(directory: true), ofItemAtPath: parent.path)
+                requestedAttributes(directory: true), ofItemAtPath: parent.path)
+            try verifyDeviceProtection(parent.path)
             #if canImport(Darwin)
                 var excluded = URLResourceValues()
                 excluded.isExcludedFromBackup = true
@@ -757,7 +759,8 @@ enum MutationQueueFilePolicy {
                 try rejectSymbolicLink(file)
                 if FileManager.default.fileExists(atPath: path) {
                     try FileManager.default.setAttributes(
-                        attributes(directory: false), ofItemAtPath: path)
+                        requestedAttributes(directory: false), ofItemAtPath: path)
+                    try verifyDeviceProtection(path)
                     #if canImport(Darwin)
                         var protectedFile = file
                         try protectedFile.setResourceValues(excluded)
@@ -768,13 +771,36 @@ enum MutationQueueFilePolicy {
             throw MutationQueueFailure.io
         }
     }
-    private static func attributes(directory: Bool) -> [FileAttributeKey: Any] {
+    static func requestedAttributes(directory: Bool) -> [FileAttributeKey: Any] {
         var result: [FileAttributeKey: Any] = [.posixPermissions: directory ? 0o700 : 0o600]
         #if os(iOS)
             result[.protectionKey] = FileProtectionType.completeUntilFirstUserAuthentication
         #endif
         return result
     }
+    #if os(iOS)
+        /// Foundation attribute dictionaries can expose an NSString/String raw value, rather than
+        /// Swift's FileProtectionType wrapper. Normalize both representations without losing checks.
+        static func protectionName(_ attributes: [FileAttributeKey: Any]) -> String? {
+            if let value = attributes[.protectionKey] as? FileProtectionType {
+                return value.rawValue
+            }
+            return attributes[.protectionKey] as? String
+        }
+    #endif
+
+    private static func verifyDeviceProtection(_ path: String) throws {
+        #if os(iOS) && !targetEnvironment(simulator)
+            let actual = try FileManager.default.attributesOfItem(atPath: path)
+            guard
+                protectionName(actual)
+                    == FileProtectionType.completeUntilFirstUserAuthentication.rawValue
+            else {
+                throw MutationQueueFailure.io
+            }
+        #endif
+    }
+
     private static func rejectSymbolicLink(_ url: URL) throws {
         if let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
             attributes[.type] as? FileAttributeType == .typeSymbolicLink

@@ -285,19 +285,40 @@ final class MutationQueueSQLiteTests: XCTestCase {
     func testNativeDataProtectionAttributes() async throws {
         let f = try await queueFixture(self)
         #if os(iOS)
-            for path in [
+            let values = try [
                 f.url.deletingLastPathComponent().path, f.url.path, f.url.path + "-wal",
                 f.url.path + "-shm",
-            ] {
-                let attributes = try FileManager.default.attributesOfItem(atPath: path)
+            ].map {
+                MutationQueueFilePolicy.protectionName(
+                    try FileManager.default.attributesOfItem(atPath: $0))
+            }
+            #if targetEnvironment(simulator)
+                if values.allSatisfy({ $0 == nil }) {
+                    throw XCTSkip(
+                        "The Simulator filesystem does not expose Data Protection attributes; requested policy is verified separately. Physical-device round-trip remains required."
+                    )
+                }
+            #endif
+            for actual in values {
                 XCTAssertEqual(
-                    attributes[.protectionKey] as? FileProtectionType,
-                    .completeUntilFirstUserAuthentication)
+                    actual, FileProtectionType.completeUntilFirstUserAuthentication.rawValue)
             }
         #else
             XCTAssertTrue(FileManager.default.fileExists(atPath: f.url.path))
         #endif
     }
+    func testRequestedProtectionPolicyAndPermissions() throws {
+        for directory in [false, true] {
+            let attributes = MutationQueueFilePolicy.requestedAttributes(directory: directory)
+            XCTAssertEqual(attributes[.posixPermissions] as? Int, directory ? 0o700 : 0o600)
+            #if os(iOS)
+                XCTAssertEqual(
+                    MutationQueueFilePolicy.protectionName(attributes),
+                    FileProtectionType.completeUntilFirstUserAuthentication.rawValue)
+            #endif
+        }
+    }
+
     func testBackupExclusionForDeviceBoundQueue() async throws {
         let f = try await queueFixture(self)
         #if canImport(Darwin)
