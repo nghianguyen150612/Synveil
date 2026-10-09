@@ -95,6 +95,10 @@
 		A10000012C00000000000049 /* NodeFileDetailsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000049 /* NodeFileDetailsViewModel.swift */; };
 		A10000012C00000000000050 /* NodeFileDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000050 /* NodeFileDetailsView.swift */; };
 		B10000012C00000000000028 /* NodeFileDetailsViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000028 /* NodeFileDetailsViewModelTests.swift */; };
+		A10000012C00000000000051 /* ClientMutationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000051 /* ClientMutationModels.swift */; };
+		A10000012C00000000000052 /* ClientMutationResponseDTO.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000052 /* ClientMutationResponseDTO.swift */; };
+		A10000012C00000000000053 /* AuthenticatedClientMutationRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000053 /* AuthenticatedClientMutationRepository.swift */; };
+		B10000012C00000000000029 /* ClientMutationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000029 /* ClientMutationTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -197,6 +201,10 @@
 		A20000012C00000000000049 /* NodeFileDetailsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Node/NodeFileDetailsViewModel.swift; sourceTree = "<group>"; };
 		A20000012C00000000000050 /* NodeFileDetailsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Node/NodeFileDetailsView.swift; sourceTree = "<group>"; };
 		B20000012C00000000000028 /* NodeFileDetailsViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NodeFileDetailsViewModelTests.swift; sourceTree = "<group>"; };
+		A20000012C00000000000051 /* ClientMutationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Mutation/ClientMutationModels.swift; sourceTree = "<group>"; };
+		A20000012C00000000000052 /* ClientMutationResponseDTO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Mutation/ClientMutationResponseDTO.swift; sourceTree = "<group>"; };
+		A20000012C00000000000053 /* AuthenticatedClientMutationRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Mutation/AuthenticatedClientMutationRepository.swift; sourceTree = "<group>"; };
+		B20000012C00000000000029 /* ClientMutationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/ClientMutationTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -236,6 +244,9 @@
 				A40000012C00000000000015 /* Features */ = {
 			isa = PBXGroup;
 			children = (
+				A20000012C00000000000053 /* AuthenticatedClientMutationRepository.swift */,
+				A20000012C00000000000052 /* ClientMutationResponseDTO.swift */,
+				A20000012C00000000000051 /* ClientMutationModels.swift */,
 				A20000012C0000000000003D /* AuthenticationRecoveryView.swift */,
 				A20000012C0000000000003C /* AuthenticationRecoveryPresentation.swift */,
 				A40000012C00000000000017 /* Library */,
@@ -389,6 +400,7 @@
 		B40000012C00000000000002 /* SynveilTests */ = {
 			isa = PBXGroup;
 			children = (
+				B20000012C00000000000029 /* ClientMutationTests.swift */,
 				B20000012C00000000000023 /* LibraryCatalogViewModelTests.swift */,
 				B20000012C00000000000024 /* LibraryCatalogViewTests.swift */,
 				B20000012C00000000000025 /* NodeBrowserTests.swift */,
@@ -508,6 +520,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10000012C00000000000053 /* AuthenticatedClientMutationRepository.swift in Sources */,
+				A10000012C00000000000052 /* ClientMutationResponseDTO.swift in Sources */,
+				A10000012C00000000000051 /* ClientMutationModels.swift in Sources */,
 				A10000012C00000000000043 /* LibraryCatalogView.swift in Sources */,
 				A10000012C00000000000042 /* LibraryCatalogViewModel.swift in Sources */,
 				A10000012C00000000000044 /* NodeModels.swift in Sources */,
@@ -575,6 +590,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B10000012C00000000000029 /* ClientMutationTests.swift in Sources */,
 				B10000012C00000000000023 /* LibraryCatalogViewModelTests.swift in Sources */,
 				B10000012C00000000000024 /* LibraryCatalogViewTests.swift in Sources */,
 				B10000012C00000000000025 /* NodeBrowserTests.swift in Sources */,

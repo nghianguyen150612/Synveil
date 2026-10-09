@@ -86,6 +86,15 @@ public struct RustBridgeAdapter: Sendable {
         return swiftData
     }
 
+    /// Reuses shared core UUIDv7 generation and the established Rust buffer ownership boundary.
+    public func generateClientMutationID() throws -> String {
+        let bytes = try consumeRustBuffer { synveil_ffi_client_mutation_id_generate($0) }
+        guard let value = String(data: bytes, encoding: .utf8) else {
+            throw RustBridgeError.internalError
+        }
+        return value
+    }
+
     // MARK: - Infrastructure SHA-256 Operations
 
     /// Parses a canonical SHA-256 string (e.g. `sha256:<64 hex chars>`) using real Rust shared core

@@ -82,14 +82,15 @@ def validate_artifact_bundle(staging_dir: str) -> None:
             f"Invalid artifact_profile: expected 'release', got {manifest.get('artifact_profile')}"
         )
 
-    if manifest.get("c_abi_export_status") != "MODEL_MAPPING_P020":
+    if manifest.get("c_abi_export_status") != "MODEL_MAPPING_P034":
         raise ValueError(
-            f"Invalid c_abi_export_status: expected 'MODEL_MAPPING_P020', got {manifest.get('c_abi_export_status')}"
+            f"Invalid c_abi_export_status: expected 'MODEL_MAPPING_P034', got {manifest.get('c_abi_export_status')}"
         )
 
     expected_exports = [
         "synveil_ffi_abi_version",
         "synveil_ffi_buffer_release",
+        "synveil_ffi_client_mutation_id_generate",
         "synveil_ffi_device_credential_validate",
         "synveil_ffi_enrollment_secret_validate",
         "synveil_ffi_library_id_validate",
@@ -104,9 +105,9 @@ def validate_artifact_bundle(staging_dir: str) -> None:
             f"Invalid c_abi_exports: expected {expected_exports}, got {manifest.get('c_abi_exports')}"
         )
 
-    if manifest.get("ffi_model_mapping") != "P020_AUTH_FILE_PRIMITIVES":
+    if manifest.get("ffi_model_mapping") != "P034_AUTH_FILE_MUTATION_PRIMITIVES":
         raise ValueError(
-            f"Invalid ffi_model_mapping: expected 'P020_AUTH_FILE_PRIMITIVES', got {manifest.get('ffi_model_mapping')}"
+            f"Invalid ffi_model_mapping: expected 'P034_AUTH_FILE_MUTATION_PRIMITIVES', got {manifest.get('ffi_model_mapping')}"
         )
 
     if manifest.get("rust_bridge_protocol") != "P020_APPLICATION_SERVICE_BOUNDARY":
@@ -157,6 +158,7 @@ def validate_artifact_bundle(staging_dir: str) -> None:
         for required_symbol in [
             "SynveilFfiBuffer",
             "synveil_ffi_buffer_release",
+            "synveil_ffi_client_mutation_id_generate",
             "synveil_ffi_enrollment_secret_validate",
             "synveil_ffi_device_credential_validate",
             "synveil_ffi_library_id_validate",

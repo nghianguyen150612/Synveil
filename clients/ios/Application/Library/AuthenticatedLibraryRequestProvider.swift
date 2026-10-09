@@ -5,6 +5,12 @@ struct LibraryRequestScope: Sendable, CustomStringConvertible, CustomDebugString
     fileprivate let session: DeviceCredentialSession
     fileprivate let revision: UInt64
 
+    func matches(_ scope: ClientMutationScope) -> Bool {
+        session.serverEndpoint == scope.serverEndpoint
+            && session.record.ownerUserId == scope.ownerUserId
+            && session.record.deviceId == scope.deviceId.rawValue
+    }
+
     var description: String { "[REDACTED_LIBRARY_REQUEST_SCOPE]" }
     var debugDescription: String { description }
 }
@@ -34,7 +40,7 @@ protocol AuthenticatedNodeRequestProviderProtocol {
 
 @MainActor
 final class AuthenticatedLibraryRequestProvider: AuthenticatedLibraryRequestProviderProtocol,
-    AuthenticatedNodeRequestProviderProtocol
+    AuthenticatedNodeRequestProviderProtocol, AuthenticatedClientMutationRequestProviderProtocol
 {
     private let controller: SessionController
     private let store: any SecureCredentialSinkProtocol
@@ -128,12 +134,7 @@ final class AuthenticatedLibraryRequestProvider: AuthenticatedLibraryRequestProv
         try checkCurrent(scope)
         let request = HTTPTransportRequest(
             url: url,
-            headers: [
-                "Authorization": "Bearer \(scope.session.record.credential.rawValue)",
-                "Accept": "application/json",
-                "Accept-Encoding": "identity",
-                "User-Agent": "Synveil/0.1.0 (iOS)",
-            ])
+            headers: authenticatedHeaders(scope))
         do {
             let response = try await transport.send(request)
             try await validate(scope)
@@ -143,6 +144,51 @@ final class AuthenticatedLibraryRequestProvider: AuthenticatedLibraryRequestProv
             try checkCurrent(scope)
             throw error
         }
+    }
+
+    /// One attempt only. The dispatch marker is set after all local/session checks, immediately
+    /// before invoking transport; any later inability to verify the result is ambiguous.
+    func submitMutation(
+        _ mutation: PreparedClientMutation, scope: LibraryRequestScope,
+        onDispatch: () -> Void
+    ) async throws -> HTTPTransportResponse {
+        try ClientMutationPolicy.validateRequestSize(mutation.requestBody)
+        guard scope.matches(mutation.base.scope) else { throw ClientMutationFailure.scopeMismatch }
+        try await validate(scope)
+        let endpoint = scope.session.serverEndpoint
+        guard var components = URLComponents(url: endpoint.url, resolvingAgainstBaseURL: false),
+            components.user == nil, components.password == nil
+        else { throw LibraryFailure.originMismatch }
+        let basePath = components.percentEncodedPath.trimmingCharacters(
+            in: CharacterSet(charactersIn: "/"))
+        components.percentEncodedPath =
+            (basePath.isEmpty ? "" : "/\(basePath)")
+            + "/api/v1/devices/\(scope.session.record.deviceId)/libraries/\(mutation.base.scope.libraryId.rawValue)/mutations"
+        components.query = nil
+        components.fragment = nil
+        guard let url = components.url, url.scheme == "https", url.host == endpoint.host,
+            url.port == endpoint.port
+        else { throw LibraryFailure.originMismatch }
+        try checkCurrent(scope)
+        let request = HTTPTransportRequest(
+            url: url, method: .post,
+            headers: authenticatedHeaders(scope, jsonBody: true), body: mutation.requestBody)
+        onDispatch()
+        let response = try await transport.send(request)
+        try await validate(scope)
+        return response
+    }
+
+    private func authenticatedHeaders(_ scope: LibraryRequestScope, jsonBody: Bool = false)
+        -> [String: String]
+    {
+        var headers = [
+            "Authorization": "Bearer \(scope.session.record.credential.rawValue)",
+            "Accept": "application/json", "Accept-Encoding": "identity",
+            "User-Agent": "Synveil/0.1.0 (iOS)",
+        ]
+        if jsonBody { headers["Content-Type"] = "application/json" }
+        return headers
     }
 
     func handle(_ failure: LibraryFailure, scope: LibraryRequestScope) {

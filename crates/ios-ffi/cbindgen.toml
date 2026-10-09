@@ -10,6 +10,7 @@ usize_is_size_t = true
 [export]
 include = [
     "synveil_ffi_abi_version",
+    "synveil_ffi_client_mutation_id_generate",
     "synveil_ffi_validate_abi_version",
     "synveil_ffi_buffer_release",
     "synveil_ffi_sha256_parse",
