@@ -1107,6 +1107,502 @@ final class NodeBrowserTests: XCTestCase {
         }
     }
 
+    func testSingleLate404And401AfterLogoutCannotChangeRecovery() async throws {
+        for (status, code) in [(404, "not_found"), (401, "device_revoked")] {
+            let fixture = try fixture(responses: [], suspended: true)
+            let read = Task { try await singleRead(fixture) }
+            await fixture.transport.waitForRequest()
+            await fixture.controller.requestLogout()
+            await fixture.transport.complete(try nodeError(status: status, code: code))
+            let result = try await read.value
+            XCTAssertEqual(result, .failed(.staleSession))
+            XCTAssertEqual(fixture.controller.state, .readyForServerValidation)
+        }
+    }
+
+    func testSingleCancelledBeforeBeginSendsNoRequest() async throws {
+        let fixture = try fixture(responses: [])
+        let read = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await singleRead(fixture)
+        }
+        let result = try await read.value
+        XCTAssertEqual(result, .failed(.cancelled))
+        let requests = await fixture.transport.requests()
+        XCTAssertTrue(requests.isEmpty)
+    }
+
+    func testSingleCleartextEndpointSendsNoRequest() async throws {
+        let endpoint = try ServerEndpoint(
+            validating: "http://127.0.0.1:8080/synveil")
+        let fixture = try fixture(responses: [], endpoint: endpoint)
+        let result = try await singleRead(fixture)
+        XCTAssertEqual(result, .failed(.originMismatch))
+        let requests = await fixture.transport.requests()
+        XCTAssertTrue(requests.isEmpty)
+    }
+
+    // P033 single-resource decoding and authenticated read regressions.
+    func testSingleValidResponseUsesRealRustAndTypedNode() async throws {
+        let realBridge = try await RustBridgeAsyncAdapter()
+        let node = try await NodeResponseDecoder(bridge: realBridge).decodeSingle(singleBody())
+        XCTAssertEqual(node.id.rawValue, nodeId(1))
+        XCTAssertEqual(node.libraryId.rawValue, nodeId(7000))
+        XCTAssertEqual(node.parentId?.rawValue, nodeId(10000))
+        XCTAssertEqual(node.kind, .file)
+        XCTAssertEqual(node.state, .active)
+        XCTAssertEqual(node.revision.rawValue, "42")
+        XCTAssertEqual(node.name, "Logical/A 🚀")
+        XCTAssertFalse(node.purgeEligible)
+        XCTAssertEqual(node.createdAt, try LibraryWireValidation.timestamp("2026-10-09T12:00:00Z"))
+    }
+
+    private func assertInvalidSingle(_ root: [String: Any]) async throws {
+        do {
+            _ = try await NodeResponseDecoder(bridge: bridge).decodeSingle(
+                JSONSerialization.data(withJSONObject: root))
+            XCTFail("Expected strict single-resource rejection")
+        } catch { XCTAssertEqual(error as? NodeFailure, .protocolFailure) }
+    }
+
+    private func invalidSingleResource(_ change: (inout [String: Any]) -> Void) async throws {
+        var resource = singleResource()
+        change(&resource)
+        try await assertInvalidSingle(["data": resource, "meta": ["request_id": "request-123"]])
+    }
+
+    private func invalidSingleAttributes(_ change: (inout [String: Any]) -> Void) async throws {
+        try await invalidSingleResource { resource in
+            var attributes = resource["attributes"] as! [String: Any]
+            change(&attributes)
+            resource["attributes"] = attributes
+        }
+    }
+
+    private func singleRead(_ fixture: Fixture, parent: NodeParentScope? = nil) async throws
+        -> NodeDetailsRepositoryResult
+    {
+        let library = try await LibraryId.validated(nodeId(7000), using: bridge)
+        let node = try await NodeId.validated(nodeId(1), using: bridge)
+        let root = try await NodeId.validated(nodeId(10000), using: bridge)
+        return await fixture.repository.getNode(
+            libraryId: library, nodeId: node,
+            expectedParent: parent ?? .libraryRoot(rootNodeId: root))
+    }
+
+    func testSingleMissingRequiredEnvelopeFields() async throws {
+        for key in ["data", "meta"] {
+            var root: [String: Any] = [
+                "data": singleResource(), "meta": ["request_id": "request-123"],
+            ]
+            root.removeValue(forKey: key)
+            try await assertInvalidSingle(root)
+        }
+    }
+
+    func testSingleUnknownEnvelopeKeyRejected() async throws {
+        try await assertInvalidSingle([
+            "data": singleResource(), "meta": ["request_id": "request-123"], "page": [:],
+        ])
+    }
+
+    func testSingleMalformedJSONRejected() async {
+        do {
+            _ = try await NodeResponseDecoder(bridge: bridge).decodeSingle(Data("{broken".utf8))
+            XCTFail("Expected malformed JSON rejection")
+        } catch { XCTAssertEqual(error as? NodeFailure, .protocolFailure) }
+    }
+
+    func testSingleInvalidRequestIDAndMetadataRejected() async throws {
+        for meta: Any in [
+            ["request_id": "bad"], ["request_id": NSNull()], ["request_id": 42],
+            ["request_id": "request-123", "extra": true], NSNull(),
+        ] {
+            try await assertInvalidSingle(["data": singleResource(), "meta": meta])
+        }
+    }
+
+    func testSingleRequiredFieldsAndJSONTypesRejected() async throws {
+        for key in ["id", "type", "revision", "attributes"] {
+            try await invalidSingleResource { $0.removeValue(forKey: key) }
+            try await invalidSingleResource { $0[key] = NSNull() }
+            try await invalidSingleResource { $0[key] = 42 }
+        }
+        for key in [
+            "library_id", "name", "kind", "state", "created_at", "updated_at", "purge_eligible",
+        ] {
+            try await invalidSingleAttributes { $0.removeValue(forKey: key) }
+            try await invalidSingleAttributes { $0[key] = NSNull() }
+        }
+    }
+
+    func testSingleOptionalAttributesOmitted() async throws {
+        let resource = singleResource { $0.removeValue(forKey: "parent_id") }
+        let node = try await NodeResponseDecoder(bridge: bridge).decodeSingle(singleBody(resource))
+        XCTAssertNil(node.parentId)
+        XCTAssertNil(node.currentVersionId)
+        XCTAssertNil(node.trashedAt)
+        XCTAssertNil(node.restoreDeadline)
+    }
+
+    func testSingleExplicitNullAndWrongTypeOptionalAttributesRejected() async throws {
+        for key in ["parent_id", "current_version_id", "trashed_at", "restore_deadline"] {
+            try await invalidSingleAttributes { $0[key] = NSNull() }
+            try await invalidSingleAttributes { $0[key] = false }
+        }
+    }
+
+    func testSingleInvalidExactRevisionsRejected() async throws {
+        for revision: Any in ["-1", "01", "1.0", "1e3", "", " 1", 42, true] {
+            try await invalidSingleResource { $0["revision"] = revision }
+        }
+    }
+
+    func testSingleInvalidTimestampsRejected() async throws {
+        for key in ["created_at", "updated_at", "trashed_at", "restore_deadline"] {
+            for value in ["bad", "2026-02-30T12:00:00Z", "2026-10-09T12:00:00+24:00"] {
+                try await invalidSingleAttributes { $0[key] = value }
+            }
+        }
+    }
+
+    func testSinglePurgeEligibleRequiresBoolean() async throws {
+        for value: Any in ["false", 0, 1, NSNull()] {
+            try await invalidSingleAttributes { $0["purge_eligible"] = value }
+        }
+    }
+
+    func testSingleOversizedBodyRejected() async {
+        do {
+            _ = try await NodeResponseDecoder(bridge: bridge).decodeSingle(
+                Data(repeating: 32, count: NodeBrowserPolicy.maximumResponseBytes + 1))
+            XCTFail("Expected bounded decoding")
+        } catch { XCTAssertEqual(error as? NodeFailure, .resourceLimit) }
+    }
+
+    func testSingleGETUsesBasePathAndOnlyDeviceAuthentication() async throws {
+        let fixture = try fixture(responses: [singleResponse()])
+        let result = try await singleRead(fixture)
+        guard case .loaded = result else { return XCTFail("Expected verified file") }
+        let requests = await fixture.transport.requests()
+        XCTAssertEqual(requests.count, 1)
+        let request = try XCTUnwrap(requests.first)
+        XCTAssertEqual(request.method, .get)
+        XCTAssertNil(request.body)
+        XCTAssertEqual(
+            request.url.absoluteString,
+            "https://node.example:8443/synveil/api/v1/nodes/" + nodeId(1))
+        XCTAssertNil(request.url.query)
+        XCTAssertEqual(request.headers["Authorization"], "Bearer " + nodeBearer)
+        XCTAssertFalse(request.url.absoluteString.contains(nodeBearer))
+        XCTAssertNil(request.headers["Cookie"])
+        XCTAssertFalse(request.headers.keys.contains { $0.lowercased().contains("csrf") })
+        XCTAssertFalse(request.headers.values.contains { $0.contains("sve1_") })
+        XCTAssertFalse(String(reflecting: request).contains(nodeBearer))
+    }
+
+    func testSingleUnauthenticatedRequestNotSent() async throws {
+        let fixture = try fixture(responses: [], authenticated: false)
+        let result = try await singleRead(fixture)
+        XCTAssertEqual(result, .failed(.unauthenticated))
+        let requests = await fixture.transport.requests()
+        XCTAssertTrue(requests.isEmpty)
+    }
+
+    func testSingleRequestDuringLogoutNotSent() async throws {
+        let fixture = try fixture(responses: [])
+        await fixture.store.suspendDeletion()
+        let logout = Task { await fixture.controller.requestLogout() }
+        await fixture.store.waitForDeletion()
+        let result = try await singleRead(fixture)
+        XCTAssertEqual(result, .failed(.unauthenticated))
+        let requests = await fixture.transport.requests()
+        XCTAssertTrue(requests.isEmpty)
+        await fixture.store.completeDeletion()
+        await logout.value
+    }
+
+    func testSingleKeychainFailureIsFailClosed() async throws {
+        let fixture = try fixture(responses: [])
+        await fixture.store.failLoads(.readFailure)
+        let result = try await singleRead(fixture)
+        XCTAssertEqual(result, .failed(.credentialUnavailable))
+        let requests = await fixture.transport.requests()
+        XCTAssertTrue(requests.isEmpty)
+    }
+
+    func testSingleOriginMismatchNeverSendsRequest() async throws {
+        let fixture = try fixture(responses: [])
+        let other = try ServerEndpoint(validating: "https://other.example")
+        try await fixture.store.replace(nodeSession(endpoint: other))
+        let result = try await singleRead(fixture)
+        XCTAssertEqual(result, .failed(.originMismatch))
+        let requests = await fixture.transport.requests()
+        XCTAssertTrue(requests.isEmpty)
+    }
+
+    func testSingleRedirectRejectedWithoutSecondRequest() async throws {
+        let response = HTTPTransportResponse(
+            statusCode: 302, headers: ["Location": "https://other.example"], body: Data())
+        let fixture = try fixture(responses: [response])
+        let result = try await singleRead(fixture)
+        XCTAssertEqual(result, .failed(.redirectRejected))
+        let requests = await fixture.transport.requests()
+        XCTAssertEqual(requests.count, 1)
+    }
+
+    func testSingleTransportFailuresRetainCredential() async throws {
+        let cases: [(SynveilTransportError, NodeFailure)] = [
+            (.offline, .offline), (.dnsFailure, .dnsFailure), (.timeout, .timeout),
+            (.tlsError, .tlsFailure), (.bodyLimitExceeded, .resourceLimit),
+            (.cancelled, .cancelled),
+        ]
+        for (error, expected) in cases {
+            let fixture = try fixture(responses: [], error: error)
+            let result = try await singleRead(fixture)
+            XCTAssertEqual(result, .failed(expected))
+            XCTAssertEqual(fixture.controller.state, .authenticated)
+            let deletes = await fixture.store.deleteCount()
+            XCTAssertEqual(deletes, 0)
+        }
+    }
+
+    func testSingle404IsUnavailableWithoutRevocation() async throws {
+        let fixture = try fixture(responses: [nodeError(status: 404, code: "not_found")])
+        let result = try await singleRead(fixture)
+        XCTAssertEqual(result, .unavailable)
+        XCTAssertEqual(fixture.controller.state, .authenticated)
+        let deletes = await fixture.store.deleteCount()
+        XCTAssertEqual(deletes, 0)
+    }
+
+    func testSingle503RetainsCredential() async throws {
+        let fixture = try fixture(responses: [nodeError(status: 503, code: "service_unavailable")])
+        let result = try await singleRead(fixture)
+        XCTAssertEqual(result, .failed(.serverUnavailable))
+        XCTAssertEqual(fixture.controller.state, .authenticated)
+        let deletes = await fixture.store.deleteCount()
+        XCTAssertEqual(deletes, 0)
+    }
+
+    func testSingleDocumentedAuthenticationRejectionsUseSessionRecovery() async throws {
+        for (code, failure) in [
+            ("authentication_failed", NodeFailure.authenticationRejected),
+            ("device_revoked", .deviceRevoked),
+        ] {
+            let fixture = try fixture(responses: [nodeError(status: 401, code: code)])
+            let result = try await singleRead(fixture)
+            XCTAssertEqual(result, .failed(failure))
+            XCTAssertNotEqual(fixture.controller.state, .authenticated)
+            let deletes = await fixture.store.deleteCount()
+            XCTAssertEqual(deletes, 0)
+        }
+    }
+
+    func testSingleLateSuccessAfterLogoutRejected() async throws {
+        let fixture = try fixture(responses: [], suspended: true)
+        let read = Task { try await singleRead(fixture) }
+        await fixture.transport.waitForRequest()
+        await fixture.controller.requestLogout()
+        try await fixture.transport.complete(singleResponse())
+        let result = try await read.value
+        XCTAssertEqual(result, .failed(.staleSession))
+    }
+
+    func testSingleCancellationPreventsSuccessPublication() async throws {
+        let fixture = try fixture(responses: [], suspended: true)
+        let read = Task { try await singleRead(fixture) }
+        await fixture.transport.waitForRequest()
+        read.cancel()
+        try await fixture.transport.complete(singleResponse())
+        let result = try await read.value
+        XCTAssertEqual(result, .failed(.cancelled))
+    }
+
+    func testSingleCredentialReplacementDuringRequestRejected() async throws {
+        let fixture = try fixture(responses: [], suspended: true)
+        let read = Task { try await singleRead(fixture) }
+        await fixture.transport.waitForRequest()
+        try await fixture.store.replace(
+            nodeSession(
+                endpoint: fixture.endpoint, bearer: "svd1_" + String(repeating: "b", count: 64)))
+        try await fixture.transport.complete(singleResponse())
+        let result = try await read.value
+        XCTAssertEqual(result, .failed(.staleSession))
+    }
+
+    func testSingleLogoutDuringRustValidationRejectsLateSuccess() async throws {
+        let gate = NodeValidationGate()
+        let fixture = try fixture(
+            responses: [singleResponse()], validator: NodeTestValidator(gate: gate))
+        let read = Task { try await singleRead(fixture) }
+        await gate.wait()
+        await fixture.controller.requestLogout()
+        await gate.release()
+        let result = try await read.value
+        XCTAssertEqual(result, .failed(.staleSession))
+    }
+
+    func testSingleRenamedNewRevisionAndVersionAreAuthoritative() async throws {
+        var resource = singleResource {
+            $0["name"] = "report-new.txt"
+            $0["current_version_id"] = nodeId(50)
+        }
+        resource["revision"] = "184467440737095516160000000000000000000"
+        let fixture = try fixture(responses: [singleResponse(resource)])
+        let result = try await singleRead(fixture)
+        guard case .loaded(let node) = result else {
+            return XCTFail("Expected authoritative update")
+        }
+        XCTAssertEqual(node.name, "report-new.txt")
+        XCTAssertEqual(node.revision.rawValue, resource["revision"] as? String)
+        XCTAssertEqual(node.currentVersionId?.rawValue, nodeId(50))
+        let requests = await fixture.transport.requests()
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests.first?.method, .get)
+    }
+
+    func testSingleNestedParentIsVerified() async throws {
+        let parent = try await NodeId.validated(nodeId(42), using: bridge)
+        let resource = singleResource { $0["parent_id"] = parent.rawValue }
+        let fixture = try fixture(responses: [singleResponse(resource)])
+        let result = try await singleRead(fixture, parent: .directory(parent))
+        guard case .loaded(let node) = result else { return XCTFail("Expected nested file") }
+        XCTAssertEqual(node.parentId, parent)
+    }
+
+    func testSingleSuccessfulAndFailedHTTPBodiesAreBounded() async throws {
+        for status in [200, 404, 401, 503] {
+            let response = HTTPTransportResponse(
+                statusCode: status, headers: ["Content-Type": "application/json"],
+                body: Data(repeating: 32, count: NodeBrowserPolicy.maximumResponseBytes + 1))
+            let fixture = try fixture(responses: [response])
+            let result = try await singleRead(fixture)
+            XCTAssertEqual(result, .failed(.resourceLimit))
+            XCTAssertEqual(fixture.controller.state, .authenticated)
+        }
+    }
+
+    func testSingleWrongResourceTypeRejected() async throws {
+        try await invalidSingleResource { $0["type"] = "library" }
+    }
+
+    func testSingleUnknownResourceKeyRejected() async throws {
+        try await invalidSingleResource { $0["extra"] = "untrusted" }
+    }
+
+    func testSingleInvalidNodeIDRejected() async throws {
+        try await invalidSingleResource { $0["id"] = "bad" }
+    }
+
+    func testSingleUnknownAttributeRejected() async throws {
+        try await invalidSingleAttributes { $0["storage_path"] = "/private" }
+    }
+
+    func testSingleInvalidLibraryIDRejected() async throws {
+        try await invalidSingleAttributes { $0["library_id"] = "bad" }
+    }
+
+    func testSingleInvalidParentIDRejected() async throws {
+        try await invalidSingleAttributes { $0["parent_id"] = "bad" }
+    }
+
+    func testSingleInvalidCurrentVersionIDRejected() async throws {
+        try await invalidSingleAttributes { $0["current_version_id"] = "bad" }
+    }
+
+    func testSingleInvalidLogicalNameRejected() async throws {
+        try await invalidSingleAttributes { $0["name"] = "" }
+    }
+
+    func testSingleUnknownKindRejected() async throws {
+        try await invalidSingleAttributes { $0["kind"] = "LINK" }
+    }
+
+    func testSingleUnknownStateRejected() async throws {
+        try await invalidSingleAttributes { $0["state"] = "DELETED" }
+    }
+
+    func testSingleNodeIdentityMismatchNeverPublishesCurrentDetails() async throws {
+        var resource = singleResource()
+        resource["id"] = nodeId(2)
+        let fixture = try fixture(responses: [singleResponse(resource)])
+        let result = try await singleRead(fixture)
+        XCTAssertEqual(result, .inconsistent)
+    }
+
+    func testSingleLibraryMismatchNeverPublishesCurrentDetails() async throws {
+        var resource = singleResource()
+        resource = singleResource { $0["library_id"] = nodeId(7001) }
+        let fixture = try fixture(responses: [singleResponse(resource)])
+        let result = try await singleRead(fixture)
+        XCTAssertEqual(result, .inconsistent)
+    }
+
+    func testSingleMovedParentNeverPublishesCurrentDetails() async throws {
+        var resource = singleResource()
+        resource = singleResource { $0["parent_id"] = nodeId(10001) }
+        let fixture = try fixture(responses: [singleResponse(resource)])
+        let result = try await singleRead(fixture)
+        XCTAssertEqual(result, .inconsistent)
+    }
+
+    func testSingleMissingRootParentNeverPublishesCurrentDetails() async throws {
+        var resource = singleResource()
+        resource = singleResource { $0.removeValue(forKey: "parent_id") }
+        let fixture = try fixture(responses: [singleResponse(resource)])
+        let result = try await singleRead(fixture)
+        XCTAssertEqual(result, .inconsistent)
+    }
+
+    func testSingleReplacedByDirectoryNeverPublishesCurrentDetails() async throws {
+        var resource = singleResource()
+        resource = singleResource { $0["kind"] = "DIRECTORY" }
+        let fixture = try fixture(responses: [singleResponse(resource)])
+        let result = try await singleRead(fixture)
+        XCTAssertEqual(result, .unavailable)
+    }
+
+    func testSingleTrashedFileNeverPublishesCurrentDetails() async throws {
+        var resource = singleResource()
+        resource = singleResource { $0["state"] = "TRASHED" }
+        let fixture = try fixture(responses: [singleResponse(resource)])
+        let result = try await singleRead(fixture)
+        XCTAssertEqual(result, .unavailable)
+    }
+
+    func testSinglePurgingFileNeverPublishesCurrentDetails() async throws {
+        var resource = singleResource()
+        resource = singleResource { $0["state"] = "PURGING" }
+        let fixture = try fixture(responses: [singleResponse(resource)])
+        let result = try await singleRead(fixture)
+        XCTAssertEqual(result, .unavailable)
+    }
+
+    func testSingleActiveTrashMetadataNeverPublishesCurrentDetails() async throws {
+        var resource = singleResource()
+        resource = singleResource { $0["trashed_at"] = "2026-10-09T12:00:00Z" }
+        let fixture = try fixture(responses: [singleResponse(resource)])
+        let result = try await singleRead(fixture)
+        XCTAssertEqual(result, .unavailable)
+    }
+
+    func testSingleActiveRestoreDeadlineNeverPublishesCurrentDetails() async throws {
+        var resource = singleResource()
+        resource = singleResource { $0["restore_deadline"] = "2026-10-09T12:00:00Z" }
+        let fixture = try fixture(responses: [singleResponse(resource)])
+        let result = try await singleRead(fixture)
+        XCTAssertEqual(result, .unavailable)
+    }
+
+    func testSingleActivePurgeEligibleNeverPublishesCurrentDetails() async throws {
+        var resource = singleResource()
+        resource = singleResource { $0["purge_eligible"] = true }
+        let fixture = try fixture(responses: [singleResponse(resource)])
+        let result = try await singleRead(fixture)
+        XCTAssertEqual(result, .unavailable)
+    }
+
     private struct Fixture {
         let endpoint: ServerEndpoint
         let controller: SessionController
@@ -1355,4 +1851,23 @@ private func changedNode(number: Int = 1, _ change: (inout [String: Any]) -> Voi
 private func nodeHTTP(_ body: Data) -> HTTPTransportResponse {
     HTTPTransportResponse(
         statusCode: 200, headers: ["Content-Type": "application/json"], body: body)
+}
+
+private func singleResource(_ change: (inout [String: Any]) -> Void = { _ in }) -> [String: Any] {
+    var resource = nodeResource(1)
+    var attributes = resource["attributes"] as! [String: Any]
+    attributes["kind"] = "FILE"
+    change(&attributes)
+    resource["attributes"] = attributes
+    return resource
+}
+
+private func singleBody(_ resource: [String: Any]? = nil) throws -> Data {
+    try JSONSerialization.data(withJSONObject: [
+        "data": resource ?? singleResource(), "meta": ["request_id": "request-123"],
+    ])
+}
+
+private func singleResponse(_ resource: [String: Any]? = nil) throws -> HTTPTransportResponse {
+    nodeHTTP(try singleBody(resource))
 }

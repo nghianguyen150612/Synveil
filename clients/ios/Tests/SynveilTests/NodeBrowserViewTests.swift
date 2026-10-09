@@ -188,7 +188,9 @@ final class NodeBrowserViewTests: XCTestCase {
         )
         let file = try await makeNode(40, library: library, parent: library.rootNodeId)
         let model = makeViewModel(route: .root(for: library))
-        let details = NodeFileDetailsView(route: try XCTUnwrap(model.details(for: file)))
+        let details = NodeFileDetailsView(
+            repository: nil, sessionController: controller,
+            route: try XCTUnwrap(model.details(for: file)))
 
         XCTAssertNotNil(browser.body)
         XCTAssertNotNil(details.body)

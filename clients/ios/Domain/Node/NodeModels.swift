@@ -85,9 +85,19 @@ public enum NodeRepositoryResult: Equatable, Sendable {
     case failed(NodeFailure)
 }
 
+/// Verified read-only file metadata. Scope changes never expose the returned resource.
+public enum NodeDetailsRepositoryResult: Equatable, Sendable {
+    case loaded(Node)
+    case unavailable
+    case inconsistent
+    case failed(NodeFailure)
+}
+
 @MainActor
 public protocol NodeRepositoryProtocol {
     func listChildren(libraryId: LibraryId, parent: NodeParentScope) async -> NodeRepositoryResult
+    func getNode(libraryId: LibraryId, nodeId: NodeId, expectedParent: NodeParentScope) async
+        -> NodeDetailsRepositoryResult
 }
 
 public enum NodeBrowserPolicy {

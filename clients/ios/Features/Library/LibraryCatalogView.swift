@@ -54,7 +54,12 @@ struct LibraryCatalogView: View {
                         .id(route)
                     }
                     .navigationDestination(for: NodeFileDetailsRoute.self) { route in
-                        NodeFileDetailsView(route: route)
+                        NodeFileDetailsView(
+                            repository: nodeRepository,
+                            sessionController: sessionController,
+                            route: route
+                        )
+                        .id(route)
                     }
                     .toolbar {
                         ToolbarItem(placement: .topBarTrailing) {

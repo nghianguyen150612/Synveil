@@ -71,4 +71,47 @@ public final class AuthenticatedNodeRepository: NodeRepositoryProtocol {
             return .failed(failure)
         }
     }
+
+    /// Single-resource read used by file details; no snapshot fields constrain valid updates.
+    public func getNode(libraryId: LibraryId, nodeId: NodeId, expectedParent: NodeParentScope) async
+        -> NodeDetailsRepositoryResult
+    {
+        var scope: LibraryRequestScope?
+        do {
+            try Task.checkCancellation()
+            let current = try await provider.begin()
+            scope = current
+            _ = try await LibraryId.validated(libraryId.rawValue, using: bridge)
+            _ = try await NodeId.validated(nodeId.rawValue, using: bridge)
+            _ = try await NodeId.validated(expectedParent.expectedParentId.rawValue, using: bridge)
+            try await provider.validate(current)
+            let response = try await provider.requestNode(nodeId: nodeId, scope: current)
+            do {
+                try AuthenticatedLibraryCatalogRepository.validateHTTP(response)
+            } catch NodeFailure.httpFailure(statusCode: 404) {
+                try await provider.validate(current)
+                try Task.checkCancellation()
+                return .unavailable
+            }
+            let node = try await decoder.decodeSingle(response.body)
+            // Rust validation also suspends; never publish a resource from a replaced session.
+            try await provider.validate(current)
+            try Task.checkCancellation()
+            guard node.id == nodeId, node.libraryId == libraryId,
+                node.parentId == expectedParent.expectedParentId,
+                node.id != expectedParent.expectedParentId
+            else { return .inconsistent }
+            guard node.kind == .file, node.state == .active,
+                node.trashedAt == nil, node.restoreDeadline == nil, !node.purgeEligible
+            else { return .unavailable }
+            return .loaded(node)
+        } catch {
+            let failure =
+                Task.isCancelled
+                ? NodeFailure.cancelled : AuthenticatedLibraryCatalogRepository.classify(error)
+            if let scope { provider.handle(failure, scope: scope) }
+            return .failed(failure)
+        }
+    }
+
 }

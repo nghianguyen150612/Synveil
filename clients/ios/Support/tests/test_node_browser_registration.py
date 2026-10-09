@@ -54,7 +54,7 @@ class NodeBrowserRegistrationTests(unittest.TestCase):
         self.assertIn("func invalidate()", model)
         self.assertIn(".refreshable", browser)
         self.assertIn("This folder is empty.", browser)
-        self.assertIn("File content is not available in this version", browser)
+        self.assertIn("File content is not available in this version", (IOS / "Features/Node/NodeFileDetailsView.swift").read_text())
         self.assertIn('node.kind == .directory ? "folder" : "doc"', browser)
         self.assertIn("func accessibilityDescription(for node: Node)", browser)
         self.assertIn("navigationDestination(for: NodeBrowserRoute.self)", catalog)
