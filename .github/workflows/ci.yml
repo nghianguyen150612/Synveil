@@ -138,6 +138,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -152,6 +154,17 @@ jobs:
           arch: win64_msvc2022_64
           cache: true
 
+      - name: Record compiler, linker, and app-local CRT identities
+        shell: pwsh
+        run: ./scripts/prepare-windows-candidate-tools.ps1
+      - name: Install reproducible ZIP prerequisite
+        shell: pwsh
+        run: |
+          choco install zip --version=3.0 --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'WINDOWS_ZIP_PREREQUISITE_FAILURE' }
+      - name: Verify ZIP prerequisite before compiling
+        shell: bash
+        run: zip -v
       - name: Verify Qt 6.4 minimum
         shell: pwsh
         run: |
@@ -340,6 +353,15 @@ jobs:
       - name: Test managed server storage bootstrap and runtime
         if: runner.os == 'Linux'
         run: CARGO_BUILD_JOBS=1 cargo test -p synveil-object-store -p synveil-server-storage -p synveil-server-config -p synveil-storage -p synveil-api --lib --locked
+
+      - name: Repeat Windows callback ownership and SQLite teardown regression
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          1..30 | ForEach-Object {
+            cargo test -p synveil-client-sync --lib --locked signals::tests::commit_and_writer_release_are_observable_before_wake_callback_returns -- --exact
+            if ($LASTEXITCODE -ne 0) { throw "Callback teardown regression failed on iteration $_" }
+          }
 
       - name: Test workspace without the platform-specific Qt binary
         run: cargo test --workspace --exclude synveil-desktop --locked

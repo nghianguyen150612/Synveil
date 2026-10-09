@@ -2117,6 +2117,7 @@ enum BoundControlTransport {
     #[cfg(windows)]
     Windows {
         server: Option<tokio::net::windows::named_pipe::NamedPipeServer>,
+        next: Option<tokio::net::windows::named_pipe::NamedPipeServer>,
         name: String,
     },
 }
@@ -2184,16 +2185,27 @@ impl BoundControlTransport {
                 })
             }
             #[cfg(windows)]
-            Self::Windows { server, name } => {
+            Self::Windows { server, next, name } => {
+                if next.is_none() {
+                    *next = Some(create_windows_pipe(name, false)?);
+                }
                 let current = server
-                    .take()
+                    .as_mut()
                     .ok_or(DesktopControlServerError::ListenerFailed)?;
+                // Keep both instances in the transport while connect() is
+                // pending: run_server selects this future against other
+                // events, so cancellation must not drop either pipe handle.
                 current
                     .connect()
                     .await
                     .map_err(|_| DesktopControlServerError::ListenerFailed)?;
-                let connected = current;
-                *server = Some(create_windows_pipe(name, false)?);
+                let connected = server
+                    .take()
+                    .ok_or(DesktopControlServerError::ListenerFailed)?;
+                *server = Some(
+                    next.take()
+                        .ok_or(DesktopControlServerError::ListenerFailed)?,
+                );
                 Ok(AcceptedControlConnection {
                     io: Box::new(connected),
                 })
@@ -3436,6 +3448,7 @@ fn bind_windows_transport(name: &str) -> Result<BoundControlTransport, DesktopCo
     validate_pipe_name(name)?;
     Ok(BoundControlTransport::Windows {
         server: Some(create_windows_pipe(name, true)?),
+        next: None,
         name: name.to_owned(),
     })
 }
@@ -3559,6 +3572,16 @@ mod tests {
 
     fn test_profile() -> synveil_client_sync::ServerProfileId {
         synveil_client_sync::ServerProfileId::new()
+    }
+
+    #[cfg(unix)]
+    fn secure_test_root(prefix: &str) -> PathBuf {
+        // macOS's per-user TMPDIR is deeply nested. IPC socket paths are
+        // limited to 108 bytes, so keep these disposable fixtures under the
+        // canonical short system temporary root.
+        std::fs::canonicalize("/tmp")
+            .expect("canonical short temporary directory")
+            .join(format!("{prefix}-{}", uuid::Uuid::now_v7()))
     }
 
     #[test]
@@ -3908,7 +3931,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn active_socket_is_never_replaced_and_stale_socket_is_recovered() {
-        let root = std::env::temp_dir().join(format!("sv96-active-{}", uuid::Uuid::now_v7()));
+        let root = secure_test_root("sv96-active");
         fs::create_dir_all(&root).expect("fixture root");
         let path = root.join(CONTROL_ENDPOINT_DIRECTORY).join("control.sock");
         let endpoint = DesktopControlEndpoint::UnixSocket { path: path.clone() };
@@ -3954,7 +3977,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn symlink_regular_file_and_directory_endpoints_are_refused() {
-        let root = std::env::temp_dir().join(format!("sv96-unsafe-{}", uuid::Uuid::now_v7()));
+        let root = secure_test_root("sv96-unsafe");
         fs::create_dir_all(root.join(CONTROL_ENDPOINT_DIRECTORY)).expect("fixture directory");
         let path = root.join(CONTROL_ENDPOINT_DIRECTORY).join("control.sock");
         let target = root.join("target");
@@ -3993,8 +4016,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn secure_directory_and_socket_policy_is_explicit() {
-        let root =
-            std::env::temp_dir().join(format!("synveil-control-security-{}", uuid::Uuid::now_v7()));
+        let root = secure_test_root("synveil-control-security");
         fs::create_dir_all(&root).expect("fixture root");
         let control_dir = root.join(CONTROL_ENDPOINT_DIRECTORY);
         ensure_secure_control_directory(&control_dir, nix::unistd::geteuid().as_raw())
@@ -4009,8 +4031,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn local_server_and_client_share_one_host_control_surface() {
-        let root =
-            std::env::temp_dir().join(format!("synveil-control-local-{}", uuid::Uuid::now_v7()));
+        let root = secure_test_root("synveil-control-local");
         fs::create_dir_all(&root).expect("fixture root");
         let state = Arc::new(
             LocalStateStore::open(&LocalStateConfig::new(root.join("state.sqlite3")))

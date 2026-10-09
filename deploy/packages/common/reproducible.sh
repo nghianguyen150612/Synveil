@@ -628,7 +628,7 @@ synveil_write_linux_artifact_manifest() {
     local source_date_epoch="$3"
     shift 3
 
-    local source_revision source_fingerprint pair name artifact
+    local source_revision source_fingerprint pair name artifact build_id
     source_revision="$(synveil_source_revision "$repo_root")"
     source_fingerprint="$(synveil_source_fingerprint "$repo_root")"
     mkdir -p "$(dirname "$manifest_path")"
@@ -645,10 +645,14 @@ synveil_write_linux_artifact_manifest() {
             name="${pair%%:*}"
             artifact="${pair#*:}"
             synveil_assert_repo_artifact_path "$repo_root" "$artifact" "$name"
+            build_id="$(synveil_artifact_build_id "$artifact")"
+            # The release link policy omits GNU build IDs. Keep the manifest
+            # row unambiguous instead of dropping its third field entirely.
+            [[ -n "$build_id" ]] || build_id=none
             printf '%s %s %s %s\n' \
                 "$(synveil_artifact_sha256 "$artifact")" \
                 "$(synveil_artifact_size "$artifact")" \
-                "$(synveil_artifact_build_id "$artifact")" \
+                "$build_id" \
                 "$name"
         done
     } > "$manifest_path"

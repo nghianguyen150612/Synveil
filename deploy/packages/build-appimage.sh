@@ -84,6 +84,17 @@ build_one() {
     --executable "$appdir/usr/bin/synveil-desktop" --executable "$appdir/usr/bin/synveil-client" --executable "$appdir/usr/bin/synveil-appimage-integration" \
     --desktop-file "$appdir/synveil.desktop" --icon-file "$appdir/synveil.svg" \
     --custom-apprun "$SCRIPT_DIR/appimage/AppRun" --plugin qt
+  # The Qt plugin adds a cosmetic platform-theme hook. linuxdeploy wraps even
+  # a custom AppRun whenever that hook exists, defeating our closed entrypoint
+  # contract. Synveil already sets its bundled Qt paths in the reviewed AppRun;
+  # discard only this generated hook in our private AppDir and restore that
+  # entrypoint before the output pass. Unknown hooks fail closed.
+  rm -f "$appdir/apprun-hooks/linuxdeploy-plugin-qt-hook.sh"
+  if [[ -d "$appdir/apprun-hooks" ]]; then
+    rmdir "$appdir/apprun-hooks"
+  fi
+  rm -f "$appdir/AppRun.wrapped"
+  install -m0755 "$SCRIPT_DIR/appimage/AppRun" "$appdir/AppRun"
   # Pass the reviewed entry point to the output invocation too. linuxdeploy
   # processes the AppDir again while creating the filesystem and otherwise
   # replaces AppRun after the first deployment pass.
@@ -92,6 +103,9 @@ build_one() {
   (cd "$WORK/$label" && OUTPUT="$destination" "$LINUXDEPLOY" --appdir "$appdir" \
     --custom-apprun "$SCRIPT_DIR/appimage/AppRun" --output appimage)
   [[ -s $destination ]] || { echo '[synveil-appimage] ERROR: AppImage tool produced no artifact' >&2; exit 1; }
+  cmp -s "$SCRIPT_DIR/appimage/AppRun" "$appdir/AppRun" || {
+    echo '[synveil-appimage] ERROR: deployment replaced reviewed AppRun' >&2; exit 1;
+  }
   python3 "$REPO_ROOT/scripts/validate-appimage-build.py" --appdir "$appdir"
 }
 build_one primary

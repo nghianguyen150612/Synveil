@@ -125,8 +125,20 @@ function Interrupt-SetupAfterLicenseCopy([string]$Path, [string[]]$Extra, [strin
                 }
                 throw "P044_WINDOWS_INTERRUPTION_FAILURE: $detail"
             }
-            if ((Test-Path -LiteralPath (Join-Path $root 'LICENSE') -PathType Leaf) -and
-                (Get-FileHash -LiteralPath (Join-Path $root 'LICENSE') -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $NewerLicenseHash) {
+            $licenseHash = $null
+            if (Test-Path -LiteralPath (Join-Path $root 'LICENSE') -PathType Leaf) {
+                try {
+                    $licenseHash = (Get-FileHash -LiteralPath (Join-Path $root 'LICENSE') -Algorithm SHA256).Hash.ToLowerInvariant()
+                } catch [System.IO.IOException] {
+                    # Inno may still hold the target file open while replacing it.
+                    # Retry only the Windows sharing violation, within the existing
+                    # 90-second observation bound; all other I/O errors stay fatal.
+                    if (($_.Exception.HResult -band 0xFFFF) -ne 32) { throw }
+                    Start-Sleep -Milliseconds 5
+                    continue
+                }
+            }
+            if ($licenseHash -ceq $NewerLicenseHash) {
                 $process.Refresh()
                 if ($process.HasExited) {
                     throw 'P044_WINDOWS_INTERRUPTION_FAILURE: Setup exited before forced termination.'

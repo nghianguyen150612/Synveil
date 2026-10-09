@@ -46,10 +46,6 @@ fn unique_tag(label: &str) -> String {
     format!("p79_{label}_{nanos}_{}", std::process::id())
 }
 
-fn shell_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
-}
-
 /// Extract the packaged binary from the built DEB (proves the packaged
 /// artifact itself executes; its SHA parity with the release binary is locked
 /// by `linux_native_packaging_units`).
@@ -68,13 +64,10 @@ fn packaged_binary() -> PathBuf {
         .expect("no .deb found (run deploy/packages/build.sh first)");
     let dest = std::env::temp_dir().join(unique_tag("pkgbin"));
     fs::create_dir_all(&dest).expect("tempdir");
-    let out = Command::new("bash")
-        .arg("-c")
-        .arg(format!(
-            "set -euo pipefail; ar p {} data.tar.gz | tar -xzf - -C {}",
-            shell_quote(&deb.to_string_lossy()),
-            shell_quote(&dest.to_string_lossy())
-        ))
+    let out = Command::new("dpkg-deb")
+        .arg("--extract")
+        .arg(&deb)
+        .arg(&dest)
         .output()
         .expect("extract deb");
     assert!(

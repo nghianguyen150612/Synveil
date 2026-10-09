@@ -1,19 +1,53 @@
 param(
     [Parameter(Mandatory=$true)][string]$Setup,
     [Parameter(Mandatory=$true)][string]$RepositoryRoot,
-    [Parameter(Mandatory=$true)][string]$EvidencePath
+    [Parameter(Mandatory=$true)][string]$EvidencePath,
+    [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{40}$')][string]$SourceCommit,
+    [Parameter(Mandatory=$true)][string]$ExpectedSid
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'windows-known-folders.ps1')
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = [Security.Principal.WindowsPrincipal]::new($identity)
+$isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if ($identity.User.Value -cne $ExpectedSid -or $isAdmin) {
+    throw 'STANDARD_USER_IDENTITY_FAILURE: child token does not match the disposable non-administrator account'
+}
+$profileRoot = [SynveilKnownFolders]::CurrentUserProfile()
+$profileEnvMatches = $false
+if (![string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+    $profileEnvMatches = [string]::Equals([IO.Path]::GetFullPath($env:USERPROFILE).TrimEnd('\'), $profileRoot.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)
+}
+$localAppDataEnvMatches = $false
+if (![string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+    $localAppDataEnvMatches = [string]::Equals([IO.Path]::GetFullPath($env:LOCALAPPDATA).TrimEnd('\'), (Join-Path $profileRoot 'AppData\Local').TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)
+}
+Write-Output "STANDARD_USER_PREFLIGHT: expected SID matched; administrator=false; USERPROFILE_matches_token_profile=$profileEnvMatches; LOCALAPPDATA_matches_token_profile=$localAppDataEnvMatches"
+# Start-Process -Credential can inherit the caller's environment even when it
+# loads the target profile. Rebuild the profile-scoped variables from the
+# process token before invoking Setup so this child models a normal user
+# environment instead of runneradmin's profile paths.
+Set-WindowsTokenProfileEnvironment
+$tokenLocalAppData = Join-Path $profileRoot 'AppData\Local'
+if (![string]::Equals([IO.Path]::GetFullPath($env:LOCALAPPDATA).TrimEnd('\'), $tokenLocalAppData.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'STANDARD_USER_ENVIRONMENT_FAILURE: process LocalAppData does not match its token profile'
+}
+Write-Output 'STANDARD_USER_ENVIRONMENT: profile-scoped variables now match the non-administrator token'
+$localAppData = Get-WindowsKnownFolderPath LocalApplicationData
 $appId = '{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1'
 $uninstallSubkey = "Software\Microsoft\Windows\CurrentVersion\Uninstall\$appId"
-$root = Join-Path $env:LOCALAPPDATA 'Programs\Synveil'
-$startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Synveil.lnk'
-$desktop = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Synveil.lnk'
-$commonStartMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Synveil.lnk'
-$publicDesktop = Join-Path $env:PUBLIC 'Desktop\Synveil.lnk'
-$logRoot = Join-Path $env:LOCALAPPDATA 'Synveil\installer'
-$sentinel = Join-Path $env:LOCALAPPDATA 'Synveil\state-sentinel\p025.txt'
+$root = Join-Path $localAppData 'Programs\Synveil'
+$startMenu = Join-Path (Get-WindowsKnownFolderPath Programs) 'Synveil.lnk'
+$desktop = Join-Path (Get-WindowsKnownFolderPath DesktopDirectory) 'Synveil.lnk'
+$commonStartMenu = Join-Path (Get-WindowsKnownFolderPath CommonPrograms) 'Synveil.lnk'
+$publicDesktop = Join-Path (Get-WindowsKnownFolderPath CommonDesktopDirectory) 'Synveil.lnk'
+$logRoot = Join-Path $localAppData 'Synveil\installer'
+$sentinel = Join-Path $localAppData 'Synveil\state-sentinel\p025.txt'
+$evidencePath = Join-Path $logRoot (Split-Path $EvidencePath -Leaf)
+if ((Split-Path $evidencePath -Leaf) -cne 'windows-per-user-evidence.json') {
+    throw 'STANDARD_USER_EVIDENCE_FAILURE: unexpected child evidence filename'
+}
 
 Add-Type -TypeDefinition @'
 using System;
@@ -67,10 +101,21 @@ function Get-HklmRegistrationCount {
 }
 function Get-SynveilServiceCount { return @((Get-Service -Name '*Synveil*' -ErrorAction SilentlyContinue)).Count }
 function Get-SynveilTaskCount { return @((Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -match 'Synveil' -or $_.TaskPath -match 'Synveil' })).Count }
+function Wait-UninstallRemoval {
+    # Inno's uninstaller launches a separate final cleanup process to remove
+    # its own executable and directory. The parent exit precedes that cleanup.
+    # Observe native removal; never delete the remaining files in the harness.
+    $deadline = [Diagnostics.Stopwatch]::StartNew()
+    while (Test-Path -LiteralPath $root) {
+        if ($deadline.ElapsedMilliseconds -ge 30000) {
+            $remaining = @(Get-ChildItem -LiteralPath $root -Force | Select-Object -ExpandProperty Name)
+            Write-Output ('PER_USER_UNINSTALL_REMAINING: ' + ($remaining -join ', '))
+            throw 'PER_USER_UNINSTALL_FAILURE: package root remains after bounded native cleanup'
+        }
+        Start-Sleep -Milliseconds 100
+    }
+}
 
-$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-$principal = [Security.Principal.WindowsPrincipal]::new($identity)
-$isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $token = [SynveilTokenEvidence]::Current()
 Assert-True (!$isAdmin) 'PER_USER_TOKEN_FAILURE: test account belongs to Administrators'
 Assert-True ($token[0] -eq '0') 'PER_USER_TOKEN_FAILURE: harness token is elevated'
@@ -86,7 +131,7 @@ New-Item $logRoot -ItemType Directory -Force | Out-Null
 New-Item (Split-Path $sentinel) -ItemType Directory -Force | Out-Null
 Set-Content -LiteralPath $sentinel -Value 'P025 synthetic non-secret state sentinel'
 $setupHash = (Get-FileHash -LiteralPath $Setup -Algorithm SHA256).Hash.ToLowerInvariant()
-$unrelatedCwd = Join-Path $env:TEMP 'synveil-p025-unrelated-cwd'
+$unrelatedCwd = Join-Path $logRoot 'unrelated-cwd'
 New-Item $unrelatedCwd -ItemType Directory -Force | Out-Null
 
 Invoke-Bounded $Setup @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/STARTUP=0','/DESKTOPICON=0','/LAUNCH=0',('/LOG=' + (Join-Path $logRoot 'install.log'))) $unrelatedCwd 0 'installer'
@@ -101,7 +146,8 @@ $uninstaller = $hkcu.GetValue('UninstallString').Trim('"'); $hkcu.Dispose()
 Assert-True (Test-Path $uninstaller -PathType Leaf) 'PER_USER_REGISTRY_FAILURE: registered uninstaller missing'
 
 & (Join-Path $RepositoryRoot 'scripts\test-windows-installed-runtime.ps1') -RuntimeRoot $root -Manifest (Join-Path $root 'SYNVEIL-MANIFEST.txt')
-if ($LASTEXITCODE -ne 0) { throw 'PER_USER_RUNTIME_FAILURE: installed manifest verifier failed' }
+# The PowerShell verifier throws on failure under Stop. LASTEXITCODE describes
+# native executables, not this script invocation, and can be unset here.
 $acl = Get-Acl -LiteralPath $root
 $broadWrite = @($acl.Access | Where-Object {
     $_.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
@@ -111,11 +157,14 @@ $broadWrite = @($acl.Access | Where-Object {
 Assert-True ($broadWrite.Count -eq 0) 'PER_USER_ACL_FAILURE: broad local-user principal can write package root'
 
 foreach ($name in @('QT_ROOT_DIR','QT_PLUGIN_PATH','QML2_IMPORT_PATH','QML_IMPORT_PATH')) { Remove-Item "Env:$name" -ErrorAction SilentlyContinue }
-$env:QT_QPA_PLATFORM='offscreen'; $env:QT_DEBUG_PLUGINS='1'; $env:PATH="$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem"
+# The installed Windows runtime ships qwindows.dll, not Qt's offscreen plugin.
+$env:QT_QPA_PLATFORM='windows'; $env:QT_DEBUG_PLUGINS='1'; $env:PATH="$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem"
 $desktopOut=Join-Path $logRoot 'desktop.stdout.log'; $desktopErr=Join-Path $logRoot 'desktop.stderr.log'
 Invoke-Bounded (Join-Path $root 'synveil-desktop.exe') @('--qml-smoke-test') $unrelatedCwd 0 'desktop smoke' $desktopOut $desktopErr
 $diagnostics = Get-Content $desktopErr -Raw
 Assert-True ($diagnostics -notmatch [regex]::Escape($RepositoryRoot) -and $diagnostics -notmatch 'hostedtoolcache.*Qt') 'PER_USER_RUNTIME_FAILURE: desktop used checkout/Qt SDK path'
+$clientProfileManifest = Join-Path $env:APPDATA 'Synveil\client.conf'
+Assert-True (!(Test-Path $clientProfileManifest -PathType Leaf)) 'PER_USER_SMOKE_FAILURE: QML smoke created a first-run profile manifest'
 $env:QT_DEBUG_PLUGINS='0'
 Invoke-Bounded (Join-Path $root 'synveil-client.exe') @() $unrelatedCwd 78 'client probe' (Join-Path $logRoot 'client.stdout.log') (Join-Path $logRoot 'client.stderr.log')
 Assert-True ([Environment]::GetEnvironmentVariable('Path','Machine') -ceq $machinePathBefore) 'PER_USER_MUTATION_FAILURE: machine PATH changed'
@@ -124,6 +173,7 @@ Assert-True ((Get-SynveilServiceCount) -eq $servicesBefore) 'PER_USER_MUTATION_F
 Assert-True ((Get-SynveilTaskCount) -eq $tasksBefore) 'PER_USER_MUTATION_FAILURE: Synveil scheduled task created'
 
 Invoke-Bounded $uninstaller @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG=' + (Join-Path $logRoot 'uninstall.log'))) $unrelatedCwd 0 'uninstaller'
+Wait-UninstallRemoval
 Assert-True (!(Test-Path $root)) 'PER_USER_UNINSTALL_FAILURE: package root remains'
 Assert-True (!(Test-Path $startMenu)) 'PER_USER_UNINSTALL_FAILURE: Start Menu shortcut remains'
 Assert-True ($null -eq [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($uninstallSubkey)) 'PER_USER_UNINSTALL_FAILURE: HKCU registration remains'
@@ -134,11 +184,13 @@ Assert-True (Test-Path $desktop -PathType Leaf) 'PER_USER_OPTION_FAILURE: DESKTO
 $hkcu = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($uninstallSubkey); Assert-True ($null -ne $hkcu) 'PER_USER_REINSTALL_FAILURE: HKCU registration missing'
 $uninstaller = $hkcu.GetValue('UninstallString').Trim('"'); $hkcu.Dispose()
 Invoke-Bounded $uninstaller @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG=' + (Join-Path $logRoot 'uninstall-reinstall.log'))) $unrelatedCwd 0 'second uninstaller'
+Wait-UninstallRemoval
+Assert-True (!(Test-Path $root) -and !(Test-Path $startMenu)) 'PER_USER_UNINSTALL_FAILURE: reinstalled package/Start Menu remains'
 Assert-True (!(Test-Path $desktop) -and (Test-Path $sentinel)) 'PER_USER_UNINSTALL_FAILURE: option cleanup/state preservation failed'
 
 $os = Get-CimInstance Win32_OperatingSystem
 $evidence = [ordered]@{
-    schema_version=1; source_commit=$env:GITHUB_SHA; artifact_sha256=$setupHash
+    schema_version=1; source_commit=$SourceCommit; artifact_sha256=$setupHash
     windows_version=$os.Version; windows_build=$os.BuildNumber; architecture=$env:PROCESSOR_ARCHITECTURE
     test_account_category='synthetic_standard_user'; administrator_member=$isAdmin
     installer_elevated=$script:observedTokens['installer'].elevated; installer_token=$script:observedTokens['installer']
@@ -149,6 +201,6 @@ $evidence = [ordered]@{
     machine_path_unchanged=$true; user_path_unchanged=$true; service_created=$false; scheduled_task_created=$false
     uninstall='pass'; reinstall='pass'; state_preservation='pass'; cleanup='pending_controller'
 }
-New-Item (Split-Path $EvidencePath) -ItemType Directory -Force | Out-Null
-$evidence | ConvertTo-Json | Set-Content -LiteralPath $EvidencePath -Encoding utf8
+New-Item (Split-Path $evidencePath) -ItemType Directory -Force | Out-Null
+$evidence | ConvertTo-Json | Set-Content -LiteralPath $evidencePath -Encoding utf8
 Write-Host 'Windows standard-user installation: PASS'

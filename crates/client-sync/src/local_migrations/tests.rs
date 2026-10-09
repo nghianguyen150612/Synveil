@@ -3,7 +3,7 @@ use std::{borrow::Cow, fs};
 use sqlx::{
     SqlitePool,
     migrate::{Migration, MigrationType, Migrator},
-    sqlite::SqliteConnectOptions,
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
 
 use crate::{
@@ -15,16 +15,25 @@ async fn fixture(version: i64) -> (std::path::PathBuf, LocalStateConfig, SqliteP
     let directory = std::env::temp_dir().join(format!("synveil-upgrade-{}", uuid::Uuid::now_v7()));
     fs::create_dir(&directory).unwrap();
     let config = LocalStateConfig::new(directory.join("state.sqlite3"));
-    let pool = SqlitePool::connect_with(
-        SqliteConnectOptions::new()
-            .filename(config.database_path())
-            .create_if_missing(true)
-            .foreign_keys(true),
-    )
-    .await
-    .unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(config.database_path())
+                .create_if_missing(true)
+                .foreign_keys(true),
+        )
+        .await
+        .unwrap();
     prefix(version).run(&pool).await.unwrap();
     (directory, config, pool)
+}
+
+// Closing an explicitly owned connection awaits the SQLite worker rather than
+// racing the pool's asynchronously scheduled return-to-pool task.
+async fn close_fixture_pool(pool: &SqlitePool) {
+    pool.acquire().await.unwrap().close().await.unwrap();
+    pool.close().await;
 }
 
 fn prefix(version: i64) -> Migrator {
@@ -68,10 +77,10 @@ async fn every_frozen_prefix_upgrades_reopens_and_matches_fresh_schema() {
             .map(|(kind, name, _)| (kind.clone(), name.clone()))
             .collect()
     );
-    fresh_pool.close().await;
+    close_fixture_pool(&fresh_pool).await;
     for version in 1..LOCAL_SCHEMA_VERSION {
         let (directory, config, pool) = fixture(version).await;
-        pool.close().await;
+        close_fixture_pool(&pool).await;
         let store = LocalStateStore::open(&config).await.unwrap();
         assert_eq!(store.schema_version().await.unwrap(), LOCAL_SCHEMA_VERSION);
         assert_eq!(schema(&store.pool).await, expected);
@@ -97,13 +106,14 @@ async fn failed_transaction_rolls_back_ddl_data_and_version_then_restart_resumes
         Cow::Borrowed("DELETE FROM server_profiles; CREATE TABLE half_migrated (value TEXT); SELECT * FROM absent_failure_target;"), false));
     broken.migrations = Cow::Owned(migrations);
     assert!(broken.run(&pool).await.is_err());
-    pool.close().await;
+    close_fixture_pool(&pool).await;
     // Reconnect to the file, so assertions cannot rely on a rolled-back
     // transaction's process-local view.
-    let pool =
-        SqlitePool::connect_with(SqliteConnectOptions::new().filename(config.database_path()))
-            .await
-            .unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(SqliteConnectOptions::new().filename(config.database_path()))
+        .await
+        .unwrap();
     let value: String = sqlx::query_scalar("SELECT display_label FROM server_profiles")
         .fetch_one(&pool)
         .await
@@ -120,7 +130,7 @@ async fn failed_transaction_rolls_back_ddl_data_and_version_then_restart_resumes
         .await
         .unwrap();
     assert_eq!(version, 6);
-    pool.close().await;
+    close_fixture_pool(&pool).await;
     let store = LocalStateStore::open(&config).await.unwrap();
     assert_eq!(store.schema_version().await.unwrap(), LOCAL_SCHEMA_VERSION);
     assert_eq!(
@@ -181,7 +191,7 @@ async fn damaged_or_unknown_schema_fails_closed_without_repairing_evidence() {
         seed_evidence_profile(&pool).await;
         sqlx::query(mutation).execute(&pool).await.unwrap();
         let before = schema(&pool).await;
-        pool.close().await;
+        close_fixture_pool(&pool).await;
         for _ in 0..2 {
             let error = LocalStateStore::open(&config).await.unwrap_err();
             if unsupported {
@@ -190,11 +200,20 @@ async fn damaged_or_unknown_schema_fails_closed_without_repairing_evidence() {
             } else {
                 assert!(matches!(error, ClientSyncError::LocalSchemaInvalid));
             }
+            // Windows rejects this immediately if failed startup retained a
+            // database descriptor. Exercise each corruption twice, without
+            // backoff or weakening the schema/data preservation assertions.
+            let moved = directory.join("closed.sqlite3");
+            fs::rename(config.database_path(), &moved).unwrap_or_else(|error| {
+                panic!("failed startup retained database ownership for {mutation}: {error}")
+            });
+            fs::rename(&moved, config.database_path()).unwrap();
         }
-        let pool =
-            SqlitePool::connect_with(SqliteConnectOptions::new().filename(config.database_path()))
-                .await
-                .unwrap();
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(SqliteConnectOptions::new().filename(config.database_path()))
+            .await
+            .unwrap();
         assert_eq!(schema(&pool).await, before, "{mutation}");
         assert_eq!(
             sqlx::query_scalar::<_, String>("SELECT display_label FROM server_profiles")
@@ -203,7 +222,7 @@ async fn damaged_or_unknown_schema_fails_closed_without_repairing_evidence() {
                 .unwrap(),
             "preserve"
         );
-        pool.close().await;
+        close_fixture_pool(&pool).await;
         remove_dir_all_bounded(&directory).unwrap();
     }
 }
@@ -273,7 +292,7 @@ async fn v6_upgrade_preserves_profile_scope_pending_ambiguous_completed_and_conf
         "pending_acknowledgements",
     ];
     let before = snapshot(&pool, &tables).await;
-    pool.close().await;
+    close_fixture_pool(&pool).await;
     for _ in 0..2 {
         let store = LocalStateStore::open(&config).await.unwrap();
         assert_eq!(snapshot(&store.pool, &tables).await, before);
@@ -335,16 +354,17 @@ async fn unrecognized_historical_columns_cannot_be_erased_by_table_rebuild() {
         .execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO outbound_intents (intent_id, library_id, intent_kind, state, observed_relative_path, observed_kind, base_epoch, base_applied_sequence, dedupe_version, dedupe_sha256, created_at_ms, updated_at_ms) VALUES (?, ?, 'CREATE_DIRECTORY', 'PENDING', 'pending', 'DIRECTORY', 1, 0, 1, ?, 0, 0)")
         .bind(uuid::Uuid::now_v7().to_string()).bind(&library).bind(vec![0_u8;32]).execute(&pool).await.unwrap();
-    pool.close().await;
+    close_fixture_pool(&pool).await;
     let result = LocalStateStore::open(&config).await;
     assert!(
         matches!(result, Err(ClientSyncError::LocalSchemaInvalid)),
         "unknown columns must fail before migration 0004 rebuilds the table"
     );
-    let pool =
-        SqlitePool::connect_with(SqliteConnectOptions::new().filename(config.database_path()))
-            .await
-            .unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(SqliteConnectOptions::new().filename(config.database_path()))
+        .await
+        .unwrap();
     assert_eq!(
         sqlx::query_scalar::<_, String>("SELECT future_evidence FROM outbound_intents")
             .fetch_one(&pool)
@@ -359,7 +379,7 @@ async fn unrecognized_historical_columns_cannot_be_erased_by_table_rebuild() {
             .unwrap(),
         3
     );
-    pool.close().await;
+    close_fixture_pool(&pool).await;
     remove_dir_all_bounded(&directory).unwrap();
 }
 

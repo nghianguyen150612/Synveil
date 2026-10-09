@@ -28,7 +28,9 @@ def main() -> None:
     require(workflow.count("build-windows-installer.ps1") == 2,
             "candidate must be built exactly twice only for reproducibility")
     require("actions/download-artifact@v4" in workflow and
-            "identity.sha256" in workflow and "GITHUB_SHA" in workflow,
+            "identity.sha256" in workflow and
+            "identity.source_commit -cne (git rev-parse HEAD)" in workflow and
+            "ref: ${{ inputs.source_commit || github.event.pull_request.head.sha || github.sha }}" in workflow,
             "consumer must authenticate transferred bytes and source")
     require("SYNVEIL_V0_2_WINDOWS_INSTALL_EXPERIENCE_READY" not in workflow + docs,
             "readiness marker must remain withheld before native evidence")

@@ -475,9 +475,16 @@ impl Default for DesktopUiBridgeRust {
             std::env::var_os("SYNVEIL_QML_LIVE_TEST_EXIT_AFTER_READY").is_some();
         let live_test_exit_on_terminal =
             std::env::var_os("SYNVEIL_QML_LIVE_TEST_EXIT_ON_TERMINAL").is_some();
-        let profile_id = profile::load_profile_id();
-        let profile_ready = profile_id.is_ok();
-        let profile_id = profile_id.unwrap_or_else(|_| ServerProfileId::new());
+        // The packaged QML smoke probe checks only that the native UI loads.
+        // Do not create the user's first-run profile manifest as a side effect
+        // of that probe; a later client launch must still observe no profile.
+        let loaded_profile_id = if smoke_test {
+            None
+        } else {
+            profile::load_profile_id().ok()
+        };
+        let profile_ready = loaded_profile_id.is_some();
+        let profile_id = loaded_profile_id.unwrap_or_else(ServerProfileId::new);
         let controller = DesktopController::new(DesktopControllerConfig::for_profile(profile_id));
         let launch_manager = BackgroundClientManager::for_profile(profile_id);
         let runtime = Builder::new_multi_thread()

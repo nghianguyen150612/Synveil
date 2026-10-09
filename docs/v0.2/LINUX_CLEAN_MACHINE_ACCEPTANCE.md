@@ -1,5 +1,13 @@
 # Linux Clean-Machine Acceptance (Prompt020)
 
+## Current P045 status
+
+P045 infrastructure/source is implemented; acceptance checkpoint is withheld.
+[The current matrix](CROSS_PLATFORM_CLEAN_MACHINE_MATRIX.md) records exact
+qualified targets and blocked evidence separately. The historical P020/P028
+records below are not rewritten as passed. Graphical, first-run, installed IPC
+and genuine power-cycle evidence remain required. P046 is deferred.
+
 ## Status
 
 **Not accepted. Phase C is not closed.**

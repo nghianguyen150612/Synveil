@@ -146,6 +146,25 @@ class QuickInstallTests(unittest.TestCase):
         self.assertIn("Inspect native package state", caught.exception.action)
         invoke.assert_called_once()
 
+    def test_native_install_uses_each_managers_supported_argument_contract(self):
+        for profile, expected in (("debian-x86_64", ["apt-get", "install", "-y", "--"]),
+                                  ("fedora-x86_64", ["dnf", "install", "-y"])):
+            with self.subTest(profile=profile):
+                manager = quick.NativeManager(quick.PROFILES[profile])
+                manager.artifact_evidence = self.evidence
+                with mock.patch.object(manager, "_run", return_value=mock.Mock(returncode=0, stdout="", stderr="")) as invoke:
+                    manager.install(self.package, "0.2.0")
+                invoke.assert_called_once_with([*expected, str(self.package)], mutate=True)
+
+    def test_dnf_operand_stays_a_discrete_absolute_path(self):
+        package = self.root / "package --verbose $(not-a-command).rpm"
+        package.write_bytes(self.package.read_bytes())
+        manager = quick.NativeManager(quick.PROFILES["fedora-x86_64"])
+        manager.artifact_evidence = dict(self.evidence, final_path=str(package))
+        with mock.patch.object(manager, "_run", return_value=mock.Mock(returncode=0, stdout="", stderr="")) as invoke:
+            manager.install(package, "0.2.0")
+        invoke.assert_called_once_with(["dnf", "install", "-y", str(package)], mutate=True)
+
     def test_partial_payload_with_absent_package_metadata_stops_before_retry(self):
         partial = self.root / "partial-owned-payload"
         partial.write_bytes(b"interrupted package copy")
@@ -163,6 +182,26 @@ class QuickInstallTests(unittest.TestCase):
         self.assertEqual(quick.EXIT_VERIFICATION, status)
         self.assertIn("VerificationFailed", error)
 
+    def test_package_verifier_allows_only_expected_policy_and_visibility_records(self):
+        self.assertTrue(quick.package_verification_is_clean(
+            0,
+            "missing     /etc/synveil/credentials (Permission denied)\n"
+            "missing     /usr/share/doc/synveil/LICENSE\n"
+            "missing     /usr/share/doc/synveil/NOTICE\n",
+        ))
+        self.assertFalse(quick.package_verification_is_clean(
+            0, "missing     /usr/bin/synveil-client\n"
+        ))
+        self.assertFalse(quick.package_verification_is_clean(
+            0, "??5??????   /usr/share/doc/synveil/LICENSE\n"
+        ))
+        self.assertFalse(quick.package_verification_is_clean(
+            0, "missing     /etc/synveil/credentials/secret (Permission denied)\n"
+        ))
+        self.assertFalse(quick.package_verification_is_clean(
+            1, "missing     /usr/share/doc/synveil/LICENSE\n"
+        ))
+
     def test_explicit_profile_cannot_override_detection(self):
         detected = quick.linux_platform_detection.DetectionResult(
             os_id="fedora", version_id="42", architecture="x86_64", qualification_status="QUALIFIED",
@@ -171,6 +210,22 @@ class QuickInstallTests(unittest.TestCase):
         with self.assertRaises(quick.QuickInstallError) as caught:
             quick.resolve_profile("debian-x86_64", detected)
         self.assertEqual("UnsupportedPlatform", caught.exception.category)
+
+    def test_rpm_permission_boundary_is_exact_and_other_failures_stay_closed(self):
+        protected = "missing     /etc/synveil/credentials (Permission denied)\n"
+        self.assertTrue(quick.package_verification_is_clean(1, protected, artifact_type="rpm"))
+        for status, output, stderr in (
+                (1, "", ""), (2, protected, ""), (1, protected, "rpm database error"),
+                (1, "missing /etc/synveil/credentials\n", ""),
+                (1, "missing /etc/synveil/credentials/token (Permission denied)\n", ""),
+                (1, "missing /usr/share/doc/synveil/LICENSE\n", ""),
+                (1, protected + "......G.. /etc/synveil\n", ""),
+                (1, protected + "S.5...... /usr/bin/synveil-client\n", ""),
+                (1, protected + "missing /usr/bin/synveil-desktop\n", "")):
+            with self.subTest(status=status, output=output, stderr=stderr):
+                self.assertFalse(quick.package_verification_is_clean(
+                    status, output, artifact_type="rpm", stderr=stderr))
+        self.assertFalse(quick.package_verification_is_clean(1, protected, artifact_type="deb"))
 
     def test_unsupported_detection_precedes_acquisition(self):
         detected = quick.linux_platform_detection.DetectionResult(

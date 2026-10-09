@@ -345,7 +345,13 @@ impl InstallationJournal {
         fs::remove_file(&temp).map_err(io_error)?;
         self.maybe_fail(class, JournalFaultPoint::AfterCommit)?;
         self.maybe_fail(class, JournalFaultPoint::CommittedObjectSync)?;
-        File::open(&final_path)
+        // FlushFileBuffers on Windows requires a writable handle even though
+        // checkpoint content is immutable after promotion.
+        let mut committed_options = OpenOptions::new();
+        committed_options.read(true).write(true);
+        secure_open(&mut committed_options);
+        committed_options
+            .open(&final_path)
             .and_then(|f| f.sync_all())
             .map_err(io_error)?;
         self.maybe_fail(class, JournalFaultPoint::AfterCommittedObjectSync)?;
@@ -548,16 +554,62 @@ fn reject_symlink(path: &Path) -> Result<(), JournalError> {
 fn trusted_macos_root_alias(path: &Path, metadata: &fs::Metadata) -> bool {
     use std::os::unix::fs::MetadataExt;
     // Preserve the OS-owned /var and /tmp aliases used by native temporary
-    // directories. User-controlled links remain rejected; this is no native
-    // qualification claim and does not relax Linux/Windows ancestry checks.
+    // directories. macOS commonly stores these as relative links ("private/var"
+    // and "private/tmp"), so compare their resolved targets. User-controlled
+    // links remain rejected; this does not relax Linux/Windows ancestry checks.
     let target = match path.to_str() {
         Some("/var") => Path::new("/private/var"),
         Some("/tmp") => Path::new("/private/tmp"),
         _ => return false,
     };
-    metadata.uid() == 0
-        && fs::read_link(path).is_ok_and(|actual| actual == target)
+    metadata.file_type().is_symlink()
+        && metadata.uid() == 0
+        && symlink_resolves_to(path, target)
         && fs::metadata("/").is_ok_and(|root| root.uid() == 0 && root.mode() & 0o022 == 0)
+}
+
+#[cfg(any(target_os = "macos", all(test, unix)))]
+fn symlink_resolves_to(path: &Path, target: &Path) -> bool {
+    let Ok(link_target) = fs::read_link(path) else {
+        return false;
+    };
+    let Ok(expected) = fs::canonicalize(target) else {
+        return false;
+    };
+    let resolved = if link_target.is_absolute() {
+        link_target
+    } else if let Some(parent) = path.parent() {
+        parent.join(link_target)
+    } else {
+        return false;
+    };
+    fs::canonicalize(resolved).is_ok_and(|actual| actual == expected)
+}
+
+#[cfg(all(test, unix))]
+mod macos_root_alias_tests {
+    use super::symlink_resolves_to;
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn resolves_relative_and_absolute_symlink_targets_without_trusting_other_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let expected = root.path().join("private/var");
+        let unexpected = root.path().join("private/tmp");
+        fs::create_dir_all(&expected).unwrap();
+        fs::create_dir_all(&unexpected).unwrap();
+
+        let relative_alias = root.path().join("var-relative");
+        symlink("private/var", &relative_alias).unwrap();
+        assert!(symlink_resolves_to(&relative_alias, &expected));
+
+        let absolute_alias = root.path().join("var-absolute");
+        symlink(&expected, &absolute_alias).unwrap();
+        assert!(symlink_resolves_to(&absolute_alias, &expected));
+
+        assert!(!symlink_resolves_to(&relative_alias, &unexpected));
+    }
 }
 
 fn secure_open(options: &mut OpenOptions) {
@@ -578,9 +630,29 @@ fn secure_open(options: &mut OpenOptions) {
 }
 
 fn sync_directory(path: &Path) -> Result<(), JournalError> {
-    File::open(path)
-        .and_then(|f| f.sync_all())
-        .map_err(io_error)
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Windows cannot open directories through File::open, and flushing
+        // requires GENERIC_WRITE. Never follow a reparse point or ignore a
+        // failed directory durability operation.
+        options.write(true).custom_flags(0x02000000 | 0x00200000);
+    }
+    let directory = options.open(path).map_err(io_error)?;
+    let metadata = directory.metadata().map_err(io_error)?;
+    if !metadata.is_dir() {
+        return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if metadata.file_attributes() & 0x400 != 0 {
+            return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+        }
+    }
+    directory.sync_all().map_err(io_error)
 }
 fn create_directory_durable(path: &Path) -> Result<(), JournalError> {
     let parent = path

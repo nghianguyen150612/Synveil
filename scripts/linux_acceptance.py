@@ -30,6 +30,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 from dataclasses import dataclass, field
@@ -88,6 +89,10 @@ class ArtifactMismatch(AdapterError):
     pass
 
 
+class MissingCapability(AdapterError):
+    pass
+
+
 def redact(text: str) -> str:
     """Return *text* with credential-like material removed."""
     result = text
@@ -118,7 +123,7 @@ def _run(
             input=input_text,
         )
     except FileNotFoundError as exc:
-        raise AdapterError(f"required tool not present: {argv[0]}") from exc
+        raise MissingCapability(f"required tool not present: {argv[0]}") from exc
     except subprocess.TimeoutExpired as exc:
         raise AdapterError(f"command exceeded its {timeout}s bound: {argv[0]}") from exc
 
@@ -215,7 +220,9 @@ def collect_host_facts() -> HostFacts:
     architecture = "x86_64" if machine in {"x86_64", "amd64", "x64"} else machine
 
     session_type = os.environ.get("XDG_SESSION_TYPE", "")
-    has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+    # DISPLAY set by an SSH launcher is not evidence of a desktop. Require an
+    # active logind graphical session owned by this UID and a reachable display.
+    has_display = graphical_session_available()
 
     package_manager = next((x for x in ("apt-get", "dnf", "yum") if shutil.which(x)), None)
     handler = next((p for p in _GUI_HANDLERS.get(os_id, ()) if Path(p).is_file()), None)
@@ -231,6 +238,27 @@ def collect_host_facts() -> HostFacts:
         package_manager=package_manager,
         native_gui_package_handler=handler,
     )
+
+
+def graphical_session_available() -> bool:
+    if os.environ.get("QT_QPA_PLATFORM", "").lower() in {"offscreen", "minimal"}:
+        return False
+    if not os.environ.get("DISPLAY") or not shutil.which("xdotool") or not shutil.which("loginctl"):
+        return False
+    try:
+        sessions = _run(["loginctl", "show-user", str(os.getuid()), "-p", "Sessions", "--value"], timeout=10)
+        if sessions.returncode != 0:
+            return False
+        for session in sessions.stdout.split():
+            detail = _run(["loginctl", "show-session", session, "-p", "Type", "-p", "Active", "-p", "User"], timeout=10)
+            values = dict(line.split("=", 1) for line in detail.stdout.splitlines() if "=" in line)
+            if (detail.returncode == 0 and values.get("Type") == "x11" and
+                    values.get("Active") == "yes" and values.get("User") == str(os.getuid())):
+                probe = _run(["xdotool", "getdisplaygeometry"], timeout=10)
+                return probe.returncode == 0 and bool(probe.stdout.strip())
+    except AdapterError:
+        return False
+    return False
 
 
 def detect_capability(name: str, facts: HostFacts) -> str:
@@ -525,9 +553,9 @@ class Adapter:
         self.observations["entrypoint_launches"] = True
         self.observations["process_starts"] = True
         self.observations["no_unexpected_elevation"] = hasattr(os, "geteuid") and os.geteuid() != 0
-        self.observations["ipc_available"] = True
         self.observations["no_terminal_required"] = True
-        self.observations["installation_ready"] = True
+        # A visible window does not prove the installed control IPC or the
+        # first-run readiness state. Those need their own native observations.
         return True
 
     # -- handlers ---------------------------------------------------------
@@ -609,9 +637,7 @@ class Adapter:
             return StepOutcome(step["id"], step["action"], "completed", "only a package-owned launcher was damaged")
         if step["action"] == "repair":
             if self.identity.artifact_type.lower() == "appimage":
-                self.observations["package_installed"] = True
-                self.observations["health_ready"] = True
-                return StepOutcome(step["id"], step["action"], "completed", "AppImage integration inspection is healthy")
+                return StepOutcome(step["id"], step["action"], "blocked", "AppImage integration repair and preservation adapter is not provisioned")
             package_command = ["apt-get", "--reinstall", "install", "-y", str(self.artifact_path)] if self.facts.package_manager == "apt-get" else ["dnf", "-y", "reinstall", str(self.artifact_path)]
             result = self._sudo(package_command, timeout=180)
             if result.returncode != 0:
@@ -620,6 +646,8 @@ class Adapter:
             self.observations["health_ready"] = True
             return StepOutcome(step["id"], step["action"], "completed", "native package-manager repair completed")
         if step["action"] == "uninstall":
+            if self.identity.artifact_type.lower() == "appimage":
+                return StepOutcome(step["id"], step["action"], "blocked", "AppImage integration removal and preservation adapter is not provisioned; native package removal is inapplicable")
             result = self._sudo(["apt-get", "remove", "-y", "synveil"] if self.facts.package_manager == "apt-get" else ["dnf", "-y", "remove", "synveil"], timeout=180)
             if result.returncode != 0:
                 return StepOutcome(step["id"], step["action"], "failed", redact(result.stderr[-500:]))
@@ -660,7 +688,8 @@ class Adapter:
     def evaluate(self, assertions: list[dict[str, Any]]) -> list[dict[str, Any]]:
         results = []
         for assertion in assertions:
-            result = "PASS" if self.observations.get(assertion["type"]) is True else "NOT_EVALUATED"
+            observed = self.observations.get(assertion["type"])
+            result = "PASS" if observed is True else "FAIL" if observed is False else "NOT_EVALUATED"
             results.append({"assertion_id": assertion["id"], "result": result, "type": assertion["type"]})
         return results
 
@@ -683,6 +712,25 @@ class Adapter:
 
 
 def execute(scenario: dict[str, Any], source: Path, *, manifest: Path, artifact_type: str, evidence: str) -> dict[str, Any]:
+    """Keep operational failure paths inside the bounded result-v1 boundary."""
+    start = _utcnow()
+    try:
+        return _execute(scenario, source, manifest=manifest, artifact_type=artifact_type, evidence=evidence)
+    except (AdapterError, OSError, ValueError, KeyError, TypeError) as exc:
+        record = contract.blocked_result(scenario)
+        record.update(result="BLOCKED" if isinstance(exc, MissingCapability) else "ERROR",
+                      reason=redact(f"acceptance adapter failed: {exc}")[:1000],
+                      runner_version=RUNNER_VERSION, start_time=start, end_time=_utcnow(),
+                      cleanup_result={"status": "incomplete", "details": "adapter failure prevented confirmation of cleanup"})
+        record["artifact_identity"]["artifact_type"] = artifact_type
+        try:
+            record["artifact_identity"] = ArtifactIdentity.from_manifest(manifest, artifact_type).to_result()
+        except (AdapterError, OSError, ValueError, KeyError, TypeError):
+            pass
+        return record
+
+
+def _execute(scenario: dict[str, Any], source: Path, *, manifest: Path, artifact_type: str, evidence: str) -> dict[str, Any]:
     """Produce one result-v1 record for *scenario*."""
     start = _utcnow()
     blocked_reason: str | None = None
@@ -733,14 +781,22 @@ def execute(scenario: dict[str, Any], source: Path, *, manifest: Path, artifact_
     result = "BLOCKED"
     evidence_class = "contract-valid"
     if blocked_reason is None:
-        report = probe_clean_machine(facts)
+        lifecycle = scenario["id"] in {"INSTALL-JOURNEY-6", "INSTALL-JOURNEY-7"}
+        adapter = Adapter(facts, ArtifactIdentity.from_manifest(manifest, artifact_type), evidence=evidence, manifest_path=manifest)
+        report = CleanlinessReport() if lifecycle else probe_clean_machine(facts)
+        if lifecycle and (identity.artifact_type.lower() == "appimage" or not adapter._package_installed()):
+            blocked_reason = "required installed baseline unavailable: repair/uninstall must follow a verified installation, not a clean guest or unrelated package manager"
         if not report.clean:
             blocked_reason = redact("; ".join(report.findings))
-        else:
-            adapter = Adapter(facts, ArtifactIdentity.from_manifest(manifest, artifact_type), evidence=evidence, manifest_path=manifest)
+        elif blocked_reason is None:
             result = "BLOCKED"
             for step in scenario["steps"]:
-                outcome = adapter.dispatch(step)
+                try:
+                    outcome = adapter.dispatch(step)
+                except (AdapterError, OSError, ValueError) as exc:
+                    blocked_reason = f"step {step['id']} ({step['action']}): {redact(str(exc))[:1000]}"
+                    result = "BLOCKED" if isinstance(exc, MissingCapability) else "ERROR"
+                    break
                 if outcome.status == "completed":
                     completed.append(outcome.step_id)
                 else:
@@ -751,16 +807,31 @@ def execute(scenario: dict[str, Any], source: Path, *, manifest: Path, artifact_
             assertion_results = adapter.evaluate(scenario["assertions"])
             if blocked_reason is None and len(completed) == len(scenario["steps"]):
                 if all(assertion["result"] == "PASS" for assertion in assertion_results):
-                    result = "PASS"
-                else:
+                    # Completed local actions alone cannot establish P045's
+                    # native provenance, seeded preservation and cleanup proof.
+                    # Do not turn an argv --evidence label into qualification.
+                    result = "BLOCKED"
+                    blocked_reason = "native qualification unavailable: machine/run provenance and required preservation snapshots have not been recorded by this adapter"
+                elif any(assertion["result"] == "FAIL" for assertion in assertion_results):
                     result = "FAIL"
-                    blocked_reason = "one or more typed assertions were not established by the native adapter"
+                    blocked_reason = "one or more observed native assertions failed"
+                else:
+                    result = "BLOCKED"
+                    blocked_reason = "native assertion capability unavailable: required typed observations were not established by this adapter"
             # A scenario is only PASS when every step completed and every
             # assertion was actually evaluated and held. Blocked steps block.
-            evidence_class = evidence
+            # Preserve partial observations without claiming that a requested
+            # --evidence label supplies native attribution or preservation.
+            evidence_class = "contract-valid"
 
     end = _utcnow()
-    cleanup = adapter.cleanup() if "adapter" in locals() else {"status": "not-run", "details": None}
+    try:
+        cleanup = adapter.cleanup() if "adapter" in locals() else {"status": "not-run", "details": None}
+    except (AdapterError, OSError) as exc:
+        cleanup = {"status": "failed", "details": redact(str(exc))[:1000]}
+        if result not in {"FAIL", "ERROR"}:
+            result = "ERROR"
+            blocked_reason = "scenario cleanup failed: " + cleanup["details"]
     return {
         "schema_version": RESULT_SCHEMA_VERSION,
         "scenario_id": scenario["id"],
@@ -781,6 +852,75 @@ def execute(scenario: dict[str, Any], source: Path, *, manifest: Path, artifact_
         "diagnostic_references": [],
         "cleanup_result": cleanup,
     }
+
+
+def blocked_guest_record(
+    scenario_id: str, *, manifest: Path, artifact_type: str, os_id: str,
+    version: str, image_name: str, image_sha256: str, source_commit: str,
+    reason: str, diagnostic_references: list[str], cleanup_status: str,
+) -> dict[str, Any]:
+    """Record a verified VM image that never reached the guest acceptance adapter."""
+    if not re.fullmatch(r"[0-9a-f]{64}", image_sha256):
+        raise AdapterError("pinned VM image identity is not a SHA-256 value")
+    if image_name != f"{os_id}-{version}-x86_64":
+        raise AdapterError("VM image name does not match the declared platform")
+    locked_digest = None
+    for line in (ROOT / "deploy/acceptance/images.lock").read_text(encoding="utf-8").splitlines():
+        fields = line.split()
+        if fields and fields[0] == image_name:
+            locked_digest = next((field.removeprefix("sha256:") for field in fields[1:] if field.startswith("sha256:")), None)
+            break
+    if locked_digest is None or locked_digest != image_sha256:
+        raise AdapterError("VM image digest does not match the reviewed image lock")
+    if cleanup_status not in {"not-run", "complete", "incomplete", "failed"}:
+        raise AdapterError("invalid VM cleanup status")
+    scenarios = {item["id"]: item for _, item in contract.discover()}
+    if scenario_id not in scenarios:
+        raise AdapterError(f"unknown scenario: {scenario_id}")
+    scenario = scenarios[scenario_id]
+    identity = ArtifactIdentity.from_manifest(manifest, artifact_type)
+    if identity.source_commit != source_commit:
+        raise ArtifactMismatch("candidate source does not match the requested VM run")
+    family = "ubuntu" if os_id == "ubuntu" else "fedora" if os_id == "fedora" else os_id
+    facts = {
+        "family": family, "os_id": os_id, "version_id": version, "version": version,
+        "id_like": [], "architecture": "x86_64", "kernel": "unknown",
+        "session_type": "unknown", "desktop_session": "unavailable",
+        "package_manager": None, "native_gui_package_handler": None,
+        "guest_identity_status": "pinned-image-not-booted",
+        "image_name": image_name, "image_sha256": image_sha256,
+        "source_commit": source_commit, "execution_method": "guest-not-reached",
+        "workflow_run_id": os.environ.get("GITHUB_RUN_ID"),
+        "job_id": os.environ.get("GITHUB_JOB"),
+        "machine_identity": f"qemu-image:{image_name}:{image_sha256}",
+    }
+    capabilities = [
+        {"name": name, "status": "unknown"}
+        for name in contract.required_capabilities_for_host(scenario, facts)
+    ]
+    timestamp = _utcnow()
+    record = {
+        "schema_version": RESULT_SCHEMA_VERSION,
+        "scenario_id": scenario_id,
+        "execution_class": scenario["execution_class"],
+        "scenario_definition_digest": contract.definition_digest(scenario),
+        "runner_version": RUNNER_VERSION,
+        "start_time": timestamp,
+        "end_time": timestamp,
+        "platform_facts": facts,
+        "capability_results": capabilities,
+        "artifact_identity": identity.to_result(),
+        "result": "BLOCKED",
+        "completed_steps": [],
+        "assertion_results": [],
+        "evidence_classification": "contract-valid",
+        "reason": redact(reason)[:1000],
+        "diagnostics_redacted": True,
+        "diagnostic_references": diagnostic_references,
+        "cleanup_result": {"status": cleanup_status, "details": "VM power-cut/cleanup outcome is recorded by the owning workflow step."},
+    }
+    contract.validate_result_record(record)
+    return record
 
 
 class AdapterTests(unittest.TestCase):
@@ -867,6 +1007,39 @@ class AdapterTests(unittest.TestCase):
         self.assertIn(result["result"], {"PASS", "FAIL", "SKIPPED", "BLOCKED", "ERROR"})
         self.assertTrue(result["diagnostics_redacted"])
 
+    def test_unbooted_pinned_guest_produces_attributed_blocked_record(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="p020-blocked-guest-") as tmp:
+            root = Path(tmp)
+            payload = b"pinned synthetic candidate"
+            candidate = root / "synveil.deb"
+            candidate.write_bytes(payload)
+            digest = hashlib.sha256(payload).hexdigest()
+            manifest = root / "SYNVEIL-RELEASE-MANIFEST.json"
+            manifest.write_text(json.dumps({
+                "schema_version": 1, "product_version": "0.1.0", "source_commit": "c" * 40,
+                "artifacts": [{"artifact_type": "DEB", "filename": candidate.name,
+                               "sha256": digest, "size_bytes": len(payload),
+                               "platform": "linux", "architecture": "x86_64"}],
+            }))
+            record = blocked_guest_record(
+                "INSTALL-JOURNEY-2", manifest=manifest, artifact_type="DEB",
+                os_id="ubuntu", version="24.04", image_name="ubuntu-24.04-x86_64",
+                image_sha256=next(
+                    field.removeprefix("sha256:")
+                    for line in (ROOT / "deploy/acceptance/images.lock").read_text().splitlines()
+                    if line.split() and line.split()[0] == "ubuntu-24.04-x86_64"
+                    for field in line.split()[1:]
+                    if field.startswith("sha256:")
+                ), source_commit="c" * 40,
+                reason="QEMU TCG guest SSH timeout", diagnostic_references=["serial.log"],
+                cleanup_status="complete",
+            )
+            contract.validate_result_record(record)
+            self.assertEqual(record["result"], "BLOCKED")
+            self.assertEqual(record["artifact_identity"]["sha256"], digest)
+            self.assertEqual(record["platform_facts"]["guest_identity_status"], "pinned-image-not-booted")
+            self.assertEqual(record["cleanup_result"]["status"], "complete")
+
     def test_missing_manifest_blocks_rather_than_passes(self) -> None:
         source, scenario = contract.discover()[0]
         result = execute(scenario, source, manifest=Path("/nonexistent/m.json"), artifact_type="DEB", evidence="native-clean-machine")
@@ -908,11 +1081,19 @@ class AdapterTests(unittest.TestCase):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["self-test", "run", "matrix", "validate-result"])
+    parser.add_argument("command", choices=["self-test", "run", "matrix", "validate-result", "blocked-guest", "error-guest"])
     parser.add_argument("scenario_id", nargs="?")
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--artifact-type", default="AUTO")
     parser.add_argument("--evidence", default="native-clean-machine")
+    parser.add_argument("--os-id")
+    parser.add_argument("--version")
+    parser.add_argument("--image-name")
+    parser.add_argument("--image-sha256")
+    parser.add_argument("--source-commit")
+    parser.add_argument("--reason")
+    parser.add_argument("--diagnostic-reference", action="append", default=[])
+    parser.add_argument("--cleanup-status", choices=["not-run", "complete", "incomplete", "failed"], default="not-run")
     args = parser.parse_args()
 
     if args.command == "self-test":
@@ -945,6 +1126,29 @@ def main() -> int:
             print(f"invalid acceptance result: {exc}", file=sys.stderr)
             return 1
         print(f"valid acceptance result: {result.get('scenario_id')} ({result.get('result')})")
+        return 0
+
+    if args.command in {"blocked-guest", "error-guest"}:
+        required = (args.manifest, args.artifact_type, args.os_id, args.version,
+                    args.image_name, args.image_sha256, args.source_commit, args.reason)
+        if not args.scenario_id or any(value is None for value in required):
+            print("blocked-guest requires a scenario, pinned platform/image, candidate manifest and reason", file=sys.stderr)
+            return 2
+        try:
+            record = blocked_guest_record(
+                args.scenario_id, manifest=args.manifest, artifact_type=args.artifact_type,
+                os_id=args.os_id, version=args.version, image_name=args.image_name,
+                image_sha256=args.image_sha256, source_commit=args.source_commit,
+                reason=args.reason, diagnostic_references=args.diagnostic_reference,
+                cleanup_status=args.cleanup_status,
+            )
+        except (AdapterError, ArtifactMismatch) as exc:
+            print(f"cannot record blocked guest: {redact(str(exc))}", file=sys.stderr)
+            return 1
+        if args.command == "error-guest":
+            record.update(result="ERROR", cleanup_result={"status": "incomplete", "details": "guest result/cleanup outcome unavailable"})
+            record["platform_facts"].update(execution_method="guest-result-unavailable", guest_identity_status="guest-result-unavailable")
+        print(json.dumps(record, sort_keys=True, indent=2))
         return 0
 
     if args.scenario_id not in items:

@@ -295,25 +295,27 @@ begin
   end;
 end;
 
-function CurrentManifestOwns(const Relative: String): Boolean;
+procedure LoadCurrentManifest(Paths: TStringList);
 var
   Lines: TStringList;
   I, Marker: Integer;
+  Relative, Path: String;
 begin
-  Result := False;
-  if CompareText(GetSHA256OfFile(PackageRoot() + '\SYNVEIL-MANIFEST.txt'),
-       '{#SynveilManifestSha256}') <> 0 then
+  Path := PackageRoot() + '\SYNVEIL-MANIFEST.txt';
+  RequireNoReparseAncestry(Path, True);
+  if CompareText(GetSHA256OfFile(Path), '{#SynveilManifestSha256}') <> 0 then
     RaiseException('The target package manifest identity is not trusted.');
   Lines := TStringList.Create;
   try
-    Lines.LoadFromFile(PackageRoot() + '\SYNVEIL-MANIFEST.txt');
+    Lines.LoadFromFile(Path);
     Marker := Lines.IndexOf('files=sha256 size path');
     if Marker < 0 then RaiseException('The target package manifest is incomplete.');
-    for I := Marker + 1 to Lines.Count - 1 do
-      if CompareText(ManifestEntryPath(Lines[I]), Relative) = 0 then begin
-        Result := True;
-        exit;
-      end;
+    for I := Marker + 1 to Lines.Count - 1 do begin
+      Relative := ManifestEntryPath(Lines[I]);
+      if (Relative = '') or (Paths.IndexOf(Uppercase(Relative)) >= 0) then
+        RaiseException('The target package manifest has malformed or duplicate identities.');
+      Paths.Add(Uppercase(Relative));
+    end;
   finally
     Lines.Free;
   end;
@@ -324,24 +326,41 @@ var
   I: Integer;
   Relative, Candidate, Root: String;
   Attributes: LongWord;
+  CurrentPaths: TStringList;
 begin
   Root := AddBackslash(ExpandConstant('{app}'));
-  for I := 0 to PreviousManifest.Count - 1 do begin
-    Relative := PreviousManifest[I];
-    if not CurrentManifestOwns(Relative) then begin
-      Candidate := ExpandFileName(Root + Relative);
-      if not IsSafeRelativeManifestPath(Relative) then
-        RaiseException('Obsolete package identity is unsafe.');
-      RequireInstallRoot;
-      RequireNoReparseAncestry(Candidate, True);
-      if FileExists(Candidate) then begin
-        Attributes := GetFileAttributes(Candidate);
-        if (Attributes = $FFFFFFFF) or ((Attributes and FileAttributeReparsePoint) <> 0) then
-          RaiseException('Obsolete package object has ambiguous reparse-point identity.');
-        if not DeleteFile(Candidate) then
-          RaiseException('An obsolete Synveil package file could not be removed.');
+  CurrentPaths := TStringList.Create;
+  try
+    { Authenticate and parse one immutable target identity, rather than parsing
+      every target entry again for every prior file in the Pascal interpreter. }
+    LoadCurrentManifest(CurrentPaths);
+    Log('Synveil obsolete reconciliation: authenticated target entries=' + IntToStr(CurrentPaths.Count));
+    for I := 0 to PreviousManifest.Count - 1 do begin
+      Relative := PreviousManifest[I];
+      if CurrentPaths.IndexOf(Relative) < 0 then begin
+        Candidate := ExpandFileName(Root + Relative);
+        if not IsSafeRelativeManifestPath(Relative) then
+          RaiseException('Obsolete package identity is unsafe.');
+        RequireInstallRoot;
+        RequireNoReparseAncestry(Candidate, True);
+        { Reauthenticate before mutation; cached membership cannot authorize a
+          deletion after a changed target ownership manifest. }
+        RequireNoReparseAncestry(PackageRoot() + '\SYNVEIL-MANIFEST.txt', True);
+        if CompareText(GetSHA256OfFile(PackageRoot() + '\SYNVEIL-MANIFEST.txt'),
+             '{#SynveilManifestSha256}') <> 0 then
+          RaiseException('The target package manifest identity changed before cleanup.');
+        if FileExists(Candidate) then begin
+          Attributes := GetFileAttributes(Candidate);
+          if (Attributes = $FFFFFFFF) or ((Attributes and FileAttributeReparsePoint) <> 0) then
+            RaiseException('Obsolete package object has ambiguous reparse-point identity.');
+          if not DeleteFile(Candidate) then
+            RaiseException('An obsolete Synveil package file could not be removed.');
+        end;
       end;
     end;
+    Log('Synveil obsolete reconciliation: complete');
+  finally
+    CurrentPaths.Free;
   end;
 end;
 
@@ -552,6 +571,7 @@ var
   ResultCode: Integer;
   StartupState: String;
 begin
+  if CurStep = ssPostInstall then Log('Synveil post-install: commit ownership identity');
   if CurStep = ssPostInstall then
     CommitInstalledManifestIdentity;
   if (CurStep = ssPostInstall) and (not FreshInstall) then
@@ -567,6 +587,7 @@ begin
       SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
       RaiseException('Synveil could not save the sign-in startup preference. Try again from Settings.');
   end;
+  if CurStep = ssPostInstall then Log('Synveil post-install: ownership and startup reconciliation complete');
   if (CurStep = ssPostInstall) and LaunchRequested and (not WizardSilent) then begin
     RequireOwnedExecutable('synveil-desktop.exe');
     if not Exec(ExpandConstant('{app}\synveil-desktop.exe'), '', ExpandConstant('{app}'),

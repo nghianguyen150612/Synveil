@@ -62,10 +62,15 @@ v0.2 journeys. No new artifact is created by Prompt001.
 
 | Platform / architecture | Primary artifact | Portable / alternate | Primary UX |
 | --- | --- | --- | --- |
-| Windows x86_64 | `SynveilSetup.exe` | Versioned portable ZIP if retained; Advanced distribution | GUI installer |
-| Debian / Ubuntu x86_64 | Versioned `.deb` | Supported Linux install script | Native graphical package installation |
-| Fedora / explicitly qualified RPM-family x86_64 | Versioned `.rpm` | Supported Linux install script | Native graphical package installation |
-| Generic Linux x86_64 within a tested compatibility baseline | Versioned `.AppImage` | — | Portable GUI application |
+| Windows 11 AMD64 / x86_64 | `SynveilSetup.exe` | Versioned portable ZIP if retained; Advanced distribution | GUI installer |
+| Ubuntu 24.04 x86_64 (`debian-x86_64` profile) | Versioned `.deb` | Supported Linux install script | Native graphical package installation |
+| Fedora 42 x86_64 | Versioned `.rpm` | Supported Linux install script | Native graphical package installation |
+| AppImage on Ubuntu 24.04 / Fedora 42 x86_64 | Versioned `.AppImage` | — | Portable GUI application |
+
+Current Linux qualification is authoritative in
+`deploy/install/linux-platforms-v1.json`: Debian is detected-not-qualified.
+These exact targets remain conditional on native acceptance; P045 does not
+claim they have passed. Historical family headings do not broaden qualification.
 
 Windows ARM64, Linux ARM64/aarch64, all 32-bit targets, other CPU architectures,
 macOS, iOS and Android are **outside the v0.2 Prompt001 installation matrix**.

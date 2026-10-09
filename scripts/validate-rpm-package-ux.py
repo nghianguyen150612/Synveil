@@ -106,6 +106,9 @@ def validate_source() -> None:
     for label, pattern in forbidden_scriptlets.items():
         if re.search(pattern, executable, re.MULTILINE):
             fail(f"RPM-UX-9/10/11: scriptlets contain forbidden {label}")
+    for phase in ("post", "preun", "postun"):
+        if f"printf '[synveil] %s synveil (arg: %s)\\n' '%%{phase}'" not in spec:
+            fail(f"RPM scriptlet {phase} must pass its percent-prefixed label as data to printf")
 
     workflow = text(".github/workflows/linux-packages.yml")
     required_workflow = (
@@ -154,6 +157,12 @@ def validate_rpm(rpm: pathlib.Path) -> None:
         actual = found.get(path)
         if actual != (mode, "root", "root"):
             fail(f"RPM-UX-12: {path} policy is {actual}, expected {(mode, 'root', 'root')}")
+    for path, policy in {
+        "/etc/synveil": ("drwxr-x---", "root", "synveil"),
+        "/etc/synveil/credentials": ("drwx------", "root", "root"),
+    }.items():
+        if found.get(path) != policy:
+            fail(f"RPM protected directory metadata differs from post-install policy: {path}")
 
     requires = set(rpm_query(rpm, "[%{REQUIRENAME}\\n]").splitlines())
     for dependency in ("dbus-daemon", "gnome-keyring", "qt6-qtbase-gui", "qt6-qtdeclarative"):

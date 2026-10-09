@@ -3846,9 +3846,19 @@ mod tests {
         let second = host.start().await;
         let first = first.await.expect("first starter task");
 
-        assert!(first.is_ok(), "one caller must start the host: {first:?}");
-        assert!(matches!(second, Err(DesktopSyncHostError::AlreadyStarted)));
+        assert!(
+            matches!(
+                (&first, &second),
+                (Ok(_), Err(DesktopSyncHostError::AlreadyStarted))
+                    | (Err(DesktopSyncHostError::AlreadyStarted), Ok(_))
+            ),
+            "exactly one caller must start the host: {first:?}, {second:?}"
+        );
         host.shutdown().await.expect("host shutdown");
+        // The successful start result owns another host/state handle.
+        drop(first);
+        drop(second);
+        drop(host);
         fixture.close().await;
     }
 
@@ -3924,6 +3934,7 @@ mod tests {
             host.handle().network_available()[0].1,
             SyncRuntimeWakeResult::RuntimeStopped
         );
+        drop(host);
         fixture.close().await;
     }
 
@@ -3951,6 +3962,10 @@ mod tests {
             .await
             .expect("lifecycle shutdown");
         assert_eq!(host.lifecycle(), DesktopSyncHostLifecycle::Stopped);
+        drop(linux);
+        drop(windows);
+        drop(handle);
+        drop(host);
         fixture.close().await;
     }
 
@@ -3978,6 +3993,7 @@ mod tests {
             host.unregister_library(fixture.scope.library_id()).await,
             Err(DesktopSyncHostError::Stopped)
         ));
+        drop(host);
         fixture.close().await;
     }
 
@@ -4096,6 +4112,7 @@ mod tests {
         host.join().await.expect("host join");
         host.join().await.expect("idempotent host join");
         assert_eq!(host.lifecycle(), DesktopSyncHostLifecycle::Stopped);
+        drop(host);
         fixture.close().await;
     }
 
@@ -4144,6 +4161,7 @@ mod tests {
             .expect("graceful shutdown");
         assert_eq!(executor.calls(), 1);
         assert_eq!(host.lifecycle(), DesktopSyncHostLifecycle::Stopped);
+        drop(host);
         fixture.close().await;
     }
 
@@ -4177,6 +4195,13 @@ mod tests {
 
         let shutdown_host = host.clone();
         let shutdown = tokio::spawn(async move { shutdown_host.shutdown().await });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !host.inner.stop_requested.load(Ordering::Acquire) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("shutdown must request cancellation before startup is released");
         assert_eq!(
             host.sync_now(fixture.scope.library_id()),
             SyncRuntimeWakeResult::RuntimeStopped
@@ -4193,6 +4218,7 @@ mod tests {
             .expect("shutdown after cancelled start");
         assert_eq!(host.lifecycle(), DesktopSyncHostLifecycle::Stopped);
         assert!(host.runtime_handle().is_none());
+        drop(host);
         fixture.close().await;
     }
 
@@ -4447,6 +4473,7 @@ mod tests {
         );
         assert_eq!(host.statuses().len(), 2);
         host.shutdown().await.expect("host shutdown");
+        drop(host);
         fixture.close().await;
     }
 
@@ -4553,6 +4580,8 @@ mod tests {
             "root restoration must resume runtime work"
         );
         host.shutdown().await.expect("missing-root host shutdown");
+        drop(events);
+        drop(host);
         fixture.close().await;
     }
 

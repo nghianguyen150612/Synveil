@@ -33,57 +33,11 @@ done
 
 mkdir -p "$REPORT_DIR"
 
-# Locations of interest, relative to a Cargo target root.
-#   qmlcachegen  - qmlcachegen output; embeds the QML source path
-#   qt-build-utils/qml_modules - generated qmldir and plugin C++
-#   rcc - generated resource C++ from the QML resource collection
-generated_roots=(
-    qmlcachegen
-    qt-build-utils/qml_modules
-    rcc
-)
-
-printf '[synveil-diagnosis] comparing generated inputs\n'
-: > "${REPORT_DIR}/generated-inputs.txt"
-
-for sub in "${generated_roots[@]}"; do
-    a_root="${BUILD_A}/${sub}"
-    b_root="${BUILD_B}/${sub}"
-    if [[ ! -d "$a_root" && ! -d "$b_root" ]]; then
-        continue
-    fi
-    printf '[synveil-diagnosis]   scanning %s\n' "$sub"
-    # Compare by path relative to the generated root so the two build trees
-    # (which differ by construction) are compared on equal terms.
-    for label in a b; do
-        root_var="BUILD_${label^^}"
-        root="${!root_var}/${sub}"
-        [[ -d "$root" ]] || continue
-        ( cd "$root" && find . -type f | LC_ALL=C sort ) > "${REPORT_DIR}/files-${label}.txt"
-    done
-
-    if ! diff -q "${REPORT_DIR}/files-a.txt" "${REPORT_DIR}/files-b.txt" >/dev/null 2>&1; then
-        printf '[synveil-diagnosis]   FILE SET DIFFERS under %s\n' "$sub" | tee -a "${REPORT_DIR}/generated-inputs.txt"
-        diff -u "${REPORT_DIR}/files-a.txt" "${REPORT_DIR}/files-b.txt" |
-            sed 's/^/[synveil-diagnosis]     /' | tee -a "${REPORT_DIR}/generated-inputs.txt" || true
-    fi
-
-    while IFS= read -r relative; do
-        a_file="${BUILD_A}/${sub}/${relative}"
-        b_file="${BUILD_B}/${sub}/${relative}"
-        [[ -f "$a_file" && -f "$b_file" ]] || continue
-        if cmp -s "$a_file" "$b_file"; then
-            continue
-        fi
-        printf '[synveil-diagnosis]   DIFFERS: %s/%s\n' "$sub" "${relative}" |
-            tee -a "${REPORT_DIR}/generated-inputs.txt"
-        # The first differing line almost always names the leaked or
-        # nondeterministic token, which is the whole point of this report.
-        diff -u "$a_file" "$b_file" 2>/dev/null |
-            grep -E '^[+-][^+-]' | head -n 20 |
-            sed 's/^/[synveil-diagnosis]     /' | tee -a "${REPORT_DIR}/generated-inputs.txt" || true
-    done < "${REPORT_DIR}/files-a.txt"
-done
+# Cargo stores generated Qt/CXX inputs below release/build/<crate>-<hash>/out,
+# not at the target root. Inspect those real inputs and retain raw generator
+# provenance alongside the canonicalized C++ consumed by the compiler.
+python3 "$(dirname "$0")/diagnose-generated-qt-inputs.py" \
+    "$BUILD_A" "$BUILD_B" "$REPORT_DIR"
 
 printf '[synveil-diagnosis] comparing linked binaries\n'
 : > "${REPORT_DIR}/binaries.txt"

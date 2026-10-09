@@ -2,6 +2,14 @@
 
 Status: **in progress / native evidence pending**. The Phase-D readiness marker is withheld.
 
+## Current P045 status
+
+P045 infrastructure/source is implemented; acceptance checkpoint is withheld.
+[The current matrix](CROSS_PLATFORM_CLEAN_MACHINE_MATRIX.md) records exact
+qualified targets and blocked evidence separately. The historical P020/P028
+records below are not rewritten as passed. Graphical, first-run, installed IPC
+and genuine power-cycle evidence remain required. P046 is deferred.
+
 ## Scope and candidate identity
 
 P028 qualifies the advertised Windows 11 AMD64 per-user product, not x86, ARM64,

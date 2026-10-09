@@ -173,7 +173,9 @@ def main() -> int:
     windows_iss = read("deploy/windows/installer/Synveil.iss")
     require("LoadTrustedPreviousManifest" in windows_iss
             and "RemoveProvenObsoleteFiles" in windows_iss
-            and "CurrentManifestOwns" in windows_iss
+            and "LoadCurrentManifest(CurrentPaths);" in windows_iss
+            and "if CurrentPaths.IndexOf(Relative) < 0 then begin" in windows_iss
+            and "The target package manifest identity changed before cleanup." in windows_iss
             and "DelTree(" not in windows_iss,
             "Windows recovery cleanup must use trusted old-minus-new ownership")
     require("procedure CommitInstalledManifestIdentity" in windows_iss
@@ -199,6 +201,9 @@ def main() -> int:
             and "real release synveil-client.exe" in p044_windows_runner,
             "Windows interruption fixtures must use versioned manifest fixtures and the real client")
     require("$process.Kill($true)" in p044_windows_test
+            and "catch [System.IO.IOException]" in p044_windows_test
+            and "-band 0xFFFF) -ne 32" in p044_windows_test
+            and "Start-Sleep -Milliseconds 5" in p044_windows_test
             and "prior ownership manifest" in p044_windows_test
             and "Get-ManifestHashes" in p044_windows_test
             and "NewerRuntimePayloadHash" in p044_windows_test

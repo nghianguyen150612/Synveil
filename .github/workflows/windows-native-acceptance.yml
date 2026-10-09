@@ -4,12 +4,17 @@ on:
   pull_request:
   push:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      source_commit:
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-windows
   cancel-in-progress: true
 
 env:
@@ -21,6 +26,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit || github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: ilammy/msvc-dev-cmd@v1
       - uses: jurplel/install-qt-action@v4
@@ -28,12 +35,23 @@ jobs:
           version: 6.8.3
           arch: win64_msvc2022_64
           cache: true
+      - name: Record compiler, linker, and app-local CRT identities
+        shell: pwsh
+        run: ./scripts/prepare-windows-candidate-tools.ps1
       - name: Validate checkpoint wiring
         shell: bash
         run: |
           python3 scripts/validate-windows-installer.py
           python3 scripts/validate-windows-native-acceptance.py
           ./scripts/validate-install-acceptance.sh
+      - name: Install reproducible ZIP prerequisite
+        shell: pwsh
+        run: |
+          choco install zip --version=3.0 --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'WINDOWS_ZIP_PREREQUISITE_FAILURE' }
+      - name: Verify ZIP prerequisite before compiling
+        shell: bash
+        run: zip -v
       - name: Build runtime once
         shell: bash
         run: |
@@ -63,8 +81,13 @@ jobs:
           $cargo = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
           $version = ($cargo.packages | Where-Object name -eq 'synveil-desktop').version
           if ([string]::IsNullOrWhiteSpace($version)) { throw 'P028_PRODUCT_VERSION_FAILURE' }
-          $identity = [ordered]@{schema_version=1;source_commit=$env:GITHUB_SHA;product_version=$version;filename='SynveilSetup.exe';size_bytes=(Get-Item $setup).Length;sha256=(Get-FileHash $setup -Algorithm SHA256).Hash.ToLowerInvariant();release_manifest_sha256=(Get-FileHash target/windows-installer/SYNVEIL-RELEASE-MANIFEST.json -Algorithm SHA256).Hash.ToLowerInvariant();inno_setup_version='6.7.3';qt_version='6.8.3';msvc_tools=$env:VCToolsVersion;windows_caption=$os.Caption;windows_version=$os.Version;windows_build=$os.BuildNumber;architecture=$env:PROCESSOR_ARCHITECTURE}
+          $identity = [ordered]@{schema_version=1;source_commit=(git rev-parse HEAD);product_version=$version;filename='SynveilSetup.exe';size_bytes=(Get-Item $setup).Length;sha256=(Get-FileHash $setup -Algorithm SHA256).Hash.ToLowerInvariant();release_manifest_sha256=(Get-FileHash target/windows-installer/SYNVEIL-RELEASE-MANIFEST.json -Algorithm SHA256).Hash.ToLowerInvariant();inno_setup_version='6.7.3';qt_version='6.8.3';msvc_tools=$env:VCToolsVersion;windows_caption=$os.Caption;windows_version=$os.Version;windows_build=$os.BuildNumber;architecture=$env:PROCESSOR_ARCHITECTURE;artifact_id='windows-x86_64-installer';artifact_type='windows_installer';platform='windows';toolchain_identity_sha256=(Get-FileHash target/windows-toolchain.json -Algorithm SHA256).Hash.ToLowerInvariant()}
           $identity | ConvertTo-Json | Set-Content target/windows-installer/p028-candidate.json -Encoding utf8
+      - name: Record observed candidate and release manifest
+        shell: pwsh
+        run: |
+          Get-Content target/windows-installer/p028-candidate.json -Raw
+          Get-Content target/windows-installer/SYNVEIL-RELEASE-MANIFEST.json -Raw
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ env.CANDIDATE_NAME }}
@@ -75,7 +98,16 @@ jobs:
             target/windows-installer/SYNVEIL-RELEASE-MANIFEST.json
             target/windows-installer/SynveilSetup.manifest.xml
             target/windows-installer/p028-candidate.json
+            target/windows-toolchain.json
             target/p027-fixture-*/SynveilSetup.exe
+      - name: Preserve observed producer identities even after a build failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-p045-build-diagnostics
+          path: target/windows-toolchain.json
+          if-no-files-found: warn
+          retention-days: 30
 
   standard-user-native:
     needs: build-windows-candidate
@@ -83,16 +115,23 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit || github.event.pull_request.head.sha || github.sha }}
       - uses: actions/download-artifact@v4
         with:
           name: ${{ env.CANDIDATE_NAME }}
-          path: candidate
+          # Upload strips the common target/ prefix. Restore it at download
+          # so the existing authenticated manifest/payload paths stay exact.
+          path: candidate/target
       - name: Authenticate transferred candidate
         shell: pwsh
         run: |
           $identity = Get-Content candidate/target/windows-installer/p028-candidate.json -Raw | ConvertFrom-Json
           $actual = (Get-FileHash candidate/target/windows-installer/SynveilSetup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actual -cne $identity.sha256 -or $identity.source_commit -cne $env:GITHUB_SHA) { throw 'P028_CANDIDATE_IDENTITY_FAILURE' }
+          if ($actual -cne $identity.sha256 -or (Get-Item candidate/target/windows-installer/SynveilSetup.exe).Length -ne $identity.size_bytes -or $identity.source_commit -cne (git rev-parse HEAD)) { throw 'P028_CANDIDATE_IDENTITY_FAILURE' }
+          $releaseHash = (Get-FileHash candidate/target/windows-installer/SYNVEIL-RELEASE-MANIFEST.json -Algorithm SHA256).Hash.ToLowerInvariant()
+          $toolchainHash = (Get-FileHash candidate/target/windows-toolchain.json -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($releaseHash -cne $identity.release_manifest_sha256 -or $toolchainHash -cne $identity.toolchain_identity_sha256) { throw 'P028_MANIFEST_IDENTITY_FAILURE' }
       - name: Native standard-user product acceptance
         shell: pwsh
         run: |

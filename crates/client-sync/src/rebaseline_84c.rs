@@ -1908,7 +1908,7 @@ mod tests {
         );
         store.close_pool().await;
         drop(store);
-        fs::remove_dir_all(dir).unwrap();
+        crate::test_support::remove_dir_all_bounded(&dir).unwrap();
     }
 
     // -----------------------------------------------------------------------
@@ -2593,9 +2593,14 @@ mod tests {
             old_count > 0 && new_count > 0,
             "both generations must be observed"
         );
+        assert_eq!(
+            Arc::strong_count(&store),
+            1,
+            "all reader tasks must release state"
+        );
         store.close_pool().await;
         drop(store);
-        fs::remove_dir_all(dir).unwrap();
+        crate::test_support::remove_dir_all_bounded(&dir).unwrap();
     }
 
     // -----------------------------------------------------------------------

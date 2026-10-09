@@ -499,8 +499,16 @@ interruption resilience. No VM reboot or actual power-cycle is claimed;
 
 ### P045 — Cross-Platform Clean-Machine Matrix
 
-Run fresh Windows, Debian, Fedora and generic Linux acceptance on the exact
-platform versions advertised for v0.2.
+**Infrastructure/source implemented; acceptance checkpoint withheld.**
+
+Run fresh Windows 11 AMD64, Ubuntu 24.04 x86_64 DEB, Fedora 42 x86_64 RPM,
+AppImage on those two Linux targets, and applicable verified quick-install,
+lifecycle and first-run acceptance. Historical "Debian" shorthand does not
+qualify Debian: it remains detected-not-qualified under
+`deploy/install/linux-platforms-v1.json`. Required graphical/logon, live-server
+and native power-cycle evidence remains blocked. See
+[the P045 matrix](CROSS_PLATFORM_CLEAN_MACHINE_MATRIX.md) and
+[manifest](PROMPT045_MANIFEST.md). P046 is deferred.
 
 ### P046 — v0.2 Documentation and Distribution Readiness
 

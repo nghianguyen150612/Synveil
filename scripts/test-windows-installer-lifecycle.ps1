@@ -4,23 +4,47 @@ param(
     [Parameter(Mandatory=$true)][string]$NewerFixtureSetup,
     [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{64}$')][string]$NewerLicenseHash,
     [Parameter(Mandatory=$true)][string]$RepositoryRoot,
-    [Parameter(Mandatory=$true)][string]$EvidencePath
+    [Parameter(Mandatory=$true)][string]$EvidencePath,
+    [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{40}$')][string]$SourceCommit,
+    [Parameter(Mandatory=$true)][string]$ExpectedSid
 )
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'windows-security.ps1')
+. (Join-Path $PSScriptRoot 'windows-known-folders.ps1')
+. (Join-Path $PSScriptRoot 'windows-uninstall-completion.ps1')
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = [Security.Principal.WindowsPrincipal]::new($identity)
+$isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if ($identity.User.Value -cne $ExpectedSid -or $isAdmin) {
+    throw 'STANDARD_USER_IDENTITY_FAILURE: lifecycle child token does not match the disposable non-administrator account'
+}
+$profileRoot = [SynveilKnownFolders]::CurrentUserProfile()
+$profileEnvMatches = $false
+if (![string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+    $profileEnvMatches = [string]::Equals([IO.Path]::GetFullPath($env:USERPROFILE).TrimEnd('\'), $profileRoot.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)
+}
+Write-Output "STANDARD_USER_LIFECYCLE_PREFLIGHT: expected SID matched; administrator=false; USERPROFILE_matches_token_profile=$profileEnvMatches"
+Set-WindowsTokenProfileEnvironment
+if (![string]::Equals($env:USERPROFILE, $profileRoot, [StringComparison]::OrdinalIgnoreCase) -or
+    ![string]::Equals($env:LOCALAPPDATA, (Join-Path $profileRoot 'AppData\Local'), [StringComparison]::OrdinalIgnoreCase) -or
+    ![string]::Equals($env:TEMP, (Join-Path $profileRoot 'AppData\Local\Temp'), [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'STANDARD_USER_ENVIRONMENT_FAILURE: lifecycle environment differs from its verified token profile'
+}
+Write-Output 'STANDARD_USER_LIFECYCLE_ENVIRONMENT: profile and temporary paths match the non-administrator token'
+$localAppData = Get-WindowsKnownFolderPath LocalApplicationData
 $appId = '{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1'
 $uninstallKey = "Software\Microsoft\Windows\CurrentVersion\Uninstall\$appId"
-$root = Join-Path $env:LOCALAPPDATA 'Programs\Synveil'
-$stateRoot = Join-Path $env:LOCALAPPDATA 'Synveil'
+$root = Join-Path $localAppData 'Programs\Synveil'
+$stateRoot = Join-Path $localAppData 'Synveil'
 $logRoot = Join-Path $stateRoot 'installer\p027'
-$startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Synveil.lnk'
-$desktop = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Synveil.lnk'
+$startMenu = Join-Path (Get-WindowsKnownFolderPath Programs) 'Synveil.lnk'
+$desktop = Join-Path (Get-WindowsKnownFolderPath DesktopDirectory) 'Synveil.lnk'
 
 function Assert-True([bool]$Condition, [string]$Message) { if (!$Condition) { throw $Message } }
 function Invoke-Setup([string]$Path, [string[]]$Extra, [int]$Expected, [string]$Name) {
     $arguments = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LAUNCH=0') + $Extra + @(('/LOG=' + (Join-Path $logRoot "$Name.log")))
-    $process = Start-Process -FilePath $Path -ArgumentList $arguments -WorkingDirectory $env:TEMP -PassThru
+    $process = Start-Process -FilePath $Path -ArgumentList $arguments -WorkingDirectory $logRoot -PassThru
     if (!$process.WaitForExit(120000)) { $process.Kill(); throw "LIFECYCLE_TIMEOUT: $Name" }
     Assert-True ($process.ExitCode -eq $Expected) "LIFECYCLE_EXIT_FAILURE: $Name exit $($process.ExitCode), expected $Expected"
 }
@@ -61,17 +85,22 @@ function Snapshot-State {
     }
     return ($result | ConvertTo-Json -Compress)
 }
-function Invoke-RegisteredUninstall([string]$Name) {
+function Invoke-RegisteredUninstall([string]$Name, [string[]]$PreservedNames = @()) {
     $uninstaller = Get-RegisteredUninstaller
     $process = Start-Process -FilePath $uninstaller -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG=' + (Join-Path $logRoot "$Name.log"))) -PassThru
     if (!$process.WaitForExit(120000)) { $process.Kill(); throw "LIFECYCLE_TIMEOUT: $Name" }
     Assert-True ($process.ExitCode -eq 0) "LIFECYCLE_UNINSTALL_FAILURE: $Name exit $($process.ExitCode)"
-    Assert-True ($null -eq [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($uninstallKey)) 'LIFECYCLE_UNINSTALL_FAILURE: registration remains'
+    Wait-WindowsPackageRemoval -PackageRoot $root -PreservedNames $PreservedNames -IsRegistered {
+        $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($uninstallKey)
+        if ($null -eq $key) { return $false }
+        $key.Dispose()
+        return $true
+    }
 }
 function Interrupt-UpgradeAfterOwnedPayloadCopy([string]$Path, [string]$ExpectedLicenseHash) {
     $log = Join-Path $logRoot 'upgrade-interrupted.log'
     $arguments = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LAUNCH=0',('/LOG=' + $log))
-    $process = Start-Process -FilePath $Path -ArgumentList $arguments -WorkingDirectory $env:TEMP -PassThru
+    $process = Start-Process -FilePath $Path -ArgumentList $arguments -WorkingDirectory $logRoot -PassThru
     $deadline = [DateTime]::UtcNow.AddSeconds(90)
     $license = Join-Path $root 'LICENSE'
     while ([DateTime]::UtcNow -lt $deadline) {
@@ -105,15 +134,19 @@ $unknown = Join-Path $root 'user-note.txt'; Set-Content -LiteralPath $unknown -V
 $damage = Join-Path $root 'platforms\qwindows.dll'; Remove-Item -LiteralPath $damage
 Remove-Item -LiteralPath $startMenu
 Invoke-Setup $Setup @('/REPAIR=1') 0 'repair-production'
+# Repeat real same-version repair while preserving the adjacent unknown file.
+# This exercises complete target membership reconciliation on the deployed DLL
+# inventory; source/fixture checks alone cannot validate the Pascal runtime.
+Invoke-Setup $Setup @('/REPAIR=1') 0 'repair-production-repeat'
 $null = Manifest-Hashes
 Assert-True (Test-Path $unknown -PathType Leaf) 'LIFECYCLE_REPAIR_FAILURE: unknown adjacent file removed'
 Assert-True (Test-Path $startMenu -PathType Leaf) 'LIFECYCLE_REPAIR_FAILURE: Start Menu shortcut not restored'
 Assert-True (!(Test-Path $desktop)) 'LIFECYCLE_REPAIR_FAILURE: desktop preference changed'
 Assert-True ((Snapshot-State) -ceq $stateBefore) 'LIFECYCLE_REPAIR_FAILURE: durable state changed'
-Invoke-RegisteredUninstall 'uninstall-production'
+Invoke-RegisteredUninstall 'uninstall-production' @('user-note.txt')
 Assert-True (Test-Path $unknown -PathType Leaf) 'LIFECYCLE_UNINSTALL_FAILURE: unknown adjacent file removed'
 Assert-True ((Snapshot-State) -ceq $stateBefore) 'LIFECYCLE_UNINSTALL_FAILURE: durable state changed'
-Remove-Item -LiteralPath $unknown; Remove-Item -LiteralPath $root -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $unknown; Remove-WindowsEmptyPackageRoot -PackageRoot $root
 
 # Real Setup execution with isolated numeric fixture identities; never release artifacts.
 Invoke-Setup $OlderFixtureSetup @('/STARTUP=0','/DESKTOPICON=1') 0 'install-fixture-old'
@@ -142,15 +175,15 @@ Invoke-Setup $OlderFixtureSetup @() 1 'downgrade-fixture'
 Assert-True (((Get-Registration).version -ceq '1.1.0')) 'LIFECYCLE_DOWNGRADE_FAILURE: installed version changed'
 Assert-True ((Manifest-Hashes | ConvertTo-Json -Compress) -ceq $beforeDowngrade) 'LIFECYCLE_DOWNGRADE_FAILURE: package changed'
 Assert-True ((Snapshot-State) -ceq $stateBefore) 'LIFECYCLE_DOWNGRADE_FAILURE: state changed'
-Invoke-RegisteredUninstall 'uninstall-fixture'
+Invoke-RegisteredUninstall 'uninstall-fixture' @('user-note.txt')
 Assert-True ((Test-Path $unknown) -and ((Snapshot-State) -ceq $stateBefore)) 'LIFECYCLE_UNINSTALL_FAILURE: preserved data changed'
-Remove-Item -LiteralPath $unknown; Remove-Item -LiteralPath $root -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $unknown; Remove-WindowsEmptyPackageRoot -PackageRoot $root
 Invoke-Setup $Setup @('/STARTUP=0','/DESKTOPICON=0') 0 'reinstall-production'
 $null = Manifest-Hashes
 Invoke-RegisteredUninstall 'uninstall-reinstalled'
 
 $evidence = [ordered]@{
-    schema_version=1; source_commit=$env:GITHUB_SHA; artifact_sha256=(Get-FileHash $Setup -Algorithm SHA256).Hash.ToLowerInvariant()
+    schema_version=1; source_commit=$SourceCommit; artifact_sha256=(Get-FileHash $Setup -Algorithm SHA256).Hash.ToLowerInvariant()
     windows_version=(Get-CimInstance Win32_OperatingSystem).Version
     repair=[ordered]@{ installed_version_before='production'; repair_result='pass'; payload_restored=$true; unknown_adjacent_preserved=$true; state_preserved=$true; startup_preference_preserved=$true }
     upgrade_fixture=[ordered]@{ fixture_old_version='1.0.0'; fixture_new_version='1.1.0'; interruption=[ordered]@{ process_termination='forced'; partial_target_payload_observed=$true; prior_manifest_and_registration_matched=$true; unknown_adjacent_preserved=$true; durable_state_preserved=$true; recovery_result='pass' }; upgrade_result='pass'; obsolete_owned_removed=$true; unknown_adjacent_preserved=$true; state_preserved=$true; registration_count=1; startup_preserved=$true }

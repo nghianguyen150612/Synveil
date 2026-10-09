@@ -207,11 +207,9 @@ fn parse_key(value: &str) -> Result<RebaselineTokenKey, RuntimeRebaselineCredent
 #[cfg(test)]
 #[allow(unsafe_code)]
 mod tests {
-    use std::{
-        env, fs,
-        os::unix::fs::{PermissionsExt, symlink},
-        path::PathBuf,
-    };
+    #[cfg(unix)]
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    use std::{env, fs, path::PathBuf};
 
     use super::{
         CREDENTIALS_DIRECTORY_ENV, MAX_REBASELINE_KEY_FILE_BYTES, REBASELINE_CREDENTIAL_FILE_ENV,
@@ -258,6 +256,7 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("key");
             fs::write(&path, format!("{}\r\n", "ab".repeat(32))).unwrap();
+            #[cfg(unix)]
             fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).unwrap();
             unsafe { env::set_var(REBASELINE_CREDENTIAL_FILE_ENV, &path) };
             assert!(rebaseline_key_from_runtime().is_ok());
@@ -288,7 +287,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_invalid_oversized_symlink_and_hardlink_are_redacted() {
+    fn missing_invalid_oversized_are_redacted() {
         with_clean_env(|| {
             assert_eq!(
                 rebaseline_key_from_runtime().unwrap_err(),
@@ -307,9 +306,18 @@ mod tests {
                 rebaseline_key_from_runtime().unwrap_err(),
                 RuntimeRebaselineCredentialError::OversizedCredential
             );
+        });
+    }
 
+    #[cfg(unix)]
+    #[test]
+    fn symlink_and_hardlink_are_rejected() {
+        with_clean_env(|| {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("key");
             let moved = dir.path().join("moved");
-            fs::rename(&path, &moved).unwrap();
+            fs::write(&moved, "ef".repeat(32)).unwrap();
+            unsafe { env::set_var(REBASELINE_CREDENTIAL_FILE_ENV, &path) };
             symlink(&moved, &path).unwrap();
             assert_eq!(
                 rebaseline_key_from_runtime().unwrap_err(),

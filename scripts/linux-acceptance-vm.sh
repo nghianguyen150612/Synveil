@@ -106,13 +106,21 @@ write_cloud_init() {
             ;;
         fedora)
             admin_group=wheel
-            setup_script='dnf -y group install "Fedora Workstation" && dnf -y install gnome-software gnome-screenshot at-spi2-core xdotool dbus-x11 libsecret qemu-guest-agent && mkdir -p /etc/gdm && printf "[daemon]\\nAutomaticLoginEnable=True\\nAutomaticLogin=synveil-acceptance\\nWaylandEnable=false\\n" > /etc/gdm/custom.conf && systemctl enable gdm'
+            setup_script='dnf -y install @workstation-product-environment && dnf -y install gnome-session-xsession xorg-x11-server-Xorg gnome-software gnome-screenshot at-spi2-core xdotool dbus-x11 libsecret qemu-guest-agent && mkdir -p /etc/gdm && printf "[daemon]\\nAutomaticLoginEnable=True\\nAutomaticLogin=synveil-acceptance\\nWaylandEnable=false\\n" > /etc/gdm/custom.conf && systemctl enable gdm'
             ;;
         *)
             fail "unsupported guest platform for cloud-init: ${platform}"
             ;;
     esac
 
+    # Provisioning failures must not leave a readiness marker. Cloud-init runs
+    # later runcmd entries even when an earlier entry exits nonzero.
+    setup_script+=' && systemctl set-default graphical.target && systemctl start display-manager && command -v xdotool && mkdir -p /var/lib/synveil-acceptance && touch /var/lib/synveil-acceptance/desktop-ready'
+    # JSON strings are valid YAML flow scalars; shell @Q quoting is not a YAML
+    # escaping mechanism (notably for the EXIT trap's single quotes).
+    setup_script="mkdir -p /var/lib/synveil-acceptance; trap 'status=\$?; printf \"%s\\n\" \"\$status\" > /var/lib/synveil-acceptance/provision-exit' EXIT; ${setup_script}"
+    local setup_json
+    setup_json="$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$setup_script")"
     cat > "${seed_dir}/user-data" <<EOF
 #cloud-config
 users:
@@ -126,11 +134,12 @@ users:
       - ${public_key}
 ssh_pwauth: false
 package_update: false
+growpart:
+  mode: auto
+  devices: ['/']
+resize_rootfs: true
 runcmd:
-  - [ bash, -lc, ${setup_script@Q} ]
-  - [ bash, -lc, "mkdir -p /var/lib/synveil-acceptance && touch /var/lib/synveil-acceptance/desktop-ready" ]
-  - [ systemctl, set-default, graphical.target ]
-  - [ systemctl, enable, --now, qemu-guest-agent ]
+  - [ bash, -lc, ${setup_json} ]
 EOF
 
     cat > "${seed_dir}/meta-data" <<EOF
@@ -201,11 +210,12 @@ start_vm() {
         $accel -m 4096 -smp 2 \
         -drive "file=${disk},if=virtio,format=qcow2" \
         -drive "file=${seed_iso},if=virtio,format=raw,readonly=on" \
-        -netdev user,id=net0,hostfwd="127.0.0.1:${ssh_port}-:22" \
+        -netdev user,id=net0,hostfwd="tcp:127.0.0.1:${ssh_port}-:22" \
         -device virtio-net-pci,netdev=net0 \
         -qmp "unix:${monitor},server=on,wait=off" \
         -serial "file:${serial}" \
-        -display none -vga virtio -no-reboot &
+        -display none -vga virtio -no-reboot \
+        </dev/null >"${serial}.qemu.log" 2>&1 &
     printf '%s' "$!"
 }
 
@@ -227,7 +237,14 @@ wait_for_ssh() {
 wait_for_guest_readiness() {
     local port="$1" key="$2" deadline
     deadline=$(( $(date +%s) + BOOT_TIMEOUT_SECONDS ))
+    GUEST_READINESS_FAILURE=readiness-timeout
+    local provision_status
     while (( $(date +%s) < deadline )); do
+        provision_status="$(guest_exec "$port" "$key" provisioning-status 2>/dev/null)" || provision_status=""
+        if [[ "$provision_status" =~ ^[1-9][0-9]*$ ]]; then
+            GUEST_READINESS_FAILURE="provisioning-failed-exit-${provision_status}"
+            return 1
+        fi
         if guest_exec "$port" "$key" readiness >/dev/null 2>&1; then
             log "guest graphical provisioning is ready"
             return 0
@@ -237,13 +254,31 @@ wait_for_guest_readiness() {
     return 1
 }
 
+record_boot_diagnostics() {
+    local name="$1" serial="$2" stage="$3"
+    printf '%s\n' "$stage" >"${VM_STATE_DIR}/${name}.boot-status"
+    log "guest boot did not reach readiness: ${stage}"
+    for file in "$serial" "${serial}.qemu.log"; do
+        if [[ -f "$file" ]]; then
+            log "last 120 lines of ${file}"
+            tail -n 120 "$file" >&2
+        fi
+    done
+}
+
 guest_exec() {
     local port="$1" key="$2" command_name="$3"
     case "$command_name" in
+        provisioning-status)
+            timeout 15 ssh -i "$key" -o BatchMode=yes -o ConnectTimeout=5 \
+                -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                -p "$port" synveil-acceptance@127.0.0.1 \
+                'if test -f /var/lib/synveil-acceptance/provision-exit; then cat /var/lib/synveil-acceptance/provision-exit; fi'
+            ;;
         readiness)
-            ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=no \
+            timeout 15 ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=no \
                 -o UserKnownHostsFile=/dev/null -p "$port" synveil-acceptance@127.0.0.1 \
-                'test -f /var/lib/synveil-acceptance/desktop-ready'
+                'test -f /var/lib/synveil-acceptance/desktop-ready && test -S /run/user/$(id -u)/bus || exit 1; for session in $(loginctl show-user $(id -u) -p Sessions --value); do if test "$(loginctl show-session "$session" -p Type --value)" = x11 && test "$(loginctl show-session "$session" -p Active --value)" = yes; then DISPLAY=:0 XAUTHORITY=/run/user/$(id -u)/gdm/Xauthority xdotool getdisplaygeometry >/dev/null && exit 0; fi; done; exit 1'
             ;;
         facts)
             ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=no \
@@ -254,7 +289,7 @@ guest_exec() {
             local destination="$4"
             ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=no \
                 -o UserKnownHostsFile=/dev/null -p "$port" synveil-acceptance@127.0.0.1 \
-                'DISPLAY=:0 gnome-screenshot -f /tmp/synveil-acceptance-failure.png'
+                'DISPLAY=:0 XAUTHORITY=/run/user/$(id -u)/gdm/Xauthority gnome-screenshot -f /tmp/synveil-acceptance-failure.png'
             scp -q -i "$key" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                 -P "$port" synveil-acceptance@127.0.0.1:/tmp/synveil-acceptance-failure.png "$destination"
             ;;
@@ -274,7 +309,7 @@ guest_exec() {
             esac
             ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=no \
                 -o UserKnownHostsFile=/dev/null -p "$port" synveil-acceptance@127.0.0.1 \
-                "DISPLAY=:0 XDG_SESSION_TYPE=x11 XDG_RUNTIME_DIR=/run/user/\$(id -u) DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/\$(id -u)/bus python3 /home/synveil-acceptance/p020/scripts/linux_acceptance.py run ${scenario@Q} --manifest /home/synveil-acceptance/p020/target/packages/SYNVEIL-RELEASE-MANIFEST.json --artifact-type ${artifact_type@Q} --evidence ${evidence@Q}"
+                "DISPLAY=:0 XAUTHORITY=/run/user/\$(id -u)/gdm/Xauthority XDG_SESSION_TYPE=x11 XDG_RUNTIME_DIR=/run/user/\$(id -u) DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/\$(id -u)/bus python3 /home/synveil-acceptance/p020/scripts/linux_acceptance.py run ${scenario@Q} --manifest /home/synveil-acceptance/p020/target/packages/SYNVEIL-RELEASE-MANIFEST.json --artifact-type ${artifact_type@Q} --evidence ${evidence@Q}"
             ;;
         *)
             fail "unsupported guest-control command: ${command_name}"
@@ -318,38 +353,72 @@ wait_for_boot() {
 
 qmp_cmd() {
     local monitor="$1"; shift
-    local execute="$1" arguments="${2:-{}}"
+    # A brace inside a parameter-expansion default closes it early and appends
+    # an extra '}' to supplied JSON. Keep the empty object outside the expansion.
+    local execute="$1" arguments="${2:-}"
+    [[ -n "$arguments" ]] || arguments='{}'
     python3 - "$monitor" "$execute" "$arguments" <<'PY'
 import json
 import socket
 import sys
+import time
 
 monitor, execute, arguments = sys.argv[1:]
-request = {"execute": execute, "arguments": json.loads(arguments)}
+request = {"execute": execute, "arguments": json.loads(arguments), "id": "command"}
 with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as channel:
+    deadline = time.monotonic() + 15
     channel.settimeout(15)
     channel.connect(monitor)
-    greeting = channel.recv(65536)
-    if not greeting:
-        raise SystemExit("QMP did not provide its greeting")
-    channel.sendall(b'{"execute":"qmp_capabilities"}\r\n')
-    channel.recv(65536)
-    channel.sendall((json.dumps(request) + "\r\n").encode())
-    response = channel.recv(65536)
-    if b'"error"' in response:
-        raise SystemExit(response.decode(errors="replace"))
+    with channel.makefile("rb") as reader:
+        def message():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise SystemExit("QMP response deadline exceeded")
+            channel.settimeout(remaining)
+            line = reader.readline(65537)
+            if not line or len(line) > 65536 or not line.endswith(b'\n'):
+                raise SystemExit("QMP response is absent, truncated, or oversized")
+            value = json.loads(line)
+            if not isinstance(value, dict):
+                raise SystemExit("QMP response must be an object")
+            return value
+
+        def exchange(value):
+            channel.sendall((json.dumps(value) + "\r\n").encode())
+            while True:
+                response = message()
+                if "event" in response:
+                    continue
+                if response.get("id") != value["id"]:
+                    raise SystemExit("QMP response ID does not match the request")
+                if "error" in response:
+                    raise SystemExit(json.dumps(response["error"]))
+                if "return" not in response:
+                    raise SystemExit("QMP response has no result")
+                return response["return"]
+
+        if "QMP" not in message():
+            raise SystemExit("QMP did not provide its greeting")
+        exchange({"execute": "qmp_capabilities", "id": "capabilities"})
+        result = exchange(request)
+        # HMP savevm/loadvm errors are returned as text inside QMP success.
+        # Only an empty HMP result proves these operations completed.
+        if execute == "human-monitor-command" and result != "":
+            raise SystemExit("QEMU monitor command failed: " + str(result))
 PY
 }
 
 snapshot() {
     local monitor="$1" tag="$2"
-    qmp_cmd "$monitor" "human-monitor-command" "{\"command\":\"savevm ${tag}\"}"
+    [[ "$tag" =~ ^[A-Za-z0-9_-]+$ ]] || fail "unsafe snapshot tag"
+    qmp_cmd "$monitor" "human-monitor-command" "{\"command-line\":\"savevm ${tag}\"}" || return 1
     log "snapshot saved: ${tag}"
 }
 
 restore_snapshot() {
     local monitor="$1" tag="$2"
-    qmp_cmd "$monitor" "human-monitor-command" "{\"command\":\"loadvm ${tag}\"}"
+    [[ "$tag" =~ ^[A-Za-z0-9_-]+$ ]] || fail "unsafe snapshot tag"
+    qmp_cmd "$monitor" "human-monitor-command" "{\"command-line\":\"loadvm ${tag}\"}" || return 1
     log "snapshot restored: ${tag}"
 }
 
@@ -376,7 +445,7 @@ Usage: linux-acceptance-vm.sh <command> [args]
                             Run one fixed guest-control probe or scenario
   stage NAME REPO_ROOT      Stage reviewed acceptance files and artifacts
   power-cut NAME             Force-stop the VM process without guest shutdown
-  snapshot TAG               Save a QEMU snapshot
+  snapshot NAME TAG          Save a QEMU snapshot
   restore NAME TAG           Restore a QEMU snapshot
 
 Image digests must be recorded in deploy/acceptance/images.lock.
@@ -394,6 +463,9 @@ main() {
             [[ -f "$image" ]] || fail "guest image is absent: ${image}"
             mkdir -p "$destination"
             qemu-img create -f qcow2 -F qcow2 -b "$image" "${destination}/${name}.qcow2" >/dev/null
+            # Cloud images have small root disks. Give cloud-init room for the
+            # real desktop and package cache; it grows the guest root partition.
+            qemu-img resize "${destination}/${name}.qcow2" 24G >/dev/null
             password="${SYNVEIL_ACCEPTANCE_PASSWORD:-$(python3 -c 'import secrets; print(secrets.token_urlsafe(18))')}"
             write_cloud_init "${destination}/seed" "$password" "$(cat "${key}.pub")" "$platform"
             make_seed_iso "${destination}/seed" "${destination}/${name}-seed.iso"
@@ -402,25 +474,38 @@ main() {
             ;;
         boot)
             [[ $# -eq 8 ]] || fail "boot NAME DISK SEED MONITOR SERIAL SSH_PORT KEY"
-            require_tools qemu-system-x86_64 ssh
+            require_tools qemu-system-x86_64 ssh timeout
             name="$2"; disk="$3"; seed="$4"; monitor="$5"; serial="$6"; ssh_port="$7"; key="$8"
             mkdir -p "$(dirname "$monitor")" "$(dirname "$serial")"
             pid="$(start_vm "$disk" "$seed" "$monitor" "$serial" "$ssh_port")"
             write_vm_metadata "$name" "$pid" "$monitor" "$serial" "$ssh_port" "$key" "$disk"
-            wait_for_ssh "$ssh_port" "$key"
-            wait_for_guest_readiness "$ssh_port" "$key"
+            if ! wait_for_ssh "$ssh_port" "$key"; then
+                record_boot_diagnostics "$name" "$serial" "ssh-timeout"
+                return 1
+            fi
+            if ! wait_for_guest_readiness "$ssh_port" "$key"; then
+                record_boot_diagnostics "$name" "$serial" "$GUEST_READINESS_FAILURE"
+                return 1
+            fi
+            printf '%s\n' ready >"${VM_STATE_DIR}/${name}.boot-status"
             ;;
         guest-exec)
             [[ $# -ge 3 && $# -le 7 ]] || fail "guest-exec NAME COMMAND [ARGS]"
             require_tools ssh scp timeout
             load_vm_metadata "$2"
-            timeout "$EXEC_TIMEOUT_SECONDS" "$0" _guest-exec-loaded "$3" "${4:-}" "${5:-}" "${6:-}" "${7:-}"
+            timeout "$EXEC_TIMEOUT_SECONDS" "$0" _guest-exec-loaded "$2" "$3" "${4:-}" "${5:-}" "${6:-}" "${7:-}"
             ;;
         _guest-exec-loaded)
-            [[ $# -ge 2 && $# -le 6 ]] || fail "internal guest-control invocation"
-            guest_exec "$ssh_port" "$key" "$2" "${3:-}" "${4:-}" "${5:-}" "${6:-}"
+            [[ $# -ge 3 && $# -le 7 ]] || fail "internal guest-control invocation"
+            load_vm_metadata "$2"
+            guest_exec "$ssh_port" "$key" "$3" "${4:-}" "${5:-}" "${6:-}" "${7:-}"
             ;;
-        stage)       [[ $# -eq 3 ]] || fail "stage NAME REPO_ROOT"; require_tools ssh scp; stage_acceptance "$2" "$3" ;;
+        stage)
+            [[ $# -eq 3 ]] || fail "stage NAME REPO_ROOT"
+            require_tools ssh scp timeout
+            timeout "$EXEC_TIMEOUT_SECONDS" "$0" _stage "$2" "$3"
+            ;;
+        _stage)      [[ $# -eq 3 ]] || fail "internal staging invocation"; stage_acceptance "$2" "$3" ;;
         power-cut)   [[ $# -eq 2 ]] || fail "power-cut NAME"; power_cut "$2" ;;
         snapshot)    [[ $# -eq 3 ]] || fail "snapshot NAME TAG"; load_vm_metadata "$2"; snapshot "$monitor" "$3" ;;
         restore)     [[ $# -eq 3 ]] || fail "restore NAME TAG"; load_vm_metadata "$2"; restore_snapshot "$monitor" "$3" ;;

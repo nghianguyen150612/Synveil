@@ -20,10 +20,17 @@ function Write-RandomFixtureFile([string]$Path, [int]$SizeMiB) {
     $directory = Split-Path -Parent $Path
     New-Item -ItemType Directory -Path $directory -Force | Out-Null
     $stream = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    $random = [byte[]]::new(1MB)
     $buffer = [byte[]]::new(1MB)
+    # Keep the fixture high-entropy without allowing its random bytes to
+    # accidentally contain the installer's literal secret markers.
+    $alphabet = [Text.Encoding]::ASCII.GetBytes('cdefjklmnoqrsvwxyzCDFHJLMOQSUWXZ0123456789')
     try {
         for ($index = 0; $index -lt $SizeMiB; $index++) {
-            [System.Security.Cryptography.RandomNumberGenerator]::Fill($buffer)
+            [System.Security.Cryptography.RandomNumberGenerator]::Fill($random)
+            for ($offset = 0; $offset -lt $buffer.Length; $offset++) {
+                $buffer[$offset] = $alphabet[[int]$random[$offset] % $alphabet.Length]
+            }
             $stream.Write($buffer, 0, $buffer.Length)
         }
         $stream.Flush($true)

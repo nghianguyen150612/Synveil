@@ -60,6 +60,11 @@ REQUIRED_PATHS = (
     "/usr/share/icons/hicolor/scalable/apps/synveil.svg",
     "/usr/lib/systemd/user/synveil-client.service",
 )
+EXPECTED_NONROOT_VERIFY_RECORDS = frozenset({
+    "missing /etc/synveil/credentials (Permission denied)",
+    "missing /usr/share/doc/synveil/LICENSE",
+    "missing /usr/share/doc/synveil/NOTICE",
+})
 
 
 def resolve_profile(asserted_name: str | None, detection: linux_platform_detection.DetectionResult) -> Profile:
@@ -128,8 +133,11 @@ class NativeManager:
             raise QuickInstallError("IntegrityVerificationFailed", "Verified package identity is required.",
                                     "Acquire trusted package evidence first.", EXIT_INTEGRITY)
         require_staged_evidence(evidence)
+        # Fedora 42 uses DNF5, whose install subcommand rejects "--".
+        # The verified absolute pathname is a discrete argv operand and
+        # cannot be interpreted as an option. Keep APT's supported delimiter.
         command = (["apt-get", "install", "-y", "--", str(package)] if self.profile.artifact_type == "deb"
-                   else ["dnf", "install", "-y", "--", str(package)])
+                   else ["dnf", "install", "-y", str(package)])
         try:
             result = self._run(command, mutate=True)
         except KeyboardInterrupt as error:
@@ -161,7 +169,9 @@ class NativeManager:
         # and a version label alone do not prove its bytes survived mutation.
         command = ["dpkg", "--verify", "synveil"] if self.profile.artifact_type == "deb" else ["rpm", "-V", "synveil"]
         result = self._run(command)
-        return result.returncode == 0 and not result.stdout.strip()
+        return package_verification_is_clean(result.returncode, result.stdout,
+                                             artifact_type=self.profile.artifact_type,
+                                             stderr=result.stderr)
 
 
 def sha256_file(path: Path) -> tuple[int, str]:
@@ -194,6 +204,35 @@ def native_product_version(value: str) -> str:
 def package_payload_present() -> bool:
     """Treat leftover or ambiguous package-owned paths as partial native state."""
     return any(Path(item).exists() or Path(item).is_symlink() for item in REQUIRED_PATHS)
+
+
+def package_verification_is_clean(returncode: int, output: str, *, artifact_type: str = "deb",
+                                  stderr: str = "") -> bool:
+    """Accept only the distribution's explicit exclusion of non-runtime docs.
+
+    Ubuntu ``dpkg`` path exclusions and Fedora ``tsflags=nodocs`` may omit
+    ``/usr/share/doc``. The P043 root-only credentials directory is also not
+    traversable by the ordinary installer user that runs this check. Ignore only those exact
+    expected records; every other verification record, including modified
+    documents and missing runtime files, remains a failure.
+    """
+    records = [" ".join(line.split()) for line in output.splitlines() if line.strip()]
+    if artifact_type == "rpm":
+        if stderr.strip():
+            return False
+        # RPM returns 1 for an inaccessible package-owned directory. This is
+        # expected only for the exact P043 protected credentials boundary.
+        # Group/mode/digest differences, missing runtime, unknown errors and
+        # every other nonzero status remain failures. Root CI also runs rpm -V.
+        if returncode == 1:
+            return records == ["missing /etc/synveil/credentials (Permission denied)"]
+    if returncode != 0:
+        return False
+    for record in records:
+        if record in EXPECTED_NONROOT_VERIFY_RECORDS:
+            continue
+        return False
+    return True
 
 
 def system_executable(name: str) -> str:

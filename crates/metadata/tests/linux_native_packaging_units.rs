@@ -332,16 +332,17 @@ fn dependencies_are_minimal_and_exclude_server_packages() {
     // Built DEB control (when artifacts exist) must carry the substituted value.
     if let Some(deb) = find_deb() {
         let dd = tempdir("deb-ctrl");
-        let out = Command::new("bash")
-            .arg("-c")
-            .arg(format!(
-                "set -euo pipefail; ar p {} control.tar.gz | tar -xzf - -C {}",
-                shell_quote(&deb.to_string_lossy()),
-                shell_quote(&dd.to_string_lossy())
-            ))
+        let out = Command::new("dpkg-deb")
+            .arg("--control")
+            .arg(&deb)
+            .arg(&dd)
             .output()
             .expect("extract control");
-        assert!(out.status.success());
+        assert!(
+            out.status.success(),
+            "extract control: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         let built = read(&dd.join("control"));
         let built_depends = built
             .lines()
@@ -526,14 +527,12 @@ fn uuid_simple() -> String {
 }
 
 fn extract_deb(deb: &Path, dest: &Path) {
-    // Real .deb layout: ar archive with data.tar.gz (+ control.tar.gz).
-    let data = Command::new("bash")
-        .arg("-c")
-        .arg(format!(
-            "set -euo pipefail; ar p {} data.tar.gz | tar -xzf - -C {}",
-            shell_quote(&deb.to_string_lossy()),
-            shell_quote(&dest.to_string_lossy())
-        ))
+    // dpkg-deb selects the recorded gzip/xz/zstd member compression and
+    // extracts the package without assuming a particular dpkg default.
+    let data = Command::new("dpkg-deb")
+        .arg("--extract")
+        .arg(deb)
+        .arg(dest)
         .output()
         .expect("extract deb");
     assert!(
@@ -768,17 +767,25 @@ fn native_archives_have_no_source_or_build_paths() {
     let member_text = String::from_utf8(members.stdout).expect("DEB ar member list is UTF-8");
     let members: Vec<&str> = member_text.lines().collect();
     assert_eq!(
-        members,
-        ["debian-binary", "control.tar.gz", "data.tar.gz"],
-        "DEB must retain the real deterministic three-member layout"
+        members.len(),
+        3,
+        "DEB must retain the deterministic three-member layout"
     );
+    assert_eq!(
+        members[0], "debian-binary",
+        "DEB version member must be first"
+    );
+    for (member, stem) in [(members[1], "control.tar."), (members[2], "data.tar.")] {
+        let compression = member.strip_prefix(stem).unwrap_or("");
+        assert!(
+            ["gz", "xz", "zst"].contains(&compression),
+            "DEB member {member:?} must use a supported deterministic compression"
+        );
+    }
 
-    let deb_paths = Command::new("bash")
-        .arg("-c")
-        .arg(format!(
-            "set -euo pipefail; ar p {} data.tar.gz | tar -tzf -",
-            shell_quote(&deb.to_string_lossy())
-        ))
+    let deb_paths = Command::new("dpkg-deb")
+        .arg("--contents")
+        .arg(&deb)
         .output()
         .expect("list DEB data paths");
     assert!(
