@@ -79,7 +79,11 @@
 		A10000012C0000000000003F /* LibraryResponseDTO.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000003F /* LibraryResponseDTO.swift */; };
 		A10000012C00000000000040 /* AuthenticatedLibraryRequestProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000040 /* AuthenticatedLibraryRequestProvider.swift */; };
 		A10000012C00000000000041 /* AuthenticatedLibraryCatalogRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000041 /* AuthenticatedLibraryCatalogRepository.swift */; };
+		A10000012C00000000000042 /* LibraryCatalogViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000042 /* LibraryCatalogViewModel.swift */; };
+		A10000012C00000000000043 /* LibraryCatalogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000043 /* LibraryCatalogView.swift */; };
 		B10000012C00000000000022 /* LibraryCatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000022 /* LibraryCatalogTests.swift */; };
+		B10000012C00000000000023 /* LibraryCatalogViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000023 /* LibraryCatalogViewModelTests.swift */; };
+		B10000012C00000000000024 /* LibraryCatalogViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000024 /* LibraryCatalogViewTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -166,7 +170,11 @@
 		A20000012C0000000000003F /* LibraryResponseDTO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Library/LibraryResponseDTO.swift; sourceTree = "<group>"; };
 		A20000012C00000000000040 /* AuthenticatedLibraryRequestProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Library/AuthenticatedLibraryRequestProvider.swift; sourceTree = "<group>"; };
 		A20000012C00000000000041 /* AuthenticatedLibraryCatalogRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Library/AuthenticatedLibraryCatalogRepository.swift; sourceTree = "<group>"; };
+		A20000012C00000000000042 /* LibraryCatalogViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Library/LibraryCatalogViewModel.swift; sourceTree = "<group>"; };
+		A20000012C00000000000043 /* LibraryCatalogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Library/LibraryCatalogView.swift; sourceTree = "<group>"; };
 		B20000012C00000000000022 /* LibraryCatalogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/LibraryCatalogTests.swift; sourceTree = "<group>"; };
+		B20000012C00000000000023 /* LibraryCatalogViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/LibraryCatalogViewModelTests.swift; sourceTree = "<group>"; };
+		B20000012C00000000000024 /* LibraryCatalogViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/LibraryCatalogViewTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -208,9 +216,19 @@
 			children = (
 				A20000012C0000000000003D /* AuthenticationRecoveryView.swift */,
 				A20000012C0000000000003C /* AuthenticationRecoveryPresentation.swift */,
+				A40000012C00000000000017 /* Library */,
 				A40000012C00000000000016 /* Onboarding */,
 			);
 			name = Features;
+			sourceTree = "<group>";
+		};
+		A40000012C00000000000017 /* Library */ = {
+			isa = PBXGroup;
+			children = (
+				A20000012C00000000000042 /* LibraryCatalogViewModel.swift */,
+				A20000012C00000000000043 /* LibraryCatalogView.swift */,
+			);
+			name = Library;
 			sourceTree = "<group>";
 		};
 		A40000012C00000000000016 /* Onboarding */ = {
@@ -334,6 +352,8 @@
 		B40000012C00000000000002 /* SynveilTests */ = {
 			isa = PBXGroup;
 			children = (
+				B20000012C00000000000023 /* LibraryCatalogViewModelTests.swift */,
+				B20000012C00000000000024 /* LibraryCatalogViewTests.swift */,
 				B20000012C00000000000022 /* LibraryCatalogTests.swift */,
 				B20000012C00000000000001 /* SynveilBootstrapTests.swift */,
 				B20000012C00000000000011 /* ServerEndpointTests.swift */,
@@ -447,6 +467,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10000012C00000000000043 /* LibraryCatalogView.swift in Sources */,
+				A10000012C00000000000042 /* LibraryCatalogViewModel.swift in Sources */,
 				A10000012C00000000000041 /* AuthenticatedLibraryCatalogRepository.swift in Sources */,
 				A10000012C00000000000040 /* AuthenticatedLibraryRequestProvider.swift in Sources */,
 				A10000012C0000000000003F /* LibraryResponseDTO.swift in Sources */,
@@ -505,6 +527,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B10000012C00000000000023 /* LibraryCatalogViewModelTests.swift in Sources */,
+				B10000012C00000000000024 /* LibraryCatalogViewTests.swift in Sources */,
 				B10000012C00000000000022 /* LibraryCatalogTests.swift in Sources */,
 				B10000012C00000000000021 /* AuthenticationRecoveryTests.swift in Sources */,
 				B10000012C00000000000001 /* SynveilBootstrapTests.swift in Sources */,

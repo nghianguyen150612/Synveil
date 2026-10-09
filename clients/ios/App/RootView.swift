@@ -15,6 +15,7 @@ struct RootView: View {
     var sessionController: SessionController
     var rustBridge: (any RustBridgeProtocol)? = nil
     var credentialSink: SecureCredentialSinkProtocol? = nil
+    var libraryCatalog: (any LibraryCatalogRepositoryProtocol)? = nil
 
     var body: some View {
         switch sessionController.state {
@@ -37,7 +38,12 @@ struct RootView: View {
         case .restorationVerificationPending:
             RestorationVerificationPendingView(sessionController: sessionController)
         case .authenticated:
-            AuthenticatedShellPlaceholderView(sessionController: sessionController)
+            LibraryCatalogView(
+                repository: libraryCatalog,
+                sessionController: sessionController
+            )
+            // A later authenticated lifecycle receives a fresh transient catalog and navigation stack.
+            .id(sessionController.lifecycleRevision)
         case .logoutInProgress:
             LogoutInProgressView()
         case .logoutCleanupRequired:
@@ -174,64 +180,6 @@ struct EnrollmentPlaceholderView: View {
         }
         .padding()
         .accessibilityIdentifier("synveil.root.enrollment")
-    }
-}
-
-/// Placeholder surface for authenticated application home shell.
-struct AuthenticatedShellPlaceholderView: View {
-    let sessionController: SessionController
-    @State private var isShowingLogoutConfirmation = false
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "lock.shield.fill")
-                .font(.system(size: 48))
-                .foregroundColor(.green)
-            Text("Synveil Shell")
-                .font(.title2)
-                .bold()
-            Text("Authenticated Shell Placeholder")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-
-            Button("Log Out / Forget Session", role: .destructive) {
-                isShowingLogoutConfirmation = true
-            }
-            .buttonStyle(.bordered)
-            .accessibilityIdentifier(SessionLogoutAccessibility.logoutButton)
-            .accessibilityLabel("Log out and forget this device session")
-            .accessibilityHint(
-                "Deletes the saved credential from this device. Server authorization is unchanged."
-            )
-
-            Text(
-                "Local logout removes this device's saved credential. The server may continue "
-                    + "to accept it until an owner revokes it."
-            )
-            .font(.footnote)
-            .foregroundColor(.secondary)
-            .multilineTextAlignment(.center)
-            .padding(.horizontal)
-        }
-        .padding()
-        .accessibilityIdentifier("synveil.root.authenticated")
-        .confirmationDialog(
-            "Forget this device session?",
-            isPresented: $isShowingLogoutConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Log Out and Forget Session", role: .destructive) {
-                Task { await sessionController.requestLogout() }
-            }
-            .accessibilityIdentifier(SessionLogoutAccessibility.logoutConfirmation)
-            Button("Cancel", role: .cancel) {}
-                .accessibilityIdentifier(SessionLogoutAccessibility.logoutCancellation)
-        } message: {
-            Text(
-                "This deletes the saved credential from this device. It does not revoke "
-                    + "the credential on the server."
-            )
-        }
     }
 }
 

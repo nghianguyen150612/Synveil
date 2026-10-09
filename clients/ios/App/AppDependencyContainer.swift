@@ -26,7 +26,7 @@ public final class AppDependencyContainer {
     /// Local logout service, composed from the same active Keychain store.
     public private(set) var logoutService: SessionLogoutServiceProtocol?
 
-    /// Transient authenticated catalog boundary for future Library view models.
+    /// Authenticated catalog boundary injected into the native Library presentation.
     public private(set) var libraryCatalog: (any LibraryCatalogRepositoryProtocol)?
 
     private var enrollmentSecurityPrepared = false
