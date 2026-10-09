@@ -535,6 +535,10 @@ private struct NodeFixture {
 
 @MainActor
 private final class ControlledNodeRepository: NodeRepositoryProtocol {
+    func getNode(libraryId: LibraryId, nodeId: NodeId, expectedParent: NodeParentScope) async
+        -> NodeDetailsRepositoryResult
+    { .failed(.protocolFailure) }
+
     struct Request {
         let libraryId: LibraryId
         let parent: NodeParentScope

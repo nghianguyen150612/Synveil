@@ -19,10 +19,12 @@ protocol AuthenticatedLibraryRequestProviderProtocol {
     func handle(_ failure: LibraryFailure, scope: LibraryRequestScope)
 }
 
-/// Node listing reuses the catalog's session acquisition, identity checks and recovery handler.
+/// Node reads reuse the catalog's session acquisition, identity checks and recovery handler.
 @MainActor
 protocol AuthenticatedNodeRequestProviderProtocol {
     func begin() async throws -> LibraryRequestScope
+    func requestNode(nodeId: NodeId, scope: LibraryRequestScope) async throws
+        -> HTTPTransportResponse
     func requestChildrenPage(
         libraryId: LibraryId, parent: NodeParentScope, cursor: String?, scope: LibraryRequestScope
     ) async throws -> HTTPTransportResponse
@@ -88,22 +90,32 @@ final class AuthenticatedLibraryRequestProvider: AuthenticatedLibraryRequestProv
         if let cursor, !LibraryWireValidation.validCursor(cursor) {
             throw LibraryFailure.protocolFailure
         }
+        var queryItems = [URLQueryItem(name: "limit", value: String(LibraryCatalogPolicy.pageSize))]
+        if let parentId {
+            queryItems.append(URLQueryItem(name: "parent_id", value: parentId.rawValue))
+        }
+        if let cursor { queryItems.append(URLQueryItem(name: "cursor", value: cursor)) }
+        return try await requestGET(path: collectionPath, queryItems: queryItems, scope: scope)
+    }
+
+    func requestNode(nodeId: NodeId, scope: LibraryRequestScope) async throws
+        -> HTTPTransportResponse
+    {
+        try await requestGET(
+            path: "/api/v1/nodes/\(nodeId.rawValue)", queryItems: nil, scope: scope)
+    }
+
+    private func requestGET(
+        path resourcePath: String, queryItems: [URLQueryItem]?, scope: LibraryRequestScope
+    ) async throws -> HTTPTransportResponse {
         try await validate(scope)
         let endpoint = scope.session.serverEndpoint
         guard var components = URLComponents(url: endpoint.url, resolvingAgainstBaseURL: false)
-        else {
-            throw LibraryFailure.originMismatch
-        }
+        else { throw LibraryFailure.originMismatch }
         let path = components.percentEncodedPath.trimmingCharacters(
             in: CharacterSet(charactersIn: "/"))
-        components.percentEncodedPath = (path.isEmpty ? "" : "/\(path)") + collectionPath
-        components.queryItems = [
-            URLQueryItem(name: "limit", value: String(LibraryCatalogPolicy.pageSize))
-        ]
-        if let parentId {
-            components.queryItems?.append(URLQueryItem(name: "parent_id", value: parentId.rawValue))
-        }
-        if let cursor { components.queryItems?.append(URLQueryItem(name: "cursor", value: cursor)) }
+        components.percentEncodedPath = (path.isEmpty ? "" : "/\(path)") + resourcePath
+        components.queryItems = queryItems
         // Form-style server query parsers treat a literal plus as a space.
         components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(
             of: "+", with: "%2B")
