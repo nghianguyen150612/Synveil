@@ -10,7 +10,8 @@
 
 use std::panic::UnwindSafe;
 use synveil_core::{
-    DeviceCredentialSecret, EnrollmentSecret, LibraryId, LogicalName, NodeId, Sha256Digest,
+    ClientMutationId, DeviceCredentialSecret, EnrollmentSecret, LibraryId, LogicalName, NodeId,
+    Sha256Digest,
 };
 
 /// Canonical ABI version exposed across the Swift ↔ Rust C ABI boundary.
@@ -478,6 +479,25 @@ pub extern "C" fn synveil_ffi_sha256_format(
     })
 }
 
+/// Generate a canonical UUIDv7 client mutation ID using the authoritative shared core.
+///
+/// # Safety & Preconditions
+/// `out_utf8` must be null or a writable pointer to an empty output buffer. A successful
+/// 36-byte UTF-8 result is Rust-owned and must be released with `synveil_ffi_buffer_release`.
+#[allow(unsafe_code)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+#[unsafe(no_mangle)]
+pub extern "C" fn synveil_ffi_client_mutation_id_generate(out_utf8: *mut SynveilFfiBuffer) -> u32 {
+    ffi_status_boundary(|| {
+        // SAFETY: helper checks null and initializes the caller's writable output.
+        unsafe { initialize_out_buffer(out_utf8)? };
+        let bytes = ClientMutationId::new().to_string().into_bytes();
+        // SAFETY: out_utf8 was checked and initialized above.
+        unsafe { out_utf8.write(SynveilFfiBuffer::from_vec(bytes)) };
+        Ok(())
+    })
+}
+
 /// Compile-time marker confirming bridge crate identity and core wiring.
 #[doc(hidden)]
 pub const SYNVEIL_IOS_FFI_BRIDGE_CRATE_ID: &str = "synveil-ios-ffi";
@@ -541,6 +561,38 @@ mod tests {
         assert_eq!(
             synveil_ffi_validate_abi_version(2),
             SYNVEIL_FFI_STATUS_UNSUPPORTED_ABI_VERSION
+        );
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn mutation_identity_generation_uses_shared_core_and_releases_buffers() {
+        let mut ids = std::collections::HashSet::new();
+        for _ in 0..128 {
+            let mut buffer = SynveilFfiBuffer::CANONICAL_EMPTY;
+            assert_eq!(
+                synveil_ffi_client_mutation_id_generate(&mut buffer),
+                SYNVEIL_FFI_STATUS_SUCCESS
+            );
+            // SAFETY: successful producer owns 36 readable bytes until release.
+            let text =
+                unsafe { std::str::from_utf8(std::slice::from_raw_parts(buffer.data, buffer.len)) }
+                    .unwrap();
+            assert!(text.parse::<ClientMutationId>().is_ok());
+            assert!(ids.insert(text.to_owned()));
+            assert_eq!(
+                synveil_ffi_buffer_release(&mut buffer),
+                SYNVEIL_FFI_STATUS_SUCCESS
+            );
+            assert!(buffer.is_canonical_empty());
+        }
+    }
+
+    #[test]
+    fn mutation_identity_generation_rejects_null_output() {
+        assert_eq!(
+            synveil_ffi_client_mutation_id_generate(std::ptr::null_mut()),
+            SYNVEIL_FFI_STATUS_INVALID_ARGUMENT
         );
     }
 

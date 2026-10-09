@@ -7,7 +7,9 @@ import Foundation
 /// - Guarantees synchronous Rust FFI operations run off inherited caller actor context
 ///   (`@MainActor`) via `RustBridgeExecutor`.
 /// - Exposes only native Swift value types (`Data`, `String`) and errors.
-public struct RustBridgeAsyncAdapter: RustBridgeProtocol, Sendable {
+public struct RustBridgeAsyncAdapter: RustBridgeProtocol, ClientMutationIdentityGeneratorProtocol,
+    Sendable
+{
     /// Low-level synchronous adapter primitive.
     private let syncAdapter: RustBridgeAdapter
 
@@ -49,6 +51,11 @@ public struct RustBridgeAsyncAdapter: RustBridgeProtocol, Sendable {
         return try await RustBridgeExecutor.run {
             try adapter.formatSHA256(digest)
         }
+    }
+
+    public func generateClientMutationID() async throws -> String {
+        let adapter = self.syncAdapter
+        return try await RustBridgeExecutor.run { try adapter.generateClientMutationID() }
     }
 
     // MARK: - Validation Primitive Operations

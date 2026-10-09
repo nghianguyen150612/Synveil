@@ -217,4 +217,13 @@ uint32_t synveil_ffi_sha256_format(const uint8_t *digest_ptr,
                                    size_t digest_len,
                                    struct SynveilFfiBuffer *out_utf8);
 
+/**
+ * Generate a canonical UUIDv7 client mutation ID using the authoritative shared core.
+ *
+ * # Safety & Preconditions
+ * `out_utf8` must be null or a writable pointer to an empty output buffer. A successful
+ * 36-byte UTF-8 result is Rust-owned and must be released with `synveil_ffi_buffer_release`.
+ */
+uint32_t synveil_ffi_client_mutation_id_generate(struct SynveilFfiBuffer *out_utf8);
+
 #endif  /* SYNVEIL_IOS_FFI_H */

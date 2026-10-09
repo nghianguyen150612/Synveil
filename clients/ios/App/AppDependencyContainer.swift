@@ -32,6 +32,9 @@ public final class AppDependencyContainer {
     /// Read-only Node foundation for the future native folder browser.
     public private(set) var nodeRepository: (any NodeRepositoryProtocol)?
 
+    /// Foundation only: no durable authorizer is installed and no SwiftUI write interface is exposed.
+    private(set) var clientMutationRepository: (any ClientMutationRepositoryProtocol)?
+
     private var enrollmentSecurityPrepared = false
     private var securityPreparationTask: Task<Void, Never>?
 
@@ -92,6 +95,13 @@ public final class AppDependencyContainer {
             libraryCatalog = AuthenticatedLibraryCatalogRepository(
                 provider: browserProvider, bridge: bridge)
             nodeRepository = AuthenticatedNodeRepository(provider: browserProvider, bridge: bridge)
+            clientMutationRepository = AuthenticatedClientMutationRepository(
+                provider: AuthenticatedLibraryRequestProvider(
+                    controller: sessionController, store: store,
+                    transport: URLSessionHTTPTransport(
+                        requestTimeout: 10, resourceTimeout: 15,
+                        maxResponseBodyBytes: ClientMutationPolicy.maximumResponseBytes)),
+                bridge: bridge)
             rustBridge = bridge
             credentialSink = store
             restorationService = service
@@ -99,6 +109,7 @@ public final class AppDependencyContainer {
             sessionController.installRestorationService(service)
             sessionController.installLogoutService(logout)
         } catch {
+            clientMutationRepository = nil
             libraryCatalog = nil
             nodeRepository = nil
             rustBridge = nil
