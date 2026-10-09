@@ -75,21 +75,27 @@ No P024–P029 regression test files or production security/network services wer
 - **Swift syntax:** PASS — Swift 6.2.3 parser over all `clients/ios/**/*.swift` files.
 - **Swift 6 strict concurrency/typecheck:** PASS for the new ViewModel and its tests against temporary minimal session/security type stubs. This check is limited to the ViewModel/test subset; Linux has no SwiftUI or Xcode SDK.
 - **Whitespace:** PASS — `git diff --check`.
-- **Native Xcode build and Simulator tests:** Pending hosted macOS CI; no native iOS execution is claimed from Linux.
+- **Native Xcode build:** PASS on the exact final feature head `c8e7e630b2265b8c75da4a66c4f1e752961c01c3` in hosted push run [37895120326](https://github.com/nghianguyen150612/Synveil/actions/runs/37895120326) and PR run [37895130564](https://github.com/nghianguyen150612/Synveil/actions/runs/37895130564).
+- **Native Simulator tests:** PASS on the same exact head in hosted push run [37895120290](https://github.com/nghianguyen150612/Synveil/actions/runs/37895120290) and PR run [37895130780](https://github.com/nghianguyen150612/Synveil/actions/runs/37895130780). Each run reported **368 total, 367 passed, 1 skipped, 0 failed**. All 34 new Prompt030 tests passed.
 - **Rust Apple build:** Not triggered by the changed paths; Prompt030 changes no Rust, core, generated FFI, or Rust build files.
-- **Real Keychain round-trip:** The existing Simulator case is expected to remain skipped because the unsigned test process lacks a Keychain entitlement. Its result will be reported from this Prompt030 run; no pass is presumed.
+- **Real Keychain round-trip:** `KeychainCredentialStoreTests.testSimulatorKeychainRoundTripUsesUniqueTestService` was **SKIPPED** in both hosted Simulator runs. The hosted log states: “The unsigned Simulator test process has no Keychain access entitlement.” Deterministic injected Keychain tests passed; the real round-trip is not claimed passing.
 - **Physical-device validation:** `NOT_AVAILABLE`.
 
 ## Hosted Delivery Evidence
 
-The feature branch is prepared for a pull request targeting `ios-app`. Hosted PR, exact-head workflow results, final feature commit, merge result, and resulting integration SHA will be recorded from GitHub after delivery. The repository's P029 evidence workflow uses a manifest finalization follow-up after the feature merge because the resulting hosted integration SHA does not exist before merge; this manifest will be completed through that established workflow if required.
+- **Final feature SHA:** `c8e7e630b2265b8c75da4a66c4f1e752961c01c3` (`feat(ios): add native library catalog screen`).
+- **Feature PR:** [#88](https://github.com/nghianguyen150612/Synveil/pull/88), target `ios-app`. Opened as a draft, marked ready after the required iOS checks passed, and squash-merged.
+- **iOS Static Validation:** PASS on the exact feature head in push run [37895120267](https://github.com/nghianguyen150612/Synveil/actions/runs/37895120267) and PR run [37895130776](https://github.com/nghianguyen150612/Synveil/actions/runs/37895130776). Both ran Swift formatting, support validator self-tests, and the iOS static source validator.
+- **iOS Build:** PASS on the exact feature head in push run [37895120326](https://github.com/nghianguyen150612/Synveil/actions/runs/37895120326) and PR run [37895130564](https://github.com/nghianguyen150612/Synveil/actions/runs/37895130564); both Xcode Simulator builds succeeded.
+- **iOS Simulator Tests:** PASS on the exact feature head in push run [37895120290](https://github.com/nghianguyen150612/Synveil/actions/runs/37895120290) and PR run [37895130780](https://github.com/nghianguyen150612/Synveil/actions/runs/37895130780): **368 total, 367 passed, 1 skipped, 0 failed** in each run. The skipped real Keychain test is documented above.
+- **iOS Rust Apple Build:** Not triggered and not applicable to the changed paths.
+- **Hosted feature merge:** GitHub REST confirmed `merged=true`, `state=closed`, merged at **2026-10-09 06:59:33 UTC**. The resulting hosted `ios-app` feature merge SHA is **`a3cdcae5388231ed53371e5dc8d44cc86ff7b9af`**. A fresh fetch verified this SHA on `origin/ios-app`; the Library Catalog view, ViewModel, tests, and this manifest exist in that tree.
+- **Manifest finalization:** Documentation-only [PR #89](https://github.com/nghianguyen150612/Synveil/pull/89) targets `ios-app` and follows the repository's established P029 evidence workflow because the resulting integration SHA is only available after feature merge. PR #89's own hosted merge metadata is recorded by GitHub and is not self-embedded in this manifest.
+- **Prompt031 readiness:** `READY_FOR_PROMPT031`, based on the genuine hosted feature merge and passing exact-head iOS checks.
 
-- **Final feature SHA:** Pending.
-- **Feature PR URL/number and target:** Pending; target must be `ios-app`.
-- **Exact-head iOS Static Validation:** Pending.
-- **Exact-head iOS Build:** Pending.
-- **Exact-head iOS Simulator Tests and pass/skip/fail counts:** Pending.
-- **iOS Rust Apple Build:** Not applicable to changed paths.
-- **Hosted merge state and feature merge integration SHA:** Pending.
-- **Unrelated CI failures:** Pending hosted workflow review.
-- **Prompt031 readiness:** Pending genuine hosted merge confirmation.
+## Unrelated CI Results
+
+- **Rust CI:** Push run [37895120338](https://github.com/nghianguyen150612/Synveil/actions/runs/37895120338) and PR run [37895130765](https://github.com/nghianguyen150612/Synveil/actions/runs/37895130765) failed in unchanged non-iOS work: Clippy, desktop workspace tests/checks on Linux/macOS/Windows, and Windows compilation. No Rust, desktop, or installer source was changed by Prompt030; these failures were not expanded into this feature.
+- **Linux AppImage:** Push run [37895120335](https://github.com/nghianguyen150612/Synveil/actions/runs/37895120335) and PR run [37895130634](https://github.com/nghianguyen150612/Synveil/actions/runs/37895130634) failed the existing desktop artifact inspection because a private or temporary build path was found in `synveil-desktop`. No desktop packaging source changed.
+- **Web quality:** Push run [37895120338](https://github.com/nghianguyen150612/Synveil/actions/runs/37895120338) failed the web test step; the duplicate PR event passed in Rust CI run [37895130765](https://github.com/nghianguyen150612/Synveil/actions/runs/37895130765). No web files changed.
+- **PostgreSQL 17 and DEB/RPM package workflows:** These unrelated runs were still in progress at feature merge and are not claimed as passing or failing by Prompt030.
