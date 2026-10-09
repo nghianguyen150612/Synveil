@@ -285,15 +285,15 @@ final class MutationQueueSQLiteTests: XCTestCase {
     func testNativeDataProtectionAttributes() async throws {
         let f = try await queueFixture(self)
         #if os(iOS)
-            let values = try [
+            let attributes = try [
                 f.url.deletingLastPathComponent().path, f.url.path, f.url.path + "-wal",
                 f.url.path + "-shm",
             ].map {
-                MutationQueueFilePolicy.protectionName(
-                    try FileManager.default.attributesOfItem(atPath: $0))
+                try FileManager.default.attributesOfItem(atPath: $0)
             }
+            let values = attributes.map(MutationQueueFilePolicy.protectionName)
             #if targetEnvironment(simulator)
-                if values.allSatisfy({ $0 == nil }) {
+                if attributes.allSatisfy({ $0[.protectionKey] == nil }) {
                     throw XCTSkip(
                         "The Simulator filesystem does not expose Data Protection attributes; requested policy is verified separately. Physical-device round-trip remains required."
                     )
