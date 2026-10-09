@@ -572,6 +572,7 @@ final class SessionRestorationTests: XCTestCase {
         await validator.waitForCalls(2)
         await controller.retrySessionRestoration()
         XCTAssertTrue(controller.isRestorationRetryInProgress)
+        XCTAssertNil(controller.restorationFailure)
         await validator.completeSuspendedCall(with: .authorized)
         await firstRetry.value
 

@@ -9,18 +9,20 @@ public struct ServerValidationView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
+        ScrollView {
+            VStack(spacing: 24) {
+                Spacer()
 
-            statusHeaderView
+                statusHeaderView
 
-            contentAreaView
+                contentAreaView
 
-            Spacer()
+                Spacer()
 
-            actionAreaView
+                actionAreaView
+            }
+            .padding(24)
         }
-        .padding(24)
         .accessibilityIdentifier("synveil.server-validation.container")
         .task {
             viewModel.validateServer()
@@ -38,6 +40,7 @@ public struct ServerValidationView: View {
             switch viewModel.state {
             case .idle, .checking:
                 ProgressView()
+                    .accessibilityLabel("Checking server reachability and readiness")
                     .scaleEffect(1.5)
                     .padding(.bottom, 8)
                     .accessibilityIdentifier("synveil.server-validation.progress")
@@ -86,18 +89,9 @@ public struct ServerValidationView: View {
                     .accessibilityIdentifier("synveil.server-validation.ready-text")
 
             case .aliveButNotReady, .failed:
-                let error = viewModel.userFacingErrorMessage
-                Text(error.title)
-                    .font(.headline)
-                    .foregroundColor(.primary)
-                    .accessibilityIdentifier("synveil.server-validation.error-title")
-
-                Text(error.message)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-                    .accessibilityIdentifier("synveil.server-validation.error-message")
+                if let presentation = viewModel.recoveryPresentation {
+                    AuthenticationRecoveryMessageView(presentation: presentation)
+                }
             }
         }
     }
@@ -109,21 +103,15 @@ public struct ServerValidationView: View {
         VStack(spacing: 12) {
             switch viewModel.state {
             case .aliveButNotReady, .failed:
-                Button(action: {
+                Button(AuthenticationRecoveryAction.retryServerValidation.label) {
                     viewModel.retry()
-                }) {
-                    HStack {
-                        Image(systemName: "arrow.clockwise")
-                        Text("Retry Connection")
-                    }
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color.accentColor)
-                    .foregroundColor(.white)
-                    .cornerRadius(10)
                 }
-                .accessibilityIdentifier("synveil.server-validation.retry-button")
+                .buttonStyle(.borderedProminent)
+                .disabled(viewModel.isChecking)
+                .accessibilityIdentifier(
+                    AuthenticationRecoveryAction.retryServerValidation.accessibilityIdentifier
+                )
+                .accessibilityHint(AuthenticationRecoveryAction.retryServerValidation.hint)
 
             case .idle, .checking, .ready:
                 EmptyView()
