@@ -86,14 +86,23 @@ All four new Swift files have app/test target membership and group registration.
 
 ## Hosted Delivery and Apple Validation
 
-- Final feature SHA: PENDING — recorded after commit and final-head hosted checks.
-- Feature PR targeting `ios-app`: PENDING.
-- iOS Static Validation: PENDING.
-- iOS Build: PENDING.
-- iOS Simulator Tests / passed-skipped-failed totals: PENDING.
-- iOS Rust Apple Build: PENDING — explicit dispatch planned on final feature head, although no Rust source changed.
-- Real Keychain round-trip: not claimed passing. The existing unsigned Simulator entitlement limitation remains; actual hosted skip evidence will be recorded after the run. Deterministic Keychain regressions are preserved.
+All four required iOS workflows passed on the exact final feature head **`441cf426435e9ada80dae905710b316d65b4dd25`**. GitHub REST verified each run's head SHA, completed status, and success conclusion before marking ready and merging.
+
+- Final feature SHA: **`441cf426435e9ada80dae905710b316d65b4dd25`** (`feat(ios): add authenticated node browser API`).
+- Feature PR: [#90](https://github.com/nghianguyen150612/Synveil/pull/90), target **`ios-app`**. Opened as draft, marked ready after exact-head validation, and squash-merged.
+- iOS Static Validation: [push run 37901158225](https://github.com/nghianguyen150612/Synveil/actions/runs/37901158225), PASS. Apple Swift 6.3.3 strict formatting, all 31 support checks, and source/architecture validation passed. Duplicate [PR run 37901192340](https://github.com/nghianguyen150612/Synveil/actions/runs/37901192340) also passed on the same head.
+- iOS Build: [push run 37901158202](https://github.com/nghianguyen150612/Synveil/actions/runs/37901158202), PASS, `BUILD SUCCEEDED`. Duplicate [PR run 37901192403](https://github.com/nghianguyen150612/Synveil/actions/runs/37901192403) also passed on the same head.
+- iOS Simulator Tests: [push run 37901158283](https://github.com/nghianguyen150612/Synveil/actions/runs/37901158283), PASS, `TEST SUCCEEDED`. Result bundle on iPhone 17 Pro / iOS 26.5 / ARM64 reports **477 total, 476 passed, 1 skipped, 0 failed**. All **109 new Node tests passed**; existing P024 enrollment, P025 deterministic Keychain, P026 restoration, P027 logout, P028 recovery, P029 catalog, and P030 UI/ViewModel regressions remain green. Duplicate [PR run 37901192428](https://github.com/nghianguyen150612/Synveil/actions/runs/37901192428) was still running at feature merge and is not claimed passing in this evidence snapshot.
+- iOS Rust Apple Build: [dispatch run 37901191023](https://github.com/nghianguyen150612/Synveil/actions/runs/37901191023), PASS on the same feature head, including Apple target compilation, C-header/export alignment, staged device/Simulator static artifacts, and artifact integrity verification. Explicitly dispatched even though no Rust source changed.
+- Real Keychain round-trip: **SKIPPED**, `KeychainCredentialStoreTests.testSimulatorKeychainRoundTripUsesUniqueTestService`. Actual hosted log: “The unsigned Simulator test process has no Keychain access entitlement.” Deterministic injected Keychain tests passed; real Keychain integration is not claimed passing.
 - Physical-device validation: **NOT_AVAILABLE**.
-- Hosted merge state / resulting `ios-app` SHA: PENDING.
-- Readiness: PENDING hosted merge and validation.
-- Unrelated CI failures: PENDING current-head observation; no inherited P030 green results are used.
+- Hosted feature merge: GitHub REST confirmed **`merged=true`, `state=closed`**, merged at **2026-10-09 07:59:59 UTC**.
+- Resulting hosted `ios-app` feature integration SHA: **`f9fb31f089b4a578a96f721e1868a89128ffdaa2`**. Fresh fetch matched the hosted PR's merge SHA. Node production files and this manifest were verified in that integration tree; its entire `clients/ios` tree matched the tested feature head.
+- Manifest finalization: documentation-only follow-up branch **`ios/p031-manifest-finalization`** starts directly from that verified integration SHA. It records already-observed evidence without changing tested iOS sources. Its own commit and resulting integration SHA cannot be embedded self-referentially; the genuine hosted follow-up PR provides that separate documentation integration record.
+- Readiness: **READY_FOR_PROMPT032**, based on the confirmed hosted feature merge and all required exact-head iOS checks. Future UI can inject `NodeRepositoryProtocol`, pass the selected Library's root metadata for root validation, and use typed directory scope for subsequent browsing.
+
+## Unrelated CI Evidence
+
+- [Rust CI push run 37901158255](https://github.com/nghianguyen150612/Synveil/actions/runs/37901158255) failed in unchanged non-iOS code. The macOS client control/launch suite reported three `UnsafeEndpoint` failures (`crates/client/src/control.rs` and `launch.rs`). The Linux metadata install lifecycle suite failed `sysusers_tmpfiles_artifacts_match_authoritative_sources` because the runner's `systemd-tmpfiles` does not recognize `--dry-run`. The duplicate [PR Rust run 37901192470](https://github.com/nghianguyen150612/Synveil/actions/runs/37901192470) also failed. No Rust, client, metadata or packaging source changed in P031.
+- [Linux AppImage push run 37901158278](https://github.com/nghianguyen150612/Synveil/actions/runs/37901158278) failed desktop artifact inspection: `[synveil-artifact] ERROR: private or temporary build path found in synveil-desktop`. Duplicate [PR run 37901192363](https://github.com/nghianguyen150612/Synveil/actions/runs/37901192363) also failed. No desktop or AppImage source changed.
+- PostgreSQL 17 scheduled-maintenance and Linux native package runs were still running at feature-merge inspection and are not claimed passing. No unrelated CI work was added to P031.
