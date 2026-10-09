@@ -70,19 +70,28 @@ Authentication unavailable, missing/unreadable credentials, invalid credential, 
 - Swift 6.1.2 strict recursive formatting and strict-concurrency production/test typecheck: PASS. Swift 6.2.3 strict formatting and parsing of every iOS Swift source also passed. Existing RustBridgeAdapter emits a pre-existing always-true Int-bound warning on Linux.
 - Rust `cargo test -p synveil-ios-ffi`: **16 passed, 0 failed**.
 - Linux Swift 6.2.3 XCTest harness linked the real Rust FFI and passed **158 tests, 0 failures**, including all 78 catalog tests, 43 session restoration tests, session lifecycle/transport contracts, and Rust bridge suites. Production Foundation/Observation sources were unchanged; temporary test copies converted synchronous XCTest declarations to async solely for Linux actor-aware test discovery. Apple UI, native URLSession construction, and Security.framework suites are excluded here. Initial Swift 6.1.2 runtime linking was blocked by its bundled libswiftObservation undefined symbol; the successful 6.2.3 run supersedes that attempt. This is not an Apple Simulator result.
-- Hosted iOS Static Validation / Build / Simulator tests on final feature head: PENDING.
-- Apple Rust build: no Rust/FFI changes; normal iOS Build/Simulator workflows rebuild Rust static libraries. Explicit final-head Apple workflow evidence: PENDING.
-- Real Keychain round-trip: retains the established unsigned Simulator missing-entitlement skip. Deterministic injected Keychain tests remain required; the real round-trip is not claimed passing.
+- Hosted final-head iOS validation: all four required workflows PASS on `4693cb3652e1fa5b351e6c4d9a01222f4a246b26`; links and test totals below.
+- Apple Rust build: PASS via explicit workflow dispatch on the final feature head, including device ARM64 and Simulator ARM64/x86_64 static artifacts and approved-symbol verification. No Rust/FFI source changed.
+- Real Keychain round-trip: `KeychainCredentialStoreTests.testSimulatorKeychainRoundTripUsesUniqueTestService` was SKIPPED. Hosted log: “The unsigned Simulator test process has no Keychain access entitlement.” Deterministic injected Keychain tests passed; the real round-trip is not claimed passing.
 - Physical-device validation: `NOT_AVAILABLE`.
 
 ## Hosted Delivery
 
-- Final feature commit SHA: PENDING (recorded after the immutable commit exists).
-- PR URL / number: PENDING; target must be `ios-app`.
-- Final-head hosted CI: PENDING.
-- Merge status: NOT_MERGED.
-- Resulting hosted `ios-app` SHA: PENDING.
-- Unrelated CI failures: no final-head evidence yet.
-- Prompt030 readiness: pending genuine hosted merge and final-head iOS CI.
+- Final feature commit SHA: `4693cb3652e1fa5b351e6c4d9a01222f4a246b26` (`feat(ios): add authenticated library catalog API`).
+- Feature PR: [#86](https://github.com/nghianguyen150612/Synveil/pull/86), target `ios-app`. Opened as draft, marked ready after all required final-head iOS workflows passed, and squash-merged.
+- iOS Static Validation: [run 37874583754](https://github.com/nghianguyen150612/Synveil/actions/runs/37874583754), PASS on the exact feature head. Apple Swift 6.3.3 strict formatting, all 24 support checks, and source/architecture validation passed. Duplicate PR run 37874607604 also passed.
+- iOS Build: [run 37874583771](https://github.com/nghianguyen150612/Synveil/actions/runs/37874583771), PASS on the same head, `BUILD SUCCEEDED`. Duplicate PR run 37874607717 also passed.
+- iOS Simulator Tests: [run 37874607621](https://github.com/nghianguyen150612/Synveil/actions/runs/37874607621), PASS on the same head, `TEST SUCCEEDED`. Native result bundle: **334 total, 333 passed, 1 skipped, 0 failed**. All **78 new catalog tests passed**; existing enrollment, strict token, Keychain injection, restoration, verified authorization, logout, stale transitions, recovery, origin, and transport regressions remained green. The skipped test is the real Keychain round-trip described above.
+- iOS Rust Apple Build: [run 37874607060](https://github.com/nghianguyen150612/Synveil/actions/runs/37874607060), PASS on the same head. Explicitly dispatched even though no Rust/core/FFI paths changed.
+- Hosted feature merge: GitHub REST confirmed **`merged=true`, `state=closed`**, merged at **2026-10-09 02:38:15 UTC**.
+- P029 feature merge / resulting hosted `ios-app` SHA: **`ac453f3bf5523b872569a058c2e0fb623b6246b3`**, verified from the hosted PR and a fresh integration-branch fetch. Catalog models and this manifest were verified to exist in that hosted tree.
+- Manifest finalization: [documentation-only PR #87](https://github.com/nghianguyen150612/Synveil/pull/87), follow-up branch `ios/p029-manifest-finalization` starts directly at that verified integration SHA. It records already-observed evidence and changes no tested iOS source. Its own commit/merge cannot be embedded self-referentially; the hosted follow-up PR record provides that separate documentation integration metadata.
+- Physical-device status: `NOT_AVAILABLE`.
+- Prompt030 readiness: **`READY_FOR_PROMPT030`**, based on genuine hosted P029 feature merge and passing exact-head iOS workflows.
 
-Post-merge immutable commit, CI, PR, and resulting integration evidence will be finalized in a documentation-only follow-up, as in P028; this initial record does not claim future evidence.
+## Unrelated CI Evidence
+
+- [Rust CI run 37874583751](https://github.com/nghianguyen150612/Synveil/actions/runs/37874583751) and duplicate PR run 37874607789 failed in unchanged non-iOS code. Failures include `synveil-object-store` Clippy `double_must_use` errors, Windows `synveil-install-engine` Unix-only API compilation errors, Linux metadata install lifecycle tests, and macOS client control/launch tests with `UnsafeEndpoint`. No Rust source was changed by P029; these failures were not broadened into this feature.
+- [Linux AppImage run 37874607568](https://github.com/nghianguyen150612/Synveil/actions/runs/37874607568) and push run 37874583763 failed independently reproducing the desktop AppImage: `[synveil-artifact] ERROR: private or temporary build path found in synveil-desktop`. No desktop packaging source was changed.
+- [PostgreSQL 17 scheduled-maintenance run 37874583773](https://github.com/nghianguyen150612/Synveil/actions/runs/37874583773) failed the unchanged `postgres_scheduler_tick_schema_is_current_on_postgresql_17` test in `crates/metadata/tests/backup_scheduler_tick_postgres.rs:405`: 24 passed, 1 failed in that scheduler suite. No metadata/schema source was changed by P029. Duplicate PostgreSQL run 37874607724 and Linux native package runs 37874607721 / 37874583762 were still in progress at finalization inspection and are not claimed passing.
+- The duplicate push Simulator [run 37874583786](https://github.com/nghianguyen150612/Synveil/actions/runs/37874583786) subsequently also passed on the identical feature head; native totals above come from the completed PR run, not from adding duplicate test executions together.
