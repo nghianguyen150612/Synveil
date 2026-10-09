@@ -19,8 +19,21 @@ protocol AuthenticatedLibraryRequestProviderProtocol {
     func handle(_ failure: LibraryFailure, scope: LibraryRequestScope)
 }
 
+/// Node listing reuses the catalog's session acquisition, identity checks and recovery handler.
 @MainActor
-final class AuthenticatedLibraryRequestProvider: AuthenticatedLibraryRequestProviderProtocol {
+protocol AuthenticatedNodeRequestProviderProtocol {
+    func begin() async throws -> LibraryRequestScope
+    func requestChildrenPage(
+        libraryId: LibraryId, parent: NodeParentScope, cursor: String?, scope: LibraryRequestScope
+    ) async throws -> HTTPTransportResponse
+    func validate(_ scope: LibraryRequestScope) async throws
+    func handle(_ failure: NodeFailure, scope: LibraryRequestScope)
+}
+
+@MainActor
+final class AuthenticatedLibraryRequestProvider: AuthenticatedLibraryRequestProviderProtocol,
+    AuthenticatedNodeRequestProviderProtocol
+{
     private let controller: SessionController
     private let store: any SecureCredentialSinkProtocol
     private let transport: any HTTPTransportProtocol
@@ -57,6 +70,21 @@ final class AuthenticatedLibraryRequestProvider: AuthenticatedLibraryRequestProv
     func requestPage(cursor: String?, scope: LibraryRequestScope) async throws
         -> HTTPTransportResponse
     {
+        try await requestCollectionPage(
+            path: "/api/v1/libraries", parentId: nil, cursor: cursor, scope: scope)
+    }
+
+    func requestChildrenPage(
+        libraryId: LibraryId, parent: NodeParentScope, cursor: String?, scope: LibraryRequestScope
+    ) async throws -> HTTPTransportResponse {
+        try await requestCollectionPage(
+            path: "/api/v1/libraries/\(libraryId.rawValue)/nodes",
+            parentId: parent.queryParentId, cursor: cursor, scope: scope)
+    }
+
+    private func requestCollectionPage(
+        path collectionPath: String, parentId: NodeId?, cursor: String?, scope: LibraryRequestScope
+    ) async throws -> HTTPTransportResponse {
         if let cursor, !LibraryWireValidation.validCursor(cursor) {
             throw LibraryFailure.protocolFailure
         }
@@ -68,10 +96,13 @@ final class AuthenticatedLibraryRequestProvider: AuthenticatedLibraryRequestProv
         }
         let path = components.percentEncodedPath.trimmingCharacters(
             in: CharacterSet(charactersIn: "/"))
-        components.percentEncodedPath = (path.isEmpty ? "" : "/\(path)") + "/api/v1/libraries"
+        components.percentEncodedPath = (path.isEmpty ? "" : "/\(path)") + collectionPath
         components.queryItems = [
             URLQueryItem(name: "limit", value: String(LibraryCatalogPolicy.pageSize))
         ]
+        if let parentId {
+            components.queryItems?.append(URLQueryItem(name: "parent_id", value: parentId.rawValue))
+        }
         if let cursor { components.queryItems?.append(URLQueryItem(name: "cursor", value: cursor)) }
         // Form-style server query parsers treat a literal plus as a space.
         components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(

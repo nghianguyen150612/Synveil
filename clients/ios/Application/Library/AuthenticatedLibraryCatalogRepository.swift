@@ -25,7 +25,7 @@ public final class AuthenticatedLibraryCatalogRepository: LibraryCatalogReposito
             for _ in 0..<LibraryCatalogPolicy.maximumPages {
                 try Task.checkCancellation()
                 let response = try await provider.requestPage(cursor: cursor, scope: current)
-                try validateHTTP(response)
+                try Self.validateHTTP(response)
                 let page = try await decoder.decode(response.body)
                 // Rust validation suspends too; recheck Keychain identity and lifecycle afterward.
                 try await provider.validate(current)
@@ -58,7 +58,7 @@ public final class AuthenticatedLibraryCatalogRepository: LibraryCatalogReposito
         }
     }
 
-    private func validateHTTP(_ response: HTTPTransportResponse) throws {
+    static func validateHTTP(_ response: HTTPTransportResponse) throws {
         guard response.body.count <= LibraryCatalogPolicy.maximumResponseBytes else {
             throw LibraryFailure.resourceLimit
         }
@@ -81,7 +81,7 @@ public final class AuthenticatedLibraryCatalogRepository: LibraryCatalogReposito
         throw LibraryFailure.httpFailure(statusCode: response.statusCode)
     }
 
-    private static func classify(_ error: any Error) -> LibraryFailure {
+    static func classify(_ error: any Error) -> LibraryFailure {
         if let failure = error as? LibraryFailure { return failure }
         if error is CancellationError { return .cancelled }
         guard let transport = error as? SynveilTransportError else { return .offline }
