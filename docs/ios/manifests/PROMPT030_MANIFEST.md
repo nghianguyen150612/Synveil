@@ -90,7 +90,7 @@ No P024–P029 regression test files or production security/network services wer
 - **iOS Simulator Tests:** PASS on the exact feature head in push run [37895120290](https://github.com/nghianguyen150612/Synveil/actions/runs/37895120290) and PR run [37895130780](https://github.com/nghianguyen150612/Synveil/actions/runs/37895130780): **368 total, 367 passed, 1 skipped, 0 failed** in each run. The skipped real Keychain test is documented above.
 - **iOS Rust Apple Build:** Not triggered and not applicable to the changed paths.
 - **Hosted feature merge:** GitHub REST confirmed `merged=true`, `state=closed`, merged at **2026-10-09 06:59:33 UTC**. The resulting hosted `ios-app` feature merge SHA is **`a3cdcae5388231ed53371e5dc8d44cc86ff7b9af`**. A fresh fetch verified this SHA on `origin/ios-app`; the Library Catalog view, ViewModel, tests, and this manifest exist in that tree.
-- **Manifest finalization:** This documentation-only follow-up uses the repository's established P029 evidence workflow because the resulting integration SHA is only available after feature merge. The follow-up PR's own merge metadata is recorded by GitHub and is not self-embedded in this manifest.
+- **Manifest finalization:** Documentation-only [PR #89](https://github.com/nghianguyen150612/Synveil/pull/89) targets `ios-app` and follows the repository's established P029 evidence workflow because the resulting integration SHA is only available after feature merge. PR #89's own hosted merge metadata is recorded by GitHub and is not self-embedded in this manifest.
 - **Prompt031 readiness:** `READY_FOR_PROMPT031`, based on the genuine hosted feature merge and passing exact-head iOS checks.
 
 ## Unrelated CI Results
