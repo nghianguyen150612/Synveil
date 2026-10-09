@@ -964,3 +964,27 @@ only scenario-owned files under work/. No unrelated state is removed.
 Acceptance remains withheld until every required final-head gate passes at its
 declared minimum and the final PR is merged and verified. No release/tag is
 created and P046 is not begun.
+
+## Current-head Windows client-probe follow-up
+
+On source `6049471907551ef55f9a446bc1f3b625538dbc67`, Windows installer push
+run `37876421866`, job `113645979080`, passed runtime closure, reproducible
+installer construction, execution-level inspection, and lifecycle fixtures.
+The disposable-standard-user qualification then failed at the bounded
+no-argument client probe. Its uploaded `windows-installer-p025` artifact (ID
+`11593400012`, archive SHA-256
+`fea3c80c502e0f0cf9c61882ce67549ff9b373cdcff9835baa6c742d2992508b`) showed
+the expected non-admin SID/profile and intact 1,363-file runtime manifest. The
+QML smoke left `client.conf` absent as intended. The client probe itself then
+called `DesktopClientConfig::from_platform`, which creates first-run profile
+state before entering the long-running worker, so it timed out instead of
+returning the expected missing-configuration status.
+
+The follow-up changes the background client's no-argument entry to load only an
+existing profile through `from_existing_platform`; the explicit first-run
+creation path remains available to the desktop flow. A focused regression
+asserts a missing profile returns `MissingConfiguration` without creating the
+manifest. These source changes are in progress for exact-head Windows rerun;
+the `6049471` artifact remains a failed diagnostic and is not acceptance PASS.
+The hosted Windows runner still cannot supply genuine Windows 11 interactive
+Setup, logon-trigger, or installed IPC evidence.
