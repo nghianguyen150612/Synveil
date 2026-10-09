@@ -358,7 +358,10 @@ final class NodeBrowserViewModelTests: XCTestCase {
         let firstLibrary = try await makeLibrary(1)
         let secondLibrary = try await makeLibrary(2)
         let controller = try makeAuthenticatedController()
-        let repository = ControlledNodeRepository(results: [.loaded([]), .loaded([])])
+        let repository = ControlledNodeRepository(
+            results: [.loaded([]), .loaded([])],
+            suspendedRequests: []
+        )
         let firstModel = NodeBrowserViewModel(
             repository: repository,
             sessionController: controller,
