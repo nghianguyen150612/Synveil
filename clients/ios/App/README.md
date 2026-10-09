@@ -26,5 +26,5 @@ The `App` directory contains the application entry point and top-level dependenc
   - `.readyForServerValidation` -> `ServerValidationPlaceholderView` (`synveil.root.server-validation`)
   - `.needsEnrollment` -> `EnrollmentPlaceholderView` (`synveil.root.enrollment`)
   - `.restorationVerificationPending` -> retry surface (`synveil.root.verification-pending`)
-  - `.authenticated` -> `AuthenticatedShellPlaceholderView` (`synveil.root.authenticated`)
-  - `.recoveryRequired` -> `RecoveryPlaceholderView` (`synveil.root.recovery`)
+  - `.authenticated` -> `LibraryCatalogView` (`synveil.root.authenticated`), using the injected P029 `LibraryCatalogRepositoryProtocol`
+  - `.recoveryRequired` -> `AuthenticationRecoveryView` (`synveil.root.recovery`)

@@ -14,7 +14,8 @@ struct SynveilApp: App {
             RootView(
                 sessionController: container.sessionController,
                 rustBridge: container.rustBridge,
-                credentialSink: container.credentialSink
+                credentialSink: container.credentialSink,
+                libraryCatalog: container.libraryCatalog
             )
             .task {
                 await container.prepareEnrollmentSecurity()

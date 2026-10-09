@@ -269,7 +269,8 @@ final class SessionLogoutTests: XCTestCase {
         let endpoint = try makeEndpoint()
         let service = SuspendedLogoutService()
         let controller = makeAuthenticatedController(endpoint: endpoint, logoutService: service)
-        let authenticatedShell = AuthenticatedShellPlaceholderView(
+        let authenticatedShell = LibraryCatalogView(
+            repository: nil,
             sessionController: controller
         )
 
