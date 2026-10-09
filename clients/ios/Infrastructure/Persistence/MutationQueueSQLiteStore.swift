@@ -221,11 +221,11 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol {
         }
     }
 
-    func quarantineSession(scope: ClientMutationScope) throws {
+    func quarantineSessions() throws {
         try transaction {
-            if let id = try scopeId(scope) {
-                try execute("UPDATE scopes SET quarantined=1 WHERE scope_id=?", [.integer(id)])
-            }
+            // The app has one active credential. Logout/recovery must also quarantine persisted
+            // scopes that this process has not read; dormant records remain preserved, inaccessible.
+            try execute("UPDATE scopes SET quarantined=1 WHERE quarantined=0")
         }
     }
 

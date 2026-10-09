@@ -46,17 +46,12 @@ final class DurableMutationQueue: DurableMutationQueueProtocol {
     /// quarantined. Immediate capability invalidation precedes asynchronous SQLite quarantine.
     func invalidateSession() {
         owner = UUID().uuidString
-        let scopes = sessions.map { $0.0 }
         sessions.removeAll()
         let prior = quarantineTask
         let store = store
         quarantineTask = Task { [weak self] in
             await prior?.value
-            for scope in scopes {
-                do { try await store.quarantineSession(scope: scope) } catch {
-                    self?.quarantineFailed = true
-                }
-            }
+            do { try await store.quarantineSessions() } catch { self?.quarantineFailed = true }
         }
     }
 

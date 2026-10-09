@@ -409,8 +409,8 @@ struct QueueDelayedStorage: MutationQueueStorageProtocol {
     func bindSession(scope: ClientMutationScope, credentialId: String) async throws {
         try await base.bindSession(scope: scope, credentialId: credentialId)
     }
-    func quarantineSession(scope: ClientMutationScope) async throws {
-        try await base.quarantineSession(scope: scope)
+    func quarantineSessions() async throws {
+        try await base.quarantineSessions()
     }
     func syncBase(scope: ClientMutationScope) async throws -> StoredSyncBase? {
         try await base.syncBase(scope: scope)

@@ -108,7 +108,7 @@ struct StoredMutationRecord: Sendable {
 
 protocol MutationQueueStorageProtocol: Sendable {
     func bindSession(scope: ClientMutationScope, credentialId: String) async throws
-    func quarantineSession(scope: ClientMutationScope) async throws
+    func quarantineSessions() async throws
     func syncBase(scope: ClientMutationScope) async throws -> StoredSyncBase?
     func persistCheckpoint(_ checkpoint: SyncCheckpoint) async throws -> SyncBaseStatus
     func invalidateBase(scope: ClientMutationScope) async throws

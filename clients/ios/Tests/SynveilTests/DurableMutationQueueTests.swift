@@ -466,6 +466,22 @@ final class DurableMutationQueueTests: XCTestCase {
         XCTAssertEqual(try queueRawScalar(f.url, "SELECT count(*) FROM mutations"), "1")
         XCTAssertEqual(try queueRawScalar(f.url, "SELECT quarantined FROM scopes"), "1")
     }
+    func testLogoutQuarantinesPersistedScopesNotReadInCurrentQueueInstance() async throws {
+        let f = try await queueFixture(self)
+        _ = try await queueEnqueued(f)
+        let coldQueue = DurableMutationQueue(
+            store: f.database, provider: f.provider, bridge: QueueValidator())
+        f.controller.installMutationSessionInvalidator { [weak coldQueue] in
+            coldQueue?.invalidateSession()
+        }
+        await f.controller.requestLogout()
+        let id = try await ClientMutationId.validated(queueUUID(10), using: QueueValidator())
+        let result = await coldQueue.get(scope: f.scope, mutationId: id)
+        XCTAssertEqual(result, .failed(.unauthenticated))
+        XCTAssertEqual(try queueRawScalar(f.url, "SELECT quarantined FROM scopes"), "1")
+        XCTAssertEqual(try queueRawScalar(f.url, "SELECT count(*) FROM mutations"), "1")
+    }
+
     func testReplacementCredentialCannotInheritQuarantinedQueue() async throws {
         let f = try await queueFixture(self)
         let row = try await queueEnqueued(f)
