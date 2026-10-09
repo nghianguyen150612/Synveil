@@ -69,6 +69,18 @@ class MatrixGateTests(unittest.TestCase):
                 record["platform_facts"][field] = value
                 self.validate(record)
 
+    def test_unattributed_native_label_and_missing_preservation_are_rejected(self):
+        for field in ("execution_method", "machine_identity", "workflow_run_id", "job_id", "producer_run_id", "producer_job_id", "preservation_verified"):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                record = copy.deepcopy(self.record)
+                record["platform_facts"].pop(field)
+                self.validate(record)
+
+    def test_real_guest_tcg_is_not_rejected_for_absent_kvm(self):
+        record = copy.deepcopy(self.record)
+        record["platform_facts"]["acceleration"] = "tcg"
+        self.validate(record)
+
     def test_stale_runner_candidate_and_scenario_are_rejected(self):
         for container, field in (("artifact_identity", "source_commit"), ("platform_facts", "source_commit")):
             with self.subTest(container=container), self.assertRaises(ValueError):

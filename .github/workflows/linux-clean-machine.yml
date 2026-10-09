@@ -347,6 +347,20 @@ jobs:
             if [ "$status" -ne 0 ]; then
               echo "native acceptance adapter returned $status for $scenario; preserving its result record"
             fi
+            if ! python3 scripts/linux_acceptance.py validate-result "acceptance-evidence/${scenario}.json"; then
+              # SSH timeout/crash must produce an ERROR record, never an empty
+              # file or a synthesized PASS. Preserve the collection failure.
+              image_digest="$(awk -v name='${{ matrix.image }}' '$1 == name { for (i=2;i<=NF;i++) if ($i ~ /^sha256:/) { sub(/^sha256:/, "", $i); print $i; exit } }' deploy/acceptance/images.lock)"
+              python3 scripts/linux_acceptance.py error-guest "$scenario" \
+                --manifest target/packages/SYNVEIL-RELEASE-MANIFEST.json \
+                --artifact-type "${{ matrix.artifact_type }}" \
+                --os-id "${{ matrix.platform }}" --version "${{ matrix.version }}" \
+                --image-name "${{ matrix.image }}" --image-sha256 "$image_digest" \
+                --source-commit "$(git rev-parse HEAD)" \
+                --reason "Guest adapter returned no valid result-v1 record (exit $status); product and cleanup outcomes are unknown." \
+                > "acceptance-evidence/${scenario}.json.tmp"
+              mv "acceptance-evidence/${scenario}.json.tmp" "acceptance-evidence/${scenario}.json"
+            fi
           done
           unset password
           cat acceptance-evidence/*.json

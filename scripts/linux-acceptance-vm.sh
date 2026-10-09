@@ -106,13 +106,16 @@ write_cloud_init() {
             ;;
         fedora)
             admin_group=wheel
-            setup_script='dnf -y group install "Fedora Workstation" && dnf -y install gnome-software gnome-screenshot at-spi2-core xdotool dbus-x11 libsecret qemu-guest-agent && mkdir -p /etc/gdm && printf "[daemon]\\nAutomaticLoginEnable=True\\nAutomaticLogin=synveil-acceptance\\nWaylandEnable=false\\n" > /etc/gdm/custom.conf && systemctl enable gdm'
+            setup_script='dnf -y environment install workstation-product-environment && dnf -y install gnome-software gnome-screenshot at-spi2-core xdotool dbus-x11 libsecret qemu-guest-agent && mkdir -p /etc/gdm && printf "[daemon]\\nAutomaticLoginEnable=True\\nAutomaticLogin=synveil-acceptance\\nWaylandEnable=false\\n" > /etc/gdm/custom.conf && systemctl enable gdm'
             ;;
         *)
             fail "unsupported guest platform for cloud-init: ${platform}"
             ;;
     esac
 
+    # Provisioning failures must not leave a readiness marker. Cloud-init runs
+    # later runcmd entries even when an earlier entry exits nonzero.
+    setup_script+=' && systemctl set-default graphical.target && systemctl start display-manager && command -v xdotool && mkdir -p /var/lib/synveil-acceptance && touch /var/lib/synveil-acceptance/desktop-ready'
     cat > "${seed_dir}/user-data" <<EOF
 #cloud-config
 users:
@@ -126,11 +129,12 @@ users:
       - ${public_key}
 ssh_pwauth: false
 package_update: false
+growpart:
+  mode: auto
+  devices: ['/']
+resize_rootfs: true
 runcmd:
   - [ bash, -lc, ${setup_script@Q} ]
-  - [ bash, -lc, "mkdir -p /var/lib/synveil-acceptance && touch /var/lib/synveil-acceptance/desktop-ready" ]
-  - [ systemctl, set-default, graphical.target ]
-  - [ systemctl, enable, --now, qemu-guest-agent ]
 EOF
 
     cat > "${seed_dir}/meta-data" <<EOF
@@ -256,7 +260,7 @@ guest_exec() {
         readiness)
             ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=no \
                 -o UserKnownHostsFile=/dev/null -p "$port" synveil-acceptance@127.0.0.1 \
-                'test -f /var/lib/synveil-acceptance/desktop-ready'
+                'test -f /var/lib/synveil-acceptance/desktop-ready && test -S /run/user/$(id -u)/bus || exit 1; for session in $(loginctl show-user $(id -u) -p Sessions --value); do if test "$(loginctl show-session "$session" -p Type --value)" = x11 && test "$(loginctl show-session "$session" -p Active --value)" = yes; then DISPLAY=:0 XAUTHORITY=/run/user/$(id -u)/gdm/Xauthority xdotool getdisplaygeometry >/dev/null && exit 0; fi; done; exit 1'
             ;;
         facts)
             ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=no \
@@ -267,7 +271,7 @@ guest_exec() {
             local destination="$4"
             ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=no \
                 -o UserKnownHostsFile=/dev/null -p "$port" synveil-acceptance@127.0.0.1 \
-                'DISPLAY=:0 gnome-screenshot -f /tmp/synveil-acceptance-failure.png'
+                'DISPLAY=:0 XAUTHORITY=/run/user/$(id -u)/gdm/Xauthority gnome-screenshot -f /tmp/synveil-acceptance-failure.png'
             scp -q -i "$key" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                 -P "$port" synveil-acceptance@127.0.0.1:/tmp/synveil-acceptance-failure.png "$destination"
             ;;
@@ -287,7 +291,7 @@ guest_exec() {
             esac
             ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=no \
                 -o UserKnownHostsFile=/dev/null -p "$port" synveil-acceptance@127.0.0.1 \
-                "DISPLAY=:0 XDG_SESSION_TYPE=x11 XDG_RUNTIME_DIR=/run/user/\$(id -u) DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/\$(id -u)/bus python3 /home/synveil-acceptance/p020/scripts/linux_acceptance.py run ${scenario@Q} --manifest /home/synveil-acceptance/p020/target/packages/SYNVEIL-RELEASE-MANIFEST.json --artifact-type ${artifact_type@Q} --evidence ${evidence@Q}"
+                "DISPLAY=:0 XAUTHORITY=/run/user/\$(id -u)/gdm/Xauthority XDG_SESSION_TYPE=x11 XDG_RUNTIME_DIR=/run/user/\$(id -u) DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/\$(id -u)/bus python3 /home/synveil-acceptance/p020/scripts/linux_acceptance.py run ${scenario@Q} --manifest /home/synveil-acceptance/p020/target/packages/SYNVEIL-RELEASE-MANIFEST.json --artifact-type ${artifact_type@Q} --evidence ${evidence@Q}"
             ;;
         *)
             fail "unsupported guest-control command: ${command_name}"
@@ -441,6 +445,9 @@ main() {
             [[ -f "$image" ]] || fail "guest image is absent: ${image}"
             mkdir -p "$destination"
             qemu-img create -f qcow2 -F qcow2 -b "$image" "${destination}/${name}.qcow2" >/dev/null
+            # Cloud images have small root disks. Give cloud-init room for the
+            # real desktop and package cache; it grows the guest root partition.
+            qemu-img resize "${destination}/${name}.qcow2" 24G >/dev/null
             password="${SYNVEIL_ACCEPTANCE_PASSWORD:-$(python3 -c 'import secrets; print(secrets.token_urlsafe(18))')}"
             write_cloud_init "${destination}/seed" "$password" "$(cat "${key}.pub")" "$platform"
             make_seed_iso "${destination}/seed" "${destination}/${name}-seed.iso"

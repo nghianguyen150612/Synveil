@@ -1045,3 +1045,86 @@ routes, actual persistent-disk mutation power-cycle recovery, reachable-server
 FIRST-RUN-1, and production-artifact-backed FIRST-RUN-2 remain required. No
 source validation, userspace package lifecycle, or QMP control check substitutes
 for those native journeys. PR #78 remains draft and acceptance is withheld.
+
+## Resume audit of `ff77ad5`: native qualification remains withheld
+
+Remote branch and PR #78 were recovered at `ff77ad5f6964b3022aca147a6256e164e171725b`, tree `d65da0d761cafe1c797a8184357f496bd5b52b56`. Main remained `a560a40c8f2fe5b91db27c1b63fa0b0ab87173bc`; PR #78 was OPEN, DRAFT and unmerged. All prior commits, including QMP framing and macOS journal canonicalization, are preserved.
+
+P045 run `37895485222` completed with failure. Its contract, source gates, candidate producers, Linux adapters and four VM jobs passed at job level. The scenario inventory below preserves the historical statuses; a successful VM collector is not product acceptance. The aggregate contains **2 raw PASS, 6 FAIL, 24 BLOCKED, 0 ERROR, 0 SKIPPED**, plus one input parsing error. Both raw PASS records are rejected by the P045 provenance gate, so **qualified native PASS is zero**.
+
+| Route | Scenario | Historical result | Finding / qualification |
+| --- | --- | --- | --- |
+| windows-11-amd64-setup | INSTALL-JOURNEY-1 | BLOCKED | No qualifying Windows 11 interactive Setup/GUI/logon/IPC/power-cycle/first-run result; hosted Windows Server standard-user success is scoped evidence. |
+| windows-11-amd64-setup | INSTALL-JOURNEY-6 | BLOCKED | No qualifying Windows 11 interactive Setup/GUI/logon/IPC/power-cycle/first-run result; hosted Windows Server standard-user success is scoped evidence. |
+| windows-11-amd64-setup | INSTALL-JOURNEY-7 | BLOCKED | No qualifying Windows 11 interactive Setup/GUI/logon/IPC/power-cycle/first-run result; hosted Windows Server standard-user success is scoped evidence. |
+| windows-11-amd64-setup | INSTALL-JOURNEY-8 | BLOCKED | No qualifying Windows 11 interactive Setup/GUI/logon/IPC/power-cycle/first-run result; hosted Windows Server standard-user success is scoped evidence. |
+| windows-11-amd64-setup | FIRST-RUN-1 | BLOCKED | No qualifying Windows 11 interactive Setup/GUI/logon/IPC/power-cycle/first-run result; hosted Windows Server standard-user success is scoped evidence. |
+| windows-11-amd64-setup | FIRST-RUN-2 | BLOCKED | No qualifying Windows 11 interactive Setup/GUI/logon/IPC/power-cycle/first-run result; hosted Windows Server standard-user success is scoped evidence. |
+| ubuntu-24.04-x86_64-deb | INSTALL-JOURNEY-2 | BLOCKED | required capabilities unavailable: secret_store |
+| ubuntu-24.04-x86_64-deb | INSTALL-JOURNEY-6 | FAIL | Repair ran without a passing installed baseline after desktop provisioning ran out of disk space; dpkg error 2. |
+| ubuntu-24.04-x86_64-deb | INSTALL-JOURNEY-7 | FAIL | Prior repair left dpkg interrupted; no passing installed baseline. |
+| ubuntu-24.04-x86_64-deb | INSTALL-JOURNEY-8 | BLOCKED | required capabilities unavailable: release_download |
+| ubuntu-24.04-x86_64-deb | FIRST-RUN-1 | BLOCKED | required capabilities unavailable: loopback_server, network_access, secret_store |
+| ubuntu-24.04-x86_64-deb | FIRST-RUN-2 | BLOCKED | required capabilities unavailable: loopback_server, secret_store |
+| ubuntu-24.04-x86_64-appimage | INSTALL-JOURNEY-4 | BLOCKED | required capabilities unavailable: secret_store |
+| ubuntu-24.04-x86_64-appimage | INSTALL-JOURNEY-6 | FAIL | No observed Synveil window; DISPLAY was assigned despite failed desktop provisioning. Product execution and graphical session were not established. |
+| ubuntu-24.04-x86_64-appimage | INSTALL-JOURNEY-7 | FAIL | AppImage incorrectly dispatched to APT package removal: no synveil package. |
+| ubuntu-24.04-x86_64-appimage | INSTALL-JOURNEY-8 | BLOCKED | required capabilities unavailable: release_download |
+| ubuntu-24.04-x86_64-appimage | FIRST-RUN-1 | BLOCKED | required capabilities unavailable: loopback_server, network_access, secret_store |
+| ubuntu-24.04-x86_64-appimage | FIRST-RUN-2 | BLOCKED | required capabilities unavailable: loopback_server, secret_store |
+| ubuntu-24.04-x86_64-quick-install | INSTALL-JOURNEY-5 | BLOCKED | required capabilities unavailable: internet_access, release_download |
+| fedora-42-x86_64-rpm | INSTALL-JOURNEY-3 | BLOCKED | step STEP-02 (open_installer): no supported graphical package handler is installed |
+| fedora-42-x86_64-rpm | INSTALL-JOURNEY-6 | BLOCKED | Zero-byte result; uncaught xdotool-missing AdapterError. Aggregate substituted a BLOCKED preflight and retained its input error. |
+| fedora-42-x86_64-rpm | INSTALL-JOURNEY-7 | PASS | Raw uninstall PASS lacks execution_method, machine/run provenance and preservation; not accepted. |
+| fedora-42-x86_64-rpm | INSTALL-JOURNEY-8 | BLOCKED | required capabilities unavailable: release_download |
+| fedora-42-x86_64-rpm | FIRST-RUN-1 | BLOCKED | required capabilities unavailable: loopback_server, network_access |
+| fedora-42-x86_64-rpm | FIRST-RUN-2 | BLOCKED | required capabilities unavailable: loopback_server |
+| fedora-42-x86_64-appimage | INSTALL-JOURNEY-4 | FAIL | No observed Synveil window; DISPLAY was assigned despite failed desktop provisioning. Product execution and graphical session were not established. |
+| fedora-42-x86_64-appimage | INSTALL-JOURNEY-6 | FAIL | No observed Synveil window; DISPLAY was assigned despite failed desktop provisioning. Product execution and graphical session were not established. |
+| fedora-42-x86_64-appimage | INSTALL-JOURNEY-7 | PASS | Raw uninstall PASS lacks execution_method, machine/run provenance and preservation; not accepted. |
+| fedora-42-x86_64-appimage | INSTALL-JOURNEY-8 | BLOCKED | required capabilities unavailable: release_download |
+| fedora-42-x86_64-appimage | FIRST-RUN-1 | BLOCKED | required capabilities unavailable: loopback_server, network_access |
+| fedora-42-x86_64-appimage | FIRST-RUN-2 | BLOCKED | required capabilities unavailable: loopback_server |
+| fedora-42-x86_64-quick-install | INSTALL-JOURNEY-5 | BLOCKED | required capabilities unavailable: internet_access, release_download |
+
+Exact candidate source is `ff77ad5f6964b3022aca147a6256e164e171725b`, product version `0.1.0`, x86_64:
+
+| Candidate | Size | SHA-256 |
+| --- | ---: | --- |
+| Synveil-0.1.0-x86_64.AppImage | 48912888 | `892d1b7e2a62e57f2967bcea30837f351a19ec0034f94bec9524dc4aa1eb19ce` |
+| synveil_0.1.0_amd64.deb | 8456330 | `de7dbf4f1a95d52d9b59d1c34c8817ead89cbb1ac515e979643bb9987fe4db7f` |
+| synveil-0.1.0-1.x86_64.rpm | 12144219 | `a2a067a12fb0a8f95cc5382d6618e0fc33cd2cb1673eabb0f0d25bd4602a2414` |
+| SynveilSetup.exe | 32888055 | `83a8488a4c1911d8b9099a400e43225ca557abc0e91244c98320e252344b9f7d` |
+
+Linux candidate archive is **11602631427**, not 11602541322 (which is the Windows candidate). Both archives were downloaded, their ZIP hashes checked against authenticated GitHub metadata, and every payload checked against its manifest. Linux release manifest SHA-256 is `f5bc79c28e5a4940320ea7f12961b63c11ff84b350631eba995c93c2b832f903`; Windows is `1c4ddcf94bd3cedba28c21c004580aa971f2c9d80f5b8e8fb5e41cad42ce6328`.
+
+| Evidence artifact | ID | ZIP SHA-256 |
+| --- | --- | --- |
+| Matrix result | 11603710611 | `4f69fd16fb5c312b4fc7deb374eae7c55507a71835d5ca8fa7201cba198f177e` |
+| Ubuntu DEB | 11603600179 | `33b566a087fe063739325d000c0417a3cbf5b53beed6116e5d2139290b34597d` |
+| Ubuntu AppImage | 11602674559 | `7a16812d8130018ccb953543455d590c2b4ecafbbb233abcccd8cb7c5e33ee57` |
+| Fedora RPM | 11602454793 | `77bed173199413a5f598b1bc06b550771c4e0d80e9c2cc351bb72a13bd77933f` |
+| Fedora AppImage | 11603380001 | `12312870dbcba0748934edc87e074f6161fde3c14c4ac54dd8162fb9281e0b76` |
+| Windows P028 evidence | 11602341255 | `52998b1a55d856d50f0103710b63580a1e3d4fdda8af6f0dabdc1d90b4e4be15` |
+| Windows installer diagnostics | 11600709203 | `6a12b7d3973907808252a6288fbe54acf23ed8dba27be25423de2e4a6fd33054` |
+| Linux exact candidates | 11602631427 | `10ba0be64fdf336805be586f67e9e7bbd28eea923af866f80ece33fe5df8e277` |
+| Windows exact candidate | 11602541322 | `758385e288704a89e85c8be8c5b9381d3543bc5e276e418bea286d75206ec313` |
+
+Confirmed harness defects and corrections:
+
+- Fedora serial logs show `No match for argument: Fedora Workstation`: DNF5 requires the environment ID `workstation-product-environment`. Its real Fedora 42 environment list was queried. Ubuntu serial logs show insufficient space for 543 MB of archives and 1921 MB installed desktop payload. The disposable overlay is expanded to 24 GiB and cloud-init root growth is enabled.
+- Readiness previously came from an unconditional later cloud-init entry after provisioning failure. The marker now follows successful package/configuration/service setup, GDM configuration uses actual newlines, and readiness requires the actual active X11 user session/display. An assigned DISPLAY or offscreen Qt backend cannot qualify a desktop. TCG remains permitted; KVM is not made an acceptance requirement.
+- Missing-tool/timeout/OS/preflight exceptions produce bounded redacted result-v1 BLOCKED/ERROR records. Collection replaces absent or invalid guest output with a valid ERROR record tied to the pinned image and exact candidate, with unknown execution/cleanup stated explicitly. No PASS is synthesized.
+- Repair/uninstall cannot run against a clean guest without the required installed baseline. AppImage repair/removal cannot dispatch to APT/DNF or infer integration health. Window presence no longer infers control IPC/readiness. Partial actions remain contract-valid; absent native provenance and preservation block qualification. The aggregate validator continues rejecting fixture/source/offscreen promotion.
+- Windows installer run `37895484891`, job `113705766092`: per-user child passed, then lifecycle child failed at `install-production exit 1`. Its preflight recorded an inherited launcher profile. Both children now share token-derived profile/temporary environment setup; lifecycle validates it before Setup. Bounded p027 Setup/uninstall logs are preserved for the next hosted diagnosis. Hosted confirmation is required; the underlying Setup log was absent from the old collection.
+- Rust run `37895484832`, jobs `113705766354` and `113705766214`: 287 client-sync tests passed and only the callback fixture cleanup hit Windows sharing violation 32. Callback completion and sole Arc ownership were already awaited. Teardown now acquires the one pooled connection and awaits its explicit worker shutdown before closing the pool/dropping the store; bounded deletion retries only Windows sharing/lock errors and still fails if removal does not complete. The existing Windows test job adds 30 repetitions. Production synchronization and SQLite durability are unchanged.
+
+Separate owning-scope blockers remain outside this repair: P035 run `37895484738` reuses its already Closed database for a second fresh-Open test; PG17 run `37895484767` retains an adversarial expected schema 7 versus actual 8. No server-maintenance rewrite is included.
+
+Windows P028 run `37895484737` fails its honest environment gate after the standard-user test succeeds: hosted windows-2025 is not Windows 11 interactive acceptance, and installed named-pipe end-to-end evidence is not wired. A disposable Windows 11 AMD64 interactive/logon machine and qualified IPC consumer remain required.
+
+FIRST-RUN-1 needs installed-binary Connect/onboarding/credentials/sync against a controlled reachable authenticated server. FIRST-RUN-2 needs P036 production identities and native Host journeys. The P036 release/dependency producer and reviewed native provisioner must supply `acceptance/p036/production-artifacts.json` for desktop, server, PostgreSQL17 and edge, each with version, source_revision, platform, architecture, sha256, provenance and license. Digests must be recomputed from actual distributed bytes and authenticated against trusted release/CI provenance and dependency publisher inventories; handwritten identities, source stubs and arbitrary database URLs do not substitute. This file remains absent. P036 self-hosted runner labels `synveil-ubuntu-24.04-p036`, `synveil-fedora-42-p036` and `synveil-p036-vm-control` are unserved; referenced native acceptance scripts also remain absent in this checkpoint.
+
+INSTALL-JOURNEY-8 remains blocked: a final cleanup hard kill, process SIGKILL, snapshot, container restart or graceful reboot is not an installer-boundary hard power cut followed by persistent-disk restart, journal reconciliation and preservation proof. The QEMU control plane has a real hard-cut primitive, but no required mutation-boundary recovery journey has been qualified.
+
+All source changes invalidate candidate-specific acceptance on previous heads. Historical raw records are retained as diagnostics only. New final-head candidate/evidence runs must pass before PR #78 can leave draft or merge. No P046 or v0.2.0 tag is created.

@@ -1008,3 +1008,12 @@ on the unchanged Rust source (`linux_notify_backend_handles_live_rename_move_del
 This does not establish installed synchronization or acceptance on either
 qualified Linux target. The historical hosted move-intent failure is not
 converted into a native PASS.
+
+
+## Resume from ff77ad5: evidence boundary and lifecycle repair
+
+Recovered existing branch/PR #78 at `ff77ad5f6964b3022aca147a6256e164e171725b`, tree `d65da0d761cafe1c797a8184357f496bd5b52b56`; main remains `a560a40c8f2fe5b91db27c1b63fa0b0ab87173bc`. P045 run `37895485222` contains 2 raw PASS, 6 FAIL and 24 BLOCKED records plus one empty Fedora result. Both raw passes fail native provenance validation; acceptance remains withheld. The detailed matrix document preserves all 32 records and exact authenticated archive/candidate identities.
+
+Corrections address failed desktop provisioning marked ready, insufficient guest disk, DNF environment selection, exception/transport result serialization, missing installed baselines, AppImage/package-manager dispatch and false native promotion. Windows lifecycle now receives token-derived temporary/profile paths and preserves bounded Setup logs. SQLite test teardown explicitly awaits worker shutdown; hosted Windows repetitions verify it. Passing P043/P044, QMP framing, package builders, reproducibility policy and macOS canonicalization are preserved.
+
+New candidates and genuine native result-v1 evidence must bind the final source. Windows 11 interactive/logon/IPC, installed Linux graphical journeys and preservation, real mutation-boundary power-cycle recovery, controlled first-run Connect/Host and authenticated P036 production inventories remain required. The old artifacts do not qualify the new source. PR #78 stays draft and unmerged, acceptance is withheld, P046 deferred, and no v0.2.0 tag is created.
