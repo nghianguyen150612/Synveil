@@ -2862,6 +2862,7 @@ mod tests {
         let library_id = executor.scope.library_id();
         let runtime = SyncRuntime::new(config());
         let handle = runtime.start().expect("start race test runtime");
+        let mut events = handle.events();
         let first_cycle_started = executor.started.notified();
 
         let registration_barrier = Arc::new(tokio::sync::Barrier::new(2));
@@ -2899,7 +2900,13 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(1), first_cycle_started)
             .await
             .expect("registered library must start after the registration/wake race");
-        settle().await;
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while handle.status(library_id).unwrap().phase() != SyncRuntimeLibraryPhase::Idle {
+                events.recv().await.expect("registration cycle event");
+            }
+        })
+        .await
+        .expect("registration and its bounded follow-up must finish");
         let calls_after_registration_race = executor.calls();
         assert!(
             (1..=2).contains(&calls_after_registration_race),
@@ -2945,6 +2952,13 @@ mod tests {
         .await
         .expect("unregistered in-flight cycle must be removed after completion");
         assert!(handle.status(library_id).is_none());
+        let calls_after_unregistration_race = executor.calls();
+        // The manual wake may win before unregister and start one more cycle.
+        // Its call is independent of the registration race's follow-up.
+        assert!(
+            (calls_after_registration_race..=calls_after_registration_race + 1)
+                .contains(&calls_after_unregistration_race)
+        );
 
         let second_cycle_started = executor.started.notified();
         runtime
@@ -2953,8 +2967,14 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(1), second_cycle_started)
             .await
             .expect("re-registered library must start after the unregistration race");
-        settle().await;
-        assert!((2..=3).contains(&executor.calls()));
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while handle.status(library_id).unwrap().phase() != SyncRuntimeLibraryPhase::Idle {
+                events.recv().await.expect("re-registration cycle event");
+            }
+        })
+        .await
+        .expect("re-registered startup cycle must finish");
+        assert_eq!(executor.calls(), calls_after_unregistration_race + 1);
         assert_eq!(executor.max_active(), 1);
         handle.shutdown().await.expect("race test shutdown");
     }

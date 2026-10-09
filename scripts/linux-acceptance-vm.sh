@@ -339,33 +339,64 @@ qmp_cmd() {
 import json
 import socket
 import sys
+import time
 
 monitor, execute, arguments = sys.argv[1:]
-request = {"execute": execute, "arguments": json.loads(arguments)}
+request = {"execute": execute, "arguments": json.loads(arguments), "id": "command"}
 with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as channel:
+    deadline = time.monotonic() + 15
     channel.settimeout(15)
     channel.connect(monitor)
-    greeting = channel.recv(65536)
-    if not greeting:
-        raise SystemExit("QMP did not provide its greeting")
-    channel.sendall(b'{"execute":"qmp_capabilities"}\r\n')
-    channel.recv(65536)
-    channel.sendall((json.dumps(request) + "\r\n").encode())
-    response = channel.recv(65536)
-    if b'"error"' in response:
-        raise SystemExit(response.decode(errors="replace"))
+    with channel.makefile("rb") as reader:
+        def message():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise SystemExit("QMP response deadline exceeded")
+            channel.settimeout(remaining)
+            line = reader.readline(65537)
+            if not line or len(line) > 65536 or not line.endswith(b'\n'):
+                raise SystemExit("QMP response is absent, truncated, or oversized")
+            value = json.loads(line)
+            if not isinstance(value, dict):
+                raise SystemExit("QMP response must be an object")
+            return value
+
+        def exchange(value):
+            channel.sendall((json.dumps(value) + "\r\n").encode())
+            while True:
+                response = message()
+                if "event" in response:
+                    continue
+                if response.get("id") != value["id"]:
+                    raise SystemExit("QMP response ID does not match the request")
+                if "error" in response:
+                    raise SystemExit(json.dumps(response["error"]))
+                if "return" not in response:
+                    raise SystemExit("QMP response has no result")
+                return response["return"]
+
+        if "QMP" not in message():
+            raise SystemExit("QMP did not provide its greeting")
+        exchange({"execute": "qmp_capabilities", "id": "capabilities"})
+        result = exchange(request)
+        # HMP savevm/loadvm errors are returned as text inside QMP success.
+        # Only an empty HMP result proves these operations completed.
+        if execute == "human-monitor-command" and result != "":
+            raise SystemExit("QEMU monitor command failed: " + str(result))
 PY
 }
 
 snapshot() {
     local monitor="$1" tag="$2"
-    qmp_cmd "$monitor" "human-monitor-command" "{\"command\":\"savevm ${tag}\"}"
+    [[ "$tag" =~ ^[A-Za-z0-9_-]+$ ]] || fail "unsafe snapshot tag"
+    qmp_cmd "$monitor" "human-monitor-command" "{\"command-line\":\"savevm ${tag}\"}" || return 1
     log "snapshot saved: ${tag}"
 }
 
 restore_snapshot() {
     local monitor="$1" tag="$2"
-    qmp_cmd "$monitor" "human-monitor-command" "{\"command\":\"loadvm ${tag}\"}"
+    [[ "$tag" =~ ^[A-Za-z0-9_-]+$ ]] || fail "unsafe snapshot tag"
+    qmp_cmd "$monitor" "human-monitor-command" "{\"command-line\":\"loadvm ${tag}\"}" || return 1
     log "snapshot restored: ${tag}"
 }
 
@@ -392,7 +423,7 @@ Usage: linux-acceptance-vm.sh <command> [args]
                             Run one fixed guest-control probe or scenario
   stage NAME REPO_ROOT      Stage reviewed acceptance files and artifacts
   power-cut NAME             Force-stop the VM process without guest shutdown
-  snapshot TAG               Save a QEMU snapshot
+  snapshot NAME TAG          Save a QEMU snapshot
   restore NAME TAG           Restore a QEMU snapshot
 
 Image digests must be recorded in deploy/acceptance/images.lock.

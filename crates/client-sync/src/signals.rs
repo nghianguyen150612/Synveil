@@ -372,6 +372,7 @@ mod tests {
         intent_id: synveil_core::OutboundIntentId,
         intent_visible_at_wake: AtomicBool,
         calls: Mutex<Vec<(LibraryId, SyncRuntimeWakeReason)>>,
+        task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     }
 
     impl CommitObservingNotifier {
@@ -384,6 +385,7 @@ mod tests {
                 intent_id,
                 intent_visible_at_wake: AtomicBool::new(false),
                 calls: Mutex::new(Vec::new()),
+                task: Mutex::new(None),
             })
         }
 
@@ -427,6 +429,7 @@ mod tests {
             if !visible {
                 task.abort();
             }
+            *self.task.lock().expect("callback task lock") = Some(task);
             self.intent_visible_at_wake
                 .store(visible, Ordering::Release);
             SyncRuntimeWakeResult::Queued
@@ -626,8 +629,14 @@ mod tests {
             Some(SyncRuntimeWakeResult::Queued)
         );
         assert!(notifier.intent_visible_at_wake());
+        let callback_task = notifier.task.lock().expect("callback task lock").take();
+        callback_task
+            .expect("callback task")
+            .await
+            .expect("callback completion");
         drop(producer);
         drop(notifier);
+        assert_eq!(Arc::strong_count(&state), 1, "callback must release state");
         close_fixture(directory, state).await;
     }
 

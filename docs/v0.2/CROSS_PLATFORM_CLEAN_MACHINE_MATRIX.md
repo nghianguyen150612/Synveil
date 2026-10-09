@@ -988,3 +988,60 @@ manifest. These source changes are in progress for exact-head Windows rerun;
 the `6049471` artifact remains a failed diagnostic and is not acceptance PASS.
 The hosted Windows runner still cannot supply genuine Windows 11 interactive
 Setup, logon-trigger, or installed IPC evidence.
+
+## Completed 08b4dcb run and targeted continuation
+
+Source `08b4dcb9a0ba9f767ee574b231b203f068b1fb11`, P045 run
+`37878353789`, completed with passing source/contract gates and failed native
+consumers. The downloaded `p045-matrix-result-v1` artifact, ID `11595156853`,
+archive SHA-256 `43a91467cf052f9367bd2213346f9b4e280d4584dd1fdc2a32d353b31b44e959`,
+contained 32 BLOCKED records and no PASS. These are failed-run diagnostics,
+not final acceptance evidence.
+
+All four Linux guests reached graphical provisioning and then failed the clean
+snapshot with `Parameter 'command-line' is missing`. The controller now sends
+QMP `human-monitor-command` arguments using the documented `command-line`
+field, reads complete JSON frames, matches reply IDs after capability negotiation,
+and rejects both QMP errors and HMP error text. An event, EOF, partial reply, or
+mismatched reply cannot report snapshot success. A real QEMU qcow2 save/load
+check and rejection of a missing snapshot validate this control contract only;
+they do not satisfy INSTALL-JOURNEY-8 power-cycle evidence.
+
+Windows installer run `37878353536`, job `113652012591`, produced current child
+diagnostics in artifact `11593752532` (archive SHA-256
+`b188db6cfae50500ed6ee832e3807f4bacbf21f0e1257f18849ff52e3e907295`). The
+non-admin SID and 1,363-file runtime manifest passed, as did desktop and client
+probes after the no-profile startup fix. The next failure was
+`PER_USER_UNINSTALL_FAILURE: package root remains`; Inno's log records deferred
+directory/self-removal. Both uninstall checks now poll native directory removal
+within 30 seconds and report remaining filenames on failure. The harness never
+removes leftovers to manufacture a successful uninstall.
+
+Fedora job `113659172916` failed because DNF5 rejects the install subcommand's
+`--` delimiter. DNF now receives a discrete verified absolute-path operand;
+APT keeps its passing argument contract. Further local installation of the
+same exact-head RPM exposed a real scriptlet defect: RPM expanded `%%post` into
+`%post` inside the shell printf format, causing the hook to stop before its
+ownership repair. Phase labels for post/preun/postun now use printf data
+operands. The existing root:synveil 0750 and root:root 0700 directory policy is
+retained and checked against produced RPM metadata. Ordinary-user RPM verification
+accepts exit 1 only for the single exact credentials-directory permission-denied
+record with empty stderr; group/mode/digest differences, missing payload, and
+other errors still fail. Root package verification remains required.
+
+Current Windows client-sync failures were fixture teardown sharing violations:
+retained host/start handles, a detached callback task, and SQLite descriptor
+release after atomic-reader completion. The tests now release/join their owners
+before bounded cleanup. The atomic-reader diagnostic had 2,000 observations
+and zero hybrid generations. The macOS scheduler test now waits for observable
+cycle completion and bounds each race separately, including a manual wake that
+may legitimately win before unregistration. It still requires one active cycle
+at most and exactly one new startup cycle after re-registration. Local validation
+passed 292 client-sync tests, strict crate Clippy, 25 host tests, and 100 repeated
+registration/unregistration race runs; these are source validation only.
+
+Windows 11 interactive/logon/installed IPC, both qualified Linux clean-machine
+routes, actual persistent-disk mutation power-cycle recovery, reachable-server
+FIRST-RUN-1, and production-artifact-backed FIRST-RUN-2 remain required. No
+source validation, userspace package lifecycle, or QMP control check substitutes
+for those native journeys. PR #78 remains draft and acceptance is withheld.

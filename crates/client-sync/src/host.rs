@@ -3846,9 +3846,18 @@ mod tests {
         let second = host.start().await;
         let first = first.await.expect("first starter task");
 
-        assert!(first.is_ok(), "one caller must start the host: {first:?}");
-        assert!(matches!(second, Err(DesktopSyncHostError::AlreadyStarted)));
+        assert!(
+            matches!(
+                (&first, &second),
+                (Ok(_), Err(DesktopSyncHostError::AlreadyStarted))
+                    | (Err(DesktopSyncHostError::AlreadyStarted), Ok(_))
+            ),
+            "exactly one caller must start the host: {first:?}, {second:?}"
+        );
         host.shutdown().await.expect("host shutdown");
+        // The successful start result owns another host/state handle.
+        drop(first);
+        drop(second);
         drop(host);
         fixture.close().await;
     }
@@ -4186,6 +4195,13 @@ mod tests {
 
         let shutdown_host = host.clone();
         let shutdown = tokio::spawn(async move { shutdown_host.shutdown().await });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !host.inner.stop_requested.load(Ordering::Acquire) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("shutdown must request cancellation before startup is released");
         assert_eq!(
             host.sync_now(fixture.scope.library_id()),
             SyncRuntimeWakeResult::RuntimeStopped
@@ -4202,6 +4218,7 @@ mod tests {
             .expect("shutdown after cancelled start");
         assert_eq!(host.lifecycle(), DesktopSyncHostLifecycle::Stopped);
         assert!(host.runtime_handle().is_none());
+        drop(host);
         fixture.close().await;
     }
 

@@ -113,6 +113,20 @@ function Get-HklmRegistrationCount {
 }
 function Get-SynveilServiceCount { return @((Get-Service -Name '*Synveil*' -ErrorAction SilentlyContinue)).Count }
 function Get-SynveilTaskCount { return @((Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -match 'Synveil' -or $_.TaskPath -match 'Synveil' })).Count }
+function Wait-UninstallRemoval {
+    # Inno's uninstaller launches a separate final cleanup process to remove
+    # its own executable and directory. The parent exit precedes that cleanup.
+    # Observe native removal; never delete the remaining files in the harness.
+    $deadline = [Diagnostics.Stopwatch]::StartNew()
+    while (Test-Path -LiteralPath $root) {
+        if ($deadline.ElapsedMilliseconds -ge 30000) {
+            $remaining = @(Get-ChildItem -LiteralPath $root -Force | Select-Object -ExpandProperty Name)
+            Write-Output ('PER_USER_UNINSTALL_REMAINING: ' + ($remaining -join ', '))
+            throw 'PER_USER_UNINSTALL_FAILURE: package root remains after bounded native cleanup'
+        }
+        Start-Sleep -Milliseconds 100
+    }
+}
 
 $token = [SynveilTokenEvidence]::Current()
 Assert-True (!$isAdmin) 'PER_USER_TOKEN_FAILURE: test account belongs to Administrators'
@@ -171,6 +185,7 @@ Assert-True ((Get-SynveilServiceCount) -eq $servicesBefore) 'PER_USER_MUTATION_F
 Assert-True ((Get-SynveilTaskCount) -eq $tasksBefore) 'PER_USER_MUTATION_FAILURE: Synveil scheduled task created'
 
 Invoke-Bounded $uninstaller @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG=' + (Join-Path $logRoot 'uninstall.log'))) $unrelatedCwd 0 'uninstaller'
+Wait-UninstallRemoval
 Assert-True (!(Test-Path $root)) 'PER_USER_UNINSTALL_FAILURE: package root remains'
 Assert-True (!(Test-Path $startMenu)) 'PER_USER_UNINSTALL_FAILURE: Start Menu shortcut remains'
 Assert-True ($null -eq [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($uninstallSubkey)) 'PER_USER_UNINSTALL_FAILURE: HKCU registration remains'
@@ -181,6 +196,8 @@ Assert-True (Test-Path $desktop -PathType Leaf) 'PER_USER_OPTION_FAILURE: DESKTO
 $hkcu = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($uninstallSubkey); Assert-True ($null -ne $hkcu) 'PER_USER_REINSTALL_FAILURE: HKCU registration missing'
 $uninstaller = $hkcu.GetValue('UninstallString').Trim('"'); $hkcu.Dispose()
 Invoke-Bounded $uninstaller @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG=' + (Join-Path $logRoot 'uninstall-reinstall.log'))) $unrelatedCwd 0 'second uninstaller'
+Wait-UninstallRemoval
+Assert-True (!(Test-Path $root) -and !(Test-Path $startMenu)) 'PER_USER_UNINSTALL_FAILURE: reinstalled package/Start Menu remains'
 Assert-True (!(Test-Path $desktop) -and (Test-Path $sentinel)) 'PER_USER_UNINSTALL_FAILURE: option cleanup/state preservation failed'
 
 $os = Get-CimInstance Win32_OperatingSystem

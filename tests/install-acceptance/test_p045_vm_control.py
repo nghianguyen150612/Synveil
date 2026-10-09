@@ -32,10 +32,13 @@ class QmpFramingTests(unittest.TestCase):
                                 connection.settimeout(5)
                                 connection.sendall(b'{"QMP": {}}\r\n')
                                 reader = connection.makefile("rb")
-                                self.assertEqual(json.loads(reader.readline()), {"execute": "qmp_capabilities"})
-                                connection.sendall(b'{"return": {}}\r\n')
+                                self.assertEqual(json.loads(reader.readline()), {"execute": "qmp_capabilities", "id": "capabilities"})
+                                connection.sendall(b'{"return": {}, "id": "capabilities"}\r\n')
                                 observed.append(json.loads(reader.readline()))
-                                connection.sendall(b'{"return": ""}\r\n')
+                                # Events and replies can share a read or arrive
+                                # fragmented; neither is a command completion.
+                                connection.sendall(b'{"event": "STOP"}\r\n{"ret')
+                                connection.sendall(b'urn": "", "id": "command"}\r\n')
                     except Exception as exc:
                         failures.append(exc)
 
@@ -53,9 +56,52 @@ class QmpFramingTests(unittest.TestCase):
                 for result in results:
                     self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(observed, [
-                    {"execute": "human-monitor-command", "arguments": {"command": "savevm clean"}},
-                    {"execute": "human-monitor-command", "arguments": {"command": "loadvm clean"}},
+                    {"execute": "human-monitor-command", "arguments": {"command-line": "savevm clean"}, "id": "command"},
+                    {"execute": "human-monitor-command", "arguments": {"command-line": "loadvm clean"}, "id": "command"},
                 ])
+
+    def test_failed_or_absent_reply_cannot_report_snapshot_saved(self):
+        replies = [
+            b'{"error":{"class":"GenericError","desc":"failure"},"id":"command"}\r\n',
+            b'{"return":"Error: snapshot failed","id":"command"}\r\n',
+            b'{"event":"STOP"}\r\n',
+            b'{"return":"","id":"other"}\r\n',
+            b'{"return":',
+        ]
+        for reply in replies:
+            with self.subTest(reply=reply), tempfile.TemporaryDirectory(prefix="p045-qmp-") as directory:
+                monitor = Path(directory) / "qmp.sock"
+                (Path(directory) / "fixture.env").write_text(f"monitor={monitor}\n")
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+                    listener.bind(str(monitor))
+                    listener.listen(1)
+                    listener.settimeout(5)
+                    failures = []
+
+                    def serve():
+                        try:
+                            connection, _ = listener.accept()
+                            with connection, connection.makefile("rb") as reader:
+                                connection.settimeout(5)
+                                connection.sendall(b'{"QMP":{}}\r\n')
+                                reader.readline()
+                                connection.sendall(b'{"return":{},"id":"capabilities"}\r\n')
+                                reader.readline()
+                                connection.sendall(reply)
+                        except Exception as exc:
+                            failures.append(exc)
+
+                    worker = threading.Thread(target=serve, daemon=True)
+                    worker.start()
+                    result = subprocess.run(
+                        ["bash", str(ROOT / "scripts/linux-acceptance-vm.sh"), "snapshot", "fixture", "clean"],
+                        env={**os.environ, "SYNVEIL_VM_STATE_DIR": directory},
+                        capture_output=True, text=True, timeout=10)
+                    worker.join(10)
+                    self.assertFalse(worker.is_alive())
+                    self.assertFalse(failures, failures)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertNotIn("snapshot saved", result.stderr)
 
 
 if __name__ == "__main__":
