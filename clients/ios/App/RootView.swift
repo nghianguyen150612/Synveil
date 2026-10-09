@@ -16,6 +16,7 @@ struct RootView: View {
     var rustBridge: (any RustBridgeProtocol)? = nil
     var credentialSink: SecureCredentialSinkProtocol? = nil
     var libraryCatalog: (any LibraryCatalogRepositoryProtocol)? = nil
+    var nodeRepository: (any NodeRepositoryProtocol)? = nil
 
     var body: some View {
         switch sessionController.state {
@@ -40,6 +41,7 @@ struct RootView: View {
         case .authenticated:
             LibraryCatalogView(
                 repository: libraryCatalog,
+                nodeRepository: nodeRepository,
                 sessionController: sessionController
             )
             // A later authenticated lifecycle receives a fresh transient catalog and navigation stack.

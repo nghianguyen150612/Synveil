@@ -53,6 +53,7 @@ class LibraryCatalogViewRegistrationTests(unittest.TestCase):
         self.assertIn("sessionController: sessionController", root)
         self.assertNotIn("AuthenticatedShellPlaceholderView", root)
         self.assertIn("libraryCatalog: container.libraryCatalog", (IOS / "App/SynveilApp.swift").read_text())
+        self.assertIn("nodeRepository: container.nodeRepository", (IOS / "App/SynveilApp.swift").read_text())
 
     def test_catalog_uses_native_loading_refresh_selection_and_read_only_details(self):
         screen = SCREEN.read_text()
@@ -64,8 +65,8 @@ class LibraryCatalogViewRegistrationTests(unittest.TestCase):
             "No libraries available",
             "no libraries visible to this device",
             "NavigationLink(value: library.id)",
-            "LibraryReadOnlyDetailView",
-            "Folder browsing is not available yet.",
+            "NodeBrowserView(",
+            ".root(for: library)",
             "Log Out and Forget Session",
             "confirmationDialog(",
             "READ_ONLY",
@@ -85,6 +86,7 @@ class LibraryCatalogViewRegistrationTests(unittest.TestCase):
         self.assertIn("SessionLogoutAccessibility.logoutButton", screen)
         self.assertIn(".disabled(!viewModel.canRefresh || viewModel.isRequestInProgress)", screen)
         self.assertNotIn(".frame(width:", screen)
+        self.assertNotIn("Folder browsing is not available yet.", screen)
 
     def test_model_uses_repository_and_fences_transient_data_to_session(self):
         model = VIEW_MODEL.read_text()
