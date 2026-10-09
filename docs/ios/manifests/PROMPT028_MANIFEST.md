@@ -89,15 +89,18 @@ confirmation remain on pending verification. Cleanup never claims server revocat
 
 ## Hosted Validation and Delivery
 
-- Final feature commit SHA: pending commit.
-- PR targeting `ios-app`: [PR #84](https://github.com/nghianguyen150612/Synveil/pull/84), opened as draft pending final-head validation.
-- Final-head iOS Static Validation: pending.
-- Final-head iOS Build: pending.
-- Final-head iOS Simulator Tests and total results: pending.
-- Real Keychain Simulator test: P025–P027's known missing-entitlement skip remains a limitation, not a successful real Keychain round trip. Final P028 status will be recorded from actual logs.
+- Final tested feature commit SHA: `a7504b00a07ddccfdb46acff6b6390f1ae05106c` (`fix(ios): fence retry presentation and validate recovery sources`).
+- PR targeting `ios-app`: [PR #84](https://github.com/nghianguyen150612/Synveil/pull/84). Opened as draft, marked ready after the required final-head iOS checks passed, then merged by squash.
+- Final-head iOS Static Validation: passed on `a7504b00a07ddccfdb46acff6b6390f1ae05106c`, [run 37861519755](https://github.com/nghianguyen150612/Synveil/actions/runs/37861519755). Hosted Apple Swift 6.3.3 strict formatting, all 22 static tests and source validation passed. The duplicate pull-request static run `37861523696` also passed.
+- Final-head iOS Build: passed on the same head, [run 37861519693](https://github.com/nghianguyen150612/Synveil/actions/runs/37861519693); Xcode reported `BUILD SUCCEEDED`.
+- Final-head iOS Simulator Tests: passed on the same head, [run 37861519725](https://github.com/nghianguyen150612/Synveil/actions/runs/37861519725); Xcode reported `TEST SUCCEEDED` and the result bundle confirmed **256 total, 255 passed, 1 skipped, 0 failed**. All 37 new recovery cases passed, including `testRecoveryViewsRenderAtAccessibilityDynamicTypeSizes`. Existing P024–P027 deterministic suites remained green.
+- Real Keychain Simulator test: `KeychainCredentialStoreTests.testSimulatorKeychainRoundTripUsesUniqueTestService` was **skipped**. Actual final-head log: “The unsigned Simulator test process has no Keychain access entitlement.” This is not a successful real Keychain round trip; deterministic injected Keychain tests passed.
 - Physical-device validation: `NOT_AVAILABLE`.
-- Merge state and resulting `ios-app` SHA: pending hosted verification.
-- Unrelated workflows: pending final-head inspection; no desktop/Linux/PostgreSQL changes are in scope.
+- Hosted merge state: GitHub confirmed `merged=true` at **2026-10-09 00:19:24 UTC**.
+- P028 feature merge / resulting `ios-app` SHA: `fcd039c15d991321f31f2ff76a8cd289ec073518`, verified from the hosted PR record and a fresh `origin/ios-app` fetch.
+- Manifest finalization: this post-merge documentation-only update records already-observed evidence. The same `ios/p028-authentication-error-ux` branch incorporates the verified integration merge before this update; no tested iOS source changes are included. Its own finalization commit/merge cannot be embedded self-referentially; GitHub's follow-up PR record provides that separate documentation integration metadata.
+- Unrelated failure: [Linux AppImage run 37861519718](https://github.com/nghianguyen150612/Synveil/actions/runs/37861519718) failed “Build and independently reproduce AppImage”: `[synveil-artifact] ERROR: private or temporary build path found in synveil-desktop`, with marker `/home/`. No desktop packaging source was changed.
+- Other workflows at the feature merge inspection: duplicate AppImage and PostgreSQL scheduled-maintenance runs were in progress; Linux native packages and Rust CI were queued/in progress. They are not claimed as passing and were not modified. Duplicate pull-request iOS Build/Simulator runs were still in progress/queued, separate from the completed passing final-head runs cited above.
 
 ## Files Changed
 
