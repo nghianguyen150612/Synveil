@@ -1128,3 +1128,17 @@ FIRST-RUN-1 needs installed-binary Connect/onboarding/credentials/sync against a
 INSTALL-JOURNEY-8 remains blocked: a final cleanup hard kill, process SIGKILL, snapshot, container restart or graceful reboot is not an installer-boundary hard power cut followed by persistent-disk restart, journal reconciliation and preservation proof. The QEMU control plane has a real hard-cut primitive, but no required mutation-boundary recovery journey has been qualified.
 
 All source changes invalidate candidate-specific acceptance on previous heads. Historical raw records are retained as diagnostics only. New final-head candidate/evidence runs must pass before PR #78 can leave draft or merge. No P046 or v0.2.0 tag is created.
+
+The first hosted continuation at `84d2b50db29264cc39793433cb126acd6393a835`
+reproduced a stale structural validator after the environment helper extraction:
+Windows run `37924563796`, job `113800289514`, and installer push run
+`37924557711`, job `113800268626`, required the old inline
+`$env:LOCALAPPDATA = $tokenLocalAppData` assignment. They stopped before
+candidate compilation or product execution. The validator now verifies every
+token-derived assignment in the shared helper and requires both children to
+invoke it after their complete SID/non-administrator guard. Adversarial tests
+reject an empty helper, launcher-owned temporary paths, missing calls and calls
+before the guard. The cheap P045 contract gate also runs the Windows installer
+and native-checkpoint validators before expensive candidate builds. These
+checks were missed in the first local validation set and were added after the
+reproduced hosted failure; the token ownership requirement is preserved.

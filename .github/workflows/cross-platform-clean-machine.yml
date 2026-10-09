@@ -27,6 +27,8 @@ jobs:
       - name: Validate matrix and adversarial evidence tests
         run: |
           python3 scripts/validate-cross-platform-clean-machine-matrix.py
+          python3 scripts/validate-windows-installer.py
+          python3 scripts/validate-windows-native-acceptance.py
           python3 -m unittest discover -s tests/install-acceptance -p 'test_p045_*.py' -v
           python3 scripts/install_acceptance.py inventory
           ./scripts/validate-docs.sh

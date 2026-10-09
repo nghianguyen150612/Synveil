@@ -36,6 +36,31 @@ def require(value: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def validate_token_profile_environment(known_folders: str, children: tuple[str, ...]) -> None:
+    """A shared helper must retain the original token-owned environment proof."""
+    marker = "function Set-WindowsTokenProfileEnvironment {"
+    require(marker in known_folders, "token profile environment helper is required")
+    helper = known_folders.split(marker, 1)[1]
+    for proof in (
+        "$profileRoot = [SynveilKnownFolders]::CurrentUserProfile()",
+        "$localAppData = Join-Path $profileRoot 'AppData\\Local'",
+        "$tokenTemp = Join-Path $localAppData 'Temp'",
+        "$profileDrive = Split-Path -Qualifier $profileRoot",
+        "$env:USERPROFILE = $profileRoot", "$env:LOCALAPPDATA = $localAppData",
+        "$env:APPDATA = Join-Path $profileRoot 'AppData\\Roaming'",
+        "$env:HOMEDRIVE = $profileDrive", "$env:HOMEPATH = $profileRoot.Substring($profileDrive.Length)",
+        "$env:TEMP = $tokenTemp", "$env:TMP = $tokenTemp",
+        "$identity = [Security.Principal.WindowsIdentity]::GetCurrent()",
+        "$env:USERNAME = $identity.Name.Substring($identity.Name.LastIndexOf('\\') + 1)",
+        "$env:USERDOMAIN = $env:COMPUTERNAME",
+    ):
+        require(proof in helper, f"token-derived profile environment assignment: {proof}")
+    for child in children:
+        guard = re.search(r"if \(\$identity.User.Value -cne \$ExpectedSid -or \$isAdmin\) \{\s*throw 'STANDARD_USER_IDENTITY_FAILURE:[^']*'\s*\}", child)
+        call = child.find("\nSet-WindowsTokenProfileEnvironment\n")
+        require(guard is not None and call >= guard.end(), "environment setup must follow the child's SID/non-admin guard")
+
+
 def parse_lock(path: Path = LOCK) -> dict:
     data = json.loads(path.read_text(encoding="utf-8"))
     require(set(data) == {"schema_version", "tool", "version", "url", "sha256", "compiler"}, "lock fields")
@@ -152,10 +177,11 @@ def main() -> int:
                      "Win32_UserProfile", "loadedProfile.LocalPath", "262144", "install.log"):
         require(evidence in per_user_invoker, f"P025 disposable-account harness: {evidence}")
     for evidence in ("ExpectedSid", "STANDARD_USER_IDENTITY_FAILURE", "STANDARD_USER_PREFLIGHT",
-                     "STANDARD_USER_ENVIRONMENT_FAILURE", "STANDARD_USER_ENVIRONMENT", "$env:LOCALAPPDATA = $tokenLocalAppData",
-                     "$env:USERPROFILE = $profileRoot", "Split-Path $EvidencePath -Leaf",
+                     "STANDARD_USER_ENVIRONMENT_FAILURE", "STANDARD_USER_ENVIRONMENT", "Set-WindowsTokenProfileEnvironment",
+                     "Split-Path $EvidencePath -Leaf",
                      "STANDARD_USER_EVIDENCE_FAILURE"):
         require(evidence in per_user_test, f"P025 child identity proof: {evidence}")
+    validate_token_profile_environment(known_folders, (per_user_test, lifecycle_test))
     for evidence in ("SHGetKnownFolderPath", "ExactSpelling=true", "OpenProcessToken", "GetCurrentProcess", "GetUserProfileDirectory", "CurrentUserProfile", "TOKEN_QUERY", "TOKEN_IMPERSONATE", "TOKEN_DUPLICATE", "KF_FLAG_DONT_VERIFY", "LocalApplicationData", "Programs", "DesktopDirectory", "CommonPrograms", "CommonDesktopDirectory"):
         require(evidence in known_folders, f"P025 token-owned Windows folders: {evidence}")
     require('[DllImport("userenv.dll", EntryPoint="GetUserProfileDirectoryW", ExactSpelling=true, SetLastError=true)]' in known_folders,
