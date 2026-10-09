@@ -88,6 +88,10 @@
 		A10000012C00000000000045 /* NodeResponseDTO.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000045 /* NodeResponseDTO.swift */; };
 		A10000012C00000000000046 /* AuthenticatedNodeRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000046 /* AuthenticatedNodeRepository.swift */; };
 		B10000012C00000000000025 /* NodeBrowserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000025 /* NodeBrowserTests.swift */; };
+		A10000012C00000000000047 /* NodeBrowserViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000047 /* NodeBrowserViewModel.swift */; };
+		A10000012C00000000000048 /* NodeBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000048 /* NodeBrowserView.swift */; };
+		B10000012C00000000000026 /* NodeBrowserViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000026 /* NodeBrowserViewModelTests.swift */; };
+		B10000012C00000000000027 /* NodeBrowserViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000027 /* NodeBrowserViewTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -183,6 +187,10 @@
 		A20000012C00000000000045 /* NodeResponseDTO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Node/NodeResponseDTO.swift; sourceTree = "<group>"; };
 		A20000012C00000000000046 /* AuthenticatedNodeRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Node/AuthenticatedNodeRepository.swift; sourceTree = "<group>"; };
 		B20000012C00000000000025 /* NodeBrowserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NodeBrowserTests.swift; sourceTree = "<group>"; };
+		A20000012C00000000000047 /* NodeBrowserViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Node/NodeBrowserViewModel.swift; sourceTree = "<group>"; };
+		A20000012C00000000000048 /* NodeBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Node/NodeBrowserView.swift; sourceTree = "<group>"; };
+		B20000012C00000000000026 /* NodeBrowserViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NodeBrowserViewModelTests.swift; sourceTree = "<group>"; };
+		B20000012C00000000000027 /* NodeBrowserViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NodeBrowserViewTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -225,6 +233,7 @@
 				A20000012C0000000000003D /* AuthenticationRecoveryView.swift */,
 				A20000012C0000000000003C /* AuthenticationRecoveryPresentation.swift */,
 				A40000012C00000000000017 /* Library */,
+				A40000012C00000000000018 /* Node */,
 				A40000012C00000000000016 /* Onboarding */,
 			);
 			name = Features;
@@ -237,6 +246,15 @@
 				A20000012C00000000000043 /* LibraryCatalogView.swift */,
 			);
 			name = Library;
+			sourceTree = "<group>";
+		};
+		A40000012C00000000000018 /* Node */ = {
+			isa = PBXGroup;
+			children = (
+				A20000012C00000000000047 /* NodeBrowserViewModel.swift */,
+				A20000012C00000000000048 /* NodeBrowserView.swift */,
+			);
+			name = Node;
 			sourceTree = "<group>";
 		};
 		A40000012C00000000000016 /* Onboarding */ = {
@@ -366,6 +384,8 @@
 				B20000012C00000000000023 /* LibraryCatalogViewModelTests.swift */,
 				B20000012C00000000000024 /* LibraryCatalogViewTests.swift */,
 				B20000012C00000000000025 /* NodeBrowserTests.swift */,
+				B20000012C00000000000026 /* NodeBrowserViewModelTests.swift */,
+				B20000012C00000000000027 /* NodeBrowserViewTests.swift */,
 				B20000012C00000000000022 /* LibraryCatalogTests.swift */,
 				B20000012C00000000000001 /* SynveilBootstrapTests.swift */,
 				B20000012C00000000000011 /* ServerEndpointTests.swift */,
@@ -484,6 +504,8 @@
 				A10000012C00000000000044 /* NodeModels.swift in Sources */,
 				A10000012C00000000000045 /* NodeResponseDTO.swift in Sources */,
 				A10000012C00000000000046 /* AuthenticatedNodeRepository.swift in Sources */,
+				A10000012C00000000000047 /* NodeBrowserViewModel.swift in Sources */,
+				A10000012C00000000000048 /* NodeBrowserView.swift in Sources */,
 				A10000012C00000000000041 /* AuthenticatedLibraryCatalogRepository.swift in Sources */,
 				A10000012C00000000000040 /* AuthenticatedLibraryRequestProvider.swift in Sources */,
 				A10000012C0000000000003F /* LibraryResponseDTO.swift in Sources */,
@@ -545,6 +567,8 @@
 				B10000012C00000000000023 /* LibraryCatalogViewModelTests.swift in Sources */,
 				B10000012C00000000000024 /* LibraryCatalogViewTests.swift in Sources */,
 				B10000012C00000000000025 /* NodeBrowserTests.swift in Sources */,
+				B10000012C00000000000026 /* NodeBrowserViewModelTests.swift in Sources */,
+				B10000012C00000000000027 /* NodeBrowserViewTests.swift in Sources */,
 				B10000012C00000000000022 /* LibraryCatalogTests.swift in Sources */,
 				B10000012C00000000000021 /* AuthenticationRecoveryTests.swift in Sources */,
 				B10000012C00000000000001 /* SynveilBootstrapTests.swift in Sources */,

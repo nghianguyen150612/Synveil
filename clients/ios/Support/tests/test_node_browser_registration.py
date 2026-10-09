@@ -18,6 +18,10 @@ class NodeBrowserRegistrationTests(unittest.TestCase):
             "Domain/Node/NodeResponseDTO.swift",
             "Application/Node/AuthenticatedNodeRepository.swift",
             "Tests/SynveilTests/NodeBrowserTests.swift",
+            "Features/Node/NodeBrowserViewModel.swift",
+            "Features/Node/NodeBrowserView.swift",
+            "Tests/SynveilTests/NodeBrowserViewModelTests.swift",
+            "Tests/SynveilTests/NodeBrowserViewTests.swift",
         ]:
             self.assertTrue((IOS / path).is_file())
             reference = re.search(r"([A-F0-9]{24}) /\*.*?\*/ = \{isa = PBXFileReference;[^\n]*path = " + re.escape(path) + r";", project)
@@ -29,6 +33,56 @@ class NodeBrowserRegistrationTests(unittest.TestCase):
             target = 1 if path.startswith("Tests/") else 0
             self.assertIn(build.group(1), sources[target])
             self.assertNotIn(build.group(1), sources[1 - target])
+
+    def test_native_browser_reuses_the_injected_repository_and_typed_scopes(self):
+        root = (IOS / "App/RootView.swift").read_text()
+        app = (IOS / "App/SynveilApp.swift").read_text()
+        catalog = (IOS / "Features/Library/LibraryCatalogView.swift").read_text()
+        browser = (IOS / "Features/Node/NodeBrowserView.swift").read_text()
+        model = (IOS / "Features/Node/NodeBrowserViewModel.swift").read_text()
+
+        self.assertIn("nodeRepository: container.nodeRepository", app)
+        self.assertIn("nodeRepository: nodeRepository", root)
+        self.assertIn("NodeBrowserView(", catalog)
+        self.assertIn(".root(for: library)", catalog)
+        self.assertIn("NavigationStack", catalog)
+        self.assertIn("NavigationLink(value: destination)", browser)
+        self.assertIn(".directory(node.id)", model)
+        self.assertIn("NodeRepositoryProtocol", model)
+        self.assertIn("repository.listChildren(libraryId: library.id, parent: parentScope)", model)
+        self.assertIn("sessionController.lifecycleRevision == sessionRevision", model)
+        self.assertIn("func invalidate()", model)
+        self.assertIn(".refreshable", browser)
+        self.assertIn("This folder is empty.", browser)
+        self.assertIn("File content is not available in this version", browser)
+        self.assertIn('node.kind == .directory ? "folder" : "doc"', browser)
+        self.assertIn("func accessibilityDescription(for node: Node)", browser)
+        self.assertIn("navigationDestination(for: NodeBrowserRoute.self)", catalog)
+        self.assertIn("navigationDestination(for: NodeFileDetailsRoute.self)", catalog)
+        self.assertNotIn("Folder browsing is not available yet.", catalog)
+        self.assertNotRegex(model, r"\b(?:DeviceBearer|Bearer|svd1_)\b")
+        for fake_operation in [
+            'Button("Download"',
+            'Button("Upload"',
+            'Button("Rename"',
+            'Button("Delete"',
+            "ShareLink(",
+            "QuickLookPreview(",
+        ]:
+            self.assertNotIn(fake_operation, browser)
+
+    def test_browser_sources_do_not_add_transport_or_persistent_cache(self):
+        browser = (IOS / "Features/Node/NodeBrowserView.swift").read_text()
+        model = (IOS / "Features/Node/NodeBrowserViewModel.swift").read_text()
+        for forbidden in [
+            "URLSession",
+            "UserDefaults",
+            "SwiftData",
+            "CoreData",
+            "GRDB",
+            "SQLite",
+        ]:
+            self.assertNotIn(forbidden, browser + model)
 
     def test_production_nodes_reuses_security_and_bounded_transport(self):
         composition = (IOS / "App/AppDependencyContainer.swift").read_text()

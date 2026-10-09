@@ -3,15 +3,18 @@ import SwiftUI
 /// Authenticated, read-only library catalog. A new state-owned model is made for each session.
 struct LibraryCatalogView: View {
     private let sessionController: SessionController
+    private let nodeRepository: (any NodeRepositoryProtocol)?
 
     @State private var viewModel: LibraryCatalogViewModel
     @State private var isShowingLogoutConfirmation = false
 
     init(
         repository: (any LibraryCatalogRepositoryProtocol)?,
+        nodeRepository: (any NodeRepositoryProtocol)? = nil,
         sessionController: SessionController
     ) {
         self.sessionController = sessionController
+        self.nodeRepository = nodeRepository
         _viewModel = State(
             initialValue: LibraryCatalogViewModel(
                 repository: repository,
@@ -32,10 +35,26 @@ struct LibraryCatalogView: View {
                     .navigationBarTitleDisplayMode(.large)
                     .navigationDestination(for: LibraryId.self) { id in
                         if let library = viewModel.library(with: id) {
-                            LibraryReadOnlyDetailView(library: library)
+                            NodeBrowserView(
+                                repository: nodeRepository,
+                                sessionController: sessionController,
+                                route: .root(for: library)
+                            )
+                            .id(NodeBrowserRoute.root(for: library))
                         } else {
                             LibrarySelectionUnavailableView()
                         }
+                    }
+                    .navigationDestination(for: NodeBrowserRoute.self) { route in
+                        NodeBrowserView(
+                            repository: nodeRepository,
+                            sessionController: sessionController,
+                            route: route
+                        )
+                        .id(route)
+                    }
+                    .navigationDestination(for: NodeFileDetailsRoute.self) { route in
+                        NodeFileDetailsView(route: route)
                     }
                     .toolbar {
                         ToolbarItem(placement: .topBarTrailing) {
@@ -234,7 +253,7 @@ struct LibraryCatalogView: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(LibraryCatalogRow.accessibilityDescription(for: library))
                 .accessibilityHint(
-                    "Opens read-only library details. Folder browsing is not available yet."
+                    "Opens this Library's root folder contents."
                 )
                 .accessibilityIdentifier("synveil.library.row.\(library.id.rawValue)")
             }
@@ -334,70 +353,14 @@ private struct CatalogFeedbackView: View {
     }
 }
 
-private struct LibraryReadOnlyDetailView: View {
-    let library: Library
-
-    private var status: LibraryStatusPresentation {
-        LibraryStatusPresentation.make(for: library.status)
-    }
-
-    var body: some View {
-        List {
-            Section("Library") {
-                Text(library.name)
-                    .font(.headline)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityAddTraits(.isHeader)
-                    .accessibilityIdentifier("synveil.library.details.name")
-
-                Label(status.label, systemImage: status.symbol)
-                    .accessibilityLabel("Status: \(status.label)")
-                    .accessibilityIdentifier("synveil.library.details.status")
-
-                LabeledContent("Updated") {
-                    Text(library.updatedAt.formatted(date: .abbreviated, time: .shortened))
-                        .multilineTextAlignment(.trailing)
-                }
-            }
-
-            Section("Library identity") {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Library ID")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    Text(library.id.rawValue)
-                        .font(.footnote.monospaced())
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("synveil.library.details.id")
-                }
-            }
-
-            Section {
-                Label("Folder browsing is not available yet.", systemImage: "info.circle")
-                    .font(.body)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("synveil.library.details.browsing-deferred")
-            } footer: {
-                Text(
-                    "This screen only displays library information. No files or folders are loaded."
-                )
-            }
-        }
-        .navigationTitle("Library Details")
-        .navigationBarTitleDisplayMode(.inline)
-        .accessibilityIdentifier("synveil.library.details")
-    }
-}
-
 private struct LibrarySelectionUnavailableView: View {
     var body: some View {
         ContentUnavailableView(
-            "Library no longer available",
+            "Library contents unavailable",
             systemImage: "folder.badge.questionmark",
             description: Text("Return to the catalog and refresh the current session.")
         )
-        .navigationTitle("Library Details")
-        .accessibilityIdentifier("synveil.library.details.unavailable")
+        .navigationTitle("Library")
+        .accessibilityIdentifier("synveil.library.contents.unavailable")
     }
 }
