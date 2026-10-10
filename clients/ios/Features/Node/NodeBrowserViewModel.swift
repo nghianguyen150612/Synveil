@@ -15,6 +15,13 @@ struct NodeBrowserLibraryContext: Equatable, Hashable, Sendable {
         status = library.status
     }
 
+    init(_ mutationLibrary: MetadataMutationLibraryContext) {
+        id = mutationLibrary.id
+        name = mutationLibrary.name
+        rootNodeId = mutationLibrary.rootNodeId
+        status = mutationLibrary.status
+    }
+
     var mutationContext: MetadataMutationLibraryContext {
         MetadataMutationLibraryContext(
             id: id, name: name, rootNodeId: rootNodeId, status: status)

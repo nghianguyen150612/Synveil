@@ -413,8 +413,7 @@ final class MetadataMutationFeatureTests: XCTestCase {
             generator: CountingMutationIDGenerator(first: 700))
         let controller = try authenticatedMutationController()
         let route = NodeBrowserRoute(
-            library: NodeBrowserLibraryContext(
-                id: library.id, name: library.name, rootNodeId: root, status: library.status),
+            library: NodeBrowserLibraryContext(library),
             parentScope: .libraryRoot(rootNodeId: root), directoryTitle: library.name,
             ancestry: [root])
         let viewModel = MetadataMutationViewModel(
@@ -685,9 +684,7 @@ final class MetadataMutationFeatureTests: XCTestCase {
         let controller = try authenticatedMutationController()
         let library = try await presentationLibrary(status: .active)
         let route = NodeBrowserRoute(
-            library: NodeBrowserLibraryContext(
-                id: library.id, name: library.name, rootNodeId: library.rootNodeId,
-                status: library.status),
+            library: NodeBrowserLibraryContext(library),
             parentScope: .libraryRoot(rootNodeId: library.rootNodeId),
             directoryTitle: library.name, ancestry: [library.rootNodeId])
         let feature = FakeMetadataMutationFeature()
@@ -717,8 +714,7 @@ final class MetadataMutationFeatureTests: XCTestCase {
         let library = mutationLibrary(fixture, root: rootId)
         let session = try authenticatedMutationController()
         let route = NodeBrowserRoute(
-            library: NodeBrowserLibraryContext(
-                id: library.id, name: library.name, rootNodeId: rootId, status: library.status),
+            library: NodeBrowserLibraryContext(library),
             parentScope: .libraryRoot(rootNodeId: rootId), directoryTitle: library.name,
             ancestry: [rootId])
         let browser = NodeBrowserView(
