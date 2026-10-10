@@ -127,6 +127,15 @@ final class SyncAckService {
         return result
     }
 
+    /// Release process ownership if a trusted coordinator's original session is fenced after
+    /// acquisition. Durable ACK_IN_FLIGHT evidence remains; no network or rollback is implied.
+    func discardUndispatchedReceipt(_ receipt: AppliedFeedCommitReceipt) async {
+        guard receipt.owner == owner,
+            !activeDispatches.contains(receipt.proof.commitIdentity)
+        else { return }
+        await projection.finishAppliedAttempt(receipt.proof)
+    }
+
     private func performAcknowledgement(_ receipt: AppliedFeedCommitReceipt) async
         -> SyncAckSubmissionResult
     {

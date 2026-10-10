@@ -12,7 +12,7 @@ protocol AuthenticatedSyncCheckpointRequestProviderProtocol {
 /// Explicit preparation only. GET can create server state; neither initialization nor browsing
 /// calls this service. The queue owns session binding and durable checkpoint persistence.
 @MainActor
-final class SyncCheckpointService {
+final class SyncCheckpointService: SyncCheckpointPreparationProtocol {
     private let provider: any AuthenticatedSyncCheckpointRequestProviderProtocol
     private let queue: DurableMutationQueue
     private let decoder: SyncCheckpointResponseDecoder

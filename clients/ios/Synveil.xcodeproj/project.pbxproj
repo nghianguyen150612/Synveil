@@ -135,6 +135,15 @@
 		D2503E9F2CD21E9E90345D16 /* NodeProjectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D8A32CED97CF1B91273DF7A /* NodeProjectionTests.swift */; };
 		E10E3AD3CAF0E4A257F7AAB8 /* NodeProjectionSQLiteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FBD63B5BE62328C2FF4A716 /* NodeProjectionSQLiteTests.swift */; };
 		91B9621F10A5C61D7BB234AF /* CommittedProjectionAckTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0617D440657E182F0461976 /* CommittedProjectionAckTests.swift */; };
+		7E67E9AFCA0F1625006117C2 /* InboundSyncModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BC1C985AD6B117F8D90753B /* InboundSyncModels.swift */; };
+		9D37C8EFFEAE03382E52A9AD /* InboundSyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CEF6D936D5C97440AB34212 /* InboundSyncCoordinator.swift */; };
+		B434156B38347EB11B0CD572 /* SyncStatusViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1816EB6C8D07DBA8C70C6D69 /* SyncStatusViewModel.swift */; };
+		9FF6AD1290B03F7D24833EC7 /* SyncStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 703A4772C1E48412091F9DFA /* SyncStatusView.swift */; };
+		AFCB14A0E5AFBD5BF6BCBAD0 /* InboundSyncTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACC470B3EFFFF0DD1C6EE70 /* InboundSyncTestSupport.swift */; };
+		A46B19C83C6DB753DAC2D25A /* InboundSyncCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C05935A31E1D6A3CD9111DF9 /* InboundSyncCoordinatorTests.swift */; };
+		407BCF57189B040188F9B622 /* InboundSyncRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16EEBD2222FE64206514A30F /* InboundSyncRecoveryTests.swift */; };
+		48B5C46A84D00167AEB0F06C /* InboundSyncRaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C08D8E26A94145FC6362A2C9 /* InboundSyncRaceTests.swift */; };
+		1D9E4EB06644AB6B7D438164 /* SyncStatusViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FB2DF3EA7D3D3FE25CB4EB2 /* SyncStatusViewModelTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -277,6 +286,15 @@
 		2D8A32CED97CF1B91273DF7A /* NodeProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NodeProjectionTests.swift; sourceTree = SOURCE_ROOT; };
 		9FBD63B5BE62328C2FF4A716 /* NodeProjectionSQLiteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NodeProjectionSQLiteTests.swift; sourceTree = SOURCE_ROOT; };
 		F0617D440657E182F0461976 /* CommittedProjectionAckTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/CommittedProjectionAckTests.swift; sourceTree = SOURCE_ROOT; };
+		0BC1C985AD6B117F8D90753B /* InboundSyncModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Sync/InboundSyncModels.swift; sourceTree = SOURCE_ROOT; };
+		0CEF6D936D5C97440AB34212 /* InboundSyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Sync/InboundSyncCoordinator.swift; sourceTree = SOURCE_ROOT; };
+		1816EB6C8D07DBA8C70C6D69 /* SyncStatusViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Sync/SyncStatusViewModel.swift; sourceTree = SOURCE_ROOT; };
+		703A4772C1E48412091F9DFA /* SyncStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Sync/SyncStatusView.swift; sourceTree = SOURCE_ROOT; };
+		5ACC470B3EFFFF0DD1C6EE70 /* InboundSyncTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/InboundSyncTestSupport.swift; sourceTree = SOURCE_ROOT; };
+		C05935A31E1D6A3CD9111DF9 /* InboundSyncCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/InboundSyncCoordinatorTests.swift; sourceTree = SOURCE_ROOT; };
+		16EEBD2222FE64206514A30F /* InboundSyncRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/InboundSyncRecoveryTests.swift; sourceTree = SOURCE_ROOT; };
+		C08D8E26A94145FC6362A2C9 /* InboundSyncRaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/InboundSyncRaceTests.swift; sourceTree = SOURCE_ROOT; };
+		5FB2DF3EA7D3D3FE25CB4EB2 /* SyncStatusViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SyncStatusViewModelTests.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -316,6 +334,10 @@
 				A40000012C00000000000015 /* Features */ = {
 			isa = PBXGroup;
 			children = (
+				703A4772C1E48412091F9DFA /* SyncStatusView.swift */,
+				1816EB6C8D07DBA8C70C6D69 /* SyncStatusViewModel.swift */,
+				0CEF6D936D5C97440AB34212 /* InboundSyncCoordinator.swift */,
+				0BC1C985AD6B117F8D90753B /* InboundSyncModels.swift */,
 				045E037D95FD1DB835C55948 /* SQLiteNodeProjectionRepository.swift */,
 				2470ECCC03C9F9EF448B81DC /* CommittedSQLiteSyncProjectionStorage.swift */,
 				9C2B605C452792053A247DF6 /* NodeProjectionSQLiteSchema.swift */,
@@ -501,6 +523,11 @@
 		B40000012C00000000000002 /* SynveilTests */ = {
 			isa = PBXGroup;
 			children = (
+				5FB2DF3EA7D3D3FE25CB4EB2 /* SyncStatusViewModelTests.swift */,
+				C08D8E26A94145FC6362A2C9 /* InboundSyncRaceTests.swift */,
+				16EEBD2222FE64206514A30F /* InboundSyncRecoveryTests.swift */,
+				C05935A31E1D6A3CD9111DF9 /* InboundSyncCoordinatorTests.swift */,
+				5ACC470B3EFFFF0DD1C6EE70 /* InboundSyncTestSupport.swift */,
 				F0617D440657E182F0461976 /* CommittedProjectionAckTests.swift */,
 				9FBD63B5BE62328C2FF4A716 /* NodeProjectionSQLiteTests.swift */,
 				2D8A32CED97CF1B91273DF7A /* NodeProjectionTests.swift */,
@@ -635,6 +662,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				9FF6AD1290B03F7D24833EC7 /* SyncStatusView.swift in Sources */,
+				B434156B38347EB11B0CD572 /* SyncStatusViewModel.swift in Sources */,
+				9D37C8EFFEAE03382E52A9AD /* InboundSyncCoordinator.swift in Sources */,
+				7E67E9AFCA0F1625006117C2 /* InboundSyncModels.swift in Sources */,
 				DDB310164E7571A9C70D2834 /* SQLiteNodeProjectionRepository.swift in Sources */,
 				D867AE8CC0B3FD2AE8F93058 /* CommittedSQLiteSyncProjectionStorage.swift in Sources */,
 				A48DAAE05140A903FF7B835B /* NodeProjectionSQLiteSchema.swift in Sources */,
@@ -726,6 +757,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1D9E4EB06644AB6B7D438164 /* SyncStatusViewModelTests.swift in Sources */,
+				48B5C46A84D00167AEB0F06C /* InboundSyncRaceTests.swift in Sources */,
+				407BCF57189B040188F9B622 /* InboundSyncRecoveryTests.swift in Sources */,
+				A46B19C83C6DB753DAC2D25A /* InboundSyncCoordinatorTests.swift in Sources */,
+				AFCB14A0E5AFBD5BF6BCBAD0 /* InboundSyncTestSupport.swift in Sources */,
 				91B9621F10A5C61D7BB234AF /* CommittedProjectionAckTests.swift in Sources */,
 				E10E3AD3CAF0E4A257F7AAB8 /* NodeProjectionSQLiteTests.swift in Sources */,
 				D2503E9F2CD21E9E90345D16 /* NodeProjectionTests.swift in Sources */,

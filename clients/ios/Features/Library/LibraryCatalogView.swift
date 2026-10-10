@@ -5,6 +5,9 @@ struct LibraryCatalogView: View {
     private let sessionController: SessionController
     private let nodeRepository: (any NodeRepositoryProtocol)?
     private let metadataMutationFeature: (any MetadataMutationFeatureProtocol)?
+    private let inboundSyncCoordinator: (any InboundSyncCoordinatorProtocol)?
+    private let nodeProjectionRepository: (any NodeProjectionRepositoryProtocol)?
+    private let syncCheckpointService: (any SyncCheckpointPreparationProtocol)?
 
     @State private var viewModel: LibraryCatalogViewModel
     @State private var isShowingLogoutConfirmation = false
@@ -13,11 +16,17 @@ struct LibraryCatalogView: View {
         repository: (any LibraryCatalogRepositoryProtocol)?,
         nodeRepository: (any NodeRepositoryProtocol)? = nil,
         metadataMutationFeature: (any MetadataMutationFeatureProtocol)? = nil,
+        inboundSyncCoordinator: (any InboundSyncCoordinatorProtocol)? = nil,
+        nodeProjectionRepository: (any NodeProjectionRepositoryProtocol)? = nil,
+        syncCheckpointService: (any SyncCheckpointPreparationProtocol)? = nil,
         sessionController: SessionController
     ) {
         self.sessionController = sessionController
         self.nodeRepository = nodeRepository
         self.metadataMutationFeature = metadataMutationFeature
+        self.inboundSyncCoordinator = inboundSyncCoordinator
+        self.nodeProjectionRepository = nodeProjectionRepository
+        self.syncCheckpointService = syncCheckpointService
         _viewModel = State(
             initialValue: LibraryCatalogViewModel(
                 repository: repository,
@@ -266,6 +275,27 @@ struct LibraryCatalogView: View {
                     "Opens this Library's root folder contents."
                 )
                 .accessibilityIdentifier("synveil.library.row.\(library.id.rawValue)")
+            }
+        }
+        Section("Synchronization") {
+            ForEach(libraries, id: \.id) { library in
+                NavigationLink {
+                    SyncStatusView(
+                        library: library, coordinator: inboundSyncCoordinator,
+                        projection: nodeProjectionRepository, checkpoint: syncCheckpointService,
+                        sessionController: sessionController
+                    )
+                    .id(library.id)
+                } label: {
+                    Label(
+                        "Sync Status — \(library.name)", systemImage: "arrow.triangle.2.circlepath"
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityHint(
+                    "Opens saved synchronization status. Opening does not synchronize."
+                )
+                .accessibilityIdentifier("synveil.library.sync.\(library.id.rawValue)")
             }
         }
     }

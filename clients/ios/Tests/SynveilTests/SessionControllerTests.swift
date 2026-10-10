@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Synveil
 
 final class SessionControllerTests: XCTestCase {

@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+
 @testable import Synveil
 
 final class ServerReachabilityTests: XCTestCase {
