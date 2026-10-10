@@ -182,6 +182,7 @@ async fn damaged_or_unknown_schema_fails_closed_without_repairing_evidence() {
         sqlx::query(mutation).execute(&pool).await.unwrap();
         let before = schema(&pool).await;
         pool.close().await;
+        drop(pool);
         for _ in 0..2 {
             let error = LocalStateStore::open(&config).await.unwrap_err();
             if unsupported {
@@ -204,6 +205,7 @@ async fn damaged_or_unknown_schema_fails_closed_without_repairing_evidence() {
             "preserve"
         );
         pool.close().await;
+        drop(pool);
         remove_dir_all_bounded(&directory).unwrap();
     }
 }

@@ -1960,7 +1960,10 @@ mod tests {
 
         fn release(&self) {
             self.hold.store(false, Ordering::SeqCst);
-            self.release.notify_waiters();
+            // There is at most one in-flight cycle per executor. `notify_one`
+            // also retains the release if the test observes `started` just
+            // before run_once polls this notification.
+            self.release.notify_one();
         }
     }
 
@@ -1980,7 +1983,7 @@ mod tests {
             self.global_max_active
                 .fetch_max(global_active, Ordering::SeqCst);
             self.calls.fetch_add(1, Ordering::SeqCst);
-            self.started.notify_waiters();
+            self.started.notify_one();
             if self.hold.load(Ordering::SeqCst) {
                 self.release.notified().await;
             }
@@ -2859,6 +2862,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn registration_and_unregistration_races_keep_wakes_typed_and_recoverable() {
         let executor = FakeExecutor::new(scope(), vec![Ok(idle_result()), Ok(idle_result())]);
+        executor.hold.store(true, Ordering::SeqCst);
         let library_id = executor.scope.library_id();
         let runtime = SyncRuntime::new(config());
         let handle = runtime.start().expect("start race test runtime");
@@ -2899,12 +2903,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(1), first_cycle_started)
             .await
             .expect("registered library must start after the registration/wake race");
-        settle().await;
-        let calls_after_registration_race = executor.calls();
-        assert!(
-            (1..=2).contains(&calls_after_registration_race),
-            "registration/wake race may schedule at most one bounded follow-up, got {calls_after_registration_race} calls"
-        );
+        assert_eq!(executor.calls(), 1, "first bounded cycle must remain held");
 
         let unregistration_barrier = Arc::new(tokio::sync::Barrier::new(2));
         let unregistration_task = {
@@ -2937,6 +2936,7 @@ mod tests {
                 | SyncRuntimeWakeResult::Coalesced
                 | SyncRuntimeWakeResult::AlreadyRunningFollowupRecorded
         ));
+        executor.release();
         tokio::time::timeout(Duration::from_secs(1), async {
             while handle.status(library_id).is_some() {
                 tokio::task::yield_now().await;
@@ -2954,7 +2954,11 @@ mod tests {
             .await
             .expect("re-registered library must start after the unregistration race");
         settle().await;
-        assert!((2..=3).contains(&executor.calls()));
+        assert_eq!(
+            executor.calls(),
+            2,
+            "one cycle per registration; the unregistered cycle must not retain a wake"
+        );
         assert_eq!(executor.max_active(), 1);
         handle.shutdown().await.expect("race test shutdown");
     }
