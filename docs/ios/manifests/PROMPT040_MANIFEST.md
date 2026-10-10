@@ -7,7 +7,12 @@
 - Actual starting `origin/ios-app` SHA: `3e25912c03118236afb0210319f0b1211b48a560`.
 - The initial clean checkout was `work` at `3851ea11927e24255614cfc38adbaccbd345ca03`. It was not used for implementation.
 - Executed remote/status inspection, explicit forced ref fetch of `ios-app`, both SHA reads and the required P039 ancestry check (successful). No additional integration commits existed. Created the requested feature branch from `origin/ios-app`; no dirty reset or `codex/` branch.
-- Final source feature SHA, genuine PR, exact-head native CI, hosted merge and resulting integration SHA: **PENDING** at implementation time. They will be recorded from GitHub evidence during delivery; this manifest does not assert a merge or native pass in advance.
+- Frozen final source feature SHA: `fe33a5223eb6927d1e52e1006806ad0c63e26ed6`.
+- Genuine feature PR: [#112](https://github.com/nghianguyen150612/Synveil/pull/112), base `ios-app`, ready (`draft=false`) before squash merge.
+- Independent GitHub REST confirmation: `merged=true`, `state=closed`, exact frozen feature head; merged at `2026-10-10T13:32:09Z`.
+- Source squash merge and resulting hosted `ios-app` SHA: `0faa1bb2de04e49d1412d239f1a08448e3ae221e`. The GitHub ref API independently matches it. Source merge tree `b1914e73e4c3669d89a81b1b8c9f55cab706ac86` exactly matches the tested feature tree; source/test/initial-manifest diff is empty.
+- The shell GitHub credential expired during CI monitoring. Delivery continued through the already connected GitHub app without credential replacement or exposure. A subsequent anonymous Git transport attempt was unavailable; the local integration commit was imported from GitHub's verified signed commit payload, with its Git object SHA independently reproduced before updating the local remote-tracking ref. No fetch success is fabricated.
+- Hosted evidence is finalized on documentation-only `ios/p040-manifest-finalization`, based on that source merge. No Swift, tests, project or workflows change after the frozen source head. Its resulting hosted tip is recorded in the final report rather than embedded as its own circular commit identity.
 
 ## Authoritative references
 
@@ -100,10 +105,37 @@ Local validation performed with downloaded official Swift 6.2 on Linux, unchange
 
 ## Hosted native evidence and limitations
 
-Fresh exact-source-head iOS Static Validation, iOS Build, iOS Simulator Tests and explicitly dispatched iOS Rust Apple Build: **PENDING**. Required native suite totals, artifact/run IDs, final feature SHA, genuine ios-app PR/merge and unrelated workflows will be filled from GitHub results, not inferred from P039.
+All four required workflows report SUCCESS with `head_sha=fe33a5223eb6927d1e52e1006806ad0c63e26ed6`; these are fresh P040 runs, not P039 evidence:
 
-The two known P039 Simulator limitations remain accurately reported if the native runner skips them: unsigned Keychain round-trip entitlement and unavailable Simulator filesystem Data Protection attribute verification. They are never counted as passes. Physical-device validation: **NOT_AVAILABLE**. No hardware-backed Keychain, device filesystem-protection round-trip or physical power-loss durability is claimed. Real file-backed SQLite transaction/reopen tests establish their exercised boundaries only.
+| Workflow | Exact-source-head run | Result |
+| --- | --- | --- |
+| iOS Static Validation | [38053946908](https://github.com/nghianguyen150612/Synveil/actions/runs/38053946908) | SUCCESS |
+| iOS Build | [38053946879](https://github.com/nghianguyen150612/Synveil/actions/runs/38053946879) | SUCCESS |
+| iOS Simulator Tests | [38053941410](https://github.com/nghianguyen150612/Synveil/actions/runs/38053941410) | SUCCESS |
+| iOS Rust Apple Build, explicitly dispatched | [38053941540](https://github.com/nghianguyen150612/Synveil/actions/runs/38053941540) | SUCCESS |
+
+Genuine xcresult summary: **1,405 total / 1,403 passed / two skipped / zero failed**, result Passed, on iPhone 17 Pro with iOS Simulator 26.5. All **48 InboundSyncCoordinatorTests**, **27 InboundSyncRecoveryTests**, **22 InboundSyncRaceTests** and **33 SyncStatusViewModelTests** passed with no P040 skip. Native rendering and accessibility Dynamic Type cases passed. All 55 P039 NodeProjectionTests, 54 NodeProjectionSQLiteTests and 42 CommittedProjectionAckTests also passed; P037 MetadataMutationFeatureTests, existing Node Browser and all registered P024–P039 suites ran in the same target. The real-Rust identity rehydration test passed natively. Artifact `ios-simulator-test-results`, ID `11671071768`, digest `sha256:75d417d5d432d3fad2181c9416a3e585b87ed5da5edabe563ea703ea684d1600`, was uploaded with seven-day retention. Apple Rust target, C header and staged static-artifact verification passed.
+
+Native real file-backed SQLite evidence includes production one-page and two-page runs; durable staging before materialization; atomic projection COMMIT before ACK; confirmation COMMIT before the next GET; original staged/applied/token/checkpoint evidence across reopen; application/lease/confirmation rollback and lost-return readback; uncertain same-token recovery; eight-attempt bounds; independent-connection run exclusion; exact Device/Library/credential quarantine; cancellation and logout during awaited operations. These cases exercise the real coordinator and existing production SQLite/services with deterministic scripted network/canonical metadata fixtures, rather than only mocked ViewModels. They do not establish physical power-loss durability.
+
+Exactly two cases skipped in this P040 native run:
+
+- `KeychainCredentialStoreTests.testSimulatorKeychainRoundTripUsesUniqueTestService`: unsigned Simulator process has no Keychain access entitlement.
+- `MutationQueueSQLiteTests.testNativeDataProtectionAttributes`: Simulator filesystem does not expose Data Protection attributes; requested policy is verified separately.
+
+Neither skip is counted as passed. Physical-device validation: **NOT_AVAILABLE**. No hardware-backed Keychain, device filesystem-protection round-trip or physical power-loss durability is claimed.
+
+## Unrelated hosted CI snapshot
+
+At source merge/finalization, exact-feature-head non-iOS workflows included:
+
+- Linux AppImage [38053946921](https://github.com/nghianguyen150612/Synveil/actions/runs/38053946921): FAILURE. Inspected error: `private or temporary build path found in synveil-desktop`, also documented by P039. Duplicate push run 38053941395 was still running at this snapshot.
+- Rust CI 38053946918: queued; duplicate 38053941455: running. No successful conclusion claimed.
+- Linux native packages 38053946906 / 38053941380 and PostgreSQL scheduled-maintenance 38053946875 / 38053941376: running. No successful conclusion claimed.
+- Duplicate iOS push Static Validation 38053941451 and Build 38053941400 passed; duplicate PR Simulator 38053946901 was still running. The required exact-source-head Simulator evidence is the completed successful run linked above.
+
+These workflows are reported independently; no desktop/server changes or success claims were added to P040. GitHub accepted the genuine source squash merge with the four required iOS workflows successful.
 
 ## Deferred work
 
-No startup/background/reachability/timer sync, automatic ACK/replay/outbound drain, conflict resolution, full rebaseline/snapshot bootstrap, file-content caching/transfers/downloads/uploads, PhotoKit/Quick Look/Share Sheet/File Provider or offline-browser replacement. Prompt041 readiness requires genuine hosted merge into ios-app and verified source/tests/manifest presence; it is not asserted before those gates.
+No startup/background/reachability/timer sync, automatic ACK/replay/outbound drain, conflict resolution, full rebaseline/snapshot bootstrap, file-content caching/transfers/downloads/uploads, PhotoKit/Quick Look/Share Sheet/File Provider or offline-browser replacement. Existing durable capacity bounds remain; full bootstrap and future retention policy are deferred. Source delivery is independently confirmed merged/closed into `ios-app`, with all four required exact-head iOS gates successful. The documentation-only finalization preserves the verified source tree. Prompt041 may build on explicit bounded foreground inbound synchronization; full snapshots, scheduling, transfers and complete offline browsing remain deferred.
