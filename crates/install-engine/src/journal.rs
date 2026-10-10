@@ -578,9 +578,41 @@ fn secure_open(options: &mut OpenOptions) {
 }
 
 fn sync_directory(path: &Path) -> Result<(), JournalError> {
-    File::open(path)
-        .and_then(|f| f.sync_all())
-        .map_err(io_error)
+    reject_symlink(path)?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        const FILE_SHARE_READ: u32 = 0x0000_0001;
+        const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+        const FILE_SHARE_DELETE: u32 = 0x0000_0004;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+
+        // Windows requires BACKUP_SEMANTICS to open a directory handle. Keep
+        // OPEN_REPARSE_POINT and verify the handle itself so a path replacement
+        // cannot make the durability flush follow a junction or symbolic link.
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .write(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+        let directory = options.open(path).map_err(io_error)?;
+        let metadata = directory.metadata().map_err(io_error)?;
+        use std::os::windows::fs::MetadataExt;
+        if !metadata.is_dir() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+        }
+        directory.sync_all().map_err(io_error)
+    }
+    #[cfg(not(windows))]
+    {
+        File::open(path)
+            .and_then(|file| file.sync_all())
+            .map_err(io_error)
+    }
 }
 fn create_directory_durable(path: &Path) -> Result<(), JournalError> {
     let parent = path
@@ -609,6 +641,20 @@ fn create_directory_durable(path: &Path) -> Result<(), JournalError> {
             }
         }
         Err(error) => Err(io_error(error)),
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_directory_sync_tests {
+    use super::create_directory_durable;
+
+    #[test]
+    fn directory_flush_uses_a_real_windows_directory_handle() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let root = temporary.path().join("journal-root");
+        create_directory_durable(&root).expect("create and durably flush journal directory");
+        create_directory_durable(&root.join("nested"))
+            .expect("create and durably flush nested journal directory");
     }
 }
 
