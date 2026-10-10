@@ -2185,14 +2185,16 @@ impl BoundControlTransport {
             }
             #[cfg(windows)]
             Self::Windows { server, name } => {
-                let current = server
-                    .take()
+                let pending = server
+                    .as_mut()
                     .ok_or(DesktopControlServerError::ListenerFailed)?;
-                current
+                pending
                     .connect()
                     .await
                     .map_err(|_| DesktopControlServerError::ListenerFailed)?;
-                let connected = current;
+                let connected = server
+                    .take()
+                    .ok_or(DesktopControlServerError::ListenerFailed)?;
                 *server = Some(create_windows_pipe(name, false)?);
                 Ok(AcceptedControlConnection {
                     io: Box::new(connected),
@@ -3908,7 +3910,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn active_socket_is_never_replaced_and_stale_socket_is_recovered() {
-        let root = std::env::temp_dir().join(format!("sv96-active-{}", uuid::Uuid::now_v7()));
+        let root = PathBuf::from("/tmp").join(format!("sv96-active-{}", uuid::Uuid::now_v7()));
         fs::create_dir_all(&root).expect("fixture root");
         let path = root.join(CONTROL_ENDPOINT_DIRECTORY).join("control.sock");
         let endpoint = DesktopControlEndpoint::UnixSocket { path: path.clone() };
@@ -4009,8 +4011,8 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn local_server_and_client_share_one_host_control_surface() {
-        let root =
-            std::env::temp_dir().join(format!("synveil-control-local-{}", uuid::Uuid::now_v7()));
+        let root = PathBuf::from("/tmp")
+            .join(format!("sv96-local-{}", uuid::Uuid::now_v7()));
         fs::create_dir_all(&root).expect("fixture root");
         let state = Arc::new(
             LocalStateStore::open(&LocalStateConfig::new(root.join("state.sqlite3")))

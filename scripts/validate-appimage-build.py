@@ -108,6 +108,23 @@ def main() -> int:
             fail(f"static builder contract missing: {token}")
     if builder.count("--custom-apprun") < 2:
         fail("static builder contract must preserve the reviewed AppRun during deployment and output")
+    for token in (
+        'rm -f "$appdir/apprun-hooks/linuxdeploy-plugin-qt-hook.sh"',
+        'rmdir "$appdir/apprun-hooks"',
+        'rm -f "$appdir/AppRun.wrapped"',
+        'install -m0755 "$SCRIPT_DIR/appimage/AppRun" "$appdir/AppRun"',
+        'cmp -s "$SCRIPT_DIR/appimage/AppRun" "$appdir/AppRun"',
+    ):
+        if token not in builder:
+            fail(f"static builder contract does not preserve the reviewed AppRun: {token}")
+    hook_cleanup = builder.index('rm -f "$appdir/apprun-hooks/linuxdeploy-plugin-qt-hook.sh"')
+    reviewed_restore = builder.index(
+        'install -m0755 "$SCRIPT_DIR/appimage/AppRun" "$appdir/AppRun"', hook_cleanup
+    )
+    output_pass = builder.index("--output appimage")
+    post_output_compare = builder.index('cmp -s "$SCRIPT_DIR/appimage/AppRun" "$appdir/AppRun"')
+    if not hook_cleanup < reviewed_restore < output_pass < post_output_compare:
+        fail("AppRun hook cleanup, restore, and post-output verification must remain ordered")
     print("APPIMAGE static/source contract: PASS")
     if args.appdir:
         validate_appdir(args.appdir.resolve()); print("AppDir inspection: PASS")

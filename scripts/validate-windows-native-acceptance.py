@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/windows-native-acceptance.yml"
 DOC = ROOT / "docs/v0.2/WINDOWS_NATIVE_ACCEPTANCE.md"
 MANIFEST = ROOT / "docs/v0.2/PROMPT028_MANIFEST.md"
+MSVC_TOOLCHAIN = ROOT / "scripts/select-msvc-linker.ps1"
 
 
 def require(condition: bool, message: str) -> None:
@@ -16,6 +17,7 @@ def require(condition: bool, message: str) -> None:
 def main() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
     docs = DOC.read_text(encoding="utf-8") + MANIFEST.read_text(encoding="utf-8")
+    msvc_toolchain = MSVC_TOOLCHAIN.read_text(encoding="utf-8")
     for token in (
         "windows-2025", "build-windows-candidate", "standard-user-native",
         "SynveilSetup.exe", "p028-candidate.json", "Get-FileHash",
@@ -23,8 +25,14 @@ def main() -> None:
         "requestedExecutionLevel", "asInvoker", "BLOCKED_BY_ENVIRONMENT",
         "interactive_gui='BLOCKED'", "real_logon='BLOCKED'", "named_pipe='BLOCKED'",
         "if: always()", "timeout-minutes", "diagnostics_redacted",
+        "select-msvc-linker.ps1",
     ):
         require(token in workflow, f"missing checkpoint wiring: {token}")
+    require("CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" in msvc_toolchain and
+            "VCToolsRedistDir" in msvc_toolchain and "SYNVEIL_MSVC_CRT_DIR" in msvc_toolchain,
+            "native build does not select the authenticated MSVC linker and runtime")
+    require(workflow.index("select-msvc-linker.ps1") < workflow.index("Build runtime once"),
+            "authenticated linker must be selected before the native candidate compile")
     require(workflow.count("build-windows-installer.ps1") == 2,
             "candidate must be built exactly twice only for reproducibility")
     require("actions/download-artifact@v4" in workflow and

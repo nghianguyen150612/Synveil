@@ -28,6 +28,9 @@ jobs:
           version: 6.8.3
           arch: win64_msvc2022_64
           cache: true
+      - name: Select and authenticate the MSVC linker and runtime
+        shell: pwsh
+        run: ./scripts/select-msvc-linker.ps1
       - name: Validate checkpoint wiring
         shell: bash
         run: |

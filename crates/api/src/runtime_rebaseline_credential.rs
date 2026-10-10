@@ -204,7 +204,7 @@ fn parse_key(value: &str) -> Result<RebaselineTokenKey, RuntimeRebaselineCredent
     RebaselineTokenKey::from_hex(value).map_err(Into::into)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 #[allow(unsafe_code)]
 mod tests {
     use std::{

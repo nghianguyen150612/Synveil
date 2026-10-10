@@ -27,36 +27,7 @@ jobs:
           cache: true
       - name: Select and authenticate the MSVC linker
         shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if ([string]::IsNullOrWhiteSpace($env:VCToolsInstallDir)) {
-            throw 'MSVC_LINKER_SELECTION_FAILURE: VCToolsInstallDir was not exported by the developer environment'
-          }
-          $linker = [IO.Path]::GetFullPath((Join-Path $env:VCToolsInstallDir 'bin\Hostx64\x64\link.exe'))
-          $toolsRoot = [IO.Path]::GetFullPath($env:VCToolsInstallDir).TrimEnd('\') + '\'
-          if (!$linker.StartsWith($toolsRoot, [StringComparison]::OrdinalIgnoreCase) -or !(Test-Path -LiteralPath $linker -PathType Leaf)) {
-            throw 'MSVC_LINKER_SELECTION_FAILURE: the selected linker is outside the active Visual C++ tools root or missing'
-          }
-          $linkerFile = Get-Item -LiteralPath $linker
-          if ($null -ne $linkerFile.LinkType) {
-            throw 'MSVC_LINKER_SELECTION_FAILURE: the selected linker must be a regular, non-reparse-point file'
-          }
-          $identity = [Diagnostics.FileVersionInfo]::GetVersionInfo($linker)
-          if ($identity.CompanyName -notmatch '^Microsoft Corporation$' -or $identity.OriginalFilename -notmatch '^LINK\.EXE$') {
-            throw "MSVC_LINKER_SELECTION_FAILURE: unexpected linker identity company='$($identity.CompanyName)' original='$($identity.OriginalFilename)'"
-          }
-          $bytes = [IO.File]::ReadAllBytes($linker)
-          if ($bytes.Length -lt 512 -or $bytes[0] -ne 0x4d -or $bytes[1] -ne 0x5a) {
-            throw 'MSVC_LINKER_SELECTION_FAILURE: the selected linker is not a PE executable'
-          }
-          $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
-          if ($peOffset -lt 0 -or $peOffset + 6 -ge $bytes.Length -or [BitConverter]::ToUInt32($bytes, $peOffset) -ne 0x00004550 -or [BitConverter]::ToUInt16($bytes, $peOffset + 4) -ne 0x8664) {
-            throw 'MSVC_LINKER_SELECTION_FAILURE: the selected linker is not an AMD64 PE executable'
-          }
-          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "Authenticated MSVC linker: $linker"
-          Write-Host "Version: $($identity.FileVersion)"
-          Write-Host "SHA-256: $((Get-FileHash -LiteralPath $linker -Algorithm SHA256).Hash.ToLowerInvariant())"
+        run: ./scripts/select-msvc-linker.ps1
       - name: Validate reviewed installer sources
         shell: bash
         run: |
