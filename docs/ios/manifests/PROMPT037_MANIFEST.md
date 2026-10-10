@@ -7,10 +7,11 @@
 - Feature branch: `ios/p037-metadata-mutation-ux`.
 - Verified starting SHA: `a7c9a875d083056c95620bc38fb116e241b3a1a4`.
 - Bootstrap: fetched `origin/ios-app`, verified the P036 SHA is an ancestor, and created the feature branch from that fetched integration ref. The starting worktree was clean. The initial checkout at `a560a40c8f2fe5b91db27c1b63fa0b0ab87173bc` was not used as the implementation baseline.
-- Final feature SHA: **pending commit**.
-- Feature PR targeting `ios-app`: **pending publication**.
-- Exact-head hosted iOS CI: **pending feature SHA and GitHub Actions run**.
-- Hosted merge status and resulting `ios-app` SHA: **pending hosted evidence**.
+- Final feature SHA: `2f7957b2d9cbbbbc6134a5bef8825e9384f17392`.
+- Feature PR targeting `ios-app`: [#103](https://github.com/nghianguyen150612/Synveil/pull/103). GitHub reports `merged=true`, `state=closed`, merged at `2026-10-10T04:47:36Z`.
+- Squash merge commit and resulting `ios-app` SHA for the P037 feature: `9e0ae71eccd637c8fb68a7f412acb749d51aeb97`.
+- The P037 service, UI, XCTest source, and manifest were confirmed present on fetched `origin/ios-app` at that SHA.
+- Exact-head hosted iOS CI on `2f7957b2d9cbbbbc6134a5bef8825e9384f17392`: iOS Static Validation [run 38024055166](https://github.com/nghianguyen150612/Synveil/actions/runs/38024055166) passed; iOS Build [run 38024055148](https://github.com/nghianguyen150612/Synveil/actions/runs/38024055148) passed; iOS Simulator Tests [run 38024055302](https://github.com/nghianguyen150612/Synveil/actions/runs/38024055302) passed; dispatched iOS Rust Apple Build [run 38024059058](https://github.com/nghianguyen150612/Synveil/actions/runs/38024059058) passed.
 
 ## Scope and references
 
@@ -116,20 +117,20 @@ Modified:
 - `swift-format lint --recursive --strict clients/ios`: passed with Swift 6.1.3 in the Linux Docker toolchain on 2026-10-10.
 - `find clients/ios -name "*.swift" -print0 | xargs -0 swiftc -frontend -parse`: passed with Swift 6.1.3 in the Linux Docker toolchain on 2026-10-10. This is syntax parsing, not SwiftUI typechecking.
 - Host `swiftc`/`xcodebuild` and Apple SDKs are unavailable. SwiftUI typechecking and XCTest have not been claimed locally.
-- Native Simulator passed/skipped/failed totals: **pending exact-head hosted iOS Simulator Tests workflow**.
-- Real SQLite evidence: XCTest sources use the existing SQLite-backed queue fixture. Native execution is **pending hosted macOS Simulator CI**.
-- Keychain round-trip and Data Protection Simulator skips: P036 documented these two entitlement/filesystem-dependent checks. P037-specific hosted results are pending and will be recorded from the exact-head run.
+- Native Simulator result on the exact feature SHA: **987 passed, 2 skipped, 0 failed** (989 total) on the iPhone 17 Pro / iOS 26.5 hosted Simulator. The result bundle says `Passed`; see [run 38024055302](https://github.com/nghianguyen150612/Synveil/actions/runs/38024055302).
+- The two skips were `KeychainCredentialStoreTests.testSimulatorKeychainRoundTripUsesUniqueTestService` (the unsigned Simulator test process has no Keychain access entitlement) and `MutationQueueSQLiteTests.testNativeDataProtectionAttributes` (the Simulator filesystem does not expose Data Protection attributes; policy was verified separately and physical-device round-trip remains required).
+- Real SQLite evidence: the hosted XCTest run includes the P037 SwiftUI composition test using the existing SQLite-backed queue fixture, verifies durable enqueue state before Send, and then exercises the explicit APPLIED drain path. The exact-head native test suite passed. This is not physical power-loss durability evidence.
 - Physical-device validation: `NOT_AVAILABLE` in this environment; no device durability or hardware Keychain claims.
-- Exact-head hosted iOS Static Validation, iOS Build, iOS Simulator Tests and applicable iOS Rust Apple Build: **pending**.
+- Exact-head hosted results: iOS Static Validation passed (run `38024055166`); iOS Build passed (run `38024055148`); iOS Simulator Tests passed, 987/2/0 (run `38024055302`); dispatched iOS Rust Apple Build passed (run `38024059058`).
+- Exact-head unrelated workflow status observed after the feature PR merge: Linux AppImage failed (run `38024055146`); Rust CI had failures in its Windows and Linux test jobs, Windows desktop UI and web quality jobs (run `38024055263`). PostgreSQL 17 and Linux native package jobs were still running when this manifest was finalized; none is an iOS P037 gate. The successful P037 iOS evidence above is recorded independently. No P037 fix was made for those unrelated areas.
 
 ## Finalization fields
 
-- Final feature SHA: **pending commit**.
-- Feature PR number and URL (`ios-app` base): **pending publication**.
-- PR ready status: **pending hosted review state**.
-- Exact-head workflow run IDs and results: **pending hosted evidence**.
-- Hosted merge state (`merged=true`, `state=closed`): **pending**.
-- Resulting hosted `ios-app` SHA: **pending merge verification**.
-- Feature sources, tests and this manifest on integrated `ios-app`: **pending merge verification**.
-- Unrelated CI failures: **not assessed until hosted workflows run**.
+- Final feature SHA: `2f7957b2d9cbbbbc6134a5bef8825e9384f17392`.
+- Feature PR: [#103](https://github.com/nghianguyen150612/Synveil/pull/103), base `ios-app`; marked ready for review before squash merge.
+- Exact-head workflow run IDs: iOS Static Validation `38024055166` success; iOS Build `38024055148` success; iOS Simulator Tests `38024055302` success (987 passed, 2 skipped, 0 failed); iOS Rust Apple Build `38024059058` success.
+- Hosted merge state verified from GitHub REST: `merged=true`, `state=closed`, `merged_at=2026-10-10T04:47:36Z`.
+- Resulting hosted `ios-app` SHA for P037 integration: `9e0ae71eccd637c8fb68a7f412acb749d51aeb97`.
+- Feature sources, tests and this manifest were verified on integrated `ios-app` at the resulting SHA. This manifest’s post-merge evidence finalization is submitted separately so the feature merge record remains immutable.
+- Unrelated hosted workflow status is listed in Tests and validation evidence; broad Rust, AppImage, desktop, web, PostgreSQL and packaging jobs are outside the P037 iOS validation scope.
 - Remaining limitations: no general Trash listing; Restore is APPLIED-operation and precondition gated; no offline persistent Node cache; no background mutation execution; Linux cannot execute Swift/XCTest/Simulator; physical-device behavior remains unverified.
