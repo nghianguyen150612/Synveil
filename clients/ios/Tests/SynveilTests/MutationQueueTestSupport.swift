@@ -466,7 +466,7 @@ actor QueueDelayedStorage: MutationQueueStorageProtocol {
             failNextRecordReadAfterEnqueue = false
             throw MutationQueueFailure.commitAcknowledgementLost
         }
-        try await base.record(scope: scope, id: id)
+        return try await base.record(scope: scope, id: id)
     }
     func recoverInterruptedOperations() async throws -> Int {
         try await base.recoverInterruptedOperations()
