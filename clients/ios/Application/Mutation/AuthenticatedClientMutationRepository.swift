@@ -11,8 +11,8 @@ protocol AuthenticatedClientMutationRequestProviderProtocol {
     func handle(_ failure: LibraryFailure, scope: LibraryRequestScope)
 }
 
-/// A future durable engine must verify persisted identity/bytes, authoritative sync base and
-/// recovery ownership before each attempt. P034 supplies no production implementation.
+/// A lease-bound durable authorizer verifies identity, bytes, base and current ownership before
+/// each attempt. Nil remains fail-closed for callers without queue-owned authority.
 @MainActor
 protocol ClientMutationPreparationAuthorizerProtocol {
     func authorizePersistedSubmission(_ mutation: PreparedClientMutation) async throws
@@ -22,6 +22,7 @@ protocol ClientMutationPreparationAuthorizerProtocol {
 final class AuthenticatedClientMutationRepository: ClientMutationRepositoryProtocol {
     private let provider: any AuthenticatedClientMutationRequestProviderProtocol
     private let decoder: ClientMutationResponseDecoder
+    private(set) var didDispatch = false
     private let authorizer: (any ClientMutationPreparationAuthorizerProtocol)?
 
     init(
@@ -49,6 +50,7 @@ final class AuthenticatedClientMutationRepository: ClientMutationRepositoryProto
             try Task.checkCancellation()
             let response = try await provider.submitMutation(mutation, scope: scope) {
                 dispatched = true
+                self.didDispatch = true
             }
             let result = try await decoder.decode(response, for: mutation)
             // Rust, HTTP and Keychain all suspend. Fence every terminal result, including recovery.

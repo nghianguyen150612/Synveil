@@ -4,8 +4,8 @@ import Foundation
 /// the persisted attempt ID is evidence, never sufficient authority by itself.
 @MainActor
 final class MutationSubmissionLease {
-    fileprivate let mutation: PreparedClientMutation
-    fileprivate let session: LibraryRequestScope
+    let mutation: PreparedClientMutation
+    let session: LibraryRequestScope
     fileprivate let owner: String
     fileprivate let attemptId: String
     fileprivate init(
@@ -226,8 +226,26 @@ final class DurableMutationQueue: DurableMutationQueueProtocol {
         }
     }
 
+    func validateExecutionSession(_ session: LibraryRequestScope) async throws {
+        try await fence(session)
+    }
+
+    /// Only the explicit reconciliation boundary calls this method. Normal drains use acquireAttempt.
+    func acquireRecoveryAttempt(scope: ClientMutationScope, mutationId: ClientMutationId)
+        async throws
+        -> MutationSubmissionLease
+    {
+        try await acquire(scope: scope, mutationId: mutationId, recovery: true)
+    }
+
     func acquireAttempt(scope: ClientMutationScope, mutationId: ClientMutationId) async throws
         -> MutationSubmissionLease
+    {
+        try await acquire(scope: scope, mutationId: mutationId, recovery: false)
+    }
+
+    private func acquire(scope: ClientMutationScope, mutationId: ClientMutationId, recovery: Bool)
+        async throws -> MutationSubmissionLease
     {
         let session = try await capture(scope: scope)
         let base = try await verifiedBase(scope: scope)
@@ -238,14 +256,39 @@ final class DurableMutationQueue: DurableMutationQueueProtocol {
         guard originalRecord.mutation.base == base else {
             throw MutationQueueFailure.reconciliationRequired
         }
+        if recovery {
+            guard originalRecord.state == .outcomeUnknown else {
+                throw MutationQueueFailure.invalidTransition
+            }
+            let history = try await store.attemptHistory(scope: scope, id: mutationId.rawValue)
+            for previous in history {
+                guard UUID(uuidString: previous.attempt.id) != nil,
+                    UUID(uuidString: previous.attempt.owner) != nil,
+                    previous.attempt.startedAt.timeIntervalSince1970.isFinite
+                else { throw MutationQueueFailure.malformedRecord }
+                let evidence = try JSONDecoder().decode(
+                    MutationOutcomeEvidence.self, from: previous.evidence)
+                try await codec.validateEvidence(
+                    evidence, state: .outcomeUnknown, mutation: originalRecord.mutation)
+            }
+        }
         try await fence(session)
         let attemptId = UUID().uuidString
         let capturedOwner = owner
-        let row = try await store.beginAttempt(
-            scope: scope, id: mutationId.rawValue, owner: capturedOwner, attemptId: attemptId)
+        let row: StoredMutationRecord
+        if recovery {
+            row = try await store.beginRecoveryAttempt(
+                scope: scope, id: mutationId.rawValue, owner: capturedOwner, attemptId: attemptId)
+        } else {
+            row = try await store.beginAttempt(
+                scope: scope, id: mutationId.rawValue, owner: capturedOwner, attemptId: attemptId)
+        }
         let record: MutationQueueRecord
         do {
             record = try await codec.rehydrate(row)
+            guard record.mutation == originalRecord.mutation else {
+                throw MutationQueueFailure.malformedRecord
+            }
             try await fence(session)
         } catch {
             if Task.isCancelled || error is CancellationError
@@ -282,12 +325,16 @@ final class DurableMutationQueue: DurableMutationQueueProtocol {
         guard lease.owner == owner else { throw MutationQueueFailure.ownershipRequired }
     }
 
-    func finish(_ lease: MutationSubmissionLease, result: ClientMutationSubmissionResult)
+    func finish(
+        _ lease: MutationSubmissionLease, result: ClientMutationSubmissionResult,
+        preDispatchFailure: Bool = false
+    )
         async throws
     {
         guard lease.owner == owner else { throw MutationQueueFailure.ownershipRequired }
         try await fence(lease.session)
-        let (state, evidence) = try await codec.evidence(for: result, mutation: lease.mutation)
+        let (state, evidence) = try await codec.evidence(
+            for: result, mutation: lease.mutation, preDispatchFailure: preDispatchFailure)
         try await fence(lease.session)
         guard lease.owner == owner else { throw MutationQueueFailure.ownershipRequired }
         try await store.finishAttempt(
@@ -311,8 +358,8 @@ final class DurableMutationQueue: DurableMutationQueueProtocol {
     }
 }
 
-/// Bound to one lease, consumes its durable dispatch authorization at most once. Production
-/// repository composition deliberately leaves this uninstalled until P036 owns transport/results.
+/// Bound to one lease, consumes its durable dispatch authorization at most once. Installed only
+/// in a coordinator-owned per-attempt repository; the global repository remains fail-closed.
 @MainActor
 final class DurableMutationAttemptAuthorizer: ClientMutationPreparationAuthorizerProtocol {
     private let queue: DurableMutationQueue

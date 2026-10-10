@@ -282,19 +282,25 @@ actor QueueTransport: HTTPTransportProtocol {
     private var response: HTTPTransportResponse
     private var error: SynveilTransportError?
     private var sent: [HTTPTransportRequest] = []
+    private var script: [HTTPTransportResponse] = []
     private var gate: QueueGate?
     init(_ response: HTTPTransportResponse) { self.response = response }
     func send(_ request: HTTPTransportRequest) async throws -> HTTPTransportResponse {
         sent.append(request)
+        let scripted = script.isEmpty ? nil : script.removeFirst()
         if let gate {
             self.gate = nil
             await gate.arrive()
         }
         if let error { throw error }
-        return response
+        return scripted ?? response
     }
     func set(_ response: HTTPTransportResponse) {
         self.response = response
+        error = nil
+    }
+    func setSequence(_ responses: [HTTPTransportResponse]) {
+        script = responses
         error = nil
     }
     func fail(_ error: SynveilTransportError) { self.error = error }
@@ -406,6 +412,9 @@ func queueAssertFailure<T>(
 struct QueueDelayedStorage: MutationQueueStorageProtocol {
     let base: MutationQueueSQLiteStore
     let gate: QueueGate
+    var delayResult = false
+    var delayLease = false
+    var resultBeforeCommit = false
     func bindSession(scope: ClientMutationScope, credentialId: String) async throws {
         try await base.bindSession(scope: scope, credentialId: credentialId)
     }
@@ -425,7 +434,7 @@ struct QueueDelayedStorage: MutationQueueStorageProtocol {
         StoredMutationRecord, Bool
     ) {
         let committed = try await base.enqueue(mutation, payload: payload)
-        await gate.arrive()
+        if !delayResult { await gate.arrive() }
         return committed
     }
     func records(scope: ClientMutationScope, limit: Int) async throws -> [StoredMutationRecord] {
@@ -440,8 +449,22 @@ struct QueueDelayedStorage: MutationQueueStorageProtocol {
     func beginAttempt(scope: ClientMutationScope, id: String, owner: String, attemptId: String)
         async throws -> StoredMutationRecord
     {
-        try await base.beginAttempt(scope: scope, id: id, owner: owner, attemptId: attemptId)
+        let committed = try await base.beginAttempt(
+            scope: scope, id: id, owner: owner, attemptId: attemptId)
+        if delayLease { await gate.arrive() }
+        return committed
     }
+    func beginRecoveryAttempt(
+        scope: ClientMutationScope, id: String, owner: String, attemptId: String
+    )
+        async throws -> StoredMutationRecord
+    {
+        try await base.beginRecoveryAttempt(
+            scope: scope, id: id, owner: owner, attemptId: attemptId)
+    }
+    func attemptHistory(scope: ClientMutationScope, id: String) async throws
+        -> [MutationHistoricalAttempt]
+    { try await base.attemptHistory(scope: scope, id: id) }
     func authorizeAttempt(_ mutation: PreparedClientMutation, owner: String, attemptId: String)
         async throws
     { try await base.authorizeAttempt(mutation, owner: owner, attemptId: attemptId) }
@@ -449,8 +472,10 @@ struct QueueDelayedStorage: MutationQueueStorageProtocol {
         scope: ClientMutationScope, id: String, owner: String, attemptId: String,
         state: MutationQueueState, evidence: Data
     ) async throws {
+        if delayResult && resultBeforeCommit { await gate.arrive() }
         try await base.finishAttempt(
             scope: scope, id: id, owner: owner, attemptId: attemptId, state: state,
             evidence: evidence)
+        if delayResult && !resultBeforeCommit { await gate.arrive() }
     }
 }
