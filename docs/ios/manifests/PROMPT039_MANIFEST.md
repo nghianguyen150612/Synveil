@@ -167,7 +167,7 @@ Source delivery is independently confirmed merged/closed into ios-app, with all 
 
 At source merge/finalization, exact-feature-head non-iOS workflows included:
 
-- Linux AppImage [38038824923](https://github.com/nghianguyen150612/Synveil/actions/runs/38038824923): FAILURE. Inspected error: private or temporary build path found in synveil-desktop, also documented by P038. Duplicate PR run was still running at the snapshot.
+- Linux AppImage [38038824923](https://github.com/nghianguyen150612/Synveil/actions/runs/38038824923): FAILURE. Inspected error: private or temporary build path found in synveil-desktop, also documented by P038. Duplicate PR run [38038848525](https://github.com/nghianguyen150612/Synveil/actions/runs/38038848525) also reports FAILURE at the snapshot.
 - Rust CI [38038824886](https://github.com/nghianguyen150612/Synveil/actions/runs/38038824886) and duplicate PR run 38038848567: queued at the snapshot; no successful conclusion claimed.
 - PostgreSQL 17 scheduled-maintenance runs 38038824884 and 38038848499 and Linux DEB/RPM runs 38038824949 and 38038848528: still running at the snapshot; no successful conclusion claimed.
 
