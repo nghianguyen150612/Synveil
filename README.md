@@ -28,6 +28,10 @@ and durable local state; `synveil-desktop` is the Qt UI/tray/control surface.
 Vietnamese documentation is available under [`docs/vi`](docs/vi/PRODUCT.md).
 The complete documentation index is [`docs/README.md`](docs/README.md).
 
+## Upcoming v0.2 preview
+
+v0.2 is not released; v0.1.0 remains the current released product. Continue to use the v0.1 guides above for installations today. The [English v0.2 preview guides](docs/en/v0.2/README.md) and [Vietnamese v0.2 preview guides](docs/vi/v0.2/README.md) describe planned installation and distribution limits. They do not authorize installing CI artifacts or claim native qualification.
+
 ## Workspace components
 
 | Component | Role |
