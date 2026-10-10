@@ -1,9 +1,9 @@
 use std::{borrow::Cow, fs};
 
 use sqlx::{
-    SqlitePool, SqlitePoolOptions,
+    SqlitePool,
     migrate::{Migration, MigrationType, Migrator},
-    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous},
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
 
 use crate::{
