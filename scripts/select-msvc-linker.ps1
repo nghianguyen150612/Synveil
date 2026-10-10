@@ -36,11 +36,24 @@ $redistRoot = [IO.Path]::GetFullPath($env:VCToolsRedistDir).TrimEnd('\')
 if ([IO.Path]::GetFileName($redistRoot) -cne $env:VCToolsVersion) {
   throw 'MSVC_CRT_SELECTION_FAILURE: the active redistributable version does not match VCToolsVersion'
 }
-$crtDirectory = [IO.Path]::GetFullPath((Join-Path $redistRoot 'x64\Microsoft.VC143.CRT'))
+$x64RedistRoot = Join-Path $redistRoot 'x64'
+if (!(Test-Path -LiteralPath $x64RedistRoot -PathType Container)) {
+  throw 'MSVC_CRT_SELECTION_FAILURE: the active x64 redistributable directory is missing'
+}
+$crtCandidates = @(Get-ChildItem -LiteralPath $x64RedistRoot -Directory -Filter 'Microsoft.VC*.CRT' |
+  Where-Object {
+    (Test-Path -LiteralPath (Join-Path $_.FullName 'msvcp140.dll') -PathType Leaf) -and
+    (Test-Path -LiteralPath (Join-Path $_.FullName 'vcruntime140.dll') -PathType Leaf)
+  })
+if ($crtCandidates.Count -ne 1) {
+  $candidateNames = ($crtCandidates | ForEach-Object { $_.Name }) -join ', '
+  throw "MSVC_CRT_SELECTION_FAILURE: expected one x64 MSVC CRT directory under the active redist, found $($crtCandidates.Count): $candidateNames"
+}
+$crtDirectory = [IO.Path]::GetFullPath($crtCandidates[0].FullName)
 $crtRoot = $redistRoot.TrimEnd('\') + '\'
 if (!$crtDirectory.StartsWith($crtRoot, [StringComparison]::OrdinalIgnoreCase) -or
     !(Test-Path -LiteralPath $crtDirectory -PathType Container)) {
-  throw 'MSVC_CRT_SELECTION_FAILURE: the active x64 VC143 redistributable directory is missing or outside VCToolsRedistDir'
+  throw 'MSVC_CRT_SELECTION_FAILURE: the selected x64 redistributable directory is outside VCToolsRedistDir'
 }
 $crtDirectoryItem = Get-Item -LiteralPath $crtDirectory
 if ($null -ne $crtDirectoryItem.LinkType) {

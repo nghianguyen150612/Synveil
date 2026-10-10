@@ -136,12 +136,12 @@ def main() -> int:
         require(evidence in workflow or evidence in per_user_test, f"P024 hosted runtime evidence: {evidence}")
     require("select-msvc-linker.ps1" in workflow and "VCToolsInstallDir" in msvc_toolchain and "CompanyName" in msvc_toolchain and "OriginalFilename" in msvc_toolchain, "authenticated MSVC linker selection")
     require("LinkType" in msvc_toolchain and "0x00004550" in msvc_toolchain and "0x8664" in msvc_toolchain, "regular AMD64 PE linker identity")
-    require("VCToolsRedistDir" in msvc_toolchain and "VCToolsVersion" in msvc_toolchain and "SYNVEIL_MSVC_CRT_DIR" in msvc_toolchain, "authenticated exact MSVC runtime selection")
+    require("VCToolsRedistDir" in msvc_toolchain and "VCToolsVersion" in msvc_toolchain and "SYNVEIL_MSVC_CRT_DIR" in msvc_toolchain and "Microsoft.VC*.CRT" in msvc_toolchain and "$crtCandidates.Count -ne 1" in msvc_toolchain, "authenticated exact MSVC runtime selection")
     require("$banner" not in workflow and "& $linker '/?'" not in workflow, "linker identity does not depend on localized help output")
     require("CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" in reproducible and '"${rustc_linker_args[@]}"' in reproducible, "direct rustc uses selected MSVC linker")
     require("CARGO_ENCODED_RUSTFLAGS" in reproducible and "$'\\x1f'" in reproducible, "lossless Cargo flag transport")
     require('rustc "${SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS[@]}" "${rustc_linker_args[@]}"' in reproducible, "direct rustc receives discrete remaps")
-    for runtime_rule in ("--compiler-runtime", "SYNVEIL_MSVC_CRT_DIR", "Microsoft.VC143.CRT", "MSVCP140", "--qmldir", "platforms/qwindows.dll", "QmlImports=qml", "Qml2Imports=qml", "is_system_dll", "missing non-system import", "development directory leaked", 'rm -rf -- "$STAGING_DIR"'):
+    for runtime_rule in ("--compiler-runtime", "SYNVEIL_MSVC_CRT_DIR", "VCToolsRedistDir/x64/%s", "MSVCP140", "--qmldir", "platforms/qwindows.dll", "QmlImports=qml", "Qml2Imports=qml", "is_system_dll", "missing non-system import", "development directory leaked", 'rm -rf -- "$STAGING_DIR"'):
         require(runtime_rule in package, f"authoritative runtime rule: {runtime_rule}")
     require(package.rindex("copy_missing_msvc_runtime_imports") < package.index("# Audit every shipped PE's imports"),
             "authenticated CRT closure must be copied before the complete import audit")
