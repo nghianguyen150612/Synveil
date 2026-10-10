@@ -407,8 +407,9 @@ copy_missing_msvc_runtime_imports() {
     # reproduced Windows runner. Add only imported MSVC runtime DLLs from the
     # exact active redist directory; the closed import audit below still
     # rejects every unresolved non-system dependency.
-    local pass changed pe_file imported runtime_file upper
-    for pass in 1 2 3 4; do
+    local changed pe_file imported runtime_file upper
+    # The loop counter is intentionally unused; only the bounded pass count matters.
+    for _ in 1 2 3 4; do
         changed=0
         while IFS= read -r imported; do
             [[ -n "$imported" ]] || continue
