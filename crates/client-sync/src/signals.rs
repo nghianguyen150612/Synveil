@@ -15,7 +15,6 @@ use crate::{
     ClientSyncError, DeviceEnrollmentRecord, EnrollmentCredentials, LocalStateStore,
     MAX_SYNC_RUNTIME_LIBRARIES, OutboundIntent, OutboundIntentUpsertResult, ServerProfileId,
     SyncRuntimeIdentity, SyncRuntimeWakeReason, SyncRuntimeWakeResult, SyncWakeNotifier,
-    test_support::remove_dir_all_bounded,
 };
 
 /// The durable half of a producer operation that may be followed by a wake.
@@ -333,7 +332,7 @@ mod tests {
     use super::*;
     use crate::{
         LocalFingerprint, LocalNode, LocalStateConfig, ManagedRelativePath, ReplicaScope,
-        RootBindingId, ServerProfile,
+        RootBindingId, ServerProfile, test_support::remove_dir_all_bounded,
     };
 
     struct RecordingNotifier {
