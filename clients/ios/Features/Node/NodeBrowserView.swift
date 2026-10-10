@@ -747,7 +747,8 @@ struct NodeBrowserView: View {
                     .accessibilityHint(
                         "Opens read-only file information. File content is not available here."))
         } else {
-            let blockedByRecovery = node.kind == .directory
+            let blockedByRecovery =
+                node.kind == .directory
                 && viewModel.contentSource == .cached
                 && (viewModel.cachedPresentation?.knowledge == .staleKnown
                     || viewModel.cachedPresentation?.projection.completeness == .rebaselineRequired)
