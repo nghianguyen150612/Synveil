@@ -198,6 +198,13 @@ def main() -> int:
     require("Assert-NoSecretLikeBytes" in build and "runtime-payload.bin" in build and
             "secret-like marker '$marker' in $Label" in build,
             "P044 synthetic random payload must be the only fixture-only secret scan exclusion")
+    private_path_scan = build[build.index("function Assert-NoPrivateSourcePath") :
+                              build.index("function Get-WorkspaceVersion")]
+    require("[Text.Encoding]::ASCII.GetString($Content)" in private_path_scan and
+            "[Text.Encoding]::Unicode.GetString($Content)" in private_path_scan and
+            "Assert-NoPrivateSourcePath $bytes $repo" in build and
+            build.index("Assert-NoPrivateSourcePath $bytes $repo") > build.index("if (!$LifecycleFixtureVersion)"),
+            "private source path scan must inspect every compiled Setup, including P044 fixtures")
     require("Build isolated lifecycle Setup fixtures" in workflow and "OlderFixtureSetup" in workflow,
             "hosted standard-user lifecycle execution")
     with tempfile.TemporaryDirectory() as directory:

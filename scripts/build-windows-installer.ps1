@@ -39,6 +39,13 @@ function Assert-NoSecretLikeBytes([byte[]]$Content, [string]$Label) {
         }
     }
 }
+function Assert-NoPrivateSourcePath([byte[]]$Content, [string]$RepositoryRoot) {
+    $ascii = [Text.Encoding]::ASCII.GetString($Content)
+    $utf16 = [Text.Encoding]::Unicode.GetString($Content)
+    if ($ascii.Contains($RepositoryRoot) -or $utf16.Contains($RepositoryRoot)) {
+        Fail "INSTALLER_VERIFY_FAILURE" "private source path leaked into Setup"
+    }
+}
 function Get-WorkspaceVersion([string]$CargoToml) {
     $text = [IO.File]::ReadAllText($CargoToml)
     $match = [regex]::Match($text, '(?ms)^\[workspace\.package\]\s*.*?^version\s*=\s*"([^"\r\n]+)"')
@@ -242,7 +249,7 @@ try {
             Assert-NoSecretLikeBytes ([IO.File]::ReadAllBytes($payloadFile.FullName)) "fixture payload $relative"
         }
     }
-    if ($ascii.Contains($repo) -or $utf16.Contains($repo)) { Fail "INSTALLER_VERIFY_FAILURE" "private source path leaked into Setup" }
+    Assert-NoPrivateSourcePath $bytes $repo
     if (!$LifecycleFixtureVersion) {
         Invoke-Checked 'python' @((Join-Path $repo 'scripts/release_manifest.py'),'create','--artifact-root',$output,'--product-version',$version.Product,'--source-commit',$revision,'--output',(Join-Path $output 'SYNVEIL-RELEASE-MANIFEST.json'),'--artifact','{"id":"windows-x86_64-installer","artifact_type":"windows_installer","filename":"SynveilSetup.exe","platform":"windows","architecture":"x86_64","role":"primary_installer","components":["synveil-desktop","synveil-client"]}') "INSTALLER_VERIFY_FAILURE"
         Invoke-Checked 'python' @((Join-Path $repo 'scripts/release_manifest.py'),'validate','--artifact-root',$output,(Join-Path $output 'SYNVEIL-RELEASE-MANIFEST.json')) "INSTALLER_VERIFY_FAILURE"
