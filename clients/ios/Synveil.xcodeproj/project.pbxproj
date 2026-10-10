@@ -117,6 +117,14 @@
 		B10000012C0000000000002C /* SyncCheckpointTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000002C /* SyncCheckpointTests.swift */; };
 		B10000012C0000000000002D /* DurableMutationQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000002D /* DurableMutationQueueTests.swift */; };
 		B10000012C0000000000002E /* MutationDrainCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000002E /* MutationDrainCoordinatorTests.swift */; };
+		A893D82F975D12132C1A3E46 /* SyncFeedModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 265EE87233579198D3DA626B /* SyncFeedModels.swift */; };
+		2A84DAF617D2CE3541C8A1F4 /* SyncFeedResponseDTO.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56D2AF75CC46AC4FB8233D9B /* SyncFeedResponseDTO.swift */; };
+		02C472AB88F669F505A8F5F6 /* SyncFeedService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A36E2B84BD8A0E0672444A6 /* SyncFeedService.swift */; };
+		4369C59B22E6BC7681FCF978 /* SyncAckService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0423AAA62F4F6BC6A7BBA61D /* SyncAckService.swift */; };
+		1E657CCF51E5E6BDDA7CBF01 /* SyncFeedTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D34F3CB4D50E8EE1331253A /* SyncFeedTestSupport.swift */; };
+		BC8B716A1238DA8A95F897C2 /* SyncFeedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2CF54A2FD4A7EBC9DCB1279 /* SyncFeedTests.swift */; };
+		05D3BA7FCCAFDBEA2384E9BD /* InboundSyncSQLiteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8616BD8EB6E80FB92015D2C9 /* InboundSyncSQLiteTests.swift */; };
+		3A555D0FF12FB7A3FA7F01DB /* SyncAckTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F703B8ECE495228C01537310 /* SyncAckTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -241,6 +249,14 @@
 		B20000012C0000000000002C /* SyncCheckpointTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SyncCheckpointTests.swift; sourceTree = "<group>"; };
 		B20000012C0000000000002D /* DurableMutationQueueTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/DurableMutationQueueTests.swift; sourceTree = "<group>"; };
 		B20000012C0000000000002E /* MutationDrainCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/MutationDrainCoordinatorTests.swift; sourceTree = "<group>"; };
+		265EE87233579198D3DA626B /* SyncFeedModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Sync/SyncFeedModels.swift; sourceTree = "<group>"; };
+		56D2AF75CC46AC4FB8233D9B /* SyncFeedResponseDTO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Sync/SyncFeedResponseDTO.swift; sourceTree = "<group>"; };
+		3A36E2B84BD8A0E0672444A6 /* SyncFeedService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Sync/SyncFeedService.swift; sourceTree = "<group>"; };
+		0423AAA62F4F6BC6A7BBA61D /* SyncAckService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Sync/SyncAckService.swift; sourceTree = "<group>"; };
+		2D34F3CB4D50E8EE1331253A /* SyncFeedTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SyncFeedTestSupport.swift; sourceTree = "<group>"; };
+		D2CF54A2FD4A7EBC9DCB1279 /* SyncFeedTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SyncFeedTests.swift; sourceTree = "<group>"; };
+		8616BD8EB6E80FB92015D2C9 /* InboundSyncSQLiteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/InboundSyncSQLiteTests.swift; sourceTree = "<group>"; };
+		F703B8ECE495228C01537310 /* SyncAckTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SyncAckTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -349,6 +365,8 @@
 		A40000012C00000000000011 /* Domain */ = {
 			isa = PBXGroup;
 			children = (
+				56D2AF75CC46AC4FB8233D9B /* SyncFeedResponseDTO.swift */,
+				265EE87233579198D3DA626B /* SyncFeedModels.swift */,
 				A20000012C00000000000057 /* MutationPersistenceCodec.swift */,
 				A20000012C00000000000056 /* SyncCheckpointResponseDTO.swift */,
 				A20000012C00000000000055 /* MutationQueueModels.swift */,
@@ -382,6 +400,8 @@
 		A40000012C00000000000012 /* Application */ = {
 			isa = PBXGroup;
 			children = (
+				0423AAA62F4F6BC6A7BBA61D /* SyncAckService.swift */,
+				3A36E2B84BD8A0E0672444A6 /* SyncFeedService.swift */,
 				A20000012C00000000000059 /* DurableMutationQueue.swift */,
 				A20000012C00000000000060 /* MetadataMutationService.swift */,
 				A20000012C0000000000005B /* MutationDrainCoordinator.swift */,
@@ -455,6 +475,10 @@
 		B40000012C00000000000002 /* SynveilTests */ = {
 			isa = PBXGroup;
 			children = (
+				F703B8ECE495228C01537310 /* SyncAckTests.swift */,
+				8616BD8EB6E80FB92015D2C9 /* InboundSyncSQLiteTests.swift */,
+				D2CF54A2FD4A7EBC9DCB1279 /* SyncFeedTests.swift */,
+				2D34F3CB4D50E8EE1331253A /* SyncFeedTestSupport.swift */,
 				B20000012C0000000000002D /* DurableMutationQueueTests.swift */,
 				B20000012C0000000000002E /* MutationDrainCoordinatorTests.swift */,
 				B20000012C0000000000002C /* SyncCheckpointTests.swift */,
@@ -581,6 +605,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4369C59B22E6BC7681FCF978 /* SyncAckService.swift in Sources */,
+				02C472AB88F669F505A8F5F6 /* SyncFeedService.swift in Sources */,
+				2A84DAF617D2CE3541C8A1F4 /* SyncFeedResponseDTO.swift in Sources */,
+				A893D82F975D12132C1A3E46 /* SyncFeedModels.swift in Sources */,
 				A10000012C0000000000005A /* MutationQueueSQLiteStore.swift in Sources */,
 				A10000012C00000000000059 /* DurableMutationQueue.swift in Sources */,
 				A10000012C00000000000060 /* MetadataMutationService.swift in Sources */,
@@ -662,6 +690,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3A555D0FF12FB7A3FA7F01DB /* SyncAckTests.swift in Sources */,
+				05D3BA7FCCAFDBEA2384E9BD /* InboundSyncSQLiteTests.swift in Sources */,
+				BC8B716A1238DA8A95F897C2 /* SyncFeedTests.swift in Sources */,
+				1E657CCF51E5E6BDDA7CBF01 /* SyncFeedTestSupport.swift in Sources */,
 				B10000012C0000000000002D /* DurableMutationQueueTests.swift in Sources */,
 				B10000012C00000000000030 /* MetadataMutationFeatureTests.swift in Sources */,
 				B10000012C0000000000002E /* MutationDrainCoordinatorTests.swift in Sources */,

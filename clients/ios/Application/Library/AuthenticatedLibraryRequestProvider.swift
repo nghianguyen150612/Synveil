@@ -61,7 +61,7 @@ protocol AuthenticatedNodeRequestProviderProtocol {
 @MainActor
 final class AuthenticatedLibraryRequestProvider: AuthenticatedLibraryRequestProviderProtocol,
     AuthenticatedNodeRequestProviderProtocol, AuthenticatedClientMutationRequestProviderProtocol,
-    AuthenticatedSyncCheckpointRequestProviderProtocol
+    AuthenticatedSyncCheckpointRequestProviderProtocol, AuthenticatedSyncFeedRequestProviderProtocol
 {
     private let controller: SessionController
     private let store: any SecureCredentialSinkProtocol
@@ -140,6 +140,49 @@ final class AuthenticatedLibraryRequestProvider: AuthenticatedLibraryRequestProv
             path:
                 "/api/v1/devices/\(session.session.record.deviceId)/libraries/\(mutationScope.libraryId.rawValue)/checkpoint",
             queryItems: nil, scope: session)
+    }
+
+    func requestFeed(scope: ClientMutationScope, session: LibraryRequestScope, limit: Int)
+        async throws -> HTTPTransportResponse
+    {
+        guard (1...500).contains(limit) else { throw SyncFeedFailure.protocolFailure }
+        guard session.matches(scope) else { throw SyncFeedFailure.scopeMismatch }
+        return try await requestGET(
+            path:
+                "/api/v1/devices/\(scope.deviceId.rawValue)/libraries/\(scope.libraryId.rawValue)/changes",
+            queryItems: [URLQueryItem(name: "limit", value: String(limit))], scope: session)
+    }
+
+    func submitSyncAck(
+        _ receipt: AppliedFeedCommitReceipt, session: LibraryRequestScope, onDispatch: () -> Void
+    ) async throws -> HTTPTransportResponse {
+        guard receipt.matches(session) else { throw SyncFeedFailure.staleSession }
+        let evidence = receipt.evidence
+        let body = try SyncFeedPolicy.ackBody(evidence)
+        guard session.matches(evidence.scope) else { throw SyncFeedFailure.scopeMismatch }
+        try await validate(session)
+        let endpoint = session.session.serverEndpoint
+        guard var components = URLComponents(url: endpoint.url, resolvingAgainstBaseURL: false),
+            components.user == nil, components.password == nil
+        else { throw LibraryFailure.originMismatch }
+        let basePath = components.percentEncodedPath.trimmingCharacters(
+            in: CharacterSet(charactersIn: "/"))
+        components.percentEncodedPath =
+            (basePath.isEmpty ? "" : "/\(basePath)")
+            + "/api/v1/devices/\(evidence.scope.deviceId.rawValue)/libraries/\(evidence.scope.libraryId.rawValue)/changes/ack"
+        components.query = nil
+        components.fragment = nil
+        guard let url = components.url, url.scheme == "https", url.host == endpoint.host,
+            url.port == endpoint.port
+        else { throw LibraryFailure.originMismatch }
+        try checkCurrent(session)
+        let request = HTTPTransportRequest(
+            url: url, method: .post,
+            headers: authenticatedHeaders(session, jsonBody: true), body: body)
+        onDispatch()
+        let response = try await transport.send(request)
+        try await validate(session)
+        return response
     }
 
     private func requestGET(

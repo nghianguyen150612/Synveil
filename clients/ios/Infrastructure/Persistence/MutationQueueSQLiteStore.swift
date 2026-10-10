@@ -17,7 +17,7 @@ private final class MutationSQLiteConnection: @unchecked Sendable {
 
 /// Serial transactions never suspend. The application creates exactly one store; independent
 /// connections still use SQLite's writer lock, unique keys, and bounded busy timeout.
-actor MutationQueueSQLiteStore: MutationQueueStorageProtocol {
+actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorageProtocol {
     private let connection: MutationSQLiteConnection
     private var poisoned = false
     private let url: URL
@@ -25,7 +25,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol {
     private let maximumOutstanding: Int
     private let maximumBytes: Int
     private let maximumRecords: Int
-    static let schemaVersion = 2
+    static let schemaVersion = 3
     private static let scopePredicate = "endpoint=? AND owner_id=? AND device_id=? AND library_id=?"
     private static let columns =
         "mutation_id,epoch,sequence,kind,payload,request,encoding_version,enqueue_order,created_at,state,attempt_id,attempt_owner,attempt_started,dispatch_recorded,evidence"
@@ -115,7 +115,31 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol {
         BEGIN SELECT RAISE(ABORT,'invalid transition'); END
         """,
     ]
-    private static let schema = Array(version1Schema.dropLast()) + recoverySchema
+    static let version2Schema = Array(version1Schema.dropLast()) + recoverySchema
+    static let inboundSchema = [
+        """
+        CREATE TABLE inbound_pages (
+          scope_id INTEGER NOT NULL REFERENCES scopes(scope_id), epoch TEXT NOT NULL, from_sequence TEXT NOT NULL,
+          through_sequence TEXT NOT NULL, high_watermark TEXT NOT NULL,
+          response BLOB NOT NULL CHECK(length(response) BETWEEN 1 AND 2097152),
+          canonical_data BLOB NOT NULL CHECK(length(canonical_data) BETWEEN 1 AND 2097152),
+          encoding_version INTEGER NOT NULL CHECK(encoding_version=1),
+          state TEXT NOT NULL CHECK(state IN ('RECEIVED_UNAPPLIED','APPLIED_ACK_PENDING','ACK_IN_FLIGHT','ACK_CONFIRMED','BLOCKED_REBASELINE')),
+          created_at REAL NOT NULL, updated_at REAL NOT NULL,
+          PRIMARY KEY(scope_id,epoch,from_sequence)
+        )
+        """,
+        """
+        CREATE TRIGGER inbound_immutable BEFORE UPDATE OF scope_id,epoch,from_sequence,through_sequence,high_watermark,response,canonical_data,encoding_version,created_at ON inbound_pages
+        BEGIN SELECT RAISE(ABORT,'immutable inbound page'); END
+        """,
+        """
+        CREATE TRIGGER inbound_application_gate BEFORE UPDATE OF state ON inbound_pages
+        WHEN NEW.state<>OLD.state AND NEW.state<>'BLOCKED_REBASELINE'
+        BEGIN SELECT RAISE(ABORT,'projection commit required'); END
+        """,
+    ]
+    private static let schema = version2Schema + inboundSchema
 
     init(
         url: URL, busyTimeoutMilliseconds: Int32 = 250,
@@ -147,7 +171,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol {
         // Initialization uses only local helpers; no actor reference escapes before schema validation.
         try Self.execute(handle, "PRAGMA foreign_keys=ON")
         let version = try Self.scalar(handle, "PRAGMA user_version")
-        guard [0, 1, Int64(Self.schemaVersion)].contains(version) else {
+        guard [0, 1, 2, Int64(Self.schemaVersion)].contains(version) else {
             throw MutationQueueFailure.unsupportedSchema
         }
         if version == 0 {
@@ -162,7 +186,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol {
             do {
                 for statement in Self.schema { try Self.execute(handle, statement) }
                 try fault?(.migration)
-                try Self.execute(handle, "PRAGMA user_version=2")
+                try Self.execute(handle, "PRAGMA user_version=3")
                 try Self.execute(handle, "COMMIT")
             } catch {
                 try? Self.execute(handle, "ROLLBACK")
@@ -183,9 +207,24 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol {
             try Self.execute(handle, "BEGIN IMMEDIATE")
             do {
                 try Self.execute(handle, "DROP TRIGGER mutation_transition")
-                for statement in Self.recoverySchema { try Self.execute(handle, statement) }
+                for statement in Self.recoverySchema + Self.inboundSchema {
+                    try Self.execute(handle, statement)
+                }
                 try fault?(.migration)
-                try Self.execute(handle, "PRAGMA user_version=2")
+                try Self.execute(handle, "PRAGMA user_version=3")
+                try Self.execute(handle, "COMMIT")
+            } catch {
+                try? Self.execute(handle, "ROLLBACK")
+                throw error
+            }
+        }
+        if version == 2 {
+            try verifySchema(Self.version2Schema)
+            try Self.execute(handle, "BEGIN IMMEDIATE")
+            do {
+                for statement in Self.inboundSchema { try Self.execute(handle, statement) }
+                try fault?(.migration)
+                try Self.execute(handle, "PRAGMA user_version=3")
                 try Self.execute(handle, "COMMIT")
             } catch {
                 try? Self.execute(handle, "ROLLBACK")
@@ -632,6 +671,143 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol {
         }
     }
 
+    /// Revalidate every event before entering the synchronous SQLite transaction.
+    func stageFeed(_ page: SyncFeedPage, credentialId: String, bridge: any RustBridgeProtocol)
+        async throws -> (InboundSyncPageRecord, Bool)
+    {
+        let verified = try await SyncFeedResponseDecoder(bridge: bridge).decode(
+            HTTPTransportResponse(
+                statusCode: 200, headers: ["Content-Type": "application/json"],
+                body: page.responseBody),
+            scope: page.scope, expected: page.start)
+        guard verified == page, !page.events.isEmpty else { throw SyncFeedFailure.protocolFailure }
+        try Task.checkCancellation()
+        return try transaction {
+            try requireFeedScope(page.scope, credentialId: credentialId)
+            guard let base = try syncBase(scope: page.scope), base.status == .verified,
+                base.epoch == page.start.epoch.rawValue,
+                base.sequence == page.start.sequence.rawValue
+            else { throw SyncFeedFailure.checkpointConflict }
+            let id = try requireScopeId(page.scope)
+            if let old = try rawInbound(scope: page.scope, position: page.start) {
+                guard old.canonical == page.canonicalData, old.through == page.through.rawValue,
+                    old.high == page.highWatermark.rawValue
+                else { throw SyncFeedFailure.checkpointConflict }
+                guard old.state == .receivedUnapplied else {
+                    throw SyncFeedFailure.rebaselineRequired
+                }
+                return (
+                    InboundSyncPageRecord(
+                        page: page, state: old.state, createdAt: old.created,
+                        updatedAt: old.updated, encodingVersion: 1), false
+                )
+            }
+            guard
+                try scalar("SELECT count(*) FROM inbound_pages WHERE scope_id=?", [.integer(id)])
+                    < Int64(SyncFeedPolicy.maximumPagesPerScope),
+                try scalar("SELECT count(*) FROM inbound_pages") < Int64(maximumRecords)
+            else { throw MutationQueueFailure.capacity }
+            try checkCapacity(additionalBytes: page.responseBody.count + page.canonicalData.count)
+            let now = Date()
+            try fault?(.beforeInsert)
+            try execute(
+                "INSERT INTO inbound_pages(scope_id,epoch,from_sequence,through_sequence,high_watermark,response,canonical_data,encoding_version,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,1,'RECEIVED_UNAPPLIED',?,?)",
+                [
+                    .integer(id), .text(page.start.epoch.rawValue),
+                    .text(page.start.sequence.rawValue),
+                    .text(page.through.rawValue), .text(page.highWatermark.rawValue),
+                    .blob(page.responseBody),
+                    .blob(page.canonicalData), .real(now.timeIntervalSince1970),
+                    .real(now.timeIntervalSince1970),
+                ])
+            try fault?(.afterInsert)
+            return (
+                InboundSyncPageRecord(
+                    page: page, state: .receivedUnapplied, createdAt: now,
+                    updatedAt: now, encodingVersion: 1), true
+            )
+        }
+    }
+
+    private struct RawInbound: Equatable {
+        let response: Data
+        let canonical: Data
+        let through: String
+        let high: String
+        let state: InboundSyncPageState
+        let created: Date
+        let updated: Date
+    }
+
+    private func rawInbound(scope: ClientMutationScope, position: SyncJournalPosition) throws
+        -> RawInbound?
+    {
+        guard let id = try scopeId(scope) else { return nil }
+        return try query(
+            "SELECT response,canonical_data,through_sequence,high_watermark,state,created_at,updated_at,encoding_version FROM inbound_pages WHERE scope_id=? AND epoch=? AND from_sequence=?",
+            [.integer(id), .text(position.epoch.rawValue), .text(position.sequence.rawValue)]
+        ) { s in
+            guard let state = InboundSyncPageState(rawValue: try Self.text(s, 4)),
+                sqlite3_column_int(s, 7) == 1,
+                [SQLITE_FLOAT, SQLITE_INTEGER].contains(sqlite3_column_type(s, 5)),
+                [SQLITE_FLOAT, SQLITE_INTEGER].contains(sqlite3_column_type(s, 6))
+            else { throw MutationQueueFailure.malformedRecord }
+            return RawInbound(
+                response: try Self.blob(s, 0, maximum: SyncFeedPolicy.maximumResponseBytes),
+                canonical: try Self.blob(s, 1, maximum: SyncFeedPolicy.maximumResponseBytes),
+                through: try Self.text(s, 2), high: try Self.text(s, 3), state: state,
+                created: Date(timeIntervalSince1970: sqlite3_column_double(s, 5)),
+                updated: Date(timeIntervalSince1970: sqlite3_column_double(s, 6)))
+        }.first
+    }
+
+    func inboundPage(
+        scope: ClientMutationScope, position: SyncJournalPosition, credentialId: String,
+        bridge: any RustBridgeProtocol
+    ) async throws -> InboundSyncPageRecord? {
+        try requireFeedScope(scope, credentialId: credentialId)
+        guard let raw = try rawInbound(scope: scope, position: position) else { return nil }
+        let page = try await SyncFeedResponseDecoder(bridge: bridge).decode(
+            HTTPTransportResponse(
+                statusCode: 200, headers: ["Content-Type": "application/json"], body: raw.response),
+            scope: scope, expected: position)
+        guard page.canonicalData == raw.canonical, page.through.rawValue == raw.through,
+            page.highWatermark.rawValue == raw.high, !page.events.isEmpty,
+            raw.created <= raw.updated,
+            [.receivedUnapplied, .blockedRebaseline].contains(raw.state)
+        else { throw MutationQueueFailure.malformedRecord }
+        try requireFeedScope(scope, credentialId: credentialId)
+        // Decoding suspends on Rust validation. A concurrent rebaseline may have blocked this row.
+        guard try rawInbound(scope: scope, position: position) == raw else {
+            throw MutationQueueFailure.reconciliationRequired
+        }
+        return InboundSyncPageRecord(
+            page: page, state: raw.state, createdAt: raw.created,
+            updatedAt: raw.updated, encodingVersion: 1)
+    }
+
+    func blockInbound(scope: ClientMutationScope, credentialId: String) throws {
+        try transaction {
+            try requireFeedScope(scope, credentialId: credentialId)
+            let id = try requireScopeId(scope)
+            try execute(
+                "UPDATE inbound_pages SET state='BLOCKED_REBASELINE',updated_at=? WHERE scope_id=?",
+                [.real(Date().timeIntervalSince1970), .integer(id)])
+            try execute(
+                "UPDATE sync_bases SET status='RECONCILIATION_REQUIRED' WHERE scope_id=?",
+                [.integer(id)])
+        }
+    }
+
+    private func requireFeedScope(_ scope: ClientMutationScope, credentialId: String) throws {
+        try requireUnquarantinedScope(scope)
+        guard
+            try scalar(
+                "SELECT count(*) FROM scopes WHERE scope_id=? AND credential_id=?",
+                [.integer(try requireScopeId(scope)), .text(credentialId)]) == 1
+        else { throw MutationQueueFailure.scopeMismatch }
+    }
+
     private func requireUnquarantinedScope(_ scope: ClientMutationScope) throws {
         let id = try requireScopeId(scope)
         guard try scalar("SELECT quarantined FROM scopes WHERE scope_id=?", [.integer(id)]) == 0
@@ -749,7 +925,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol {
     }
     private func checkCapacity(additionalBytes: Int) throws {
         let bytes = try scalar(
-            "SELECT coalesce((SELECT sum(length(request)+length(payload)+coalesce(length(evidence),0)) FROM mutations),0)+coalesce((SELECT sum(length(response)) FROM sync_bases),0)+coalesce((SELECT sum(length(evidence)) FROM mutation_attempt_history),0)"
+            "SELECT coalesce((SELECT sum(length(request)+length(payload)+coalesce(length(evidence),0)) FROM mutations),0)+coalesce((SELECT sum(length(response)) FROM sync_bases),0)+coalesce((SELECT sum(length(evidence)) FROM mutation_attempt_history),0)+coalesce((SELECT sum(length(response)+length(canonical_data)) FROM inbound_pages),0)"
         )
         guard bytes + Int64(additionalBytes) <= Int64(maximumBytes) else {
             throw MutationQueueFailure.capacity

@@ -14,7 +14,7 @@ final class MutationRecoverySQLiteTests: XCTestCase {
         let row = try await MutationPersistenceCodec(bridge: QueueValidator()).rehydrate(
             XCTUnwrap(raw))
         XCTAssertEqual(row, old)
-        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "2")
+        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "3")
         XCTAssertEqual(
             try queueRawScalar(f.url, "SELECT count(*) FROM mutation_attempt_history"), "0")
     }
@@ -369,6 +369,12 @@ final class MutationRecoverySQLiteTests: XCTestCase {
         try queueRawSQL(f.url, "DROP TABLE mutation_attempt_history")
         try queueRawSQL(f.url, "DROP TRIGGER mutation_transition")
         try queueRawSQL(f.url, XCTUnwrap(MutationQueueSQLiteStore.version1Schema.last))
+        for sql in [
+            "DROP TRIGGER inbound_immutable", "DROP TRIGGER inbound_application_gate",
+            "DROP TABLE inbound_pages",
+        ] {
+            try queueRawSQL(f.url, sql)
+        }
         try queueRawSQL(f.url, "PRAGMA user_version=1")
     }
     private func unknown(fault: QueueFaultInjector? = nil) async throws -> QueueFixture {
