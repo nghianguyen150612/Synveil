@@ -8,6 +8,8 @@
 # imported by Microsoft's VC++ redistributable installer itself.
 # WININET.DLL is the Windows Internet API library supplied by Windows 11 and
 # imported by Microsoft's VC++ redistributable installer itself.
+# WINTRUST.DLL is the Windows trust-verification API supplied by Windows 11
+# and imported by Microsoft's VC++ redistributable installer itself.
 # SPDX-License-Identifier: MIT
 
 is_system_dll() {
@@ -19,7 +21,7 @@ is_system_dll() {
         VERSION.DLL|DWMAPI.DLL|IMM32.DLL|SETUPAPI.DLL|AUTHZ.DLL|NCRYPT.DLL|D3D11.DLL|D3D12.DLL|\
         D3D9.DLL|DNSAPI.DLL|DWRITE.DLL|DXGI.DLL|IMAGEHLP.DLL|MPR.DLL|MSVCRT.DLL|\
         NETAPI32.DLL|RPCRT4.DLL|SECUR32.DLL|SHCORE.DLL|USERENV.DLL|UXTHEME.DLL|\
-        UIAUTOMATIONCORE.DLL|WINMM.DLL|WINSPOOL.DRV|WTSAPI32.DLL|CABINET.DLL|MSI.DLL|WININET.DLL)
+        UIAUTOMATIONCORE.DLL|WINMM.DLL|WINSPOOL.DRV|WTSAPI32.DLL|CABINET.DLL|MSI.DLL|WININET.DLL|WINTRUST.DLL)
             return 0
             ;;
         *)
