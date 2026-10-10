@@ -494,6 +494,43 @@ final class MutationDrainCoordinatorTests: XCTestCase {
         XCTAssertEqual(restored?.state, .applied)
         await posts(f, 1)
     }
+    func testSQLiteAuthorizationFailurePreservesTypedCategoryAndNoPOST() async throws {
+        for failure in [MutationQueueFailure.busy, .diskFull, .io] {
+            let fault = QueueFaultInjector()
+            let f = try await queueFixture(self, fault: fault)
+            _ = try await queueEnqueued(f)
+            fault.arm(.afterDispatchOwnership, failure: failure)
+            let result = await drainCoordinator(f).drain(scope: f.scope, maximumOperations: 1)
+            XCTAssertEqual(
+                result,
+                .stopped(
+                    .queue(failure), MutationDrainSummary(attempted: 1, localPreDispatchFailures: 1)
+                ))
+            let row = try await queueRecord(f)
+            XCTAssertEqual(row.state, .outcomeUnknown)
+            XCTAssertEqual(row.attempt?.dispatchRecorded, false)
+            await posts(f, 0)
+        }
+    }
+    func testDispatchCommitAcknowledgementLossIsDistinctFromNetworkUncertainty() async throws {
+        let fault = QueueFaultInjector()
+        let f = try await queueFixture(self, fault: fault)
+        _ = try await queueEnqueued(f)
+        let provider = DrainAuthorizationCommitLossProvider(base: f.provider, fault: fault)
+        let result = await drainCoordinator(f, provider: provider).drain(
+            scope: f.scope, maximumOperations: 1)
+        XCTAssertEqual(
+            result,
+            .stopped(
+                .queue(.commitAcknowledgementLost),
+                MutationDrainSummary(attempted: 1, localPreDispatchFailures: 1)))
+        let row = try await queueRecord(f)
+        XCTAssertEqual(row.state, .outcomeUnknown)
+        XCTAssertEqual(row.attempt?.dispatchRecorded, true)
+        XCTAssertEqual(row.evidence?.uncertainty, "LOCAL_PRE_DISPATCH")
+        await posts(f, 0)
+    }
+
     func testCancellationBeforeLeaseDispatchesNothing() async throws {
         let f = try await queueFixture(self)
         _ = try await queueEnqueued(f)
@@ -854,6 +891,36 @@ private final class DrainRejectingProvider: AuthenticatedClientMutationRequestPr
         _ mutation: PreparedClientMutation, scope: LibraryRequestScope,
         onDispatch: () -> Void
     ) async throws -> HTTPTransportResponse { throw SynveilTransportError.offline }
+    func handle(_ failure: LibraryFailure, scope: LibraryRequestScope) {
+        base.handle(failure, scope: scope)
+    }
+}
+
+@MainActor
+private final class DrainAuthorizationCommitLossProvider:
+    AuthenticatedClientMutationRequestProviderProtocol
+{
+    let base: AuthenticatedLibraryRequestProvider
+    let fault: QueueFaultInjector
+    var armed = false
+    init(base: AuthenticatedLibraryRequestProvider, fault: QueueFaultInjector) {
+        self.base = base
+        self.fault = fault
+    }
+    func begin() async throws -> LibraryRequestScope { try await base.begin() }
+    func validate(_ scope: LibraryRequestScope) async throws {
+        try await base.validate(scope)
+        if !armed {
+            armed = true
+            fault.arm(.afterCommit)
+        }
+    }
+    func submitMutation(
+        _ mutation: PreparedClientMutation, scope: LibraryRequestScope,
+        onDispatch: () -> Void
+    ) async throws -> HTTPTransportResponse {
+        try await base.submitMutation(mutation, scope: scope, onDispatch: onDispatch)
+    }
     func handle(_ failure: LibraryFailure, scope: LibraryRequestScope) {
         base.handle(failure, scope: scope)
     }

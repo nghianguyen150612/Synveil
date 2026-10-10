@@ -394,11 +394,15 @@ final class DurableMutationQueue: DurableMutationQueueProtocol {
 final class DurableMutationAttemptAuthorizer: ClientMutationPreparationAuthorizerProtocol {
     private let queue: DurableMutationQueue
     private let lease: MutationSubmissionLease
+    private(set) var failure: MutationQueueFailure?
     init(queue: DurableMutationQueue, lease: MutationSubmissionLease) {
         self.queue = queue
         self.lease = lease
     }
     func authorizePersistedSubmission(_ mutation: PreparedClientMutation) async throws {
-        try await queue.authorize(mutation, lease: lease)
+        do { try await queue.authorize(mutation, lease: lease) } catch {
+            failure = DurableMutationQueue.classify(error)
+            throw error
+        }
     }
 }

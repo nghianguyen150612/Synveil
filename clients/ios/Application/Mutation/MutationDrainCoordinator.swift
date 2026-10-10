@@ -106,9 +106,10 @@ final class MutationDrainCoordinator {
     private func execute(_ lease: MutationSubmissionLease, summary: inout MutationDrainSummary)
         async -> MutationDrainStopReason?
     {
+        let authorizer = DurableMutationAttemptAuthorizer(queue: queue, lease: lease)
         let repository = AuthenticatedClientMutationRepository(
             provider: MutationLeaseRequestProvider(provider: provider, session: lease.session),
-            bridge: bridge, authorizer: DurableMutationAttemptAuthorizer(queue: queue, lease: lease)
+            bridge: bridge, authorizer: authorizer
         )
         let result = await repository.submit(lease.mutation)
         let preDispatchFailure = !repository.didDispatch
@@ -159,6 +160,7 @@ final class MutationDrainCoordinator {
             } else {
                 summary.unknown += 1
             }
+            if let authorizationFailure = authorizer.failure { return .queue(authorizationFailure) }
             return .submission(failure)
         case .outcomeUnknown(let failure):
             summary.unknown += 1

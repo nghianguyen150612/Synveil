@@ -29,6 +29,7 @@ class MutationDrainSafetyTests(unittest.TestCase):
     def test_repository_is_per_lease_and_transport_cannot_capture_new_session(self):
         text = (IOS / "Application/Mutation/MutationDrainCoordinator.swift").read_text()
         self.assertIn("DurableMutationAttemptAuthorizer(queue: queue, lease: lease)", text)
+        self.assertIn("authorizer: authorizer", text)
         self.assertIn("session: lease.session", text)
         self.assertIn("repository.submit(lease.mutation)", text)
         self.assertNotIn("provider.begin()", text)
