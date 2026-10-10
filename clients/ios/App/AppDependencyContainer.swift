@@ -40,6 +40,9 @@ public final class AppDependencyContainer {
     private(set) var mutationDrainCoordinator: MutationDrainCoordinator?
     private(set) var syncCheckpointService: SyncCheckpointService?
     private(set) var syncFeedService: SyncFeedService?
+    private(set) var nodeProjectionRepository: SQLiteNodeProjectionRepository?
+    private(set) var syncFeedApplicationService: SyncFeedApplicationService?
+    private(set) var syncAckService: SyncAckService?
     private(set) var metadataMutationFeature: (any MetadataMutationFeatureProtocol)?
     private(set) var mutationQueueFailure: MutationQueueFailure?
 
@@ -135,7 +138,17 @@ public final class AppDependencyContainer {
                 syncFeedService = SyncFeedService(
                     provider: feedProvider, queue: queue,
                     store: database, bridge: bridge)
-                // No committed projection storage exists in P038. SyncAckService is not constructed.
+                if let nodeRepository {
+                    nodeProjectionRepository = SQLiteNodeProjectionRepository(
+                        database: database, provider: feedProvider, bridge: bridge)
+                    syncFeedApplicationService = SyncFeedApplicationService(
+                        provider: feedProvider, queue: queue, database: database,
+                        nodes: nodeRepository, bridge: bridge)
+                    let projection = CommittedSQLiteSyncProjectionStorage(
+                        database: database, bridge: bridge)
+                    syncAckService = SyncAckService(
+                        provider: feedProvider, projection: projection, bridge: bridge)
+                }
                 var composedMetadataMutationService: MetadataMutationService?
                 if let nodeRepository {
                     let feature = MetadataMutationService(
@@ -156,6 +169,9 @@ public final class AppDependencyContainer {
                 mutationDrainCoordinator = nil
                 syncCheckpointService = nil
                 syncFeedService = nil
+                nodeProjectionRepository = nil
+                syncFeedApplicationService = nil
+                syncAckService = nil
                 metadataMutationFeature = nil
                 mutationQueueFailure = DurableMutationQueue.classify(error)
             }

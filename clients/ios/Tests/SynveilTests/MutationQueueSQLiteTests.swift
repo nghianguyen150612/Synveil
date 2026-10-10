@@ -8,12 +8,12 @@ import XCTest
 final class MutationQueueSQLiteTests: XCTestCase {
     func testDatabaseInitializationRegistersSchema() async throws {
         let f = try await queueFixture(self)
-        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "3")
+        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "4")
         XCTAssertEqual(
             try queueRawScalar(
                 f.url,
                 "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-            ), "6")
+            ), "12")
     }
     func testWALAndFullDurabilityConfiguration() async throws {
         let f = try await queueFixture(self)
@@ -214,12 +214,12 @@ final class MutationQueueSQLiteTests: XCTestCase {
     func testUnknownFutureSchemaDoesNotResetDatabase() async throws {
         let f = try await queueFixture(self)
         _ = try await queueEnqueued(f)
-        try queueRawSQL(f.url, "PRAGMA user_version=4")
+        try queueRawSQL(f.url, "PRAGMA user_version=5")
         XCTAssertThrowsError(try MutationQueueSQLiteStore(url: f.url)) {
             XCTAssertEqual($0 as? MutationQueueFailure, .unsupportedSchema)
         }
         XCTAssertEqual(try queueRawScalar(f.url, "SELECT count(*) FROM mutations"), "1")
-        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "4")
+        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "5")
     }
     func testUnversionedNonemptyDatabaseRejected() async throws {
         let url = queueTemporaryURL(self)
@@ -241,7 +241,7 @@ final class MutationQueueSQLiteTests: XCTestCase {
             try queueRawScalar(
                 url, "SELECT count(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"), "0")
         _ = try MutationQueueSQLiteStore(url: url)
-        XCTAssertEqual(try queueRawScalar(url, "PRAGMA user_version"), "3")
+        XCTAssertEqual(try queueRawScalar(url, "PRAGMA user_version"), "4")
     }
     func testMalformedCurrentSchemaRejectedWithoutRecreation() async throws {
         let f = try await queueFixture(self)

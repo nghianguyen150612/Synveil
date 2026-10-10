@@ -17,7 +17,7 @@ final class InboundSyncSQLiteTests: XCTestCase {
         XCTAssertEqual(row?.state, .receivedUnapplied)
         XCTAssertEqual(row?.page.events.map(\.sequence.rawValue), ["1", "2"])
         XCTAssertEqual(row?.page.evidence?.token, "v1.sync-ack.original-evidence_123")
-        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "3")
+        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "4")
     }
     func testDuplicatePageIdempotentAcrossRequestIds() async throws {
         let f = try await queueFixture(self)
@@ -175,7 +175,7 @@ final class InboundSyncSQLiteTests: XCTestCase {
         XCTAssertEqual(history, afterHistory)
         XCTAssertEqual(try queueRawScalar(f.url, "SELECT sequence FROM sync_bases"), "0")
         XCTAssertEqual(try queueRawScalar(f.url, "SELECT quarantined FROM scopes"), "1")
-        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "3")
+        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "4")
     }
     func testV2MigrationFaultRollsBackWithoutLosingRecords() async throws {
         let f = try await queueFixture(self)
@@ -302,6 +302,10 @@ final class InboundSyncSQLiteTests: XCTestCase {
         var handle: OpaquePointer?
         XCTAssertEqual(sqlite3_open(f.url.path, &handle), SQLITE_OK)
         let db = try XCTUnwrap(handle)
+        XCTAssertEqual(
+            sqlite3_create_function_v2(
+                db, "synveil_projection_authorized", 0, SQLITE_UTF8, nil,
+                { context, _, _ in sqlite3_result_int(context, 0) }, nil, nil, nil), SQLITE_OK)
         XCTAssertEqual(sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil), SQLITE_OK)
         XCTAssertEqual(
             sqlite3_exec(db, "UPDATE inbound_pages SET state='BLOCKED_REBASELINE'", nil, nil, nil),
@@ -365,6 +369,7 @@ final class InboundSyncSQLiteTests: XCTestCase {
         XCTAssertNil(page)
     }
     private func downgradeV2(_ url: URL) throws {
+        try projectionDowngradeV3(url)
         for sql in [
             "DROP TRIGGER inbound_immutable", "DROP TRIGGER inbound_application_gate",
             "DROP TABLE inbound_pages", "PRAGMA user_version=2",

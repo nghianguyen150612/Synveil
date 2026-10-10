@@ -31,14 +31,11 @@ class SyncFeedFoundationTests(unittest.TestCase):
             self.assertIn(build.group(1), phases[target])
             self.assertNotIn(build.group(1), phases[1 - target])
 
-    def test_production_has_no_projection_authority_or_ack_dispatch(self):
-        production = list((IOS / "Application").rglob("*.swift")) + list((IOS / "Infrastructure").rglob("*.swift"))
-        for path in production:
-            source = path.read_text()
-            self.assertNotRegex(source, r"(?:class|actor|struct)\s+\w+\s*:\s*CommittedSyncProjectionStorageProtocol", str(path))
+    def test_production_ack_requires_committed_projection_authority(self):
         composition = (IOS / "App/AppDependencyContainer.swift").read_text()
         self.assertIn("syncFeedService = SyncFeedService(", composition)
-        self.assertNotIn("SyncAckService(", composition)
+        self.assertIn("SyncAckService(", composition)
+        self.assertRegex(composition, r"CommittedSQLiteSyncProjectionStorage\(\s*database: database")
         self.assertNotIn("readAndStage(", composition)
         self.assertNotIn(".acknowledge(", composition)
         ack = (IOS / "Application/Sync/SyncAckService.swift").read_text()
@@ -46,6 +43,7 @@ class SyncFeedFoundationTests(unittest.TestCase):
         self.assertNotIn("#if DEBUG", ack)
         self.assertIn("projection.validateAppliedPage", ack)
         self.assertIn("projection.confirmAppliedPage", ack)
+        self.assertIn("projection.authorizeAckDispatch", ack)
         for path in (IOS / "Features").rglob("*.swift"):
             self.assertNotIn("AppliedFeedCommitReceipt", path.read_text())
             self.assertNotIn("SyncFeedService", path.read_text())
@@ -59,12 +57,12 @@ class SyncFeedFoundationTests(unittest.TestCase):
         self.assertRegex(provider, r"func submitSyncAck\(\s*_ receipt: AppliedFeedCommitReceipt")
         self.assertIn('URLQueryItem(name: "limit", value: String(limit))', provider)
         store = (IOS / "Infrastructure/Persistence/MutationQueueSQLiteStore.swift").read_text()
-        self.assertIn("static let schemaVersion = 3", store)
+        self.assertIn("static let schemaVersion = 4", store)
         self.assertIn("try verifySchema(Self.version2Schema)", store)
 
     def test_actual_schema_rejects_ack_from_staging_and_retains_evidence(self):
         source = (IOS / "Infrastructure/Persistence/MutationQueueSQLiteStore.swift").read_text()
-        block = source.split("static let inboundSchema = [", 1)[1].split("private static let schema", 1)[0]
+        block = source.split("static let inboundSchema = [", 1)[1].split("static let version3Schema", 1)[0]
         sql = re.findall(r'"""\n(.*?)\n\s*"""', block, re.S)
         self.assertEqual(len(sql), 3)
         db = sqlite3.connect(":memory:")
