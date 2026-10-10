@@ -1481,7 +1481,7 @@ fn expected_synveil_gid() -> Option<u32> {
     None
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use std::{fs, os::unix::fs::PermissionsExt};
     use synveil_object_store::{

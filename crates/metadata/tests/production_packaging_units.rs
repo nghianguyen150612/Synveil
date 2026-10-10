@@ -270,7 +270,7 @@ fn package_unit_6_upgrade_preserves_state() {
             .lines()
             .find(|line| line.contains("LOCAL_SCHEMA_VERSION"))
             .map(str::trim),
-        Some("pub const LOCAL_SCHEMA_VERSION: i64 = 7;")
+        Some("pub const LOCAL_SCHEMA_VERSION: i64 = 8;")
     );
 }
 

@@ -388,6 +388,55 @@ sha256_file() {
     fi
 }
 
+copy_missing_msvc_runtime_imports() {
+    if [[ "$native_windows" -ne 1 ]]; then
+        return 0
+    fi
+    if [[ -z "${SYNVEIL_MSVC_CRT_DIR:-}" ]] || ! command -v cygpath >/dev/null 2>&1; then
+        printf '[synveil-windows-package] ERROR: native Windows packaging requires the authenticated MSVC CRT directory\n' >&2
+        exit 1
+    fi
+    local crt_dir
+    crt_dir="$(cygpath -u "$SYNVEIL_MSVC_CRT_DIR")"
+    if [[ ! -d "$crt_dir" || -L "$crt_dir" ]]; then
+        printf '[synveil-windows-package] ERROR: authenticated MSVC CRT directory is unavailable\n' >&2
+        exit 1
+    fi
+
+    # windeployqt --compiler-runtime did not include MSVCP140.dll on the
+    # reproduced Windows runner. Add only imported VC143 runtime DLLs from the
+    # exact active redist directory; the closed import audit below still
+    # rejects every unresolved non-system dependency.
+    local pass changed pe_file imported runtime_file upper
+    for pass in 1 2 3 4; do
+        changed=0
+        while IFS= read -r imported; do
+            [[ -n "$imported" ]] || continue
+            upper="${imported^^}"
+            is_system_dll "$imported" && continue
+            [[ -z "$(find_stage_dll "$imported")" ]] || continue
+            case "$upper" in
+                MSVCP140*.DLL|VCRUNTIME140*.DLL|CONCRT140.DLL|VCCORLIB140.DLL) ;;
+                *) continue ;;
+            esac
+            runtime_file="$(find "$crt_dir" -maxdepth 1 -type f -iname "$imported" -print -quit)"
+            if [[ -z "$runtime_file" || -L "$runtime_file" ]]; then
+                continue
+            fi
+            copy_file "$runtime_file" "$STAGE_ROOT/$(basename "$runtime_file")"
+            log "added imported MSVC runtime from the active redistributable: $(basename "$runtime_file")"
+            changed=$((changed + 1))
+        done < <(
+            while IFS= read -r pe_file; do
+                pe_import_names "$pe_file"
+            done < <(find "$STAGE_ROOT" -type f \( -iname '*.exe' -o -iname '*.dll' \) -print | sort) | sort -fu
+        )
+        [[ "$changed" -gt 0 ]] || break
+    done
+}
+
+copy_missing_msvc_runtime_imports
+
 # Audit every shipped PE's imports. Windows system/API-set DLLs are supplied by
 # Windows; every other imported DLL must be in this ZIP. This catches Linux
 # shared-library leakage and incomplete Qt/C++ runtime closure.
@@ -439,6 +488,7 @@ write_package_manifest() {
             printf 'qt_architecture=x86_64-msvc\n'
             printf 'windeployqt=%s\n' "$($WINDEPLOYQT --version 2>&1 | tr -d '\r' | head -n 1)"
             printf 'msvc=%s\n' "${VCToolsVersion:-unknown}"
+            printf 'msvc_crt=VCToolsRedistDir/x64/Microsoft.VC143.CRT\n'
         else
             printf 'qt=%s\n' "$("${QT_PREFIX}/bin/qmake" -query QT_VERSION 2>/dev/null || printf unknown)"
             printf 'qt_architecture=x86_64-cross\n'
