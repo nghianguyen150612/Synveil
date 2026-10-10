@@ -19,6 +19,26 @@ The operations guides are the primary user/operator manuals. Historical Prompt
 audits, ADRs, blueprints, and repository reports remain available for
 engineering traceability but are not installation or recovery instructions.
 
+## Upcoming v0.2 preview / Bản xem trước v0.2 sắp tới
+
+v0.2 is not released; v0.1.0 remains the current released product. Use the
+v0.1 release guides above for installations today. The v0.2 user guides are
+preview guidance only: they do not make unsigned CI artifacts installable or
+claim P045 native acceptance.
+
+v0.2 chưa được phát hành; v0.1.0 vẫn là phiên bản hiện đã phát hành. Hãy dùng
+các hướng dẫn v0.1 phía trên nếu cài đặt ngay hôm nay. Tài liệu v0.2 chỉ là
+hướng dẫn xem trước: không cho phép cài artifact CI chưa ký và không tuyên bố
+đã đạt chấp nhận native P045.
+
+- [English v0.2 guide index](en/v0.2/README.md) / [Mục lục hướng dẫn v0.2 tiếng Việt](vi/v0.2/README.md)
+- [English installation](en/v0.2/INSTALLATION.md) / [Cài đặt tiếng Việt](vi/v0.2/INSTALLATION.md)
+- [English first run](en/v0.2/FIRST_RUN.md) / [Thiết lập lần đầu tiếng Việt](vi/v0.2/FIRST_RUN.md)
+- [English troubleshooting](en/v0.2/TROUBLESHOOTING.md) / [Xử lý sự cố tiếng Việt](vi/v0.2/TROUBLESHOOTING.md)
+- [English lifecycle guide](en/v0.2/UPGRADE_REPAIR_UNINSTALL.md) / [Hướng dẫn lifecycle tiếng Việt](vi/v0.2/UPGRADE_REPAIR_UNINSTALL.md)
+- [English Advanced guide](en/v0.2/ADVANCED_INSTALLATION.md) / [Hướng dẫn nâng cao tiếng Việt](vi/v0.2/ADVANCED_INSTALLATION.md)
+- [English distribution readiness](en/v0.2/DISTRIBUTION_READINESS.md) / [Mức độ sẵn sàng phân phối tiếng Việt](vi/v0.2/DISTRIBUTION_READINESS.md)
+
 ## Architecture and contracts
 
 - [English product definition](en/PRODUCT.md) / [Định nghĩa sản phẩm](vi/PRODUCT.md)
@@ -63,6 +83,7 @@ v0.1 đã phát hành. Cài đặt/phục hồi hiện tại vẫn theo hướng
 - [v0.2 upgrade/repair/uninstall contract](v0.2/UPGRADE_REPAIR_UNINSTALL_CONTRACT.md)
 - [v0.2 installer error model](v0.2/INSTALLER_ERROR_MODEL.md)
 - [v0.2 release channel and version selection](v0.2/RELEASE_CHANNEL_SELECTION.md)
+- [Prompt046 documentation and distribution readiness manifest](v0.2/PROMPT046_MANIFEST.md)
 - [v0.2 Linux package integration reconciliation](v0.2/LINUX_PACKAGE_INTEGRATION_RECONCILIATION.md)
 - [v0.2 managed server storage location](v0.2/SERVER_STORAGE_LOCATION.md)
 - [v0.2 Debian and Ubuntu desktop package UX](v0.2/DEBIAN_UBUNTU_PACKAGE_UX.md)
