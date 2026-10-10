@@ -345,9 +345,7 @@ impl InstallationJournal {
         fs::remove_file(&temp).map_err(io_error)?;
         self.maybe_fail(class, JournalFaultPoint::AfterCommit)?;
         self.maybe_fail(class, JournalFaultPoint::CommittedObjectSync)?;
-        File::open(&final_path)
-            .and_then(|f| f.sync_all())
-            .map_err(io_error)?;
+        sync_committed_file(&final_path)?;
         self.maybe_fail(class, JournalFaultPoint::AfterCommittedObjectSync)?;
         self.maybe_fail(class, JournalFaultPoint::DirectorySync)?;
         sync_directory(&self.directory)?;
@@ -614,6 +612,31 @@ fn sync_directory(path: &Path) -> Result<(), JournalError> {
             .map_err(io_error)
     }
 }
+
+fn sync_committed_file(path: &Path) -> Result<(), JournalError> {
+    reject_symlink(path)?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+        let mut options = OpenOptions::new();
+        options.write(true);
+        secure_open(&mut options);
+        let file = options.open(path).map_err(io_error)?;
+        let metadata = file.metadata().map_err(io_error)?;
+        if !metadata.is_file() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+        }
+        file.sync_all().map_err(io_error)
+    }
+    #[cfg(not(windows))]
+    {
+        File::open(path)
+            .and_then(|file| file.sync_all())
+            .map_err(io_error)
+    }
+}
 fn create_directory_durable(path: &Path) -> Result<(), JournalError> {
     let parent = path
         .parent()
@@ -646,7 +669,9 @@ fn create_directory_durable(path: &Path) -> Result<(), JournalError> {
 
 #[cfg(all(test, windows))]
 mod windows_directory_sync_tests {
-    use super::create_directory_durable;
+    use std::{fs::File, io::Write};
+
+    use super::{create_directory_durable, sync_committed_file};
 
     #[test]
     fn directory_flush_uses_a_real_windows_directory_handle() {
@@ -655,6 +680,23 @@ mod windows_directory_sync_tests {
         create_directory_durable(&root).expect("create and durably flush journal directory");
         create_directory_durable(&root.join("nested"))
             .expect("create and durably flush nested journal directory");
+    }
+
+    #[test]
+    fn committed_record_flush_reopens_a_writable_non_reparse_handle() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let path = temporary.path().join("checkpoint.json");
+        let mut file = File::create(&path).expect("checkpoint file");
+        file.write_all(b"durable checkpoint")
+            .expect("checkpoint bytes");
+        file.sync_all().expect("initial checkpoint flush");
+        drop(file);
+
+        assert!(
+            File::open(&path).expect("read-only checkpoint handle").sync_all().is_err(),
+            "Windows FlushFileBuffers requires a handle opened with write access"
+        );
+        sync_committed_file(&path).expect("reopen checkpoint with write access and flush it");
     }
 }
 
