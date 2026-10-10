@@ -376,8 +376,9 @@ final class MetadataMutationService: MetadataMutationFeatureProtocol {
         -> MetadataMutationDrainPresentation
     {
         guard library.status == .active else {
-            return emptyDrain(
-                map(library.status == .readOnly ? .readOnlyLibrary : .quarantinedLibrary))
+            let failure: MetadataMutationFailure =
+                library.status == .readOnly ? .readOnlyLibrary : .quarantinedLibrary
+            return emptyDrain(failure)
         }
         do {
             let scope = try await makeScope(in: library)
@@ -437,8 +438,9 @@ final class MetadataMutationService: MetadataMutationFeatureProtocol {
         in library: MetadataMutationLibraryContext
     ) async -> MetadataMutationDrainPresentation {
         guard library.status == .active else {
-            return emptyDrain(
-                map(library.status == .readOnly ? .readOnlyLibrary : .quarantinedLibrary))
+            let failure: MetadataMutationFailure =
+                library.status == .readOnly ? .readOnlyLibrary : .quarantinedLibrary
+            return emptyDrain(failure)
         }
         do {
             let scope = try await makeScope(in: library)
