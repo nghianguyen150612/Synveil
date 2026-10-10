@@ -39,6 +39,7 @@ public final class AppDependencyContainer {
     private(set) var durableMutationQueue: DurableMutationQueue?
     private(set) var mutationDrainCoordinator: MutationDrainCoordinator?
     private(set) var syncCheckpointService: SyncCheckpointService?
+    private(set) var syncFeedService: SyncFeedService?
     private(set) var metadataMutationFeature: (any MetadataMutationFeatureProtocol)?
     private(set) var mutationQueueFailure: MutationQueueFailure?
 
@@ -126,6 +127,15 @@ public final class AppDependencyContainer {
                 let checkpoint = SyncCheckpointService(
                     provider: browserProvider, queue: queue, bridge: bridge)
                 syncCheckpointService = checkpoint
+                let feedProvider = AuthenticatedLibraryRequestProvider(
+                    controller: sessionController, store: store,
+                    transport: URLSessionHTTPTransport(
+                        requestTimeout: 10, resourceTimeout: 15,
+                        maxResponseBodyBytes: SyncFeedPolicy.maximumResponseBytes))
+                syncFeedService = SyncFeedService(
+                    provider: feedProvider, queue: queue,
+                    store: database, bridge: bridge)
+                // No committed projection storage exists in P038. SyncAckService is not constructed.
                 var composedMetadataMutationService: MetadataMutationService?
                 if let nodeRepository {
                     let feature = MetadataMutationService(
@@ -145,6 +155,7 @@ public final class AppDependencyContainer {
                 durableMutationQueue = nil
                 mutationDrainCoordinator = nil
                 syncCheckpointService = nil
+                syncFeedService = nil
                 metadataMutationFeature = nil
                 mutationQueueFailure = DurableMutationQueue.classify(error)
             }
