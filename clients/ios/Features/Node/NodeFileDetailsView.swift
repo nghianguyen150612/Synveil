@@ -7,12 +7,14 @@ struct NodeFileDetailsView: View {
 
     init(
         repository: (any NodeRepositoryProtocol)?, sessionController: SessionController,
+        offlineDetailsService: (any OfflineNodeBrowserServiceProtocol)? = nil,
         route: NodeFileDetailsRoute
     ) {
         self.sessionController = sessionController
         _viewModel = State(
             initialValue: NodeFileDetailsViewModel(
-                repository: repository, sessionController: sessionController, route: route))
+                repository: repository, sessionController: sessionController,
+                offlineDetailsService: offlineDetailsService, route: route))
     }
 
     var body: some View {
@@ -36,10 +38,16 @@ struct NodeFileDetailsView: View {
                 Button {
                     Task { await viewModel.refresh() }
                 } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+                    Label(
+                        viewModel.contentSource == .cached ? "Refresh from Server" : "Refresh",
+                        systemImage: "arrow.clockwise")
                 }
                 .disabled(!viewModel.canRefresh)
-                .accessibilityLabel("Refresh file metadata")
+                .accessibilityLabel(
+                    viewModel.contentSource == .cached
+                        ? "Refresh from Server" : "Refresh file metadata from server"
+                )
+                .accessibilityHint("Checks the selected file's current server metadata.")
                 .accessibilityIdentifier("synveil.node.details.refresh")
             }
         }
@@ -56,8 +64,11 @@ struct NodeFileDetailsView: View {
         switch viewModel.presentationState {
         case .idle, .loading:
             Section {
-                ProgressView("Loading current file metadata…")
-                    .accessibilityIdentifier("synveil.node.details.loading")
+                ProgressView(
+                    viewModel.route.contentSource == .cached
+                        ? "Loading saved file metadata…" : "Loading current file metadata…"
+                )
+                .accessibilityIdentifier("synveil.node.details.loading")
             }
         case .loaded(let node):
             metadata(node)
@@ -83,6 +94,14 @@ struct NodeFileDetailsView: View {
                 message:
                     "This file is no longer available at its previous location. Return to the folder or refresh to check again.",
                 identifier: "synveil.node.details.unavailable")
+        case .savedUnavailable(let failure):
+            feedback(
+                title: failure == .synchronizationRecoveryRequired
+                    ? "Synchronization recovery required" : "Saved metadata unavailable",
+                message: failure == .synchronizationRecoveryRequired
+                    ? "Saved file metadata needs synchronization recovery before it can be shown."
+                    : "No complete, validated saved file record is available for this folder.",
+                identifier: "synveil.node.details.saved-unavailable")
         case .failed(let failure):
             feedback(
                 title: failure.title, message: failure.message,
@@ -105,8 +124,12 @@ struct NodeFileDetailsView: View {
                     .accessibilityAddTraits(.isHeader)
                 Text(message).fixedSize(horizontal: false, vertical: true)
                 if viewModel.canRefresh {
-                    Button("Refresh") { Task { await viewModel.refresh() } }
-                        .accessibilityIdentifier("\(identifier).action")
+                    Button(
+                        viewModel.contentSource == .cached ? "Refresh from Server" : "Refresh"
+                    ) {
+                        Task { await viewModel.refresh() }
+                    }
+                    .accessibilityIdentifier("\(identifier).action")
                 }
             }
             .accessibilityElement(children: .contain)
@@ -117,6 +140,38 @@ struct NodeFileDetailsView: View {
 
     @ViewBuilder
     private func metadata(_ node: Node) -> some View {
+        if viewModel.contentSource == .cached {
+            Section {
+                Label(
+                    viewModel.savedProjectionState?.completeness == .rebaselineRequired
+                        ? "Synchronization recovery required. Saved metadata is not verified with the server."
+                        : "Saved metadata — current server state not verified.",
+                    systemImage:
+                        viewModel.savedProjectionState?.completeness == .rebaselineRequired
+                        ? "exclamationmark.triangle" : "tray.full"
+                )
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("synveil.node.details.saved-source")
+            }
+        } else if viewModel.contentSource == .previouslyLoaded {
+            Section {
+                Label(
+                    "Previously loaded metadata — not verified by this refresh.",
+                    systemImage: "clock.arrow.circlepath"
+                )
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("synveil.node.details.previous-source")
+            }
+        } else {
+            Section {
+                Label(
+                    "Current metadata retrieved from server.",
+                    systemImage: "network"
+                )
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("synveil.node.details.live-source")
+            }
+        }
         Section("File") {
             Text(node.name)
                 .font(.headline)

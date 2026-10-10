@@ -125,10 +125,13 @@ final class NodeBrowserViewModelTests: XCTestCase {
         )
 
         await fixture.viewModel.loadIfNeeded()
+        XCTAssertTrue(fixture.viewModel.canPrepareMutationsFromVisibleResults)
         await fixture.viewModel.refresh()
 
         XCTAssertEqual(fixture.viewModel.state, .refreshFailed([node], .node(.timeout)))
         XCTAssertEqual(fixture.viewModel.visibleNodes, [node])
+        XCTAssertEqual(fixture.viewModel.contentSource, .previouslyLoaded)
+        XCTAssertTrue(fixture.viewModel.canPrepareMutationsFromVisibleResults)
         XCTAssertFalse(
             String(describing: fixture.viewModel.state).localizedCaseInsensitiveContains("cache")
         )
@@ -192,6 +195,7 @@ final class NodeBrowserViewModelTests: XCTestCase {
         await fixture.viewModel.loadIfNeeded()
         await fixture.viewModel.refresh()
         XCTAssertEqual(fixture.viewModel.state, .refreshCancelled([node]))
+        XCTAssertTrue(fixture.viewModel.canPrepareMutationsFromVisibleResults)
     }
 
     func testLogoutInvalidatesDirectoryModelAndCancelsPendingRepositoryWork() async throws {
@@ -250,6 +254,20 @@ final class NodeBrowserViewModelTests: XCTestCase {
         await load.value
 
         XCTAssertEqual(fixture.viewModel.state, .invalidated)
+    }
+
+    func testSessionLifecycleChangeBlocksVisibleSourceAndNavigationImmediately() async throws {
+        let fixture = try await makeFixture(results: [.loaded([])])
+        await fixture.viewModel.loadIfNeeded()
+        XCTAssertEqual(fixture.viewModel.contentSource, .live)
+
+        fixture.sessionController.requireRecovery(.credential)
+
+        XCTAssertNil(fixture.viewModel.visibleNodes)
+        XCTAssertNil(fixture.viewModel.contentSource)
+        XCTAssertFalse(fixture.viewModel.canPrepareMutationsFromVisibleResults)
+        XCTAssertEqual(fixture.viewModel.presentationState, .invalidated)
+        XCTAssertEqual(fixture.viewModel.state, .empty)
     }
 
     func testOfflineFailureDoesNotChangeAuthenticatedSession() async throws {

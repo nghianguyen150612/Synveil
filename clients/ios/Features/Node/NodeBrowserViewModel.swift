@@ -35,25 +35,30 @@ struct NodeBrowserRoute: Equatable, Hashable, Sendable {
     let directoryTitle: String
     let ancestry: [NodeId]
     let parentNodeSnapshot: Node?
+    /// Cached descendants remain local-only until the user explicitly refreshes from the server.
+    let initialSource: NodeBrowserContentSource?
 
     init(
         library: NodeBrowserLibraryContext,
         parentScope: NodeParentScope,
         directoryTitle: String,
         ancestry: [NodeId],
-        parentNodeSnapshot: Node? = nil
+        parentNodeSnapshot: Node? = nil,
+        initialSource: NodeBrowserContentSource? = nil
     ) {
         self.library = library
         self.parentScope = parentScope
         self.directoryTitle = directoryTitle
         self.ancestry = ancestry
         self.parentNodeSnapshot = parentNodeSnapshot
+        self.initialSource = initialSource
     }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.library == rhs.library && lhs.parentScope == rhs.parentScope
             && lhs.directoryTitle == rhs.directoryTitle && lhs.ancestry == rhs.ancestry
             && lhs.parentNodeSnapshot == rhs.parentNodeSnapshot
+            && lhs.initialSource == rhs.initialSource
     }
 
     func hash(into hasher: inout Hasher) {
@@ -70,6 +75,7 @@ struct NodeBrowserRoute: Equatable, Hashable, Sendable {
         hasher.combine(ancestry)
         hasher.combine(parentNodeSnapshot?.id)
         hasher.combine(parentNodeSnapshot?.revision)
+        hasher.combine(initialSource)
     }
 
     static func root(for library: Library) -> Self {
@@ -94,13 +100,16 @@ struct NodeFileDetailsRoute: Equatable, Hashable, Sendable {
     let revision: NodeRevision
     let createdAt: Date
     let updatedAt: Date
+    let currentVersionId: FileVersionId?
+    let contentSource: NodeBrowserContentSource
 
     init(
         node: Node,
         library: NodeBrowserLibraryContext,
         parentScope: NodeParentScope,
         ancestry: [NodeId],
-        parentDirectoryTitle: String
+        parentDirectoryTitle: String,
+        contentSource: NodeBrowserContentSource = .live
     ) {
         self.library = library
         self.parentScope = parentScope
@@ -111,6 +120,8 @@ struct NodeFileDetailsRoute: Equatable, Hashable, Sendable {
         revision = node.revision
         createdAt = node.createdAt
         updatedAt = node.updatedAt
+        currentVersionId = node.currentVersionId
+        self.contentSource = contentSource
     }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
@@ -119,7 +130,8 @@ struct NodeFileDetailsRoute: Equatable, Hashable, Sendable {
             && lhs.parentDirectoryTitle == rhs.parentDirectoryTitle
             && lhs.nodeId == rhs.nodeId && lhs.name == rhs.name
             && lhs.revision == rhs.revision && lhs.createdAt == rhs.createdAt
-            && lhs.updatedAt == rhs.updatedAt
+            && lhs.updatedAt == rhs.updatedAt && lhs.currentVersionId == rhs.currentVersionId
+            && lhs.contentSource == rhs.contentSource
     }
 
     func hash(into hasher: inout Hasher) {
@@ -139,14 +151,19 @@ struct NodeFileDetailsRoute: Equatable, Hashable, Sendable {
         hasher.combine(revision)
         hasher.combine(createdAt)
         hasher.combine(updatedAt)
+        hasher.combine(currentVersionId)
+        hasher.combine(contentSource)
     }
 }
 
 enum NodeBrowserViewState: Equatable {
     case idle
     case loading
+    case loadingSaved
     case loaded([Node])
     case empty
+    case saved(NodeCachedDirectoryPresentation)
+    case savedUnavailable(NodeCacheUIFailure)
     case refreshing([Node])
     case refreshFailed([Node], NodeBrowserUIFailure)
     case refreshCancelled([Node])
@@ -159,18 +176,19 @@ enum NodeBrowserViewState: Equatable {
         case .loaded(let nodes), .refreshing(let nodes), .refreshFailed(let nodes, _),
             .refreshCancelled(let nodes):
             nodes
+        case .saved(let presentation): presentation.nodes
         case .empty:
             []
-        case .idle, .loading, .failed, .cancelled, .invalidated:
+        case .idle, .loading, .loadingSaved, .savedUnavailable, .failed, .cancelled, .invalidated:
             nil
         }
     }
 
     var isRequestInProgress: Bool {
         switch self {
-        case .loading, .refreshing: true
-        case .idle, .loaded, .empty, .refreshFailed, .refreshCancelled, .failed, .cancelled,
-            .invalidated:
+        case .loading, .loadingSaved, .refreshing: true
+        case .idle, .loaded, .empty, .saved, .savedUnavailable, .refreshFailed, .refreshCancelled,
+            .failed, .cancelled, .invalidated:
             false
         }
     }
@@ -300,21 +318,29 @@ final class NodeBrowserViewModel {
     let ancestry: [NodeId]
 
     private let repository: (any NodeRepositoryProtocol)?
+    private let offlineBrowserService: (any OfflineNodeBrowserServiceProtocol)?
     private let sessionController: SessionController
     private let sessionRevision: UInt64
+    private let initialSource: NodeBrowserContentSource?
     @ObservationIgnored private var didStartInitialLoad = false
     @ObservationIgnored private var activeRequestIdentity: RequestIdentity?
     @ObservationIgnored private var activeRepositoryTask: Task<NodeRepositoryResult, Never>?
+    @ObservationIgnored private var activeOfflineTask: Task<OfflineNodeBrowserResult, Never>?
     @ObservationIgnored private var operationGeneration: UInt64 = 0
     @ObservationIgnored private var invalidated = false
+    private(set) var isRefreshingSavedItems = false
+    private(set) var savedRefreshFailure: NodeBrowserUIFailure?
 
     init(
         repository: (any NodeRepositoryProtocol)?,
+        offlineBrowserService: (any OfflineNodeBrowserServiceProtocol)? = nil,
         sessionController: SessionController,
         route: NodeBrowserRoute
     ) {
         self.repository = repository
+        self.offlineBrowserService = offlineBrowserService
         self.sessionController = sessionController
+        initialSource = route.initialSource
         library = route.library
         parentScope = route.parentScope
         directoryTitle = route.directoryTitle
@@ -327,14 +353,62 @@ final class NodeBrowserViewModel {
         return state.visibleNodes
     }
 
-    var isRequestInProgress: Bool { state.isRequestInProgress }
+    var presentationState: NodeBrowserViewState {
+        isCurrentSession ? state : .invalidated
+    }
+
+    var isRequestInProgress: Bool { state.isRequestInProgress || isRefreshingSavedItems }
+
+    /// P037 may prepare changes from a validated live result that is retained in this same
+    /// authenticated ViewModel. Projection-only saved rows never qualify as mutation input.
+    var canPrepareMutationsFromVisibleResults: Bool {
+        guard isCurrentSession else { return false }
+        return switch state {
+        case .loaded, .empty, .refreshFailed, .refreshCancelled:
+            true
+        case .idle, .loading, .loadingSaved, .saved, .savedUnavailable, .refreshing, .failed,
+            .cancelled, .invalidated:
+            false
+        }
+    }
+
+    var contentSource: NodeBrowserContentSource? {
+        guard isCurrentSession else { return nil }
+        return switch state {
+        case .loaded, .empty: .live
+        case .saved: .cached
+        case .refreshing, .refreshFailed, .refreshCancelled: .previouslyLoaded
+        case .idle, .loading, .loadingSaved, .savedUnavailable, .failed, .cancelled, .invalidated:
+            nil
+        }
+    }
+
+    var cachedPresentation: NodeCachedDirectoryPresentation? {
+        guard isCurrentSession else { return nil }
+        guard case .saved(let presentation) = state else { return nil }
+        return presentation
+    }
+
+    var canViewSavedItems: Bool {
+        guard offlineBrowserService != nil, isCurrentSession, !isRequestInProgress else {
+            return false
+        }
+        return switch state {
+        case .idle, .loaded, .empty, .saved, .savedUnavailable:
+            true
+        case .failed(let failure), .refreshFailed(_, let failure):
+            failure.mayRetainPreviouslyLoadedData
+        case .loading, .loadingSaved, .refreshing, .refreshCancelled, .cancelled, .invalidated:
+            false
+        }
+    }
 
     var canRefresh: Bool {
         guard isCurrentSession, activeRequestIdentity == nil else { return false }
         return switch state {
         case .failed(let failure), .refreshFailed(_, let failure): failure.canRetry
-        case .loading, .refreshing, .invalidated: false
-        case .idle, .loaded, .empty, .refreshCancelled, .cancelled: true
+        case .loading, .loadingSaved, .refreshing, .invalidated: false
+        case .idle, .loaded, .empty, .saved, .savedUnavailable, .refreshCancelled, .cancelled: true
         }
     }
 
@@ -342,18 +416,45 @@ final class NodeBrowserViewModel {
         guard !didStartInitialLoad, case .idle = state else { return }
         guard validateCurrentSession() else { return }
         didStartInitialLoad = true
-        await requestDirectory(isRefresh: false)
+        await requestDirectory(
+            isRefresh: false, request: initialSource == .cached ? .savedOnly : .liveFirst)
     }
 
     func refresh() async {
         guard validateCurrentSession(), activeRequestIdentity == nil else { return }
         didStartInitialLoad = true
-        await requestDirectory(isRefresh: true)
+        await requestDirectory(isRefresh: true, request: .serverOnly)
+    }
+
+    /// Local-only read of saved metadata; it never invokes Sync Now or an outbound operation.
+    func viewSavedItems() async {
+        guard canViewSavedItems, activeRequestIdentity == nil else { return }
+        didStartInitialLoad = true
+        await requestDirectory(isRefresh: false, request: .savedOnly)
     }
 
     func sessionDidChange() {
         guard !isCurrentSession else { return }
         invalidate()
+    }
+
+    func cancelCurrentRequest() {
+        guard activeRequestIdentity != nil else { return }
+        activeRequestIdentity = nil
+        operationGeneration &+= 1
+        activeRepositoryTask?.cancel()
+        activeRepositoryTask = nil
+        activeOfflineTask?.cancel()
+        activeOfflineTask = nil
+        isRefreshingSavedItems = false
+        savedRefreshFailure = nil
+        if let presentation = cachedPresentation {
+            state = .saved(presentation)
+        } else if case .refreshing(let nodes) = state {
+            state = .refreshCancelled(nodes)
+        } else {
+            state = .cancelled
+        }
     }
 
     func invalidate() {
@@ -363,33 +464,47 @@ final class NodeBrowserViewModel {
         operationGeneration &+= 1
         activeRepositoryTask?.cancel()
         activeRepositoryTask = nil
+        activeOfflineTask?.cancel()
+        activeOfflineTask = nil
+        isRefreshingSavedItems = false
+        savedRefreshFailure = nil
         state = .invalidated
     }
 
     func route(into node: Node) -> NodeBrowserRoute? {
-        guard node.kind == .directory, node.libraryId == library.id,
+        guard isCurrentSession, node.kind == .directory, node.libraryId == library.id,
             node.parentId == parentScope.expectedParentId, node.state == .active,
+            node.trashedAt == nil, node.restoreDeadline == nil, !node.purgeEligible,
             !ancestry.contains(node.id)
         else { return nil }
+        if contentSource == .cached,
+            cachedPresentation?.knowledge == .staleKnown
+                || cachedPresentation?.projection.completeness == .rebaselineRequired
+        {
+            return nil
+        }
         return NodeBrowserRoute(
             library: library,
             parentScope: .directory(node.id),
             directoryTitle: node.name,
             ancestry: ancestry + [node.id],
-            parentNodeSnapshot: node
+            parentNodeSnapshot: node,
+            initialSource: contentSource == .cached ? .cached : nil
         )
     }
 
     func details(for node: Node) -> NodeFileDetailsRoute? {
-        guard node.kind == .file, node.libraryId == library.id,
-            node.parentId == parentScope.expectedParentId, node.state == .active
+        guard isCurrentSession, node.kind == .file, node.libraryId == library.id,
+            node.parentId == parentScope.expectedParentId, node.state == .active,
+            node.trashedAt == nil, node.restoreDeadline == nil, !node.purgeEligible
         else { return nil }
         return NodeFileDetailsRoute(
             node: node,
             library: library,
             parentScope: parentScope,
             ancestry: ancestry,
-            parentDirectoryTitle: directoryTitle
+            parentDirectoryTitle: directoryTitle,
+            contentSource: contentSource ?? .live
         )
     }
 
@@ -407,7 +522,9 @@ final class NodeBrowserViewModel {
         return true
     }
 
-    private func requestDirectory(isRefresh: Bool) async {
+    private func requestDirectory(
+        isRefresh: Bool, request: OfflineNodeBrowserRequest
+    ) async {
         guard activeRequestIdentity == nil, validateCurrentSession() else { return }
         operationGeneration &+= 1
         let identity = RequestIdentity(
@@ -418,15 +535,57 @@ final class NodeBrowserViewModel {
         )
         activeRequestIdentity = identity
         let previouslyLoaded = state.visibleNodes
+        let previousSaved = cachedPresentation
 
-        if isRefresh, let previouslyLoaded {
+        if isRefresh, previousSaved != nil {
+            isRefreshingSavedItems = true
+            savedRefreshFailure = nil
+        } else if request == .savedOnly {
+            state = .loadingSaved
+        } else if isRefresh, let previouslyLoaded {
             state = .refreshing(previouslyLoaded)
         } else {
             state = .loading
         }
 
         guard !Task.isCancelled else {
-            finishCancelled(identity: identity, previouslyLoaded: previouslyLoaded)
+            finishCancelled(
+                identity: identity, previouslyLoaded: previouslyLoaded,
+                previousSaved: previousSaved)
+            return
+        }
+
+        if let offlineBrowserService {
+            let task = Task { @MainActor in
+                await offlineBrowserService.browse(
+                    libraryId: library.id, parent: parentScope, request: request)
+            }
+            activeOfflineTask = task
+            let result = await withTaskCancellationHandler {
+                await task.value
+            } onCancel: {
+                task.cancel()
+            }
+
+            guard activeRequestIdentity == identity else { return }
+            activeOfflineTask = nil
+            guard validateCurrentSession() else { return }
+            if Task.isCancelled {
+                finishCancelled(
+                    identity: identity, previouslyLoaded: previouslyLoaded,
+                    previousSaved: previousSaved)
+                return
+            }
+            finishOfflineResult(
+                result, identity: identity, previouslyLoaded: previouslyLoaded,
+                previousSaved: previousSaved)
+            return
+        }
+
+        guard request != .savedOnly else {
+            activeRequestIdentity = nil
+            isRefreshingSavedItems = false
+            state = .savedUnavailable(.unavailable)
             return
         }
 
@@ -434,7 +593,8 @@ final class NodeBrowserViewModel {
             finishRequest(
                 identity: identity,
                 failure: .repositoryUnavailable,
-                previouslyLoaded: previouslyLoaded
+                previouslyLoaded: previouslyLoaded,
+                previousSaved: previousSaved
             )
             return
         }
@@ -453,7 +613,9 @@ final class NodeBrowserViewModel {
         activeRepositoryTask = nil
         guard validateCurrentSession() else { return }
         if Task.isCancelled {
-            finishCancelled(identity: identity, previouslyLoaded: previouslyLoaded)
+            finishCancelled(
+                identity: identity, previouslyLoaded: previouslyLoaded,
+                previousSaved: previousSaved)
             return
         }
 
@@ -463,7 +625,8 @@ final class NodeBrowserViewModel {
                 finishRequest(
                     identity: identity,
                     failure: .node(.protocolFailure),
-                    previouslyLoaded: previouslyLoaded
+                    previouslyLoaded: previouslyLoaded,
+                    previousSaved: previousSaved
                 )
                 return
             }
@@ -474,36 +637,110 @@ final class NodeBrowserViewModel {
             finishRequest(
                 identity: identity,
                 failure: .node(failure),
-                previouslyLoaded: previouslyLoaded
+                previouslyLoaded: previouslyLoaded,
+                previousSaved: previousSaved
             )
+        }
+    }
+
+    private func finishOfflineResult(
+        _ result: OfflineNodeBrowserResult,
+        identity: RequestIdentity,
+        previouslyLoaded: [Node]?,
+        previousSaved: NodeCachedDirectoryPresentation?
+    ) {
+        guard activeRequestIdentity == identity else { return }
+        guard validateCurrentSession() else { return }
+        activeRequestIdentity = nil
+        isRefreshingSavedItems = false
+
+        switch result {
+        case .live(let nodes):
+            guard isValidDirectory(nodes) else {
+                savedRefreshFailure = nil
+                state = .failed(.node(.protocolFailure))
+                return
+            }
+            savedRefreshFailure = nil
+            let ordered = Self.presentationOrder(nodes)
+            state = ordered.isEmpty ? .empty : .loaded(ordered)
+        case .saved(let presentation):
+            guard isValidDirectory(presentation.nodes) else {
+                savedRefreshFailure = nil
+                state = .failed(.node(.protocolFailure))
+                return
+            }
+            savedRefreshFailure = nil
+            state = .saved(presentation)
+        case .savedUnavailable(let failure):
+            savedRefreshFailure = nil
+            state = .savedUnavailable(failure)
+        case .failed(let failure):
+            if failure == .cancelled {
+                savedRefreshFailure = nil
+                if let previousSaved {
+                    state = .saved(previousSaved)
+                } else if let previouslyLoaded {
+                    state = .refreshCancelled(previouslyLoaded)
+                } else {
+                    state = .cancelled
+                }
+                return
+            }
+            let displayFailure = NodeBrowserUIFailure.node(failure)
+            if let previousSaved, displayFailure.mayRetainPreviouslyLoadedData {
+                state = .saved(previousSaved)
+                savedRefreshFailure = displayFailure
+            } else if let previouslyLoaded, displayFailure.mayRetainPreviouslyLoadedData {
+                state = .refreshFailed(previouslyLoaded, displayFailure)
+                savedRefreshFailure = nil
+            } else {
+                savedRefreshFailure = nil
+                state = .failed(displayFailure)
+            }
         }
     }
 
     private func finishRequest(
         identity: RequestIdentity,
         failure: NodeBrowserUIFailure,
-        previouslyLoaded: [Node]?
+        previouslyLoaded: [Node]?,
+        previousSaved: NodeCachedDirectoryPresentation? = nil
     ) {
         guard activeRequestIdentity == identity else { return }
         guard validateCurrentSession() else { return }
 
         if case .node(.cancelled) = failure {
-            finishCancelled(identity: identity, previouslyLoaded: previouslyLoaded)
+            finishCancelled(
+                identity: identity, previouslyLoaded: previouslyLoaded,
+                previousSaved: previousSaved)
             return
         }
         activeRequestIdentity = nil
-        if let previouslyLoaded, failure.mayRetainPreviouslyLoadedData {
+        isRefreshingSavedItems = false
+        if let previousSaved, failure.mayRetainPreviouslyLoadedData {
+            state = .saved(previousSaved)
+            savedRefreshFailure = failure
+        } else if let previouslyLoaded, failure.mayRetainPreviouslyLoadedData {
+            savedRefreshFailure = nil
             state = .refreshFailed(previouslyLoaded, failure)
         } else {
+            savedRefreshFailure = nil
             state = .failed(failure)
         }
     }
 
-    private func finishCancelled(identity: RequestIdentity, previouslyLoaded: [Node]?) {
+    private func finishCancelled(
+        identity: RequestIdentity, previouslyLoaded: [Node]?,
+        previousSaved: NodeCachedDirectoryPresentation? = nil
+    ) {
         guard activeRequestIdentity == identity else { return }
         activeRequestIdentity = nil
+        isRefreshingSavedItems = false
         guard validateCurrentSession() else { return }
-        if let previouslyLoaded {
+        if let previousSaved {
+            state = .saved(previousSaved)
+        } else if let previouslyLoaded {
             state = .refreshCancelled(previouslyLoaded)
         } else {
             state = .cancelled
@@ -532,6 +769,7 @@ final class NodeBrowserViewModel {
                 && node.state == .active
                 && node.trashedAt == nil
                 && node.restoreDeadline == nil
+                && !node.purgeEligible
                 && identifiers.insert(node.id).inserted
         }
     }

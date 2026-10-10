@@ -32,7 +32,7 @@ final class NodeBrowserViewTests: XCTestCase {
     func testDirectorySelectionCreatesDirectDirectoryScopeAndKeepsLibrary() async throws {
         let library = try await makeLibrary(1)
         let route = NodeBrowserRoute.root(for: library)
-        let model = makeViewModel(route: route)
+        let model = try makeViewModel(route: route)
         let folder = try await makeNode(
             20,
             library: library,
@@ -55,7 +55,7 @@ final class NodeBrowserViewTests: XCTestCase {
         for status in [LibraryStatus.readOnly, .quarantined] {
             let library = try await makeLibrary(1, status: status)
             let root = NodeBrowserRoute.root(for: library)
-            let viewModel = makeViewModel(route: root)
+            let viewModel = try makeViewModel(route: root)
             let folder = try await makeNode(
                 20, library: library, parent: library.rootNodeId,
                 kind: .directory, name: "Restricted")
@@ -70,7 +70,7 @@ final class NodeBrowserViewTests: XCTestCase {
     func testNestedNavigationUsesEachActualDirectoryID() async throws {
         let library = try await makeLibrary(1)
         let root = NodeBrowserRoute.root(for: library)
-        let rootModel = makeViewModel(route: root)
+        let rootModel = try makeViewModel(route: root)
         let first = try await makeNode(
             20,
             library: library,
@@ -79,7 +79,7 @@ final class NodeBrowserViewTests: XCTestCase {
             name: "Archive"
         )
         let firstRoute = try XCTUnwrap(rootModel.route(into: first))
-        let firstModel = makeViewModel(route: firstRoute)
+        let firstModel = try makeViewModel(route: firstRoute)
         let second = try await makeNode(
             21,
             library: library,
@@ -97,7 +97,7 @@ final class NodeBrowserViewTests: XCTestCase {
 
     func testSameNamedFoldersRemainDistinctByNodeID() async throws {
         let library = try await makeLibrary(1)
-        let model = makeViewModel(route: .root(for: library))
+        let model = try makeViewModel(route: .root(for: library))
         let first = try await makeNode(
             30,
             library: library,
@@ -131,7 +131,7 @@ final class NodeBrowserViewTests: XCTestCase {
             directoryTitle: "Nested",
             ancestry: [library.rootNodeId, directoryId]
         )
-        let model = makeViewModel(route: nestedRoute)
+        let model = try makeViewModel(route: nestedRoute)
         let cycle = try await makeNode(
             20,
             library: library,
@@ -145,7 +145,7 @@ final class NodeBrowserViewTests: XCTestCase {
 
     func testFileSelectionCarriesOnlyValidatedReadOnlyMetadata() async throws {
         let library = try await makeLibrary(1)
-        let model = makeViewModel(route: .root(for: library))
+        let model = try makeViewModel(route: .root(for: library))
         let file = try await makeNode(
             40,
             library: library,
@@ -169,7 +169,7 @@ final class NodeBrowserViewTests: XCTestCase {
 
     func testFileCannotBeUsedAsDirectoryDestination() async throws {
         let library = try await makeLibrary(1)
-        let model = makeViewModel(route: .root(for: library))
+        let model = try makeViewModel(route: .root(for: library))
         let file = try await makeNode(40, library: library, parent: library.rootNodeId)
         XCTAssertNil(model.route(into: file))
     }
@@ -177,7 +177,7 @@ final class NodeBrowserViewTests: XCTestCase {
     func testNodeFromAnotherLibraryCannotCreateRouteOrDetails() async throws {
         let firstLibrary = try await makeLibrary(1)
         let secondLibrary = try await makeLibrary(2)
-        let model = makeViewModel(route: .root(for: firstLibrary))
+        let model = try makeViewModel(route: .root(for: firstLibrary))
         let folder = try await makeNode(
             30,
             library: secondLibrary,
@@ -205,7 +205,7 @@ final class NodeBrowserViewTests: XCTestCase {
             route: .root(for: library)
         )
         let file = try await makeNode(40, library: library, parent: library.rootNodeId)
-        let model = makeViewModel(route: .root(for: library))
+        let model = try makeViewModel(route: .root(for: library))
         let details = NodeFileDetailsView(
             repository: nil, sessionController: controller,
             route: try XCTUnwrap(model.details(for: file)))
@@ -214,10 +214,48 @@ final class NodeBrowserViewTests: XCTestCase {
         XCTAssertNotNil(details.body)
     }
 
-    private func makeViewModel(route: NodeBrowserRoute) -> NodeBrowserViewModel {
+    func testSavedBrowserAndFileDetailsUseRegisteredNativeViews() async throws {
+        let library = try await makeLibrary(1)
+        let controller = try makeAuthenticatedController()
+        let root = NodeBrowserRoute(
+            library: NodeBrowserLibraryContext(library),
+            parentScope: .libraryRoot(rootNodeId: library.rootNodeId),
+            directoryTitle: library.name, ancestry: [library.rootNodeId],
+            initialSource: .cached)
+        let browser = NodeBrowserView(
+            repository: nil, sessionController: controller, route: root)
+        let file = try await makeNode(40, library: library, parent: library.rootNodeId)
+        let detailsRoute = NodeFileDetailsRoute(
+            node: file, library: NodeBrowserLibraryContext(library),
+            parentScope: .libraryRoot(rootNodeId: library.rootNodeId),
+            ancestry: [library.rootNodeId], parentDirectoryTitle: library.name,
+            contentSource: .cached)
+        let details = NodeFileDetailsView(
+            repository: nil, sessionController: controller, route: detailsRoute)
+
+        XCTAssertEqual(root.initialSource, .cached)
+        XCTAssertEqual(detailsRoute.contentSource, .cached)
+        XCTAssertNotNil(browser.body)
+        XCTAssertNotNil(details.body)
+    }
+
+    func testRoutesAndDetailsRequireCurrentAuthenticatedSession() async throws {
+        let library = try await makeLibrary(1)
+        let route = NodeBrowserRoute.root(for: library)
+        let viewModel = NodeBrowserViewModel(
+            repository: nil, sessionController: SessionController(), route: route)
+        let folder = try await makeNode(
+            20, library: library, parent: library.rootNodeId, kind: .directory)
+        let file = try await makeNode(21, library: library, parent: library.rootNodeId)
+
+        XCTAssertNil(viewModel.route(into: folder))
+        XCTAssertNil(viewModel.details(for: file))
+    }
+
+    private func makeViewModel(route: NodeBrowserRoute) throws -> NodeBrowserViewModel {
         NodeBrowserViewModel(
             repository: nil,
-            sessionController: SessionController(),
+            sessionController: try makeAuthenticatedController(),
             route: route
         )
     }
