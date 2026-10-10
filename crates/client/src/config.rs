@@ -1065,7 +1065,7 @@ mod tests {
         assert_eq!(config.libraries().len(), 1);
         assert_eq!(config.libraries()[0].library_id(), library_id);
         assert_eq!(config.libraries()[0].root(), PathBuf::from(&root).as_path());
-        assert!(!format!("{config:?}").contains(root));
+        assert!(!format!("{config:?}").contains(&root));
     }
 
     #[test]
@@ -1179,8 +1179,9 @@ mod tests {
     #[test]
     fn network_hint_interval_is_bounded() {
         let profile_id = ServerProfileId::new();
-        let library = DesktopClientLibrary::new(LibraryId::new(), absolute_test_root("network-hint-root"))
-            .expect("library manifest");
+        let library =
+            DesktopClientLibrary::new(LibraryId::new(), absolute_test_root("network-hint-root"))
+                .expect("library manifest");
         let config = DesktopClientConfig::new(profile_id, [library]).expect("config");
         assert!(matches!(
             config.with_network_hint_interval(Duration::ZERO),

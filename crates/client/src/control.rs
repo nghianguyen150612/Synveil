@@ -4011,8 +4011,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn local_server_and_client_share_one_host_control_surface() {
-        let root = PathBuf::from("/tmp")
-            .join(format!("sv96-local-{}", uuid::Uuid::now_v7()));
+        let root = PathBuf::from("/tmp").join(format!("sv96-local-{}", uuid::Uuid::now_v7()));
         fs::create_dir_all(&root).expect("fixture root");
         let state = Arc::new(
             LocalStateStore::open(&LocalStateConfig::new(root.join("state.sqlite3")))
