@@ -16,7 +16,8 @@ enum NodeFileDetailsState: Equatable {
     var visibleNode: Node? {
         switch self {
         case .loaded(let node), .refreshing(let node), .refreshFailed(let node, _): node
-        case .idle, .loading, .unavailable, .savedUnavailable, .failed, .cancelled, .invalidated: nil
+        case .idle, .loading, .unavailable, .savedUnavailable, .failed, .cancelled,
+            .invalidated: nil
         }
     }
 

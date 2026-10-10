@@ -45,7 +45,8 @@ struct NodeFileDetailsView: View {
                 .disabled(!viewModel.canRefresh)
                 .accessibilityLabel(
                     viewModel.contentSource == .cached
-                        ? "Refresh from Server" : "Refresh file metadata from server")
+                        ? "Refresh from Server" : "Refresh file metadata from server"
+                )
                 .accessibilityHint("Checks the selected file's current server metadata.")
                 .accessibilityIdentifier("synveil.node.details.refresh")
             }
@@ -65,8 +66,9 @@ struct NodeFileDetailsView: View {
             Section {
                 ProgressView(
                     viewModel.route.contentSource == .cached
-                        ? "Loading saved file metadata…" : "Loading current file metadata…")
-                    .accessibilityIdentifier("synveil.node.details.loading")
+                        ? "Loading saved file metadata…" : "Loading current file metadata…"
+                )
+                .accessibilityIdentifier("synveil.node.details.loading")
             }
         case .loaded(let node):
             metadata(node)
@@ -127,7 +129,7 @@ struct NodeFileDetailsView: View {
                     ) {
                         Task { await viewModel.refresh() }
                     }
-                        .accessibilityIdentifier("\(identifier).action")
+                    .accessibilityIdentifier("\(identifier).action")
                 }
             }
             .accessibilityElement(children: .contain)
@@ -144,25 +146,30 @@ struct NodeFileDetailsView: View {
                     viewModel.savedProjectionState?.completeness == .rebaselineRequired
                         ? "Synchronization recovery required. Saved metadata is not verified with the server."
                         : "Saved metadata — current server state not verified.",
-                    systemImage: viewModel.savedProjectionState?.completeness == .rebaselineRequired
-                        ? "exclamationmark.triangle" : "tray.full")
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("synveil.node.details.saved-source")
+                    systemImage:
+                        viewModel.savedProjectionState?.completeness == .rebaselineRequired
+                        ? "exclamationmark.triangle" : "tray.full"
+                )
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("synveil.node.details.saved-source")
             }
         } else if viewModel.contentSource == .previouslyLoaded {
             Section {
                 Label(
                     "Previously loaded metadata — not verified by this refresh.",
-                    systemImage: "clock.arrow.circlepath")
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("synveil.node.details.previous-source")
+                    systemImage: "clock.arrow.circlepath"
+                )
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("synveil.node.details.previous-source")
             }
         } else {
             Section {
                 Label(
-                    "Current metadata retrieved from server.", systemImage: "network")
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("synveil.node.details.live-source")
+                    "Current metadata retrieved from server.",
+                    systemImage: "network"
+                )
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("synveil.node.details.live-source")
             }
         }
         Section("File") {

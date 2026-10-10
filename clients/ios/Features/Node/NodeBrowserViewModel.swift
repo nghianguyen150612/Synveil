@@ -478,8 +478,8 @@ final class NodeBrowserViewModel {
             !ancestry.contains(node.id)
         else { return nil }
         if contentSource == .cached,
-            (cachedPresentation?.knowledge == .staleKnown
-                || cachedPresentation?.projection.completeness == .rebaselineRequired)
+            cachedPresentation?.knowledge == .staleKnown
+                || cachedPresentation?.projection.completeness == .rebaselineRequired
         {
             return nil
         }

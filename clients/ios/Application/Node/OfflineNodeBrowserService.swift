@@ -194,9 +194,11 @@ final class OfflineNodeBrowserService: OfflineNodeBrowserServiceProtocol {
                 return liveFailure.map(OfflineNodeBrowserResult.failed)
                     ?? .savedUnavailable(Self.uiFailure(for: failure))
             case .loaded(let cached):
-                guard Self.isValid(
-                    cached.nodes, libraryId: libraryId, parent: parent
-                ) else {
+                guard
+                    Self.isValid(
+                        cached.nodes, libraryId: libraryId, parent: parent
+                    )
+                else {
                     return liveFailure.map(OfflineNodeBrowserResult.failed)
                         ?? .savedUnavailable(.unavailable)
                 }

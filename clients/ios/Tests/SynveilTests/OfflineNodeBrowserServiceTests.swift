@@ -509,7 +509,8 @@ final class OfflineNodeBrowserServiceTests: XCTestCase {
     }
 
     private func makeAuthenticatedController(endpoint: ServerEndpoint) throws -> SessionController {
-        let controller = SessionController(configuration: AppConfiguration(serverEndpoint: endpoint))
+        let controller = SessionController(
+            configuration: AppConfiguration(serverEndpoint: endpoint))
         controller.showServerProfileSetup()
         controller.configureServerEndpoint(endpoint)
         controller.requireEnrollment()
@@ -546,7 +547,8 @@ private struct Fixture {
     ) async throws -> Node {
         let versionId: FileVersionId?
         if let version {
-            versionId = try await FileVersionId.validated(queueUUID(version), using: QueueValidator())
+            versionId = try await FileVersionId.validated(
+                queueUUID(version), using: QueueValidator())
         } else {
             versionId = nil
         }
@@ -597,14 +599,13 @@ private final class OfflineBrowserProjectionRepository: NodeProjectionRepository
     func node(scope: ClientMutationScope, nodeId: NodeId) async -> CachedNodeResult {
         nodeCount += 1
         if let result = nodeResults[nodeId] { return result }
-        if case .found(let record, _) = nodeResult, record.id != nodeId {
-            return .missing(.init(
-                completeness: .uninitialized, incrementalAnchor: nil, locallyApplied: nil,
-                serverConfirmed: nil, library: nil))
-        }
-        return nodeResult ?? .missing(.init(
+        let missingState = NodeProjectionState(
             completeness: .uninitialized, incrementalAnchor: nil, locallyApplied: nil,
-            serverConfirmed: nil, library: nil))
+            serverConfirmed: nil, library: nil)
+        if case .found(let record, _) = nodeResult, record.id != nodeId {
+            return .missing(missingState)
+        }
+        return nodeResult ?? .missing(missingState)
     }
 
     func children(scope: ClientMutationScope, parentId: NodeId, limit: Int) async

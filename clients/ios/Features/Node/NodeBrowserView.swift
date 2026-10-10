@@ -84,7 +84,8 @@ struct NodeBrowserView: View {
                 }
                 .disabled(!viewModel.canRefresh || viewModel.isRequestInProgress)
                 .accessibilityLabel(
-                    viewModel.contentSource == .cached ? "Refresh from Server" : "Refresh folder")
+                    viewModel.contentSource == .cached ? "Refresh from Server" : "Refresh folder"
+                )
                 .accessibilityHint("Checks this folder with the selected Library server.")
                 .accessibilityIdentifier("synveil.node.refresh")
             }
@@ -95,7 +96,9 @@ struct NodeBrowserView: View {
                     } label: {
                         Label("View Saved Items", systemImage: "tray.2")
                     }
-                    .accessibilityHint("Reads saved metadata on this device without contacting the server.")
+                    .accessibilityHint(
+                        "Reads saved metadata on this device without contacting the server."
+                    )
                     .accessibilityIdentifier("synveil.node.view-saved-items")
                 }
             }
@@ -116,7 +119,8 @@ struct NodeBrowserView: View {
             let message: String
             switch source {
             case .live: message = "Showing current server folder results."
-            case .cached: message = "Showing saved metadata. It has not been verified with the server."
+            case .cached:
+                message = "Showing saved metadata. It has not been verified with the server."
             case .previouslyLoaded: message = "Showing previously loaded results."
             case nil: return
             }
@@ -433,7 +437,8 @@ struct NodeBrowserView: View {
         case .refreshing(let nodes):
             sourceBanner(
                 title: "Previously loaded results",
-                message: "These items were loaded earlier in this session and are not verified by this refresh.",
+                message:
+                    "These items were loaded earlier in this session and are not verified by this refresh.",
                 symbol: "clock.arrow.circlepath",
                 identifier: "synveil.node.previous-source")
             Section {
@@ -453,7 +458,8 @@ struct NodeBrowserView: View {
         case .refreshFailed(let nodes, let failure):
             sourceBanner(
                 title: "Previously loaded results",
-                message: "These items were loaded earlier in this session and are not verified by this refresh.",
+                message:
+                    "These items were loaded earlier in this session and are not verified by this refresh.",
                 symbol: "clock.arrow.circlepath",
                 identifier: "synveil.node.previous-source")
             Section {
@@ -480,7 +486,8 @@ struct NodeBrowserView: View {
         case .refreshCancelled(let nodes):
             sourceBanner(
                 title: "Previously loaded results",
-                message: "These items were loaded earlier in this session and are not verified by the cancelled refresh.",
+                message:
+                    "These items were loaded earlier in this session and are not verified by the cancelled refresh.",
                 symbol: "clock.arrow.circlepath",
                 identifier: "synveil.node.previous-source")
             Section {
@@ -558,14 +565,18 @@ struct NodeBrowserView: View {
                 Text(savedMessage(presentation))
                     .fixedSize(horizontal: false, vertical: true)
                 if let failure = presentation.liveFailure {
-                    Text("\(failureMessage(failure)) Showing saved metadata; it has not been verified with the server.")
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("synveil.node.saved.fallback-warning")
+                    Text(
+                        "\(failureMessage(failure)) Showing saved metadata; it has not been verified with the server."
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("synveil.node.saved.fallback-warning")
                 }
                 if let failure = viewModel.savedRefreshFailure {
-                    Text("\(failure.message) Saved items remain unchanged and have not been verified.")
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("synveil.node.saved.refresh-warning")
+                    Text(
+                        "\(failure.message) Saved items remain unchanged and have not been verified."
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("synveil.node.saved.refresh-warning")
                 }
                 if viewModel.isRefreshingSavedItems {
                     ProgressView("Checking server…")
@@ -574,17 +585,22 @@ struct NodeBrowserView: View {
                 if presentation.hasMore {
                     Label(
                         "Showing the first saved results. More saved items are available; this listing is truncated.",
-                        systemImage: "ellipsis")
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("synveil.node.saved.truncated")
+                        systemImage: "ellipsis"
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("synveil.node.saved.truncated")
                 }
                 if let position = presentation.projection.locallyApplied {
-                    Text("Local metadata applied through sequence \(position.sequence.rawValue) in epoch \(position.epoch.rawValue).")
-                        .accessibilityIdentifier("synveil.node.saved.local-position")
+                    Text(
+                        "Local metadata applied through sequence \(position.sequence.rawValue) in epoch \(position.epoch.rawValue)."
+                    )
+                    .accessibilityIdentifier("synveil.node.saved.local-position")
                 }
                 if let position = presentation.projection.serverConfirmed {
-                    Text("Server acknowledged through sequence \(position.sequence.rawValue) in epoch \(position.epoch.rawValue).")
-                        .accessibilityIdentifier("synveil.node.saved.server-position")
+                    Text(
+                        "Server acknowledged through sequence \(position.sequence.rawValue) in epoch \(position.epoch.rawValue)."
+                    )
+                    .accessibilityIdentifier("synveil.node.saved.server-position")
                 }
             }
             .accessibilityElement(children: .contain)
@@ -620,7 +636,8 @@ struct NodeBrowserView: View {
 
     private func savedMessage(_ presentation: NodeCachedDirectoryPresentation) -> String {
         if presentation.projection.completeness == .rebaselineRequired {
-            return "Previously saved metadata is not verified and synchronization recovery is required."
+            return
+                "Previously saved metadata is not verified and synchronization recovery is required."
         }
         switch presentation.knowledge {
         case .partial:
@@ -630,7 +647,8 @@ struct NodeBrowserView: View {
         case .staleKnown:
             return "Previously saved information exists but needs verification."
         case .complete:
-            return "Saved listing completeness is supported by the verified projection. It has not been checked with the server now."
+            return
+                "Saved listing completeness is supported by the verified projection. It has not been checked with the server now."
         }
     }
 
