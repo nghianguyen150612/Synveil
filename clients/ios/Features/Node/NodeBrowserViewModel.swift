@@ -363,7 +363,7 @@ final class NodeBrowserViewModel {
     /// authenticated ViewModel. Projection-only saved rows never qualify as mutation input.
     var canPrepareMutationsFromVisibleResults: Bool {
         guard isCurrentSession else { return false }
-        switch state {
+        return switch state {
         case .loaded, .empty, .refreshFailed, .refreshCancelled:
             true
         case .idle, .loading, .loadingSaved, .saved, .savedUnavailable, .refreshing, .failed,
@@ -393,7 +393,7 @@ final class NodeBrowserViewModel {
         guard offlineBrowserService != nil, isCurrentSession, !isRequestInProgress else {
             return false
         }
-        switch state {
+        return switch state {
         case .idle, .loaded, .empty, .saved, .savedUnavailable:
             true
         case .failed(let failure), .refreshFailed(_, let failure):

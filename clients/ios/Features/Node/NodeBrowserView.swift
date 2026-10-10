@@ -622,7 +622,7 @@ struct NodeBrowserView: View {
         if presentation.projection.completeness == .rebaselineRequired {
             return "Synchronization recovery required"
         }
-        switch presentation.knowledge {
+        return switch presentation.knowledge {
         case .partial: "Partial saved listing"
         case .missing: "No saved listing for this folder"
         case .staleKnown: "Stale saved metadata"
