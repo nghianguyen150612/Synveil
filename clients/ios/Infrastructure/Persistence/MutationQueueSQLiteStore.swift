@@ -1,8 +1,17 @@
 import Foundation
 import SQLite3
 
+#if canImport(Darwin)
+    import Darwin
+#else
+    import Glibc
+#endif
+
 /// Deterministic boundary injection for tests; absent in production composition.
 enum MutationQueueFaultPoint: Equatable, Sendable {
+    case beforeMaterialization, afterMaterialization, afterFirstNodeWrite, afterFinalNodeWrite
+    case beforeProjectionCommit, afterProjectionCommit, beforeAckLeaseCommit, afterAckLeaseCommit
+    case beforeAckConfirmationCommit, afterAckConfirmationCommit, beforeQuarantine
     case migration, beforeInsert, afterInsert, beforeCommit, afterCommit, beforeRollback
     case afterSubmitting, afterDispatchOwnership, beforeResultPersistence, duringConflictPersistence
 }
@@ -11,8 +20,32 @@ enum MutationQueueFaultPoint: Equatable, Sendable {
 /// This wrapper only permits actor-independent destruction of the C handle.
 private final class MutationSQLiteConnection: @unchecked Sendable {
     let handle: OpaquePointer
+    // Accessed only synchronously by the actor and SQLite callbacks on this connection.
+    var projectionAuthority: Int32 = 0
+    var ackLockDescriptor: Int32 = -1
+    var ackLockHeld = false
+    func acquireAckLock(path: String) throws {
+        guard !ackLockHeld else { throw SyncFeedFailure.applicationCommitRequired }
+        if ackLockDescriptor == -1 {
+            ackLockDescriptor = open(path, O_RDWR | O_CREAT | O_NOFOLLOW, mode_t(0o600))
+        }
+        guard ackLockDescriptor >= 0 else { throw MutationQueueFailure.io }
+        guard flock(ackLockDescriptor, LOCK_EX | LOCK_NB) == 0 else {
+            throw SyncFeedFailure.applicationCommitRequired
+        }
+        ackLockHeld = true
+    }
+    func releaseAckLock() {
+        if ackLockHeld {
+            _ = flock(ackLockDescriptor, LOCK_UN)
+            ackLockHeld = false
+        }
+    }
     init(_ handle: OpaquePointer) { self.handle = handle }
-    deinit { sqlite3_close_v2(handle) }
+    deinit {
+        sqlite3_close_v2(handle)
+        if ackLockDescriptor >= 0 { close(ackLockDescriptor) }
+    }
 }
 
 /// Serial transactions never suspend. The application creates exactly one store; independent
@@ -20,12 +53,15 @@ private final class MutationSQLiteConnection: @unchecked Sendable {
 actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorageProtocol {
     private let connection: MutationSQLiteConnection
     private var poisoned = false
+    private var projectionQuarantineFailed = false
     private let url: URL
     private let fault: (@Sendable (MutationQueueFaultPoint) throws -> Void)?
     private let maximumOutstanding: Int
     private let maximumBytes: Int
     private let maximumRecords: Int
-    static let schemaVersion = 3
+    static let schemaVersion = 4
+    private let processOwner = UUID().uuidString
+    private var activeAckAttempts: Set<String> = []
     private static let scopePredicate = "endpoint=? AND owner_id=? AND device_id=? AND library_id=?"
     private static let columns =
         "mutation_id,epoch,sequence,kind,payload,request,encoding_version,enqueue_order,created_at,state,attempt_id,attempt_owner,attempt_started,dispatch_recorded,evidence"
@@ -139,7 +175,9 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         BEGIN SELECT RAISE(ABORT,'projection commit required'); END
         """,
     ]
-    private static let schema = version2Schema + inboundSchema
+    static let version3Schema = version2Schema + inboundSchema
+    private static let schema =
+        version2Schema + Array(inboundSchema.dropLast()) + NodeProjectionSQLiteSchema.statements
 
     init(
         url: URL, busyTimeoutMilliseconds: Int32 = 250,
@@ -171,8 +209,18 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         // Initialization uses only local helpers; no actor reference escapes before schema validation.
         try Self.execute(handle, "PRAGMA foreign_keys=ON")
         let version = try Self.scalar(handle, "PRAGMA user_version")
-        guard [0, 1, 2, Int64(Self.schemaVersion)].contains(version) else {
+        guard [0, 1, 2, 3, Int64(Self.schemaVersion)].contains(version) else {
             throw MutationQueueFailure.unsupportedSchema
+        }
+        if version > 0 {
+            let priorIntegrity = try Self.query(handle, "PRAGMA quick_check") {
+                try Self.text($0, 0)
+            }
+            guard priorIntegrity == ["ok"],
+                try Self.query(handle, "PRAGMA foreign_key_check", map: { _ in 1 }).isEmpty
+            else {
+                throw MutationQueueFailure.corrupt
+            }
         }
         if version == 0 {
             guard
@@ -186,7 +234,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
             do {
                 for statement in Self.schema { try Self.execute(handle, statement) }
                 try fault?(.migration)
-                try Self.execute(handle, "PRAGMA user_version=3")
+                try Self.execute(handle, "PRAGMA user_version=4")
                 try Self.execute(handle, "COMMIT")
             } catch {
                 try? Self.execute(handle, "ROLLBACK")
@@ -207,11 +255,13 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
             try Self.execute(handle, "BEGIN IMMEDIATE")
             do {
                 try Self.execute(handle, "DROP TRIGGER mutation_transition")
-                for statement in Self.recoverySchema + Self.inboundSchema {
+                for statement in Self.recoverySchema + Array(Self.inboundSchema.dropLast())
+                    + NodeProjectionSQLiteSchema.statements
+                {
                     try Self.execute(handle, statement)
                 }
                 try fault?(.migration)
-                try Self.execute(handle, "PRAGMA user_version=3")
+                try Self.execute(handle, "PRAGMA user_version=4")
                 try Self.execute(handle, "COMMIT")
             } catch {
                 try? Self.execute(handle, "ROLLBACK")
@@ -222,15 +272,43 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
             try verifySchema(Self.version2Schema)
             try Self.execute(handle, "BEGIN IMMEDIATE")
             do {
-                for statement in Self.inboundSchema { try Self.execute(handle, statement) }
+                for statement in Array(Self.inboundSchema.dropLast())
+                    + NodeProjectionSQLiteSchema.statements
+                { try Self.execute(handle, statement) }
                 try fault?(.migration)
-                try Self.execute(handle, "PRAGMA user_version=3")
+                try Self.execute(handle, "PRAGMA user_version=4")
                 try Self.execute(handle, "COMMIT")
             } catch {
                 try? Self.execute(handle, "ROLLBACK")
                 throw error
             }
         }
+        if version == 3 {
+            try verifySchema(Self.version3Schema)
+            try Self.execute(handle, "BEGIN IMMEDIATE")
+            do {
+                try Self.execute(handle, "DROP TRIGGER inbound_application_gate")
+                for statement in NodeProjectionSQLiteSchema.statements {
+                    try Self.execute(handle, statement)
+                }
+                try fault?(.migration)
+                try Self.execute(handle, "PRAGMA user_version=4")
+                try Self.execute(handle, "COMMIT")
+            } catch {
+                try? Self.execute(handle, "ROLLBACK")
+                throw error
+            }
+        }
+        let context = Unmanaged.passUnretained(connection).toOpaque()
+        try Self.check(
+            sqlite3_create_function_v2(
+                handle, "synveil_projection_authorized", 0, SQLITE_UTF8, context,
+                { context, _, _ in
+                    guard let context, let pointer = sqlite3_user_data(context) else { return }
+                    let connection = Unmanaged<MutationSQLiteConnection>.fromOpaque(pointer)
+                        .takeUnretainedValue()
+                    sqlite3_result_int(context, connection.projectionAuthority)
+                }, nil, nil, nil))
         try verifySchema(Self.schema)
         let integrity = try Self.query(handle, "PRAGMA quick_check") { try Self.text($0, 0) }
         guard integrity == ["ok"],
@@ -310,10 +388,16 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
     }
 
     func quarantineSessions() throws {
-        try transaction {
-            // The app has one active credential. Logout/recovery must also quarantine persisted
-            // scopes that this process has not read; dormant records remain preserved, inaccessible.
-            try execute("UPDATE scopes SET quarantined=1 WHERE quarantined=0")
+        do {
+            try transaction {
+                try fault?(.beforeQuarantine)
+                // Preserve all evidence while making every dormant authenticated scope inaccessible.
+                try execute("UPDATE scopes SET quarantined=1 WHERE quarantined=0")
+            }
+        } catch {
+            // A failed durable logout must not leave projection/ACK authority usable in this process.
+            projectionQuarantineFailed = true
+            throw error
         }
     }
 
@@ -349,9 +433,36 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
                     SyncDecimalValidation.less(epoch, $0.epoch)
                         || epoch == $0.epoch && SyncDecimalValidation.less(sequence, $0.sequence)
                 } ?? false
+            let projection = try projectionRow(scope)
+            let beyondProjection =
+                projection.map {
+                    $0.epoch != epoch || SyncDecimalValidation.less($0.applied, sequence)
+                } ?? false
+            if rewind || beyondProjection {
+                connection.projectionAuthority = 4
+                defer { connection.projectionAuthority = 0 }
+                try execute(
+                    "UPDATE node_projection_state SET completeness='REBASELINE_REQUIRED' WHERE scope_id=?",
+                    [.integer(id)])
+                try execute(
+                    "UPDATE sync_bases SET status='RECONCILIATION_REQUIRED' WHERE scope_id=?",
+                    [.integer(id)])
+                return .reconciliationRequired
+            }
             let status: SyncBaseStatus =
                 incompatible || rewind || old?.status == .reconciliationRequired
                 ? .reconciliationRequired : .verified
+            if projection != nil {
+                connection.projectionAuthority = 3
+                defer { connection.projectionAuthority = 0 }
+                try execute(
+                    "UPDATE node_projection_state SET confirmed_sequence=?,completeness=? WHERE scope_id=?",
+                    [
+                        .text(sequence),
+                        .text(status == .verified ? "PARTIAL" : "REBASELINE_REQUIRED"),
+                        .integer(id),
+                    ])
+            }
             let oldBytes = old?.responseBody.count ?? 0
             try checkCapacity(additionalBytes: checkpoint.responseBody.count - oldBytes)
             try execute(
@@ -693,7 +804,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
                 guard old.canonical == page.canonicalData, old.through == page.through.rawValue,
                     old.high == page.highWatermark.rawValue
                 else { throw SyncFeedFailure.checkpointConflict }
-                guard old.state == .receivedUnapplied else {
+                guard old.state != .blockedRebaseline else {
                     throw SyncFeedFailure.rebaselineRequired
                 }
                 return (
@@ -774,16 +885,25 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         guard page.canonicalData == raw.canonical, page.through.rawValue == raw.through,
             page.highWatermark.rawValue == raw.high, !page.events.isEmpty,
             raw.created <= raw.updated,
-            [.receivedUnapplied, .blockedRebaseline].contains(raw.state)
+            InboundSyncPageState(rawValue: raw.state.rawValue) != nil
         else { throw MutationQueueFailure.malformedRecord }
         try requireFeedScope(scope, credentialId: credentialId)
         // Decoding suspends on Rust validation. A concurrent rebaseline may have blocked this row.
-        guard try rawInbound(scope: scope, position: position) == raw else {
+        guard let current = try rawInbound(scope: scope, position: position) else {
             throw MutationQueueFailure.reconciliationRequired
         }
+        if current != raw {
+            // Concurrent atomic application may legitimately replace only staging state/timestamp.
+            guard raw.state == .receivedUnapplied,
+                [.appliedAckPending, .ackInFlight, .ackConfirmed].contains(current.state),
+                current.response == raw.response, current.canonical == raw.canonical,
+                current.through == raw.through,
+                current.high == raw.high, current.created == raw.created
+            else { throw MutationQueueFailure.reconciliationRequired }
+        }
         return InboundSyncPageRecord(
-            page: page, state: raw.state, createdAt: raw.created,
-            updatedAt: raw.updated, encodingVersion: 1)
+            page: page, state: current.state, createdAt: current.created,
+            updatedAt: current.updated, encodingVersion: 1)
     }
 
     func blockInbound(scope: ClientMutationScope, credentialId: String) throws {
@@ -793,6 +913,11 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
             try execute(
                 "UPDATE inbound_pages SET state='BLOCKED_REBASELINE',updated_at=? WHERE scope_id=?",
                 [.real(Date().timeIntervalSince1970), .integer(id)])
+            connection.projectionAuthority = 4
+            defer { connection.projectionAuthority = 0 }
+            try execute(
+                "UPDATE node_projection_state SET completeness='REBASELINE_REQUIRED' WHERE scope_id=?",
+                [.integer(id)])
             try execute(
                 "UPDATE sync_bases SET status='RECONCILIATION_REQUIRED' WHERE scope_id=?",
                 [.integer(id)])
@@ -800,6 +925,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
     }
 
     private func requireFeedScope(_ scope: ClientMutationScope, credentialId: String) throws {
+        guard !projectionQuarantineFailed else { throw MutationQueueFailure.unavailable }
         try requireUnquarantinedScope(scope)
         guard
             try scalar(
@@ -925,7 +1051,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
     }
     private func checkCapacity(additionalBytes: Int) throws {
         let bytes = try scalar(
-            "SELECT coalesce((SELECT sum(length(request)+length(payload)+coalesce(length(evidence),0)) FROM mutations),0)+coalesce((SELECT sum(length(response)) FROM sync_bases),0)+coalesce((SELECT sum(length(evidence)) FROM mutation_attempt_history),0)+coalesce((SELECT sum(length(response)+length(canonical_data)) FROM inbound_pages),0)"
+            "SELECT coalesce((SELECT sum(length(request)+length(payload)+coalesce(length(evidence),0)) FROM mutations),0)+coalesce((SELECT sum(length(response)) FROM sync_bases),0)+coalesce((SELECT sum(length(evidence)) FROM mutation_attempt_history),0)+coalesce((SELECT sum(length(response)+length(canonical_data)) FROM inbound_pages),0)+coalesce((SELECT sum(coalesce(length(metadata),0)+length(node_id)+length(revision)+length(sequence)+coalesce(length(parent_id),0)+128) FROM cached_nodes),0)+coalesce((SELECT sum(length(metadata)+64) FROM cached_libraries),0)+coalesce((SELECT sum(length(canonical_data)+128) FROM projection_commits),0)+coalesce((SELECT count(*)*256 FROM projection_events),0)+coalesce((SELECT sum(coalesce(length(checkpoint),0)+256) FROM sync_ack_attempts),0)+coalesce((SELECT count(*)*256 FROM node_projection_state),0)"
         )
         guard bytes + Int64(additionalBytes) <= Int64(maximumBytes) else {
             throw MutationQueueFailure.capacity
@@ -955,7 +1081,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         }
     }
 
-    private enum SQLValue { case text(String), blob(Data), integer(Int64), real(Double) }
+    private enum SQLValue { case text(String), blob(Data), integer(Int64), real(Double), null }
     private static func statement(_ handle: OpaquePointer, _ sql: String, _ values: [SQLValue])
         throws -> OpaquePointer
     {
@@ -983,6 +1109,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
                         })
                 case .integer(let number):
                     try check(sqlite3_bind_int64(statement, position, number))
+                case .null: try check(sqlite3_bind_null(statement, position))
                 case .real(let number): try check(sqlite3_bind_double(statement, position, number))
                 }
             }
@@ -1163,5 +1290,751 @@ enum MutationQueueFilePolicy {
         {
             throw MutationQueueFailure.databaseOpen
         }
+    }
+}
+
+extension MutationQueueSQLiteStore {
+    private struct ProjectionRow: Equatable {
+        let epoch: String, anchor: String, applied: String, confirmed: String
+        let completeness: NodeProjectionCompleteness
+    }
+    private struct CacheRow: Equatable {
+        let id: String, revision: String, sequence: String, parent: String?
+        let lifecycle: CachedNodeLifecycle, provenance: CachedNodeProvenance
+        let metadata: Data?
+    }
+    private func projectionRow(_ scope: ClientMutationScope) throws -> ProjectionRow? {
+        try query(
+            "SELECT epoch,anchor_sequence,applied_sequence,confirmed_sequence,completeness,encoding_version FROM node_projection_state WHERE scope_id=?",
+            [.integer(try requireScopeId(scope))]
+        ) { s in
+            guard let completeness = NodeProjectionCompleteness(rawValue: try Self.text(s, 4)),
+                sqlite3_column_int(s, 5) == 1
+            else { throw MutationQueueFailure.malformedRecord }
+            return ProjectionRow(
+                epoch: try Self.text(s, 0), anchor: try Self.text(s, 1),
+                applied: try Self.text(s, 2), confirmed: try Self.text(s, 3),
+                completeness: completeness)
+        }.first
+    }
+    private func cacheRows(
+        _ scope: ClientMutationScope, epoch: String, node: NodeId? = nil, parent: NodeId? = nil,
+        limit: Int = 1
+    ) throws -> [CacheRow] {
+        var values: [SQLValue] = [.integer(try requireScopeId(scope)), .text(epoch)]
+        var predicate = "scope_id=? AND epoch=?"
+        if let node {
+            predicate += " AND node_id=?"
+            values.append(.text(node.rawValue))
+        }
+        if let parent {
+            predicate += " AND parent_id=? AND lifecycle='ACTIVE' AND provenance='CANONICAL'"
+            values.append(.text(parent.rawValue))
+        }
+        values.append(.integer(Int64(limit)))
+        return try query(
+            "SELECT node_id,revision,sequence,parent_id,lifecycle,provenance,metadata,encoding_version FROM cached_nodes WHERE \(predicate) ORDER BY node_id LIMIT ?",
+            values
+        ) { s in
+            guard let lifecycle = CachedNodeLifecycle(rawValue: try Self.text(s, 4)),
+                let provenance = CachedNodeProvenance(rawValue: try Self.text(s, 5)),
+                sqlite3_column_int(s, 7) == 1
+            else { throw MutationQueueFailure.malformedRecord }
+            return CacheRow(
+                id: try Self.text(s, 0), revision: try Self.text(s, 1),
+                sequence: try Self.text(s, 2),
+                parent: sqlite3_column_type(s, 3) == SQLITE_NULL ? nil : try Self.text(s, 3),
+                lifecycle: lifecycle, provenance: provenance,
+                metadata: sqlite3_column_type(s, 6) == SQLITE_NULL
+                    ? nil : try Self.blob(s, 6, maximum: NodeProjectionPolicy.maximumMetadataBytes))
+        }
+    }
+    private func libraryBytes(_ scope: ClientMutationScope, epoch: String) throws -> Data? {
+        try query(
+            "SELECT metadata,encoding_version FROM cached_libraries WHERE scope_id=? AND epoch=?",
+            [.integer(try requireScopeId(scope)), .text(epoch)]
+        ) { s in
+            guard sqlite3_column_int(s, 1) == 1 else { throw MutationQueueFailure.malformedRecord }
+            return try Self.blob(s, 0, maximum: NodeProjectionPolicy.maximumMetadataBytes)
+        }.first
+    }
+    private func currentEpoch(_ scope: ClientMutationScope) throws -> String {
+        guard let base = try syncBase(scope: scope) else {
+            throw MutationQueueFailure.syncBaseUnavailable
+        }
+        _ = try SyncDecimalValidation.validate(base.epoch, nonzero: true)
+        return base.epoch
+    }
+    private func decodeCache(
+        _ raw: CacheRow, scope: ClientMutationScope, epoch: String, bridge: any RustBridgeProtocol
+    ) async throws -> CachedNodeRecord {
+        let id = try await NodeId.validated(raw.id, using: bridge)
+        var node: Node?
+        if let bytes = raw.metadata {
+            node = try await JSONDecoder().decode(NodeProjectionMetadata.self, from: bytes)
+                .validated(using: bridge)
+        }
+        let revision = try SyncDecimalValidation.validate(raw.revision, nonzero: true)
+        let position = SyncJournalPosition(
+            epoch: try SyncDecimalValidation.validate(epoch, nonzero: true),
+            sequence: try SyncDecimalValidation.validate(raw.sequence))
+        if let node {
+            guard node.id == id, node.libraryId == scope.libraryId,
+                !SyncDecimalValidation.less(raw.revision, node.revision.rawValue)
+            else { throw MutationQueueFailure.malformedRecord }
+            if raw.provenance == .canonical {
+                guard node.revision.rawValue == raw.revision, node.parentId?.rawValue == raw.parent,
+                    node.state == .active, raw.lifecycle == .active
+                else { throw MutationQueueFailure.malformedRecord }
+            }
+        } else if raw.provenance != .event {
+            throw MutationQueueFailure.malformedRecord
+        }
+        if raw.lifecycle == .purged, node != nil || raw.parent != nil || raw.provenance != .event {
+            throw MutationQueueFailure.malformedRecord
+        }
+        return CachedNodeRecord(
+            scope: scope, position: position, id: id, revision: revision, lifecycle: raw.lifecycle,
+            provenance: raw.provenance, metadata: node)
+    }
+    func cachedProjectionState(
+        scope: ClientMutationScope, credentialId: String, bridge: any RustBridgeProtocol
+    ) async throws -> NodeProjectionState {
+        try requireFeedScope(scope, credentialId: credentialId)
+        let row = try projectionRow(scope)
+        let base = try syncBase(scope: scope)
+        let epoch = try currentEpoch(scope)
+        guard row == nil || row?.epoch == epoch else {
+            throw SyncProjectionFailure.reconciliationRequired
+        }
+        let bytes = try libraryBytes(scope, epoch: epoch)
+        let library: CachedLibraryRecord?
+        if let bytes {
+            let value = try await JSONDecoder().decode(LibraryProjectionMetadata.self, from: bytes)
+                .validated(bridge: bridge)
+            guard value.id == scope.libraryId else { throw SyncProjectionFailure.scopeMismatch }
+            library = CachedLibraryRecord(
+                scope: scope, epoch: try SyncDecimalValidation.validate(epoch, nonzero: true),
+                library: value)
+        } else {
+            library = nil
+        }
+        let state: NodeProjectionState
+        func position(_ value: String) throws -> SyncJournalPosition {
+            SyncJournalPosition(
+                epoch: try SyncDecimalValidation.validate(epoch, nonzero: true),
+                sequence: try SyncDecimalValidation.validate(value))
+        }
+        if let row {
+            guard !SyncDecimalValidation.less(row.applied, row.anchor),
+                !SyncDecimalValidation.less(row.applied, row.confirmed),
+                row.completeness != .complete
+            else { throw MutationQueueFailure.malformedRecord }
+            state = NodeProjectionState(
+                completeness: base?.status == .verified ? row.completeness : .rebaselineRequired,
+                incrementalAnchor: try position(row.anchor),
+                locallyApplied: try position(row.applied),
+                serverConfirmed: try position(row.confirmed), library: library)
+        } else {
+            state = NodeProjectionState(
+                completeness: base?.status == .verified ? .uninitialized : .rebaselineRequired,
+                incrementalAnchor: nil, locallyApplied: nil,
+                serverConfirmed: try base.map { try position($0.sequence) }, library: library)
+        }
+        try requireFeedScope(scope, credentialId: credentialId)
+        guard try projectionRow(scope) == row,
+            try syncBase(scope: scope)?.responseBody == base?.responseBody,
+            try libraryBytes(scope, epoch: epoch) == bytes
+        else { throw SyncProjectionFailure.stalePage }
+        return state
+    }
+    func cachedNode(
+        scope: ClientMutationScope, nodeId: NodeId, credentialId: String,
+        bridge: any RustBridgeProtocol
+    ) async throws -> CachedNodeRecord? {
+        try requireFeedScope(scope, credentialId: credentialId)
+        let epoch = try currentEpoch(scope)
+        guard try projectionRow(scope).map({ $0.epoch == epoch }) ?? true else {
+            throw SyncProjectionFailure.reconciliationRequired
+        }
+        let raw = try cacheRows(scope, epoch: epoch, node: nodeId).first
+        let result: CachedNodeRecord?
+        if let raw {
+            result = try await decodeCache(raw, scope: scope, epoch: epoch, bridge: bridge)
+        } else {
+            result = nil
+        }
+        try requireFeedScope(scope, credentialId: credentialId)
+        guard try currentEpoch(scope) == epoch,
+            try cacheRows(scope, epoch: epoch, node: nodeId).first == raw
+        else { throw SyncProjectionFailure.stalePage }
+        return result
+    }
+    func cachedChildren(
+        scope: ClientMutationScope, parentId: NodeId, limit: Int, credentialId: String,
+        bridge: any RustBridgeProtocol
+    ) async throws -> CachedChildren {
+        guard (1...NodeProjectionPolicy.maximumChildren).contains(limit) else {
+            throw SyncProjectionFailure.storageCapacity
+        }
+        try requireFeedScope(scope, credentialId: credentialId)
+        let epoch = try currentEpoch(scope)
+        let snapshot = try projectionRow(scope)
+        let parent = try cacheRows(scope, epoch: epoch, node: parentId).first
+        let rows = try cacheRows(scope, epoch: epoch, parent: parentId, limit: limit + 1)
+        var nodes: [Node] = []
+        // An inactive known ancestor cannot become an active offline directory through its children.
+        let visible = try activeAncestry(scope: scope, epoch: epoch, parent: parentId)
+        if visible {
+            for row in rows.prefix(limit) {
+                guard
+                    let node = try await decodeCache(
+                        row, scope: scope, epoch: epoch, bridge: bridge
+                    ).completeNode
+                else { throw MutationQueueFailure.malformedRecord }
+                nodes.append(node)
+            }
+        }
+        let state = try await cachedProjectionState(
+            scope: scope, credentialId: credentialId, bridge: bridge)
+        try requireFeedScope(scope, credentialId: credentialId)
+        guard try projectionRow(scope) == snapshot,
+            try cacheRows(scope, epoch: epoch, node: parentId).first == parent,
+            try cacheRows(scope, epoch: epoch, parent: parentId, limit: limit + 1) == rows
+        else { throw SyncProjectionFailure.stalePage }
+        let knowledge: CachedDirectoryKnowledge =
+            state.completeness == .rebaselineRequired || !visible
+            ? .staleKnown : (parent == nil && rows.isEmpty ? .missing : .partial)
+        return CachedChildren(
+            nodes: nodes, knowledge: knowledge, hasMore: visible && rows.count > limit,
+            projection: state)
+    }
+    private func activeAncestry(scope: ClientMutationScope, epoch: String, parent: NodeId) throws
+        -> Bool
+    {
+        var next: String? = parent.rawValue
+        var seen: Set<String> = []
+        for _ in 0..<128 {
+            guard let id = next else { return true }
+            guard seen.insert(id).inserted else { throw SyncProjectionFailure.invalidParent }
+            let values: [SQLValue] = [.integer(try requireScopeId(scope)), .text(epoch), .text(id)]
+            let row = try query(
+                "SELECT parent_id,lifecycle FROM cached_nodes WHERE scope_id=? AND epoch=? AND node_id=?",
+                values
+            ) { s in
+                (
+                    sqlite3_column_type(s, 0) == SQLITE_NULL ? nil : try Self.text(s, 0),
+                    try Self.text(s, 1)
+                )
+            }.first
+            guard let row else { return true }
+            guard row.1 == "ACTIVE" else { return false }
+            next = row.0
+        }
+        throw SyncProjectionFailure.invalidParent
+    }
+
+    func rememberLibrary(
+        _ library: Library, scope: ClientMutationScope, credentialId: String,
+        bridge: any RustBridgeProtocol
+    ) async throws {
+        let metadata = LibraryProjectionMetadata(library)
+        _ = try await metadata.validated(bridge: bridge)
+        guard library.id == scope.libraryId else { throw SyncProjectionFailure.scopeMismatch }
+        let bytes = try JSONEncoder().encode(metadata)
+        guard bytes.count <= NodeProjectionPolicy.maximumMetadataBytes else {
+            throw SyncProjectionFailure.storageCapacity
+        }
+        try Task.checkCancellation()
+        try transaction {
+            try requireFeedScope(scope, credentialId: credentialId)
+            let epoch = try currentEpoch(scope)
+            let old = try libraryBytes(scope, epoch: epoch)
+            if let old {
+                let prior = try JSONDecoder().decode(LibraryProjectionMetadata.self, from: old)
+                guard !SyncDecimalValidation.less(library.revision.rawValue, prior.revision),
+                    library.revision.rawValue != prior.revision || old == bytes
+                else { throw SyncProjectionFailure.revisionRegression }
+            }
+            try checkCapacity(additionalBytes: bytes.count - (old?.count ?? 0) + 64)
+            connection.projectionAuthority = 1
+            defer { connection.projectionAuthority = 0 }
+            try execute(
+                "INSERT INTO cached_libraries(scope_id,epoch,metadata,encoding_version) VALUES(?,?,?,1) ON CONFLICT(scope_id,epoch) DO UPDATE SET metadata=excluded.metadata",
+                [.integer(try requireScopeId(scope)), .text(epoch), .blob(bytes)])
+        }
+    }
+
+    func projectionFault(_ point: MutationQueueFaultPoint) throws { try fault?(point) }
+
+    func applyProjection(
+        _ plan: SyncNodeMaterializationPlan, credentialId: String, bridge: any RustBridgeProtocol
+    ) async throws -> Bool {
+        let page = plan.page
+        // Revalidate immutable durable page outside the non-suspending write transaction.
+        guard
+            let record = try await inboundPage(
+                scope: page.scope, position: page.start, credentialId: credentialId, bridge: bridge),
+            record.page == page
+        else { throw SyncProjectionFailure.stalePage }
+        let bytes = plan.nodes.values.reduce(0, { $0 + $1.bytes.count })
+        guard plan.nodes.count + plan.parents.count <= NodeProjectionPolicy.maximumNodesPerPage,
+            bytes <= NodeProjectionPolicy.maximumPlanBytes
+        else { throw SyncProjectionFailure.storageCapacity }
+        try Task.checkCancellation()
+        var committed = false
+        do {
+            let existing = try transaction {
+                try requireFeedScope(page.scope, credentialId: credentialId)
+                guard let raw = try rawInbound(scope: page.scope, position: page.start),
+                    raw.canonical == page.canonicalData
+                else { throw SyncProjectionFailure.stalePage }
+                if [.appliedAckPending, .ackInFlight, .ackConfirmed].contains(raw.state) {
+                    try requireProjectionCommit(page)
+                    return true
+                }
+                guard raw.state == .receivedUnapplied, let evidence = page.evidence,
+                    let base = try syncBase(scope: page.scope), base.status == .verified,
+                    base.epoch == page.start.epoch.rawValue
+                else { throw SyncProjectionFailure.reconciliationRequired }
+                let previous = try projectionRow(page.scope)
+                guard previous == nil || previous?.epoch == base.epoch,
+                    previous?.completeness != .rebaselineRequired,
+                    (previous?.applied ?? base.sequence) == page.start.sequence.rawValue,
+                    base.sequence == (previous?.confirmed ?? base.sequence)
+                else { throw SyncProjectionFailure.stalePage }
+                let scopeId = try requireScopeId(page.scope)
+                let epoch = page.start.epoch.rawValue
+                guard
+                    try scalar("SELECT count(*) FROM cached_nodes")
+                        + Int64(plan.nodes.count + page.events.count)
+                        <= Int64(NodeProjectionPolicy.maximumNodes),
+                    try scalar("SELECT count(*) FROM projection_events") + Int64(page.events.count)
+                        <= Int64(NodeProjectionPolicy.maximumEvents)
+                else { throw SyncProjectionFailure.storageCapacity }
+                try checkCapacity(
+                    additionalBytes: bytes + page.canonicalData.count + page.events.count * 512
+                        + 512)
+                connection.projectionAuthority = 1
+                defer { connection.projectionAuthority = 0 }
+                if previous == nil {
+                    try execute(
+                        "INSERT INTO node_projection_state VALUES(?,?,?,?,?,'PARTIAL',1)",
+                        [
+                            .integer(scopeId), .text(epoch), .text(base.sequence),
+                            .text(base.sequence), .text(base.sequence),
+                        ])
+                }
+                let commitId = UUID().uuidString
+                try execute(
+                    "INSERT INTO projection_commits VALUES(?,?,?,?,?,?,?,?)",
+                    [
+                        .integer(scopeId), .text(epoch), .text(evidence.from.rawValue),
+                        .text(evidence.through.rawValue), .text(commitId),
+                        .integer(Int64(page.events.count)), .blob(page.canonicalData),
+                        .real(Date().timeIntervalSince1970),
+                    ])
+                var final: [NodeId: SyncJournalEvent] = [:]
+                for event in page.events {
+                    try SyncNodeMaterializer.validateEvent(event)
+                    if let previousEvent = final[event.resourceId] {
+                        guard previousEvent.kind != .nodePurged,
+                            SyncDecimalValidation.less(
+                                previousEvent.resourceRevision.rawValue,
+                                event.resourceRevision.rawValue)
+                                || (event.kind == .nodePurged
+                                    && previousEvent.resourceRevision == event.resourceRevision)
+                        else { throw SyncProjectionFailure.revisionRegression }
+                    } else if let old = try cacheRows(
+                        page.scope, epoch: epoch, node: event.resourceId
+                    ).first {
+                        guard old.lifecycle != .purged else {
+                            throw SyncProjectionFailure.reconciliationRequired
+                        }
+                        guard
+                            SyncDecimalValidation.less(
+                                old.revision, event.resourceRevision.rawValue)
+                                || (event.kind == .nodePurged
+                                    && old.revision == event.resourceRevision.rawValue)
+                        else { throw SyncProjectionFailure.revisionRegression }
+                    }
+                    guard
+                        try scalar(
+                            "SELECT count(*) FROM projection_events WHERE scope_id=? AND epoch=? AND (sequence=? OR event_id=?)",
+                            [
+                                .integer(scopeId), .text(epoch), .text(event.sequence.rawValue),
+                                .text(event.id.rawValue),
+                            ]) == 0
+                    else { throw SyncProjectionFailure.conflictingEvent }
+                    try execute(
+                        "INSERT INTO projection_events VALUES(?,?,?,?,?,?,?,?)",
+                        [
+                            .integer(scopeId), .text(epoch), .text(event.sequence.rawValue),
+                            .text(event.id.rawValue), .text(page.start.sequence.rawValue),
+                            .text(event.resourceId.rawValue),
+                            .text(event.resourceRevision.rawValue), .text(event.kind.rawValue),
+                        ])
+                    final[event.resourceId] = event
+                }
+                var writes = 0
+                for id in final.keys.sorted(by: { $0.rawValue < $1.rawValue }) {
+                    let event = final[id]!
+                    let old = try cacheRows(page.scope, epoch: epoch, node: id).first
+                    let lifecycle: CachedNodeLifecycle
+                    let provenance: CachedNodeProvenance
+                    let metadata: Data?
+                    let parent: String?
+                    switch event.kind {
+                    case .nodePurged:
+                        lifecycle = .purged
+                        provenance = .event
+                        metadata = nil
+                        parent = nil
+                    case .nodeTrashed:
+                        lifecycle = .trashed
+                        provenance = old?.metadata == nil ? .event : .lastKnown
+                        metadata = old?.metadata
+                        parent = event.parentId?.rawValue
+                    case .nodeCreated, .nodeRenamed, .nodeMoved, .nodeRestored,
+                        .fileContentCommitted, .fileVersionRestored:
+                        guard let prepared = plan.nodes[id] else {
+                            throw SyncProjectionFailure.missingMaterialization
+                        }
+                        let node = prepared.node
+                        guard node.id == id, node.libraryId == page.scope.libraryId,
+                            node.revision.rawValue == event.resourceRevision.rawValue,
+                            node.state == .active,
+                            node.parentId == event.parentId, node.parentId != id,
+                            event.nodeKind == nil || event.nodeKind == node.kind,
+                            event.nodeState == nil || event.nodeState == node.state,
+                            node.currentVersionId == event.currentVersionId,
+                            ![.fileContentCommitted, .fileVersionRestored].contains(event.kind)
+                                || node.kind == .file,
+                            let parentId = node.parentId,
+                            let parentNode = plan.parents[parentId]?.node,
+                            parentNode.id == parentId, parentNode.libraryId == page.scope.libraryId,
+                            parentNode.kind == .directory, parentNode.state == .active
+                        else { throw SyncProjectionFailure.malformedMetadata }
+                        if let parentRow = try cacheRows(page.scope, epoch: epoch, node: parentId)
+                            .first,
+                            parentRow.lifecycle != .active, final[parentId]?.kind != .nodeRestored
+                        {
+                            throw SyncProjectionFailure.invalidParent
+                        }
+                        lifecycle = .active
+                        provenance = .canonical
+                        metadata = prepared.bytes
+                        parent = node.parentId?.rawValue
+                    }
+                    let values: [SQLValue] = [
+                        .integer(scopeId), .text(epoch), .text(id.rawValue),
+                        .text(event.resourceRevision.rawValue), .text(event.sequence.rawValue),
+                        parent.map(SQLValue.text) ?? .null, .text(lifecycle.rawValue),
+                        .text(provenance.rawValue), metadata.map(SQLValue.blob) ?? .null,
+                    ]
+                    try execute(
+                        "INSERT INTO cached_nodes VALUES(?,?,?,?,?,?,?,?,?,1) ON CONFLICT(scope_id,epoch,node_id) DO UPDATE SET revision=excluded.revision,sequence=excluded.sequence,parent_id=excluded.parent_id,lifecycle=excluded.lifecycle,provenance=excluded.provenance,metadata=excluded.metadata",
+                        values)
+                    writes += 1
+                    if writes == 1 { try fault?(.afterFirstNodeWrite) }
+                }
+                for prepared in plan.nodes.values {
+                    guard
+                        try activeAncestry(
+                            scope: page.scope, epoch: epoch, parent: prepared.node.id)
+                    else { throw SyncProjectionFailure.invalidParent }
+                }
+                try fault?(.afterFinalNodeWrite)
+                try execute(
+                    "UPDATE node_projection_state SET applied_sequence=?,completeness='PARTIAL' WHERE scope_id=? AND epoch=?",
+                    [.text(page.through.rawValue), .integer(scopeId), .text(epoch)])
+                try execute(
+                    "UPDATE inbound_pages SET state='APPLIED_ACK_PENDING',updated_at=? WHERE scope_id=? AND epoch=? AND from_sequence=?",
+                    [
+                        .real(Date().timeIntervalSince1970), .integer(scopeId), .text(epoch),
+                        .text(page.start.sequence.rawValue),
+                    ])
+                try requireProjectionCommit(page)
+                try fault?(.beforeProjectionCommit)
+                return false
+            }
+            committed = true
+            try fault?(.afterProjectionCommit)
+            return existing
+        } catch {
+            if committed { throw MutationQueueFailure.commitAcknowledgementLost }
+            throw error
+        }
+    }
+    private func requireProjectionCommit(_ page: SyncFeedPage) throws {
+        let scopeId = try requireScopeId(page.scope)
+        guard let state = try projectionRow(page.scope), state.epoch == page.start.epoch.rawValue,
+            !SyncDecimalValidation.less(state.applied, page.through.rawValue),
+            try scalar(
+                "SELECT count(*) FROM projection_commits c WHERE scope_id=? AND epoch=? AND from_sequence=? AND through_sequence=? AND canonical_data=? AND event_count=? AND event_count=(SELECT count(*) FROM projection_events e WHERE e.scope_id=c.scope_id AND e.epoch=c.epoch AND e.from_sequence=c.from_sequence)",
+                [
+                    .integer(scopeId), .text(page.start.epoch.rawValue),
+                    .text(page.start.sequence.rawValue), .text(page.through.rawValue),
+                    .blob(page.canonicalData), .integer(Int64(page.events.count)),
+                ]) == 1
+        else { throw SyncFeedFailure.applicationCommitRequired }
+    }
+}
+
+extension MutationQueueSQLiteStore {
+    private struct AckAttempt: Equatable {
+        let id: String, owner: String, previous: String, applied: String
+        let dispatched: Bool, completed: Bool
+    }
+    private func ackAttempt(_ proof: AppliedSyncPageProof) throws -> AckAttempt? {
+        let parts = proof.commitIdentity.split(separator: "/")
+        guard parts.count == 2 else { throw SyncFeedFailure.applicationCommitRequired }
+        return try query(
+            "SELECT attempt_id,attempt_owner,previous_sequence,applied_sequence,dispatched,completed FROM sync_ack_attempts WHERE scope_id=? AND epoch=? AND from_sequence=? AND attempt_id=?",
+            [
+                .integer(try requireScopeId(proof.evidence.scope)),
+                .text(proof.evidence.epoch.rawValue), .text(proof.evidence.from.rawValue),
+                .text(String(parts[1])),
+            ]
+        ) { s in
+            AckAttempt(
+                id: try Self.text(s, 0), owner: try Self.text(s, 1), previous: try Self.text(s, 2),
+                applied: try Self.text(s, 3), dispatched: sqlite3_column_int(s, 4) == 1,
+                completed: sqlite3_column_int(s, 5) == 1)
+        }.first
+    }
+    private func commitIdentity(_ page: SyncFeedPage) throws -> String {
+        try requireProjectionCommit(page)
+        guard
+            let id = try query(
+                "SELECT commit_id FROM projection_commits WHERE scope_id=? AND epoch=? AND from_sequence=?",
+                [
+                    .integer(try requireScopeId(page.scope)), .text(page.start.epoch.rawValue),
+                    .text(page.start.sequence.rawValue),
+                ], map: { try Self.text($0, 0) }
+            ).first
+        else { throw SyncFeedFailure.applicationCommitRequired }
+        return id
+    }
+    func claimProjectionPage(
+        scope: ClientMutationScope, position: SyncJournalPosition, credentialId: String,
+        bridge: any RustBridgeProtocol, recovery: Bool
+    ) async throws -> AppliedSyncPageProof {
+        guard
+            let record = try await inboundPage(
+                scope: scope, position: position, credentialId: credentialId, bridge: bridge),
+            let evidence = record.page.evidence
+        else { throw SyncFeedFailure.applicationCommitRequired }
+        try Task.checkCancellation()
+        // OS ownership serializes live attempts across store instances/processes. The zero-byte
+        // lock contains no metadata or token. Process termination releases it without networking.
+        try connection.acquireAckLock(path: url.path + ".ack.lock")
+        var issued = false
+        defer { if !issued { connection.releaseAckLock() } }
+        let proof = try transaction {
+            try requireFeedScope(scope, credentialId: credentialId)
+            guard let raw = try rawInbound(scope: scope, position: position),
+                raw.canonical == record.page.canonicalData,
+                raw.state == (recovery ? .ackInFlight : .appliedAckPending),
+                let row = try projectionRow(scope), row.completeness == .partial,
+                let base = try syncBase(scope: scope), base.status == .verified,
+                base.epoch == row.epoch,
+                base.sequence == row.confirmed
+            else { throw SyncFeedFailure.applicationCommitRequired }
+            let scopeId = try requireScopeId(scope)
+            let positions = try query(
+                "SELECT from_sequence FROM inbound_pages WHERE scope_id=? AND epoch=? AND state IN ('APPLIED_ACK_PENDING','ACK_IN_FLIGHT')",
+                [.integer(scopeId), .text(position.epoch.rawValue)]
+            ) { try Self.text($0, 0) }
+            guard
+                !positions.contains(where: {
+                    SyncDecimalValidation.less($0, position.sequence.rawValue)
+                })
+            else { throw SyncFeedFailure.checkpointConflict }
+            let existing = try query(
+                "SELECT attempt_id FROM sync_ack_attempts WHERE scope_id=? AND epoch=? AND from_sequence=?",
+                [
+                    .integer(scopeId), .text(position.epoch.rawValue),
+                    .text(position.sequence.rawValue),
+                ]
+            ) { try Self.text($0, 0) }
+            guard existing.count < MutationQueuePolicy.maximumRecoveryAttempts,
+                existing.allSatisfy({ !activeAckAttempts.contains($0) })
+            else { throw SyncFeedFailure.applicationCommitRequired }
+            let commit = try commitIdentity(record.page)
+            let attempt = UUID().uuidString
+            try checkCapacity(additionalBytes: 256)
+            connection.projectionAuthority = 2
+            defer { connection.projectionAuthority = 0 }
+            try execute(
+                "INSERT INTO sync_ack_attempts(scope_id,epoch,from_sequence,attempt_id,attempt_owner,previous_sequence,applied_sequence,started_at) VALUES(?,?,?,?,?,?,?,?)",
+                [
+                    .integer(scopeId), .text(position.epoch.rawValue),
+                    .text(position.sequence.rawValue), .text(attempt), .text(processOwner),
+                    .text(row.confirmed), .text(row.applied), .real(Date().timeIntervalSince1970),
+                ])
+            if !recovery {
+                try execute(
+                    "UPDATE inbound_pages SET state='ACK_IN_FLIGHT',updated_at=? WHERE scope_id=? AND epoch=? AND from_sequence=?",
+                    [
+                        .real(Date().timeIntervalSince1970), .integer(scopeId),
+                        .text(position.epoch.rawValue), .text(position.sequence.rawValue),
+                    ])
+            }
+            try fault?(.beforeAckLeaseCommit)
+            return AppliedSyncPageProof(
+                evidence: evidence,
+                locallyApplied: SyncJournalPosition(
+                    epoch: position.epoch, sequence: try SyncDecimalValidation.validate(row.applied)
+                ),
+                previouslyConfirmed: SyncJournalPosition(
+                    epoch: position.epoch,
+                    sequence: try SyncDecimalValidation.validate(row.confirmed)),
+                commitIdentity: commit + "/" + attempt)
+        }
+        // No dispatch capability exists before durable lease COMMIT. Post-commit failure leaves
+        // recoverable ACK_IN_FLIGHT without retaining an inaccessible process-local reservation.
+        try fault?(.afterAckLeaseCommit)
+        activeAckAttempts.insert(String(proof.commitIdentity.split(separator: "/")[1]))
+        issued = true
+        return proof
+    }
+    func validateProjectionProof(_ proof: AppliedSyncPageProof, credentialId: String) throws {
+        try requireFeedScope(proof.evidence.scope, credentialId: credentialId)
+        guard
+            let raw = try rawInbound(
+                scope: proof.evidence.scope,
+                position: SyncJournalPosition(
+                    epoch: proof.evidence.epoch, sequence: proof.evidence.from)),
+            raw.state == .ackInFlight,
+            let row = try projectionRow(proof.evidence.scope),
+            row.epoch == proof.evidence.epoch.rawValue,
+            row.completeness == .partial, row.applied == proof.locallyApplied.sequence.rawValue,
+            row.confirmed == proof.previouslyConfirmed.sequence.rawValue,
+            let attempt = try ackAttempt(proof), !attempt.completed, attempt.owner == processOwner,
+            activeAckAttempts.contains(attempt.id), attempt.previous == row.confirmed,
+            attempt.applied == row.applied,
+            let commit = try query(
+                "SELECT commit_id FROM projection_commits WHERE scope_id=? AND epoch=? AND from_sequence=? AND through_sequence=? AND canonical_data=?",
+                [
+                    .integer(try requireScopeId(proof.evidence.scope)),
+                    .text(proof.evidence.epoch.rawValue), .text(proof.evidence.from.rawValue),
+                    .text(proof.evidence.through.rawValue), .blob(raw.canonical),
+                ], map: { try Self.text($0, 0) }
+            ).first,
+            proof.commitIdentity == commit + "/" + attempt.id,
+            proof.locallyApplied.epoch == proof.evidence.epoch,
+            proof.previouslyConfirmed.epoch == proof.evidence.epoch
+        else { throw SyncFeedFailure.applicationCommitRequired }
+        // Signed evidence must be exactly the token and page position retained in canonical wire data.
+        guard
+            let envelope = try JSONSerialization.jsonObject(with: raw.canonical) as? [String: Any],
+            envelope["ack_token"] as? String == proof.evidence.token,
+            envelope["epoch"] as? String == proof.evidence.epoch.rawValue,
+            envelope["from_sequence"] as? String == proof.evidence.from.rawValue,
+            envelope["through_sequence"] as? String == proof.evidence.through.rawValue,
+            envelope["high_watermark"] as? String == proof.evidence.highWatermark.rawValue
+        else { throw SyncFeedFailure.applicationCommitRequired }
+        guard let base = try syncBase(scope: proof.evidence.scope), base.status == .verified,
+            base.epoch == row.epoch, base.sequence == row.confirmed
+        else { throw SyncFeedFailure.checkpointConflict }
+    }
+    func authorizeProjectionAckDispatch(_ proof: AppliedSyncPageProof, credentialId: String) throws
+    {
+        try transaction {
+            try validateProjectionProof(proof, credentialId: credentialId)
+            guard let attempt = try ackAttempt(proof), !attempt.dispatched else {
+                throw SyncFeedFailure.applicationCommitRequired
+            }
+            connection.projectionAuthority = 2
+            defer { connection.projectionAuthority = 0 }
+            try execute(
+                "UPDATE sync_ack_attempts SET dispatched=1 WHERE attempt_id=?", [.text(attempt.id)])
+        }
+    }
+    func finishProjectionAttempt(_ proof: AppliedSyncPageProof) {
+        guard let attempt = proof.commitIdentity.split(separator: "/").last else { return }
+        activeAckAttempts.remove(String(attempt))
+        if activeAckAttempts.isEmpty { connection.releaseAckLock() }
+    }
+    func blockProjectionPage(_ proof: AppliedSyncPageProof, credentialId: String) throws {
+        try transaction {
+            try validateProjectionProof(proof, credentialId: credentialId)
+            let id = try requireScopeId(proof.evidence.scope)
+            connection.projectionAuthority = 4
+            defer { connection.projectionAuthority = 0 }
+            try execute(
+                "UPDATE node_projection_state SET completeness='REBASELINE_REQUIRED' WHERE scope_id=?",
+                [.integer(id)])
+            try execute(
+                "UPDATE inbound_pages SET state='BLOCKED_REBASELINE',updated_at=? WHERE scope_id=? AND epoch=? AND from_sequence=?",
+                [
+                    .real(Date().timeIntervalSince1970), .integer(id),
+                    .text(proof.evidence.epoch.rawValue), .text(proof.evidence.from.rawValue),
+                ])
+            try execute(
+                "UPDATE sync_bases SET status='RECONCILIATION_REQUIRED' WHERE scope_id=?",
+                [.integer(id)])
+        }
+    }
+    func confirmProjectionPage(
+        _ proof: AppliedSyncPageProof, checkpoint: SyncCheckpoint, credentialId: String,
+        bridge: any RustBridgeProtocol
+    ) async throws {
+        let verified = try await SyncCheckpointResponseDecoder(bridge: bridge).decode(
+            HTTPTransportResponse(
+                statusCode: 200, headers: ["Content-Type": "application/json"],
+                body: checkpoint.responseBody), scope: proof.evidence.scope)
+        guard verified == checkpoint else { throw SyncFeedFailure.protocolFailure }
+        try transaction {
+            try validateProjectionProof(proof, credentialId: credentialId)
+            guard checkpoint.base.scope == proof.evidence.scope,
+                checkpoint.base.epoch == proof.evidence.epoch,
+                !SyncDecimalValidation.less(
+                    checkpoint.base.sequence.rawValue, proof.evidence.through.rawValue),
+                !SyncDecimalValidation.less(
+                    checkpoint.base.sequence.rawValue, proof.previouslyConfirmed.sequence.rawValue),
+                !SyncDecimalValidation.less(
+                    proof.locallyApplied.sequence.rawValue, checkpoint.base.sequence.rawValue),
+                let attempt = try ackAttempt(proof), attempt.dispatched
+            else { throw SyncFeedFailure.checkpointConflict }
+            let scopeId = try requireScopeId(proof.evidence.scope)
+            let old = try syncBase(scope: proof.evidence.scope)
+            try checkCapacity(
+                additionalBytes: checkpoint.responseBody.count * 2 - (old?.responseBody.count ?? 0))
+            connection.projectionAuthority = 3
+            defer { connection.projectionAuthority = 0 }
+            let incompatible =
+                try scalar(
+                    "SELECT count(*) FROM mutations WHERE scope_id=? AND state NOT IN ('APPLIED','FAILED_PERMANENT') AND (epoch<>? OR sequence<>?)",
+                    [
+                        .integer(scopeId), .text(checkpoint.base.epoch.rawValue),
+                        .text(checkpoint.base.sequence.rawValue),
+                    ]) > 0
+            try execute(
+                "UPDATE sync_bases SET sequence=?,response=?,status=? WHERE scope_id=? AND epoch=?",
+                [
+                    .text(checkpoint.base.sequence.rawValue), .blob(checkpoint.responseBody),
+                    .text(incompatible ? "RECONCILIATION_REQUIRED" : "VERIFIED"), .integer(scopeId),
+                    .text(checkpoint.base.epoch.rawValue),
+                ])
+            try execute(
+                "UPDATE node_projection_state SET confirmed_sequence=?,completeness=? WHERE scope_id=?",
+                [
+                    .text(checkpoint.base.sequence.rawValue),
+                    .text(incompatible ? "REBASELINE_REQUIRED" : "PARTIAL"), .integer(scopeId),
+                ])
+            try execute(
+                "UPDATE sync_ack_attempts SET completed=1,checkpoint=? WHERE attempt_id=?",
+                [.blob(checkpoint.responseBody), .text(attempt.id)])
+            try execute(
+                "UPDATE inbound_pages SET state='ACK_CONFIRMED',updated_at=? WHERE scope_id=? AND epoch=? AND from_sequence=?",
+                [
+                    .real(Date().timeIntervalSince1970), .integer(scopeId),
+                    .text(proof.evidence.epoch.rawValue), .text(proof.evidence.from.rawValue),
+                ])
+            try fault?(.beforeAckConfirmationCommit)
+        }
+        try fault?(.afterAckConfirmationCommit)
     }
 }

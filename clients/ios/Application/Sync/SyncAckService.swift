@@ -1,12 +1,17 @@
 import Foundation
 
-/// Future cache layer must implement this on the SAME database as inbound staging. Authorization
+/// The production cache implements this on the SAME database as inbound staging. Authorization
 /// must prove atomic Node projection COMMIT and claim durable ACK_IN_FLIGHT before returning.
-/// P038 intentionally supplies no production conformer; staging cannot authorize this interface.
+/// Staging alone cannot authorize this interface.
 protocol CommittedSyncProjectionStorageProtocol: Sendable {
     func claimAppliedPage(
         scope: ClientMutationScope, position: SyncJournalPosition, credentialId: String
     ) async throws -> AppliedSyncPageProof
+    func recoverAppliedPage(
+        scope: ClientMutationScope, position: SyncJournalPosition, credentialId: String
+    ) async throws -> AppliedSyncPageProof
+    func authorizeAckDispatch(_ proof: AppliedSyncPageProof, credentialId: String) async throws
+    func finishAppliedAttempt(_ proof: AppliedSyncPageProof) async
     func validateAppliedPage(_ proof: AppliedSyncPageProof, credentialId: String) async throws
     /// Preserve token and projection evidence while durably blocking further dispatch.
     func blockAppliedPage(
@@ -16,6 +21,18 @@ protocol CommittedSyncProjectionStorageProtocol: Sendable {
     func confirmAppliedPage(
         _ proof: AppliedSyncPageProof, checkpoint: SyncCheckpoint, credentialId: String)
         async throws
+}
+
+extension CommittedSyncProjectionStorageProtocol {
+    func recoverAppliedPage(
+        scope: ClientMutationScope, position: SyncJournalPosition, credentialId: String
+    ) async throws -> AppliedSyncPageProof {
+        throw SyncFeedFailure.applicationCommitRequired
+    }
+    func authorizeAckDispatch(_ proof: AppliedSyncPageProof, credentialId: String) async throws {
+        try await validateAppliedPage(proof, credentialId: credentialId)
+    }
+    func finishAppliedAttempt(_ proof: AppliedSyncPageProof) async {}
 }
 
 struct AppliedSyncPageProof: Equatable, Sendable {
@@ -40,14 +57,15 @@ struct AppliedFeedCommitReceipt: Sendable {
     }
 }
 
-/// NOT composed in P038. Tests inject dedicated committed-storage fixtures; no flag or staging
-/// override enables production dispatch. No timers, retries, or startup recovery network operations.
+/// Explicit ACK only. Production authority proves committed projection and owns durable attempts.
+/// No timers, retries, or startup recovery network operations.
 @MainActor
 final class SyncAckService {
     private let provider: any AuthenticatedSyncFeedRequestProviderProtocol
     private let projection: any CommittedSyncProjectionStorageProtocol
     private let bridge: any RustBridgeProtocol
     private let owner = UUID()
+    private var activeDispatches: Set<String> = []
 
     init(
         provider: any AuthenticatedSyncFeedRequestProviderProtocol,
@@ -61,20 +79,57 @@ final class SyncAckService {
     func receipt(scope: ClientMutationScope, position: SyncJournalPosition) async throws
         -> AppliedFeedCommitReceipt
     {
+        try await acquireReceipt(scope: scope, position: position, recovery: false)
+    }
+
+    /// One explicitly requested recovery; original token and committed page remain unchanged.
+    func recoveryReceipt(scope: ClientMutationScope, position: SyncJournalPosition) async throws
+        -> AppliedFeedCommitReceipt
+    {
+        try await acquireReceipt(scope: scope, position: position, recovery: true)
+    }
+
+    private func acquireReceipt(
+        scope: ClientMutationScope, position: SyncJournalPosition, recovery: Bool
+    ) async throws -> AppliedFeedCommitReceipt {
         let session = try await provider.begin()
         guard session.matches(scope) else { throw SyncFeedFailure.scopeMismatch }
         try await provider.validate(session)
-        let proof = try await projection.claimAppliedPage(
-            scope: scope, position: position, credentialId: session.credentialIdentifier)
-        guard proof.evidence.scope == scope, proof.evidence.epoch == position.epoch,
-            proof.evidence.from == position.sequence
-        else { throw SyncFeedFailure.applicationCommitRequired }
-        try Self.validateProof(proof)
-        try await provider.validate(session)
-        return AppliedFeedCommitReceipt(proof: proof, session: session, owner: owner)
+        let proof: AppliedSyncPageProof
+        if recovery {
+            proof = try await projection.recoverAppliedPage(
+                scope: scope, position: position, credentialId: session.credentialIdentifier)
+        } else {
+            proof = try await projection.claimAppliedPage(
+                scope: scope, position: position, credentialId: session.credentialIdentifier)
+        }
+        do {
+            guard proof.evidence.scope == scope, proof.evidence.epoch == position.epoch,
+                proof.evidence.from == position.sequence
+            else { throw SyncFeedFailure.applicationCommitRequired }
+            try Self.validateProof(proof)
+            try await provider.validate(session)
+            return AppliedFeedCommitReceipt(proof: proof, session: session, owner: owner)
+        } catch {
+            await projection.finishAppliedAttempt(proof)
+            throw error
+        }
     }
 
     func acknowledge(_ receipt: AppliedFeedCommitReceipt) async -> SyncAckSubmissionResult {
+        guard receipt.owner == owner, activeDispatches.insert(receipt.proof.commitIdentity).inserted
+        else {
+            return .failed(.applicationCommitRequired)
+        }
+        defer { activeDispatches.remove(receipt.proof.commitIdentity) }
+        let result = await performAcknowledgement(receipt)
+        if receipt.owner == owner { await projection.finishAppliedAttempt(receipt.proof) }
+        return result
+    }
+
+    private func performAcknowledgement(_ receipt: AppliedFeedCommitReceipt) async
+        -> SyncAckSubmissionResult
+    {
         var dispatched = false
         do {
             guard receipt.owner == owner else { throw SyncFeedFailure.applicationCommitRequired }
@@ -84,6 +139,8 @@ final class SyncAckService {
             try await projection.validateAppliedPage(
                 proof, credentialId: receipt.session.credentialIdentifier)
             try await provider.validate(receipt.session)
+            try await projection.authorizeAckDispatch(
+                proof, credentialId: receipt.session.credentialIdentifier)
             let response = try await provider.submitSyncAck(receipt, session: receipt.session) {
                 dispatched = true
             }

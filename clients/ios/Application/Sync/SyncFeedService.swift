@@ -84,7 +84,7 @@ final class SyncFeedService {
                     credentialId: session.credentialIdentifier, bridge: bridge),
                 record.page.canonicalData == page.canonicalData
             else { throw MutationQueueFailure.commitAcknowledgementLost }
-            guard record.state == .receivedUnapplied else {
+            guard record.state != .blockedRebaseline else {
                 throw SyncFeedFailure.rebaselineRequired
             }
             do { try await provider.validate(session) } catch {
