@@ -693,7 +693,10 @@ mod windows_directory_sync_tests {
         drop(file);
 
         assert!(
-            File::open(&path).expect("read-only checkpoint handle").sync_all().is_err(),
+            File::open(&path)
+                .expect("read-only checkpoint handle")
+                .sync_all()
+                .is_err(),
             "Windows FlushFileBuffers requires a handle opened with write access"
         );
         sync_committed_file(&path).expect("reopen checkpoint with write access and flush it");
