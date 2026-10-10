@@ -3565,9 +3565,24 @@ mod tests {
 
     #[cfg(unix)]
     fn short_unix_socket_fixture_root() -> PathBuf {
-        let root = std::env::temp_dir().join(format!("sv{}", uuid::Uuid::now_v7().simple()));
+        #[cfg(target_os = "macos")]
+        let base = PathBuf::from("/tmp");
+        #[cfg(not(target_os = "macos"))]
+        let base = std::env::temp_dir();
+        let root = base.join(format!("sv{}", uuid::Uuid::now_v7().simple()));
         fs::create_dir_all(&root).expect("fixture root");
-        root.canonicalize().expect("canonical fixture root")
+        let root = root.canonicalize().expect("canonical fixture root");
+        use std::os::unix::ffi::OsStrExt as _;
+        assert!(
+            root.join(CONTROL_ENDPOINT_DIRECTORY)
+                .join("control.sock")
+                .as_os_str()
+                .as_bytes()
+                .len()
+                < 100,
+            "Unix socket fixture path must remain below macOS and Linux limits"
+        );
+        root
     }
 
     #[test]
