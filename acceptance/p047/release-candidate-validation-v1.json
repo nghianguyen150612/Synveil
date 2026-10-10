@@ -1,0 +1,2795 @@
+{
+  "schema_version": 1,
+  "report_id": "P047_RELEASE_CANDIDATE_VALIDATION",
+  "report_date_utc": "2026-10-10",
+  "current_product_version": "0.1.0",
+  "candidate_release_version": "0.2.0 (not created; P048 owns tag/release)",
+  "qualification_decision": "BLOCKED",
+  "p047_pr": {
+    "number": 104,
+    "url": "https://github.com/nghianguyen150612/Synveil/pull/104",
+    "state": "OPEN",
+    "draft": true,
+    "base": "main",
+    "head_branch": "release/p047-final-rc-validation",
+    "validated_product_source_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d"
+  },
+  "p047_pr_merged": false,
+  "release_tag_created": false,
+  "source_scope": {
+    "audited_main_sha": "3851ea11927e24255614cfc38adbaccbd345ca03",
+    "audited_main_tree_sha": "7801eb5c0d57a312072440a1f2decb463008b12c",
+    "p047_validation_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+    "p047_validation_tree_sha": "510408aa1bea32a73226c401e83f290427043b9e",
+    "p047_validation_scope": "Product source and validation harness fixes were built at 62651f05431ed5be255b7e7dd05ac1cffe8b927d (tree 510408aa1bea32a73226c401e83f290427043b9e). The final validation report/manifest is a separate metadata commit and does not alter compiled product inputs.",
+    "p045_branch_excluded": true
+  },
+  "main_product_audit": {
+    "implemented_prompt_areas_on_main": [
+      "P007-P010 install engine, transaction journal, and lifecycle",
+      "P012-P020 Linux package, AppImage, and quick-install source",
+      "P021-P028 Windows installer/runtime source",
+      "P029-P035 managed server and first-admin source",
+      "P037-P042 Connect, Host intent, library wizard, sync progress, and repair UX source",
+      "P043 artifact/channel security source",
+      "P044 installation resilience source",
+      "P046 bilingual documentation"
+    ],
+    "known_not_on_main": [
+      "P045 clean-machine acceptance PR #78 remains OPEN/DRAFT/UNMERGED at 035497c05c145e5c6129e744f9455937069680f4",
+      "P036 production Host dependency inventory and production acceptance"
+    ],
+    "acceptance_inventory": {
+      "scenario_count": 11,
+      "current_availability": "IMPLEMENTATION_PENDING for all 11 scenario definitions",
+      "native_journeys_executed": 0,
+      "evidence_location": "acceptance/install-scenarios-v1.json and scripts/install_acceptance.py inventory"
+    },
+    "user_data_compatibility": "P041 migration 0008 sets LOCAL_SCHEMA_VERSION=8; P047 corrected stale assertions to the authoritative constant and did not modify migration or data-integrity semantics.",
+    "unmerged_pull_request_audit": [
+      {
+        "pull_request": 78,
+        "title": "Synveil v0.2 P045: Cross-Platform Clean-Machine Matrix",
+        "state": "OPEN_DRAFT_UNMERGED",
+        "head_branch": "feat/cross-platform-clean-machine-matrix",
+        "head_sha": "035497c05c145e5c6129e744f9455937069680f4",
+        "base_branch": "main",
+        "scope": "Native Windows 11, Ubuntu 24.04, Fedora 42 lifecycle and power-cycle acceptance matrix.",
+        "mainline_status": "Not present on main; reference-only handoff inspected; no evidence imported."
+      },
+      {
+        "pull_request": 58,
+        "title": "feat: add managed server reachability",
+        "state": "OPEN_DRAFT_UNMERGED",
+        "head_branch": "codex/implement-server-network-reachability-te5w2y",
+        "head_sha": "1ff1977f3f8a9dccb50f559129b7346926930ca4",
+        "base_branch": "main",
+        "scope": "Alternate P034 managed server-network reachability implementation.",
+        "mainline_status": "Overlaps P034 implementation on main at 2e4809f; no distinct clean-machine or production Host evidence."
+      },
+      {
+        "pull_request": 59,
+        "title": "Introduce server-network crate, network model, edge service and CI validation",
+        "state": "OPEN_DRAFT_UNMERGED",
+        "head_branch": "codex/implement-server-network-reachability-re0jlv",
+        "head_sha": "17be001ad7461c17f62d331db214e90ea233094b",
+        "base_branch": "main",
+        "scope": "P034 server-network model, edge packaging and CI validation.",
+        "mainline_status": "Head patch stable patch ID matches main commit 2e4809f; no distinct P036 production identities or Host acceptance."
+      },
+      {
+        "pull_request": 103,
+        "title": "feat(ios): add metadata mutation UX and queue status",
+        "state": "OPEN_DRAFT_UNMERGED",
+        "head_branch": "ios/p037-metadata-mutation-ux",
+        "head_sha": "2f7957b2d9cbbbbc6134a5bef8825e9384f17392",
+        "base_branch": "ios-app",
+        "scope": "Separate iOS application and metadata mutation client.",
+        "mainline_status": "Targets ios-app rather than main; excluded from desktop/server v0.2 release candidate scope."
+      }
+    ]
+  },
+  "defect_audit": [
+    {
+      "area": "Windows linker selection",
+      "main_workflow_run": 38015962172,
+      "main_job_id": 114106142192,
+      "observed": "Git Bash /usr/bin/link.exe selected instead of MSVC linker",
+      "p047_change": "scripts/select-msvc-linker.ps1 authenticates absolute active-toolset AMD64 Microsoft linker and exports explicit Cargo linker",
+      "current_status": "The acfd exact-head installer run authenticated the absolute active MSVC linker and matching CRT, then exposed a separate Windows system-DLL classification failure. The corrected 381b27f producer run 38025538706 is queued.",
+      "current_workflow_run": 38025538706,
+      "previous_code_run_1de1d": 38024446187,
+      "current_job_id": 114132184799
+    },
+    {
+      "area": "Windows CRT deployment",
+      "main_workflow_run": 38015962245,
+      "main_job_id": 114106184060,
+      "observed": "Qt6Core.dll import closure missing MSVCP140.dll after linker selection passed",
+      "p047_change": "Resolve the unique active-toolset CRT under VCToolsRedistDir, vendor-check it, copy only imported CRT DLLs, and audit PE closure",
+      "current_status": "MSVC 14.51.36231 linker and CRT selection passed in acfd run 38024448969; package import audit then rejected Qt system DLL UIAutomationCore.DLL. The policy fix is in 381b27f; exact corrected Windows installer run 38025538706 is queued.",
+      "current_workflow_run": 38025538706,
+      "previous_code_run_1de1d": 38024446280,
+      "current_job_id": 114132184799
+    },
+    {
+      "area": "Linux AppImage",
+      "main_workflow_run": 38015962187,
+      "main_job_id": 114106149743,
+      "observed": "APPIMAGE-8 AppRun does not exec packaged desktop after linuxdeploy Qt hook",
+      "p047_change": "Remove only known generated hook, restore reviewed AppRun, and compare after packaging",
+      "current_status": "acfd run 38024448824 passed build/AppDir inspection but failed its Qt smoke because the validator forced absent offscreen plugin; corrected xcb-under-Xvfb producer run 38025538795 is queued.",
+      "current_workflow_run": 38025538795,
+      "previous_code_run_1de1d": 38024446194,
+      "current_job_id": 114132184041
+    },
+    {
+      "area": "Linux DEB/RPM reproducibility",
+      "main_workflow_run": 38015962118,
+      "main_job_id": 114106144572,
+      "observed": "synveil-desktop binary digest differed across independent builds (expected 48e80ec11a949ad335edf0604562a71bc73b82bbd8345e9cc450d0cb6abbe32a; actual c6a752d6c5b370312001a3d7a7939672743d40529ec8834ff3c113602c59913e; first difference byte 1,379,207); packages were not uploaded",
+      "p047_change": "No speculative product binary change",
+      "current_status": "UNRESOLVED_RELEASE_BLOCKER; the main mismatch has no reproduced source root. P047 acfd package workflow was cancelled when a newer source commit was pushed; exact corrected-source run 38025538700 is queued.",
+      "current_workflow_run": 38025538700,
+      "previous_code_run_1de1d": 38023992747
+    },
+    {
+      "area": "Rust test portability and compile",
+      "main_workflow_run": 38015962171,
+      "observed": "Windows tests imported Unix-only APIs; Windows config fixtures used /tmp; long Unix socket paths failed on macOS; canceled named-pipe connect dropped listener",
+      "p047_change": "Gate Unix-only tests, use platform-absolute config roots and short Unix fixtures, retain pending Windows pipe listener across connect cancellation",
+      "current_status": "The acfd exact-head run 38024446185 reproduced three macOS IPC UnsafeEndpoint fixture failures and three Windows LinuxConfigLayout InvalidPath fixture failures. Short canonical macOS socket roots with a path-bound assertion and Windows gating for POSIX-only config fixtures are in 381b27f; exact source run 38025538748 is queued.",
+      "current_workflow_run": 38025538748,
+      "previous_code_run_1de1d": 38023992827
+    },
+    {
+      "area": "Local schema assertion",
+      "main_workflow_runs": [
+        38015962171,
+        38015962181
+      ],
+      "observed": "tests expected schema 7, current P041 schema 8",
+      "p047_change": "Use LOCAL_SCHEMA_VERSION and update contract assertion to 8; migrations unchanged",
+      "current_status": "P047 source uses authoritative LOCAL_SCHEMA_VERSION=8 without changing migrations. Exact P047 Rust run 38025538748 and PG17 run 38025538749 are queued.",
+      "current_workflow_run": 38025538748,
+      "previous_code_run_1de1d": 38023992827
+    },
+    {
+      "area": "P035 bootstrap fixture",
+      "main_workflow_run": 38015962207,
+      "main_job_id": 114106142150,
+      "observed": "First live test passed; second saw Closed instead of expected Open after reusing same database",
+      "p047_change": "Create a fresh database for the second exact integration test; assertions unchanged",
+      "current_status": "FIX VERIFIED on acfd source by run 38024448902 job 114132182340: two bootstrap invocations used distinct fresh PostgreSQL databases and passed. Exact source-head confirmation is pending in run 38025541389.",
+      "current_workflow_run": 38025541389,
+      "previous_code_run_1de1d": 38023996395,
+      "current_job_id": 114132182340
+    },
+    {
+      "area": "PG17 scheduled-maintenance",
+      "main_workflow_run": 38015962181,
+      "main_job_id": 114106199419,
+      "observed": "Prompt89 failed because expected schema 7, actual 8; later maintenance tests skipped",
+      "p047_change": "Correct stale schema assertion without changing migration",
+      "current_status": "Stale schema assertion corrected to 8 without altering migration semantics; latest exact P047 source run 38025538749 is queued.",
+      "current_workflow_run": 38025538749
+    },
+    {
+      "area": "P047 Linux package workflow shellcheck",
+      "main_workflow_run": null,
+      "p047_workflow_run": 38023992747,
+      "p047_job_id": 114130875731,
+      "observed": "Strict ShellCheck failed SC2034 at deploy/packages/build-windows.sh:411 because the bounded loop counter pass was unused; package build and upload steps were skipped.",
+      "p047_change": "Use the intentional underscore loop placeholder and retain the fixed four-pass bounded MSVC import closure.",
+      "current_status": "FIX VERIFIED on acfd run 38024448867 job 114132185268: strict ShellCheck passed. The exact 381b27f package run 38025538700 is queued.",
+      "current_workflow_run": 38025538700,
+      "current_job_id": 114132185268,
+      "previous_code_run_1de1d": 38023992747
+    },
+    {
+      "area": "Windows PE system import classification",
+      "main_workflow_run": null,
+      "p047_workflow_run": 38024448969,
+      "p047_job_id": 114132184799,
+      "observed": "The closed PE import audit rejected UIAutomationCore.DLL imported by Qt platforms/qwindows.dll after authenticated linker and CRT selection passed.",
+      "p047_change": "Extracted the Windows system import policy to deploy/packages/common/windows-pe-import-policy.sh; added the OS-provided UIAUTOMATIONCORE.DLL entry and tests that still reject MSVCP140.dll, vcruntime140.dll and unknown imports.",
+      "current_status": "FIX IMPLEMENTED; exact corrected producer run 38025538706 is queued. The old failure did not upload Setup.exe.",
+      "current_workflow_run": 38025538706
+    },
+    {
+      "area": "AppImage Qt smoke plugin selection",
+      "main_workflow_run": null,
+      "p047_workflow_run": 38024448824,
+      "p047_job_id": 114132184041,
+      "observed": "AppDir build and inspection passed, then QML smoke failed because QT_QPA_PLATFORM=offscreen was forced while AppDir packaged only libqxcb.so. The logged artifact digest 8a39886bb5dedbcc17c374d329af28b2ab689c4f1b772ba18e2af95cc4a09196 had no uploaded byte-size or artifact ID.",
+      "p047_change": "Run the bounded smoke with bundled xcb in isolated Xvfb; tests lock plugin selection and fail clearly if xvfb-run is missing.",
+      "current_status": "FIX IMPLEMENTED; exact corrected producer run 38025538795 is queued. The old failed smoke is not release-acceptance evidence.",
+      "current_workflow_run": 38025538795
+    },
+    {
+      "area": "macOS Unix socket test roots",
+      "main_workflow_run": 38016138153,
+      "main_job_id": 114106700631,
+      "p047_workflow_run": 38024446185,
+      "p047_job_id": 114132190521,
+      "observed": "Three exact client tests failed with UnsafeEndpoint. Their hard-coded /tmp path traversed macOS /tmp -> /private/tmp symlink, so the production secure-path policy correctly refused it.",
+      "p047_change": "Use a canonicalized short /tmp root on macOS and assert test socket paths remain under 100 bytes, leaving the endpoint security checks active.",
+      "current_status": "FIX IMPLEMENTED in 381b27f; exact Rust CI run 38025538748 is queued.",
+      "current_workflow_run": 38025538748
+    },
+    {
+      "area": "Windows LinuxConfigLayout fixture applicability",
+      "main_workflow_run": null,
+      "p047_workflow_run": 38024446185,
+      "p047_job_id": 114132190544,
+      "observed": "Three API tests failed at fixture_layout with InvalidPath because LinuxConfigLayout accepts POSIX path components and Windows temporary paths carry a drive prefix.",
+      "p047_change": "Run those Linux server-config behavior tests on Unix targets; assertions still run on Linux/macOS and no Windows Host support claim is made.",
+      "current_status": "FIX IMPLEMENTED with cfg(not(windows)); exact Rust CI run 38025538748 is queued.",
+      "current_workflow_run": 38025538748
+    }
+  ],
+  "hosted_workflows": [
+    {
+      "workflow": "Rust CI",
+      "run_id": 38023992827,
+      "event": "push",
+      "head_sha": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+      "status_at_report_creation": "cancelled when a newer P047 source commit was pushed; not an exact final-source result"
+    },
+    {
+      "workflow": "PostgreSQL 17 scheduled-maintenance",
+      "run_id": 38023992706,
+      "event": "push",
+      "head_sha": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+      "status_at_report_creation": "cancelled when a newer P047 source commit was pushed; not an exact final-source result"
+    },
+    {
+      "workflow": "Windows installer",
+      "run_id": 38023992743,
+      "event": "push",
+      "head_sha": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+      "status_at_report_creation": "cancelled when a newer P047 source commit was pushed; not an exact final-source result"
+    },
+    {
+      "workflow": "Windows native acceptance",
+      "run_id": 38023992720,
+      "event": "push",
+      "head_sha": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+      "status_at_report_creation": "cancelled when a newer P047 source commit was pushed; not an exact final-source result"
+    },
+    {
+      "workflow": "Linux AppImage",
+      "run_id": 38023992777,
+      "event": "push",
+      "head_sha": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+      "status_at_report_creation": "cancelled when a newer P047 source commit was pushed; not an exact final-source result"
+    },
+    {
+      "workflow": "Linux native packages (DEB + RPM)",
+      "run_id": 38023992747,
+      "event": "push",
+      "head_sha": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+      "status_at_report_creation": "cancelled when a newer P047 source commit was pushed; not an exact final-source result"
+    },
+    {
+      "workflow": "Prompt035 server first-admin bootstrap",
+      "run_id": 38023996395,
+      "event": "pull_request",
+      "head_sha": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+      "status_at_report_creation": "cancelled when a newer P047 source commit was pushed; not an exact final-source result"
+    },
+    {
+      "workflow": "Server self-host acceptance",
+      "run_id": 38023996490,
+      "event": "pull_request",
+      "head_sha": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+      "status_at_report_creation": "cancelled when a newer P047 source commit was pushed; not an exact final-source result"
+    },
+    {
+      "workflow": "Linux clean-machine acceptance",
+      "run_id": 38023996386,
+      "event": "pull_request",
+      "head_sha": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+      "status_at_report_creation": "cancelled when a newer P047 source commit was pushed; not an exact final-source result"
+    },
+    {
+      "workflow": "Rust CI",
+      "run_id": 38024446185,
+      "event": "push",
+      "head_sha": "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+      "status_at_report_creation": "cancelled when a newer P047 source commit was pushed; not an exact final-source result"
+    },
+    {
+      "workflow": "PostgreSQL 17 scheduled-maintenance",
+      "run_id": 38024446234,
+      "event": "push",
+      "head_sha": "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+      "status_at_report_creation": "cancelled when a newer P047 source commit was pushed; not an exact final-source result"
+    },
+    {
+      "workflow": "Windows installer",
+      "run_id": 38024448969,
+      "event": "push",
+      "head_sha": "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+      "status_at_report_creation": "cancelled when a newer P047 source commit was pushed; not an exact final-source result",
+      "job_id": 114132184799
+    },
+    {
+      "workflow": "Windows native acceptance",
+      "run_id": 38024446187,
+      "event": "push",
+      "head_sha": "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+      "status_at_report_creation": "cancelled when a newer P047 source commit was pushed; not an exact final-source result"
+    },
+    {
+      "workflow": "Linux AppImage",
+      "run_id": 38024448824,
+      "event": "push",
+      "head_sha": "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+      "status_at_report_creation": "cancelled when a newer P047 source commit was pushed; not an exact final-source result",
+      "job_id": 114132184041
+    },
+    {
+      "workflow": "Linux native packages (DEB + RPM)",
+      "run_id": 38024448867,
+      "event": "push",
+      "head_sha": "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+      "status_at_report_creation": "cancelled when a newer P047 source commit was pushed; not an exact final-source result",
+      "job_id": 114132185268
+    },
+    {
+      "workflow": "Server self-host acceptance",
+      "run_id": 38024448888,
+      "job_id": 114132182641,
+      "event": "pull_request",
+      "head_sha": "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+      "status_at_report_creation": "cancelled when a newer P047 source commit was pushed; not an exact final-source result"
+    },
+    {
+      "workflow": "Rust CI",
+      "run_id": 38025538748,
+      "event": "push",
+      "head_sha": "381b27f4be27c77d64450f58cea08f63e98ad34b",
+      "status_at_report_creation": "queued; no result inferred"
+    },
+    {
+      "workflow": "Rust CI",
+      "run_id": 38025541402,
+      "event": "pull_request",
+      "head_sha": "381b27f4be27c77d64450f58cea08f63e98ad34b",
+      "status_at_report_creation": "queued; no result inferred"
+    },
+    {
+      "workflow": "PostgreSQL 17 scheduled-maintenance",
+      "run_id": 38025538749,
+      "event": "push",
+      "head_sha": "381b27f4be27c77d64450f58cea08f63e98ad34b",
+      "status_at_report_creation": "queued; no result inferred"
+    },
+    {
+      "workflow": "PostgreSQL 17 scheduled-maintenance",
+      "run_id": 38025541456,
+      "event": "pull_request",
+      "head_sha": "381b27f4be27c77d64450f58cea08f63e98ad34b",
+      "status_at_report_creation": "queued; no result inferred"
+    },
+    {
+      "workflow": "Windows installer",
+      "run_id": 38025538706,
+      "event": "push",
+      "head_sha": "381b27f4be27c77d64450f58cea08f63e98ad34b",
+      "status_at_report_creation": "queued; no result inferred"
+    },
+    {
+      "workflow": "Windows installer",
+      "run_id": 38025541493,
+      "event": "pull_request",
+      "head_sha": "381b27f4be27c77d64450f58cea08f63e98ad34b",
+      "status_at_report_creation": "queued; no result inferred"
+    },
+    {
+      "workflow": "Windows native acceptance",
+      "run_id": 38025538704,
+      "event": "push",
+      "head_sha": "381b27f4be27c77d64450f58cea08f63e98ad34b",
+      "status_at_report_creation": "queued; no result inferred"
+    },
+    {
+      "workflow": "Windows native acceptance",
+      "run_id": 38025541500,
+      "event": "pull_request",
+      "head_sha": "381b27f4be27c77d64450f58cea08f63e98ad34b",
+      "status_at_report_creation": "queued; no result inferred"
+    },
+    {
+      "workflow": "Linux AppImage",
+      "run_id": 38025538795,
+      "event": "push",
+      "head_sha": "381b27f4be27c77d64450f58cea08f63e98ad34b",
+      "status_at_report_creation": "queued; no result inferred"
+    },
+    {
+      "workflow": "Linux AppImage",
+      "run_id": 38025541490,
+      "event": "pull_request",
+      "head_sha": "381b27f4be27c77d64450f58cea08f63e98ad34b",
+      "status_at_report_creation": "queued; no result inferred"
+    },
+    {
+      "workflow": "Linux native packages (DEB + RPM)",
+      "run_id": 38025538700,
+      "event": "push",
+      "head_sha": "381b27f4be27c77d64450f58cea08f63e98ad34b",
+      "status_at_report_creation": "queued; no result inferred"
+    },
+    {
+      "workflow": "Linux native packages (DEB + RPM)",
+      "run_id": 38025541392,
+      "event": "pull_request",
+      "head_sha": "381b27f4be27c77d64450f58cea08f63e98ad34b",
+      "status_at_report_creation": "queued; no result inferred"
+    },
+    {
+      "workflow": "Prompt035 server first-admin bootstrap",
+      "run_id": 38025541389,
+      "event": "pull_request",
+      "head_sha": "381b27f4be27c77d64450f58cea08f63e98ad34b",
+      "status_at_report_creation": "queued; no result inferred"
+    },
+    {
+      "workflow": "Server self-host acceptance",
+      "run_id": 38025541459,
+      "event": "pull_request",
+      "head_sha": "381b27f4be27c77d64450f58cea08f63e98ad34b",
+      "status_at_report_creation": "queued; no result inferred"
+    },
+    {
+      "workflow": "Linux clean-machine acceptance",
+      "run_id": 38025541450,
+      "event": "pull_request",
+      "head_sha": "381b27f4be27c77d64450f58cea08f63e98ad34b",
+      "status_at_report_creation": "queued; no result inferred"
+    },
+    {
+      "workflow": "Installer security hardening",
+      "run_id": 38025541410,
+      "event": "pull_request",
+      "head_sha": "381b27f4be27c77d64450f58cea08f63e98ad34b",
+      "status_at_report_creation": "queued; no result inferred"
+    },
+    {
+      "workflow": "Installation resilience hardening",
+      "run_id": 38025541563,
+      "event": "pull_request",
+      "head_sha": "381b27f4be27c77d64450f58cea08f63e98ad34b",
+      "status_at_report_creation": "queued; no result inferred"
+    },
+    {
+      "workflow": "Linux AppImage",
+      "run_id": 38025827887,
+      "event": "push",
+      "head_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+      "status_at_report_creation": "queued; no result inferred",
+      "job_ids": [
+        114136388332
+      ],
+      "status_observed_at_utc": "2026-10-10T05:02:25Z"
+    },
+    {
+      "workflow": "Windows native acceptance",
+      "run_id": 38025827893,
+      "event": "push",
+      "head_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+      "status_at_report_creation": "queued; no result inferred",
+      "job_ids": [
+        114136382885
+      ],
+      "status_observed_at_utc": "2026-10-10T05:02:25Z"
+    },
+    {
+      "workflow": "Windows installer",
+      "run_id": 38025827853,
+      "event": "push",
+      "head_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+      "status_at_report_creation": "queued; no result inferred",
+      "job_ids": [
+        114136380889
+      ],
+      "status_observed_at_utc": "2026-10-10T05:02:25Z"
+    },
+    {
+      "workflow": "Rust CI",
+      "run_id": 38025827860,
+      "event": "push",
+      "head_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+      "status_at_report_creation": "queued; no result inferred",
+      "job_ids": [
+        114136399823,
+        114136399943,
+        114136399949,
+        114136399990,
+        114136399998,
+        114136400016,
+        114136400022,
+        114136400038,
+        114136400092,
+        114136400102,
+        114136400202
+      ],
+      "status_observed_at_utc": "2026-10-10T05:02:25Z"
+    },
+    {
+      "workflow": "Linux native packages (DEB + RPM)",
+      "run_id": 38025827873,
+      "event": "push",
+      "head_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+      "status_at_report_creation": "queued; no result inferred",
+      "job_ids": [
+        114136348412,
+        114136348508,
+        114136348522
+      ],
+      "status_observed_at_utc": "2026-10-10T05:02:25Z"
+    },
+    {
+      "workflow": "PostgreSQL 17 scheduled-maintenance",
+      "run_id": 38025827935,
+      "event": "push",
+      "head_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+      "status_at_report_creation": "queued; no result inferred",
+      "job_ids": [
+        114136347978
+      ],
+      "status_observed_at_utc": "2026-10-10T05:02:25Z"
+    },
+    {
+      "workflow": "Prompt034 server network reachability",
+      "run_id": 38025830541,
+      "event": "pull_request",
+      "head_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+      "status_at_report_creation": "queued; no result inferred",
+      "job_ids": [],
+      "status_observed_at_utc": "2026-10-10T05:02:25Z"
+    },
+    {
+      "workflow": "repair and recovery UX",
+      "run_id": 38025830559,
+      "event": "pull_request",
+      "head_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+      "status_at_report_creation": "queued; no result inferred",
+      "job_ids": [],
+      "status_observed_at_utc": "2026-10-10T05:02:25Z"
+    },
+    {
+      "workflow": "Installation resilience hardening",
+      "run_id": 38025830547,
+      "event": "pull_request",
+      "head_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+      "status_at_report_creation": "queued; no result inferred",
+      "job_ids": [],
+      "status_observed_at_utc": "2026-10-10T05:02:25Z"
+    },
+    {
+      "workflow": "Rust CI",
+      "run_id": 38025830426,
+      "event": "pull_request",
+      "head_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+      "status_at_report_creation": "queued; no result inferred",
+      "job_ids": [],
+      "status_observed_at_utc": "2026-10-10T05:02:25Z"
+    },
+    {
+      "workflow": "authentication UX polish",
+      "run_id": 38025830479,
+      "event": "pull_request",
+      "head_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+      "status_at_report_creation": "queued; no result inferred",
+      "job_ids": [],
+      "status_observed_at_utc": "2026-10-10T05:02:25Z"
+    },
+    {
+      "workflow": "connection setup simplification",
+      "run_id": 38025830491,
+      "event": "pull_request",
+      "head_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+      "status_at_report_creation": "queued; no result inferred",
+      "job_ids": [],
+      "status_observed_at_utc": "2026-10-10T05:02:25Z"
+    },
+    {
+      "workflow": "Prompt035 server first-admin bootstrap",
+      "run_id": 38025830471,
+      "event": "pull_request",
+      "head_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+      "status_at_report_creation": "queued; no result inferred",
+      "job_ids": [
+        114136353605
+      ],
+      "status_observed_at_utc": "2026-10-10T05:02:25Z"
+    },
+    {
+      "workflow": "library first-run wizard",
+      "run_id": 38025830480,
+      "event": "pull_request",
+      "head_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+      "status_at_report_creation": "queued; no result inferred",
+      "job_ids": [],
+      "status_observed_at_utc": "2026-10-10T05:02:25Z"
+    },
+    {
+      "workflow": "installation to sync progress",
+      "run_id": 38025830522,
+      "event": "pull_request",
+      "head_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+      "status_at_report_creation": "queued; no result inferred",
+      "job_ids": [],
+      "status_observed_at_utc": "2026-10-10T05:02:25Z"
+    },
+    {
+      "workflow": "Server self-host acceptance",
+      "run_id": 38025830519,
+      "event": "pull_request",
+      "head_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+      "status_at_report_creation": "queued; no result inferred",
+      "job_ids": [
+        114136354106,
+        114136354142,
+        114136354218,
+        114136354236,
+        114136354339
+      ],
+      "status_observed_at_utc": "2026-10-10T05:02:25Z"
+    },
+    {
+      "workflow": "Linux AppImage",
+      "run_id": 38025830496,
+      "event": "pull_request",
+      "head_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+      "status_at_report_creation": "queued; no result inferred",
+      "job_ids": [],
+      "status_observed_at_utc": "2026-10-10T05:02:25Z"
+    },
+    {
+      "workflow": "Windows installer",
+      "run_id": 38025830530,
+      "event": "pull_request",
+      "head_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+      "status_at_report_creation": "queued; no result inferred",
+      "job_ids": [],
+      "status_observed_at_utc": "2026-10-10T05:02:25Z"
+    },
+    {
+      "workflow": "Installer security hardening",
+      "run_id": 38025830521,
+      "event": "pull_request",
+      "head_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+      "status_at_report_creation": "queued; no result inferred",
+      "job_ids": [
+        114136356388
+      ],
+      "status_observed_at_utc": "2026-10-10T05:02:25Z"
+    },
+    {
+      "workflow": "Linux native packages (DEB + RPM)",
+      "run_id": 38025830489,
+      "event": "pull_request",
+      "head_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+      "status_at_report_creation": "queued; no result inferred",
+      "job_ids": [],
+      "status_observed_at_utc": "2026-10-10T05:02:25Z"
+    },
+    {
+      "workflow": "PostgreSQL 17 scheduled-maintenance",
+      "run_id": 38025830478,
+      "event": "pull_request",
+      "head_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+      "status_at_report_creation": "queued; no result inferred",
+      "job_ids": [],
+      "status_observed_at_utc": "2026-10-10T05:02:25Z"
+    },
+    {
+      "workflow": "Linux clean-machine acceptance",
+      "run_id": 38025830484,
+      "event": "pull_request",
+      "head_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+      "status_at_report_creation": "queued; no result inferred",
+      "job_ids": [
+        114136355846,
+        114136355904
+      ],
+      "status_observed_at_utc": "2026-10-10T05:02:25Z"
+    },
+    {
+      "workflow": "Windows native acceptance",
+      "run_id": 38025830511,
+      "event": "pull_request",
+      "head_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+      "status_at_report_creation": "queued; no result inferred",
+      "job_ids": [],
+      "status_observed_at_utc": "2026-10-10T05:02:25Z"
+    }
+  ],
+  "artifact_inventory": [
+    {
+      "inventory_id": "windows_installer",
+      "artifact_name": "Windows GUI installer",
+      "artifact_type": "windows_installer",
+      "status": "BLOCKED",
+      "source_sha": null,
+      "source_tree_sha": null,
+      "platform": "Windows 11 x86_64",
+      "architecture": "x86_64",
+      "product_version": "0.1.0",
+      "toolchain_identity": "P047 acfd diagnostic run selected Microsoft Visual Studio 18 MSVC 14.51.36231 linker and matching CRT; final exact-source artifact not produced.",
+      "build_workflow_id": null,
+      "build_job_id": null,
+      "workflow_run_id": 38025827853,
+      "artifact_id": null,
+      "byte_size": null,
+      "sha256": null,
+      "signature_status": "MISSING",
+      "provenance": {
+        "class": "source-audit",
+        "detail": "Final product source run 38025827853 is queued and has no uploaded artifact; the prior acfd build selected the authenticated MSVC linker/CRT but failed its closed PE audit on UIAutomationCore.DLL."
+      },
+      "native_acceptance_status": "BLOCKED",
+      "evidence_location": [
+        ".github/workflows/windows-installer.yml run 38024448969; exact P047 candidate build remains in progress",
+        ".github/workflows/windows-native-acceptance.yml run 38024448998; candidate path pending",
+        "Exact P047 Windows installer source run 38025538706; queued",
+        "Exact final product source run 38025827853, job 114136380889: queued; no Actions artifact uploaded."
+      ],
+      "reason": "P045 Windows 11 GUI acceptance is also required. Any future CI build at the current source version 0.1.0 would remain diagnostic/CI-only, not a v0.2.0 public release artifact.",
+      "target_release_version": "0.2.0",
+      "release_candidate_qualification": "BLOCKED"
+    },
+    {
+      "inventory_id": "linux_deb",
+      "artifact_name": "Ubuntu DEB package",
+      "artifact_type": "deb",
+      "status": "BLOCKED",
+      "source_sha": null,
+      "source_tree_sha": null,
+      "platform": "Ubuntu 24.04 x86_64",
+      "architecture": "x86_64",
+      "product_version": "0.1.0",
+      "toolchain_identity": "Linux packaging workflow toolchain not recorded for a qualifying artifact",
+      "build_workflow_id": null,
+      "build_job_id": null,
+      "workflow_run_id": 38025827873,
+      "artifact_id": null,
+      "byte_size": null,
+      "sha256": null,
+      "signature_status": "MISSING",
+      "provenance": {
+        "class": "source-audit",
+        "detail": "Final product source DEB/RPM workflow run 38025827873 is queued and has no uploaded artifact; main-source synveil-desktop reproducibility failure remains unresolved."
+      },
+      "native_acceptance_status": "BLOCKED",
+      "evidence_location": [
+        ".github/workflows/linux-packages.yml run 38024448867; DEB/RPM producer job pending",
+        "Linux clean-machine acceptance run 38024448854; exact acceptance artifact build is queued",
+        "Exact P047 Linux DEB/RPM producer run 38025538700; queued",
+        "Exact final product source run 38025827873, jobs 114136348412/114136348508: queued; no Actions artifact uploaded."
+      ],
+      "reason": "Ubuntu native package-manager acceptance and deterministic artifact identity are missing. Any future CI build at the current source version 0.1.0 would remain diagnostic/CI-only, not a v0.2.0 public release artifact.",
+      "target_release_version": "0.2.0",
+      "release_candidate_qualification": "BLOCKED"
+    },
+    {
+      "inventory_id": "linux_rpm",
+      "artifact_name": "Fedora RPM package",
+      "artifact_type": "rpm",
+      "status": "BLOCKED",
+      "source_sha": null,
+      "source_tree_sha": null,
+      "platform": "Fedora 42 x86_64",
+      "architecture": "x86_64",
+      "product_version": "0.1.0",
+      "toolchain_identity": "Linux packaging workflow toolchain not recorded for a qualifying artifact",
+      "build_workflow_id": null,
+      "build_job_id": null,
+      "workflow_run_id": 38025827873,
+      "artifact_id": null,
+      "byte_size": null,
+      "sha256": null,
+      "signature_status": "MISSING",
+      "provenance": {
+        "class": "source-audit",
+        "detail": "Final product source DEB/RPM workflow run 38025827873 is queued and has no uploaded artifact; main-source synveil-desktop reproducibility failure remains unresolved."
+      },
+      "native_acceptance_status": "BLOCKED",
+      "evidence_location": [
+        ".github/workflows/linux-packages.yml run 38024448867; DEB/RPM producer job pending",
+        "Linux clean-machine acceptance run 38024448854; exact acceptance artifact build is queued",
+        "Exact P047 Linux DEB/RPM producer run 38025538700; queued",
+        "Exact final product source run 38025827873, jobs 114136348412/114136348508: queued; no Actions artifact uploaded."
+      ],
+      "reason": "Fedora native package-manager acceptance and deterministic artifact identity are missing. Any future CI build at the current source version 0.1.0 would remain diagnostic/CI-only, not a v0.2.0 public release artifact.",
+      "target_release_version": "0.2.0",
+      "release_candidate_qualification": "BLOCKED"
+    },
+    {
+      "inventory_id": "linux_appimage",
+      "artifact_name": "Linux AppImage",
+      "artifact_type": "appimage",
+      "status": "BLOCKED",
+      "source_sha": null,
+      "source_tree_sha": null,
+      "platform": "Ubuntu 24.04 x86_64 and Fedora 42 x86_64 P045 candidates; no generic Linux claim",
+      "architecture": "x86_64",
+      "product_version": "0.1.0",
+      "toolchain_identity": "Linux AppImage workflow toolchain not recorded for a qualifying artifact",
+      "build_workflow_id": null,
+      "build_job_id": null,
+      "workflow_run_id": 38025827887,
+      "artifact_id": null,
+      "byte_size": null,
+      "sha256": null,
+      "signature_status": "MISSING",
+      "provenance": {
+        "class": "source-audit",
+        "detail": "Final product source AppImage run 38025827887 is queued and has no uploaded artifact; the prior acfd run passed AppDir inspection but failed the offscreen plugin smoke before upload."
+      },
+      "native_acceptance_status": "BLOCKED",
+      "evidence_location": [
+        ".github/workflows/appimage.yml run 38024448824; full reproducibility, inspection, and runtime smoke are in progress",
+        "Linux clean-machine acceptance run 38024448854; bundled AppImage build is queued",
+        "Exact P047 AppImage producer run 38025538795; queued",
+        "Exact final product source run 38025827887, job 114136388332: queued; no Actions artifact uploaded."
+      ],
+      "reason": "A reproducible artifact, authenticated distribution, AppRun runtime smoke, and native acceptance are missing. Any future CI build at the current source version 0.1.0 would remain diagnostic/CI-only, not a v0.2.0 public release artifact.",
+      "target_release_version": "0.2.0",
+      "release_candidate_qualification": "BLOCKED"
+    },
+    {
+      "inventory_id": "server_component",
+      "artifact_name": "Managed server runtime bundle",
+      "artifact_type": "server_runtime_bundle",
+      "status": "MISSING",
+      "source_sha": null,
+      "source_tree_sha": null,
+      "platform": "Linux x86_64 server component; target distribution not qualified",
+      "architecture": "x86_64",
+      "product_version": "0.1.0",
+      "toolchain_identity": null,
+      "build_workflow_id": null,
+      "build_job_id": null,
+      "workflow_run_id": null,
+      "artifact_id": null,
+      "byte_size": null,
+      "sha256": null,
+      "signature_status": "MISSING",
+      "provenance": {
+        "class": "source-audit",
+        "detail": "No exact release candidate server runtime bundle identity or public producer artifact was found in the audited source/workflow evidence."
+      },
+      "native_acceptance_status": "BLOCKED",
+      "evidence_location": [
+        "scripts/build-server-runtime-bundle.sh",
+        "deploy/server/POSTGRESQL_RUNTIME_ARTIFACT.md",
+        "deploy/server/EDGE_RUNTIME_ARTIFACT.md",
+        ".github/workflows/server-self-host-acceptance.yml run 38024448888 requires P036 inventory before Host journeys"
+      ],
+      "reason": "Server runtime candidate identity and production service acceptance are missing. Any future CI build at the current source version 0.1.0 would remain diagnostic/CI-only, not a v0.2.0 public release artifact.",
+      "target_release_version": "0.2.0",
+      "release_candidate_qualification": "BLOCKED"
+    },
+    {
+      "inventory_id": "managed_host_dependencies",
+      "artifact_name": "P036 PostgreSQL 17 and managed edge dependencies",
+      "artifact_type": "production dependency inventory",
+      "status": "BLOCKED",
+      "source_sha": null,
+      "source_tree_sha": null,
+      "platform": "Controlled reachable self-host environment",
+      "architecture": "x86_64",
+      "product_version": null,
+      "toolchain_identity": null,
+      "build_workflow_id": null,
+      "build_job_id": null,
+      "workflow_run_id": 38025541459,
+      "artifact_id": null,
+      "byte_size": null,
+      "sha256": null,
+      "signature_status": "MISSING",
+      "provenance": {
+        "class": "missing-external-production-inventory",
+        "detail": "P036 source contract exists, but the production dependency inventory and authenticated PostgreSQL 17/managed-edge artifact identities are absent."
+      },
+      "native_acceptance_status": "BLOCKED",
+      "evidence_location": [
+        "acceptance/p036/production-artifacts.json (absent)",
+        "docs/v0.2/PROMPT036_MANIFEST.md",
+        ".github/workflows/server-self-host-acceptance.yml run 38024448888 job 114132182641",
+        "Exact P047 Server self-host acceptance run 38025541459; production identity job queued"
+      ],
+      "reason": "P036 production artifact inventory and live Host journey are required.",
+      "target_release_version": "0.2.0",
+      "release_candidate_qualification": "BLOCKED"
+    },
+    {
+      "inventory_id": "release_channel_metadata",
+      "artifact_name": "Authenticated stable release channel metadata",
+      "artifact_type": "release channel and detached authentication descriptor",
+      "status": "BLOCKED",
+      "source_sha": null,
+      "source_tree_sha": null,
+      "platform": "Production distribution",
+      "architecture": "all applicable architectures",
+      "product_version": "0.2.0 target; not produced",
+      "toolchain_identity": null,
+      "build_workflow_id": null,
+      "build_job_id": null,
+      "workflow_run_id": null,
+      "artifact_id": null,
+      "byte_size": null,
+      "sha256": null,
+      "signature_status": "MISSING",
+      "provenance": {
+        "class": "source-audit",
+        "detail": "Source validators and fixtures exist; no authenticated production channel publication or trust bootstrap was observed."
+      },
+      "native_acceptance_status": "BLOCKED",
+      "evidence_location": [
+        "deploy/release/release-channel-v1.schema.json",
+        "deploy/release/release-channel-auth-v1.schema.json",
+        "scripts/release_channel.py",
+        "No authenticated production channel publication evidence"
+      ],
+      "reason": "Production channel metadata, trusted bootstrap, signatures, and rollback high-water evidence are missing. Any future CI build at the current source version 0.1.0 would remain diagnostic/CI-only, not a v0.2.0 public release artifact.",
+      "target_release_version": "0.2.0",
+      "release_candidate_qualification": "BLOCKED"
+    },
+    {
+      "inventory_id": "release_manifest",
+      "artifact_name": "Exact release artifact manifest",
+      "artifact_type": "release manifest",
+      "status": "BLOCKED",
+      "source_sha": null,
+      "source_tree_sha": null,
+      "platform": "Production distribution",
+      "architecture": "all applicable architectures",
+      "product_version": "0.2.0 target; not produced",
+      "toolchain_identity": null,
+      "build_workflow_id": null,
+      "build_job_id": null,
+      "workflow_run_id": null,
+      "artifact_id": null,
+      "byte_size": null,
+      "sha256": null,
+      "signature_status": "MISSING",
+      "provenance": {
+        "class": "source-audit",
+        "detail": "Manifest schema and validators exist; no complete manifest binds an exact releasable candidate set."
+      },
+      "native_acceptance_status": "BLOCKED",
+      "evidence_location": [
+        "deploy/release/release-manifest-v1.schema.json",
+        "scripts/release_manifest.py",
+        "No complete target-version 0.2.0 artifact set exists"
+      ],
+      "reason": "Exact artifacts, candidate version/source identities, and authenticated publication are missing. Any future CI build at the current source version 0.1.0 would remain diagnostic/CI-only, not a v0.2.0 public release artifact.",
+      "target_release_version": "0.2.0",
+      "release_candidate_qualification": "BLOCKED"
+    },
+    {
+      "inventory_id": "trust_signing_material",
+      "artifact_name": "Production signing and trust material reference",
+      "artifact_type": "trust bootstrap and signing reference",
+      "status": "BLOCKED",
+      "source_sha": null,
+      "source_tree_sha": null,
+      "platform": "Production distribution",
+      "architecture": "all applicable architectures",
+      "product_version": "0.2.0 target; not produced",
+      "toolchain_identity": null,
+      "build_workflow_id": null,
+      "build_job_id": null,
+      "workflow_run_id": null,
+      "artifact_id": null,
+      "byte_size": null,
+      "sha256": null,
+      "signature_status": "MISSING",
+      "provenance": {
+        "class": "source-audit",
+        "detail": "No production keys, trusted bootstrap, key-rotation evidence, or authenticated publication identity was observed. No production key was created."
+      },
+      "native_acceptance_status": "BLOCKED",
+      "evidence_location": [
+        "deploy/release/release-auth-v1.schema.json",
+        "scripts/release_signature.py",
+        "No production key custody, trust bootstrap, or rotation evidence; P047 created no keys"
+      ],
+      "reason": "Production signing and trust operations must be provisioned and independently verified. Any future CI build at the current source version 0.1.0 would remain diagnostic/CI-only, not a v0.2.0 public release artifact.",
+      "target_release_version": "0.2.0",
+      "release_candidate_qualification": "BLOCKED"
+    }
+  ],
+  "coverage": [
+    {
+      "category": "SOURCE_QUALITY",
+      "requirement": "Strict formatting, lint, dependency policy, and applicable source/workspace checks pass on the exact P047 validation revision.",
+      "owning_prompt": [
+        "P047"
+      ],
+      "target_platform": "All source targets",
+      "source_revision": [
+        "3851ea11927e24255614cfc38adbaccbd345ca03",
+        "f7f597a1a4c4110ff1c64d9cdecc10bb60a53125",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "381b27f4be27c77d64450f58cea08f63e98ad34b",
+        "62651f05431ed5be255b7e7dd05ac1cffe8b927d"
+      ],
+      "evidence_location": [
+        "GitHub Actions Rust CI exact P047 source run 38025538748 (push) and 38025541402 (pull_request); queued at report update",
+        "Local cargo fmt --all -- --check (cargo unavailable)",
+        "GitHub Actions Rust CI exact P047 source run 38025827860 (push); queued",
+        "GitHub Actions run 38025827860 (push, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)"
+      ],
+      "artifact_identity": {
+        "status": "UNVERIFIED",
+        "inventory_ids": [],
+        "reason": "Exact qualifying artifact identities are absent or still pending; see artifact_inventory.",
+        "sha256": null,
+        "required": false
+      },
+      "actual_test_result": {
+        "result": "BLOCKED",
+        "evidence": [
+          {
+            "result": "FAIL",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "3851ea11927e24255614cfc38adbaccbd345ca03",
+            "location": "GitHub Actions Rust CI 38015962171",
+            "detail": "Main source had Windows test portability failures, macOS Unix-socket path failures, Windows Qt fixture failures, and stale schema expectations; P047 corrected them without weakening assertions or data semantics."
+          },
+          {
+            "result": "FAIL",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "f7f597a1a4c4110ff1c64d9cdecc10bb60a53125",
+            "location": "P047 Rust CI 38023778222, jobs 114130221919, 114130221883, 114130221917, 114130221990",
+            "detail": "Rustfmt reported three formatting diffs and Rust compilation failed because str::contains was passed a String; P047 fixed both in 1de1d27."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "static",
+            "source_revision": "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+            "location": "Local cargo fmt --all -- --check",
+            "detail": "The local environment has no cargo binary; exact-head hosted Rust CI run 38023992827 is pending."
+          },
+          {
+            "result": "FAIL",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+            "location": "Rust CI run 38024446185, jobs 114132190521 and 114132190544",
+            "detail": "Exact P047 acfd run reproduced three macOS IPC tests failing with UnsafeEndpoint and three Windows runtime_server_configuration fixtures failing with InvalidPath. Corrected fixture roots and platform applicability are in 381b27f; exact final-source Rust run 38025538748 is queued."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "381b27f4be27c77d64450f58cea08f63e98ad34b",
+            "location": "Rust CI run 38025538748 (push); all jobs queued",
+            "detail": "No exact final-source Rust, format, Clippy, dependency, desktop Qt, or Web workflow result is available yet; queued is not a pass."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025827860 (push, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source Rust CI including formatting, strict Clippy, dependency policy, cross-platform tests, and Web quality remains queued; no conclusion is available."
+          }
+        ]
+      },
+      "evidence_class": "ci-native-scoped",
+      "missing_requirements": [
+        "Exact-head Rust format, Clippy, dependency, workspace, desktop Qt and Web hosted jobs must complete successfully.",
+        "Exact-source Rust CI including formatting, strict Clippy, dependency policy, cross-platform tests, and Web quality remains queued; no conclusion is available."
+      ],
+      "qualification_decision": "BLOCKED"
+    },
+    {
+      "category": "DESKTOP_RUNTIME",
+      "requirement": "Desktop and client processes start, establish IPC, present the real desktop surface, and shut down cleanly.",
+      "owning_prompt": [
+        "P037",
+        "P038",
+        "P039",
+        "P040",
+        "P041",
+        "P047"
+      ],
+      "target_platform": "Windows 11; Ubuntu 24.04 x86_64; Fedora 42 x86_64 candidates",
+      "source_revision": [
+        "3851ea11927e24255614cfc38adbaccbd345ca03",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "381b27f4be27c77d64450f58cea08f63e98ad34b",
+        "62651f05431ed5be255b7e7dd05ac1cffe8b927d"
+      ],
+      "evidence_location": [
+        "Rust CI exact P047 source run 38025538748 (push), Native desktop UI (Linux Qt 6) and Native desktop UI (Windows Qt 6); queued at report update",
+        "P045 native installed-artifact acceptance is absent",
+        "Rust CI exact P047 source run 38025827860 (push), native desktop UI jobs; queued",
+        "GitHub Actions run 38025827860 (push, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)"
+      ],
+      "artifact_identity": {
+        "status": "UNVERIFIED",
+        "inventory_ids": [],
+        "reason": "Exact qualifying artifact identities are absent or still pending; see artifact_inventory.",
+        "sha256": null,
+        "required": true
+      },
+      "actual_test_result": {
+        "result": "BLOCKED",
+        "evidence": [
+          {
+            "result": "PASS",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "3851ea11927e24255614cfc38adbaccbd345ca03",
+            "location": "Rust CI 38015962171 job 114106158824",
+            "detail": "Linux Qt 6 native desktop job passed on audited main; this is scoped CI, not clean-machine acceptance."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+            "location": "Rust CI 38023992827",
+            "detail": "P047 exact-head desktop runtime job is pending."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025827860 (push, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source Linux and Windows Qt desktop jobs remain queued; no desktop runtime result is available."
+          }
+        ]
+      },
+      "evidence_class": "ci-native-scoped",
+      "missing_requirements": [
+        "Native installed desktop startup and genuine user-session evidence are missing.",
+        "Exact-source Linux and Windows Qt desktop jobs remain queued; no desktop runtime result is available."
+      ],
+      "qualification_decision": "BLOCKED"
+    },
+    {
+      "category": "CLIENT_SYNC",
+      "requirement": "A user authenticates, creates a library, completes initial synchronization, pause/resume, recovery, and restart with data preserved.",
+      "owning_prompt": [
+        "P039",
+        "P040",
+        "P041",
+        "P042",
+        "P045",
+        "P047"
+      ],
+      "target_platform": "Windows 11; Ubuntu 24.04 x86_64; Fedora 42 x86_64 candidates",
+      "source_revision": [
+        "3851ea11927e24255614cfc38adbaccbd345ca03",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "381b27f4be27c77d64450f58cea08f63e98ad34b",
+        "62651f05431ed5be255b7e7dd05ac1cffe8b927d"
+      ],
+      "evidence_location": [
+        "Rust CI exact P047 source run 38025538748 (push); queued at report update",
+        "acceptance/install-scenarios-v1.json: no native journey result",
+        "Rust CI exact P047 source run 38025827860 (push); queued",
+        "GitHub Actions run 38025827860 (push, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)"
+      ],
+      "artifact_identity": {
+        "status": "UNVERIFIED",
+        "inventory_ids": [],
+        "reason": "Exact qualifying artifact identities are absent or still pending; see artifact_inventory.",
+        "sha256": null,
+        "required": true
+      },
+      "actual_test_result": {
+        "result": "BLOCKED",
+        "evidence": [
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+            "location": "Rust CI 38023992827",
+            "detail": "Exact-head workspace tests are pending after correction of a compile error; no end-to-end user sync journey has been recorded."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025827860 (push, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source Ubuntu, Windows, and macOS workspace test jobs remain queued; no client sync journey result is available."
+          }
+        ]
+      },
+      "evidence_class": "ci-native-scoped",
+      "missing_requirements": [
+        "Exact installed artifacts and native end-to-end sync journeys are missing.",
+        "Exact-source Ubuntu, Windows, and macOS workspace test jobs remain queued; no client sync journey result is available."
+      ],
+      "qualification_decision": "BLOCKED"
+    },
+    {
+      "category": "SERVER_RUNTIME",
+      "requirement": "Managed server services install, start, expose the intended private listener, and satisfy runtime/database ownership contracts.",
+      "owning_prompt": [
+        "P029",
+        "P030",
+        "P031",
+        "P032",
+        "P033",
+        "P034",
+        "P035",
+        "P047"
+      ],
+      "target_platform": "Linux managed-server scope; PostgreSQL 17 dependency",
+      "source_revision": [
+        "3851ea11927e24255614cfc38adbaccbd345ca03",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "381b27f4be27c77d64450f58cea08f63e98ad34b",
+        "62651f05431ed5be255b7e7dd05ac1cffe8b927d"
+      ],
+      "evidence_location": [
+        "Prompt035 exact previous P047 run 38024448902, job 114132182340, passed its fresh-database bootstrap test",
+        "Server self-host acceptance exact P047 run 38025541459, artifact-identity prerequisite job 114135498476 queued; P036 file absent",
+        "GitHub Actions run 38025830471 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+        "GitHub Actions run 38025827935 (push, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)"
+      ],
+      "artifact_identity": {
+        "status": "BLOCKED",
+        "inventory_ids": [
+          "server_component"
+        ],
+        "reason": "Exact qualifying artifact identities are absent or still pending; see artifact_inventory.",
+        "sha256": null,
+        "required": true
+      },
+      "actual_test_result": {
+        "result": "BLOCKED",
+        "evidence": [
+          {
+            "result": "PASS",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "3851ea11927e24255614cfc38adbaccbd345ca03",
+            "location": "P033 server-services run 38015962198; P034 reachability run 38015962111",
+            "detail": "Scoped server service and reachability workflows passed on audited main."
+          },
+          {
+            "result": "FAIL",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "3851ea11927e24255614cfc38adbaccbd345ca03",
+            "location": "P035 workflow 38015962207 job 114106142150",
+            "detail": "The second identical bootstrap test reused a closed database; P047 gives the second test a fresh database and preserves its assertions."
+          },
+          {
+            "result": "PASS",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+            "location": "Prompt034 server network reachability PR run 38023996430",
+            "detail": "Exact P047-head network contract job passed; it does not provide managed Host production readiness."
+          },
+          {
+            "result": "PASS",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+            "location": "Prompt035 server first-admin bootstrap run 38023996395 job 114130832163",
+            "detail": "Both auth unit tests and API bootstrap tests completed successfully against the exact P047 head after the second test was assigned a fresh database."
+          },
+          {
+            "result": "PASS",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+            "location": "Prompt035 server first-admin bootstrap run 38024448902 job 114132182340",
+            "detail": "Exact acfd06f head passed the auth unit, API bootstrap, managed-edge blocking, and both fresh-database PostgreSQL bootstrap invocations."
+          },
+          {
+            "result": "PASS",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+            "location": "Prompt034 server network reachability run 38024448823 job 114132182158",
+            "detail": "Exact acfd06f head passed the server-network reachability contract; this is scoped CI, not production Host acceptance."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025830471 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source P035 bootstrap run is queued; the separate P036 production Host dependency is missing."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025827935 (push, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source PostgreSQL 17 scheduled-maintenance workflow is queued; no result is available."
+          }
+        ]
+      },
+      "evidence_class": "ci-native-scoped",
+      "missing_requirements": [
+        "Exact server bundle identity and completed exact-head PostgreSQL 17 suite are missing.",
+        "Exact-source P035 bootstrap run is queued; the separate P036 production Host dependency is missing.",
+        "Exact-source PostgreSQL 17 scheduled-maintenance workflow is queued; no result is available."
+      ],
+      "qualification_decision": "BLOCKED"
+    },
+    {
+      "category": "FIRST_RUN_CONNECT",
+      "requirement": "Installed Connect flow completes secure server entry, authentication, library choice, and first synchronization.",
+      "owning_prompt": [
+        "P037",
+        "P038",
+        "P039",
+        "P040",
+        "P041",
+        "P045",
+        "P047"
+      ],
+      "target_platform": "Windows 11; Ubuntu 24.04 x86_64; Fedora 42 x86_64 candidates",
+      "source_revision": [
+        "3851ea11927e24255614cfc38adbaccbd345ca03",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "381b27f4be27c77d64450f58cea08f63e98ad34b",
+        "62651f05431ed5be255b7e7dd05ac1cffe8b927d"
+      ],
+      "evidence_location": [
+        "./scripts/validate-docs.sh and ./scripts/validate-install-acceptance.sh",
+        "acceptance/install-scenarios-v1.json: no installed native Connect journey result",
+        "GitHub Actions run 38025830479 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+        "GitHub Actions run 38025830491 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+        "GitHub Actions run 38025830480 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+        "GitHub Actions run 38025830522 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)"
+      ],
+      "artifact_identity": {
+        "status": "BLOCKED",
+        "inventory_ids": [
+          "windows_installer",
+          "linux_deb",
+          "linux_rpm",
+          "linux_appimage"
+        ],
+        "reason": "Exact qualifying artifact identities are absent or still pending; see artifact_inventory.",
+        "sha256": null,
+        "required": true
+      },
+      "actual_test_result": {
+        "result": "BLOCKED",
+        "evidence": [
+          {
+            "result": "PASS",
+            "evidence_class": "static",
+            "source_revision": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+            "location": "scripts/validate-docs.sh and source validators for P037-P041",
+            "detail": "Source and contract validators cover UI routing; no installed-client native Connect journey is available."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025830479 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source authentication UX workflow is queued; this cannot substitute for an installed client Connect journey."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025830491 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source connection setup workflow is queued; this cannot substitute for an installed client Connect journey."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025830480 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source first-library workflow is queued; no installed first-run journey is recorded."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025830522 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source installation-to-sync workflow is queued; no installed first-run journey is recorded."
+          }
+        ]
+      },
+      "evidence_class": "static",
+      "missing_requirements": [
+        "Native installed-client journey against a controlled reachable server is missing.",
+        "Exact-source authentication UX workflow is queued; this cannot substitute for an installed client Connect journey.",
+        "Exact-source connection setup workflow is queued; this cannot substitute for an installed client Connect journey.",
+        "Exact-source first-library workflow is queued; no installed first-run journey is recorded.",
+        "Exact-source installation-to-sync workflow is queued; no installed first-run journey is recorded."
+      ],
+      "qualification_decision": "BLOCKED"
+    },
+    {
+      "category": "FIRST_RUN_HOST",
+      "requirement": "Installed Host UI performs production first-admin bootstrap, normal login, library setup, initial sync, and recovery against controlled services.",
+      "owning_prompt": [
+        "P029",
+        "P030",
+        "P035",
+        "P036",
+        "P045",
+        "P047"
+      ],
+      "target_platform": "Linux managed server and genuine PostgreSQL 17; Windows client candidate",
+      "source_revision": [
+        "3851ea11927e24255614cfc38adbaccbd345ca03",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "381b27f4be27c77d64450f58cea08f63e98ad34b",
+        "62651f05431ed5be255b7e7dd05ac1cffe8b927d"
+      ],
+      "evidence_location": [
+        "acceptance/p036/production-artifacts.json (absent)",
+        "Server self-host acceptance run 38025541459, job 114135498476 queued for production identity prerequisite",
+        "GitHub Actions run 38025830519 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)"
+      ],
+      "artifact_identity": {
+        "status": "BLOCKED",
+        "inventory_ids": [
+          "server_component",
+          "managed_host_dependencies",
+          "windows_installer"
+        ],
+        "reason": "Exact qualifying artifact identities are absent or still pending; see artifact_inventory.",
+        "sha256": null,
+        "required": true
+      },
+      "actual_test_result": {
+        "result": "BLOCKED",
+        "evidence": [
+          {
+            "result": "BLOCKED",
+            "evidence_class": "live-external-dependency",
+            "source_revision": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+            "location": "acceptance/p036/production-artifacts.json; .github/workflows/server-self-host-acceptance.yml",
+            "detail": "The required P036 production inventory is absent and live Host acceptance is blocked."
+          },
+          {
+            "result": "FAIL",
+            "evidence_class": "live-external-dependency",
+            "source_revision": "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+            "location": "Server self-host acceptance run 38024448888 job 114132182641, step \"Require production PG17, server, desktop, and edge inventories\"",
+            "detail": "The P036 production artifact prerequisite failed because acceptance/p036/production-artifacts.json is absent. No real Host product journey ran; the qualification outcome remains BLOCKED rather than a product-behavior FAIL."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025830519 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source Host acceptance is queued, but the required production manifest acceptance/p036/production-artifacts.json is absent; no real Host journey ran."
+          }
+        ]
+      },
+      "evidence_class": "live-external-dependency",
+      "missing_requirements": [
+        "acceptance/p036/production-artifacts.json with authentic PostgreSQL 17 and managed-edge identities is absent.",
+        "Installed Host UI acceptance against a controlled reachable production-identity server has not run.",
+        "Exact-source Host acceptance is queued, but the required production manifest acceptance/p036/production-artifacts.json is absent; no real Host journey ran."
+      ],
+      "qualification_decision": "BLOCKED"
+    },
+    {
+      "category": "WINDOWS_INSTALLER",
+      "requirement": "Windows 11 user downloads, runs GUI Setup, installs, launches, and completes first-run with correct lifecycle behavior.",
+      "owning_prompt": [
+        "P021",
+        "P022",
+        "P025",
+        "P027",
+        "P045",
+        "P047"
+      ],
+      "target_platform": "Windows 11 x86_64",
+      "source_revision": [
+        "3851ea11927e24255614cfc38adbaccbd345ca03",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "381b27f4be27c77d64450f58cea08f63e98ad34b",
+        "62651f05431ed5be255b7e7dd05ac1cffe8b927d"
+      ],
+      "evidence_location": [
+        "Windows installer run 38024448969, job 114132184799 failed PE audit on UIAutomationCore.DLL after linker/CRT selection passed",
+        "Exact corrected P047 source run 38025538706 (push), job queued",
+        "P045 interactive GUI/logon/named-pipe journey unavailable",
+        "Windows installer exact P047 source run 38025827853 (push); queued",
+        "GitHub Actions run 38025827853 (push, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+        "GitHub Actions run 38025830530 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)"
+      ],
+      "artifact_identity": {
+        "status": "BLOCKED",
+        "inventory_ids": [
+          "windows_installer"
+        ],
+        "reason": "Exact qualifying artifact identities are absent or still pending; see artifact_inventory.",
+        "sha256": null,
+        "required": true
+      },
+      "actual_test_result": {
+        "result": "BLOCKED",
+        "evidence": [
+          {
+            "result": "FAIL",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "3851ea11927e24255614cfc38adbaccbd345ca03",
+            "location": "Windows installer run 38015962245 job 114106184060",
+            "detail": "Authenticated linker selection succeeded; package failed because Qt6Core imported MSVCP140.dll was absent. P047 now resolves the active MSVC CRT and exact-head build is pending."
+          },
+          {
+            "result": "PASS",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+            "location": "Windows installer run 38024448969 job 114132184799, step \"Select and authenticate the MSVC linker\"",
+            "detail": "The active MSVC linker/CRT selector passed on acfd06f; Setup build, reproducibility, payload closure, and standard-user test are still in progress."
+          },
+          {
+            "result": "FAIL",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+            "location": "Windows installer run 38024448969, job 114132184799, closed PE import audit",
+            "detail": "Exact P047 acfd build selected the authenticated active MSVC linker and CRT, then rejected UIAutomationCore.DLL imported by Qt qwindows.dll. P047 added a specific Windows system-DLL policy entry and regression tests; exact corrected-source build 38025538706 is queued."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "381b27f4be27c77d64450f58cea08f63e98ad34b",
+            "location": "Windows installer run 38025538706 (push), job 114135491320 queued",
+            "detail": "No exact final-source installer artifact has completed; native P045 GUI/logon/named-pipe acceptance is also absent."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025827853 (push, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source producer job is queued and no installer artifact was uploaded; P045 native GUI/logon/IPC acceptance remains required."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025830530 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source Windows installer PR workflow is queued; no result is inferred."
+          }
+        ]
+      },
+      "evidence_class": "ci-native-scoped",
+      "missing_requirements": [
+        "Exact-head installer artifact identity, trust, native interactive GUI, and P045 evidence are missing.",
+        "Exact-source producer job is queued and no installer artifact was uploaded; P045 native GUI/logon/IPC acceptance remains required.",
+        "Exact-source Windows installer PR workflow is queued; no result is inferred."
+      ],
+      "qualification_decision": "BLOCKED"
+    },
+    {
+      "category": "UBUNTU_DEB",
+      "requirement": "Ubuntu package-manager journey installs, launches, completes first-run, upgrades/repairs, and preserves data.",
+      "owning_prompt": [
+        "P007",
+        "P010",
+        "P012",
+        "P014",
+        "P015",
+        "P045",
+        "P047"
+      ],
+      "target_platform": "Ubuntu 24.04 x86_64 only",
+      "source_revision": [
+        "3851ea11927e24255614cfc38adbaccbd345ca03",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "1de1d2786aecbe0f786740505726e0d75c174ae0",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "381b27f4be27c77d64450f58cea08f63e98ad34b",
+        "62651f05431ed5be255b7e7dd05ac1cffe8b927d"
+      ],
+      "evidence_location": [
+        "Main Linux native packages run 38016138174 and earlier same-source run 38015962118; synveil-desktop reproducibility failed",
+        "Exact corrected P047 source run 38025538700 (push); jobs queued",
+        "P045 package-manager acceptance unavailable",
+        "Linux native packages exact P047 source run 38025827873 (push); queued",
+        "GitHub Actions run 38025827873 (push, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+        "GitHub Actions run 38025830489 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)"
+      ],
+      "artifact_identity": {
+        "status": "BLOCKED",
+        "inventory_ids": [
+          "linux_deb"
+        ],
+        "reason": "Exact qualifying artifact identities are absent or still pending; see artifact_inventory.",
+        "sha256": null,
+        "required": true
+      },
+      "actual_test_result": {
+        "result": "BLOCKED",
+        "evidence": [
+          {
+            "result": "FAIL",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "3851ea11927e24255614cfc38adbaccbd345ca03",
+            "location": "Linux native packages run 38015962118 job 114106144572",
+            "detail": "DEB/RPM build completed ephemerally but reproducibility failed for synveil-desktop; package-manager acceptance jobs were skipped."
+          },
+          {
+            "result": "FAIL",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+            "location": "Linux native packages run 38023992747 job 114130875731, Shell syntax validation (packages + install lifecycle)",
+            "detail": "Strict ShellCheck stopped before package production: SC2034 flagged the unused pass counter in the new bounded CRT import-closure loop. P047 changed the unused counter to the intentional underscore placeholder in acfd06f; exact-head rerun 38024446240 is pending."
+          },
+          {
+            "result": "PASS",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+            "location": "Linux native packages run 38024448867 job 114132185268, step \"Shell syntax validation (packages + install lifecycle)\"",
+            "detail": "Strict ShellCheck and shell syntax now pass after the unused bounded CRT loop counter was changed to the intentional underscore placeholder. Package production and reproducibility checks remain in progress."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "381b27f4be27c77d64450f58cea08f63e98ad34b",
+            "location": "Linux native packages run 38025538700 (push), build/reproducibility jobs queued",
+            "detail": "The known main-source synveil-desktop digest mismatch remains unresolved; the exact final-source build/reproducibility result is queued."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025827873 (push, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source DEB/RPM producer jobs are queued and uploaded artifact count is zero; the main-source desktop reproducibility failure remains unresolved."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025830489 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source package PR workflow is queued; no package-manager acceptance result is available."
+          }
+        ]
+      },
+      "evidence_class": "ci-native-scoped",
+      "missing_requirements": [
+        "Reproducible candidate DEB and native package-manager acceptance are missing.",
+        "Exact-source DEB/RPM producer jobs are queued and uploaded artifact count is zero; the main-source desktop reproducibility failure remains unresolved.",
+        "Exact-source package PR workflow is queued; no package-manager acceptance result is available."
+      ],
+      "qualification_decision": "BLOCKED"
+    },
+    {
+      "category": "FEDORA_RPM",
+      "requirement": "Fedora package-manager journey installs, launches, completes first-run, upgrades/repairs, and preserves data.",
+      "owning_prompt": [
+        "P007",
+        "P010",
+        "P012",
+        "P016",
+        "P017",
+        "P045",
+        "P047"
+      ],
+      "target_platform": "Fedora 42 x86_64 only",
+      "source_revision": [
+        "3851ea11927e24255614cfc38adbaccbd345ca03",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "1de1d2786aecbe0f786740505726e0d75c174ae0",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "381b27f4be27c77d64450f58cea08f63e98ad34b",
+        "62651f05431ed5be255b7e7dd05ac1cffe8b927d"
+      ],
+      "evidence_location": [
+        "Main Linux native packages run 38016138174 and earlier same-source run 38015962118; synveil-desktop reproducibility failed",
+        "Exact corrected P047 source run 38025538700 (push); jobs queued",
+        "P045 package-manager acceptance unavailable",
+        "Linux native packages exact P047 source run 38025827873 (push); queued",
+        "GitHub Actions run 38025827873 (push, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+        "GitHub Actions run 38025830489 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)"
+      ],
+      "artifact_identity": {
+        "status": "BLOCKED",
+        "inventory_ids": [
+          "linux_rpm"
+        ],
+        "reason": "Exact qualifying artifact identities are absent or still pending; see artifact_inventory.",
+        "sha256": null,
+        "required": true
+      },
+      "actual_test_result": {
+        "result": "BLOCKED",
+        "evidence": [
+          {
+            "result": "FAIL",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "3851ea11927e24255614cfc38adbaccbd345ca03",
+            "location": "Linux native packages run 38015962118 job 114106144572",
+            "detail": "DEB/RPM build completed ephemerally but reproducibility failed for synveil-desktop; package-manager acceptance jobs were skipped."
+          },
+          {
+            "result": "FAIL",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+            "location": "Linux native packages run 38023992747 job 114130875731, Shell syntax validation (packages + install lifecycle)",
+            "detail": "Strict ShellCheck stopped before package production: SC2034 flagged the unused pass counter in the new bounded CRT import-closure loop. P047 changed the unused counter to the intentional underscore placeholder in acfd06f; exact-head rerun 38024446240 is pending."
+          },
+          {
+            "result": "PASS",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+            "location": "Linux native packages run 38024448867 job 114132185268, step \"Shell syntax validation (packages + install lifecycle)\"",
+            "detail": "Strict ShellCheck and shell syntax now pass after the unused bounded CRT loop counter was changed to the intentional underscore placeholder. Package production and reproducibility checks remain in progress."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "381b27f4be27c77d64450f58cea08f63e98ad34b",
+            "location": "Linux native packages run 38025538700 (push), build/reproducibility jobs queued",
+            "detail": "The known main-source synveil-desktop digest mismatch remains unresolved; the exact final-source build/reproducibility result is queued."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025827873 (push, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source DEB/RPM producer jobs are queued and uploaded artifact count is zero; the main-source desktop reproducibility failure remains unresolved."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025830489 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source package PR workflow is queued; no package-manager acceptance result is available."
+          }
+        ]
+      },
+      "evidence_class": "ci-native-scoped",
+      "missing_requirements": [
+        "Reproducible candidate RPM and native package-manager acceptance are missing.",
+        "Exact-source DEB/RPM producer jobs are queued and uploaded artifact count is zero; the main-source desktop reproducibility failure remains unresolved.",
+        "Exact-source package PR workflow is queued; no package-manager acceptance result is available."
+      ],
+      "qualification_decision": "BLOCKED"
+    },
+    {
+      "category": "LINUX_APPIMAGE",
+      "requirement": "Authenticated AppImage launches from a normal user account and completes first-run on a qualified clean machine.",
+      "owning_prompt": [
+        "P012",
+        "P018",
+        "P020",
+        "P043",
+        "P045",
+        "P047"
+      ],
+      "target_platform": "Ubuntu 24.04 x86_64 and Fedora 42 x86_64 P045 candidates only; no generic Linux claim",
+      "source_revision": [
+        "3851ea11927e24255614cfc38adbaccbd345ca03",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "381b27f4be27c77d64450f58cea08f63e98ad34b",
+        "62651f05431ed5be255b7e7dd05ac1cffe8b927d"
+      ],
+      "evidence_location": [
+        "Main AppImage run 38015962187, job 114106149743: APPIMAGE-8",
+        "P047 run 38024448824, job 114132184041: AppDir build/inspection passed; QML smoke failed because offscreen Qt plugin was not packaged; no workflow artifact uploaded",
+        "Corrected xcb-under-Xvfb exact P047 source run 38025538795 (push); job queued",
+        "Linux AppImage exact P047 source run 38025827887 (push); queued",
+        "GitHub Actions run 38025827887 (push, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+        "GitHub Actions run 38025830496 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)"
+      ],
+      "artifact_identity": {
+        "status": "BLOCKED",
+        "inventory_ids": [
+          "linux_appimage"
+        ],
+        "reason": "Exact qualifying artifact identities are absent or still pending; see artifact_inventory.",
+        "sha256": null,
+        "required": true
+      },
+      "actual_test_result": {
+        "result": "BLOCKED",
+        "evidence": [
+          {
+            "result": "FAIL",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "3851ea11927e24255614cfc38adbaccbd345ca03",
+            "location": "Linux AppImage run 38015962187 job 114106149743",
+            "detail": "APPIMAGE-8: AppRun did not exec the packaged desktop. P047 restores the reviewed AppRun after linuxdeploy's Qt hook and exact-head build is pending."
+          },
+          {
+            "result": "PASS",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+            "location": "Linux AppImage run 38024448824 job 114132184041, step \"Static contracts and shell checks\"",
+            "detail": "The AppRun restoration/order contract and shell checks pass on the exact P047 head; full independent build, AppDir inspection, AppRun smoke, runtime lifecycle, and upload remain in progress."
+          },
+          {
+            "result": "FAIL",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+            "location": "Linux AppImage run 38024448824, job 114132184041, Host-decontaminated bounded QML smoke",
+            "detail": "Build, reproducibility and AppDir identity checks passed, but smoke forced offscreen while only bundled xcb existed; no artifact was uploaded. The logged failed image digest is recorded under defect_audit and lacks byte-size/artifact ID. Corrected xcb-under-Xvfb run 38025538795 is queued."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "381b27f4be27c77d64450f58cea08f63e98ad34b",
+            "location": "Linux AppImage run 38025538795 (push), job 114135491955 queued",
+            "detail": "No exact final-source AppImage build, smoke or uploaded artifact identity is available yet; queue status is not a pass."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025827887 (push, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source AppImage producer job is queued and uploaded artifact count is zero; no exact artifact or runtime smoke result is available."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025830496 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source AppImage PR workflow is queued; no result is inferred."
+          }
+        ]
+      },
+      "evidence_class": "ci-native-scoped",
+      "missing_requirements": [
+        "AppRun fix needs exact-head reproducible runtime proof, authenticated candidate identity, and P045 native journey.",
+        "Exact-source AppImage producer job is queued and uploaded artifact count is zero; no exact artifact or runtime smoke result is available.",
+        "Exact-source AppImage PR workflow is queued; no result is inferred."
+      ],
+      "qualification_decision": "BLOCKED"
+    },
+    {
+      "category": "QUICK_INSTALL",
+      "requirement": "Authenticated channel selects the exact eligible Linux package, verifies download, shows authorization, and installs safely.",
+      "owning_prompt": [
+        "P018",
+        "P020",
+        "P043",
+        "P045",
+        "P047"
+      ],
+      "target_platform": "Ubuntu 24.04 x86_64 and Fedora 42 x86_64 candidates",
+      "source_revision": [
+        "3851ea11927e24255614cfc38adbaccbd345ca03",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "381b27f4be27c77d64450f58cea08f63e98ad34b",
+        "62651f05431ed5be255b7e7dd05ac1cffe8b927d"
+      ],
+      "evidence_location": [
+        "./scripts/validate-linux-quick-install.sh"
+      ],
+      "artifact_identity": {
+        "status": "BLOCKED",
+        "inventory_ids": [
+          "release_channel_metadata",
+          "release_manifest",
+          "trust_signing_material",
+          "linux_deb",
+          "linux_rpm"
+        ],
+        "reason": "Exact qualifying artifact identities are absent or still pending; see artifact_inventory.",
+        "sha256": null,
+        "required": true
+      },
+      "actual_test_result": {
+        "result": "PASS",
+        "evidence": [
+          {
+            "result": "PASS",
+            "evidence_class": "fixture",
+            "source_revision": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+            "location": "./scripts/validate-linux-quick-install.sh",
+            "detail": "15 quick-install tests, 77 download tests, and 101 channel tests passed locally; production authenticated distribution and native install are not exercised."
+          }
+        ]
+      },
+      "evidence_class": "fixture",
+      "missing_requirements": [
+        "Production trust bootstrap, published channel and exact candidate package are unavailable."
+      ],
+      "qualification_decision": "BLOCKED"
+    },
+    {
+      "category": "UPGRADE",
+      "requirement": "Upgrade from a supported prior installation preserves user configuration, credentials, and library data.",
+      "owning_prompt": [
+        "P007",
+        "P010",
+        "P021",
+        "P044",
+        "P045",
+        "P047"
+      ],
+      "target_platform": "Windows 11; Ubuntu 24.04 x86_64; Fedora 42 x86_64 candidates",
+      "source_revision": [
+        "3851ea11927e24255614cfc38adbaccbd345ca03",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "381b27f4be27c77d64450f58cea08f63e98ad34b",
+        "62651f05431ed5be255b7e7dd05ac1cffe8b927d"
+      ],
+      "evidence_location": [
+        "acceptance/install-scenarios-v1.json; ./scripts/validate-install-lifecycle.sh",
+        "GitHub Actions run 38025830484 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+        "GitHub Actions run 38025830511 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)"
+      ],
+      "artifact_identity": {
+        "status": "BLOCKED",
+        "inventory_ids": [
+          "windows_installer",
+          "linux_deb",
+          "linux_rpm"
+        ],
+        "reason": "Exact qualifying artifact identities are absent or still pending; see artifact_inventory.",
+        "sha256": null,
+        "required": true
+      },
+      "actual_test_result": {
+        "result": "BLOCKED",
+        "evidence": [
+          {
+            "result": "BLOCKED",
+            "evidence_class": "contract-valid",
+            "source_revision": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+            "location": "acceptance/install-scenarios-v1.json; ./scripts/validate-install-lifecycle.sh",
+            "detail": "The lifecycle contract defines upgrade requirements, but Cargo-dependent execution is unavailable locally and no qualifying native artifact journey is recorded."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025830484 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source Linux clean-machine workflow is queued; upgrade lifecycle and data preservation remain unqualified."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025830511 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source Windows native acceptance workflow is queued; no installed upgrade evidence is available."
+          }
+        ]
+      },
+      "evidence_class": "contract-valid",
+      "missing_requirements": [
+        "Exact candidate artifacts and clean-machine upgrade evidence are missing.",
+        "Exact-source Linux clean-machine workflow is queued; upgrade lifecycle and data preservation remain unqualified.",
+        "Exact-source Windows native acceptance workflow is queued; no installed upgrade evidence is available."
+      ],
+      "qualification_decision": "BLOCKED"
+    },
+    {
+      "category": "REPAIR",
+      "requirement": "Repair reinstalls package-owned state safely, is idempotent, and preserves user-owned state.",
+      "owning_prompt": [
+        "P007",
+        "P010",
+        "P044",
+        "P045",
+        "P047"
+      ],
+      "target_platform": "Windows 11; Ubuntu 24.04 x86_64; Fedora 42 x86_64 candidates",
+      "source_revision": [
+        "3851ea11927e24255614cfc38adbaccbd345ca03",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "381b27f4be27c77d64450f58cea08f63e98ad34b",
+        "62651f05431ed5be255b7e7dd05ac1cffe8b927d"
+      ],
+      "evidence_location": [
+        "python3 scripts/validate-installation-resilience-hardening.py; python3 scripts/validate-unified-welcome.py",
+        "GitHub Actions run 38025830559 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+        "GitHub Actions run 38025830547 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)"
+      ],
+      "artifact_identity": {
+        "status": "BLOCKED",
+        "inventory_ids": [
+          "windows_installer",
+          "linux_deb",
+          "linux_rpm"
+        ],
+        "reason": "Exact qualifying artifact identities are absent or still pending; see artifact_inventory.",
+        "sha256": null,
+        "required": true
+      },
+      "actual_test_result": {
+        "result": "PASS",
+        "evidence": [
+          {
+            "result": "PASS",
+            "evidence_class": "static",
+            "source_revision": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+            "location": "python3 scripts/validate-installation-resilience-hardening.py; python3 scripts/validate-unified-welcome.py",
+            "detail": "Static and source contract validators passed; no installed candidate repair journey is recorded."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025830559 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source repair/recovery workflow is queued; local source validation is not native repair acceptance."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025830547 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source installation resilience workflow is queued; no native repair result is available."
+          }
+        ]
+      },
+      "evidence_class": "static",
+      "missing_requirements": [
+        "Native installed-product repair and reconciliation evidence is missing.",
+        "Exact-source repair/recovery workflow is queued; local source validation is not native repair acceptance.",
+        "Exact-source installation resilience workflow is queued; no native repair result is available."
+      ],
+      "qualification_decision": "BLOCKED"
+    },
+    {
+      "category": "UNINSTALL",
+      "requirement": "Uninstall removes only owned product components and preserves user libraries/configuration according to contract.",
+      "owning_prompt": [
+        "P007",
+        "P010",
+        "P045",
+        "P047"
+      ],
+      "target_platform": "Windows 11; Ubuntu 24.04 x86_64; Fedora 42 x86_64 candidates",
+      "source_revision": [
+        "3851ea11927e24255614cfc38adbaccbd345ca03",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "381b27f4be27c77d64450f58cea08f63e98ad34b",
+        "62651f05431ed5be255b7e7dd05ac1cffe8b927d"
+      ],
+      "evidence_location": [
+        "acceptance/install-scenarios-v1.json; ./scripts/validate-install-lifecycle.sh",
+        "GitHub Actions run 38025830484 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+        "GitHub Actions run 38025830511 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)"
+      ],
+      "artifact_identity": {
+        "status": "BLOCKED",
+        "inventory_ids": [
+          "windows_installer",
+          "linux_deb",
+          "linux_rpm"
+        ],
+        "reason": "Exact qualifying artifact identities are absent or still pending; see artifact_inventory.",
+        "sha256": null,
+        "required": true
+      },
+      "actual_test_result": {
+        "result": "BLOCKED",
+        "evidence": [
+          {
+            "result": "BLOCKED",
+            "evidence_class": "contract-valid",
+            "source_revision": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+            "location": "acceptance/install-scenarios-v1.json; ./scripts/validate-install-lifecycle.sh",
+            "detail": "Native lifecycle execution and package-owned data preservation evidence are unavailable."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025830484 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source Linux clean-machine workflow is queued; uninstall data-preservation evidence is unavailable."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025830511 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source Windows native acceptance workflow is queued; no installed uninstall evidence is available."
+          }
+        ]
+      },
+      "evidence_class": "contract-valid",
+      "missing_requirements": [
+        "Native lifecycle and data-preservation evidence is missing.",
+        "Exact-source Linux clean-machine workflow is queued; uninstall data-preservation evidence is unavailable.",
+        "Exact-source Windows native acceptance workflow is queued; no installed uninstall evidence is available."
+      ],
+      "qualification_decision": "BLOCKED"
+    },
+    {
+      "category": "DATA_PRESERVATION",
+      "requirement": "Upgrade, repair, interruption recovery, and uninstall preserve user-owned data and credentials.",
+      "owning_prompt": [
+        "P010",
+        "P042",
+        "P044",
+        "P045",
+        "P047"
+      ],
+      "target_platform": "Windows 11; Ubuntu 24.04 x86_64; Fedora 42 x86_64 candidates",
+      "source_revision": [
+        "3851ea11927e24255614cfc38adbaccbd345ca03",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "381b27f4be27c77d64450f58cea08f63e98ad34b",
+        "62651f05431ed5be255b7e7dd05ac1cffe8b927d"
+      ],
+      "evidence_location": [
+        "P044 resilience validators and release download security tests",
+        "GitHub Actions run 38025830484 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+        "GitHub Actions run 38025830511 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)"
+      ],
+      "artifact_identity": {
+        "status": "BLOCKED",
+        "inventory_ids": [
+          "windows_installer",
+          "linux_deb",
+          "linux_rpm"
+        ],
+        "reason": "Exact qualifying artifact identities are absent or still pending; see artifact_inventory.",
+        "sha256": null,
+        "required": true
+      },
+      "actual_test_result": {
+        "result": "PASS",
+        "evidence": [
+          {
+            "result": "PASS",
+            "evidence_class": "fixture",
+            "source_revision": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+            "location": "P044 resilience validators and release download security tests",
+            "detail": "Source/fixture checks passed; no clean-machine package lifecycle or production-state preservation evidence is recorded."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025830484 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source Linux clean-machine acceptance is queued; fixture validation does not prove package lifecycle preservation."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025830511 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source Windows native acceptance is queued; fixture validation does not prove installed-product preservation."
+          }
+        ]
+      },
+      "evidence_class": "fixture",
+      "missing_requirements": [
+        "Clean-machine lifecycle and genuine production Host preservation evidence is missing.",
+        "Exact-source Linux clean-machine acceptance is queued; fixture validation does not prove package lifecycle preservation.",
+        "Exact-source Windows native acceptance is queued; fixture validation does not prove installed-product preservation."
+      ],
+      "qualification_decision": "BLOCKED"
+    },
+    {
+      "category": "POWER_CYCLE_RECOVERY",
+      "requirement": "After real power loss at required transaction boundaries, rerun reconciles safely without replay or data loss.",
+      "owning_prompt": [
+        "P044",
+        "P045",
+        "P047"
+      ],
+      "target_platform": "Native Windows 11, Ubuntu 24.04, and Fedora 42 candidates",
+      "source_revision": [
+        "3851ea11927e24255614cfc38adbaccbd345ca03",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "381b27f4be27c77d64450f58cea08f63e98ad34b",
+        "62651f05431ed5be255b7e7dd05ac1cffe8b927d"
+      ],
+      "evidence_location": [
+        "P045 PR #78 and docs/v0.2/P045_NATIVE_RUNNER_HANDOFF.md; native/hard-power runner unavailable",
+        "P044 interruption validators do not emulate power-cycle"
+      ],
+      "artifact_identity": {
+        "status": "BLOCKED",
+        "inventory_ids": [
+          "windows_installer",
+          "linux_deb",
+          "linux_rpm"
+        ],
+        "reason": "Exact qualifying artifact identities are absent or still pending; see artifact_inventory.",
+        "sha256": null,
+        "required": true
+      },
+      "actual_test_result": {
+        "result": "SKIPPED",
+        "evidence": [
+          {
+            "result": "SKIPPED",
+            "evidence_class": "interruption-power-cycle",
+            "source_revision": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+            "location": "P045 PR #78 native runner handoff; acceptance/p047 report",
+            "detail": "No physical/virtual power-cycle acceptance was executed; P044 process interruption does not qualify this requirement."
+          }
+        ]
+      },
+      "evidence_class": "interruption-power-cycle",
+      "missing_requirements": [
+        "P045 real power-cycle evidence is absent; process interruption fixtures are insufficient."
+      ],
+      "qualification_decision": "BLOCKED"
+    },
+    {
+      "category": "ARTIFACT_INTEGRITY",
+      "requirement": "Every candidate has exact source/tree, platform, version, build, artifact ID, byte size, SHA-256, provenance, and acceptance binding.",
+      "owning_prompt": [
+        "P012",
+        "P020",
+        "P021",
+        "P043",
+        "P047"
+      ],
+      "target_platform": "All candidate artifacts and target architectures",
+      "source_revision": [
+        "3851ea11927e24255614cfc38adbaccbd345ca03",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "381b27f4be27c77d64450f58cea08f63e98ad34b",
+        "62651f05431ed5be255b7e7dd05ac1cffe8b927d"
+      ],
+      "evidence_location": [
+        "./scripts/validate-release-manifest.sh; ./scripts/validate-release-download.sh",
+        "GitHub Actions run 38025827853 (push, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+        "GitHub Actions run 38025827873 (push, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+        "GitHub Actions run 38025827887 (push, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)"
+      ],
+      "artifact_identity": {
+        "status": "BLOCKED",
+        "inventory_ids": [
+          "windows_installer",
+          "linux_deb",
+          "linux_rpm",
+          "linux_appimage",
+          "server_component",
+          "managed_host_dependencies",
+          "release_channel_metadata",
+          "release_manifest"
+        ],
+        "reason": "Exact qualifying artifact identities are absent or still pending; see artifact_inventory.",
+        "sha256": null,
+        "required": true
+      },
+      "actual_test_result": {
+        "result": "PASS",
+        "evidence": [
+          {
+            "result": "PASS",
+            "evidence_class": "fixture",
+            "source_revision": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+            "location": "./scripts/validate-release-manifest.sh; ./scripts/validate-release-download.sh",
+            "detail": "34 manifest tests and 77 download-integrity tests passed; no complete authenticated candidate artifact set is available."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025827853 (push, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "No exact-source candidate artifact exists yet; producer run is queued and signature/provenance checks cannot bind absent bytes."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025827873 (push, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "No exact-source DEB/RPM artifacts exist yet; producer run is queued and signature/provenance checks cannot bind absent bytes."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025827887 (push, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "No exact-source AppImage artifact exists yet; producer run is queued and signature/provenance checks cannot bind absent bytes."
+          }
+        ]
+      },
+      "evidence_class": "fixture",
+      "missing_requirements": [
+        "Complete exact artifact set and authenticated release manifest are unavailable.",
+        "No exact-source candidate artifact exists yet; producer run is queued and signature/provenance checks cannot bind absent bytes.",
+        "No exact-source DEB/RPM artifacts exist yet; producer run is queued and signature/provenance checks cannot bind absent bytes.",
+        "No exact-source AppImage artifact exists yet; producer run is queued and signature/provenance checks cannot bind absent bytes."
+      ],
+      "qualification_decision": "BLOCKED"
+    },
+    {
+      "category": "RELEASE_SIGNING",
+      "requirement": "Production release signatures and verification references are present and independently validated.",
+      "owning_prompt": [
+        "P043",
+        "P047"
+      ],
+      "target_platform": "Production distribution",
+      "source_revision": [
+        "3851ea11927e24255614cfc38adbaccbd345ca03",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "381b27f4be27c77d64450f58cea08f63e98ad34b",
+        "62651f05431ed5be255b7e7dd05ac1cffe8b927d"
+      ],
+      "evidence_location": [
+        "Production signing infrastructure and trust-bootstrap inventory absent"
+      ],
+      "artifact_identity": {
+        "status": "BLOCKED",
+        "inventory_ids": [
+          "trust_signing_material",
+          "release_manifest",
+          "release_channel_metadata"
+        ],
+        "reason": "Exact qualifying artifact identities are absent or still pending; see artifact_inventory.",
+        "sha256": null,
+        "required": true
+      },
+      "actual_test_result": {
+        "result": "BLOCKED",
+        "evidence": [
+          {
+            "result": "BLOCKED",
+            "evidence_class": "release-acceptance",
+            "source_revision": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+            "location": "Production signing infrastructure and trust-bootstrap inventory absent",
+            "detail": "Source verification code is not production key custody or release signing evidence."
+          }
+        ]
+      },
+      "evidence_class": "release-acceptance",
+      "missing_requirements": [
+        "Production signing infrastructure and verified signed candidate set are unavailable."
+      ],
+      "qualification_decision": "BLOCKED"
+    },
+    {
+      "category": "TRUST_BOOTSTRAP",
+      "requirement": "A trusted verifier bootstrap authenticates channel metadata, key rotation, and minimum generation without rollback.",
+      "owning_prompt": [
+        "P020",
+        "P043",
+        "P047"
+      ],
+      "target_platform": "Production distribution",
+      "source_revision": [
+        "3851ea11927e24255614cfc38adbaccbd345ca03",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "381b27f4be27c77d64450f58cea08f63e98ad34b",
+        "62651f05431ed5be255b7e7dd05ac1cffe8b927d"
+      ],
+      "evidence_location": [
+        "Production trust bootstrap and trusted channel publication absent"
+      ],
+      "artifact_identity": {
+        "status": "BLOCKED",
+        "inventory_ids": [
+          "trust_signing_material",
+          "release_channel_metadata"
+        ],
+        "reason": "Exact qualifying artifact identities are absent or still pending; see artifact_inventory.",
+        "sha256": null,
+        "required": true
+      },
+      "actual_test_result": {
+        "result": "BLOCKED",
+        "evidence": [
+          {
+            "result": "BLOCKED",
+            "evidence_class": "release-acceptance",
+            "source_revision": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+            "location": "Production trust bootstrap and trusted channel publication absent",
+            "detail": "No production trust root, key rotation, or bootstrap distribution evidence is available."
+          }
+        ]
+      },
+      "evidence_class": "release-acceptance",
+      "missing_requirements": [
+        "Production trust bootstrap, pinned trust material, and key-rotation evidence are unavailable."
+      ],
+      "qualification_decision": "BLOCKED"
+    },
+    {
+      "category": "DISTRIBUTION_CHANNEL",
+      "requirement": "Authenticated production channel publishes exact current candidates with rollback resistance and safe download policy.",
+      "owning_prompt": [
+        "P018",
+        "P020",
+        "P043",
+        "P047"
+      ],
+      "target_platform": "Production distribution",
+      "source_revision": [
+        "3851ea11927e24255614cfc38adbaccbd345ca03",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "381b27f4be27c77d64450f58cea08f63e98ad34b",
+        "62651f05431ed5be255b7e7dd05ac1cffe8b927d"
+      ],
+      "evidence_location": [
+        "./scripts/validate-release-channel.sh",
+        "GitHub Actions run 38025830521 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)"
+      ],
+      "artifact_identity": {
+        "status": "BLOCKED",
+        "inventory_ids": [
+          "release_channel_metadata",
+          "release_manifest",
+          "trust_signing_material"
+        ],
+        "reason": "Exact qualifying artifact identities are absent or still pending; see artifact_inventory.",
+        "sha256": null,
+        "required": true
+      },
+      "actual_test_result": {
+        "result": "PASS",
+        "evidence": [
+          {
+            "result": "PASS",
+            "evidence_class": "fixture",
+            "source_revision": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+            "location": "./scripts/validate-release-channel.sh",
+            "detail": "101 channel tests passed, including rollback and equivocation fixtures; no authenticated production channel was published."
+          },
+          {
+            "result": "BLOCKED",
+            "evidence_class": "ci-native-scoped",
+            "source_revision": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+            "location": "GitHub Actions run 38025830521 (pull_request, source 62651f05431ed5be255b7e7dd05ac1cffe8b927d)",
+            "detail": "Exact-source installer security workflow is queued; production channel publication and trusted bootstrap are absent."
+          }
+        ]
+      },
+      "evidence_class": "fixture",
+      "missing_requirements": [
+        "No authenticated production channel publication or exact release set exists.",
+        "Exact-source installer security workflow is queued; production channel publication and trusted bootstrap are absent."
+      ],
+      "qualification_decision": "BLOCKED"
+    },
+    {
+      "category": "DOCUMENTATION",
+      "requirement": "English and Vietnamese release-facing documents accurately match qualified behavior, commands, platform limits, security, and data handling.",
+      "owning_prompt": [
+        "P046",
+        "P047"
+      ],
+      "target_platform": "English and Vietnamese; qualified candidate platforms only",
+      "source_revision": [
+        "3851ea11927e24255614cfc38adbaccbd345ca03",
+        "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+        "381b27f4be27c77d64450f58cea08f63e98ad34b",
+        "62651f05431ed5be255b7e7dd05ac1cffe8b927d"
+      ],
+      "evidence_location": [
+        "./scripts/validate-docs.sh: P046 English/Vietnamese parity and links pass on current workspace",
+        "docs/v0.2/PROMPT047_MANIFEST.md"
+      ],
+      "artifact_identity": {
+        "status": "BLOCKED",
+        "inventory_ids": [
+          "windows_installer",
+          "linux_deb",
+          "linux_rpm",
+          "linux_appimage",
+          "release_manifest"
+        ],
+        "reason": "Exact qualifying artifact identities are absent or still pending; see artifact_inventory.",
+        "sha256": null,
+        "required": true
+      },
+      "actual_test_result": {
+        "result": "PASS",
+        "evidence": [
+          {
+            "result": "PASS",
+            "evidence_class": "static",
+            "source_revision": "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+            "location": "./scripts/validate-docs.sh",
+            "detail": "Passed after adding the P047 report target; includes P046 bilingual parity, relative links, platform limits, command/flag parity, release status, and trust hygiene."
+          }
+        ]
+      },
+      "evidence_class": "static",
+      "missing_requirements": [
+        "P046 parity must pass against the committed P047 report and final candidate artifacts are not available for review."
+      ],
+      "qualification_decision": "BLOCKED"
+    }
+  ],
+  "release_dependencies": {
+    "p045": {
+      "accepted_and_merged": false,
+      "state": "OPEN_DRAFT_UNMERGED",
+      "pull_request": 78,
+      "branch": "feat/cross-platform-clean-machine-matrix",
+      "head_sha": "035497c05c145e5c6129e744f9455937069680f4",
+      "requirement": "Windows 11 interactive GUI and genuine login/named-pipe; clean Ubuntu/Fedora lifecycle; data preservation; real power-cycle; authenticated exact candidate identity."
+    },
+    "p036": {
+      "production_acceptance": "BLOCKED",
+      "manifest_path": "acceptance/p036/production-artifacts.json",
+      "manifest_present": false,
+      "requirement": "Authentic PostgreSQL 17 and managed-edge identities plus installed Host first-admin, login, library, sync, recovery, and preservation against controlled reachable server.",
+      "evidence_workflow_run": 38024448888,
+      "evidence_job_id": 114132182641,
+      "failed_step": "Require production PG17, server, desktop, and edge inventories",
+      "exact_diagnostic": "test -f acceptance/p036/production-artifacts.json exited 1",
+      "latest_exact_source_workflow_run": 38025830519,
+      "latest_exact_source_artifact_identity_job_id": 114136354339,
+      "latest_exact_source_status": "queued; job not completed; prior acfd run proved the required manifest is absent"
+    },
+    "production_signing": {
+      "ready": false,
+      "production_keys_created_by_p047": false,
+      "trusted_bootstrap_available": false,
+      "authenticated_channel_published": false,
+      "key_rotation_evidence": false
+    },
+    "external_services": [
+      "Controlled reachable server for Host acceptance",
+      "Genuine PostgreSQL 17 dependency",
+      "Authentic managed-edge dependency",
+      "Production signing/key custody",
+      "Trusted channel bootstrap and authenticated publication",
+      "Interactive Windows 11 and native Ubuntu 24.04/Fedora 42 acceptance environments"
+    ]
+  },
+  "dependency_graph": [
+    {
+      "from": "P047 source quality and reproducible producers",
+      "to": "exact candidate artifact set",
+      "required_for": [
+        "artifact integrity",
+        "P045 native acceptance",
+        "P048"
+      ]
+    },
+    {
+      "from": "exact candidate artifact set",
+      "to": "P045 clean-machine acceptance",
+      "required_for": [
+        "Windows/Ubuntu/Fedora journeys",
+        "upgrade/repair/uninstall",
+        "data preservation"
+      ]
+    },
+    {
+      "from": "P036 production artifact manifest and services",
+      "to": "installed Host journey",
+      "required_for": [
+        "first-admin",
+        "normal authentication",
+        "library setup",
+        "first sync",
+        "recovery"
+      ]
+    },
+    {
+      "from": "P043 production signing and trusted bootstrap",
+      "to": "authenticated channel publication",
+      "required_for": [
+        "quick install",
+        "rollback resistance",
+        "release distribution"
+      ]
+    },
+    {
+      "from": "P044 recovery plus P045 real power-cycle",
+      "to": "power-cycle recovery and preservation acceptance",
+      "required_for": [
+        "P047 final qualification"
+      ]
+    },
+    {
+      "from": "P046 bilingual documentation",
+      "to": "documented supported journeys",
+      "required_for": [
+        "documentation gate"
+      ]
+    },
+    {
+      "from": "all required passing evidence and accepted P047",
+      "to": "P048 final tag and release",
+      "required_for": [
+        "P048 start"
+      ]
+    }
+  ],
+  "release_blockers": [
+    "P045 PR #78 remains open/draft/unmerged; no accepted native Windows 11, Ubuntu 24.04, Fedora 42, or power-cycle evidence.",
+    "P036 production manifest acceptance/p036/production-artifacts.json is absent; real PostgreSQL 17, managed edge, and installed Host first-run evidence are unavailable.",
+    "No complete exact releasable artifact set or production-authenticated artifact/channel identities are available.",
+    "Production signing keys, trusted bootstrap, authenticated release-channel publication, and key-rotation evidence are unavailable.",
+    "Linux DEB/RPM reproducibility failure for synveil-desktop remains unresolved; no qualifying package artifact was uploaded from main.",
+    "All 23 exact-source hosted workflow runs for 62651f05431ed5be255b7e7dd05ac1cffe8b927d were queued at 2026-10-10T05:02:25Z; no hosted job completed and no candidate artifact was uploaded.",
+    "Windows, Ubuntu DEB, Fedora RPM, AppImage, upgrade/repair/uninstall, and power-cycle native clean-machine scenarios remain unqualified.",
+    "P047 PR #104 must remain draft/unmerged while required release evidence is blocked.",
+    "The source still declares product version 0.1.0; no v0.2.0 candidate artifact set has been produced. P048 owns the final 0.2.0 tag and release.",
+    "P047 exact-source hosted validation runs for 62651f05431ed5be255b7e7dd05ac1cffe8b927d have started or are queued; no result is inferred."
+  ],
+  "p048_prerequisites": [
+    "All applicable coverage gates PASS on exact authenticated artifact identities",
+    "P045 native acceptance genuinely accepted and merged or approved external evidence contract",
+    "P036 production dependency identities and live installed Host acceptance",
+    "Production trusted bootstrap, signing, key rotation, and authenticated channel publication",
+    "DEB/RPM/AppImage/Windows artifact producers reproducible and complete",
+    "Upgrade, repair, uninstall, preservation, and real power-cycle recovery accepted",
+    "P047 PR accepted and merged before P048 owns v0.2.0 final tag/release"
+  ],
+  "p045_native_handoff": {
+    "reference_only_source_sha": "035497c05c145e5c6129e744f9455937069680f4",
+    "reference_paths": [
+      "deploy/acceptance/p045-matrix-v1.json",
+      "docs/v0.2/P045_NATIVE_RUNNER_HANDOFF.md",
+      ".github/workflows/cross-platform-clean-machine.yml"
+    ],
+    "native_evidence_imported": false,
+    "runner_requirements": [
+      "isolated Linux KVM host with disposable Ubuntu 24.04 and Fedora 42 guests, /dev/kvm, reviewed provisioning permissions, and exact package-handler journeys",
+      "interactive Windows 11 VM with a genuine logged-on standard user and attached GUI session",
+      "hypervisor-owned persistent guest disk and hard-power control at declared mutation boundaries",
+      "controlled reachable server and genuine production dependency inventory",
+      "exact candidate producer bytes and P045 result-v1 aggregation"
+    ],
+    "available_in_this_execution": false,
+    "reason": "No external worker was installed or registered, no genuine Windows interactive session or KVM/hard-power host was available, and the owner deferred P045 acceptance.",
+    "final_source_windows_candidate_run": 38025827893,
+    "final_source_linux_acceptance_run": 38025830484
+  },
+  "local_validations": [
+    {
+      "command": "./scripts/validate-p047-release-validation.sh",
+      "result": "PASS",
+      "detail": "Final report contract passed: all 21 gates, 9 inventory entries, and 10 fail-closed tests passed with decision BLOCKED."
+    },
+    {
+      "command": "./scripts/validate-docs.sh",
+      "result": "PASS",
+      "detail": "Re-run on final report workspace: P043/P044 validators, P046 English/Vietnamese parity, relative links, claims, command/flag parity, and 7 topics/14 troubleshooting cases passed."
+    },
+    {
+      "command": "./scripts/validate-install-acceptance.sh",
+      "result": "PASS",
+      "detail": "Exact current workspace: 11 scenario definitions and 21 contract tests pass; no native journeys executed."
+    },
+    {
+      "command": "./scripts/validate-release-manifest.sh",
+      "result": "PASS",
+      "detail": "34 release-manifest tests passed."
+    },
+    {
+      "command": "./scripts/validate-release-download.sh",
+      "result": "PASS",
+      "detail": "77 download integrity/security tests passed."
+    },
+    {
+      "command": "./scripts/validate-release-channel.sh",
+      "result": "PASS",
+      "detail": "101 release-channel tests passed."
+    },
+    {
+      "command": "./scripts/validate-linux-quick-install.sh",
+      "result": "PASS",
+      "detail": "15 quick-install tests passed; it reran 77 download tests and 101 release-channel tests."
+    },
+    {
+      "command": "P043/P044 validators",
+      "result": "PASS",
+      "detail": "Installer security and installation resilience source validators passed; P043/P044 validators are included in validate-docs.sh."
+    },
+    {
+      "command": "python3 scripts/validate-appimage-build.py",
+      "result": "PASS",
+      "detail": "Static AppRun contract passed; runtime inspection was not run locally because no AppImage artifact was supplied."
+    },
+    {
+      "command": "python3 scripts/validate-windows-installer.py",
+      "result": "PASS",
+      "detail": "P021-P027 Windows installer source and payload closure contract passed."
+    },
+    {
+      "command": "python3 scripts/validate-windows-native-acceptance.py",
+      "result": "PASS",
+      "detail": "P028 contract validator passed; native interactive Windows acceptance remains blocked."
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "result": "BLOCKED",
+      "detail": "Attempted locally; cargo is not installed in this environment. Exact-source hosted Rust CI run 38025827860 remains queued."
+    },
+    {
+      "command": "./scripts/validate-install-lifecycle.sh",
+      "result": "BLOCKED",
+      "detail": "Cargo-dependent lifecycle execution cannot run locally because cargo is unavailable."
+    },
+    {
+      "command": "./scripts/validate-installer-engine.sh",
+      "result": "BLOCKED",
+      "detail": "Cargo-dependent installer engine tests cannot run locally because cargo is unavailable."
+    },
+    {
+      "command": "./scripts/validate-linux-package-integration.sh",
+      "result": "BLOCKED",
+      "detail": "Static hook audit passed; Cargo integration tests could not run locally because cargo is unavailable."
+    },
+    {
+      "command": "./scripts/validate-release-artifacts.sh",
+      "result": "BLOCKED",
+      "detail": "No generated target/packages/SYNVEIL-LINUX-ARTIFACT-MANIFEST.txt exists in this workspace; this artifact-root validator requires a built candidate. The manifest schema validators passed independently."
+    },
+    {
+      "command": "git diff --check",
+      "result": "PASS",
+      "detail": "Passed after staging all P047 report, manifest, and fail-closed validator files."
+    },
+    {
+      "command": "bash -n deploy/packages/build-windows.sh",
+      "result": "PASS",
+      "detail": "Passed after the SC2034 fix; local ShellCheck is unavailable, so hosted strict ShellCheck remains authoritative."
+    },
+    {
+      "command": "python3 scripts/validate-windows-installer.py",
+      "result": "PASS",
+      "detail": "Exact P047 installer source contract passed, including active-toolset CRT selection and closed PE import audit."
+    },
+    {
+      "command": "npm run lint",
+      "result": "PASS",
+      "detail": "Web lint passed locally; apps/web source was unchanged by P047."
+    },
+    {
+      "command": "npm run typecheck",
+      "result": "PASS",
+      "detail": "Web TypeScript check passed locally; apps/web source was unchanged by P047."
+    },
+    {
+      "command": "npm test",
+      "result": "PASS",
+      "detail": "Web test suite passed: 23 files and 251 tests; apps/web source was unchanged by P047."
+    },
+    {
+      "command": "npm run build",
+      "result": "PASS",
+      "detail": "Web production build passed locally; apps/web source was unchanged by P047."
+    },
+    {
+      "command": "python3 -m unittest discover -s tests/appimage -v",
+      "result": "PASS",
+      "detail": "Final source workspace: two focused regression tests passed for bundled xcb under isolated Xvfb and clear failure when xvfb-run is missing."
+    },
+    {
+      "command": "./scripts/validate-appimage-build.sh",
+      "result": "PASS",
+      "detail": "Current AppImage source/static contract passed; local artifact runtime inspection was skipped because no AppImage was supplied."
+    },
+    {
+      "command": "./tests/windows/test-windows-pe-import-policy.sh",
+      "result": "PASS",
+      "detail": "System UIAutomationCore/kernel/API-set imports are accepted; MSVC runtime and unknown DLLs remain non-system imports."
+    },
+    {
+      "command": "bash -n deploy/packages/build-windows.sh deploy/packages/common/windows-pe-import-policy.sh tests/windows/test-windows-pe-import-policy.sh",
+      "result": "PASS",
+      "detail": "Windows package script, shared import policy, and focused regression test passed Bash syntax validation."
+    }
+  ],
+  "target_release_version": "0.2.0",
+  "hosted_validation_snapshot": {
+    "source_sha": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+    "observed_at_utc": "2026-10-10T05:02:25Z",
+    "workflow_run_count": 23,
+    "queued_run_count": 23,
+    "completed_run_count": 0,
+    "job_state": "All observed jobs were queued; none had a conclusion.",
+    "producer_artifact_checks": [
+      {
+        "run_id": 38025827853,
+        "artifact_count": 0,
+        "note": "Windows installer producer had not run."
+      },
+      {
+        "run_id": 38025827873,
+        "artifact_count": 0,
+        "note": "Linux DEB/RPM producer had not run."
+      },
+      {
+        "run_id": 38025827887,
+        "artifact_count": 0,
+        "note": "AppImage producer had not run."
+      }
+    ],
+    "qualification_effect": "BLOCKED; queued runs and an empty artifact list are not product passes or candidate artifacts."
+  }
+}
