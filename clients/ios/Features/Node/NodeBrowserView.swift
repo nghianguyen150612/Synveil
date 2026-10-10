@@ -4,16 +4,24 @@ import SwiftUI
 struct NodeBrowserView: View {
     private let sessionController: SessionController
     private let route: NodeBrowserRoute
+    private let nodeRepository: (any NodeRepositoryProtocol)?
+    private let metadataMutationFeature: (any MetadataMutationFeatureProtocol)?
 
     @State private var viewModel: NodeBrowserViewModel
+    @State private var mutationViewModel: MetadataMutationViewModel
+    @State private var presentedSheet: NodeBrowserSheet?
+    @State private var pendingTrashNode: Node?
 
     init(
         repository: (any NodeRepositoryProtocol)?,
         sessionController: SessionController,
-        route: NodeBrowserRoute
+        route: NodeBrowserRoute,
+        metadataMutationFeature: (any MetadataMutationFeatureProtocol)? = nil
     ) {
         self.sessionController = sessionController
         self.route = route
+        self.nodeRepository = repository
+        self.metadataMutationFeature = metadataMutationFeature
         _viewModel = State(
             initialValue: NodeBrowserViewModel(
                 repository: repository,
@@ -21,19 +29,50 @@ struct NodeBrowserView: View {
                 route: route
             )
         )
+        _mutationViewModel = State(
+            initialValue: MetadataMutationViewModel(
+                route: route, feature: metadataMutationFeature,
+                sessionController: sessionController))
     }
 
     var body: some View {
         List {
+            mutationControls
             directoryContents
         }
         .listStyle(.insetGrouped)
         .navigationTitle(route.directoryTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            if mutationViewModel.canCreateFolder {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        presentedSheet = .newFolder
+                    } label: {
+                        Label("New Folder", systemImage: "folder.badge.plus")
+                    }
+                    .accessibilityIdentifier("synveil.node.new-folder")
+                }
+            }
+            if metadataMutationFeature != nil {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        presentedSheet = .activity
+                    } label: {
+                        Label("Pending Changes", systemImage: "tray.full")
+                    }
+                    .accessibilityHint(
+                        "Shows saved mutation queue states. Opening it does not send changes."
+                    )
+                    .accessibilityIdentifier("synveil.node.pending-changes")
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    Task { await viewModel.refresh() }
+                    Task {
+                        await viewModel.refresh()
+                        await mutationViewModel.refreshAvailability(forceParentRefresh: true)
+                    }
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
@@ -45,14 +84,226 @@ struct NodeBrowserView: View {
         }
         .refreshable {
             await viewModel.refresh()
+            await mutationViewModel.refreshAvailability(forceParentRefresh: true)
         }
         .task {
             await viewModel.loadIfNeeded()
+            await mutationViewModel.refreshAvailability()
         }
         .onChange(of: sessionController.state) { _, _ in
             viewModel.sessionDidChange()
+            mutationViewModel.sessionDidChange()
+            if sessionController.state != .authenticated {
+                presentedSheet = nil
+                pendingTrashNode = nil
+            }
+        }
+        .onChange(of: sessionController.lifecycleRevision) { _, _ in
+            mutationViewModel.sessionDidChange()
+            presentedSheet = nil
+            pendingTrashNode = nil
+        }
+        .sheet(item: $presentedSheet) { sheet in sheetContents(for: sheet) }
+        .confirmationDialog(
+            "Move \(pendingTrashNode?.name ?? "item") to Trash?",
+            isPresented: Binding(
+                get: { pendingTrashNode != nil },
+                set: { if !$0 { pendingTrashNode = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Move to Trash", role: .destructive) {
+                guard let node = pendingTrashNode else { return }
+                pendingTrashNode = nil
+                Task { _ = await mutationViewModel.enqueueTrash(node: node, confirmed: true) }
+            }
+            .accessibilityIdentifier("synveil.node.trash.confirm")
+            Button("Cancel", role: .cancel) { pendingTrashNode = nil }
+                .accessibilityIdentifier("synveil.node.trash.cancel")
+        } message: {
+            Text(
+                "This is a logical Trash operation, not immediate physical deletion. A nonempty folder may be rejected; descendants are not trashed automatically."
+            )
         }
         .accessibilityIdentifier(directoryAccessibilityIdentifier)
+    }
+
+    @ViewBuilder
+    private var mutationControls: some View {
+        if metadataMutationFeature == nil {
+            Section("Changes") {
+                Label(
+                    "Metadata changes are unavailable because the durable queue is not ready. Browsing remains available.",
+                    systemImage: "lock"
+                )
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("synveil.node.mutations.unavailable")
+            }
+        } else if route.library.status != .active {
+            Section("Changes unavailable") {
+                Label(
+                    route.library.status == .readOnly
+                        ? "This Library is read-only. You can continue browsing."
+                        : "This Library is quarantined. You can continue browsing.",
+                    systemImage: route.library.status == .readOnly
+                        ? "lock" : "exclamationmark.shield"
+                )
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("synveil.node.mutations.library-status")
+            }
+        } else if mutationViewModel.isCheckingAvailability {
+            Section("Changes") {
+                ProgressView("Checking saved synchronization state…")
+                    .accessibilityLabel("Checking synchronization state")
+                    .accessibilityIdentifier("synveil.node.mutations.checking")
+            }
+        } else if mutationViewModel.availability == .setupRequired {
+            Section("Changes not enabled") {
+                Text(
+                    "Enable Changes connects to the server to establish synchronization state. It does not send a metadata change."
+                )
+                .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    Task { await mutationViewModel.enableChanges() }
+                } label: {
+                    if mutationViewModel.isPreparingChanges {
+                        ProgressView("Preparing synchronization…")
+                    } else {
+                        Label(
+                            "Enable Changes for This Library",
+                            systemImage: "arrow.triangle.2.circlepath")
+                    }
+                }
+                .disabled(mutationViewModel.isPreparingChanges)
+                .accessibilityIdentifier("synveil.node.mutations.enable-changes")
+            }
+        } else if case .unavailable(let reason) = mutationViewModel.availability {
+            Section("Changes unavailable") {
+                Label(
+                    MetadataMutationViewModel.message(for: reason),
+                    systemImage: "exclamationmark.triangle"
+                )
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("synveil.node.mutations.blocked")
+            }
+        }
+        if let notice = mutationViewModel.notice {
+            Section("Change status") {
+                MutationNoticeView(notice: notice, identifier: "synveil.node.mutations.notice")
+            }
+        }
+        if route.library.status == .active, mutationViewModel.availability == .ready,
+            !mutationViewModel.isCheckingFolderParent
+        {
+            folderParentControls
+        }
+    }
+
+    @ViewBuilder
+    private var folderParentControls: some View {
+        switch mutationViewModel.folderParentAvailability {
+        case .ready:
+            EmptyView()
+        case .setupRequired:
+            Section("New Folder unavailable") {
+                Text("The verified synchronization base is no longer available.")
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Enable Changes for This Library") {
+                    Task { await mutationViewModel.enableChanges() }
+                }
+                .accessibilityHint(
+                    "Establishes synchronization state. It does not queue or send a metadata change."
+                )
+                .accessibilityIdentifier("synveil.node.mutations.enable-changes")
+            }
+        case .unavailable(.invalidMetadata):
+            Section("New Folder unavailable") {
+                Text(
+                    "The current folder revision could not be verified. Refresh its metadata before creating a folder."
+                )
+                .fixedSize(horizontal: false, vertical: true)
+                Button("Check Folder Metadata") {
+                    Task {
+                        await mutationViewModel.refreshAvailability(forceParentRefresh: true)
+                    }
+                }
+                .accessibilityHint(
+                    "Reads the current folder metadata. It does not queue or send a change."
+                )
+                .accessibilityIdentifier("synveil.node.mutations.check-parent")
+            }
+        case .unavailable(let reason):
+            Section("New Folder unavailable") {
+                Text(MetadataMutationViewModel.message(for: reason))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("synveil.node.mutations.parent-unavailable")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sheetContents(for sheet: NodeBrowserSheet) -> some View {
+        switch sheet {
+        case .newFolder:
+            NavigationStack {
+                MetadataNameEditorView(
+                    title: "New Folder", initialName: "", fieldLabel: "Folder name",
+                    helpText:
+                        "Enter the exact logical name. Synveil preserves Unicode spelling and does not change the server until you send this queued operation."
+                ) { name in
+                    await mutationViewModel.enqueueFolder(name: name)
+                }
+            }
+        case .rename(let node):
+            NavigationStack {
+                MetadataNameEditorView(
+                    title: "Rename", initialName: node.name, fieldLabel: "New name",
+                    helpText:
+                        "The current validated name is prefilled. The server-backed list changes only after an Applied result."
+                ) { name in
+                    await mutationViewModel.enqueueRename(node: node, newName: name)
+                }
+            }
+        case .move(let node):
+            MoveDestinationPickerView(
+                repository: nodeRepository,
+                sessionController: sessionController,
+                library: route.library.mutationContext,
+                source: node,
+                initialDirectoryId: route.parentScope.expectedParentId,
+                initialDirectoryTitle: route.directoryTitle,
+                initialAncestry: route.ancestry,
+                initialParentSnapshot: route.parentNodeSnapshot,
+                initialChildren: viewModel.visibleNodes ?? []
+            ) { destination, destinationAncestry in
+                presentedSheet = nil
+                Task {
+                    _ = await mutationViewModel.enqueueMove(
+                        node: node, destination: destination,
+                        destinationAncestry: destinationAncestry)
+                }
+            }
+        case .activity:
+            if let metadataMutationFeature {
+                NavigationStack {
+                    MutationActivityView(
+                        library: route.library.mutationContext,
+                        feature: metadataMutationFeature,
+                        sessionController: sessionController,
+                        onConfirmedMutation: {
+                            Task {
+                                await viewModel.refresh()
+                                await mutationViewModel.refreshAvailability(
+                                    forceParentRefresh: true)
+                            }
+                        })
+                }
+            } else {
+                ContentUnavailableView(
+                    "Pending Changes unavailable",
+                    systemImage: "tray",
+                    description: Text("The durable mutation queue is not ready."))
+            }
+        }
     }
 
     @ViewBuilder
@@ -231,34 +482,66 @@ struct NodeBrowserView: View {
     private func nodeRows(_ nodes: [Node]) -> some View {
         Section("Items") {
             ForEach(nodes, id: \.id) { node in
-                if let destination = viewModel.route(into: node) {
-                    NavigationLink(value: destination) {
-                        NodeBrowserRow(node: node)
-                    }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(NodeBrowserRow.accessibilityDescription(for: node))
-                    .accessibilityHint("Opens this folder's direct contents.")
-                    .accessibilityIdentifier("synveil.node.row.\(node.id.rawValue)")
-                } else if let destination = viewModel.details(for: node) {
-                    NavigationLink(value: destination) {
-                        NodeBrowserRow(node: node)
-                    }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(NodeBrowserRow.accessibilityDescription(for: node))
+                nodeRow(node)
+            }
+        }
+    }
+
+    private func nodeRow(_ node: Node) -> some View {
+        let row: AnyView
+        if let destination = viewModel.route(into: node) {
+            row = AnyView(
+                NavigationLink(value: destination) { NodeBrowserRow(node: node) }
+                    .accessibilityHint("Opens this folder's direct contents."))
+        } else if let destination = viewModel.details(for: node) {
+            row = AnyView(
+                NavigationLink(value: destination) { NodeBrowserRow(node: node) }
                     .accessibilityHint(
-                        "Opens read-only file information. File content is not available here."
-                    )
-                    .accessibilityIdentifier("synveil.node.row.\(node.id.rawValue)")
-                } else {
-                    NodeBrowserRow(node: node)
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(NodeBrowserRow.accessibilityDescription(for: node))
-                        .accessibilityHint(
-                            "This folder links to an ancestor and cannot be opened again."
-                        )
-                        .accessibilityIdentifier("synveil.node.row.\(node.id.rawValue)")
+                        "Opens read-only file information. File content is not available here."))
+        } else {
+            row = AnyView(
+                NodeBrowserRow(node: node)
+                    .accessibilityHint(
+                        "This folder links to an ancestor and cannot be opened again."))
+        }
+        return
+            row
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(NodeBrowserRow.accessibilityDescription(for: node))
+            .accessibilityIdentifier("synveil.node.row.\(node.id.rawValue)")
+            .contextMenu {
+                if mutationViewModel.canEdit && node.state == .active {
+                    Button("Rename", systemImage: "pencil") {
+                        presentedSheet = .rename(node)
+                    }
+                    .accessibilityIdentifier("synveil.node.rename.\(node.id.rawValue)")
+                    Button("Move", systemImage: "folder") {
+                        presentedSheet = .move(node)
+                    }
+                    .accessibilityIdentifier("synveil.node.move.\(node.id.rawValue)")
+                    Button(role: .destructive) {
+                        pendingTrashNode = node
+                    } label: {
+                        Label("Move to Trash", systemImage: "trash")
+                    }
+                    .accessibilityIdentifier("synveil.node.trash.\(node.id.rawValue)")
                 }
             }
+    }
+}
+
+private enum NodeBrowserSheet: Identifiable {
+    case newFolder
+    case rename(Node)
+    case move(Node)
+    case activity
+
+    var id: String {
+        switch self {
+        case .newFolder: "new-folder"
+        case .rename(let node): "rename-\(node.id.rawValue)"
+        case .move(let node): "move-\(node.id.rawValue)"
+        case .activity: "activity"
         }
     }
 }

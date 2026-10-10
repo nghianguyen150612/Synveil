@@ -93,11 +93,25 @@ public enum NodeDetailsRepositoryResult: Equatable, Sendable {
     case failed(NodeFailure)
 }
 
+/// A single authoritative metadata projection. Callers must still validate the intended role/state.
+public typealias NodeMetadataRepositoryResult = NodeDetailsRepositoryResult
+
 @MainActor
 public protocol NodeRepositoryProtocol {
     func listChildren(libraryId: LibraryId, parent: NodeParentScope) async -> NodeRepositoryResult
     func getNode(libraryId: LibraryId, nodeId: NodeId, expectedParent: NodeParentScope) async
         -> NodeDetailsRepositoryResult
+    func getNodeMetadata(libraryId: LibraryId, nodeId: NodeId) async
+        -> NodeMetadataRepositoryResult
+}
+
+public extension NodeRepositoryProtocol {
+    /// Compatibility for read-only repositories that do not expose a general metadata lookup.
+    func getNodeMetadata(libraryId: LibraryId, nodeId: NodeId) async
+        -> NodeMetadataRepositoryResult
+    {
+        .unavailable
+    }
 }
 
 public enum NodeBrowserPolicy {

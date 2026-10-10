@@ -6,11 +6,25 @@ struct NodeBrowserLibraryContext: Equatable, Hashable, Sendable {
     let id: LibraryId
     let name: String
     let rootNodeId: NodeId
+    let status: LibraryStatus
 
     init(_ library: Library) {
         id = library.id
         name = library.name
         rootNodeId = library.rootNodeId
+        status = library.status
+    }
+
+    init(_ mutationLibrary: MetadataMutationLibraryContext) {
+        id = mutationLibrary.id
+        name = mutationLibrary.name
+        rootNodeId = mutationLibrary.rootNodeId
+        status = mutationLibrary.status
+    }
+
+    var mutationContext: MetadataMutationLibraryContext {
+        MetadataMutationLibraryContext(
+            id: id, name: name, rootNodeId: rootNodeId, status: status)
     }
 }
 
@@ -20,10 +34,26 @@ struct NodeBrowserRoute: Equatable, Hashable, Sendable {
     let parentScope: NodeParentScope
     let directoryTitle: String
     let ancestry: [NodeId]
+    let parentNodeSnapshot: Node?
+
+    init(
+        library: NodeBrowserLibraryContext,
+        parentScope: NodeParentScope,
+        directoryTitle: String,
+        ancestry: [NodeId],
+        parentNodeSnapshot: Node? = nil
+    ) {
+        self.library = library
+        self.parentScope = parentScope
+        self.directoryTitle = directoryTitle
+        self.ancestry = ancestry
+        self.parentNodeSnapshot = parentNodeSnapshot
+    }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.library == rhs.library && lhs.parentScope == rhs.parentScope
             && lhs.directoryTitle == rhs.directoryTitle && lhs.ancestry == rhs.ancestry
+            && lhs.parentNodeSnapshot == rhs.parentNodeSnapshot
     }
 
     func hash(into hasher: inout Hasher) {
@@ -38,6 +68,8 @@ struct NodeBrowserRoute: Equatable, Hashable, Sendable {
         }
         hasher.combine(directoryTitle)
         hasher.combine(ancestry)
+        hasher.combine(parentNodeSnapshot?.id)
+        hasher.combine(parentNodeSnapshot?.revision)
     }
 
     static func root(for library: Library) -> Self {
@@ -343,7 +375,8 @@ final class NodeBrowserViewModel {
             library: library,
             parentScope: .directory(node.id),
             directoryTitle: node.name,
-            ancestry: ancestry + [node.id]
+            ancestry: ancestry + [node.id],
+            parentNodeSnapshot: node
         )
     }
 

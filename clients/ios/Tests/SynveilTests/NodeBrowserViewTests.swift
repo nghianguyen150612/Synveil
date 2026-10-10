@@ -47,6 +47,24 @@ final class NodeBrowserViewTests: XCTestCase {
         XCTAssertEqual(destination.parentScope, .directory(folder.id))
         XCTAssertEqual(destination.directoryTitle, "Reports")
         XCTAssertEqual(destination.ancestry, [library.rootNodeId, folder.id])
+        XCTAssertEqual(destination.parentNodeSnapshot, folder)
+        XCTAssertEqual(destination.library.status, library.status)
+    }
+
+    func testReadOnlyAndQuarantinedLibraryStatusesSurviveNavigationContext() async throws {
+        for status in [LibraryStatus.readOnly, .quarantined] {
+            let library = try await makeLibrary(1, status: status)
+            let root = NodeBrowserRoute.root(for: library)
+            let viewModel = makeViewModel(route: root)
+            let folder = try await makeNode(
+                20, library: library, parent: library.rootNodeId,
+                kind: .directory, name: "Restricted")
+
+            let destination = try XCTUnwrap(viewModel.route(into: folder))
+
+            XCTAssertEqual(destination.library.status, status)
+            XCTAssertEqual(destination.library.mutationContext.status, status)
+        }
     }
 
     func testNestedNavigationUsesEachActualDirectoryID() async throws {
@@ -229,14 +247,16 @@ final class NodeBrowserViewTests: XCTestCase {
         return controller
     }
 
-    private func makeLibrary(_ number: Int) async throws -> Library {
+    private func makeLibrary(
+        _ number: Int, status: LibraryStatus = .active
+    ) async throws -> Library {
         let validator = BrowserViewTestValidator()
         return Library(
             id: try await LibraryId.validated(testID(number), using: validator),
             revision: try LibraryRevision(validating: "1"),
             name: "Library \(number)",
             rootNodeId: try await NodeId.validated(testID(number + 10_000), using: validator),
-            status: .active,
+            status: status,
             createdAt: Date(timeIntervalSince1970: 1_760_000_000),
             updatedAt: Date(timeIntervalSince1970: 1_760_000_100)
         )

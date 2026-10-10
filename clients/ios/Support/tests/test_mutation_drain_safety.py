@@ -18,10 +18,19 @@ class MutationDrainSafetyTests(unittest.TestCase):
         for folder in ["App", "Features"]:
             for path in (IOS / folder).rglob("*.swift"):
                 text = path.read_text()
-                calls = [".drain(", ".reconcileUnknown(", ".submitMutation("]
+                calls = [".drain(", ".submitMutation("]
                 if folder == "Features": calls += ["clientMutationRepository", "MutationSubmissionLease"]
                 for call in calls:
                     self.assertNotIn(call, text, str(path))
+                if path.name == "MetadataMutationViewModel.swift":
+                    # The explicit user-confirmed unknown action may cross the application facade;
+                    # SwiftUI never calls the coordinator or transport itself.
+                    self.assertIn("feature.reconcileUnknown(mutationId: mutationId, in: library)", text)
+                elif path.name == "MetadataMutationView.swift":
+                    self.assertIn('"Check / Retry Original Operation"', text)
+                    self.assertIn("viewModel.reconcileUnknown(mutationId: id)", text)
+                else:
+                    self.assertNotIn(".reconcileUnknown(", text, str(path))
         text = (IOS / "Application/Mutation/MutationDrainCoordinator.swift").read_text()
         for symbol in ["Timer(", "BGTask", "UUID(", "URLSession", "NodeRepository", "SyncCheckpointService"]:
             self.assertNotIn(symbol, text)

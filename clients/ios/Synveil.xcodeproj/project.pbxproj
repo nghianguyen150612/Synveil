@@ -107,6 +107,10 @@
 		A10000012C00000000000059 /* DurableMutationQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000059 /* DurableMutationQueue.swift */; };
 		A10000012C0000000000005B /* MutationDrainCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000005B /* MutationDrainCoordinator.swift */; };
 		A10000012C0000000000005A /* MutationQueueSQLiteStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000005A /* MutationQueueSQLiteStore.swift */; };
+		A10000012C00000000000060 /* MetadataMutationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000060 /* MetadataMutationService.swift */; };
+		A10000012C00000000000061 /* MetadataMutationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000061 /* MetadataMutationViewModel.swift */; };
+		A10000012C00000000000062 /* MetadataMutationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000062 /* MetadataMutationView.swift */; };
+		B10000012C00000000000030 /* MetadataMutationFeatureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000030 /* MetadataMutationFeatureTests.swift */; };
 		B10000012C0000000000002A /* MutationQueueTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000002A /* MutationQueueTestSupport.swift */; };
 		B10000012C0000000000002B /* MutationQueueSQLiteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000002B /* MutationQueueSQLiteTests.swift */; };
 		B10000012C0000000000002F /* MutationRecoverySQLiteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000002F /* MutationRecoverySQLiteTests.swift */; };
@@ -227,6 +231,10 @@
 		A20000012C00000000000059 /* DurableMutationQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Mutation/DurableMutationQueue.swift; sourceTree = "<group>"; };
 		A20000012C0000000000005B /* MutationDrainCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Mutation/MutationDrainCoordinator.swift; sourceTree = "<group>"; };
 		A20000012C0000000000005A /* MutationQueueSQLiteStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/MutationQueueSQLiteStore.swift; sourceTree = "<group>"; };
+		A20000012C00000000000060 /* MetadataMutationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Mutation/MetadataMutationService.swift; sourceTree = "<group>"; };
+		A20000012C00000000000061 /* MetadataMutationViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Mutation/MetadataMutationViewModel.swift; sourceTree = "<group>"; };
+		A20000012C00000000000062 /* MetadataMutationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Mutation/MetadataMutationView.swift; sourceTree = "<group>"; };
+		B20000012C00000000000030 /* MetadataMutationFeatureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/MetadataMutationFeatureTests.swift; sourceTree = "<group>"; };
 		B20000012C0000000000002A /* MutationQueueTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/MutationQueueTestSupport.swift; sourceTree = "<group>"; };
 		B20000012C0000000000002B /* MutationQueueSQLiteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/MutationQueueSQLiteTests.swift; sourceTree = "<group>"; };
 		B20000012C0000000000002F /* MutationRecoverySQLiteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/MutationRecoverySQLiteTests.swift; sourceTree = "<group>"; };
@@ -279,9 +287,19 @@
 				A20000012C0000000000003C /* AuthenticationRecoveryPresentation.swift */,
 				A40000012C00000000000017 /* Library */,
 				A40000012C00000000000018 /* Node */,
+				A40000012C0000000000001B /* Mutation */,
 				A40000012C00000000000016 /* Onboarding */,
 			);
 			name = Features;
+			sourceTree = "<group>";
+		};
+		A40000012C0000000000001B /* Mutation */ = {
+			isa = PBXGroup;
+			children = (
+				A20000012C00000000000061 /* MetadataMutationViewModel.swift */,
+				A20000012C00000000000062 /* MetadataMutationView.swift */,
+			);
+			name = Mutation;
 			sourceTree = "<group>";
 		};
 		A40000012C00000000000017 /* Library */ = {
@@ -365,6 +383,7 @@
 			isa = PBXGroup;
 			children = (
 				A20000012C00000000000059 /* DurableMutationQueue.swift */,
+				A20000012C00000000000060 /* MetadataMutationService.swift */,
 				A20000012C0000000000005B /* MutationDrainCoordinator.swift */,
 				A20000012C00000000000058 /* SyncCheckpointService.swift */,
 				A20000012C00000000000044 /* NodeModels.swift */,
@@ -564,6 +583,7 @@
 			files = (
 				A10000012C0000000000005A /* MutationQueueSQLiteStore.swift in Sources */,
 				A10000012C00000000000059 /* DurableMutationQueue.swift in Sources */,
+				A10000012C00000000000060 /* MetadataMutationService.swift in Sources */,
 				A10000012C0000000000005B /* MutationDrainCoordinator.swift in Sources */,
 				A10000012C00000000000058 /* SyncCheckpointService.swift in Sources */,
 				A10000012C00000000000057 /* MutationPersistenceCodec.swift in Sources */,
@@ -582,6 +602,8 @@
 				A10000012C00000000000048 /* NodeBrowserView.swift in Sources */,
 				A10000012C00000000000050 /* NodeFileDetailsView.swift in Sources */,
 				A10000012C00000000000049 /* NodeFileDetailsViewModel.swift in Sources */,
+				A10000012C00000000000061 /* MetadataMutationViewModel.swift in Sources */,
+				A10000012C00000000000062 /* MetadataMutationView.swift in Sources */,
 				A10000012C00000000000041 /* AuthenticatedLibraryCatalogRepository.swift in Sources */,
 				A10000012C00000000000040 /* AuthenticatedLibraryRequestProvider.swift in Sources */,
 				A10000012C0000000000003F /* LibraryResponseDTO.swift in Sources */,
@@ -641,6 +663,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				B10000012C0000000000002D /* DurableMutationQueueTests.swift in Sources */,
+				B10000012C00000000000030 /* MetadataMutationFeatureTests.swift in Sources */,
 				B10000012C0000000000002E /* MutationDrainCoordinatorTests.swift in Sources */,
 				B10000012C0000000000002C /* SyncCheckpointTests.swift in Sources */,
 				B10000012C0000000000002B /* MutationQueueSQLiteTests.swift in Sources */,

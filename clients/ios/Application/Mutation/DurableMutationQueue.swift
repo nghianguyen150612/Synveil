@@ -204,6 +204,50 @@ final class DurableMutationQueue: DurableMutationQueueProtocol {
         } catch { return .failed(Self.classify(error)) }
     }
 
+    /// Bounded durable activity view. Outstanding rows are selected first by SQLite, and the UI
+    /// receives only fully rehydrated records from the exact authenticated scope.
+    func activity(scope: ClientMutationScope, limit: Int) async -> MutationQueueReadResult {
+        do {
+            let session = try await capture(scope: scope)
+            let rows = try await store.activityRecords(scope: scope, limit: limit)
+            var records: [MutationQueueRecord] = []
+            for row in rows { records.append(try await codec.rehydrate(row)) }
+            try await fence(session)
+            return .records(records)
+        } catch { return .failed(Self.classify(error)) }
+    }
+
+    /// Returns the validated durable UNKNOWN recovery count without exposing attempt evidence.
+    func recoveryAttemptCount(scope: ClientMutationScope, mutationId: ClientMutationId) async
+        -> MutationQueueCountResult
+    {
+        do {
+            let session = try await capture(scope: scope)
+            guard let row = try await store.record(scope: scope, id: mutationId.rawValue) else {
+                try await fence(session)
+                return .missing
+            }
+            let record = try await codec.rehydrate(row)
+            guard record.state == .outcomeUnknown else {
+                try await fence(session)
+                return .count(0)
+            }
+            let history = try await store.attemptHistory(scope: scope, id: mutationId.rawValue)
+            for previous in history {
+                guard UUID(uuidString: previous.attempt.id) != nil,
+                    UUID(uuidString: previous.attempt.owner) != nil,
+                    previous.attempt.startedAt.timeIntervalSince1970.isFinite
+                else { throw MutationQueueFailure.malformedRecord }
+                let evidence = try JSONDecoder().decode(
+                    MutationOutcomeEvidence.self, from: previous.evidence)
+                try await codec.validateEvidence(
+                    evidence, state: .outcomeUnknown, mutation: record.mutation)
+            }
+            try await fence(session)
+            return .count(history.count)
+        } catch { return .failed(Self.classify(error)) }
+    }
+
     func get(scope: ClientMutationScope, mutationId: ClientMutationId) async
         -> MutationQueueLookupResult
     {
