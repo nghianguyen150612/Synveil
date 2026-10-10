@@ -385,14 +385,52 @@ final class MetadataMutationFeatureTests: XCTestCase {
         XCTAssertEqual(parentId, rootId)
         XCTAssertEqual(parentRevision.rawValue, "45")
         XCTAssertEqual(restoreRecord.state, .pending)
+    }
+
+    func testAppliedMutationRefreshesParentRevisionBeforeCreatingFolder() async throws {
+        let fixture = try await queueFixture(self)
+        let rootId = try await NodeId.validated(queueUUID(81), using: QueueValidator())
+        let root = try await mutationNode(
+            81, scope: fixture.scope, parent: nil, revision: "44", kind: .directory)
+        let source = try await mutationNode(82, scope: fixture.scope, parent: rootId, revision: "5")
+        let repository = MutationNodeRepository(nodes: [root, source])
+        let generator = CountingMutationIDGenerator(first: 700)
+        let feature = makeFeature(fixture, repository: repository, generator: generator)
+        let library = mutationLibrary(fixture, root: rootId)
+
+        let initialParentAvailability = await feature.folderParentAvailability(
+            in: library, parentNodeId: rootId, parentSnapshot: root, forceRefresh: false)
+        XCTAssertEqual(initialParentAvailability, .ready)
+        guard
+            case .persisted(let trashReceipt) = await feature.enqueue(
+                .trash(node: source, confirmed: true), in: library)
+        else { return XCTFail("Expected trash operation to queue") }
+        let trashId = try await ClientMutationId.validated(
+            trashReceipt.mutationId, using: QueueValidator())
+        guard
+            case .record(let trashRecord) = await fixture.queue.get(
+                scope: fixture.scope, mutationId: trashId)
+        else { return XCTFail("Missing durable trash record") }
+        await fixture.transport.set(try appliedTrashResponse(trashRecord.mutation, source: source))
+
+        let drain = await feature.sendPendingChanges(in: library)
+        XCTAssertEqual(drain.applied, 1)
+        XCTAssertNil(drain.stop)
+        let refreshedRoot = try await mutationNode(
+            81, scope: fixture.scope, parent: nil, revision: "45", kind: .directory)
+        repository.replace(refreshedRoot)
+        let currentParentAvailability = await feature.folderParentAvailability(
+            in: library, parentNodeId: rootId, parentSnapshot: root, forceRefresh: false)
+        XCTAssertEqual(currentParentAvailability, .ready)
+        XCTAssertEqual(repository.metadataRequestCount, 1)
 
         guard
             case .persisted(let folderReceipt) = await feature.enqueue(
                 .createFolder(
                     parentNodeId: rootId, parentAncestry: [rootId], parentSnapshot: root,
-                    name: "After restore"),
+                    name: "After applied change"),
                 in: library)
-        else { return XCTFail("Expected a new folder to use the refreshed parent revision") }
+        else { return XCTFail("Expected folder creation to use the refreshed parent revision") }
         let folderId = try await ClientMutationId.validated(
             folderReceipt.mutationId, using: QueueValidator())
         guard
