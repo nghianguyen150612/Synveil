@@ -138,10 +138,12 @@ fn has_legacy_configuration_inputs() -> bool {
 mod tests {
     use std::env;
 
+    #[cfg(not(windows))]
     use synveil_server_config::{
         ConfigInspection, DeploymentProfile, ExistingServerEvidence, ExternalDatabaseCredential,
         NewServerConfig, StorageId, StorageRootIdentity,
     };
+    #[cfg(not(windows))]
     use synveil_storage::{
         CapabilityEvidence, CapabilitySupport, StorageAvailability, StorageBackendKind,
         StorageCapabilities, StorageCapability,
@@ -149,8 +151,10 @@ mod tests {
 
     use super::{
         RuntimeServerConfiguration, RuntimeServerConfigurationError, SERVER_CONFIG_FILE_ENV,
-        select_server_configuration, server_configuration_from_runtime,
+        server_configuration_from_runtime,
     };
+    #[cfg(not(windows))]
+    use super::select_server_configuration;
 
     fn clear_env(f: impl FnOnce()) {
         let _guard = crate::runtime_test_support::environment_lock();
@@ -197,6 +201,7 @@ mod tests {
         .unwrap()
     }
 
+    #[cfg(not(windows))]
     fn ready_storage_capabilities() -> StorageCapabilities {
         [
             StorageCapability::ExclusiveCreate,
