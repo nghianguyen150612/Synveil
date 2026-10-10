@@ -123,10 +123,11 @@ synveil_export_encoded_rustflags() {
 }
 
 # CXX-Qt's QML-module build asks Qt's rcc tool to embed a generated qmldir and
-# the QML source files. rcc records their filesystem mtimes in generated C++.
-# Use a build-host wrapper that copies those QML resources under OUT_DIR and
-# fixes only the copies to SOURCE_DATE_EPOCH before invoking the real rcc.
-# This keeps source files untouched and makes clean release rebuilds stable.
+# the QML source files. rcc records source paths and filesystem mtimes in
+# generated C++. Use a build-host wrapper that stages resource copies under a
+# canonical, checkout- and target-root-independent directory and fixes only
+# the copies to SOURCE_DATE_EPOCH before invoking the real rcc. This keeps
+# source files untouched and makes clean release rebuilds stable.
 synveil_prepare_reproducible_qt_tools() {
     local repo_root="$1"
     local cargo_target_dir="$2"
@@ -233,9 +234,11 @@ synveil_prepare_reproducible_qt_tools() {
     # binary, so it must be checkout-independent and must not look like a
     # private path. It matches the Rust/C++ remap prefix already in force.
     local qml_canonical_root="${SYNVEIL_QML_CANONICAL_ROOT:-/usr/src/synveil}"
-    if [[ -n "$real_qmlcachegen" ]]; then
-        synveil_ensure_writable_root "$qml_canonical_root" || return 1
-    fi
+    # Both qmlcachegen and rcc use this stable root: qmlcachegen needs a
+    # canonical QML source path, and rcc's generated C++ embeds its staged
+    # resource paths. Refuse a target-root fallback because that would make
+    # independent release builds differ.
+    synveil_ensure_writable_root "$qml_canonical_root" || return 1
 
     qmake_identity="$(cksum < "$real_qmake" | awk '{print $1 ":" $2}')"
     rcc_identity="$(cksum < "$real_rcc" | awk '{print $1 ":" $2}')"

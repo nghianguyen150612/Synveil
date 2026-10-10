@@ -109,7 +109,11 @@ fn run_rcc() -> Result<ExitStatus, String> {
         return run_real_rcc(args);
     }
 
-    let normalized_qrc = normalize_qml_resources(&qrc_path, &qrc_contents)?;
+    let normalized_qrc = normalize_qml_resources(
+        &qrc_path,
+        &qrc_contents,
+        Path::new(QML_CANONICAL_ROOT),
+    )?;
     let mut normalized_args = args;
     normalized_args[qrc_index] = normalized_qrc.into_os_string();
     run_real_rcc(normalized_args)
@@ -229,7 +233,11 @@ fn attribute(tag: &str, name: &str) -> Option<String> {
     Some(tag[value_start..value_start + relative_end].to_owned())
 }
 
-fn normalize_qml_resources(qrc_path: &Path, contents: &str) -> Result<PathBuf, String> {
+fn normalize_qml_resources(
+    qrc_path: &Path,
+    contents: &str,
+    canonical_root: &Path,
+) -> Result<PathBuf, String> {
     let epoch = SOURCE_DATE_EPOCH
         .parse::<u64>()
         .map_err(|error| format!("invalid SOURCE_DATE_EPOCH {SOURCE_DATE_EPOCH:?}: {error}"))?;
@@ -249,7 +257,10 @@ fn normalize_qml_resources(qrc_path: &Path, contents: &str) -> Result<PathBuf, S
                 qrc_path.display()
             )
         })?;
-    let staged_dir = parent.join(".synveil-reproducible-rcc").join(stem);
+    // rcc includes source paths in generated comments. Staging below OUT_DIR
+    // therefore leaks each independent Cargo target root into the binary.
+    // Keep the path stable across clean builds, like the qmlcachegen inputs.
+    let staged_dir = canonical_root.join(".synveil-reproducible-rcc").join(stem);
     fs::create_dir_all(&staged_dir)
         .map_err(|error| format!("could not create {}: {error}", staged_dir.display()))?;
 

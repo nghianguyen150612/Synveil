@@ -318,6 +318,23 @@ fn artifact_unit_8_qmlcachegen_pins_hash_seed_at_the_child_process_boundary() {
 }
 
 #[test]
+fn artifact_unit_9_qml_resource_staging_uses_the_canonical_root() {
+    let wrapper = read(repo_root().join("scripts/reproducible-qt-wrapper.rs"));
+    let function_start = wrapper
+        .find("fn normalize_qml_resources(")
+        .expect("QML resource normalization entrypoint");
+    let function_end = wrapper[function_start..]
+        .find("\n}")
+        .map(|offset| function_start + offset);
+    let function = &wrapper[function_start..function_end.expect("normalization function end")];
+    assert!(function.contains("canonical_root.join(\".synveil-reproducible-rcc\")"));
+    assert!(
+        !function.contains("parent.join(\".synveil-reproducible-rcc\")"),
+        "RCC staging must not depend on a Cargo target root"
+    );
+}
+
+#[test]
 fn artifact_unit_5_manifest_matches_generated_artifacts() {
     let Some(manifest_path) = linux_manifest() else {
         eprintln!("SKIP ARTIFACT-UNIT-5: Linux release manifest is absent");
