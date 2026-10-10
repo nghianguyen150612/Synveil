@@ -182,7 +182,7 @@ final class MetadataMutationViewModel {
 
     func enqueueFolder(name: String) async -> Bool {
         guard folderParentAvailability == .ready else { return false }
-        await enqueue(
+        return await enqueue(
             .createFolder(
                 parentNodeId: route.parentScope.expectedParentId,
                 parentAncestry: route.ancestry,
