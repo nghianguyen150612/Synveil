@@ -90,10 +90,36 @@ Local source validator, Python Support suite **47 passed**, documentation valida
 
 ## Hosted Delivery Evidence
 
-At initial manifest creation, feature publication/native CI/merge evidence is **PENDING**, not claimed complete. The source/test head will be frozen before verification; final hosted evidence is recorded through a documentation-only finalization commit so an immutable source SHA is never made self-referential.
+The source/test head was frozen before native verification. This evidence is finalized through a separate documentation-only change; no Swift, test, project, workflow or production dependency changes follow the verified source head.
 
-Final feature SHA, PR URL, native Simulator totals, four exact-head iOS workflow runs, merge confirmation, integration SHA and unrelated CI status: **PENDING**.
+- Final feature SHA: **`6454bab8a4e74f3f802036b19347361364358f97`**.
+- Source PR: **[#100](https://github.com/nghianguyen150612/Synveil/pull/100)**, targeting **ios-app**, marked ready after the four exact-head native workflows passed, then squash-merged.
+- Fresh GitHub REST confirmation: **merged=true**, **state=closed**, **draft=false**, head SHA equal to the frozen feature SHA, base branch **ios-app**.
+- Source integration / resulting ios-app SHA: **`fd9532b15b4f9ab5ef6dd361f185240cd997cac9`**. Explicit fetch confirmed the hosted branch at that SHA. `git diff` between the frozen feature head and that integration head for `clients/ios` was empty. Coordinator, both new XCTest suites and this manifest were confirmed present on the integrated branch.
+- The later documentation-only finalization advances ios-app without changing that verified source tree. Its own SHA is intentionally not embedded in this file; the final delivery report records the resulting hosted tip after that PR merges.
 
-Known P035 Simulator limitations remain: real Keychain entitlement round-trip and unavailable filesystem Data Protection attributes. Actual current-run skips will be recorded from native results. Physical-device validation: **NOT_AVAILABLE**. No physical power-loss test is claimed.
+All four required workflows report **completed / success** and the exact feature head **`6454bab8a4e74f3f802036b19347361364358f97`** in GitHub run metadata:
 
-Readiness: **NOT_YET_VERIFIED** until genuine GitHub evidence confirms P036 merged into ios-app.
+| Required workflow | Exact-head run | Result |
+| --- | --- | --- |
+| iOS Static Validation | [38015805563](https://github.com/nghianguyen150612/Synveil/actions/runs/38015805563) | SUCCESS |
+| iOS Build | [38015805599](https://github.com/nghianguyen150612/Synveil/actions/runs/38015805599) | SUCCESS |
+| iOS Simulator Tests | [38015805541](https://github.com/nghianguyen150612/Synveil/actions/runs/38015805541) | SUCCESS |
+| iOS Rust Apple Build | [38015805696](https://github.com/nghianguyen150612/Synveil/actions/runs/38015805696) | SUCCESS |
+
+The Simulator run's genuine xcresult summary reports **959 total / 957 passed / 2 skipped / 0 failed / 0 expected failures**, result **Passed**, on **arm64 iPhone 17 Pro, iOS Simulator 26.5**. All **66 MutationDrainCoordinatorTests** and **24 MutationRecoverySQLiteTests** passed, with no P036 skip or failure. Existing P024-P035 suites ran in the same native test target. The result bundle was uploaded as `ios-simulator-test-results` by that workflow (seven-day artifact retention).
+
+Real native file-backed SQLite evidence includes successful v1 migration preserving PENDING identity/bytes, terminal outcomes and interrupted attempts; failed migration rolling back version/schema; exact previous uncertainty archived transactionally; guarded recovery transitions; immutable/nondeletable history; ninth-recovery blocking; recovery COMMIT acknowledgement loss; and recovery crash/reopen retaining UNKNOWN plus history. Coordinator native tests also passed lease COMMIT acknowledgement loss without POST and APPLIED COMMIT acknowledgement loss without false rollback/success. These are real SQLite transactions and reopen/fault-injection tests, not hardware power-cut evidence.
+
+Exactly two existing native tests skipped:
+
+- `KeychainCredentialStoreTests.testSimulatorKeychainRoundTripUsesUniqueTestService`: the unsigned Simulator test process has no Keychain access entitlement.
+- `MutationQueueSQLiteTests.testNativeDataProtectionAttributes`: the Simulator filesystem exposes no Data Protection attributes. Requested policy is verified separately; physical-device read-back remains required.
+
+Physical-device validation: **NOT_AVAILABLE**. Real device Keychain entitlement/protection round-trip and physical power-loss durability are not claimed.
+
+Duplicate PR-triggered static [38015808806](https://github.com/nghianguyen150612/Synveil/actions/runs/38015808806) and build [38015808777](https://github.com/nghianguyen150612/Synveil/actions/runs/38015808777) also passed at the same feature SHA. Duplicate Simulator [38015808839](https://github.com/nghianguyen150612/Synveil/actions/runs/38015808839) was still running at source merge; the complete successful push-triggered Simulator result above supplies the required evidence. Earlier feature-head runs are not substituted for exact-final-head verification.
+
+Unrelated CI at source merge: Linux AppImage [38015808792](https://github.com/nghianguyen150612/Synveil/actions/runs/38015808792) failed with **private or temporary build path found in synveil-desktop**, matching the earlier feature-head artifact failure. The separate push AppImage run was still running. Rust CI, Linux native package and PostgreSQL scheduled-maintenance workflows were queued or running; no passing conclusion is claimed for them. Their desktop/server/packaging/workflow source is unchanged by P036. These statuses are a recorded snapshot, not predictions of later conclusions.
+
+Readiness: **READY_FOR_PROMPT037**. Genuine GitHub evidence confirms source PR #100 is merged and closed on ios-app, and all four required exact-feature-head iOS workflows passed. User-facing editing, ACK, full rebaseline and automatic execution remain deferred as documented above.
