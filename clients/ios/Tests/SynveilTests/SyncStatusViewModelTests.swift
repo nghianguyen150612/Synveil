@@ -5,6 +5,7 @@ import XCTest
 
 #if canImport(SwiftUI)
     import SwiftUI
+    import UIKit
 #endif
 
 @MainActor
@@ -414,7 +415,10 @@ final class SyncStatusViewModelTests: XCTestCase {
                     f, name: String(repeating: "Library ", count: 100)),
                 coordinator: f.coordinator, projection: f.projection,
                 checkpoint: f.base.service, sessionController: f.base.controller)
-            XCTAssertNotNil(view.environment(\.dynamicTypeSize, .accessibility5).body)
+            let host = UIHostingController(
+                rootView: view.environment(\.dynamicTypeSize, .accessibility5))
+            host.loadViewIfNeeded()
+            XCTAssertNotNil(host.view)
         }
     #endif
 }
