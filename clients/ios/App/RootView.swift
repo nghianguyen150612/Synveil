@@ -18,6 +18,9 @@ struct RootView: View {
     var libraryCatalog: (any LibraryCatalogRepositoryProtocol)? = nil
     var nodeRepository: (any NodeRepositoryProtocol)? = nil
     var metadataMutationFeature: (any MetadataMutationFeatureProtocol)? = nil
+    var inboundSyncCoordinator: (any InboundSyncCoordinatorProtocol)? = nil
+    var nodeProjectionRepository: (any NodeProjectionRepositoryProtocol)? = nil
+    var syncCheckpointService: (any SyncCheckpointPreparationProtocol)? = nil
 
     var body: some View {
         switch sessionController.state {
@@ -44,6 +47,9 @@ struct RootView: View {
                 repository: libraryCatalog,
                 nodeRepository: nodeRepository,
                 metadataMutationFeature: metadataMutationFeature,
+                inboundSyncCoordinator: inboundSyncCoordinator,
+                nodeProjectionRepository: nodeProjectionRepository,
+                syncCheckpointService: syncCheckpointService,
                 sessionController: sessionController
             )
             // A later authenticated lifecycle receives a fresh transient catalog and navigation stack.

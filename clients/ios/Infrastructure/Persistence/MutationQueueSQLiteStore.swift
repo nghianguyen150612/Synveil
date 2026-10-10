@@ -24,6 +24,24 @@ private final class MutationSQLiteConnection: @unchecked Sendable {
     var projectionAuthority: Int32 = 0
     var ackLockDescriptor: Int32 = -1
     var ackLockHeld = false
+    var inboundLockDescriptor: Int32 = -1
+    var inboundLockOwner: UUID?
+    func acquireInboundLock(path: String, owner: UUID) throws {
+        guard inboundLockOwner == nil else { throw MutationQueueFailure.concurrentExecution }
+        if inboundLockDescriptor == -1 {
+            inboundLockDescriptor = open(path, O_RDWR | O_CREAT | O_NOFOLLOW, mode_t(0o600))
+        }
+        guard inboundLockDescriptor >= 0 else { throw MutationQueueFailure.io }
+        guard flock(inboundLockDescriptor, LOCK_EX | LOCK_NB) == 0 else {
+            throw MutationQueueFailure.concurrentExecution
+        }
+        inboundLockOwner = owner
+    }
+    func releaseInboundLock(owner: UUID) {
+        guard inboundLockOwner == owner else { return }
+        _ = flock(inboundLockDescriptor, LOCK_UN)
+        inboundLockOwner = nil
+    }
     func acquireAckLock(path: String) throws {
         guard !ackLockHeld else { throw SyncFeedFailure.applicationCommitRequired }
         if ackLockDescriptor == -1 {
@@ -45,6 +63,7 @@ private final class MutationSQLiteConnection: @unchecked Sendable {
     deinit {
         sqlite3_close_v2(handle)
         if ackLockDescriptor >= 0 { close(ackLockDescriptor) }
+        if inboundLockDescriptor >= 0 { close(inboundLockDescriptor) }
     }
 }
 
@@ -904,6 +923,84 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         return InboundSyncPageRecord(
             page: page, state: current.state, createdAt: current.created,
             updatedAt: current.updated, encodingVersion: 1)
+    }
+
+    /// Conservative global ownership across coordinators, connections and processes. The private
+    /// zero-byte advisory lock is released on process death. SQLite still authorizes every write.
+    func claimInboundRun(scope: ClientMutationScope, credentialId: String, owner: UUID) throws {
+        try requireFeedScope(scope, credentialId: credentialId)
+        try connection.acquireInboundLock(path: url.path + ".inbound.lock", owner: owner)
+    }
+
+    func finishInboundRun(owner: UUID) { connection.releaseInboundLock(owner: owner) }
+
+    /// Bounded deterministic selection across epochs; an old unresolved epoch must block a run.
+    /// Canonical unsigned decimal order uses length then text, never floating point or SQL casts.
+    func oldestUnresolvedInbound(
+        scope: ClientMutationScope, credentialId: String, bridge: any RustBridgeProtocol
+    ) async throws -> InboundSyncPageRecord? {
+        try requireFeedScope(scope, credentialId: credentialId)
+        let positions = try query(
+            "SELECT epoch,from_sequence FROM inbound_pages WHERE scope_id=? AND state<>'ACK_CONFIRMED' ORDER BY length(epoch),epoch,length(from_sequence),from_sequence LIMIT 1",
+            [.integer(try requireScopeId(scope))]
+        ) { s in
+            SyncJournalPosition(
+                epoch: try SyncDecimalValidation.validate(Self.text(s, 0), nonzero: true),
+                sequence: try SyncDecimalValidation.validate(Self.text(s, 1)))
+        }
+        guard let position = positions.first else { return nil }
+        let record = try await inboundPage(
+            scope: scope, position: position, credentialId: credentialId, bridge: bridge)
+        try requireFeedScope(scope, credentialId: credentialId)
+        return record
+    }
+
+    /// Only a bounded count leaves storage; signed tokens/attempt identities never enter UI state.
+    func inboundAckAttemptCount(
+        scope: ClientMutationScope, position: SyncJournalPosition, credentialId: String
+    ) throws -> Int {
+        try requireFeedScope(scope, credentialId: credentialId)
+        let count = try scalar(
+            "SELECT count(*) FROM sync_ack_attempts WHERE scope_id=? AND epoch=? AND from_sequence=?",
+            [
+                .integer(try requireScopeId(scope)), .text(position.epoch.rawValue),
+                .text(position.sequence.rawValue),
+            ])
+        guard (0...Int64(MutationQueuePolicy.maximumRecoveryAttempts)).contains(count) else {
+            throw MutationQueueFailure.malformedRecord
+        }
+        return Int(count)
+    }
+
+    /// Validate latest confirmed evidence without loading an unbounded page history.
+    func latestConfirmedInbound(
+        scope: ClientMutationScope, credentialId: String, bridge: any RustBridgeProtocol
+    ) async throws -> InboundSyncPageRecord? {
+        try requireFeedScope(scope, credentialId: credentialId)
+        let positions = try query(
+            "SELECT epoch,from_sequence FROM inbound_pages WHERE scope_id=? AND state='ACK_CONFIRMED' ORDER BY length(epoch) DESC,epoch DESC,length(from_sequence) DESC,from_sequence DESC LIMIT 1",
+            [.integer(try requireScopeId(scope))]
+        ) { s in
+            SyncJournalPosition(
+                epoch: try SyncDecimalValidation.validate(Self.text(s, 0), nonzero: true),
+                sequence: try SyncDecimalValidation.validate(Self.text(s, 1)))
+        }
+        guard let position = positions.first,
+            let record = try await inboundPage(
+                scope: scope, position: position, credentialId: credentialId, bridge: bridge)
+        else { return nil }
+        try requireFeedScope(scope, credentialId: credentialId)
+        guard record.state == .ackConfirmed else { throw SyncFeedFailure.checkpointConflict }
+        try requireProjectionCommit(record.page)
+        guard
+            try scalar(
+                "SELECT count(*) FROM sync_ack_attempts WHERE scope_id=? AND epoch=? AND from_sequence=? AND completed=1 AND dispatched=1 AND checkpoint IS NOT NULL",
+                [
+                    .integer(try requireScopeId(scope)), .text(position.epoch.rawValue),
+                    .text(position.sequence.rawValue),
+                ]) > 0
+        else { throw SyncFeedFailure.checkpointConflict }
+        return record
     }
 
     func blockInbound(scope: ClientMutationScope, credentialId: String) throws {

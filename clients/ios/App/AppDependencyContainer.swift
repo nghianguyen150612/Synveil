@@ -43,6 +43,7 @@ public final class AppDependencyContainer {
     private(set) var nodeProjectionRepository: SQLiteNodeProjectionRepository?
     private(set) var syncFeedApplicationService: SyncFeedApplicationService?
     private(set) var syncAckService: SyncAckService?
+    private(set) var inboundSyncCoordinator: (any InboundSyncCoordinatorProtocol)?
     private(set) var metadataMutationFeature: (any MetadataMutationFeatureProtocol)?
     private(set) var mutationQueueFailure: MutationQueueFailure?
 
@@ -148,6 +149,14 @@ public final class AppDependencyContainer {
                         database: database, bridge: bridge)
                     syncAckService = SyncAckService(
                         provider: feedProvider, projection: projection, bridge: bridge)
+                    if let syncFeedService, let syncFeedApplicationService, let syncAckService,
+                        let nodeProjectionRepository
+                    {
+                        inboundSyncCoordinator = InboundSyncCoordinator(
+                            feed: syncFeedService, application: syncFeedApplicationService,
+                            ack: syncAckService, projection: nodeProjectionRepository, queue: queue,
+                            database: database, provider: feedProvider, bridge: bridge)
+                    }
                 }
                 var composedMetadataMutationService: MetadataMutationService?
                 if let nodeRepository {
@@ -172,6 +181,7 @@ public final class AppDependencyContainer {
                 nodeProjectionRepository = nil
                 syncFeedApplicationService = nil
                 syncAckService = nil
+                inboundSyncCoordinator = nil
                 metadataMutationFeature = nil
                 mutationQueueFailure = DurableMutationQueue.classify(error)
             }

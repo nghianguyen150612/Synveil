@@ -17,7 +17,10 @@ struct SynveilApp: App {
                 credentialSink: container.credentialSink,
                 libraryCatalog: container.libraryCatalog,
                 nodeRepository: container.nodeRepository,
-                metadataMutationFeature: container.metadataMutationFeature
+                metadataMutationFeature: container.metadataMutationFeature,
+                inboundSyncCoordinator: container.inboundSyncCoordinator,
+                nodeProjectionRepository: container.nodeProjectionRepository,
+                syncCheckpointService: container.syncCheckpointService
             )
             .task {
                 await container.prepareEnrollmentSecurity()
