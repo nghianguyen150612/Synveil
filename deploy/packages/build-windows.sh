@@ -404,7 +404,7 @@ copy_missing_msvc_runtime_imports() {
     fi
 
     # windeployqt --compiler-runtime did not include MSVCP140.dll on the
-    # reproduced Windows runner. Add only imported VC143 runtime DLLs from the
+    # reproduced Windows runner. Add only imported MSVC runtime DLLs from the
     # exact active redist directory; the closed import audit below still
     # rejects every unresolved non-system dependency.
     local pass changed pe_file imported runtime_file upper
@@ -488,7 +488,7 @@ write_package_manifest() {
             printf 'qt_architecture=x86_64-msvc\n'
             printf 'windeployqt=%s\n' "$($WINDEPLOYQT --version 2>&1 | tr -d '\r' | head -n 1)"
             printf 'msvc=%s\n' "${VCToolsVersion:-unknown}"
-            printf 'msvc_crt=VCToolsRedistDir/x64/Microsoft.VC143.CRT\n'
+            printf 'msvc_crt=VCToolsRedistDir/x64/%s\n' "$(basename "$SYNVEIL_MSVC_CRT_DIR")"
         else
             printf 'qt=%s\n' "$("${QT_PREFIX}/bin/qmake" -query QT_VERSION 2>/dev/null || printf unknown)"
             printf 'qt_architecture=x86_64-cross\n'
