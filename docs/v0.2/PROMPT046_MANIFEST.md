@@ -1,12 +1,15 @@
 # Prompt046 manifest — Documentation and Distribution Readiness
 
-Status: **P046 documentation implemented and locally validated; publication is pending.** P046 does not complete P045, qualify a native platform, publish v0.2, or authorize P047/P048.
+Status: **P046 documentation implemented, locally validated, and merged through PR #101.** P046 does not complete P045, qualify a native platform, publish v0.2, or authorize P047/P048.
 
 ## Repository and branch
 
 - Repository: `https://github.com/nghianguyen150612/Synveil.git`.
 - Starting verified `origin/main`: `a560a40c8f2fe5b91db27c1b63fa0b0ab87173bc`.
 - P046 branch: `docs/p046-documentation-distribution-readiness`, created from `origin/main` at the starting SHA.
+- P046 PR source commit: `41ca6905ed7aa3c01acd57f4c9c5dadcc0e42705`.
+- P046 merge commit: `a39d357b61779ee8740940756593588527090236`.
+- `origin/main` at P046 merge verification: `a39d357b61779ee8740940756593588527090236`.
 - P045 remains separate: branch `feat/cross-platform-clean-machine-matrix`, PR [#78](https://github.com/nghianguyen150612/Synveil/pull/78), open and draft at observed head `035497c05c145e5c6129e744f9455937069680f4`. P046 does not modify its branch or PR.
 - Product version in the P046 baseline is `0.1.0` (`Cargo.toml`). v0.1.0 remains the current released product; v0.2 is upcoming and not released.
 
@@ -48,7 +51,9 @@ The user guides identify the release state before presenting any v0.2 procedure.
 - P045 Windows installer run `37970834502` passed its scoped installer workflow, including a standard-user step. Windows native acceptance run `37970834767` failed while recording required unavailable surfaces. This is scoped native testing, not native qualification.
 - P045's Linux clean-machine and Windows native evidence remains incomplete. The current P045 PR is intentionally deferred and still open/draft.
 - P036 end-to-end Host remains blocked. Self-host acceptance run `37970834595` failed its production-artifact identity gate; platform host jobs did not produce a passing Host qualification.
+- On the P046 source commit, CI run `38015105726` also failed the P036 `artifact-identity` job at “Require production PG17, server, desktop, and edge inventories.” This is a production-artifact evidence blocker, not P046 documentation evidence.
 - `gh release list --repo nghianguyen150612/Synveil --limit 20` returned no GitHub Releases at audit time. No v0.2 public download entrypoint, stable-channel payload, production signing key, public trust bootstrap, or final artifact set is published. P043 provides verification code, not a production key or signing service.
+- Additional broad CI runs on the P046 source exposed release/build failures that were not changed in this documentation task: AppImage run `38015096350` failed `APPIMAGE-8` because `AppRun` does not exec the packaged desktop; Windows candidate runs `38015096443` and `38015105724` selected Git for Windows `/usr/bin/link.exe` instead of the MSVC linker and failed before the candidate build. Do not treat these as production artifacts or native qualification.
 - Release readiness requires P045 and P036 acceptance, exact artifact/source identities, production trust-root and signing operations, authenticated channel/manifest publication, release-specific OS/runtime claims, and P047 validation. P046 creates no v0.2.0 tag.
 
 ## Supported and unsupported claims
@@ -76,7 +81,8 @@ git diff --check
 - `python3 scripts/validate-v02-user-docs.py` — passed: 7 paired topics and 14 troubleshooting categories, relative links, inline code/flag parity, release-status distinctions, platform facts, and trust hygiene.
 - `./scripts/validate-docs.sh` — passed all 23 documentation units, including the new P046 checker and existing contract validators.
 - `./scripts/validate-install-acceptance.sh` — passed: 11 scenario definitions and 21 contract tests. Native execution was not performed.
-- `git diff --check` and `git diff --cached --check` — passed for the complete 19-file P046 change set.
+- `git diff --check` and `git diff --cached --check` — passed for the complete 19-file P046 change set before publication.
+- Hosted documentation-gate jobs were still queued at merge verification; they are recorded below and are not claimed as passes. No required checks were reported for the P046 branch by `gh pr checks --required`.
 
 P046-specific remote CI has not run yet; the PR is not open. CI run IDs will be added after publication.
 
@@ -88,14 +94,17 @@ Other relevant repository/remote inspection commands included `git fetch origin 
 - P045 Windows installer: run `37970834502` — scoped installer workflow passed.
 - P045 Windows native acceptance: run `37970834767` — failed on required unavailable surfaces.
 - P036 server self-host acceptance: run `37970834595` — production artifact identity gate failed; no Host qualification.
+- P046 source commit hosted documentation gates, queued at merge verification: run `38015105712` (security structural/documentation gates), `38015105729` (repair/recovery static-and-docs), `38015105734` (library first-run documentation-and-quality), `38015105738` (installation-to-sync docs-and-quality), and `38015105759` (resilience docs and acceptance-scope validator).
+- P046 source commit P036 artifact identity: run `38015105726` — failed because required production PostgreSQL 17, server, desktop, and edge inventories were unavailable.
+- Broad source workflows also produced AppImage run `38015096350` failure (`APPIMAGE-8`: `AppRun` does not exec the packaged desktop) and Windows candidate run failures `38015096443` / `38015105724` (Git for Windows `link.exe` was selected in place of MSVC `link.exe`). These do not change P046 docs validation; they remain release engineering blockers.
 - Remaining blockers: P045 native clean-machine acceptance; P036 end-to-end Host evidence; production key custody/public trust-root delivery; stable channel, authenticated manifest and public download publication; final exact artifact identities; and P047 acceptance.
 
 ## Publication record
 
-- PR URL: **pending**.
-- P046 commit SHA: **pending**.
-- P046 CI run IDs: **pending**.
-- Merge status: **pending**.
-- Final verified `origin/main` SHA: **pending**.
+- PR URL: https://github.com/nghianguyen150612/Synveil/pull/101.
+- P046 source commit SHA: `41ca6905ed7aa3c01acd57f4c9c5dadcc0e42705`.
+- Final published P046 merge SHA: `a39d357b61779ee8740940756593588527090236`.
+- Merge status: **merged** at `2026-10-10T02:06:37Z`; P045 PR #78 remains open and draft.
+- Final verified `origin/main` SHA at P046 merge: `a39d357b61779ee8740940756593588527090236`.
 
 P045 is intentionally deferred. P046 completion does not mean P045 passed, v0.2 shipped, or P047 may begin.
