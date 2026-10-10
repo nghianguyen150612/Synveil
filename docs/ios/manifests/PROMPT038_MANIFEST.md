@@ -7,7 +7,12 @@
 - Actual starting fetched `origin/ios-app`: `0495e50e850575f1176c99299919b52e32300a10`.
 - Existing clean checkout reused. Initial `work` checkout was `a560a40c8f2fe5b91db27c1b63fa0b0ab87173bc`; it was not the implementation baseline.
 - Verified remote URL, clean status, fetched the explicit integration ref, verified the supplied P037 SHA is an ancestor, and created the feature branch from that fetched ref. No extra integration commits were present.
-- Hosted feature SHA, PR, exact-head CI, merge confirmation and resulting integration SHA: pending publication at this manifest's initial commit. These fields must be finalized from genuine hosted evidence; initial implementation alone does not establish readiness for P039.
+- Frozen final feature SHA: `586b2a2411ca4fe7d35d9689568cefbdded1ee28`.
+- Genuine feature PR: [#108](https://github.com/nghianguyen150612/Synveil/pull/108), base `ios-app`, ready (`draft=false`) before squash merge.
+- Independent GitHub REST confirmation: `merged=true`, `state=closed`, `draft=false`, head equal to the frozen feature SHA; merged at `2026-10-10T07:10:55Z` (14:10:55 Asia/Bangkok).
+- Source squash merge and resulting hosted `ios-app` SHA: `02c4a6e303fb85cbcef82271fe2f265d3d3029a4`.
+- Explicit integration fetch and GitHub ref API independently matched that SHA. `git diff` between the frozen feature head and integrated head for `clients/ios` and this initial manifest was empty. New domain/services, SQLite/test sources, project registration and manifest were verified on the merged branch.
+- Hosted evidence is finalized through a separate documentation-only branch, `ios/p038-manifest-finalization`. No production Swift, tests, project or workflows change after the frozen source head. The final report records the resulting hosted tip after this documentation PR merges; its own SHA is not embedded here.
 
 ## Authoritative references
 
@@ -90,13 +95,42 @@ Modified the authenticated Library provider, dependency container, existing SQLi
 - Real file-backed SQLite cases include v2 migration with immutable APPLIED/CONFLICT/UNKNOWN queue bytes and response evidence, attempt history, verified base and quarantine preservation, migration rollback, stage/reopen, duplicate/conflicting evidence, atomic INSERT/COMMIT rollback, lost commit readback, corruption, capacity, simulated disk full, scope/credential isolation, concurrent serialized staging, logout/replacement fencing, immutable application gating, no POST/base advancement and no network on reopen.
 - ACK cases include the actual authenticated provider request, original token/body/header/route, private capability ownership, missing/revoked application authorization, checkpoint strictness/scope/epoch/regression/projection boundary, replay at further confirmed sequence, timeout/redirect/cancellation/session loss, result persistence uncertainty, conflict/rebaseline and 503 credential preservation. Dedicated projection fixtures are test-only and are not evidence that a Node cache exists.
 - Linux Swift 6.2 portable SwiftPM harness copies production Domain/Application/SQLite sources and selected XCTest suites into ignored `work/`. System SQLite is real/file-backed. Temporary test copies adapt synchronous MainActor XCTest discovery. The existing real-Rust identity case is skipped because this worker has no Rust toolchain; genuine native CI retains it unchanged. The downloaded Linux Swift Observation library needs `--allow-shlib-undefined` at link; production Swift code is unchanged.
-- Portable result before hosted publication: 375 tests executed, 1 skipped, 0 failures (374 passed); includes 135 new P038 cases and existing P035/P036 checkpoint/queue/drain regression cases. This is Linux evidence, not Apple Simulator execution.
-- iOS Python Support suite: 58 passed (4 new); architecture/source validator, strict official Swift formatting, Swift 6 portable compilation, documentation validator and git diff --check passed before publication. Exact final checks and hosted evidence are finalized after the feature commit.
+- Portable result before hosted publication: 375 tests executed, 1 skipped, 0 failures (374 passed); includes 135 new P038 cases and existing P035/P036 checkpoint/queue/drain regression cases. The skipped real-Rust identity case passed in the genuine native Simulator run below. This is Linux evidence, not Apple Simulator execution.
+- iOS Python Support suite: 58 passed (4 new); architecture/source validator, strict official Swift formatting, Swift 6 portable compilation, documentation validator and git diff --check passed on the frozen source tree before publication. Final native evidence is recorded below.
 
 ## Native and physical validation
 
-Hosted exact-feature-head iOS Static Validation, iOS Build, iOS Simulator Tests and dispatched iOS Rust Apple Build are pending at the initial manifest commit. P037 results are not reused. Native XCTest includes P038 real SQLite and all registered P024–P037 regressions.
+All four genuine GitHub Actions runs independently report completed/success and exact head `586b2a2411ca4fe7d35d9689568cefbdded1ee28`. Earlier P038 heads and P037 results are not substituted.
 
-Known prior Keychain-entitlement and Simulator filesystem Data Protection skips are not claimed passed. Fresh native totals and skip reasons must be recorded from P038 results. Physical-device validation is NOT_AVAILABLE. Hardware Keychain, native device protection attributes and power-loss durability are unverified here.
+| Workflow | Exact-head run | Result |
+| --- | --- | --- |
+| iOS Static Validation | [38032539352](https://github.com/nghianguyen150612/Synveil/actions/runs/38032539352) | SUCCESS |
+| iOS Build | [38032539373](https://github.com/nghianguyen150612/Synveil/actions/runs/38032539373) | SUCCESS |
+| iOS Simulator Tests | [38032541956](https://github.com/nghianguyen150612/Synveil/actions/runs/38032541956) | SUCCESS |
+| iOS Rust Apple Build | [38032539602](https://github.com/nghianguyen150612/Synveil/actions/runs/38032539602) | SUCCESS |
+
+The genuine xcresult summary is **1,124 total / 1,122 passed / 2 skipped / 0 failed**, result Passed, on arm64 iPhone 17 Pro with iOS Simulator 26.5. All **75 SyncFeedTests**, **32 InboundSyncSQLiteTests** and **28 SyncAckTests** passed with no P038 skip. Existing P024–P037 suites ran in the same native target, including the real-Rust identity rehydration case. The result bundle was uploaded as ios-simulator-test-results (seven-day retention). Rust Apple validation built/checks the supported targets, verifies C header alignment and validates staged static artifacts; no separate Linux Rust unit-test pass is claimed.
+
+Real native file-backed SQLite evidence includes v2 migration preserving APPLIED/CONFLICT response bytes, UNKNOWN immutable request/payload and attempt history, verified checkpoint provenance and quarantine; failed migration rollback; stage/reopen and identical/conflicting replay; INSERT/COMMIT fault rollback and lost commit readback; concurrent actor staging; real uncommitted SQLite connection interruption retaining the last committed page; readback/rebaseline interleaving fencing; corruption/capacity/credential rejection and staging-to-ACK transition denial. These results do not prove physical power-loss durability.
+
+Exactly two existing native cases skipped:
+
+- KeychainCredentialStoreTests.testSimulatorKeychainRoundTripUsesUniqueTestService: unsigned Simulator process lacks Keychain access entitlement.
+- MutationQueueSQLiteTests.testNativeDataProtectionAttributes: Simulator filesystem does not expose Data Protection attributes; requested policy is checked separately and physical-device round-trip remains required.
+
+Physical-device validation is **NOT_AVAILABLE**. Hardware Keychain, native device protection attribute readback and power-loss durability are unverified here; the two skipped cases are not counted as passed.
 
 No persistent Node projection, canonical metadata application, automatic feed/ACK polling or drain, rebaseline execution/snapshot swap, background task, transfer or sync UI was introduced. P039 must implement canonical Node materialization, purge semantics, exact locally applied position, atomic projection+pending ACK evidence, durable authority and recovery before enabling production ACK.
+
+## Unrelated hosted CI snapshot and readiness
+
+At source merge, exact-head non-iOS results included:
+
+- Linux AppImage [38032539375](https://github.com/nghianguyen150612/Synveil/actions/runs/38032539375) and duplicate PR run 38032541909: FAILURE. The inspected failure is private or temporary build path found in synveil-desktop, also documented in prior iOS delivery.
+- Rust CI [38032539359](https://github.com/nghianguyen150612/Synveil/actions/runs/38032539359) and duplicate PR run 38032541930: FAILURE. Failed jobs include Windows workspace check, workspace tests on Ubuntu/macOS/Windows, Linux/Windows desktop UI and Clippy. These subsystems are unchanged by P038.
+- PostgreSQL 17 [38032539356](https://github.com/nghianguyen150612/Synveil/actions/runs/38032539356): FAILURE in Prompt 64–65 backup_scheduler_tick_postgres (25). Duplicate PR run 38032541965 was still running at the snapshot.
+- Linux DEB/RPM runs 38032539418 and 38032541989 were still running at that snapshot; no successful conclusion is claimed.
+
+No Rust/server/desktop/web/package/workflow source was changed to address these unrelated failures. Their snapshot statuses do not replace the four successful iOS gates above.
+
+Source delivery is independently confirmed merged and closed on ios-app, with the complete native suite and all required exact-head iOS gates successful. The documentation-only finalization preserves that verified source tree. P039 may build on this foundation; production ACK remains unavailable until genuine transactional Node projection application and durable recovery exist.
