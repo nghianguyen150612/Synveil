@@ -122,7 +122,7 @@ Modified:
 - Real SQLite evidence: the hosted XCTest run includes the P037 SwiftUI composition test using the existing SQLite-backed queue fixture, verifies durable enqueue state before Send, and then exercises the explicit APPLIED drain path. The exact-head native test suite passed. This is not physical power-loss durability evidence.
 - Physical-device validation: `NOT_AVAILABLE` in this environment; no device durability or hardware Keychain claims.
 - Exact-head hosted results: iOS Static Validation passed (run `38024055166`); iOS Build passed (run `38024055148`); iOS Simulator Tests passed, 987/2/0 (run `38024055302`); dispatched iOS Rust Apple Build passed (run `38024059058`).
-- Exact-head unrelated workflow status observed after the feature PR merge: Linux AppImage failed (run `38024055146`); Rust CI had failures in its Windows and Linux test jobs, Windows desktop UI and web quality jobs (run `38024055263`). PostgreSQL 17 and Linux native package jobs were still running when this manifest was finalized; none is an iOS P037 gate. The successful P037 iOS evidence above is recorded independently. No P037 fix was made for those unrelated areas.
+- Exact-head non-iOS workflow status on the feature SHA: Linux AppImage failed (run `38024055146`). Rust CI completed with failures in `Check (windows-latest)`, test workspaces on Ubuntu/macOS/Windows, native desktop UI on Linux/Windows, Clippy, and web application tests (run `38024055263`). These failures concern repository non-iOS workflows; the affected subsystems are outside P037’s iOS scope and none is an iOS P037 gate. The feature-SHA PostgreSQL 17 suite (run `38024055147`) and Linux DEB/RPM package workflow (run `38024055215`) were still in progress at the final status check. No P037 fix was made in those unrelated areas.
 
 ## Finalization fields
 
@@ -132,5 +132,5 @@ Modified:
 - Hosted merge state verified from GitHub REST: `merged=true`, `state=closed`, `merged_at=2026-10-10T04:47:36Z`.
 - Resulting hosted `ios-app` SHA for P037 integration: `9e0ae71eccd637c8fb68a7f412acb749d51aeb97`.
 - Feature sources, tests and this manifest were verified on integrated `ios-app` at the resulting SHA. This manifest’s post-merge evidence finalization is submitted separately so the feature merge record remains immutable.
-- Unrelated hosted workflow status is listed in Tests and validation evidence; broad Rust, AppImage, desktop, web, PostgreSQL and packaging jobs are outside the P037 iOS validation scope.
+- Non-iOS hosted workflow results are listed in Tests and validation evidence; they are outside the P037 iOS validation scope.
 - Remaining limitations: no general Trash listing; Restore is APPLIED-operation and precondition gated; no offline persistent Node cache; no background mutation execution; Linux cannot execute Swift/XCTest/Simulator; physical-device behavior remains unverified.
