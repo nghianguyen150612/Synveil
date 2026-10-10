@@ -20,11 +20,14 @@ class DurableMutationQueueRegistrationTests(unittest.TestCase):
             "Domain/Mutation/MutationPersistenceCodec.swift",
             "Application/Mutation/SyncCheckpointService.swift",
             "Application/Mutation/DurableMutationQueue.swift",
+            "Application/Mutation/MutationDrainCoordinator.swift",
             "Infrastructure/Persistence/MutationQueueSQLiteStore.swift",
             "Tests/SynveilTests/MutationQueueTestSupport.swift",
             "Tests/SynveilTests/MutationQueueSQLiteTests.swift",
             "Tests/SynveilTests/SyncCheckpointTests.swift",
             "Tests/SynveilTests/DurableMutationQueueTests.swift",
+            "Tests/SynveilTests/MutationDrainCoordinatorTests.swift",
+            "Tests/SynveilTests/MutationRecoverySQLiteTests.swift",
         ]:
             self.assertTrue((IOS / path).is_file())
             reference = re.search(r"([A-F0-9]{24}) /\*.*?\*/ = \{isa = PBXFileReference;[^\n]*path = " + re.escape(path) + r";", project)

@@ -37,6 +37,7 @@ public final class AppDependencyContainer {
 
     /// Infrastructure only. Database failure leaves read-only browsing available and POST gated.
     private(set) var durableMutationQueue: DurableMutationQueue?
+    private(set) var mutationDrainCoordinator: MutationDrainCoordinator?
     private(set) var syncCheckpointService: SyncCheckpointService?
     private(set) var mutationQueueFailure: MutationQueueFailure?
 
@@ -100,13 +101,13 @@ public final class AppDependencyContainer {
             libraryCatalog = AuthenticatedLibraryCatalogRepository(
                 provider: browserProvider, bridge: bridge)
             nodeRepository = AuthenticatedNodeRepository(provider: browserProvider, bridge: bridge)
+            let mutationProvider = AuthenticatedLibraryRequestProvider(
+                controller: sessionController, store: store,
+                transport: URLSessionHTTPTransport(
+                    requestTimeout: 10, resourceTimeout: 15,
+                    maxResponseBodyBytes: ClientMutationPolicy.maximumResponseBytes))
             clientMutationRepository = AuthenticatedClientMutationRepository(
-                provider: AuthenticatedLibraryRequestProvider(
-                    controller: sessionController, store: store,
-                    transport: URLSessionHTTPTransport(
-                        requestTimeout: 10, resourceTimeout: 15,
-                        maxResponseBodyBytes: ClientMutationPolicy.maximumResponseBytes)),
-                bridge: bridge)
+                provider: mutationProvider, bridge: bridge)
             do {
                 let database = try await Task.detached {
                     try MutationQueueSQLiteStore(url: MutationQueueSQLiteStore.productionURL())
@@ -118,6 +119,8 @@ public final class AppDependencyContainer {
                 case .failed(let failure): throw failure
                 }
                 durableMutationQueue = queue
+                mutationDrainCoordinator = MutationDrainCoordinator(
+                    queue: queue, provider: mutationProvider, bridge: bridge)
                 syncCheckpointService = SyncCheckpointService(
                     provider: browserProvider, queue: queue, bridge: bridge)
                 sessionController.installMutationSessionInvalidator { [weak queue] in
@@ -125,6 +128,7 @@ public final class AppDependencyContainer {
                 }
             } catch {
                 durableMutationQueue = nil
+                mutationDrainCoordinator = nil
                 syncCheckpointService = nil
                 mutationQueueFailure = DurableMutationQueue.classify(error)
             }

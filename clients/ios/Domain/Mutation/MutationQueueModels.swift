@@ -6,6 +6,7 @@ enum MutationQueueState: String, CaseIterable, Sendable {
     case failedPermanent = "FAILED_PERMANENT"
 
     var outstanding: Bool { self != .applied && self != .failedPermanent }
+    /// Ordinary attempt lifecycle. Explicit unknown recovery is guarded separately in SQLite.
     func permits(_ destination: Self) -> Bool {
         self == .pending && destination == .submitting
             || self == .submitting
@@ -21,6 +22,7 @@ enum MutationQueueFailure: Error, Equatable, Sendable {
     case duplicateIdentity, notFound, invalidTransition, ownershipRequired, scopeMismatch,
         staleSession
     case unauthenticated, cancelled, invalidLimit, invalidOperation, transport(LibraryFailure)
+    case concurrentExecution, recoveryLimit
     /// The write committed but its initiating session/task can no longer publish an actionable row.
     /// Read-back using a newly validated exact scope is required; this never means rollback.
     case commitAcknowledgementLost
@@ -34,6 +36,7 @@ enum MutationQueuePolicy {
     static let maximumRecords = 4096
     static let maximumReadBatch = 100
     static let maximumCheckpointBytes = 16 * 1024
+    static let maximumRecoveryAttempts = 8
 }
 
 struct MutationQueueRecord: Equatable, Sendable, CustomStringConvertible,
@@ -106,6 +109,15 @@ struct StoredMutationRecord: Sendable {
     let evidence: Data?
 }
 
+struct MutationHistoricalAttempt: Equatable, Sendable, CustomStringConvertible,
+    CustomDebugStringConvertible
+{
+    let attempt: MutationAttemptMetadata
+    let evidence: Data
+    var description: String { "[REDACTED_MUTATION_ATTEMPT_HISTORY]" }
+    var debugDescription: String { description }
+}
+
 protocol MutationQueueStorageProtocol: Sendable {
     func bindSession(scope: ClientMutationScope, credentialId: String) async throws
     func quarantineSessions() async throws
@@ -120,6 +132,12 @@ protocol MutationQueueStorageProtocol: Sendable {
     func recoverInterruptedOperations() async throws -> Int
     func beginAttempt(scope: ClientMutationScope, id: String, owner: String, attemptId: String)
         async throws -> StoredMutationRecord
+    func beginRecoveryAttempt(
+        scope: ClientMutationScope, id: String, owner: String, attemptId: String
+    )
+        async throws -> StoredMutationRecord
+    func attemptHistory(scope: ClientMutationScope, id: String) async throws
+        -> [MutationHistoricalAttempt]
     func authorizeAttempt(_ mutation: PreparedClientMutation, owner: String, attemptId: String)
         async throws
     func finishAttempt(

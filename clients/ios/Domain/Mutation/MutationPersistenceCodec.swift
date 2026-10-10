@@ -115,7 +115,10 @@ struct MutationPersistenceCodec: Sendable {
         }
     }
 
-    func evidence(for result: ClientMutationSubmissionResult, mutation: PreparedClientMutation)
+    func evidence(
+        for result: ClientMutationSubmissionResult, mutation: PreparedClientMutation,
+        preDispatchFailure: Bool = false
+    )
         async throws -> (MutationQueueState, Data)
     {
         let evidence: MutationOutcomeEvidence
@@ -190,8 +193,11 @@ struct MutationPersistenceCodec: Sendable {
             // Even a local/cancellation failure after taking attempt ownership remains conservatively unknown.
             state = .outcomeUnknown
             let cause =
-                failure == .cancelled
-                ? "CANCELLED" : failure == .staleSession ? "STALE_SESSION" : "UNVERIFIED_OUTCOME"
+                preDispatchFailure
+                ? "LOCAL_PRE_DISPATCH"
+                : failure == .cancelled
+                    ? "CANCELLED"
+                    : failure == .staleSession ? "STALE_SESSION" : "UNVERIFIED_OUTCOME"
             evidence = MutationOutcomeEvidence(
                 category: .outcomeUnknown, responseStatus: nil,
                 responseBody: nil, rejection: nil, uncertainty: cause)
@@ -234,7 +240,10 @@ struct MutationPersistenceCodec: Sendable {
         switch (state, evidence.category) {
         case (.outcomeUnknown, .outcomeUnknown):
             guard
-                ["CANCELLED", "STALE_SESSION", "UNVERIFIED_OUTCOME", "INTERRUPTED"].contains(
+                [
+                    "CANCELLED", "STALE_SESSION", "UNVERIFIED_OUTCOME", "INTERRUPTED",
+                    "LOCAL_PRE_DISPATCH", "LEASE_COMMIT_ACKNOWLEDGEMENT_LOST",
+                ].contains(
                     evidence.uncertainty),
                 evidence.responseStatus == nil, evidence.responseBody == nil,
                 evidence.rejection == nil

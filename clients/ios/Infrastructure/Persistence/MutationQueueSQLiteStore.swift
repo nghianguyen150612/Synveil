@@ -25,11 +25,11 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol {
     private let maximumOutstanding: Int
     private let maximumBytes: Int
     private let maximumRecords: Int
-    static let schemaVersion = 1
+    static let schemaVersion = 2
     private static let scopePredicate = "endpoint=? AND owner_id=? AND device_id=? AND library_id=?"
     private static let columns =
         "mutation_id,epoch,sequence,kind,payload,request,encoding_version,enqueue_order,created_at,state,attempt_id,attempt_owner,attempt_started,dispatch_recorded,evidence"
-    private static let schema = [
+    static let version1Schema = [
         """
         CREATE TABLE scopes (
           scope_id INTEGER PRIMARY KEY,
@@ -84,6 +84,39 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol {
         """,
     ]
 
+    private static let recoverySchema = [
+        """
+        CREATE TABLE mutation_attempt_history (
+          enqueue_order INTEGER NOT NULL REFERENCES mutations(enqueue_order),
+          attempt_id TEXT NOT NULL, attempt_owner TEXT NOT NULL, attempt_started REAL NOT NULL,
+          dispatch_recorded INTEGER NOT NULL CHECK(dispatch_recorded IN (0,1)),
+          evidence BLOB NOT NULL CHECK(length(evidence) BETWEEN 1 AND 65536),
+          PRIMARY KEY(enqueue_order,attempt_id)
+        )
+        """,
+        """
+        CREATE TRIGGER attempt_history_immutable BEFORE UPDATE ON mutation_attempt_history
+        BEGIN SELECT RAISE(ABORT,'immutable attempt history'); END
+        """,
+        """
+        CREATE TRIGGER attempt_history_retained BEFORE DELETE ON mutation_attempt_history
+        BEGIN SELECT RAISE(ABORT,'retained attempt history'); END
+        """,
+        """
+        CREATE TRIGGER mutation_transition BEFORE UPDATE OF state ON mutations
+        WHEN NOT (OLD.state='PENDING' AND NEW.state='SUBMITTING')
+          AND NOT (OLD.state='SUBMITTING' AND NEW.state IN ('OUTCOME_UNKNOWN','APPLIED','CONFLICT','BLOCKED_REBASELINE','FAILED_PERMANENT'))
+          AND NOT (OLD.state='OUTCOME_UNKNOWN' AND NEW.state='SUBMITTING'
+            AND NEW.attempt_id<>OLD.attempt_id AND NEW.dispatch_recorded=0 AND NEW.evidence IS NULL
+            AND EXISTS(SELECT 1 FROM mutation_attempt_history h WHERE h.enqueue_order=OLD.enqueue_order
+              AND h.attempt_id=OLD.attempt_id AND h.attempt_owner=OLD.attempt_owner
+              AND h.attempt_started=OLD.attempt_started AND h.dispatch_recorded=OLD.dispatch_recorded
+              AND h.evidence=OLD.evidence))
+        BEGIN SELECT RAISE(ABORT,'invalid transition'); END
+        """,
+    ]
+    private static let schema = Array(version1Schema.dropLast()) + recoverySchema
+
     init(
         url: URL, busyTimeoutMilliseconds: Int32 = 250,
         maximumOutstanding: Int = MutationQueuePolicy.maximumOutstandingPerScope,
@@ -114,7 +147,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol {
         // Initialization uses only local helpers; no actor reference escapes before schema validation.
         try Self.execute(handle, "PRAGMA foreign_keys=ON")
         let version = try Self.scalar(handle, "PRAGMA user_version")
-        guard version == 0 || version == Int64(Self.schemaVersion) else {
+        guard [0, 1, Int64(Self.schemaVersion)].contains(version) else {
             throw MutationQueueFailure.unsupportedSchema
         }
         if version == 0 {
@@ -129,21 +162,37 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol {
             do {
                 for statement in Self.schema { try Self.execute(handle, statement) }
                 try fault?(.migration)
-                try Self.execute(handle, "PRAGMA user_version=1")
+                try Self.execute(handle, "PRAGMA user_version=2")
                 try Self.execute(handle, "COMMIT")
             } catch {
                 try? Self.execute(handle, "ROLLBACK")
                 throw error
             }
         }
-        let registered = try Self.query(
-            handle, "SELECT sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY sql"
-        ) { s in
-            try Self.text(s, 0)
+        func verifySchema(_ expected: [String]) throws {
+            let registered = try Self.query(
+                handle, "SELECT sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY sql"
+            ) { try Self.text($0, 0) }
+            guard registered.sorted() == expected.sorted() else {
+                throw MutationQueueFailure.corrupt
+            }
         }
-        guard registered.sorted() == Self.schema.sorted() else {
-            throw MutationQueueFailure.corrupt
+        if version == 1 {
+            // Verify the exact P035 schema before changing anything; never repair damaged schemas.
+            try verifySchema(Self.version1Schema)
+            try Self.execute(handle, "BEGIN IMMEDIATE")
+            do {
+                try Self.execute(handle, "DROP TRIGGER mutation_transition")
+                for statement in Self.recoverySchema { try Self.execute(handle, statement) }
+                try fault?(.migration)
+                try Self.execute(handle, "PRAGMA user_version=2")
+                try Self.execute(handle, "COMMIT")
+            } catch {
+                try? Self.execute(handle, "ROLLBACK")
+                throw error
+            }
         }
+        try verifySchema(Self.schema)
         let integrity = try Self.query(handle, "PRAGMA quick_check") { try Self.text($0, 0) }
         guard integrity == ["ok"],
             try Self.query(handle, "PRAGMA foreign_key_check", map: { _ in 1 }).isEmpty
@@ -390,6 +439,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol {
                 row.epoch == base.epoch, row.sequence == base.sequence
             else { throw MutationQueueFailure.reconciliationRequired }
             let scopeId = try requireScopeId(scope)
+            try requireExecutionOrder(row)
             try execute(
                 "UPDATE mutations SET state='SUBMITTING',attempt_id=?,attempt_owner=?,attempt_started=? WHERE scope_id=? AND mutation_id=? AND state='PENDING'",
                 [
@@ -404,6 +454,101 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol {
         }
     }
 
+    /// Explicit recovery only. Archive uncertainty and acquire fresh authority in one transaction.
+    func beginRecoveryAttempt(
+        scope: ClientMutationScope, id: String, owner: String, attemptId: String
+    )
+        throws -> StoredMutationRecord
+    {
+        try transaction {
+            try requireUnquarantinedScope(scope)
+            let row = try requireRecord(scope: scope, id: id)
+            guard row.state == .outcomeUnknown, let old = row.attempt, let evidence = row.evidence,
+                UUID(uuidString: owner) != nil, UUID(uuidString: attemptId) != nil,
+                attemptId != old.id
+            else { throw MutationQueueFailure.invalidTransition }
+            guard let base = try syncBase(scope: scope), base.status == .verified,
+                base.epoch == row.epoch, base.sequence == row.sequence
+            else { throw MutationQueueFailure.reconciliationRequired }
+            try requireExecutionOrder(row)
+            guard
+                try attemptHistory(scope: scope, id: id).count
+                    < MutationQueuePolicy.maximumRecoveryAttempts
+            else { throw MutationQueueFailure.recoveryLimit }
+            // The old evidence moves to history: total stored BLOB bytes are unchanged here.
+            try execute(
+                "INSERT INTO mutation_attempt_history VALUES(?,?,?,?,?,?)",
+                [
+                    .integer(row.order), .text(old.id), .text(old.owner),
+                    .real(old.startedAt.timeIntervalSince1970),
+                    .integer(old.dispatchRecorded ? 1 : 0),
+                    .blob(evidence),
+                ])
+            try execute(
+                "UPDATE mutations SET state='SUBMITTING',attempt_id=?,attempt_owner=?,attempt_started=?,dispatch_recorded=0,evidence=NULL WHERE scope_id=? AND mutation_id=? AND state='OUTCOME_UNKNOWN'",
+                [
+                    .text(attemptId), .text(owner), .real(Date().timeIntervalSince1970),
+                    .integer(try requireScopeId(scope)), .text(id),
+                ])
+            guard sqlite3_changes(connection.handle) == 1 else {
+                throw MutationQueueFailure.invalidTransition
+            }
+            try fault?(.afterSubmitting)
+            return try requireRecord(scope: scope, id: id)
+        }
+    }
+
+    func attemptHistory(scope: ClientMutationScope, id: String) throws
+        -> [MutationHistoricalAttempt]
+    {
+        let row = try requireRecord(scope: scope, id: id)
+        let history = try query(
+            "SELECT attempt_id,attempt_owner,attempt_started,dispatch_recorded,evidence FROM mutation_attempt_history WHERE enqueue_order=? ORDER BY rowid LIMIT ?",
+            [.integer(row.order), .integer(Int64(MutationQueuePolicy.maximumRecoveryAttempts + 1))]
+        ) { s in
+            guard UUID(uuidString: try Self.text(s, 0)) != nil,
+                UUID(uuidString: try Self.text(s, 1)) != nil,
+                [SQLITE_FLOAT, SQLITE_INTEGER].contains(sqlite3_column_type(s, 2)),
+                sqlite3_column_double(s, 2).isFinite,
+                sqlite3_column_type(s, 3) == SQLITE_INTEGER,
+                [0, 1].contains(sqlite3_column_int(s, 3))
+            else { throw MutationQueueFailure.malformedRecord }
+            return MutationHistoricalAttempt(
+                attempt: MutationAttemptMetadata(
+                    id: try Self.text(s, 0), owner: try Self.text(s, 1),
+                    startedAt: Date(timeIntervalSince1970: sqlite3_column_double(s, 2)),
+                    dispatchRecorded: sqlite3_column_int(s, 3) == 1),
+                evidence: try Self.blob(s, 4, maximum: ClientMutationPolicy.maximumResponseBytes))
+        }
+        guard history.count <= MutationQueuePolicy.maximumRecoveryAttempts else {
+            throw MutationQueueFailure.malformedRecord
+        }
+        return history
+    }
+
+    /// Conservative scope policy: never overtake any older outstanding row; one SUBMITTING per
+    /// scope across connections. Recovery may resolve the earliest unknown, but never pass a conflict.
+    private func requireExecutionOrder(_ row: StoredMutationRecord) throws {
+        let scopeId = try requireScopeId(row.scope)
+        guard
+            try scalar(
+                "SELECT count(*) FROM mutations WHERE scope_id=? AND state='SUBMITTING' AND enqueue_order<>?",
+                [.integer(scopeId), .integer(row.order)]) == 0
+        else { throw MutationQueueFailure.concurrentExecution }
+        guard
+            try scalar(
+                "SELECT count(*) FROM mutations WHERE scope_id=? AND enqueue_order<? AND state NOT IN ('APPLIED','FAILED_PERMANENT')",
+                [.integer(scopeId), .integer(row.order)]) == 0
+        else { throw MutationQueueFailure.dependencyConflict }
+        // P035 prevents overlapping outstanding enqueues. Check the reservation again under the
+        // write lock, including imported/damaged rows and later unknown/conflict reservations.
+        guard
+            try scalar(
+                "SELECT count(*) FROM dependencies a JOIN dependencies b ON a.node_id=b.node_id JOIN mutations m ON m.enqueue_order=b.enqueue_order WHERE a.enqueue_order=? AND b.enqueue_order<>? AND m.scope_id=? AND m.state NOT IN ('APPLIED','FAILED_PERMANENT')",
+                [.integer(row.order), .integer(row.order), .integer(scopeId)]) == 0
+        else { throw MutationQueueFailure.dependencyConflict }
+    }
+
     func authorizeAttempt(_ mutation: PreparedClientMutation, owner: String, attemptId: String)
         throws
     {
@@ -415,6 +560,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol {
             guard same(row, mutation: mutation, payload: try encoder.encode(mutation.payload))
             else { throw MutationQueueFailure.duplicateIdentity }
             try requireBase(mutation)
+            try requireExecutionOrder(row)
             guard row.state == .submitting, let attempt = row.attempt, attempt.id == attemptId,
                 attempt.owner == owner, !attempt.dispatchRecorded
             else { throw MutationQueueFailure.ownershipRequired }
@@ -581,7 +727,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol {
     }
     private func checkCapacity(additionalBytes: Int) throws {
         let bytes = try scalar(
-            "SELECT coalesce((SELECT sum(length(request)+length(payload)+coalesce(length(evidence),0)) FROM mutations),0)+coalesce((SELECT sum(length(response)) FROM sync_bases),0)"
+            "SELECT coalesce((SELECT sum(length(request)+length(payload)+coalesce(length(evidence),0)) FROM mutations),0)+coalesce((SELECT sum(length(response)) FROM sync_bases),0)+coalesce((SELECT sum(length(evidence)) FROM mutation_attempt_history),0)"
         )
         guard bytes + Int64(additionalBytes) <= Int64(maximumBytes) else {
             throw MutationQueueFailure.capacity
