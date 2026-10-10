@@ -6,7 +6,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 source "${ROOT}/deploy/packages/common/windows-pe-import-policy.sh"
 
 for system_dll in UIAutomationCore.dll kernel32.dll api-ms-win-core-file-l1-1-0.dll \
-    ncrypt.dll NCRYPT.DLL Cabinet.dll CABINET.DLL Msi.dll MSI.DLL Wininet.dll WININET.DLL; do
+    ncrypt.dll NCRYPT.DLL Cabinet.dll CABINET.DLL Msi.dll MSI.DLL Wininet.dll WININET.DLL \
+    Wintrust.dll WINTRUST.DLL; do
     if ! is_system_dll "$system_dll"; then
         printf 'expected Windows system import to be allowed: %s\n' "$system_dll" >&2
         exit 1
