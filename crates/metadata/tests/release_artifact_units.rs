@@ -361,7 +361,9 @@ fn artifact_unit_10_default_qt_setup_does_not_require_the_canonical_root() {
     let rcc = tools.join("rcc");
     fs::write(&rcc, "#!/bin/sh\nexit 0\n").expect("write fake rcc");
     for path in [&qmake, &rcc] {
-        let mut permissions = fs::metadata(path).expect("read fake tool metadata").permissions();
+        let mut permissions = fs::metadata(path)
+            .expect("read fake tool metadata")
+            .permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(path, permissions).expect("make fake Qt tool executable");
     }
