@@ -1857,11 +1857,7 @@ impl OutboundObservationEngine {
                 && destination_node.present
             {
                 return self
-                    .classify_known_present(
-                        &destination_node,
-                        destination,
-                        destination_fingerprint,
-                    )
+                    .classify_known_present(&destination_node, destination, destination_fingerprint)
                     .await;
             }
             if source_actual.is_none()
@@ -3566,20 +3562,14 @@ mod tests {
         )
         .unwrap();
         harness
-            .observe(
-                WatchHintKind::Rename,
-                &[".editor.tmp", "tracked.txt"],
-            )
+            .observe(WatchHintKind::Rename, &[".editor.tmp", "tracked.txt"])
             .await;
 
         let intents = harness.engine.list_pending_intents().await.unwrap();
         assert_eq!(intents.len(), 1);
         assert_eq!(intents[0].kind(), OutboundIntentKind::ModifyFileContent);
         assert_eq!(intents[0].node_id(), Some(file_id));
-        assert_eq!(
-            intents[0].observed_relative_path().as_str(),
-            "tracked.txt"
-        );
+        assert_eq!(intents[0].observed_relative_path().as_str(), "tracked.txt");
         assert!(
             harness
                 .state
