@@ -7,7 +7,12 @@
 - Feature branch: `ios/p039-atomic-node-projection`; target: `ios-app`.
 - Reused the existing clean repository. Initial `work` checkout was `a560a40c8f2fe5b91db27c1b63fa0b0ab87173bc`, not the implementation baseline.
 - Inspected remote URL and status, fetched the explicit integration ref, checked the supplied P038 integration SHA is an ancestor, and created the feature branch from that ref. The fetched tip exactly matched the supplied SHA; no additional integration commits needed review. No destructive reset or main-based implementation occurred.
-- Final feature SHA, PR URL, exact-head native CI, actual merge state and resulting hosted integration SHA: **PENDING**. This initial record does not claim hosted completion; genuine evidence will be finalized after source validation and merge.
+- Frozen final feature SHA: `7d189beafa8947d5345304a924edcd6e5948eaa1`.
+- Genuine feature PR: [#110](https://github.com/nghianguyen150612/Synveil/pull/110), base ios-app, ready (`draft=false`) before squash merge.
+- Independent GitHub REST confirmation: `merged=true`, `state=closed`, exact frozen feature head; merged at `2026-10-10T08:54:11Z`.
+- Source squash merge and resulting hosted ios-app SHA: `c390f01c2f5a114578c286ee24cda8416aa9d986`.
+- GitHub ref API and explicit integration fetch independently matched that SHA. Diff of clients/ios and the initial manifest between frozen feature head and integrated head was empty.
+- Hosted evidence is finalized on documentation-only `ios/p039-manifest-finalization`, based on that source merge. No production Swift, tests, project or workflows change after the frozen feature head. Its resulting hosted tip is recorded in the final report rather than embedded as its own circular commit identity.
 
 ## References and server contract
 
@@ -117,9 +122,36 @@ Required source validator, **64 Python tests** (six new P039 cases), documentati
 
 ## Hosted native and physical validation
 
-Exact-feature-head iOS Static Validation, iOS Build, iOS Simulator Tests and iOS Rust Apple Build: **PENDING**. Prior P038 CI is not substituted. Genuine macOS Simulator totals and xcresult evidence will be recorded after execution.
+All four genuine GitHub Actions runs independently report completed/success and exact head `7d189beafa8947d5345304a924edcd6e5948eaa1`. Prior P038 CI is not substituted. The Rust Apple workflow was explicitly dispatched because its path filters do not automatically include Swift-only changes.
 
-Known P038 limitations remain explicit: unsigned Simulator Keychain entitlement round-trip and unavailable Simulator filesystem Data Protection attributes were previously skipped; their actual P039 statuses will be reported from its own native run. Physical-device validation is **NOT_AVAILABLE**. SQLite rollback/reopen and Simulator results do not establish physical power-loss durability, hardware Keychain or device protection attribute round-trip.
+| Workflow | Exact-head run | Result |
+| --- | --- | --- |
+| iOS Static Validation | [38038824906](https://github.com/nghianguyen150612/Synveil/actions/runs/38038824906) | SUCCESS |
+| iOS Build | [38038824861](https://github.com/nghianguyen150612/Synveil/actions/runs/38038824861) | SUCCESS |
+| iOS Simulator Tests | [38038824960](https://github.com/nghianguyen150612/Synveil/actions/runs/38038824960) | SUCCESS |
+| iOS Rust Apple Build | [38038915988](https://github.com/nghianguyen150612/Synveil/actions/runs/38038915988) | SUCCESS |
+
+Genuine xcresult summary: **1,275 total / 1,273 passed / 2 skipped / 0 failed**, result Passed, on iPhone 17 Pro with iOS Simulator 26.5. All **55 NodeProjectionTests**, **54 NodeProjectionSQLiteTests** and **42 CommittedProjectionAckTests** passed without a P039 skip. Existing P024–P038 regression suites ran in the same native test target; real-Rust identity rehydration passed. Artifact `ios-simulator-test-results`, ID `11665247740`, was uploaded with seven-day retention. Apple Rust target/header/static-artifact checks passed; no separate Linux Rust unit-test pass is claimed.
+
+Real native file-backed SQLite evidence includes exact v3 migration and preserved immutable request/payload/result/history/base/staging/quarantine; retained prior v1/v2 upgrades; transaction and migration rollback; first/final Node-write faults; actual uncommitted connection interruption; committed applied position plus ACK-pending evidence across reopen; purge protection and parent moves; capacity/busy; concurrent application and feed replay; durable production receipt acquisition, separate-connection ACK lease exclusion, original signed-token POST and confirmation persistence, interrupted explicit same-token recovery, replay bounds and session/quarantine fencing. These are actual SQLite operations, not fake projection-only storage or physical power-cut evidence.
+
+Crash/recovery matrix:
+
+| Boundary | Durable behavior verified |
+| --- | --- |
+| Before projection COMMIT | Original inbound page remains RECEIVED_UNAPPLIED; no Nodes/progress/proof escape |
+| After projection COMMIT | Nodes, event identities, applied position and APPLIED_ACK_PENDING survive together |
+| Before ACK lease COMMIT | No returned proof or authorized POST; page remains pending |
+| After ACK lease COMMIT | Original token and attempt survive as ACK_IN_FLIGHT; local/explicit recovery only |
+| After simulated server acceptance/response loss | Applied Nodes survive, checkpoint remains unconfirmed until verified evidence |
+| After confirmation COMMIT | Confirmed position, response, completion and ACK_CONFIRMED survive reopen |
+
+Exactly two cases skipped in this P039 native run:
+
+- KeychainCredentialStoreTests.testSimulatorKeychainRoundTripUsesUniqueTestService: unsigned Simulator process has no Keychain access entitlement.
+- MutationQueueSQLiteTests.testNativeDataProtectionAttributes: Simulator filesystem does not expose Data Protection attributes; requested policy is verified separately.
+
+Neither skip is counted as passed. Physical-device validation is **NOT_AVAILABLE**. SQLite rollback/reopen and Simulator results do not establish physical power-loss durability, hardware Keychain or device protection attribute round-trip.
 
 ## Files and exclusions
 
@@ -129,4 +161,14 @@ Modified: AppDependencyContainer.swift; SyncAckService.swift; SyncFeedService.sw
 
 No unrelated Rust/server/Android/desktop/AppImage/PostgreSQL/package/workflow source changes. No automatic polling/ACK/replay, background synchronization/drain, rebaseline manifest ingestion/replacement, file-content cache/transfers, conflict resolution, Quick Look/Share Sheet/File Provider/PhotoKit or offline-browser substitution.
 
-P039 is not reported complete until genuine GitHub evidence confirms the feature PR merged/closed on ios-app, all required exact-head iOS gates succeed, and integrated source/tests/manifest are verified. Hosted merge state and Prompt040 readiness remain **PENDING** in this initial record.
+Source delivery is independently confirmed merged/closed into ios-app, with all required exact-head iOS gates and native regression suites successful. The documentation-only finalization preserves the verified source tree. Prompt040 may build on durable metadata application and explicitly invoked signed ACK; complete snapshots, background execution, transfers and offline UI remain deferred.
+
+## Unrelated hosted CI snapshot
+
+At source merge/finalization, exact-feature-head non-iOS workflows included:
+
+- Linux AppImage [38038824923](https://github.com/nghianguyen150612/Synveil/actions/runs/38038824923): FAILURE. Inspected error: private or temporary build path found in synveil-desktop, also documented by P038. Duplicate PR run was still running at the snapshot.
+- Rust CI [38038824886](https://github.com/nghianguyen150612/Synveil/actions/runs/38038824886) and duplicate PR run 38038848567: queued at the snapshot; no successful conclusion claimed.
+- PostgreSQL 17 scheduled-maintenance runs 38038824884 and 38038848499 and Linux DEB/RPM runs 38038824949 and 38038848528: still running at the snapshot; no successful conclusion claimed.
+
+No unrelated source was altered to address these workflows. Their statuses do not substitute for the four successful iOS gates.
