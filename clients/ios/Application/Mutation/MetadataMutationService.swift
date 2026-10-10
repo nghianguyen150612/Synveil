@@ -23,7 +23,7 @@ enum MetadataMutationAvailability: Equatable, Sendable {
     case unavailable(MetadataMutationUnavailableReason)
 }
 
-enum MetadataMutationFailure: Equatable, Sendable {
+enum MetadataMutationFailure: Error, Equatable, Sendable {
     case readOnlyLibrary
     case quarantinedLibrary
     case sessionUnavailable

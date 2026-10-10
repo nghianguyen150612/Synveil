@@ -111,10 +111,10 @@ final class MetadataMutationViewModel {
     var setupMessage: String? {
         guard !invalidated else { return nil }
         switch availability {
-        case .ready: nil
+        case .ready: return nil
         case .setupRequired:
-            "Enable Changes connects to the server to establish synchronization state."
-        case .unavailable(let reason): Self.message(for: reason)
+            return "Enable Changes connects to the server to establish synchronization state."
+        case .unavailable(let reason): return Self.message(for: reason)
         }
     }
 
@@ -265,7 +265,7 @@ final class MetadataMutationViewModel {
         return true
     }
 
-    private static func notice(for receipt: MetadataMutationReceipt) -> MetadataMutationNotice {
+    static func notice(for receipt: MetadataMutationReceipt) -> MetadataMutationNotice {
         switch receipt.state {
         case .pending:
             MetadataMutationNotice(

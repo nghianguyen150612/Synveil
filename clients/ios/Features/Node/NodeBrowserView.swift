@@ -487,7 +487,6 @@ struct NodeBrowserView: View {
         }
     }
 
-    @ViewBuilder
     private func nodeRow(_ node: Node) -> some View {
         let row: AnyView
         if let destination = viewModel.route(into: node) {
@@ -505,7 +504,8 @@ struct NodeBrowserView: View {
                     .accessibilityHint(
                         "This folder links to an ancestor and cannot be opened again."))
         }
-        row
+        return
+            row
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(NodeBrowserRow.accessibilityDescription(for: node))
             .accessibilityIdentifier("synveil.node.row.\(node.id.rawValue)")

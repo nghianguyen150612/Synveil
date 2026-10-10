@@ -5,6 +5,7 @@ struct MutationActivityView: View {
     @State private var viewModel: MutationActivityViewModel
     @State private var unknownConfirmationId: String?
     @State private var restoreConfirmationId: String?
+    private let library: MetadataMutationLibraryContext
     private let sessionController: SessionController
     private let onConfirmedMutation: () -> Void
 
@@ -14,6 +15,7 @@ struct MutationActivityView: View {
         sessionController: SessionController,
         onConfirmedMutation: @escaping () -> Void = {}
     ) {
+        self.library = library
         self.sessionController = sessionController
         self.onConfirmedMutation = onConfirmedMutation
         _viewModel = State(
