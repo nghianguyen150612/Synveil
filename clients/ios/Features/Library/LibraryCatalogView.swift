@@ -75,8 +75,8 @@ struct LibraryCatalogView: View {
                     .navigationDestination(for: NodeFileDetailsRoute.self) { route in
                         NodeFileDetailsView(
                             repository: nodeRepository,
-                            offlineDetailsService: offlineNodeBrowserService,
                             sessionController: sessionController,
+                            offlineDetailsService: offlineNodeBrowserService,
                             route: route
                         )
                         .id(route)
