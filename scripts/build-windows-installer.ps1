@@ -30,6 +30,15 @@ function Invoke-Checked([string]$File, [string[]]$Arguments, [string]$Kind) {
         if ($process.ExitCode -ne 0) { Fail $Kind "process exited $($process.ExitCode)" }
     } finally { $process.Dispose() }
 }
+function Assert-NoSecretLikeBytes([byte[]]$Content, [string]$Label) {
+    $ascii = [Text.Encoding]::ASCII.GetString($Content)
+    $utf16 = [Text.Encoding]::Unicode.GetString($Content)
+    foreach ($marker in @('BEGIN PRIVATE KEY','ghp_','github_pat_')) {
+        if ($ascii.Contains($marker) -or $utf16.Contains($marker)) {
+            Fail "INSTALLER_VERIFY_FAILURE" "secret-like marker '$marker' in $Label"
+        }
+    }
+}
 function Get-WorkspaceVersion([string]$CargoToml) {
     $text = [IO.File]::ReadAllText($CargoToml)
     $match = [regex]::Match($text, '(?ms)^\[workspace\.package\]\s*.*?^version\s*=\s*"([^"\r\n]+)"')
@@ -218,8 +227,21 @@ try {
     $pe = [BitConverter]::ToInt32($bytes,0x3c); if ($pe -lt 0 -or $pe + 6 -ge $bytes.Length -or [BitConverter]::ToUInt32($bytes,$pe) -ne 0x00004550) { Fail "INSTALLER_VERIFY_FAILURE" "invalid PE header" }
     $machine = [BitConverter]::ToUInt16($bytes,$pe+4); if ($machine -notin @(0x14c,0x8664)) { Fail "INSTALLER_VERIFY_FAILURE" "unexpected Setup PE machine" }
     $metadata = [Diagnostics.FileVersionInfo]::GetVersionInfo($setup); if ($metadata.FileVersion -notmatch ('^' + [regex]::Escape($version.Windows) + '(?:\D|$)')) { Fail "INSTALLER_VERIFY_FAILURE" "Setup version metadata mismatch" }
-    $ascii = [Text.Encoding]::ASCII.GetString($bytes); $utf16 = [Text.Encoding]::Unicode.GetString($bytes)
-    foreach ($marker in @('BEGIN PRIVATE KEY','ghp_','github_pat_')) { if ($ascii.Contains($marker) -or $utf16.Contains($marker)) { Fail "INSTALLER_VERIFY_FAILURE" "secret-like marker in output" } }
+    if (!$LifecycleFixtureVersion) {
+        Assert-NoSecretLikeBytes $bytes 'output'
+    } else {
+        # The P044 lifecycle fixture embeds 64 MiB of cryptographically random
+        # data so Inno Setup has a bounded in-flight copy to interrupt. Scanning
+        # its compressed container for short token prefixes has a non-zero
+        # random false-positive rate. Scan every controlled staged input except
+        # that one explicitly named synthetic payload; production builds retain
+        # the whole-output scan above.
+        foreach ($payloadFile in Get-ChildItem -LiteralPath $stage -File -Recurse) {
+            $relative = [IO.Path]::GetRelativePath($stage, $payloadFile.FullName).Replace('\','/')
+            if ($relative -ceq 'runtime-payload.bin') { continue }
+            Assert-NoSecretLikeBytes ([IO.File]::ReadAllBytes($payloadFile.FullName)) "fixture payload $relative"
+        }
+    }
     if ($ascii.Contains($repo) -or $utf16.Contains($repo)) { Fail "INSTALLER_VERIFY_FAILURE" "private source path leaked into Setup" }
     if (!$LifecycleFixtureVersion) {
         Invoke-Checked 'python' @((Join-Path $repo 'scripts/release_manifest.py'),'create','--artifact-root',$output,'--product-version',$version.Product,'--source-commit',$revision,'--output',(Join-Path $output 'SYNVEIL-RELEASE-MANIFEST.json'),'--artifact','{"id":"windows-x86_64-installer","artifact_type":"windows_installer","filename":"SynveilSetup.exe","platform":"windows","architecture":"x86_64","role":"primary_installer","components":["synveil-desktop","synveil-client"]}') "INSTALLER_VERIFY_FAILURE"

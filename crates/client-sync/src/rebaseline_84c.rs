@@ -35,6 +35,7 @@ mod tests {
         RebaselineHandoffConfirmation, RebaselineHandoffOutcome, RebaselineSnapshotDescriptor,
         RebaselineSnapshotPage, RebaselineSnapshotSource, RemoteCheckpoint, RemoteError,
         RemoteErrorKind, ReplicaScope, RootBindingId, SyncRemote,
+        test_support::remove_dir_all_bounded,
     };
 
     // -----------------------------------------------------------------------
@@ -2593,9 +2594,14 @@ mod tests {
             old_count > 0 && new_count > 0,
             "both generations must be observed"
         );
+        assert_eq!(
+            Arc::strong_count(&store),
+            1,
+            "all reader tasks must release the store"
+        );
         store.close_pool().await;
         drop(store);
-        fs::remove_dir_all(dir).unwrap();
+        remove_dir_all_bounded(&dir).expect("atomic reader fixture cleanup");
     }
 
     // -----------------------------------------------------------------------

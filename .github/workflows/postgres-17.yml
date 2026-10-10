@@ -476,7 +476,9 @@ jobs:
           echo "=== Disk usage ==="
           df -h || true
           echo "=== PostgreSQL databases ==="
-          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "\l" || true
+          psql --version || true
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "SHOW server_version" || true
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" -c "SELECT datname, pg_get_userbyid(datdba) AS owner, pg_encoding_to_char(encoding) AS encoding FROM pg_database ORDER BY datname" || true
           echo "=== PostgreSQL logs (if available) ==="
           sudo cat /var/log/postgresql/*.log 2>/dev/null | tail -n 100 || true
 

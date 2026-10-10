@@ -556,7 +556,7 @@ fn trusted_macos_root_alias(path: &Path, metadata: &fs::Metadata) -> bool {
         _ => return false,
     };
     metadata.uid() == 0
-        && fs::read_link(path).is_ok_and(|actual| actual == target)
+        && fs::canonicalize(path).is_ok_and(|actual| actual == target)
         && fs::metadata("/").is_ok_and(|root| root.uid() == 0 && root.mode() & 0o022 == 0)
 }
 
@@ -639,6 +639,30 @@ fn io_error(error: std::io::Error) -> JournalError {
         JournalErrorCode::JournalIoFailed
     })
 }
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_path_tests {
+    use super::trusted_macos_root_alias;
+    use std::{fs, os::unix::fs::MetadataExt, path::Path};
+
+    #[test]
+    fn accepts_only_canonical_os_owned_temporary_root_aliases() {
+        for (alias, canonical) in [
+            (Path::new("/var"), Path::new("/private/var")),
+            (Path::new("/tmp"), Path::new("/private/tmp")),
+        ] {
+            let Ok(metadata) = fs::symlink_metadata(alias) else {
+                continue;
+            };
+            if metadata.file_type().is_symlink() {
+                assert_eq!(metadata.uid(), 0);
+                assert_eq!(fs::canonicalize(alias).unwrap(), canonical);
+                assert!(trusted_macos_root_alias(alias, &metadata));
+            }
+        }
+    }
+}
+
 fn hex_hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }

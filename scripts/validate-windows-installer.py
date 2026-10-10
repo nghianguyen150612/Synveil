@@ -195,6 +195,9 @@ def main() -> int:
         require(evidence in lifecycle_model, f"P027 separate bounded purge model: {evidence}")
     require("LifecycleFixtureVersion" in build and "if (!$env:CI)" in build and "if (!$LifecycleFixtureVersion)" in build,
             "test-only fixture cannot alter production version/release manifest")
+    require("Assert-NoSecretLikeBytes" in build and "runtime-payload.bin" in build and
+            "secret-like marker '$marker' in $Label" in build,
+            "P044 synthetic random payload must be the only fixture-only secret scan exclusion")
     require("Build isolated lifecycle Setup fixtures" in workflow and "OlderFixtureSetup" in workflow,
             "hosted standard-user lifecycle execution")
     with tempfile.TemporaryDirectory() as directory:
