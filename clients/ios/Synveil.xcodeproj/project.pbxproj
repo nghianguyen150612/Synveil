@@ -110,6 +110,8 @@
 		A10000012C00000000000060 /* MetadataMutationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000060 /* MetadataMutationService.swift */; };
 		A10000012C00000000000061 /* MetadataMutationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000061 /* MetadataMutationViewModel.swift */; };
 		A10000012C00000000000062 /* MetadataMutationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000062 /* MetadataMutationView.swift */; };
+		A10000012C00000000000063 /* OfflineNodeBrowserService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000063 /* OfflineNodeBrowserService.swift */; };
+		B10000012C00000000000063 /* OfflineNodeBrowserServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000063 /* OfflineNodeBrowserServiceTests.swift */; };
 		B10000012C00000000000030 /* MetadataMutationFeatureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000030 /* MetadataMutationFeatureTests.swift */; };
 		B10000012C0000000000002A /* MutationQueueTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000002A /* MutationQueueTestSupport.swift */; };
 		B10000012C0000000000002B /* MutationQueueSQLiteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000002B /* MutationQueueSQLiteTests.swift */; };
@@ -261,6 +263,8 @@
 		A20000012C00000000000060 /* MetadataMutationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Mutation/MetadataMutationService.swift; sourceTree = "<group>"; };
 		A20000012C00000000000061 /* MetadataMutationViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Mutation/MetadataMutationViewModel.swift; sourceTree = "<group>"; };
 		A20000012C00000000000062 /* MetadataMutationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Mutation/MetadataMutationView.swift; sourceTree = "<group>"; };
+		A20000012C00000000000063 /* OfflineNodeBrowserService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Node/OfflineNodeBrowserService.swift; sourceTree = "<group>"; };
+		B20000012C00000000000063 /* OfflineNodeBrowserServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/OfflineNodeBrowserServiceTests.swift; sourceTree = "<group>"; };
 		B20000012C00000000000030 /* MetadataMutationFeatureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/MetadataMutationFeatureTests.swift; sourceTree = "<group>"; };
 		B20000012C0000000000002A /* MutationQueueTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/MutationQueueTestSupport.swift; sourceTree = "<group>"; };
 		B20000012C0000000000002B /* MutationQueueSQLiteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/MutationQueueSQLiteTests.swift; sourceTree = "<group>"; };
@@ -457,6 +461,7 @@
 				A20000012C00000000000044 /* NodeModels.swift */,
 				A20000012C00000000000045 /* NodeResponseDTO.swift */,
 				A20000012C00000000000046 /* AuthenticatedNodeRepository.swift */,
+				A20000012C00000000000063 /* OfflineNodeBrowserService.swift */,
 				A20000012C00000000000041 /* AuthenticatedLibraryCatalogRepository.swift */,
 				A20000012C00000000000040 /* AuthenticatedLibraryRequestProvider.swift */,
 				A20000012C00000000000013 /* AppEnvironment.swift */,
@@ -549,6 +554,7 @@
 				B20000012C00000000000026 /* NodeBrowserViewModelTests.swift */,
 				B20000012C00000000000027 /* NodeBrowserViewTests.swift */,
 				B20000012C00000000000028 /* NodeFileDetailsViewModelTests.swift */,
+				B20000012C00000000000063 /* OfflineNodeBrowserServiceTests.swift */,
 				B20000012C00000000000022 /* LibraryCatalogTests.swift */,
 				B20000012C00000000000001 /* SynveilBootstrapTests.swift */,
 				B20000012C00000000000011 /* ServerEndpointTests.swift */,
@@ -693,6 +699,7 @@
 				A10000012C00000000000044 /* NodeModels.swift in Sources */,
 				A10000012C00000000000045 /* NodeResponseDTO.swift in Sources */,
 				A10000012C00000000000046 /* AuthenticatedNodeRepository.swift in Sources */,
+				A10000012C00000000000063 /* OfflineNodeBrowserService.swift in Sources */,
 				A10000012C00000000000047 /* NodeBrowserViewModel.swift in Sources */,
 				A10000012C00000000000048 /* NodeBrowserView.swift in Sources */,
 				A10000012C00000000000050 /* NodeFileDetailsView.swift in Sources */,
@@ -784,6 +791,7 @@
 				B10000012C00000000000026 /* NodeBrowserViewModelTests.swift in Sources */,
 				B10000012C00000000000027 /* NodeBrowserViewTests.swift in Sources */,
 				B10000012C00000000000028 /* NodeFileDetailsViewModelTests.swift in Sources */,
+				B10000012C00000000000063 /* OfflineNodeBrowserServiceTests.swift in Sources */,
 				B10000012C00000000000022 /* LibraryCatalogTests.swift in Sources */,
 				B10000012C00000000000021 /* AuthenticationRecoveryTests.swift in Sources */,
 				B10000012C00000000000001 /* SynveilBootstrapTests.swift in Sources */,

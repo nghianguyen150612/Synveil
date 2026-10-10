@@ -214,6 +214,31 @@ final class NodeBrowserViewTests: XCTestCase {
         XCTAssertNotNil(details.body)
     }
 
+    func testSavedBrowserAndFileDetailsUseRegisteredNativeViews() async throws {
+        let library = try await makeLibrary(1)
+        let controller = try makeAuthenticatedController()
+        let root = NodeBrowserRoute(
+            library: NodeBrowserLibraryContext(library),
+            parentScope: .libraryRoot(rootNodeId: library.rootNodeId),
+            directoryTitle: library.name, ancestry: [library.rootNodeId],
+            initialSource: .cached)
+        let browser = NodeBrowserView(
+            repository: nil, sessionController: controller, route: root)
+        let file = try await makeNode(40, library: library, parent: library.rootNodeId)
+        let detailsRoute = NodeFileDetailsRoute(
+            node: file, library: NodeBrowserLibraryContext(library),
+            parentScope: .libraryRoot(rootNodeId: library.rootNodeId),
+            ancestry: [library.rootNodeId], parentDirectoryTitle: library.name,
+            contentSource: .cached)
+        let details = NodeFileDetailsView(
+            repository: nil, sessionController: controller, route: detailsRoute)
+
+        XCTAssertEqual(root.initialSource, .cached)
+        XCTAssertEqual(detailsRoute.contentSource, .cached)
+        XCTAssertNotNil(browser.body)
+        XCTAssertNotNil(details.body)
+    }
+
     private func makeViewModel(route: NodeBrowserRoute) -> NodeBrowserViewModel {
         NodeBrowserViewModel(
             repository: nil,

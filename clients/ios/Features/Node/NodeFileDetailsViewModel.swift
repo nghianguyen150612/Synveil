@@ -8,6 +8,7 @@ enum NodeFileDetailsState: Equatable {
     case refreshing(Node)
     case refreshFailed(Node, NodeFileDetailsFailure)
     case unavailable
+    case savedUnavailable(NodeCacheUIFailure)
     case failed(NodeFileDetailsFailure)
     case cancelled
     case invalidated
@@ -15,7 +16,7 @@ enum NodeFileDetailsState: Equatable {
     var visibleNode: Node? {
         switch self {
         case .loaded(let node), .refreshing(let node), .refreshFailed(let node, _): node
-        case .idle, .loading, .unavailable, .failed, .cancelled, .invalidated: nil
+        case .idle, .loading, .unavailable, .savedUnavailable, .failed, .cancelled, .invalidated: nil
         }
     }
 
@@ -82,24 +83,31 @@ enum NodeFileDetailsFailure: Equatable {
 @MainActor
 final class NodeFileDetailsViewModel {
     private(set) var state: NodeFileDetailsState = .idle
+    private(set) var contentSource: NodeBrowserContentSource
+    private(set) var savedProjectionState: NodeProjectionState?
     let route: NodeFileDetailsRoute
 
     private let repository: (any NodeRepositoryProtocol)?
+    private let offlineDetailsService: (any OfflineNodeBrowserServiceProtocol)?
     private let sessionController: SessionController
     private let sessionRevision: UInt64
     @ObservationIgnored private var generation: UInt64 = 0
     @ObservationIgnored private var activeGeneration: UInt64?
     @ObservationIgnored private var activeTask: Task<NodeDetailsRepositoryResult, Never>?
+    @ObservationIgnored private var activeSavedTask: Task<OfflineNodeDetailsResult, Never>?
     @ObservationIgnored private var invalidated = false
     @ObservationIgnored private var didLoad = false
 
     init(
         repository: (any NodeRepositoryProtocol)?, sessionController: SessionController,
+        offlineDetailsService: (any OfflineNodeBrowserServiceProtocol)? = nil,
         route: NodeFileDetailsRoute
     ) {
         self.repository = repository
         self.sessionController = sessionController
+        self.offlineDetailsService = offlineDetailsService
         self.route = route
+        contentSource = route.contentSource
         sessionRevision = sessionController.lifecycleRevision
     }
 
@@ -112,20 +120,24 @@ final class NodeFileDetailsViewModel {
         return switch state {
         case .failed(let failure), .refreshFailed(_, let failure): failure.canRetry
         case .loading, .refreshing, .invalidated: false
-        case .idle, .loaded, .unavailable, .cancelled: true
+        case .idle, .loaded, .unavailable, .savedUnavailable, .cancelled: true
         }
     }
 
     func loadIfNeeded() async {
         guard !didLoad, case .idle = state else { return }
         didLoad = true
-        await request()
+        if route.contentSource == .cached {
+            await requestSaved()
+        } else {
+            await requestLive()
+        }
     }
 
     func refresh() async {
         guard canRefresh else { return }
         didLoad = true
-        await request()
+        await requestLive()
     }
 
     func sessionDidChange() {
@@ -139,6 +151,9 @@ final class NodeFileDetailsViewModel {
         activeGeneration = nil
         activeTask?.cancel()
         activeTask = nil
+        activeSavedTask?.cancel()
+        activeSavedTask = nil
+        savedProjectionState = nil
         state = .invalidated
     }
 
@@ -147,7 +162,7 @@ final class NodeFileDetailsViewModel {
             && sessionController.lifecycleRevision == sessionRevision
     }
 
-    private func request() async {
+    private func requestLive() async {
         guard isCurrentSession else {
             invalidate()
             return
@@ -185,6 +200,64 @@ final class NodeFileDetailsViewModel {
             previous: previous)
     }
 
+    private func requestSaved() async {
+        guard isCurrentSession else {
+            invalidate()
+            return
+        }
+        guard activeGeneration == nil else { return }
+        generation &+= 1
+        let operation = generation
+        activeGeneration = operation
+        state = .loading
+        guard let offlineDetailsService else {
+            activeGeneration = nil
+            state = .savedUnavailable(.unavailable)
+            return
+        }
+        let task = Task { @MainActor in
+            await offlineDetailsService.savedNode(
+                libraryId: route.library.id, nodeId: route.nodeId,
+                expectedParent: route.parentScope, ancestry: route.ancestry)
+        }
+        activeSavedTask = task
+        let result = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        guard activeGeneration == operation else { return }
+        activeSavedTask = nil
+        guard isCurrentSession else {
+            invalidate()
+            return
+        }
+        if Task.isCancelled {
+            activeGeneration = nil
+            state = .cancelled
+            return
+        }
+        activeGeneration = nil
+        switch result {
+        case .unavailable(let failure):
+            savedProjectionState = nil
+            state = .savedUnavailable(failure)
+        case .loaded(let node, let projection):
+            guard node.id == route.nodeId, node.libraryId == route.library.id,
+                node.parentId == route.parentScope.expectedParentId,
+                node.id != route.parentScope.expectedParentId,
+                node.kind == .file, node.state == .active,
+                node.trashedAt == nil, node.restoreDeadline == nil, !node.purgeEligible
+            else {
+                state = .savedUnavailable(.unavailable)
+                return
+            }
+            contentSource = .cached
+            savedProjectionState = projection
+            state = .loaded(node)
+        }
+    }
+
     private func finish(_ result: NodeDetailsRepositoryResult, operation: UInt64, previous: Node?) {
         guard activeGeneration == operation else { return }
         guard isCurrentSession else {
@@ -205,7 +278,10 @@ final class NodeFileDetailsViewModel {
                 return
             }
             state = .loaded(node)
+            contentSource = .live
+            savedProjectionState = nil
         case .unavailable, .inconsistent:
+            savedProjectionState = nil
             state = .unavailable
         case .failed(.cancelled):
             state = .cancelled
@@ -213,7 +289,9 @@ final class NodeFileDetailsViewModel {
             let displayFailure = NodeFileDetailsFailure.node(failure)
             if let previous, displayFailure.mayRetainPreviouslyLoadedData {
                 state = .refreshFailed(previous, displayFailure)
+                if contentSource != .cached { contentSource = .previouslyLoaded }
             } else {
+                savedProjectionState = nil
                 state = .failed(displayFailure)
             }
         }

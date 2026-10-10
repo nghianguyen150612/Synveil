@@ -17,11 +17,13 @@ class NodeBrowserRegistrationTests(unittest.TestCase):
             "Domain/Node/NodeModels.swift",
             "Domain/Node/NodeResponseDTO.swift",
             "Application/Node/AuthenticatedNodeRepository.swift",
+            "Application/Node/OfflineNodeBrowserService.swift",
             "Tests/SynveilTests/NodeBrowserTests.swift",
             "Features/Node/NodeBrowserViewModel.swift",
             "Features/Node/NodeBrowserView.swift",
             "Tests/SynveilTests/NodeBrowserViewModelTests.swift",
             "Tests/SynveilTests/NodeBrowserViewTests.swift",
+            "Tests/SynveilTests/OfflineNodeBrowserServiceTests.swift",
         ]:
             self.assertTrue((IOS / path).is_file())
             reference = re.search(r"([A-F0-9]{24}) /\*.*?\*/ = \{isa = PBXFileReference;[^\n]*path = " + re.escape(path) + r";", project)
@@ -43,6 +45,8 @@ class NodeBrowserRegistrationTests(unittest.TestCase):
 
         self.assertIn("nodeRepository: container.nodeRepository", app)
         self.assertIn("nodeRepository: nodeRepository", root)
+        self.assertIn("offlineNodeBrowserService: offlineNodeBrowserService", root)
+        self.assertIn("OfflineNodeBrowserService(", (IOS / "App/AppDependencyContainer.swift").read_text())
         self.assertIn("NodeBrowserView(", catalog)
         self.assertIn(".root(for: library)", catalog)
         self.assertIn("NavigationStack", catalog)

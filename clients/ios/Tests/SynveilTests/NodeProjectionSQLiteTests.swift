@@ -585,6 +585,46 @@ final class NodeProjectionSQLiteTests: XCTestCase {
         let result = await projectionCache(f).children(scope: f.scope, parentId: parent, limit: 0)
         XCTAssertEqual(result, .unavailable(.storageCapacity))
     }
+    func testOfflineBrowserReadsReopenedFileBackedProjectionWithoutHTTP() async throws {
+        let inbound = try await inboundFixture(self)
+        let parent = try await NodeId.validated(queueUUID(2), using: QueueValidator())
+        let file = try await projectionNode(scope: inbound.scope, id: 1, parent: 2)
+        inbound.nodes.values[file.id] = .loaded(file)
+        let page = try await projectionPage(inbound.base)
+        _ = try await projectionApply(
+            inbound.base, page: page, repository: inbound.nodes)
+
+        let live = OfflineProjectionLiveRead()
+        let service = OfflineNodeBrowserService(
+            liveRepository: live, projection: inbound.projection,
+            scopeProvider: inbound.coordinator)
+        let listing = await service.browse(
+            libraryId: inbound.scope.libraryId, parent: .directory(parent), request: .liveFirst)
+        guard case .saved(let presentation) = listing else {
+            return XCTFail("Expected saved metadata after the transient live failure")
+        }
+        XCTAssertEqual(presentation.nodes, [file])
+        XCTAssertEqual(presentation.knowledge, .partial)
+        XCTAssertEqual(presentation.liveFailure, .offline)
+
+        let reopened = try MutationQueueSQLiteStore(url: inbound.base.url)
+        let reopenedProjection = SQLiteNodeProjectionRepository(
+            database: reopened, provider: inbound.provider, bridge: QueueValidator())
+        let reopenedService = OfflineNodeBrowserService(
+            liveRepository: live, projection: reopenedProjection,
+            scopeProvider: inbound.coordinator)
+        let details = await reopenedService.savedNode(
+            libraryId: inbound.scope.libraryId, nodeId: file.id,
+            expectedParent: .directory(parent), ancestry: [parent])
+        guard case .loaded(let savedFile, let projectionState) = details else {
+            return XCTFail("Expected complete saved file metadata after reopening SQLite")
+        }
+        XCTAssertEqual(savedFile, file)
+        XCTAssertEqual(projectionState.completeness, .partial)
+        XCTAssertEqual(live.listCount, 1)
+        let requests = await inbound.wire.requests()
+        XCTAssertTrue(requests.isEmpty)
+    }
     func testMissingSecondCanonicalNodeRollsBackWholePage() async throws {
         let f = try await queueFixture(self)
         let page = try await projectionPage(
@@ -817,4 +857,18 @@ final class NodeProjectionSQLiteTests: XCTestCase {
             try queueRawScalar(f.url, "SELECT confirmed_sequence FROM node_projection_state"), "0")
     }
 
+}
+
+@MainActor
+private final class OfflineProjectionLiveRead: NodeRepositoryProtocol {
+    private(set) var listCount = 0
+
+    func listChildren(libraryId: LibraryId, parent: NodeParentScope) async -> NodeRepositoryResult {
+        listCount += 1
+        return .failed(.offline)
+    }
+
+    func getNode(libraryId: LibraryId, nodeId: NodeId, expectedParent: NodeParentScope) async
+        -> NodeDetailsRepositoryResult
+    { .unavailable }
 }

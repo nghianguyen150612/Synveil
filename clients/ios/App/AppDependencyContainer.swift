@@ -32,6 +32,9 @@ public final class AppDependencyContainer {
     /// Read-only Node foundation for the future native folder browser.
     public private(set) var nodeRepository: (any NodeRepositoryProtocol)?
 
+    /// Live-first browser composition with authenticated reads from the durable P039 projection.
+    private(set) var offlineNodeBrowserService: (any OfflineNodeBrowserServiceProtocol)?
+
     /// Foundation only: no durable authorizer is installed and no SwiftUI write interface is exposed.
     private(set) var clientMutationRepository: (any ClientMutationRepositoryProtocol)?
 
@@ -158,6 +161,12 @@ public final class AppDependencyContainer {
                             database: database, provider: feedProvider, bridge: bridge)
                     }
                 }
+                if let nodeRepository, let nodeProjectionRepository, let inboundSyncCoordinator {
+                    offlineNodeBrowserService = OfflineNodeBrowserService(
+                        liveRepository: nodeRepository,
+                        projection: nodeProjectionRepository,
+                        scopeProvider: inboundSyncCoordinator)
+                }
                 var composedMetadataMutationService: MetadataMutationService?
                 if let nodeRepository {
                     let feature = MetadataMutationService(
@@ -179,6 +188,7 @@ public final class AppDependencyContainer {
                 syncCheckpointService = nil
                 syncFeedService = nil
                 nodeProjectionRepository = nil
+                offlineNodeBrowserService = nil
                 syncFeedApplicationService = nil
                 syncAckService = nil
                 inboundSyncCoordinator = nil
@@ -195,6 +205,7 @@ public final class AppDependencyContainer {
             clientMutationRepository = nil
             libraryCatalog = nil
             nodeRepository = nil
+            offlineNodeBrowserService = nil
             metadataMutationFeature = nil
             rustBridge = nil
             credentialSink = nil

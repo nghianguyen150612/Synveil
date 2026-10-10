@@ -5,6 +5,7 @@ struct NodeBrowserView: View {
     private let sessionController: SessionController
     private let route: NodeBrowserRoute
     private let nodeRepository: (any NodeRepositoryProtocol)?
+    private let offlineBrowserService: (any OfflineNodeBrowserServiceProtocol)?
     private let metadataMutationFeature: (any MetadataMutationFeatureProtocol)?
 
     @State private var viewModel: NodeBrowserViewModel
@@ -14,6 +15,7 @@ struct NodeBrowserView: View {
 
     init(
         repository: (any NodeRepositoryProtocol)?,
+        offlineBrowserService: (any OfflineNodeBrowserServiceProtocol)? = nil,
         sessionController: SessionController,
         route: NodeBrowserRoute,
         metadataMutationFeature: (any MetadataMutationFeatureProtocol)? = nil
@@ -21,10 +23,12 @@ struct NodeBrowserView: View {
         self.sessionController = sessionController
         self.route = route
         self.nodeRepository = repository
+        self.offlineBrowserService = offlineBrowserService
         self.metadataMutationFeature = metadataMutationFeature
         _viewModel = State(
             initialValue: NodeBrowserViewModel(
                 repository: repository,
+                offlineBrowserService: offlineBrowserService,
                 sessionController: sessionController,
                 route: route
             )
@@ -44,7 +48,7 @@ struct NodeBrowserView: View {
         .navigationTitle(route.directoryTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if mutationViewModel.canCreateFolder {
+            if mutationViewModel.canCreateFolder, viewModel.canPrepareMutationsFromVisibleResults {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         presentedSheet = .newFolder
@@ -54,7 +58,7 @@ struct NodeBrowserView: View {
                     .accessibilityIdentifier("synveil.node.new-folder")
                 }
             }
-            if metadataMutationFeature != nil {
+            if metadataMutationFeature != nil, viewModel.canPrepareMutationsFromVisibleResults {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         presentedSheet = .activity
@@ -71,24 +75,56 @@ struct NodeBrowserView: View {
                 Button {
                     Task {
                         await viewModel.refresh()
-                        await mutationViewModel.refreshAvailability(forceParentRefresh: true)
+                        if viewModel.contentSource == .live {
+                            await mutationViewModel.refreshAvailability(forceParentRefresh: true)
+                        }
                     }
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
                 .disabled(!viewModel.canRefresh || viewModel.isRequestInProgress)
-                .accessibilityLabel("Refresh folder")
-                .accessibilityHint("Reloads this folder from the selected Library.")
+                .accessibilityLabel(
+                    viewModel.contentSource == .cached ? "Refresh from Server" : "Refresh folder")
+                .accessibilityHint("Checks this folder with the selected Library server.")
                 .accessibilityIdentifier("synveil.node.refresh")
+            }
+            if viewModel.canViewSavedItems {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        Task { await viewModel.viewSavedItems() }
+                    } label: {
+                        Label("View Saved Items", systemImage: "tray.2")
+                    }
+                    .accessibilityHint("Reads saved metadata on this device without contacting the server.")
+                    .accessibilityIdentifier("synveil.node.view-saved-items")
+                }
             }
         }
         .refreshable {
             await viewModel.refresh()
-            await mutationViewModel.refreshAvailability(forceParentRefresh: true)
+            if viewModel.contentSource == .live {
+                await mutationViewModel.refreshAvailability(forceParentRefresh: true)
+            }
         }
         .task {
             await viewModel.loadIfNeeded()
-            await mutationViewModel.refreshAvailability()
+            if viewModel.contentSource == .live {
+                await mutationViewModel.refreshAvailability()
+            }
+        }
+        .onChange(of: viewModel.contentSource) { _, source in
+            let message: String
+            switch source {
+            case .live: message = "Showing current server folder results."
+            case .cached: message = "Showing saved metadata. It has not been verified with the server."
+            case .previouslyLoaded: message = "Showing previously loaded results."
+            case nil: return
+            }
+            AccessibilityNotification.Announcement(message).post()
+            if source != .live, source != .previouslyLoaded {
+                presentedSheet = nil
+                pendingTrashNode = nil
+            }
         }
         .onChange(of: sessionController.state) { _, _ in
             viewModel.sessionDidChange()
@@ -99,10 +135,12 @@ struct NodeBrowserView: View {
             }
         }
         .onChange(of: sessionController.lifecycleRevision) { _, _ in
+            viewModel.sessionDidChange()
             mutationViewModel.sessionDidChange()
             presentedSheet = nil
             pendingTrashNode = nil
         }
+        .onDisappear { viewModel.cancelCurrentRequest() }
         .sheet(item: $presentedSheet) { sheet in sheetContents(for: sheet) }
         .confirmationDialog(
             "Move \(pendingTrashNode?.name ?? "item") to Trash?",
@@ -129,7 +167,25 @@ struct NodeBrowserView: View {
 
     @ViewBuilder
     private var mutationControls: some View {
-        if metadataMutationFeature == nil {
+        if viewModel.contentSource == .cached {
+            Section("Changes unavailable") {
+                Label(
+                    "Saved items on this device are read-only. Refresh from Server before preparing a change from saved metadata.",
+                    systemImage: "lock"
+                )
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("synveil.node.mutations.source-restricted")
+            }
+        } else if !viewModel.canPrepareMutationsFromVisibleResults {
+            Section("Changes unavailable") {
+                Label(
+                    "Server-backed changes are unavailable while this folder request is in progress or has not produced verified results.",
+                    systemImage: "lock"
+                )
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("synveil.node.mutations.source-restricted")
+            }
+        } else if metadataMutationFeature == nil {
             Section("Changes") {
                 Label(
                     "Metadata changes are unavailable because the durable queue is not ready. Browsing remains available.",
@@ -186,12 +242,13 @@ struct NodeBrowserView: View {
                 .accessibilityIdentifier("synveil.node.mutations.blocked")
             }
         }
-        if let notice = mutationViewModel.notice {
+        if viewModel.canPrepareMutationsFromVisibleResults, let notice = mutationViewModel.notice {
             Section("Change status") {
                 MutationNoticeView(notice: notice, identifier: "synveil.node.mutations.notice")
             }
         }
-        if route.library.status == .active, mutationViewModel.availability == .ready,
+        if viewModel.canPrepareMutationsFromVisibleResults, route.library.status == .active,
+            mutationViewModel.availability == .ready,
             !mutationViewModel.isCheckingFolderParent
         {
             folderParentControls
@@ -308,7 +365,7 @@ struct NodeBrowserView: View {
 
     @ViewBuilder
     private var directoryContents: some View {
-        switch viewModel.state {
+        switch viewModel.presentationState {
         case .idle, .loading:
             Section {
                 ProgressView("Loading folder…")
@@ -320,16 +377,65 @@ struct NodeBrowserView: View {
             }
 
         case .loaded(let nodes):
-            nodeRows(nodes)
+            sourceBanner(
+                title: "Current server results",
+                message: "This folder listing was retrieved from the selected Library server.",
+                symbol: "network",
+                identifier: "synveil.node.live-source")
+            if nodes.isEmpty {
+                Section { emptyDirectory }
+            } else {
+                nodeRows(nodes)
+            }
 
         case .empty:
+            sourceBanner(
+                title: "Current server results",
+                message: "This folder listing was retrieved from the selected Library server.",
+                symbol: "network",
+                identifier: "synveil.node.live-source")
             Section {
                 emptyDirectory
             } header: {
                 folderHeader
             }
 
+        case .loadingSaved:
+            Section {
+                ProgressView("Loading saved metadata on this device…")
+                    .accessibilityLabel("Loading saved metadata locally")
+                    .accessibilityIdentifier("synveil.node.saved.loading")
+            } header: {
+                folderHeader
+            }
+
+        case .saved(let presentation):
+            savedDirectory(presentation)
+
+        case .savedUnavailable(let failure):
+            Section {
+                NodeBrowserFeedbackView(
+                    title: failure == .synchronizationRecoveryRequired
+                        ? "Synchronization recovery required" : "Saved metadata unavailable",
+                    message: failure == .synchronizationRecoveryRequired
+                        ? "This saved listing needs synchronization recovery before it can be shown. Refresh from the server when the session is safe."
+                        : "Saved metadata could not be verified for this authenticated Library. Refresh from the server to continue.",
+                    symbol: "exclamationmark.triangle",
+                    style: .notice,
+                    actionTitle: "Refresh from Server",
+                    action: { Task { await viewModel.refresh() } },
+                    identifier: "synveil.node.saved.unavailable"
+                )
+            } header: {
+                folderHeader
+            }
+
         case .refreshing(let nodes):
+            sourceBanner(
+                title: "Previously loaded results",
+                message: "These items were loaded earlier in this session and are not verified by this refresh.",
+                symbol: "clock.arrow.circlepath",
+                identifier: "synveil.node.previous-source")
             Section {
                 ProgressView("Refreshing folder…")
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -345,6 +451,11 @@ struct NodeBrowserView: View {
             }
 
         case .refreshFailed(let nodes, let failure):
+            sourceBanner(
+                title: "Previously loaded results",
+                message: "These items were loaded earlier in this session and are not verified by this refresh.",
+                symbol: "clock.arrow.circlepath",
+                identifier: "synveil.node.previous-source")
             Section {
                 NodeBrowserFeedbackView(
                     title: failure.title,
@@ -367,6 +478,11 @@ struct NodeBrowserView: View {
             }
 
         case .refreshCancelled(let nodes):
+            sourceBanner(
+                title: "Previously loaded results",
+                message: "These items were loaded earlier in this session and are not verified by the cancelled refresh.",
+                symbol: "clock.arrow.circlepath",
+                identifier: "synveil.node.previous-source")
             Section {
                 NodeBrowserFeedbackView(
                     title: "Refresh cancelled",
@@ -419,6 +535,120 @@ struct NodeBrowserView: View {
         case .invalidated:
             EmptyView()
         }
+    }
+
+    private func sourceBanner(
+        title: String, message: String, symbol: String, identifier: String
+    ) -> some View {
+        Section {
+            Label(title, systemImage: symbol)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel("\(title). \(message)")
+                .accessibilityIdentifier(identifier)
+        }
+    }
+
+    @ViewBuilder
+    private func savedDirectory(_ presentation: NodeCachedDirectoryPresentation) -> some View {
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(savedTitle(presentation), systemImage: savedSymbol(presentation))
+                    .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
+                Text(savedMessage(presentation))
+                    .fixedSize(horizontal: false, vertical: true)
+                if let failure = presentation.liveFailure {
+                    Text("\(failureMessage(failure)) Showing saved metadata; it has not been verified with the server.")
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("synveil.node.saved.fallback-warning")
+                }
+                if let failure = viewModel.savedRefreshFailure {
+                    Text("\(failure.message) Saved items remain unchanged and have not been verified.")
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("synveil.node.saved.refresh-warning")
+                }
+                if viewModel.isRefreshingSavedItems {
+                    ProgressView("Checking server…")
+                        .accessibilityIdentifier("synveil.node.saved.refresh-progress")
+                }
+                if presentation.hasMore {
+                    Label(
+                        "Showing the first saved results. More saved items are available; this listing is truncated.",
+                        systemImage: "ellipsis")
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("synveil.node.saved.truncated")
+                }
+                if let position = presentation.projection.locallyApplied {
+                    Text("Local metadata applied through sequence \(position.sequence.rawValue) in epoch \(position.epoch.rawValue).")
+                        .accessibilityIdentifier("synveil.node.saved.local-position")
+                }
+                if let position = presentation.projection.serverConfirmed {
+                    Text("Server acknowledged through sequence \(position.sequence.rawValue) in epoch \(position.epoch.rawValue).")
+                        .accessibilityIdentifier("synveil.node.saved.server-position")
+                }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("synveil.node.saved.banner")
+        }
+
+        if presentation.nodes.isEmpty {
+            Section {
+                Text(savedEmptyMessage(presentation))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("synveil.node.saved.empty")
+            }
+        } else {
+            nodeRows(presentation.nodes)
+        }
+    }
+
+    private func savedTitle(_ presentation: NodeCachedDirectoryPresentation) -> String {
+        if presentation.projection.completeness == .rebaselineRequired {
+            return "Synchronization recovery required"
+        }
+        switch presentation.knowledge {
+        case .partial: "Partial saved listing"
+        case .missing: "No saved listing for this folder"
+        case .staleKnown: "Stale saved metadata"
+        case .complete: "Complete saved listing"
+        }
+    }
+
+    private func savedSymbol(_ presentation: NodeCachedDirectoryPresentation) -> String {
+        presentation.knowledge == .staleKnown ? "exclamationmark.triangle" : "tray.full"
+    }
+
+    private func savedMessage(_ presentation: NodeCachedDirectoryPresentation) -> String {
+        if presentation.projection.completeness == .rebaselineRequired {
+            return "Previously saved metadata is not verified and synchronization recovery is required."
+        }
+        switch presentation.knowledge {
+        case .partial:
+            return "Showing saved items only. Other files or folders may exist on the server."
+        case .missing:
+            return "No saved listing for this folder. This does not mean the folder is empty."
+        case .staleKnown:
+            return "Previously saved information exists but needs verification."
+        case .complete:
+            return "Saved listing completeness is supported by the verified projection. It has not been checked with the server now."
+        }
+    }
+
+    private func savedEmptyMessage(_ presentation: NodeCachedDirectoryPresentation) -> String {
+        switch presentation.knowledge {
+        case .missing:
+            "No saved listing for this folder."
+        case .partial:
+            "No items have been saved for offline browsing in this folder. Other items may exist on the server."
+        case .staleKnown:
+            "Saved folder information is stale or blocked by its saved ancestry. Refresh from Server to verify it."
+        case .complete:
+            "No saved items are present in this verified listing."
+        }
+    }
+
+    private func failureMessage(_ failure: NodeFailure) -> String {
+        NodeBrowserUIFailure.node(failure).message
     }
 
     @ViewBuilder
@@ -499,10 +729,16 @@ struct NodeBrowserView: View {
                     .accessibilityHint(
                         "Opens read-only file information. File content is not available here."))
         } else {
+            let blockedByRecovery = node.kind == .directory
+                && viewModel.contentSource == .cached
+                && (viewModel.cachedPresentation?.knowledge == .staleKnown
+                    || viewModel.cachedPresentation?.projection.completeness == .rebaselineRequired)
             row = AnyView(
                 NodeBrowserRow(node: node)
                     .accessibilityHint(
-                        "This folder links to an ancestor and cannot be opened again."))
+                        blockedByRecovery
+                            ? "This saved folder needs synchronization recovery before it can be opened."
+                            : "This folder links to an ancestor and cannot be opened again."))
         }
         return
             row
@@ -510,7 +746,9 @@ struct NodeBrowserView: View {
             .accessibilityLabel(NodeBrowserRow.accessibilityDescription(for: node))
             .accessibilityIdentifier("synveil.node.row.\(node.id.rawValue)")
             .contextMenu {
-                if mutationViewModel.canEdit && node.state == .active {
+                if mutationViewModel.canEdit, viewModel.canPrepareMutationsFromVisibleResults,
+                    node.state == .active
+                {
                     Button("Rename", systemImage: "pencil") {
                         presentedSheet = .rename(node)
                     }

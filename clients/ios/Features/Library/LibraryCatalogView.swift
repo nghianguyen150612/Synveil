@@ -4,6 +4,7 @@ import SwiftUI
 struct LibraryCatalogView: View {
     private let sessionController: SessionController
     private let nodeRepository: (any NodeRepositoryProtocol)?
+    private let offlineNodeBrowserService: (any OfflineNodeBrowserServiceProtocol)?
     private let metadataMutationFeature: (any MetadataMutationFeatureProtocol)?
     private let inboundSyncCoordinator: (any InboundSyncCoordinatorProtocol)?
     private let nodeProjectionRepository: (any NodeProjectionRepositoryProtocol)?
@@ -15,6 +16,7 @@ struct LibraryCatalogView: View {
     init(
         repository: (any LibraryCatalogRepositoryProtocol)?,
         nodeRepository: (any NodeRepositoryProtocol)? = nil,
+        offlineNodeBrowserService: (any OfflineNodeBrowserServiceProtocol)? = nil,
         metadataMutationFeature: (any MetadataMutationFeatureProtocol)? = nil,
         inboundSyncCoordinator: (any InboundSyncCoordinatorProtocol)? = nil,
         nodeProjectionRepository: (any NodeProjectionRepositoryProtocol)? = nil,
@@ -23,6 +25,7 @@ struct LibraryCatalogView: View {
     ) {
         self.sessionController = sessionController
         self.nodeRepository = nodeRepository
+        self.offlineNodeBrowserService = offlineNodeBrowserService
         self.metadataMutationFeature = metadataMutationFeature
         self.inboundSyncCoordinator = inboundSyncCoordinator
         self.nodeProjectionRepository = nodeProjectionRepository
@@ -49,6 +52,7 @@ struct LibraryCatalogView: View {
                         if let library = viewModel.library(with: id) {
                             NodeBrowserView(
                                 repository: nodeRepository,
+                                offlineBrowserService: offlineNodeBrowserService,
                                 sessionController: sessionController,
                                 route: .root(for: library),
                                 metadataMutationFeature: metadataMutationFeature
@@ -61,6 +65,7 @@ struct LibraryCatalogView: View {
                     .navigationDestination(for: NodeBrowserRoute.self) { route in
                         NodeBrowserView(
                             repository: nodeRepository,
+                            offlineBrowserService: offlineNodeBrowserService,
                             sessionController: sessionController,
                             route: route,
                             metadataMutationFeature: metadataMutationFeature
@@ -70,6 +75,7 @@ struct LibraryCatalogView: View {
                     .navigationDestination(for: NodeFileDetailsRoute.self) { route in
                         NodeFileDetailsView(
                             repository: nodeRepository,
+                            offlineDetailsService: offlineNodeBrowserService,
                             sessionController: sessionController,
                             route: route
                         )

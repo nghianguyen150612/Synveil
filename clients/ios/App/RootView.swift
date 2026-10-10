@@ -17,6 +17,7 @@ struct RootView: View {
     var credentialSink: SecureCredentialSinkProtocol? = nil
     var libraryCatalog: (any LibraryCatalogRepositoryProtocol)? = nil
     var nodeRepository: (any NodeRepositoryProtocol)? = nil
+    var offlineNodeBrowserService: (any OfflineNodeBrowserServiceProtocol)? = nil
     var metadataMutationFeature: (any MetadataMutationFeatureProtocol)? = nil
     var inboundSyncCoordinator: (any InboundSyncCoordinatorProtocol)? = nil
     var nodeProjectionRepository: (any NodeProjectionRepositoryProtocol)? = nil
@@ -46,6 +47,7 @@ struct RootView: View {
             LibraryCatalogView(
                 repository: libraryCatalog,
                 nodeRepository: nodeRepository,
+                offlineNodeBrowserService: offlineNodeBrowserService,
                 metadataMutationFeature: metadataMutationFeature,
                 inboundSyncCoordinator: inboundSyncCoordinator,
                 nodeProjectionRepository: nodeProjectionRepository,
