@@ -332,7 +332,8 @@ fn artifact_unit_9_qml_resource_staging_uses_the_canonical_root() {
     let function = &wrapper[function_start..function_end.expect("normalization function end")];
     assert!(function.contains("canonical_root.join(\".synveil-reproducible-rcc\")"));
     assert!(function.contains("if canonical_staging"));
-    assert!(wrapper.contains("const CANONICAL_RCC_STAGING: bool"));
+    assert!(wrapper.contains("const CANONICAL_RCC_STAGING_MODE: &str"));
+    assert!(wrapper.contains("CANONICAL_RCC_STAGING_MODE == \"1\""));
     assert!(
         function.contains("parent\n    }"),
         "non-reproducibility builds retain their target-local resource staging"

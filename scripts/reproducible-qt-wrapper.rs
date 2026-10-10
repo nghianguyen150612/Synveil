@@ -48,10 +48,7 @@ const QML_SOURCE_ROOT: &str = env!("SYNVEIL_QML_SOURCE_ROOT");
 /// Stable, checkout-independent prefix that replaces `QML_SOURCE_ROOT`.
 const QML_CANONICAL_ROOT: &str = env!("SYNVEIL_QML_CANONICAL_ROOT");
 /// Whether RCC staging paths are part of the explicit reproducibility policy.
-const CANONICAL_RCC_STAGING: bool = match env!("SYNVEIL_CANONICAL_RCC_STAGING") {
-    "1" => true,
-    _ => false,
-};
+const CANONICAL_RCC_STAGING_MODE: &str = env!("SYNVEIL_CANONICAL_RCC_STAGING");
 
 fn main() {
     let program = env::current_exe()
@@ -118,7 +115,7 @@ fn run_rcc() -> Result<ExitStatus, String> {
         &qrc_path,
         &qrc_contents,
         Path::new(QML_CANONICAL_ROOT),
-        CANONICAL_RCC_STAGING,
+        CANONICAL_RCC_STAGING_MODE == "1",
     )?;
     let mut normalized_args = args;
     normalized_args[qrc_index] = normalized_qrc.into_os_string();
