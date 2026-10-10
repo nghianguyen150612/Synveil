@@ -401,6 +401,28 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol {
         ) { try read($0, scope: scope) }
     }
 
+    /// Bounded activity snapshot. Unresolved work is selected before terminal history so a
+    /// terminal-heavy scope cannot hide an older queued operation; returned rows keep enqueue order.
+    func activityRecords(scope: ClientMutationScope, limit: Int) throws
+        -> [StoredMutationRecord]
+    {
+        guard (1...MutationQueuePolicy.maximumReadBatch).contains(limit) else {
+            throw MutationQueueFailure.invalidLimit
+        }
+        guard let id = try scopeId(scope) else { return [] }
+        let outstanding = try query(
+            "SELECT \(Self.columns) FROM mutations WHERE scope_id=? AND state NOT IN ('APPLIED','FAILED_PERMANENT') ORDER BY enqueue_order LIMIT ?",
+            [.integer(id), .integer(Int64(limit))]
+        ) { try read($0, scope: scope) }
+        let remaining = limit - outstanding.count
+        guard remaining > 0 else { return outstanding }
+        let terminal = try query(
+            "SELECT \(Self.columns) FROM mutations WHERE scope_id=? AND state IN ('APPLIED','FAILED_PERMANENT') ORDER BY enqueue_order LIMIT ?",
+            [.integer(id), .integer(Int64(remaining))]
+        ) { try read($0, scope: scope) }
+        return (outstanding + terminal).sorted { $0.order < $1.order }
+    }
+
     func record(scope: ClientMutationScope, id: String) throws -> StoredMutationRecord? {
         guard let scopeId = try scopeId(scope) else { return nil }
         return try query(

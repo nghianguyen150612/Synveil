@@ -39,6 +39,7 @@ public final class AppDependencyContainer {
     private(set) var durableMutationQueue: DurableMutationQueue?
     private(set) var mutationDrainCoordinator: MutationDrainCoordinator?
     private(set) var syncCheckpointService: SyncCheckpointService?
+    private(set) var metadataMutationFeature: (any MetadataMutationFeatureProtocol)?
     private(set) var mutationQueueFailure: MutationQueueFailure?
 
     private var enrollmentSecurityPrepared = false
@@ -119,17 +120,32 @@ public final class AppDependencyContainer {
                 case .failed(let failure): throw failure
                 }
                 durableMutationQueue = queue
-                mutationDrainCoordinator = MutationDrainCoordinator(
+                let coordinator = MutationDrainCoordinator(
                     queue: queue, provider: mutationProvider, bridge: bridge)
-                syncCheckpointService = SyncCheckpointService(
+                mutationDrainCoordinator = coordinator
+                let checkpoint = SyncCheckpointService(
                     provider: browserProvider, queue: queue, bridge: bridge)
-                sessionController.installMutationSessionInvalidator { [weak queue] in
+                syncCheckpointService = checkpoint
+                var composedMetadataMutationService: MetadataMutationService?
+                if let nodeRepository {
+                    let feature = MetadataMutationService(
+                        provider: browserProvider, queue: queue,
+                        checkpointService: checkpoint, coordinator: coordinator,
+                        nodeRepository: nodeRepository, bridge: bridge,
+                        identityGenerator: bridge)
+                    composedMetadataMutationService = feature
+                    metadataMutationFeature = feature
+                }
+                sessionController.installMutationSessionInvalidator {
+                    [weak queue, weak composedMetadataMutationService] in
                     queue?.invalidateSession()
+                    composedMetadataMutationService?.invalidateSession()
                 }
             } catch {
                 durableMutationQueue = nil
                 mutationDrainCoordinator = nil
                 syncCheckpointService = nil
+                metadataMutationFeature = nil
                 mutationQueueFailure = DurableMutationQueue.classify(error)
             }
             rustBridge = bridge
@@ -142,6 +158,7 @@ public final class AppDependencyContainer {
             clientMutationRepository = nil
             libraryCatalog = nil
             nodeRepository = nil
+            metadataMutationFeature = nil
             rustBridge = nil
             credentialSink = nil
             restorationService = nil

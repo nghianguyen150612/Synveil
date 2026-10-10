@@ -17,6 +17,7 @@ struct RootView: View {
     var credentialSink: SecureCredentialSinkProtocol? = nil
     var libraryCatalog: (any LibraryCatalogRepositoryProtocol)? = nil
     var nodeRepository: (any NodeRepositoryProtocol)? = nil
+    var metadataMutationFeature: (any MetadataMutationFeatureProtocol)? = nil
 
     var body: some View {
         switch sessionController.state {
@@ -42,6 +43,7 @@ struct RootView: View {
             LibraryCatalogView(
                 repository: libraryCatalog,
                 nodeRepository: nodeRepository,
+                metadataMutationFeature: metadataMutationFeature,
                 sessionController: sessionController
             )
             // A later authenticated lifecycle receives a fresh transient catalog and navigation stack.

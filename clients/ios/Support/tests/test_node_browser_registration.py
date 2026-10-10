@@ -61,10 +61,15 @@ class NodeBrowserRegistrationTests(unittest.TestCase):
         self.assertIn("navigationDestination(for: NodeFileDetailsRoute.self)", catalog)
         self.assertNotIn("Folder browsing is not available yet.", catalog)
         self.assertNotRegex(model, r"\b(?:DeviceBearer|Bearer|svd1_)\b")
+        for supported_metadata_operation in [
+            'Button("Rename"',
+            'Button("Move"',
+            'Label("Move to Trash"',
+        ]:
+            self.assertIn(supported_metadata_operation, browser)
         for fake_operation in [
             'Button("Download"',
             'Button("Upload"',
-            'Button("Rename"',
             'Button("Delete"',
             "ShareLink(",
             "QuickLookPreview(",

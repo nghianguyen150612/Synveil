@@ -409,12 +409,26 @@ func queueAssertFailure<T>(
 }
 
 /// Suspends after a real SQLite commit, before the queue receives its acknowledgement.
-struct QueueDelayedStorage: MutationQueueStorageProtocol {
+actor QueueDelayedStorage: MutationQueueStorageProtocol {
     let base: MutationQueueSQLiteStore
     let gate: QueueGate
     var delayResult = false
     var delayLease = false
     var resultBeforeCommit = false
+    var loseEnqueueAcknowledgement = false
+    private var failNextRecordReadAfterEnqueue = false
+    init(
+        base: MutationQueueSQLiteStore, gate: QueueGate, delayResult: Bool = false,
+        delayLease: Bool = false, resultBeforeCommit: Bool = false,
+        loseEnqueueAcknowledgement: Bool = false
+    ) {
+        self.base = base
+        self.gate = gate
+        self.delayResult = delayResult
+        self.delayLease = delayLease
+        self.resultBeforeCommit = resultBeforeCommit
+        self.loseEnqueueAcknowledgement = loseEnqueueAcknowledgement
+    }
     func bindSession(scope: ClientMutationScope, credentialId: String) async throws {
         try await base.bindSession(scope: scope, credentialId: credentialId)
     }
@@ -434,13 +448,24 @@ struct QueueDelayedStorage: MutationQueueStorageProtocol {
         StoredMutationRecord, Bool
     ) {
         let committed = try await base.enqueue(mutation, payload: payload)
+        if loseEnqueueAcknowledgement {
+            failNextRecordReadAfterEnqueue = true
+            throw MutationQueueFailure.commitAcknowledgementLost
+        }
         if !delayResult { await gate.arrive() }
         return committed
     }
     func records(scope: ClientMutationScope, limit: Int) async throws -> [StoredMutationRecord] {
         try await base.records(scope: scope, limit: limit)
     }
+    func activityRecords(scope: ClientMutationScope, limit: Int) async throws
+        -> [StoredMutationRecord]
+    { try await base.activityRecords(scope: scope, limit: limit) }
     func record(scope: ClientMutationScope, id: String) async throws -> StoredMutationRecord? {
+        if failNextRecordReadAfterEnqueue {
+            failNextRecordReadAfterEnqueue = false
+            throw MutationQueueFailure.commitAcknowledgementLost
+        }
         try await base.record(scope: scope, id: id)
     }
     func recoverInterruptedOperations() async throws -> Int {

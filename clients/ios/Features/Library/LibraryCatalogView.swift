@@ -4,6 +4,7 @@ import SwiftUI
 struct LibraryCatalogView: View {
     private let sessionController: SessionController
     private let nodeRepository: (any NodeRepositoryProtocol)?
+    private let metadataMutationFeature: (any MetadataMutationFeatureProtocol)?
 
     @State private var viewModel: LibraryCatalogViewModel
     @State private var isShowingLogoutConfirmation = false
@@ -11,10 +12,12 @@ struct LibraryCatalogView: View {
     init(
         repository: (any LibraryCatalogRepositoryProtocol)?,
         nodeRepository: (any NodeRepositoryProtocol)? = nil,
+        metadataMutationFeature: (any MetadataMutationFeatureProtocol)? = nil,
         sessionController: SessionController
     ) {
         self.sessionController = sessionController
         self.nodeRepository = nodeRepository
+        self.metadataMutationFeature = metadataMutationFeature
         _viewModel = State(
             initialValue: LibraryCatalogViewModel(
                 repository: repository,
@@ -38,7 +41,8 @@ struct LibraryCatalogView: View {
                             NodeBrowserView(
                                 repository: nodeRepository,
                                 sessionController: sessionController,
-                                route: .root(for: library)
+                                route: .root(for: library),
+                                metadataMutationFeature: metadataMutationFeature
                             )
                             .id(NodeBrowserRoute.root(for: library))
                         } else {
@@ -49,7 +53,8 @@ struct LibraryCatalogView: View {
                         NodeBrowserView(
                             repository: nodeRepository,
                             sessionController: sessionController,
-                            route: route
+                            route: route,
+                            metadataMutationFeature: metadataMutationFeature
                         )
                         .id(route)
                     }

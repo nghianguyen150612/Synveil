@@ -76,6 +76,26 @@ public final class AuthenticatedNodeRepository: NodeRepositoryProtocol {
     public func getNode(libraryId: LibraryId, nodeId: NodeId, expectedParent: NodeParentScope) async
         -> NodeDetailsRepositoryResult
     {
+        let result = await getNodeMetadata(libraryId: libraryId, nodeId: nodeId)
+        switch result {
+        case .loaded(let node):
+            guard node.id == nodeId, node.libraryId == libraryId,
+                node.parentId == expectedParent.expectedParentId,
+                node.id != expectedParent.expectedParentId
+            else { return .inconsistent }
+            guard node.kind == .file, node.state == .active,
+                node.trashedAt == nil, node.restoreDeadline == nil, !node.purgeEligible
+            else { return .unavailable }
+            return .loaded(node)
+        case .unavailable, .inconsistent, .failed:
+            return result
+        }
+    }
+
+    /// General safe metadata read used to verify directory revisions and restore parents.
+    public func getNodeMetadata(libraryId: LibraryId, nodeId: NodeId) async
+        -> NodeMetadataRepositoryResult
+    {
         var scope: LibraryRequestScope?
         do {
             try Task.checkCancellation()
@@ -83,7 +103,6 @@ public final class AuthenticatedNodeRepository: NodeRepositoryProtocol {
             scope = current
             _ = try await LibraryId.validated(libraryId.rawValue, using: bridge)
             _ = try await NodeId.validated(nodeId.rawValue, using: bridge)
-            _ = try await NodeId.validated(expectedParent.expectedParentId.rawValue, using: bridge)
             try await provider.validate(current)
             let response = try await provider.requestNode(nodeId: nodeId, scope: current)
             do {
@@ -97,13 +116,6 @@ public final class AuthenticatedNodeRepository: NodeRepositoryProtocol {
             // Rust validation also suspends; never publish a resource from a replaced session.
             try await provider.validate(current)
             try Task.checkCancellation()
-            guard node.id == nodeId, node.libraryId == libraryId,
-                node.parentId == expectedParent.expectedParentId,
-                node.id != expectedParent.expectedParentId
-            else { return .inconsistent }
-            guard node.kind == .file, node.state == .active,
-                node.trashedAt == nil, node.restoreDeadline == nil, !node.purgeEligible
-            else { return .unavailable }
             return .loaded(node)
         } catch {
             let failure =
