@@ -378,6 +378,24 @@ final class SyncStatusViewModelTests: XCTestCase {
         let requests = await f.wire.requests()
         XCTAssertEqual(requests.count, 2)
     }
+
+    func testSessionChangedResultClearsProgressEvenBeforeLifecycleNotification() async throws {
+        let f = try await inboundFixture(self)
+        let injected = StatusCoordinatorFixture(f.scope)
+        let stale = InboundSyncProgress(
+            phase: .applied, pagesProcessed: 0, eventsApplied: 1,
+            locallyApplied: try feedPosition(from: "1"), serverConfirmed: try feedPosition(),
+            observedHighWatermark: nil)
+        injected.result = .init(reason: .committedButSessionChanged, progress: stale, recovery: nil)
+        let model = try await model(f, coordinator: injected)
+        await model.loadStatus()
+        await model.syncNow()
+        XCTAssertEqual(f.base.controller.state, .authenticated)
+        XCTAssertEqual(model.state, .invalidated)
+        XCTAssertNil(model.progress.locallyApplied)
+        XCTAssertNil(model.progress.serverConfirmed)
+        XCTAssertFalse(model.canSync)
+    }
     #if canImport(SwiftUI)
         func testNativeStatusViewRendersWithInjectedCoordinator() async throws {
             let f = try await inboundFixture(self)

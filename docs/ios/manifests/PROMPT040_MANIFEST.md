@@ -84,13 +84,13 @@ Modified existing database scoped reads/run ownership, ACK unused-receipt cleanu
 
 ## Tests and local validation
 
-Added **129 XCTest methods**: 48 coordinator, 27 recovery, 22 cancellation/race and 32 status/native rendering tests. Native source registration retains all P024–P039 tests. Deterministic QueueGate, dispatch hooks and production SQLite fault injection replace sleeps.
+Added **130 XCTest methods**: 48 coordinator, 27 recovery, 22 cancellation/race and 33 status/native rendering tests. Native source registration retains all P024–P039 tests. Deterministic QueueGate, dispatch hooks and production SQLite fault injection replace sleeps.
 
 New coverage includes config/identity/auth/checkpoint preflight; one/two/three-page ordering and actual commit-before-ACK / confirmation-before-next-GET inspection; exact budgets including 4,096 applied events and reduced final limit; no invented cursor/high skip/repeated-page loop; all eight events and revision/missing metadata stops; received/pending/unknown/confirmed/blocked restart states; real reopen, duplicate/conflicting evidence; application/lease/confirmation faults and lost returns; original-token single recovery/eight-attempt limit/concurrent recovery; separate coordinator/connection exclusion; quarantine/logout/readback/credential replacement; cancellation before GET, during GET/materialization, after stage/application, before lease and after dispatch/confirmation; scoped partial cache; injected and real-coordinator UI, double taps, offline/auth/revocation/setup/unknown/rebaseline/limits/long names/native Dynamic Type. Existing P039 materialization/parent/purge/partial atomicity and P037 mutation/browser suites remain registered and unchanged.
 
 Local validation performed with downloaded official Swift 6.2 on Linux, unchanged production Domain/Application/SQLite/ViewModel sources and actual system file-backed SQLite in an ignored SwiftPM harness. Temporary test copies adapt synchronous MainActor XCTest discovery. The real Rust adapter test is skipped only in this harness because this worker has no Rust toolchain; native CI retains the original test. The harness uses allow-shlib-undefined for the downloaded Observation library. This is **Linux evidence, not Simulator execution**.
 
-- Portable final test result: **653 executed / 652 passed / one Linux-only Rust skip / zero failures**.
+- Portable final test result: **654 executed / 653 passed / one Linux-only Rust skip / zero failures**, plus all 31 portable status ViewModel cases passed after final UI wording/fencing validation.
 - `validate_ios_sources.py`: PASS.
 - Python Support suite: 70 passed (six new).
 - Official strict swift-format and Swift parsing of all registered Swift files: PASS.

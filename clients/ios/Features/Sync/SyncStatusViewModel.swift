@@ -176,6 +176,7 @@ final class SyncStatusViewModel {
         progress = result.progress
         recovery = result.recovery
         finish(result.reason)
+        guard isCurrent else { return }
         if result.reason == .awaitingAckRecovery, recovery == nil,
             let coordinator, let scope
         {
@@ -205,6 +206,9 @@ final class SyncStatusViewModel {
     func cancel() { task?.cancel() }
     func sessionDidChange() {
         guard !isCurrent else { return }
+        invalidate()
+    }
+    private func invalidate() {
         invalidated = true
         task?.cancel()
         scope = nil
@@ -228,12 +232,16 @@ final class SyncStatusViewModel {
             state = .reconciliationRequired
         case .offline: state = .offline
         case .cancelled: state = .cancelled
-        case .committedButSessionChanged: state = .invalidated
+        case .committedButSessionChanged: invalidate()
         default: state = .failed
         }
     }
 
     var message: String {
+        if state == .invalidated {
+            return
+                "The session changed. Return to the Library catalog to inspect the current authenticated scope. Previously committed work may remain saved."
+        }
         if state == .syncing { return Self.phaseLabel(progress.phase) }
         if state == .checkingLocalStatus { return "Checking saved synchronization status…" }
         if state == .pendingAck {
