@@ -12,7 +12,7 @@
 - Source PR: [#114](https://github.com/nghianguyen150612/Synveil/pull/114), base `ios-app`, marked ready before squash merge.
 - Independent GitHub REST confirmation: `merged=true`, `state=closed`, exact frozen feature head, merged at `2026-10-10T15:18:30Z`.
 - Source squash merge and hosted `ios-app` SHA before manifest finalization: `c89269544389a043f25a93f5c5642a8abbff3dd2`. The source feature and squash-merge trees both equal `27b3abc2c8a61f75f77d060c1bff3f91ba52e9a1`; the required P040 SHA remains an ancestor.
-- Final hosted evidence is being recorded on documentation-only branch `ios/p041-manifest-finalization`, based on the verified source squash merge. The finalization PR identity and merged `ios-app` tip will be added after it is created and independently verified; no source or test files change in that PR.
+- Hosted evidence was finalized by documentation-only PR [#115](https://github.com/nghianguyen150612/Synveil/pull/115), based on the verified source squash merge. It merged into `ios-app`; its final state is recorded below. This follow-up only corrects the bootstrap wording, and no source or test files changed in either documentation PR. The resulting hosted tip is reported in the delivery response rather than embedded as the manifest's own merge identity.
 
 ## References inspected
 
