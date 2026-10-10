@@ -2354,16 +2354,28 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn platform_supervised_stop_requests_canonical_shutdown_over_ipc() {
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::{ffi::OsStrExt as _, fs::PermissionsExt};
         use synveil_client_sync::{
             DesktopSyncHost, DesktopSyncHostConfig, LocalStateConfig, LocalStateStore,
         };
-        let root = std::env::temp_dir().join(format!(
+        #[cfg(target_os = "macos")]
+        let base = std::path::PathBuf::from("/tmp");
+        #[cfg(not(target_os = "macos"))]
+        let base = std::env::temp_dir();
+        let root = base.join(format!(
             "sv{}",
             ServerProfileId::new().to_string().replace('-', "")
         ));
         fs::create_dir_all(root.join("runtime/control")).unwrap();
         let root = root.canonicalize().unwrap();
+        assert!(
+            root.join("runtime/control/client.sock")
+                .as_os_str()
+                .as_bytes()
+                .len()
+                < 100,
+            "Unix socket fixture path must remain below macOS and Linux limits"
+        );
         fs::set_permissions(root.join("runtime"), fs::Permissions::from_mode(0o700)).unwrap();
         fs::set_permissions(
             root.join("runtime/control"),
