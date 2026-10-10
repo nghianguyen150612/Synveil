@@ -138,6 +138,11 @@ fn run_qmlcachegen() -> Result<ExitStatus, String> {
         .collect::<Result<Vec<_>, String>>()?;
     Command::new(REAL_QMLCACHEGEN)
         .args(rewritten)
+        // CXX-Qt clears the environment before invoking its configured Qt
+        // tools, so the release build's global setting does not reach this
+        // child. qmlcachegen uses QHash-backed data structures whose default
+        // per-process seed changes generated local declaration order.
+        .env("QT_HASH_SEED", "0")
         .status()
         .map_err(|error| format!("could not run qmlcachegen at {REAL_QMLCACHEGEN}: {error}"))
 }
