@@ -88,6 +88,7 @@ fn artifact_unit_1_same_source_produces_stable_artifact_metadata() {
     assert!(qt_wrapper.contains("normalize_qml_resources"));
     assert!(qt_wrapper.contains("SOURCE_DATE_EPOCH"));
     assert!(qt_wrapper.contains("QT_HOST_LIBEXECS/get"));
+    assert!(qt_wrapper.contains(".env(\"QT_HASH_SEED\", \"0\")"));
     let workspace_manifest = read(repo_root().join("Cargo.toml"));
     assert!(workspace_manifest.contains("[patch.crates-io]"));
     assert!(workspace_manifest.contains("cxx-qt-build = { path = \"vendor/cxx-qt-build\" }"));
@@ -251,8 +252,10 @@ source "$1"
 repo_root="$2"
 export CARGO_TARGET_DIR="$3"
 synveil_prepare_reproducible_rust_build "$repo_root"
-read -r -a cxx_flags <<< "$CXXFLAGS"
-read -r -a rust_flags <<< "$RUSTFLAGS"
+read -r -a cxx_flags <<< "${CXXFLAGS:-}"
+[[ -n "${CARGO_ENCODED_RUSTFLAGS:-}" ]]
+[[ -z "${RUSTFLAGS+x}" ]]
+IFS=$'\x1f' read -r -a rust_flags <<< "$CARGO_ENCODED_RUSTFLAGS"
 c++ "${cxx_flags[@]}" -c "$CARGO_TARGET_DIR/prefix.cpp" -o "$CARGO_TARGET_DIR/prefix.o"
 rustc "${rust_flags[@]}" --edition=2021 --crate-name p113_path_probe \
     "$CARGO_TARGET_DIR/prefix.rs" -o "$CARGO_TARGET_DIR/rust-prefix"
@@ -298,6 +301,20 @@ strings "$CARGO_TARGET_DIR/prefix.o"
         );
     }
     let _ = fs::remove_dir_all(&probe_dir);
+}
+
+#[test]
+fn artifact_unit_8_qmlcachegen_pins_hash_seed_at_the_child_process_boundary() {
+    let wrapper = read(repo_root().join("scripts/reproducible-qt-wrapper.rs"));
+    let function_start = wrapper
+        .find("fn run_qmlcachegen()")
+        .expect("qmlcachegen wrapper entrypoint");
+    let function_end = wrapper[function_start..]
+        .find("\n}")
+        .map(|offset| function_start + offset);
+    let function = &wrapper[function_start..function_end.expect("qmlcachegen function end")];
+    assert!(function.contains("Command::new(REAL_QMLCACHEGEN)"));
+    assert!(function.contains(".env(\"QT_HASH_SEED\", \"0\")"));
 }
 
 #[test]
