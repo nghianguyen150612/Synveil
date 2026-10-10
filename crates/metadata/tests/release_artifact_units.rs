@@ -81,6 +81,9 @@ fn artifact_unit_1_same_source_produces_stable_artifact_metadata() {
     assert!(common.contains("CARGO_INCREMENTAL=0"));
     assert!(common.contains("export QT_HASH_SEED=0"));
     assert!(common.contains("synveil_prepare_reproducible_qt_tools"));
+    assert!(common.contains(
+        "if [[ \"$enable_qmlcachegen_wrapper\" == 1 ]]; then\n        synveil_ensure_writable_root"
+    ));
     assert!(common.contains("--remap-path-prefix"));
     assert!(common.contains("CARGO_TARGET_DIR"));
     assert!(common.contains("source_fingerprint"));
@@ -328,9 +331,90 @@ fn artifact_unit_9_qml_resource_staging_uses_the_canonical_root() {
         .map(|offset| function_start + offset);
     let function = &wrapper[function_start..function_end.expect("normalization function end")];
     assert!(function.contains("canonical_root.join(\".synveil-reproducible-rcc\")"));
+    assert!(function.contains("if canonical_staging"));
+    assert!(wrapper.contains("const CANONICAL_RCC_STAGING: bool"));
     assert!(
-        !function.contains("parent.join(\".synveil-reproducible-rcc\")"),
-        "RCC staging must not depend on a Cargo target root"
+        function.contains("parent\n    }"),
+        "non-reproducibility builds retain their target-local resource staging"
+    );
+}
+
+#[test]
+fn artifact_unit_10_default_qt_setup_does_not_require_the_canonical_root() {
+    use std::{
+        os::unix::fs::PermissionsExt,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    let root = std::env::temp_dir().join(format!(
+        "synveil-qt-staging-mode-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock after Unix epoch")
+            .as_nanos()
+    ));
+    let tools = root.join("qt-tools");
+    fs::create_dir_all(&tools).expect("create fake Qt tool directory");
+    let qmake = root.join("qmake");
+    fs::write(&qmake, "#!/bin/sh\nprintf '%s\\n' \"$FAKE_QT_TOOLS\"\n").expect("write fake qmake");
+    let rcc = tools.join("rcc");
+    fs::write(&rcc, "#!/bin/sh\nexit 0\n").expect("write fake rcc");
+    for path in [&qmake, &rcc] {
+        let mut permissions = fs::metadata(path).expect("read fake tool metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).expect("make fake Qt tool executable");
+    }
+
+    let script = r#"
+set -euo pipefail
+source "$1"
+repo_root="$2"
+root="$3"
+export FAKE_QT_TOOLS="$root/qt-tools"
+export SOURCE_DATE_EPOCH=1700000000
+export SYNVEIL_QML_CANONICAL_ROOT="$root/canonical"
+export QMAKE="$root/qmake"
+SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS=()
+expected_staging_mode=0
+rustc() {
+    [[ "$SYNVEIL_CANONICAL_RCC_STAGING" == "$expected_staging_mode" ]] || return 21
+    while (($#)); do
+        if [[ "$1" == "-o" ]]; then
+            shift
+            : > "$1"
+            chmod +x "$1"
+            return 0
+        fi
+        shift
+    done
+    return 22
+}
+export SYNVEIL_ENABLE_QMLCACHEGEN_WRAPPER=0
+synveil_prepare_reproducible_qt_tools "$repo_root" "$root/target-default" x86_64-unknown-linux-gnu
+[[ ! -e "$root/canonical" ]]
+export QMAKE="$root/qmake"
+export SYNVEIL_ENABLE_QMLCACHEGEN_WRAPPER=1
+expected_staging_mode=1
+synveil_prepare_reproducible_qt_tools "$repo_root" "$root/target-reproducible" x86_64-unknown-linux-gnu
+[[ -d "$root/canonical" ]]
+"#;
+    let output = Command::new("bash")
+        .arg("-c")
+        .arg(script)
+        .arg("synveil-qt-staging-mode")
+        .arg(repo_root().join("deploy/packages/common/reproducible.sh"))
+        .arg(repo_root())
+        .arg(&root)
+        .current_dir(repo_root())
+        .output()
+        .expect("run Qt staging-mode regression");
+    let _ = fs::remove_dir_all(&root);
+    assert!(
+        output.status.success(),
+        "Qt staging-mode regression failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 

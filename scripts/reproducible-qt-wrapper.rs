@@ -47,6 +47,11 @@ const SOURCE_DATE_EPOCH: &str = env!("SYNVEIL_SOURCE_DATE_EPOCH");
 const QML_SOURCE_ROOT: &str = env!("SYNVEIL_QML_SOURCE_ROOT");
 /// Stable, checkout-independent prefix that replaces `QML_SOURCE_ROOT`.
 const QML_CANONICAL_ROOT: &str = env!("SYNVEIL_QML_CANONICAL_ROOT");
+/// Whether RCC staging paths are part of the explicit reproducibility policy.
+const CANONICAL_RCC_STAGING: bool = match env!("SYNVEIL_CANONICAL_RCC_STAGING") {
+    "1" => true,
+    _ => false,
+};
 
 fn main() {
     let program = env::current_exe()
@@ -113,6 +118,7 @@ fn run_rcc() -> Result<ExitStatus, String> {
         &qrc_path,
         &qrc_contents,
         Path::new(QML_CANONICAL_ROOT),
+        CANONICAL_RCC_STAGING,
     )?;
     let mut normalized_args = args;
     normalized_args[qrc_index] = normalized_qrc.into_os_string();
@@ -237,6 +243,7 @@ fn normalize_qml_resources(
     qrc_path: &Path,
     contents: &str,
     canonical_root: &Path,
+    canonical_staging: bool,
 ) -> Result<PathBuf, String> {
     let epoch = SOURCE_DATE_EPOCH
         .parse::<u64>()
@@ -257,10 +264,15 @@ fn normalize_qml_resources(
                 qrc_path.display()
             )
         })?;
-    // rcc includes source paths in generated comments. Staging below OUT_DIR
-    // therefore leaks each independent Cargo target root into the binary.
-    // Keep the path stable across clean builds, like the qmlcachegen inputs.
-    let staged_dir = canonical_root.join(".synveil-reproducible-rcc").join(stem);
+    // In reproducibility mode, rcc embeds staged source paths in generated
+    // comments, so use a target-root-independent directory. Ordinary builds
+    // keep staging local to this generated QRC's parent.
+    let staging_root = if canonical_staging {
+        canonical_root
+    } else {
+        parent
+    };
+    let staged_dir = staging_root.join(".synveil-reproducible-rcc").join(stem);
     fs::create_dir_all(&staged_dir)
         .map_err(|error| format!("could not create {}: {error}", staged_dir.display()))?;
 
