@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+
 @testable import Synveil
 
 final class RustBridgeConcurrencyTests: XCTestCase {
@@ -109,7 +110,9 @@ final class RustBridgeConcurrencyTests: XCTestCase {
 
     // MARK: - Cancellation Tests
 
+    @MainActor
     func testCancellationPreAndInFlight() async throws {
+        // Inherited MainActor isolation guarantees cancellation before the child can start.
         // 1. Pre-cancelled task
         let preCancelledTask = Task {
             try Task.checkCancellation()
@@ -126,17 +129,19 @@ final class RustBridgeConcurrencyTests: XCTestCase {
             XCTAssertTrue(error is CancellationError)
         }
 
-        // 2. Cancellation during worker sleep
+        // 2. Cancellation after the actual worker starts, without a timing assumption.
+        let workerEntered = DispatchSemaphore(value: 0)
+        let workerRelease = DispatchSemaphore(value: 0)
         let inFlightTask = Task {
             try await RustBridgeExecutor.run {
-                Thread.sleep(forTimeInterval: 0.1)
+                workerEntered.signal()
+                workerRelease.wait()
                 return "completed"
             }
         }
-
-        // Allow worker to start and enter sleep
-        try await Task.sleep(nanoseconds: 10_000_000)  // 10ms
+        await Task.detached { workerEntered.wait() }.value
         inFlightTask.cancel()
+        workerRelease.signal()
 
         do {
             _ = try await inFlightTask.value

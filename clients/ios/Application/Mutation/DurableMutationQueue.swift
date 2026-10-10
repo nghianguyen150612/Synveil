@@ -275,22 +275,38 @@ final class DurableMutationQueue: DurableMutationQueueProtocol {
         try await fence(session)
         let attemptId = UUID().uuidString
         let capturedOwner = owner
-        let row: StoredMutationRecord
-        if recovery {
-            row = try await store.beginRecoveryAttempt(
-                scope: scope, id: mutationId.rawValue, owner: capturedOwner, attemptId: attemptId)
-        } else {
-            row = try await store.beginAttempt(
-                scope: scope, id: mutationId.rawValue, owner: capturedOwner, attemptId: attemptId)
-        }
-        let record: MutationQueueRecord
         do {
-            record = try await codec.rehydrate(row)
+            let row: StoredMutationRecord
+            if recovery {
+                row = try await store.beginRecoveryAttempt(
+                    scope: scope, id: mutationId.rawValue, owner: capturedOwner,
+                    attemptId: attemptId)
+            } else {
+                row = try await store.beginAttempt(
+                    scope: scope, id: mutationId.rawValue, owner: capturedOwner,
+                    attemptId: attemptId)
+            }
+            let record = try await codec.rehydrate(row)
             guard record.mutation == originalRecord.mutation else {
                 throw MutationQueueFailure.malformedRecord
             }
             try await fence(session)
+            guard capturedOwner == owner else { throw MutationQueueFailure.ownershipRequired }
+            return MutationSubmissionLease(
+                mutation: record.mutation, session: session, owner: capturedOwner,
+                attemptId: attemptId)
         } catch {
+            // A lease COMMIT can outlive cancellation or lose its acknowledgement. Record only
+            // uncertainty for this exact attempt, without credentials, networking or publication.
+            // Conditional SQLite ownership/state guards make a rollback, newer attempt or terminal
+            // result impossible to overwrite. If SQLite/quarantine prevents cleanup, restart retains
+            // the last committed interrupted state; no attempt is dispatched or reported successful.
+            let cause =
+                error as? MutationQueueFailure == .commitAcknowledgementLost
+                ? "LEASE_COMMIT_ACKNOWLEDGEMENT_LOST" : "LOCAL_PRE_DISPATCH"
+            await abandonUndispatchedAttempt(
+                scope: scope, id: mutationId.rawValue,
+                owner: capturedOwner, attemptId: attemptId, cause: cause)
             if Task.isCancelled || error is CancellationError
                 || error as? LibraryFailure == .staleSession
             {
@@ -298,9 +314,23 @@ final class DurableMutationQueue: DurableMutationQueueProtocol {
             }
             throw error
         }
-        guard capturedOwner == owner else { throw MutationQueueFailure.ownershipRequired }
-        return MutationSubmissionLease(
-            mutation: record.mutation, session: session, owner: capturedOwner, attemptId: attemptId)
+    }
+
+    private func abandonUndispatchedAttempt(
+        scope: ClientMutationScope, id: String,
+        owner: String, attemptId: String, cause: String
+    ) async {
+        let store = store
+        let cleanup = Task {
+            let evidence = try JSONEncoder().encode(
+                MutationOutcomeEvidence(
+                    category: .outcomeUnknown, responseStatus: nil, responseBody: nil,
+                    rejection: nil, uncertainty: cause))
+            try await store.finishAttempt(
+                scope: scope, id: id, owner: owner, attemptId: attemptId,
+                state: .outcomeUnknown, evidence: evidence)
+        }
+        _ = try? await cleanup.value
     }
 
     fileprivate func authorize(_ mutation: PreparedClientMutation, lease: MutationSubmissionLease)

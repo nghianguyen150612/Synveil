@@ -115,6 +115,9 @@ final class MutationRecoverySQLiteTests: XCTestCase {
         await queueAssertFailure(.commitAcknowledgementLost) {
             try await f.queue.acquireRecoveryAttempt(scope: f.scope, mutationId: old.mutation.id)
         }
+        let settled = try await queueRecord(f)
+        XCTAssertEqual(settled.state, .outcomeUnknown)
+        XCTAssertEqual(settled.evidence?.uncertainty, "LEASE_COMMIT_ACKNOWLEDGEMENT_LOST")
         let reopened = try MutationQueueSQLiteStore(url: f.url)
         _ = try await reopened.recoverInterruptedOperations()
         let raw = try await reopened.record(scope: f.scope, id: old.mutation.id.rawValue)

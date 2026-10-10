@@ -242,7 +242,7 @@ struct MutationPersistenceCodec: Sendable {
             guard
                 [
                     "CANCELLED", "STALE_SESSION", "UNVERIFIED_OUTCOME", "INTERRUPTED",
-                    "LOCAL_PRE_DISPATCH",
+                    "LOCAL_PRE_DISPATCH", "LEASE_COMMIT_ACKNOWLEDGEMENT_LOST",
                 ].contains(
                     evidence.uncertainty),
                 evidence.responseStatus == nil, evidence.responseBody == nil,

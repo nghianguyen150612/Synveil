@@ -233,7 +233,8 @@ final class MutationDrainCoordinatorTests: XCTestCase {
         let result = await drainCoordinator(f).drain(scope: f.scope, maximumOperations: 1)
         XCTAssertEqual(result, .stopped(.queue(.commitAcknowledgementLost), MutationDrainSummary()))
         let row = try await queueRecord(f)
-        XCTAssertEqual(row.state, .submitting)
+        XCTAssertEqual(row.state, .outcomeUnknown)
+        XCTAssertEqual(row.evidence?.uncertainty, "LEASE_COMMIT_ACKNOWLEDGEMENT_LOST")
         await posts(f, 0)
     }
     func testSingleUseAuthorizerAndMissingAuthorizer() async throws {
@@ -697,6 +698,8 @@ final class MutationDrainCoordinatorTests: XCTestCase {
         if cancel { task.cancel() } else { await f.controller.requestLogout() }
         await gate.release()
         guard case .stopped = await task.value else { return XCTFail() }
+        let settled = try await f.database.record(scope: f.scope, id: row.mutation.id.rawValue)
+        if cancel { XCTAssertEqual(settled?.state, .outcomeUnknown) }
         let reopened = try MutationQueueSQLiteStore(url: f.url)
         _ = try await reopened.recoverInterruptedOperations()
         let recovered = try await reopened.record(scope: f.scope, id: row.mutation.id.rawValue)
