@@ -61,6 +61,9 @@ def validate_appdir(appdir: Path) -> None:
 
 
 def run_smoke(artifact: Path) -> None:
+    xvfb_run = shutil.which("xvfb-run")
+    if not xvfb_run:
+        fail("APPIMAGE-18: xvfb-run is required to exercise the bundled xcb platform plugin")
     with tempfile.TemporaryDirectory(prefix="synveil-appimage-smoke.") as work:
         base = Path(work)
         for name in ("config", "data", "cache", "runtime", "home"):
@@ -70,9 +73,13 @@ def run_smoke(artifact: Path) -> None:
         }}
         env.update(HOME=str(base / "home"), XDG_CONFIG_HOME=str(base / "config"),
                    XDG_DATA_HOME=str(base / "data"), XDG_CACHE_HOME=str(base / "cache"),
-                   XDG_RUNTIME_DIR=str(base / "runtime"), QT_QPA_PLATFORM="offscreen",
+                   XDG_RUNTIME_DIR=str(base / "runtime"), QT_QPA_PLATFORM="xcb",
                    QML_DISABLE_DISK_CACHE="1", APPIMAGE_EXTRACT_AND_RUN="1")
-        subprocess.run(["timeout", "20s", str(artifact), "--qml-smoke-test"], cwd=base, env=env, check=True)
+        subprocess.run(
+            [xvfb_run, "--auto-servernum", "--server-args=-screen 0 1280x800x24 -nolisten tcp",
+             "timeout", "20s", str(artifact), "--qml-smoke-test"],
+            cwd=base, env=env, check=True,
+        )
 
 
 def inspect_artifact(artifact: Path, smoke: bool) -> None:
