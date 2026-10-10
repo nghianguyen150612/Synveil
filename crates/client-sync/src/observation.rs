@@ -1843,6 +1843,27 @@ impl OutboundObservationEngine {
             .observed_node_at_path(self.scope.library_id(), source)
             .await?;
         let Some(source_node) = source_node.filter(|value| value.present) else {
+            // Atomic-save editors commonly write an untracked temporary file
+            // and rename it over the tracked destination. Treat that as a
+            // modification of the destination's existing node. Falling
+            // through to rename ambiguity would leave the old bytes in the
+            // observed snapshot and miss the user's replacement content.
+            if source_actual.is_none()
+                && let Some(destination_fingerprint) = destination_actual
+                && let Some(destination_node) = self
+                    .state
+                    .observed_node_at_path(self.scope.library_id(), destination)
+                    .await?
+                && destination_node.present
+            {
+                return self
+                    .classify_known_present(
+                        &destination_node,
+                        destination,
+                        destination_fingerprint,
+                    )
+                    .await;
+            }
             if source_actual.is_none()
                 && let Some(destination_fingerprint) = destination_actual
                 && self
@@ -3527,6 +3548,46 @@ mod tests {
         harness.observe(WatchHintKind::Create, &["user.txt"]).await;
         assert_eq!(harness.engine.count_pending_intents().await.unwrap(), 1);
         assert_eq!(notifier.calls().len(), 1);
+        harness.close().await;
+    }
+
+    #[tokio::test]
+    async fn atomic_save_rename_over_known_file_records_modification() {
+        let harness = Harness::manual().await;
+        let file_id = harness
+            .seed_file("tracked.txt", harness.root_id, b"old")
+            .await;
+        harness.start().await;
+
+        fs::write(harness.root.join(".editor.tmp"), b"replacement").unwrap();
+        fs::rename(
+            harness.root.join(".editor.tmp"),
+            harness.root.join("tracked.txt"),
+        )
+        .unwrap();
+        harness
+            .observe(
+                WatchHintKind::Rename,
+                &[".editor.tmp", "tracked.txt"],
+            )
+            .await;
+
+        let intents = harness.engine.list_pending_intents().await.unwrap();
+        assert_eq!(intents.len(), 1);
+        assert_eq!(intents[0].kind(), OutboundIntentKind::ModifyFileContent);
+        assert_eq!(intents[0].node_id(), Some(file_id));
+        assert_eq!(
+            intents[0].observed_relative_path().as_str(),
+            "tracked.txt"
+        );
+        assert!(
+            harness
+                .state
+                .observation_issues(harness.scope.library_id())
+                .await
+                .unwrap()
+                .is_empty()
+        );
         harness.close().await;
     }
 
