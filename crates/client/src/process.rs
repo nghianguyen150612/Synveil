@@ -593,11 +593,26 @@ mod tests {
             .await
             .expect("idempotent process shutdown");
 
-        state.close_pool().await;
         drop(process);
         drop(host);
+        assert_eq!(
+            Arc::strong_count(&state),
+            1,
+            "stopped process and host must release every state-store owner before fixture cleanup"
+        );
+        state.close_pool().await;
         drop(state);
-        fs::remove_dir_all(&directory).expect("process fixture cleanup");
+        fs::remove_dir_all(&directory).unwrap_or_else(|error| {
+            let remaining = fs::read_dir(&directory)
+                .map(|entries| {
+                    entries
+                        .filter_map(Result::ok)
+                        .map(|entry| entry.file_name())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            panic!("process fixture cleanup failed: {error}; remaining entries: {remaining:?}");
+        });
     }
 
     #[test]
