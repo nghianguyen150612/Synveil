@@ -128,7 +128,7 @@ final class SyncAckTests: XCTestCase {
         let (f, _, service, receipt) = try await ackFixture()
         await f.transport.set(try syncError("dependency_unavailable", status: 503))
         let result = await service.acknowledge(receipt)
-        XCTAssertEqual(result, .failed(.transport(.serverUnavailable)))
+        XCTAssertEqual(result, .outcomeUnknown(.transport(.serverUnavailable)))
         let session = try await f.credentials.load(expectedServerEndpoint: f.scope.serverEndpoint)
         XCTAssertEqual(session.record.credential.rawValue, queueBearer)
         XCTAssertEqual(receipt.evidence.token, "v1.sync-ack.original-evidence_123")
@@ -249,6 +249,16 @@ final class SyncAckTests: XCTestCase {
         XCTAssertLessThanOrEqual(body.count, 2048)
         XCTAssertThrowsError(
             try SyncFeedPolicy.ackBody(evidence(String(repeating: "a", count: 257))))
+    }
+    func testUnrecognizedServerErrorAfterDispatchIsUncertain() async throws {
+        let (f, projection, service, receipt) = try await ackFixture()
+        await f.transport.set(try syncError("internal_error", status: 500))
+        let result = await service.acknowledge(receipt)
+        XCTAssertEqual(result, .outcomeUnknown(.protocolFailure))
+        let count = await projection.count()
+        XCTAssertEqual(count, 0)
+        let requests = await f.transport.requests()
+        XCTAssertEqual(requests.count, 2)
     }
     private func ackFixture(applied: String? = nil, confirmed: String = "0") async throws -> (
         QueueFixture, AppliedFeedFixture, SyncAckService, AppliedFeedCommitReceipt

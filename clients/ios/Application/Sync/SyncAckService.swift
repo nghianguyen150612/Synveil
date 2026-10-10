@@ -99,7 +99,9 @@ final class SyncAckService {
                         credentialId: receipt.session.credentialIdentifier)
                     try await provider.validate(receipt.session)
                 }
-                // A definitive server rejection does not authorize checkpoint publication.
+                // A server-side failure may occur after the checkpoint transaction committed.
+                // Retain ACK_IN_FLIGHT evidence; only a verified checkpoint can confirm progress.
+                if response.statusCode >= 500 { return .outcomeUnknown(failure) }
                 return .failed(failure)
             }
             let checkpoint: SyncCheckpoint

@@ -109,7 +109,7 @@ enum SyncTransportValidation {
         case (401, "authentication_failed"): return .transport(.authenticationRejected)
         case (401, "device_revoked"), (403, "device_revoked"): return .transport(.deviceRevoked)
         case (503, "dependency_unavailable"): return .transport(.serverUnavailable)
-        default: return .protocolFailure
+        default: throw SyncFeedFailure.protocolFailure
         }
     }
 
