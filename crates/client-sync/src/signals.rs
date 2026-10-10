@@ -15,6 +15,7 @@ use crate::{
     ClientSyncError, DeviceEnrollmentRecord, EnrollmentCredentials, LocalStateStore,
     MAX_SYNC_RUNTIME_LIBRARIES, OutboundIntent, OutboundIntentUpsertResult, ServerProfileId,
     SyncRuntimeIdentity, SyncRuntimeWakeReason, SyncRuntimeWakeResult, SyncWakeNotifier,
+    test_support::remove_dir_all_bounded,
 };
 
 /// The durable half of a producer operation that may be followed by a wake.
@@ -536,7 +537,7 @@ mod tests {
     async fn close_fixture(directory: PathBuf, state: Arc<LocalStateStore>) {
         state.close_pool().await;
         drop(state);
-        fs::remove_dir_all(directory).expect("fixture cleanup");
+        remove_dir_all_bounded(&directory).expect("fixture cleanup");
     }
 
     #[tokio::test]
@@ -579,6 +580,8 @@ mod tests {
         );
         assert_eq!(duplicate.notification().wake_result(), None);
         assert_eq!(notifier.calls().len(), 1);
+        drop(producer);
+        drop(notifier);
         close_fixture(directory, state).await;
     }
 
@@ -607,6 +610,8 @@ mod tests {
                 .is_some()
         );
         assert_eq!(notifier.calls().len(), 1);
+        drop(producer);
+        drop(notifier);
         close_fixture(directory, state).await;
     }
 
@@ -626,6 +631,8 @@ mod tests {
             Some(SyncRuntimeWakeResult::Queued)
         );
         assert!(notifier.intent_visible_at_wake());
+        drop(producer);
+        drop(notifier);
         close_fixture(directory, state).await;
     }
 
