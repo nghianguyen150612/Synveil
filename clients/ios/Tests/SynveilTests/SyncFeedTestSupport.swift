@@ -119,3 +119,29 @@ actor AppliedFeedFixture: CommittedSyncProjectionStorageProtocol {
     func failConfirmation() { confirmFailure = .diskFull }
     func count() -> Int { confirmations }
 }
+
+/// Suspends exactly one ID validation to exercise an actual actor readback/rebaseline interleaving.
+actor FeedReadBlockingValidator: RustBridgeProtocol {
+    let gate: QueueGate
+    private var first = true
+    init(_ gate: QueueGate) { self.gate = gate }
+    func parseSHA256(_ value: String) async throws -> Data { Data() }
+    func formatSHA256(_ value: Data) async throws -> String { "" }
+    func validateEnrollmentToken(_ value: String) async throws -> Bool { false }
+    func validateDeviceBearerToken(_ value: String) async throws -> Bool {
+        DeviceCredential.isValid(value)
+    }
+    func validateLibraryID(_ value: String) async throws -> Bool {
+        try await QueueValidator().validateLibraryID(value)
+    }
+    func validateLogicalName(_ value: String) async throws -> Bool {
+        try await QueueValidator().validateLogicalName(value)
+    }
+    func validateNodeID(_ value: String) async throws -> Bool {
+        if first {
+            first = false
+            await gate.arrive()
+        }
+        return try await QueueValidator().validateNodeID(value)
+    }
+}

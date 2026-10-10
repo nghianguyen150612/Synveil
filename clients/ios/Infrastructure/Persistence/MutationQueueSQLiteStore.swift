@@ -729,7 +729,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         }
     }
 
-    private struct RawInbound {
+    private struct RawInbound: Equatable {
         let response: Data
         let canonical: Data
         let through: String
@@ -777,6 +777,10 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
             [.receivedUnapplied, .blockedRebaseline].contains(raw.state)
         else { throw MutationQueueFailure.malformedRecord }
         try requireFeedScope(scope, credentialId: credentialId)
+        // Decoding suspends on Rust validation. A concurrent rebaseline may have blocked this row.
+        guard try rawInbound(scope: scope, position: position) == raw else {
+            throw MutationQueueFailure.reconciliationRequired
+        }
         return InboundSyncPageRecord(
             page: page, state: raw.state, createdAt: raw.created,
             updatedAt: raw.updated, encodingVersion: 1)

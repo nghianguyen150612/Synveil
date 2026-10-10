@@ -82,9 +82,11 @@ final class SyncFeedService {
                 let record = try await store.inboundPage(
                     scope: scope, position: expected,
                     credentialId: session.credentialIdentifier, bridge: bridge),
-                record.page.canonicalData == page.canonicalData,
-                record.state == .receivedUnapplied
+                record.page.canonicalData == page.canonicalData
             else { throw MutationQueueFailure.commitAcknowledgementLost }
+            guard record.state == .receivedUnapplied else {
+                throw SyncFeedFailure.rebaselineRequired
+            }
             do { try await provider.validate(session) } catch {
                 throw MutationQueueFailure.committedButSessionChanged
             }

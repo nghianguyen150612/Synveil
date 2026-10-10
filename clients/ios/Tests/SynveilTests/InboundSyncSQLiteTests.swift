@@ -324,6 +324,23 @@ final class InboundSyncSQLiteTests: XCTestCase {
         let session = try await f.credentials.load(expectedServerEndpoint: f.scope.serverEndpoint)
         XCTAssertEqual(session.record.credential.rawValue, queueBearer)
     }
+    func testConcurrentRebaselineDuringReadbackCannotReturnUnappliedSnapshot() async throws {
+        let f = try await queueFixture(self)
+        _ = try await feedStage(f)
+        let gate = QueueGate()
+        let bridge = FeedReadBlockingValidator(gate)
+        let task = Task {
+            try await f.database.inboundPage(
+                scope: f.scope, position: feedPosition(),
+                credentialId: queueUUID(92), bridge: bridge)
+        }
+        await gate.wait()
+        try await f.database.blockInbound(scope: f.scope, credentialId: queueUUID(92))
+        await gate.release()
+        await queueAssertFailure(.reconciliationRequired) { try await task.value }
+        let current = try await feedRead(f.database, scope: f.scope)
+        XCTAssertEqual(current?.state, .blockedRebaseline)
+    }
     private func rejectScope(_ other: ClientMutationScope) async throws {
         let f = try await queueFixture(self)
         let page = try await feedPage(scope: other)
