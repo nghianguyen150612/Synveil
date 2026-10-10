@@ -4,6 +4,8 @@
 # the project's supported Windows 11 installation target.
 # CABINET.DLL is the inbox Cabinet API library, present on Windows 11 and
 # imported by Microsoft's VC++ redistributable installer itself.
+# MSI.DLL is the Windows Installer API library supplied by Windows 11 and
+# imported by Microsoft's VC++ redistributable installer itself.
 # SPDX-License-Identifier: MIT
 
 is_system_dll() {
@@ -15,7 +17,7 @@ is_system_dll() {
         VERSION.DLL|DWMAPI.DLL|IMM32.DLL|SETUPAPI.DLL|AUTHZ.DLL|NCRYPT.DLL|D3D11.DLL|D3D12.DLL|\
         D3D9.DLL|DNSAPI.DLL|DWRITE.DLL|DXGI.DLL|IMAGEHLP.DLL|MPR.DLL|MSVCRT.DLL|\
         NETAPI32.DLL|RPCRT4.DLL|SECUR32.DLL|SHCORE.DLL|USERENV.DLL|UXTHEME.DLL|\
-        UIAUTOMATIONCORE.DLL|WINMM.DLL|WINSPOOL.DRV|WTSAPI32.DLL|CABINET.DLL)
+        UIAUTOMATIONCORE.DLL|WINMM.DLL|WINSPOOL.DRV|WTSAPI32.DLL|CABINET.DLL|MSI.DLL)
             return 0
             ;;
         *)
