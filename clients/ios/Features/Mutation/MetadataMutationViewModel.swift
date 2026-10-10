@@ -237,7 +237,7 @@ final class MetadataMutationViewModel {
         isEnqueueing = false
         switch result {
         case .persisted(let receipt):
-            notice = Self.notice(for: receipt)
+            notice = Self.receiptNotice(for: receipt)
             return true
         case .failed(let failure):
             notice = MetadataMutationNotice(
@@ -265,7 +265,7 @@ final class MetadataMutationViewModel {
         return true
     }
 
-    static func notice(for receipt: MetadataMutationReceipt) -> MetadataMutationNotice {
+    static func receiptNotice(for receipt: MetadataMutationReceipt) -> MetadataMutationNotice {
         switch receipt.state {
         case .pending:
             MetadataMutationNotice(
@@ -549,7 +549,7 @@ final class MutationActivityViewModel {
         isRestoring = false
         switch result {
         case .persisted(let receipt):
-            notice = MetadataMutationViewModel.notice(for: receipt)
+            notice = MetadataMutationViewModel.receiptNotice(for: receipt)
         case .failed(let failure):
             notice = MetadataMutationNotice(
                 title: "Restore not queued",
