@@ -32,6 +32,7 @@ jobs:
         shell: bash
         run: |
           python scripts/validate-windows-installer.py
+          ./tests/windows/test-windows-pe-import-policy.sh
           ./scripts/test-windows-rustflags.sh
       - name: Build runtime payload
         shell: bash

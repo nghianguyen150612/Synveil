@@ -61,6 +61,7 @@ jobs:
           bash -n deploy/packages/common/arch.sh
           bash -n deploy/packages/common/payload.sh
           bash -n deploy/packages/common/reproducible.sh
+          bash -n deploy/packages/common/windows-pe-import-policy.sh
           bash -n scripts/validate-release-artifacts.sh
           bash -n scripts/validate-release-manifest.sh
           bash -n scripts/validate-rpm-package-ux.sh
@@ -75,14 +76,17 @@ jobs:
           bash -n deploy/install/common.sh
           bash -n deploy/install/quick-install.sh
           bash -n scripts/run-linux-quick-install-acceptance.sh
+          bash -n tests/windows/test-windows-pe-import-policy.sh
           shellcheck -S warning \
             deploy/packages/build.sh deploy/packages/build-windows.sh \
             deploy/packages/common/reproducible.sh \
+            deploy/packages/common/windows-pe-import-policy.sh \
             scripts/validate-release-artifacts.sh \
             scripts/verify-release-build-reproducibility.sh \
             scripts/diagnose-desktop-reproducibility.sh \
             deploy/install/quick-install.sh scripts/run-linux-quick-install-acceptance.sh \
             deploy/packages/debian/postinst deploy/packages/debian/prerm deploy/packages/debian/postrm
+          ./tests/windows/test-windows-pe-import-policy.sh
 
       - name: Prompt017 static and adversarial quick-install contracts
         run: ./scripts/validate-linux-quick-install.sh

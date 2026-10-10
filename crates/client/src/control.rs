@@ -3563,6 +3563,13 @@ mod tests {
         synveil_client_sync::ServerProfileId::new()
     }
 
+    #[cfg(unix)]
+    fn short_unix_socket_fixture_root() -> PathBuf {
+        let root = std::env::temp_dir().join(format!("sv{}", uuid::Uuid::now_v7().simple()));
+        fs::create_dir_all(&root).expect("fixture root");
+        root.canonicalize().expect("canonical fixture root")
+    }
+
     #[test]
     fn framing_rejects_zero_and_oversized_payloads_before_body_allocation() {
         assert_eq!(encode_frame(&[]), Err(ControlFrameError::ZeroLength));
@@ -3910,8 +3917,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn active_socket_is_never_replaced_and_stale_socket_is_recovered() {
-        let root = PathBuf::from("/tmp").join(format!("sv96-active-{}", uuid::Uuid::now_v7()));
-        fs::create_dir_all(&root).expect("fixture root");
+        let root = short_unix_socket_fixture_root();
         let path = root.join(CONTROL_ENDPOINT_DIRECTORY).join("control.sock");
         let endpoint = DesktopControlEndpoint::UnixSocket { path: path.clone() };
 
@@ -4011,8 +4017,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn local_server_and_client_share_one_host_control_surface() {
-        let root = PathBuf::from("/tmp").join(format!("sv96-local-{}", uuid::Uuid::now_v7()));
-        fs::create_dir_all(&root).expect("fixture root");
+        let root = short_unix_socket_fixture_root();
         let state = Arc::new(
             LocalStateStore::open(&LocalStateConfig::new(root.join("state.sqlite3")))
                 .await

@@ -16,7 +16,7 @@
 | APPIMAGE-4–8 | Real AppDir inspection requires desktop, client, canonical metadata/icon, and direct packaged-desktop AppRun target. |
 | APPIMAGE-9–12 | AppRun resets search paths; inspection requires Qt libraries, QML module metadata, and QPA plugin. |
 | APPIMAGE-13–17 | Source contract and focused documentation preserve SecretStore, user IPC/XDG state, and prohibit privileged or automatic integration. |
-| APPIMAGE-18 | Hosted validator runs the exact AppImage `--qml-smoke-test` offscreen in a disposable, decontaminated environment. |
+| APPIMAGE-18 | Hosted validator runs the exact AppImage `--qml-smoke-test` with the packaged `xcb` plugin under isolated Xvfb and a decontaminated environment. |
 | APPIMAGE-19 | Builder independently stages/constructs twice and requires `cmp` byte identity. |
 | APPIMAGE-20 | Manifest generator measures the published file; validator recomputes its size and SHA-256. |
 | APPIMAGE-21 | Builder/validator fail on missing binaries, metadata, AppRun, Qt/QML/plugin closure, tool failure, or absent output; temporary staging prevents partial publication. |
