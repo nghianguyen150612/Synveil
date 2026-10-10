@@ -353,6 +353,20 @@ final class SyncFeedTests: XCTestCase {
             try await feedPage(scope: scope, object: object)
         }
     }
+    func testEmptyPageCannotClaimUndeliveredHighWatermark() async throws {
+        let scope = try await queueScope()
+        let object = feedObject(scope: scope, count: 0, high: 1)
+        await feedAssertFailure(.protocolFailure) {
+            try await feedPage(scope: scope, object: object)
+        }
+    }
+    func testMaximumU64ResourceRevisionIsExact() async throws {
+        let scope = try await queueScope()
+        let object = eventChanged(
+            feedObject(scope: scope), key: "resource_revision", value: "18446744073709551615")
+        let page = try await feedPage(scope: scope, object: object)
+        XCTAssertEqual(page.events[0].resourceRevision.rawValue, "18446744073709551615")
+    }
     private func dataChanged(_ object: [String: Any], key: String, value: Any?) -> [String: Any] {
         var result = object
         var data = result["data"] as! [String: Any]

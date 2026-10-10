@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import XCTest
 
 @testable import Synveil
@@ -271,6 +272,57 @@ final class InboundSyncSQLiteTests: XCTestCase {
         await gate.release()
         guard case .failed = await task.value else { return XCTFail() }
         XCTAssertEqual(try queueRawScalar(f.url, "SELECT count(*) FROM inbound_pages"), "0")
+    }
+    func testV2MigrationRetainsAppliedAndConflictResponseEvidence() async throws {
+        let f = try await queueFixture(self)
+        let applied = try await queueEnqueued(f)
+        let lease = try await f.queue.acquireAttempt(
+            scope: f.scope, mutationId: applied.mutation.id)
+        try await f.queue.finish(lease, result: queueApplied(applied.mutation))
+        let conflict = try await queueEnqueued(
+            f, mutation: queuePrepared(id: 11, node: 1, scope: f.scope))
+        let second = try await f.queue.acquireAttempt(
+            scope: f.scope, mutationId: conflict.mutation.id)
+        try await f.queue.finish(second, result: queueConflict(conflict.mutation))
+        let originals = try await f.database.activityRecords(scope: f.scope, limit: 100)
+        let base = try await f.database.syncBase(scope: f.scope)
+        try downgradeV2(f.url)
+        let migrated = try MutationQueueSQLiteStore(url: f.url)
+        let rows = try await migrated.activityRecords(scope: f.scope, limit: 100)
+        let preservedBase = try await migrated.syncBase(scope: f.scope)
+        XCTAssertEqual(rows.map(\.request), originals.map(\.request))
+        XCTAssertEqual(rows.map(\.payload), originals.map(\.payload))
+        XCTAssertEqual(rows.map(\.evidence), originals.map(\.evidence))
+        XCTAssertEqual(rows.map(\.state), [.applied, .conflict])
+        XCTAssertEqual(preservedBase?.responseBody, base?.responseBody)
+    }
+    func testUncommittedSQLiteInterruptionRetainsLastCommittedPage() async throws {
+        let f = try await queueFixture(self)
+        _ = try await feedStage(f)
+        var handle: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(f.url.path, &handle), SQLITE_OK)
+        let db = try XCTUnwrap(handle)
+        XCTAssertEqual(sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil), SQLITE_OK)
+        XCTAssertEqual(
+            sqlite3_exec(db, "UPDATE inbound_pages SET state='BLOCKED_REBASELINE'", nil, nil, nil),
+            SQLITE_OK)
+        // Closing a connection with an uncommitted transaction simulates interruption, not power loss.
+        XCTAssertEqual(sqlite3_close(db), SQLITE_OK)
+        let reopened = try MutationQueueSQLiteStore(url: f.url)
+        let row = try await feedRead(reopened, scope: f.scope)
+        XCTAssertEqual(row?.state, .receivedUnapplied)
+    }
+    func testFeedUnavailablePreservesCredentialAndOriginalInbox() async throws {
+        let f = try await queueFixture(self)
+        _ = try await feedStage(f)
+        let original = try await feedRead(f.database, scope: f.scope)
+        await f.transport.set(try syncError("dependency_unavailable", status: 503))
+        let result = await feedService(f).readAndStage(scope: f.scope)
+        XCTAssertEqual(result, .failed(.transport(.serverUnavailable)))
+        let current = try await feedRead(f.database, scope: f.scope)
+        XCTAssertEqual(current, original)
+        let session = try await f.credentials.load(expectedServerEndpoint: f.scope.serverEndpoint)
+        XCTAssertEqual(session.record.credential.rawValue, queueBearer)
     }
     private func rejectScope(_ other: ClientMutationScope) async throws {
         let f = try await queueFixture(self)

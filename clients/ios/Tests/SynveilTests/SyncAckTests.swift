@@ -212,6 +212,44 @@ final class SyncAckTests: XCTestCase {
         XCTAssertFalse(String(describing: page).contains("original-evidence"))
         XCTAssertFalse(String(reflecting: page.evidence!).contains("original-evidence"))
     }
+    func testCredentialReplacementAfterDispatchCannotConfirmOrRetry() async throws {
+        let (f, projection, service, receipt) = try await ackFixture()
+        let gate = QueueGate()
+        await f.transport.suspendNextRequest(gate)
+        let task = Task { await service.acknowledge(receipt) }
+        await gate.wait()
+        await f.credentials.replace(try queueSession(f.scope, credential: 99))
+        await gate.release()
+        let result = await task.value
+        XCTAssertEqual(result, .outcomeUnknown(.transport(.staleSession)))
+        let count = await projection.count()
+        XCTAssertEqual(count, 0)
+        let requests = await f.transport.requests()
+        XCTAssertEqual(requests.count, 2)
+    }
+    func testCrossOriginAckScopeCannotObtainReceipt() async throws {
+        let (f, _, service, _) = try await ackFixture()
+        let other = try await queueScope(endpoint: "https://other.example")
+        await feedAssertFailure(.scopeMismatch) {
+            try await service.receipt(scope: other, position: feedPosition())
+        }
+        let requests = await f.transport.requests()
+        XCTAssertEqual(requests.count, 1)
+    }
+    func testMaximumTokenBodyBoundAndOversizedRejection() async throws {
+        let scope = try await queueScope()
+        let page = try await feedPage(scope: scope)
+        let original = try XCTUnwrap(page.evidence)
+        func evidence(_ token: String) -> SyncAckEvidence {
+            SyncAckEvidence(
+                scope: scope, epoch: original.epoch, from: original.from,
+                through: original.through, highWatermark: original.highWatermark, token: token)
+        }
+        let body = try SyncFeedPolicy.ackBody(evidence(String(repeating: "a", count: 256)))
+        XCTAssertLessThanOrEqual(body.count, 2048)
+        XCTAssertThrowsError(
+            try SyncFeedPolicy.ackBody(evidence(String(repeating: "a", count: 257))))
+    }
     private func ackFixture(applied: String? = nil, confirmed: String = "0") async throws -> (
         QueueFixture, AppliedFeedFixture, SyncAckService, AppliedFeedCommitReceipt
     ) {
