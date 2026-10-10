@@ -706,6 +706,90 @@ final class MetadataMutationFeatureTests: XCTestCase {
         XCTAssertNotNil(editor.body)
     }
 
+    func testNativeCompositionPersistsQueuedFolderAndExplicitlyAppliesFromSQLite() async throws {
+        let fixture = try await queueFixture(self)
+        let rootId = try await NodeId.validated(queueUUID(81), using: QueueValidator())
+        let root = try await mutationNode(
+            81, scope: fixture.scope, parent: nil, revision: "27", kind: .directory)
+        let repository = MutationNodeRepository(nodes: [root])
+        let feature = makeFeature(
+            fixture, repository: repository, generator: CountingMutationIDGenerator(first: 700))
+        let library = mutationLibrary(fixture, root: rootId)
+        let session = try authenticatedMutationController()
+        let route = NodeBrowserRoute(
+            library: NodeBrowserLibraryContext(
+                id: library.id, name: library.name, rootNodeId: rootId, status: library.status),
+            parentScope: .libraryRoot(rootNodeId: rootId), directoryTitle: library.name,
+            ancestry: [rootId])
+        let browser = NodeBrowserView(
+            repository: repository, sessionController: session, route: route,
+            metadataMutationFeature: feature)
+        let activity = MutationActivityView(
+            library: library, feature: feature, sessionController: session)
+        XCTAssertNotNil(browser.body)
+        XCTAssertNotNil(activity.body)
+
+        let browserViewModel = MetadataMutationViewModel(
+            route: route, feature: feature, sessionController: session)
+        await browserViewModel.refreshAvailability()
+        XCTAssertTrue(browserViewModel.canCreateFolder)
+        let wasQueued = await browserViewModel.enqueueFolder(name: "Native folder")
+        XCTAssertTrue(wasQueued)
+        XCTAssertEqual(browserViewModel.notice?.title, "Queued")
+
+        let activityViewModel = MutationActivityViewModel(
+            library: library, feature: feature, sessionController: session)
+        await activityViewModel.load()
+        XCTAssertEqual(activityViewModel.items.count, 1)
+        XCTAssertEqual(activityViewModel.items.first?.state, .pending)
+        XCTAssertEqual(
+            activityViewModel.items.first.map {
+                MutationQueueStatePresentation.label(for: $0.state)
+            },
+            "Queued")
+        let requestsBeforeSend = await fixture.transport.requests()
+        XCTAssertFalse(requestsBeforeSend.contains(where: { $0.method == .post }))
+
+        guard let item = activityViewModel.items.first,
+            case .record(let queued) = await fixture.queue.get(
+                scope: fixture.scope,
+                mutationId: try await ClientMutationId.validated(
+                    item.id, using: QueueValidator())),
+            case .createDirectory(let parentId, _, let name) = queued.mutation.payload.intent
+        else { return XCTFail("Expected CREATE_DIRECTORY in the durable SQLite queue") }
+        let createdNodeId = try await NodeId.validated(queueUUID(701), using: QueueValidator())
+        await fixture.transport.set(
+            try queueHTTP([
+                "data": [
+                    "outcome": "APPLIED", "mutation_id": item.id,
+                    "kind": "CREATE_DIRECTORY", "replayed": false,
+                    "journal_event_id": queueUUID(702), "journal_sequence": "9",
+                    "node": [
+                        "id": createdNodeId.rawValue,
+                        "library_id": library.id.rawValue,
+                        "parent_node_id": parentId.rawValue,
+                        "kind": "DIRECTORY", "state": "ACTIVE", "name": name,
+                        "revision": "1", "created_at": "2026-10-09T12:00:00Z",
+                        "updated_at": "2026-10-09T12:00:01Z",
+                    ],
+                ],
+                "meta": ["request_id": "native-composition-test"],
+            ]))
+
+        await activityViewModel.sendPendingChanges()
+
+        XCTAssertEqual(activityViewModel.items.first?.state, .applied)
+        XCTAssertTrue(activityViewModel.notice?.message.contains("1 change applied") == true)
+        let persisted = await fixture.queue.get(
+            scope: fixture.scope, mutationId: queued.mutation.id)
+        guard case .record(let applied) = persisted else {
+            return XCTFail("Expected the terminal result to remain durably readable")
+        }
+        XCTAssertEqual(applied.state, .applied)
+        let requestsAfterSend = await fixture.transport.requests()
+        XCTAssertEqual(requestsAfterSend.filter { $0.method == .post }.count, 1)
+    }
+
     private func makeFeature(
         _ fixture: QueueFixture,
         repository: MutationNodeRepository,

@@ -107,7 +107,7 @@ Modified:
 
 ## Tests and validation evidence
 
-- New deterministic XCTest methods: **28 added** (27 feature tests plus one Library-status navigation test; native execution pending). They exercise SQLite-backed operation preparation, root revision provenance and freshness after APPLIED, offline enqueue, missing base setup, explicit checkpoint failure, exact rename Unicode, duplicate Save, lost commit acknowledgement readback, Move guards and revisions, Trash confirmation, APPLIED trash/Restore preconditions, bounded terminal-heavy queue activity, scope isolation, state mapping, explicit send, UNKNOWN cap, session invalidation and SwiftUI view construction.
+- New deterministic XCTest methods: **29 added** (28 feature tests plus one Library-status navigation test; native execution pending). They exercise SQLite-backed operation preparation, root revision provenance and freshness after APPLIED, offline enqueue, missing base setup, explicit checkpoint failure, exact rename Unicode, duplicate Save, lost commit acknowledgement readback, Move guards and revisions, Trash confirmation, APPLIED trash/Restore preconditions, bounded terminal-heavy queue activity, scope isolation, state mapping, explicit send, UNKNOWN cap, session invalidation and SwiftUI composition with a real SQLite-backed enqueue and explicit APPLIED drain.
 - Linux Python support suite: **54 tests passed** on 2026-10-10, including new P037 facade/invocation/activity security invariants.
 - `python3 clients/ios/Support/validate_ios_sources.py`: passed on 2026-10-10.
 - `python3 -m unittest discover -s clients/ios/Support/tests`: passed, 54 tests, on 2026-10-10.
