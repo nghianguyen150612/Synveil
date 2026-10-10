@@ -140,7 +140,7 @@ The source PR was merged after the required exact-head iOS gates above passed. S
 - PostgreSQL 17 scheduled-maintenance PR run [38062286315](https://github.com/nghianguyen150612/Synveil/actions/runs/38062286315): **pending at source merge**; its duplicate push run [38062282575](https://github.com/nghianguyen150612/Synveil/actions/runs/38062282575) failed. The PR run will be updated here if it completes before manifest publication.
 - Linux native packages PR run [38062285730](https://github.com/nghianguyen150612/Synveil/actions/runs/38062285730) and duplicate push run [38062282564](https://github.com/nghianguyen150612/Synveil/actions/runs/38062282564): **pending at source merge**. No pass or failure is inferred from pending jobs.
 
-The documentation-only finalization PR number and URL will be recorded after GitHub creates it. Its merged state and the final hosted `ios-app` tip will be independently verified and reported; the manifest cannot contain its own eventual squash-merge OID without changing that OID.
+Documentation-only manifest-finalization PR: [#115](https://github.com/nghianguyen150612/Synveil/pull/115), based on source squash merge `c89269544389a043f25a93f5c5642a8abbff3dd2`. Its final `closed`/`merged=true` state and resulting hosted `ios-app` tip are independently verified after merge and reported in the delivery response; a manifest cannot contain its own eventual squash-merge OID without changing that OID.
 
 Remaining limitations: cold-start offline sign-in/session restoration is not added; no full snapshot/rebaseline, content cache, background work, automatic sync/ACK, or mutation drain is added. Physical-device checks are unavailable.
 
