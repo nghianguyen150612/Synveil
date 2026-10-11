@@ -16,6 +16,7 @@ ISS = ROOT / "deploy/windows/installer/Synveil.iss"
 BUILD = ROOT / "scripts/build-windows-installer.ps1"
 WORKFLOW = ROOT / ".github/workflows/windows-installer.yml"
 NATIVE_WORKFLOW = ROOT / ".github/workflows/windows-native-acceptance.yml"
+CI_WORKFLOW = ROOT / ".github/workflows/ci.yml"
 PACKAGE = ROOT / "deploy/packages/build-windows.sh"
 INSTALLED_RUNTIME_TEST = ROOT / "scripts/test-windows-installed-runtime.ps1"
 PER_USER_TEST = ROOT / "scripts/test-windows-per-user-installation.ps1"
@@ -82,6 +83,7 @@ def main() -> int:
     build = BUILD.read_text(encoding="utf-8")
     workflow = WORKFLOW.read_text(encoding="utf-8")
     native_workflow = NATIVE_WORKFLOW.read_text(encoding="utf-8")
+    ci_workflow = CI_WORKFLOW.read_text(encoding="utf-8")
     reproducible = REPRODUCIBLE.read_text(encoding="utf-8")
     msvc_toolchain = MSVC_TOOLCHAIN.read_text(encoding="utf-8")
     package = PACKAGE.read_text(encoding="utf-8")
@@ -163,6 +165,10 @@ def main() -> int:
     require("CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" in reproducible and '"${rustc_linker_args[@]}"' in reproducible, "direct rustc uses selected MSVC linker")
     require("CARGO_ENCODED_RUSTFLAGS" in reproducible and "$'\\x1f'" in reproducible, "lossless Cargo flag transport")
     require('rustc "${SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS[@]}" "${rustc_linker_args[@]}"' in reproducible, "direct rustc receives discrete remaps")
+    require("host_toolchain\" == *\"msvc\"" in reproducible and "link-arg=/Brepro" in reproducible,
+            "MSVC release links use the deterministic PE timestamp mode")
+    require("test-windows-rustflags.sh" in ci_workflow,
+            "Windows Qt reproducibility CI runs the MSVC linker-flag regression")
     for runtime_rule in ("SYNVEIL_MSVC_CRT_DIR", "VCToolsRedistDir/x64/%s", "MSVCP140", "copy_missing_msvc_runtime_imports", "--qmldir", "platforms/qwindows.dll", "QmlImports=qml", "Qml2Imports=qml", "is_system_dll", "missing non-system import", "development directory leaked", 'rm -rf -- "$STAGING_DIR"'):
         require(runtime_rule in package, f"authoritative runtime rule: {runtime_rule}")
     require("--compiler-runtime" not in package and "--no-compiler-runtime" in package,
@@ -232,6 +238,9 @@ def main() -> int:
                      "p027-obsolete-owned.txt", "downgrade-fixture", "reinstall-production",
                      "startup_preference_preserved", "authorized_scope"):
         require(evidence in lifecycle_test, f"P027 native lifecycle evidence: {evidence}")
+    for evidence in ("Get-SetupProcessTree", "LIFECYCLE_TIMEOUT_PROCESS name=", "$process.Kill($true)",
+                     "LIFECYCLE_TIMEOUT_RECOVERY", "process_tree_terminated=$treeTerminated"):
+        require(evidence in lifecycle_test, f"P027 timeout cleanup retains child-process evidence: {evidence}")
     for evidence in ("Interrupt-UpgradeAfterOwnedPayloadCopy", "NewerLicenseHash",
                      "LIFECYCLE_INTERRUPTION_FAILURE", "process_termination='forced'",
                      "prior_manifest_and_registration_matched"):

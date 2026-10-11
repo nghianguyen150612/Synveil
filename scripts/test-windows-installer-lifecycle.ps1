@@ -58,10 +58,57 @@ $startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Synve
 $desktop = Join-Path $desktopFolder 'Synveil.lnk'
 
 function Assert-True([bool]$Condition, [string]$Message) { if (!$Condition) { throw $Message } }
+function Get-SetupProcessTree([int]$RootProcessId) {
+    $all = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop)
+    $pending = [System.Collections.Generic.Queue[int]]::new()
+    $seen = [System.Collections.Generic.HashSet[int]]::new()
+    $tree = [System.Collections.Generic.List[object]]::new()
+    $root = $all | Where-Object { [int]$_.ProcessId -eq $RootProcessId } | Select-Object -First 1
+    if ($null -ne $root) {
+        $tree.Add($root)
+        [void]$seen.Add($RootProcessId)
+    }
+    $pending.Enqueue($RootProcessId)
+    while ($pending.Count -gt 0) {
+        $parentId = $pending.Dequeue()
+        foreach ($child in @($all | Where-Object { [int]$_.ParentProcessId -eq $parentId })) {
+            $childId = [int]$child.ProcessId
+            if ($seen.Add($childId)) {
+                $tree.Add($child)
+                $pending.Enqueue($childId)
+            }
+        }
+    }
+    return $tree.ToArray()
+}
 function Invoke-Setup([string]$Path, [string[]]$Extra, [int]$Expected, [string]$Name) {
     $arguments = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LAUNCH=0') + $Extra + @(('/LOG=' + (Join-Path $logRoot "$Name.log")))
     $process = Start-Process -FilePath $Path -ArgumentList $arguments -WorkingDirectory $env:TEMP -PassThru
-    if (!$process.WaitForExit(120000)) { $process.Kill(); throw "LIFECYCLE_TIMEOUT: $Name" }
+    if (!$process.WaitForExit(120000)) {
+        $tree = @()
+        try {
+            $tree = @(Get-SetupProcessTree $process.Id)
+            foreach ($entry in ($tree | Select-Object -First 16)) {
+                Write-Output "LIFECYCLE_TIMEOUT_PROCESS name=$($entry.Name) pid=$($entry.ProcessId) parent_pid=$($entry.ParentProcessId)"
+            }
+        } catch {
+            Write-Output "LIFECYCLE_TIMEOUT_PROCESS_TREE_FAILURE type=$($_.Exception.GetType().FullName)"
+        }
+        $treeSummary = if ($tree.Count -gt 0) {
+            ($tree | ForEach-Object { [string]$_.ProcessId }) -join ','
+        } else {
+            [string]$process.Id
+        }
+        $treeTerminated = $false
+        try {
+            if (!$process.HasExited) { $process.Kill($true) }
+            $treeTerminated = $process.WaitForExit(30000)
+        } catch {
+            Write-Output "LIFECYCLE_TIMEOUT_TREE_TERMINATION_FAILURE type=$($_.Exception.GetType().FullName)"
+        }
+        Write-Output "LIFECYCLE_TIMEOUT_RECOVERY root_pid=$($process.Id) process_pids=$treeSummary root_exited=$treeTerminated"
+        throw "LIFECYCLE_TIMEOUT: $Name root_pid=$($process.Id) process_tree_terminated=$treeTerminated"
+    }
     Assert-True ($process.ExitCode -eq $Expected) "LIFECYCLE_EXIT_FAILURE: $Name exit $($process.ExitCode), expected $Expected"
 }
 function Get-Registration {

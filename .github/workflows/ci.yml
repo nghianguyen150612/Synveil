@@ -152,6 +152,10 @@ jobs:
         shell: pwsh
         run: ./scripts/select-msvc-linker.ps1
 
+      - name: Test deterministic MSVC release linker flags
+        shell: bash
+        run: ./scripts/test-windows-rustflags.sh
+
       - name: Install native Qt 6
         uses: jurplel/install-qt-action@v4
         with:

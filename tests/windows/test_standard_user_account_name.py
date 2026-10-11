@@ -153,6 +153,17 @@ class StandardUserAccountNameTests(unittest.TestCase):
         ):
             self.assertIn(marker, profile_setup)
 
+    def test_lifecycle_timeout_records_and_terminates_setup_process_tree(self) -> None:
+        lifecycle = (ROOT / "scripts/test-windows-installer-lifecycle.ps1").read_text(encoding="utf-8")
+        timeout = lifecycle[lifecycle.index("if (!$process.WaitForExit(120000))") : lifecycle.index("Assert-True ($process.ExitCode")]
+
+        self.assertIn("Get-SetupProcessTree $process.Id", timeout)
+        self.assertIn("LIFECYCLE_TIMEOUT_PROCESS name=", timeout)
+        self.assertIn("$process.Kill($true)", timeout)
+        self.assertIn("WaitForExit(30000)", timeout)
+        self.assertIn("process_tree_terminated=$treeTerminated", timeout)
+        self.assertIn('throw "LIFECYCLE_TIMEOUT: $Name', timeout)
+
     def test_standard_user_cleanup_result_updates_the_failure_record(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")
         start = source.index("$recordPath = if", source.index("if ($sid)"))
