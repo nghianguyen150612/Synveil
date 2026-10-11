@@ -310,19 +310,23 @@ fn package_unit_8_runtime_dependency_closure() {
 fn package_unit_9_windows_package_manifest() {
     let root = repo_root();
     let builder = read(root.join("deploy/packages/build-windows.sh"));
+    let zip_builder = read(root.join("scripts/create-reproducible-zip.py"));
     for required in [
         "SYNVEIL-MANIFEST.txt",
         "write_package_manifest",
         "validate_package_manifest",
         "sha256_file",
         "platform=windows-x86_64",
-        "grep -Fxq \"$MANIFEST_NAME\"",
+        "scripts/create-reproducible-zip.py",
+        "--required-file \"$MANIFEST_NAME\"",
+        "ZIP_TOOLCHAIN",
     ] {
         assert!(
             builder.contains(required),
             "Windows manifest contract lacks {required}"
         );
     }
+    assert!(zip_builder.contains("missing required files:"));
     let zip_files = windows_package_files("zip");
     let Some(zip) = zip_files.first() else {
         eprintln!(
