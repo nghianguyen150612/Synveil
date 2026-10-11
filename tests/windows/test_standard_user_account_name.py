@@ -113,7 +113,7 @@ class StandardUserAccountNameTests(unittest.TestCase):
         end = source.index("if ($accountCreationAttempted)", start)
         diagnostics = source[start:end]
 
-        self.assertIn("PER_USER_[A-Z0-9_]+_FAILURE:", diagnostics)
+        self.assertIn("(?:PER_USER|LIFECYCLE)_[A-Z0-9_]+:", diagnostics)
         self.assertIn("Select-Object -First 8", diagnostics)
         self.assertIn("Select-Object -First 20", diagnostics)
         self.assertIn("Select-Object -First 40", diagnostics)
@@ -128,6 +128,7 @@ class StandardUserAccountNameTests(unittest.TestCase):
         self.assertIn("$lifecycleStdout = Join-Path $EvidenceDirectory 'lifecycle.stdout.log'", source)
         self.assertIn("$lifecycleStderr = Join-Path $EvidenceDirectory 'lifecycle.stderr.log'", source)
         self.assertIn("@($stdout,$stderr,$lifecycleStdout,$lifecycleStderr)", source)
+        self.assertIn("PER_USER|LIFECYCLE", source)
         self.assertIn("uninstaller|reinstaller|desktop smoke|client probe", source)
         self.assertIn("Select-Object -First 8", source)
         self.assertIn("$safeLine.Replace(\"$env:SystemDrive\\Users\\$user\", '[USER_PROFILE]')", source)

@@ -113,7 +113,7 @@ try {
             if ($childLog -and (Test-Path -LiteralPath $childLog -PathType Leaf)) {
                 $label = [IO.Path]::GetFileName($childLog)
                 $failureLines = @(Get-Content -LiteralPath $childLog -ErrorAction SilentlyContinue |
-                    Where-Object { $_ -match '(?i)(PER_USER_[A-Z0-9_]+_FAILURE:|(?:installer|uninstaller|reinstaller|desktop smoke|client probe) (?:timed out|exit \d+, expected \d+)|exception:|at .*\.ps1:)' } |
+                    Where-Object { $_ -match '(?i)((?:PER_USER|LIFECYCLE)_[A-Z0-9_]+:|(?:installer|uninstaller|reinstaller|desktop smoke|client probe) (?:timed out|exit \d+, expected \d+)|exception:|at .*\.ps1:)' } |
                     Select-Object -First 8)
                 foreach ($line in $failureLines) {
                     $safeLine = [string]$line
