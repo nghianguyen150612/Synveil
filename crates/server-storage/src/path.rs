@@ -155,6 +155,11 @@ pub(super) fn validate_root_exclusions(
     candidate: &Path,
     additional_roots: &[PathBuf],
 ) -> Result<(), PathInspectionError> {
+    // Normalize existing candidates before comparing them with canonical roots.
+    // On Windows, current_dir() and canonicalize() can represent the same path
+    // with different prefixes; comparing the raw candidate would miss the
+    // current-directory exclusion on that platform.
+    let candidate = canonical_if_exists(candidate).unwrap_or_else(|| candidate.to_path_buf());
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from);
@@ -174,7 +179,7 @@ pub(super) fn validate_root_exclusions(
     ];
     if ["/tmp", "/var/tmp", "/dev/shm"]
         .iter()
-        .any(|shared_root| candidate == Path::new(shared_root))
+        .any(|shared_root| candidate.as_path() == Path::new(shared_root))
     {
         return Err(PathInspectionError::PermissionUnsafe);
     }
@@ -200,7 +205,7 @@ pub(super) fn validate_root_exclusions(
 
     for root in reserved {
         let root = canonical_if_exists(&root).unwrap_or(root);
-        if paths_overlap(candidate, &root) {
+        if paths_overlap(&candidate, &root) {
             return Err(PathInspectionError::Invalid);
         }
     }
@@ -383,6 +388,9 @@ mod tests {
     fn current_directory_home_and_workspace_roots_are_rejected() {
         if let Ok(current) = std::env::current_dir() {
             assert!(validate_root_exclusions(&current, &[]).is_err());
+            if let Ok(canonical_current) = current.canonicalize() {
+                assert!(validate_root_exclusions(&canonical_current, &[]).is_err());
+            }
         }
         if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
             assert!(validate_root_exclusions(&home, &[]).is_err());
