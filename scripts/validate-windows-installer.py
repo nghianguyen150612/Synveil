@@ -138,6 +138,10 @@ def main() -> int:
             "Windows installer candidate enables canonical QML source and RCC staging")
     require('SYNVEIL_ENABLE_QMLCACHEGEN_WRAPPER: "1"' in native_workflow,
             "Windows P028 candidate enables canonical QML source and RCC staging")
+    for candidate_workflow in (workflow, native_workflow):
+        require("target/windows-installer-runtime/SYNVEIL-MANIFEST.txt" in candidate_workflow and
+                "target/windows-installer-generated/payload-inventory.json" in candidate_workflow,
+                "Windows candidate uploads its exact runtime input inventory for cross-producer diagnosis")
     for evidence in ("test-windows-installed-runtime.ps1", "QT_PLUGIN_PATH", "QML2_IMPORT_PATH", "unrelatedCwd", "client probe", "missing-qwindows", "corrupt-dll", "unexpected-dll", "developer-file"):
         require(evidence in workflow or evidence in per_user_test, f"P024 hosted runtime evidence: {evidence}")
     require("select-msvc-linker.ps1" in workflow and "VCToolsInstallDir" in msvc_toolchain and "CompanyName" in msvc_toolchain and "OriginalFilename" in msvc_toolchain, "authenticated MSVC linker selection")
@@ -160,6 +164,8 @@ def main() -> int:
     for evidence in ("[Environment+SpecialFolder]::UserProfile", "LocalApplicationData", "ApplicationData",
                      "Resolve-ProfileScopedFolder", "$env:LOCALAPPDATA = $localAppData",
                      "$env:APPDATA = $roamingAppData", "$env:TEMP = $userTemp",
+                     "[Environment+SpecialFolder]::Desktop", "Join-Path $profileRoot 'Desktop'",
+                     "$desktop = Join-Path $desktopFolder 'Synveil.lnk'",
                      "PER_USER_PROFILE_FAILURE"):
         require(evidence in per_user_test, f"P025 standard-user profile environment: {evidence}")
     for evidence in ("SetPassword", "-Credential", "-LoadUserProfile", "WaitForExit(300000)", ".Delete('user'", "Remove-CimInstance", "::add-mask::"):

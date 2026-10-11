@@ -109,10 +109,10 @@ async fn failed_transaction_rolls_back_ddl_data_and_version_then_restart_resumes
     pool.close().await;
     // Reconnect to the file, so assertions cannot rely on a rolled-back
     // transaction's process-local view.
-    let pool =
-        SqlitePool::connect_with(SqliteConnectOptions::new().filename(config.database_path()))
-            .await
-            .unwrap();
+    // Reopen with the same persistent SQLite settings as the production
+    // state store. The default SQLx journal mode would exercise a different
+    // database lifecycle on Windows than this WAL-backed fixture.
+    let pool = migration_test_pool(config.database_path()).await;
     let value: String = sqlx::query_scalar("SELECT display_label FROM server_profiles")
         .fetch_one(&pool)
         .await
@@ -360,10 +360,9 @@ async fn unrecognized_historical_columns_cannot_be_erased_by_table_rebuild() {
         matches!(result, Err(ClientSyncError::LocalSchemaInvalid)),
         "unknown columns must fail before migration 0004 rebuilds the table"
     );
-    let pool =
-        SqlitePool::connect_with(SqliteConnectOptions::new().filename(config.database_path()))
-            .await
-            .unwrap();
+    // Reopen with the same persistent SQLite settings as the production
+    // state store, including WAL mode and its bounded busy timeout.
+    let pool = migration_test_pool(config.database_path()).await;
     assert_eq!(
         sqlx::query_scalar::<_, String>("SELECT future_evidence FROM outbound_intents")
             .fetch_one(&pool)

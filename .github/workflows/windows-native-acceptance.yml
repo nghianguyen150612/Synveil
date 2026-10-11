@@ -88,6 +88,8 @@ jobs:
             target/windows-installer/SYNVEIL-RELEASE-MANIFEST.json
             target/windows-installer/SynveilSetup.manifest.xml
             target/windows-installer/p028-candidate.json
+            target/windows-installer-runtime/SYNVEIL-MANIFEST.txt
+            target/windows-installer-generated/payload-inventory.json
             target/p027-fixture-*/SynveilSetup.exe
 
   standard-user-native:

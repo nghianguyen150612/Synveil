@@ -42,7 +42,13 @@ $env:TEMP = $userTemp
 $env:TMP = $userTemp
 $root = Join-Path $env:LOCALAPPDATA 'Programs\Synveil'
 $startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Synveil.lnk'
-$desktop = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Synveil.lnk'
+$desktopFolder = [Environment]::GetFolderPath([Environment+SpecialFolder]::Desktop)
+if ([string]::IsNullOrWhiteSpace($desktopFolder)) {
+    $desktopFolder = Join-Path $profileRoot 'Desktop'
+}
+$desktopFolder = [IO.Path]::GetFullPath($desktopFolder)
+New-Item -Path $desktopFolder -ItemType Directory -Force | Out-Null
+$desktop = Join-Path $desktopFolder 'Synveil.lnk'
 $commonStartMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Synveil.lnk'
 $publicDesktop = Join-Path $env:PUBLIC 'Desktop\Synveil.lnk'
 $logRoot = Join-Path $env:LOCALAPPDATA 'Synveil\installer'

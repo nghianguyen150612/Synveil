@@ -10,6 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / "scripts/invoke-windows-standard-user-test.ps1"
+PER_USER_TEST = ROOT / "scripts/test-windows-per-user-installation.ps1"
 
 
 class StandardUserAccountNameTests(unittest.TestCase):
@@ -31,6 +32,18 @@ class StandardUserAccountNameTests(unittest.TestCase):
             20,
             "Windows local SAM account names cannot exceed 20 characters",
         )
+
+    def test_desktop_known_folder_has_a_profile_fallback(self) -> None:
+        source = PER_USER_TEST.read_text(encoding="utf-8")
+        self.assertIn(
+            "$desktopFolder = [Environment]::GetFolderPath([Environment+SpecialFolder]::Desktop)",
+            source,
+        )
+        self.assertIn("if ([string]::IsNullOrWhiteSpace($desktopFolder))", source)
+        self.assertIn("$desktopFolder = Join-Path $profileRoot 'Desktop'", source)
+        self.assertIn("New-Item -Path $desktopFolder -ItemType Directory -Force", source)
+        self.assertIn("$desktop = Join-Path $desktopFolder 'Synveil.lnk'", source)
+        self.assertNotIn("Join-Path ([Environment]::GetFolderPath('Desktop'))", source)
 
 
 if __name__ == "__main__":

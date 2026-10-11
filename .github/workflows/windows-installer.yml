@@ -178,4 +178,6 @@ jobs:
             target/windows-installer/SynveilSetup.exe
             target/windows-installer/SYNVEIL-RELEASE-MANIFEST.json
             target/windows-installer/SynveilSetup.manifest.xml
+            target/windows-installer-runtime/SYNVEIL-MANIFEST.txt
+            target/windows-installer-generated/payload-inventory.json
             target/windows-per-user-evidence
