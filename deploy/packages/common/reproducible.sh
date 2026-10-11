@@ -88,6 +88,30 @@ synveil_append_unique_build_flag() {
 # A unit-separator is Cargo's documented argument delimiter; unlike RUSTFLAGS,
 # neither Bash word splitting nor MSYS path rewriting can turn one remap into
 # several rustc arguments.
+synveil_append_msys_env_conversion_exclusion() {
+    local name="$1"
+    [[ -n "${MSYSTEM:-}" ]] || return 0
+
+    local exclusions="${MSYS2_ENV_CONV_EXCL:-}"
+    case ";${exclusions};" in
+        *";${name};"*) return 0 ;;
+    esac
+    if [[ -n "$exclusions" ]]; then
+        exclusions+=";"
+    fi
+    exclusions+="$name"
+    export MSYS2_ENV_CONV_EXCL="$exclusions"
+}
+
+synveil_msvc_tool_path_identity() {
+    local path="$1"
+    if command -v cygpath >/dev/null 2>&1; then
+        path="$(cygpath -w "$path" 2>/dev/null || printf '%s' "$path")"
+    fi
+    path="${path//\\//}"
+    printf '%s' "$path" | tr '[:upper:]' '[:lower:]'
+}
+
 synveil_export_encoded_rustflags() {
     local encoded=""
     local flag
@@ -107,19 +131,7 @@ synveil_export_encoded_rustflags() {
     # MSYS converts path-like environment values when starting native
     # executables. Cargo decodes this variable into individual rustc argv
     # entries, so preserve the encoded value exactly across the Bash boundary.
-    if [[ -n "${MSYSTEM:-}" ]]; then
-        local env_conversion_exclusions="${MSYS2_ENV_CONV_EXCL:-}"
-        case ";${env_conversion_exclusions};" in
-            *";CARGO_ENCODED_RUSTFLAGS;"*) ;;
-            *)
-                if [[ -n "$env_conversion_exclusions" ]]; then
-                    env_conversion_exclusions+=";"
-                fi
-                env_conversion_exclusions+="CARGO_ENCODED_RUSTFLAGS"
-                export MSYS2_ENV_CONV_EXCL="$env_conversion_exclusions"
-                ;;
-        esac
-    fi
+    synveil_append_msys_env_conversion_exclusion CARGO_ENCODED_RUSTFLAGS
 }
 
 # CXX-Qt's QML-module build asks Qt's rcc tool to embed a generated qmldir and
@@ -451,6 +463,48 @@ synveil_prepare_reproducible_rust_build() {
     # understand these flags and must not receive them.
     local host_toolchain=""
     host_toolchain="$(rustc -vV 2>/dev/null | sed -n 's/^host: //p' | head -n 1 || true)"
+    if [[ -z "$host_toolchain" ]]; then
+        printf '[synveil-artifact] ERROR: cannot identify the active rustc host for reproducible build policy\n' >&2
+        return 1
+    fi
+    if [[ "$host_toolchain" == *"msvc"* ]]; then
+        local selected_archiver="${SYNVEIL_MSVC_AR:-}"
+        local selected_archiver_fs="$selected_archiver"
+        local expected_archiver_identity
+        local configured_archiver_identity
+
+        if [[ -z "$selected_archiver" ]]; then
+            printf '[synveil-artifact] ERROR: MSVC reproducible builds require SYNVEIL_MSVC_AR from the authenticated Visual Studio toolchain selection\n' >&2
+            return 1
+        fi
+        if [[ "$selected_archiver" =~ ^[A-Za-z]:[/\\] ]]; then
+            if ! command -v cygpath >/dev/null 2>&1; then
+                printf '[synveil-artifact] ERROR: cygpath is required to validate the selected MSVC archiver path\n' >&2
+                return 1
+            fi
+            selected_archiver_fs="$(cygpath -u "$selected_archiver" 2>/dev/null || true)"
+        fi
+        if [[ -z "$selected_archiver_fs" || ! -x "$selected_archiver_fs" ]]; then
+            printf '[synveil-artifact] ERROR: selected MSVC archiver is not executable: %s\n' "$selected_archiver" >&2
+            return 1
+        fi
+        expected_archiver_identity="$(synveil_msvc_tool_path_identity "$selected_archiver")"
+        if [[ -n "${AR:-}" ]]; then
+            configured_archiver_identity="$(synveil_msvc_tool_path_identity "$AR")"
+            if [[ "$configured_archiver_identity" != "$expected_archiver_identity" ]]; then
+                printf '[synveil-artifact] ERROR: AR conflicts with the selected deterministic MSVC archiver (AR=%s, SYNVEIL_MSVC_AR=%s)\n' "$AR" "$selected_archiver" >&2
+                return 1
+            fi
+        fi
+
+        # cc-rs selects LLVM's deterministic COFF archive mode by the chosen
+        # `llvm-ar` executable name. Preserve this absolute native path across
+        # the Git Bash to Cargo environment boundary.
+        # cc-rs uses llvm-ar's deterministic cqD archive command.
+        export AR="$selected_archiver"
+        synveil_append_msys_env_conversion_exclusion AR
+        synveil_append_msys_env_conversion_exclusion SYNVEIL_MSVC_AR
+    fi
     # GNU ld's build-id note was the only differing section in two otherwise
     # identical desktop links. Do not post-process artifacts: disable that
     # non-semantic note for every Linux release package at link time.
@@ -459,10 +513,11 @@ synveil_prepare_reproducible_rust_build() {
         SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS=("${rust_flags[@]}")
         synveil_export_encoded_rustflags "${rust_flags[@]}"
     fi
-    # MSVC otherwise stamps each PE image with the current link time. The
-    # hosted two-tree comparison reproduced that timestamp as the only
-    # difference between otherwise equal release binaries. Ask the selected
-    # Microsoft linker for deterministic output at the final link boundary.
+    # MSVC otherwise stamps PE images with build-time metadata. /Brepro makes
+    # the Rust client reproducible, but the hosted desktop comparison still
+    # found a COFF timestamp difference in a linked C++-bearing artifact; the
+    # selected LLVM archiver above makes its MSVC input archives deterministic.
+    # Keep /Brepro at the final Microsoft linker boundary as well.
     if [[ "$host_toolchain" == *"msvc"* ]]; then
         if [[ ! " ${rust_flags[*]} " == *" link-arg=/Brepro "* ]]; then
             rust_flags+=("-C" "link-arg=/Brepro")

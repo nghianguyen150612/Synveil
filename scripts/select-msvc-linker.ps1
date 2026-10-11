@@ -2,8 +2,9 @@ $ErrorActionPreference = 'Stop'
 
 if ([string]::IsNullOrWhiteSpace($env:VCToolsInstallDir) -or
     [string]::IsNullOrWhiteSpace($env:VCToolsRedistDir) -or
-    [string]::IsNullOrWhiteSpace($env:VCToolsVersion)) {
-  throw 'MSVC_TOOLCHAIN_SELECTION_FAILURE: the active developer environment omitted its tools, redistributable, or version identity'
+    [string]::IsNullOrWhiteSpace($env:VCToolsVersion) -or
+    [string]::IsNullOrWhiteSpace($env:VSINSTALLDIR)) {
+  throw 'MSVC_TOOLCHAIN_SELECTION_FAILURE: the active developer environment omitted its Visual Studio root, tools, redistributable, or version identity'
 }
 
 $toolsRoot = [IO.Path]::GetFullPath($env:VCToolsInstallDir).TrimEnd('\') + '\'
@@ -30,6 +31,35 @@ if ($peOffset -lt 0 -or $peOffset + 6 -ge $linkerBytes.Length -or
     [BitConverter]::ToUInt32($linkerBytes, $peOffset) -ne 0x00004550 -or
     [BitConverter]::ToUInt16($linkerBytes, $peOffset + 4) -ne 0x8664) {
   throw 'MSVC_LINKER_SELECTION_FAILURE: the selected linker is not an AMD64 PE executable'
+}
+
+# cc-rs uses the AR-selected archive tool for C/C++ static libraries. Its
+# default MSVC lib.exe writes nondeterministic archive member metadata; the
+# Visual Studio LLVM archiver supports deterministic `cqD` mode. Select it by
+# absolute path from this same Visual Studio installation, never from PATH.
+$visualStudioRoot = [IO.Path]::GetFullPath($env:VSINSTALLDIR).TrimEnd('\') + '\'
+$archiver = [IO.Path]::GetFullPath((Join-Path $visualStudioRoot 'VC\Tools\Llvm\x64\bin\llvm-ar.exe'))
+if (!$archiver.StartsWith($visualStudioRoot, [StringComparison]::OrdinalIgnoreCase) -or
+    !(Test-Path -LiteralPath $archiver -PathType Leaf)) {
+  throw 'MSVC_ARCHIVER_SELECTION_FAILURE: the Visual Studio x64 LLVM archiver is missing or outside the selected installation'
+}
+$archiverFile = Get-Item -LiteralPath $archiver
+if ($null -ne $archiverFile.LinkType) {
+  throw 'MSVC_ARCHIVER_SELECTION_FAILURE: the selected archiver must be a regular, non-reparse-point file'
+}
+$archiverBytes = [IO.File]::ReadAllBytes($archiver)
+if ($archiverBytes.Length -lt 512 -or $archiverBytes[0] -ne 0x4d -or $archiverBytes[1] -ne 0x5a) {
+  throw 'MSVC_ARCHIVER_SELECTION_FAILURE: the selected archiver is not a PE executable'
+}
+$archiverPeOffset = [BitConverter]::ToInt32($archiverBytes, 0x3c)
+if ($archiverPeOffset -lt 0 -or $archiverPeOffset + 6 -ge $archiverBytes.Length -or
+    [BitConverter]::ToUInt32($archiverBytes, $archiverPeOffset) -ne 0x00004550 -or
+    [BitConverter]::ToUInt16($archiverBytes, $archiverPeOffset + 4) -ne 0x8664) {
+  throw 'MSVC_ARCHIVER_SELECTION_FAILURE: the selected archiver is not an AMD64 PE executable'
+}
+$archiverVersion = (& $archiver --version 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $archiverVersion -notmatch '(?i)\bLLVM\b') {
+  throw "MSVC_ARCHIVER_SELECTION_FAILURE: unexpected LLVM archiver identity (exit=$LASTEXITCODE)"
 }
 
 $redistRoot = [IO.Path]::GetFullPath($env:VCToolsRedistDir).TrimEnd('\')
@@ -73,9 +103,13 @@ foreach ($name in @('msvcp140.dll', 'vcruntime140.dll')) {
 
 "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 "SYNVEIL_MSVC_CRT_DIR=$crtDirectory" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+"SYNVEIL_MSVC_AR=$archiver" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 Write-Host "Authenticated MSVC linker: $linker"
 Write-Host "MSVC toolset version: $env:VCToolsVersion"
 Write-Host "Linker SHA-256: $((Get-FileHash -LiteralPath $linker -Algorithm SHA256).Hash.ToLowerInvariant())"
+Write-Host "Selected deterministic LLVM archiver: $archiver"
+Write-Host "LLVM archiver version: $archiverVersion"
+Write-Host "LLVM archiver SHA-256: $((Get-FileHash -LiteralPath $archiver -Algorithm SHA256).Hash.ToLowerInvariant())"
 Write-Host "Authenticated MSVC CRT directory: $crtDirectory"
 foreach ($name in @('msvcp140.dll', 'vcruntime140.dll')) {
   Write-Host "$name SHA-256: $((Get-FileHash -LiteralPath (Join-Path $crtDirectory $name) -Algorithm SHA256).Hash.ToLowerInvariant())"

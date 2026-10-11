@@ -161,6 +161,19 @@ def main() -> int:
     require("select-msvc-linker.ps1" in workflow and "VCToolsInstallDir" in msvc_toolchain and "CompanyName" in msvc_toolchain and "OriginalFilename" in msvc_toolchain, "authenticated MSVC linker selection")
     require("LinkType" in msvc_toolchain and "0x00004550" in msvc_toolchain and "0x8664" in msvc_toolchain, "regular AMD64 PE linker identity")
     require("VCToolsRedistDir" in msvc_toolchain and "VCToolsVersion" in msvc_toolchain and "SYNVEIL_MSVC_CRT_DIR" in msvc_toolchain and "Microsoft.VC*.CRT" in msvc_toolchain and "$crtCandidates.Count -ne 1" in msvc_toolchain, "authenticated exact MSVC runtime selection")
+    require("VSINSTALLDIR" in msvc_toolchain and
+            "VC\\Tools\\Llvm\\x64\\bin\\llvm-ar.exe" in msvc_toolchain and
+            "SYNVEIL_MSVC_AR" in msvc_toolchain and "--version" in msvc_toolchain and
+            "LLVM archiver SHA-256" in msvc_toolchain and
+            "MSVC_ARCHIVER_SELECTION_FAILURE" in msvc_toolchain,
+            "deterministic MSVC archiver is selected and identified from the active Visual Studio installation")
+    require("MSVC reproducible builds require SYNVEIL_MSVC_AR" in reproducible and
+            "AR conflicts with the selected deterministic MSVC archiver" in reproducible and
+            "synveil_append_msys_env_conversion_exclusion AR" in reproducible and
+            "synveil_append_msys_env_conversion_exclusion SYNVEIL_MSVC_AR" in reproducible and
+            "cqD" in reproducible and "unselected AR executable" in
+            (ROOT / "scripts/test-windows-rustflags.sh").read_text(encoding="utf-8"),
+            "MSVC archives use the selected absolute deterministic LLVM archiver without PATH fallback")
     require("$banner" not in workflow and "& $linker '/?'" not in workflow, "linker identity does not depend on localized help output")
     require("CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" in reproducible and '"${rustc_linker_args[@]}"' in reproducible, "direct rustc uses selected MSVC linker")
     require("CARGO_ENCODED_RUSTFLAGS" in reproducible and "$'\\x1f'" in reproducible, "lossless Cargo flag transport")
@@ -263,7 +276,8 @@ def main() -> int:
                      "startup_preference_preserved", "authorized_scope"):
         require(evidence in lifecycle_test, f"P027 native lifecycle evidence: {evidence}")
     for evidence in ("Get-SetupProcessTree", "LIFECYCLE_TIMEOUT_PROCESS name=", "$process.Kill($true)",
-                     "LIFECYCLE_TIMEOUT_RECOVERY", "process_tree_terminated=$treeTerminated"):
+                     "LIFECYCLE_TIMEOUT_RECOVERY", "LIFECYCLE_TIMEOUT_DIAGNOSTIC",
+                     "process_tree_terminated=$treeTerminated"):
         require(evidence in lifecycle_test, f"P027 timeout cleanup retains child-process evidence: {evidence}")
     for evidence in ("Interrupt-UpgradeAfterOwnedPayloadCopy", "NewerLicenseHash",
                      "LIFECYCLE_INTERRUPTION_FAILURE", "process_termination='forced'",

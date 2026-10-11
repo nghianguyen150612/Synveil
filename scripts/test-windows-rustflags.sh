@@ -56,11 +56,24 @@ fi
 exit 2
 SH
 chmod +x "$msvc_fixture_bin/rustc"
+cat > "$msvc_fixture_bin/llvm-ar.exe" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+chmod +x "$msvc_fixture_bin/llvm-ar.exe"
 original_path="$PATH"
 PATH="$msvc_fixture_bin:$PATH"
 export PATH
 QMAKE="$fixture_root/no-qmake"
 export QMAKE
+MSYSTEM=MINGW64
+MSYS2_ENV_CONV_EXCL='SYNVEIL_TEST_SENTINEL'
+SYNVEIL_MSVC_AR="$msvc_fixture_bin/llvm-ar.exe"
+if command -v cygpath >/dev/null 2>&1; then
+    SYNVEIL_MSVC_AR="$(cygpath -w "$SYNVEIL_MSVC_AR")"
+fi
+AR="$SYNVEIL_MSVC_AR"
+export MSYSTEM MSYS2_ENV_CONV_EXCL SYNVEIL_MSVC_AR AR
 unset CARGO_ENCODED_RUSTFLAGS RUSTFLAGS
 synveil_prepare_reproducible_rust_build "$repo_root"
 python3 - <<'PY'
@@ -72,6 +85,12 @@ if flags.count("link-arg=/Brepro") != 1:
 index = flags.index("link-arg=/Brepro")
 if index == 0 or flags[index - 1] != "-C":
     raise SystemExit(f"MSVC reproducible link argument was not passed as a Rust codegen option: {flags!r}")
+if os.environ.get("AR") != os.environ.get("SYNVEIL_MSVC_AR"):
+    raise SystemExit("MSVC reproducible archiver was not selected by absolute path")
+exclusions = os.environ.get("MSYS2_ENV_CONV_EXCL", "").split(";")
+for name in ("SYNVEIL_TEST_SENTINEL", "AR", "SYNVEIL_MSVC_AR", "CARGO_ENCODED_RUSTFLAGS"):
+    if name not in exclusions:
+        raise SystemExit(f"MSYS2_ENV_CONV_EXCL does not preserve {name}")
 PY
 direct_flags=("${SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS[@]}")
 if [[ ! " ${direct_flags[*]} " == *" link-arg=/Brepro "* ]]; then
@@ -80,6 +99,10 @@ if [[ ! " ${direct_flags[*]} " == *" link-arg=/Brepro "* ]]; then
 fi
 cat > "$msvc_fixture_bin/rustc" <<'SH'
 #!/usr/bin/env bash
+if [[ "$1" == "-vV" ]]; then
+    printf 'host: x86_64-pc-windows-msvc\n'
+    exit 0
+fi
 printf '%s\n' "${MSYS2_ARG_CONV_EXCL:-}" > "$SYNVEIL_TEST_EXCLUSION_CAPTURE"
 printf '%s\0' "$@" > "$SYNVEIL_TEST_ARG_CAPTURE"
 SH
@@ -110,7 +133,21 @@ if [[ -n "$msys_arg_conv_excl_was_set" ]]; then
 else
     unset MSYS2_ARG_CONV_EXCL
 fi
-PATH="$original_path"
+AR="$msvc_fixture_bin/unselected-ar.exe"
+export AR
+unset CARGO_ENCODED_RUSTFLAGS RUSTFLAGS
+if synveil_prepare_reproducible_rust_build "$repo_root" >"$fixture_root/ar-conflict.log" 2>&1; then
+    echo "MSVC reproducible build accepted an unselected AR executable" >&2
+    exit 1
+fi
+if ! grep -Fq "AR conflicts with the selected deterministic MSVC archiver" "$fixture_root/ar-conflict.log"; then
+    cat "$fixture_root/ar-conflict.log" >&2
+    echo "MSVC reproducible build rejected AR for an unexpected reason" >&2
+    exit 1
+fi
+AR="$SYNVEIL_MSVC_AR"
+export AR
+PATH="$msvc_fixture_bin:$original_path"
 export PATH
 unset QMAKE CARGO_ENCODED_RUSTFLAGS RUSTFLAGS
 
@@ -242,4 +279,5 @@ if "CARGO_ENCODED_RUSTFLAGS" not in os.environ.get("MSYS2_ENV_CONV_EXCL", "").sp
 PY
 fi
 
+unset AR SYNVEIL_MSVC_AR MSYSTEM
 echo "windows Rust flag transport: PASS"
