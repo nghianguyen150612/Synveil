@@ -45,6 +45,18 @@ class StandardUserAccountNameTests(unittest.TestCase):
         self.assertIn("$desktop = Join-Path $desktopFolder 'Synveil.lnk'", source)
         self.assertNotIn("Join-Path ([Environment]::GetFolderPath('Desktop'))", source)
 
+    def test_installed_runtime_verifier_uses_powershell_failure_semantics(self) -> None:
+        source = PER_USER_TEST.read_text(encoding="utf-8")
+        invocation = source.index("test-windows-installed-runtime.ps1")
+        check_start = source.rindex("try {", 0, invocation)
+        check_end = source.index("$acl = Get-Acl", invocation)
+        check = source[check_start:check_end]
+
+        self.assertIn("try {", check)
+        self.assertIn("catch {", check)
+        self.assertIn("PER_USER_RUNTIME_FAILURE: installed manifest verifier failed:", check)
+        self.assertNotIn("$LASTEXITCODE", check)
+
 
 if __name__ == "__main__":
     unittest.main()
