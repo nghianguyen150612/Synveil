@@ -3894,6 +3894,12 @@ mod tests {
                 .is_some()
         );
         host.shutdown().await.expect("host shutdown");
+        // The observer and host retain the watched replica after shutdown.
+        // Release them before Windows-safe fixture cleanup so their handles
+        // cannot keep the root directory open.
+        drop(observer);
+        drop(source);
+        drop(host);
         fixture.close().await;
     }
 
