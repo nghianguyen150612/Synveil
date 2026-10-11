@@ -412,7 +412,9 @@ fn deb_builder_pins_compression_to_the_package_layout_contract() {
         "dpkg-deb must pin gzip and level 9 using runner-compatible options"
     );
     assert_eq!(
-        build.matches(r#"dpkg-deb "${dpkg_deb_args[@]}" --build"#).count(),
+        build
+            .matches(r#"dpkg-deb "${dpkg_deb_args[@]}" --build"#)
+            .count(),
         2,
         "fakeroot and fallback producers must place the same global options before the command"
     );

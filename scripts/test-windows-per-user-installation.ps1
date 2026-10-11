@@ -7,6 +7,39 @@ param(
 $ErrorActionPreference = 'Stop'
 $appId = '{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1'
 $uninstallSubkey = "Software\Microsoft\Windows\CurrentVersion\Uninstall\$appId"
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$profileRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
+if ([string]::IsNullOrWhiteSpace($profileRoot)) { $profileRoot = $env:USERPROFILE }
+if ([string]::IsNullOrWhiteSpace($profileRoot) -or !(Test-Path -LiteralPath $profileRoot -PathType Container)) {
+    throw 'PER_USER_PROFILE_FAILURE: standard-user profile path is unavailable'
+}
+$profileRoot = [IO.Path]::GetFullPath($profileRoot)
+$profileName = Split-Path -Path $profileRoot -Leaf
+$identityName = $identity.Name.Split('\')[-1]
+if ($profileName -ine $identityName) {
+    throw 'PER_USER_PROFILE_FAILURE: profile path does not match the standard-user identity'
+}
+$script:profileRoot = $profileRoot
+$script:profilePrefix = $profileRoot.TrimEnd('\') + '\'
+function Resolve-ProfileScopedFolder([object]$KnownFolder, [string]$FallbackRelativePath) {
+    $candidate = [Environment]::GetFolderPath($KnownFolder)
+    if (![string]::IsNullOrWhiteSpace($candidate)) {
+        $candidate = [IO.Path]::GetFullPath($candidate)
+        if ($candidate.StartsWith($script:profilePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            return $candidate
+        }
+    }
+    return [IO.Path]::GetFullPath((Join-Path $script:profileRoot $FallbackRelativePath))
+}
+$localAppData = Resolve-ProfileScopedFolder ([Environment+SpecialFolder]::LocalApplicationData) 'AppData\Local'
+$roamingAppData = Resolve-ProfileScopedFolder ([Environment+SpecialFolder]::ApplicationData) 'AppData\Roaming'
+$env:USERPROFILE = $profileRoot
+$env:LOCALAPPDATA = $localAppData
+$env:APPDATA = $roamingAppData
+$userTemp = Join-Path $localAppData 'Temp'
+New-Item -Path $userTemp -ItemType Directory -Force | Out-Null
+$env:TEMP = $userTemp
+$env:TMP = $userTemp
 $root = Join-Path $env:LOCALAPPDATA 'Programs\Synveil'
 $startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Synveil.lnk'
 $desktop = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Synveil.lnk'
@@ -68,7 +101,6 @@ function Get-HklmRegistrationCount {
 function Get-SynveilServiceCount { return @((Get-Service -Name '*Synveil*' -ErrorAction SilentlyContinue)).Count }
 function Get-SynveilTaskCount { return @((Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -match 'Synveil' -or $_.TaskPath -match 'Synveil' })).Count }
 
-$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $token = [SynveilTokenEvidence]::Current()
