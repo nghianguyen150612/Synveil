@@ -394,8 +394,14 @@ build_deb() {
     find "$deb_stage" -exec touch -d "@${SOURCE_DATE_EPOCH}" {} +
     if command -v dpkg-deb >/dev/null 2>&1; then
         log "building with dpkg-deb --build"
-        fakeroot dpkg-deb --build "$deb_stage" "$deb_path" 2>/dev/null \
-            || dpkg-deb --build "$deb_stage" "$deb_path"
+        # Keep the actual archive layout aligned with the deterministic fallback
+        # below and the release package contract. dpkg-deb's default data member
+        # compression varies across distribution/tool versions (for example,
+        # xz on newer Debian hosts), which changes both package bytes and the
+        # expected data.tar member name.
+        local dpkg_deb_args=(--root-owner-group --compression=gzip --compression-level=9)
+        fakeroot dpkg-deb --build "${dpkg_deb_args[@]}" "$deb_stage" "$deb_path" 2>/dev/null \
+            || dpkg-deb --build "${dpkg_deb_args[@]}" "$deb_stage" "$deb_path"
     else
         log "dpkg-deb unavailable; building real .deb with ar+tar (equivalent format)"
         local work
