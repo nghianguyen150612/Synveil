@@ -61,7 +61,9 @@ protocol AuthenticatedNodeRequestProviderProtocol {
 @MainActor
 final class AuthenticatedLibraryRequestProvider: AuthenticatedLibraryRequestProviderProtocol,
     AuthenticatedNodeRequestProviderProtocol, AuthenticatedClientMutationRequestProviderProtocol,
-    AuthenticatedSyncCheckpointRequestProviderProtocol, AuthenticatedSyncFeedRequestProviderProtocol
+    AuthenticatedSyncCheckpointRequestProviderProtocol,
+    AuthenticatedSyncFeedRequestProviderProtocol,
+    AuthenticatedRebaselineRequestProviderProtocol
 {
     private let controller: SessionController
     private let store: any SecureCredentialSinkProtocol
@@ -250,6 +252,72 @@ final class AuthenticatedLibraryRequestProvider: AuthenticatedLibraryRequestProv
         onDispatch()
         let response = try await transport.send(request)
         try await validate(scope)
+        return response
+    }
+
+    func startRebaseline(
+        scope: ClientMutationScope, session: LibraryRequestScope, onDispatch: () -> Void
+    ) async throws -> HTTPTransportResponse {
+        guard session.matches(scope) else { throw RebaselineFailure.scopeMismatch }
+        return try await rebaselinePOST(
+            scope: scope, suffix: "", body: Data("{}".utf8), session: session,
+            onDispatch: onDispatch)
+    }
+
+    func requestRebaselinePage(
+        bootstrap: RebaselineBootstrap, cursor: String?, limit: Int, session: LibraryRequestScope
+    ) async throws -> HTTPTransportResponse {
+        guard session.matches(bootstrap.scope), (1...1000).contains(limit),
+            cursor.map({ RebaselinePolicy.validOpaque($0, maximum: 320) }) ?? true
+        else { throw RebaselineFailure.protocolFailure }
+        var query = [URLQueryItem(name: "limit", value: String(limit))]
+        if let cursor { query.append(URLQueryItem(name: "cursor", value: cursor)) }
+        return try await requestGET(
+            path: rebaselinePath(bootstrap.scope) + "/\(bootstrap.id.rawValue)/nodes",
+            queryItems: query, scope: session)
+    }
+
+    func completeRebaseline(
+        _ handoff: RebaselineHandoff, session: LibraryRequestScope, onDispatch: () -> Void
+    ) async throws -> HTTPTransportResponse {
+        guard session.matches(handoff.bootstrap.scope),
+            session.credentialIdentifier == handoff.credentialId
+        else { throw RebaselineFailure.staleSession }
+        return try await rebaselinePOST(
+            scope: handoff.bootstrap.scope, suffix: "/\(handoff.bootstrap.id.rawValue)/complete",
+            body: RebaselinePolicy.completionBody(handoff.token), session: session,
+            onDispatch: onDispatch)
+    }
+
+    private func rebaselinePath(_ scope: ClientMutationScope) -> String {
+        "/api/v1/devices/\(scope.deviceId.rawValue)/libraries/\(scope.libraryId.rawValue)/rebaseline"
+    }
+
+    private func rebaselinePOST(
+        scope: ClientMutationScope, suffix: String, body: Data, session: LibraryRequestScope,
+        onDispatch: () -> Void
+    ) async throws -> HTTPTransportResponse {
+        try await validate(session)
+        let endpoint = session.session.serverEndpoint
+        guard var components = URLComponents(url: endpoint.url, resolvingAgainstBaseURL: false),
+            components.user == nil, components.password == nil
+        else { throw LibraryFailure.originMismatch }
+        let base = components.percentEncodedPath.trimmingCharacters(
+            in: CharacterSet(charactersIn: "/"))
+        components.percentEncodedPath =
+            (base.isEmpty ? "" : "/\(base)") + rebaselinePath(scope) + suffix
+        components.query = nil
+        components.fragment = nil
+        guard let url = components.url, url.scheme == "https", url.host == endpoint.host,
+            url.port == endpoint.port
+        else { throw LibraryFailure.originMismatch }
+        try checkCurrent(session)
+        var headers = authenticatedHeaders(session, jsonBody: true)
+        headers["Cache-Control"] = "no-store"
+        let request = HTTPTransportRequest(url: url, method: .post, headers: headers, body: body)
+        onDispatch()
+        let response = try await transport.send(request)
+        try await validate(session)
         return response
     }
 

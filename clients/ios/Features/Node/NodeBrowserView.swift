@@ -607,14 +607,47 @@ struct NodeBrowserView: View {
             .accessibilityIdentifier("synveil.node.saved.banner")
         }
 
-        if presentation.nodes.isEmpty {
+        if presentation.nodes.isEmpty && presentation.snapshotNodes.isEmpty {
             Section {
                 Text(savedEmptyMessage(presentation))
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("synveil.node.saved.empty")
             }
         } else {
-            nodeRows(presentation.nodes)
+            savedRows(presentation.orderedItems)
+        }
+    }
+
+    private func savedRows(_ items: [SavedNodeBrowserItem]) -> some View {
+        Section("Saved Items") {
+            ForEach(items) { item in
+                switch item {
+                case .canonical(let node): nodeRow(node)
+                case .snapshot(let node): snapshotRow(node)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func snapshotRow(_ node: RebaselineSnapshotNode) -> some View {
+        if let destination = viewModel.route(into: node) {
+            NavigationLink(value: destination) {
+                Label(node.name, systemImage: "folder")
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityHint(
+                "Opens verified saved folder structure without contacting the server.")
+        } else {
+            NavigationLink {
+                SnapshotNodeInformationView(
+                    node: node, sessionController: sessionController)
+            } label: {
+                Label(node.name, systemImage: node.kind == .directory ? "folder" : "doc")
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityHint(
+                "Shows limited snapshot metadata. File content is unavailable.")
         }
     }
 

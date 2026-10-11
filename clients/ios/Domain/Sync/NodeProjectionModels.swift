@@ -10,6 +10,7 @@ enum CachedNodeLifecycle: String, Sendable {
 }
 enum CachedNodeProvenance: String, Sendable {
     case canonical = "CANONICAL", event = "EVENT", lastKnown = "LAST_KNOWN"
+    case snapshotManifest = "SNAPSHOT_MANIFEST"
 }
 
 /// Only canonical, complete metadata at the recorded revision can be an ordinary cached item.
@@ -21,6 +22,7 @@ struct CachedNodeRecord: Equatable, Sendable {
     let lifecycle: CachedNodeLifecycle
     let provenance: CachedNodeProvenance
     let metadata: Node?
+    var snapshotMetadata: RebaselineSnapshotNode? = nil
     var completeNode: Node? {
         guard provenance == .canonical, lifecycle == .active,
             let metadata, metadata.state == .active,
@@ -56,6 +58,7 @@ struct CachedChildren: Equatable, Sendable {
     let knowledge: CachedDirectoryKnowledge
     let hasMore: Bool
     let projection: NodeProjectionState
+    var snapshotNodes: [RebaselineSnapshotNode] = []
 }
 enum CachedChildrenResult: Equatable, Sendable {
     case loaded(CachedChildren), unavailable(SyncProjectionFailure)

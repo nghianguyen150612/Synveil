@@ -58,7 +58,7 @@ class InboundSyncCoordinatorArchitectureTests(unittest.TestCase):
 
     def test_storage_reads_are_bounded_scoped_and_do_not_migrate(self):
         source = (IOS / "Infrastructure/Persistence/MutationQueueSQLiteStore.swift").read_text()
-        self.assertIn("static let schemaVersion = 4", source)
+        self.assertIn("static let schemaVersion = 5", source)
         self.assertIn("ORDER BY length(epoch),epoch,length(from_sequence),from_sequence LIMIT 1", source)
         self.assertIn("func claimInboundRun", source)
         self.assertIn('url.path + ".inbound.lock"', source)

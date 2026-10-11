@@ -21,6 +21,28 @@ enum NodeCacheUIFailure: Equatable, Sendable {
     case synchronizationRecoveryRequired
 }
 
+enum SavedNodeBrowserItem: Identifiable, Sendable {
+    case canonical(Node), snapshot(RebaselineSnapshotNode)
+    var id: NodeId {
+        switch self {
+        case .canonical(let node): node.id
+        case .snapshot(let node): node.id
+        }
+    }
+    var name: String {
+        switch self {
+        case .canonical(let node): node.name
+        case .snapshot(let node): node.name
+        }
+    }
+    var kind: NodeKind {
+        switch self {
+        case .canonical(let node): node.kind
+        case .snapshot(let node): node.kind
+        }
+    }
+}
+
 struct NodeCachedDirectoryPresentation: Equatable, Sendable {
     let nodes: [Node]
     let knowledge: CachedDirectoryKnowledge
@@ -28,6 +50,18 @@ struct NodeCachedDirectoryPresentation: Equatable, Sendable {
     let projection: NodeProjectionState
     /// Present only when this saved result was selected after a failed live request.
     let liveFailure: NodeFailure?
+    var snapshotNodes: [RebaselineSnapshotNode] = []
+    var orderedItems: [SavedNodeBrowserItem] {
+        (nodes.map(SavedNodeBrowserItem.canonical)
+            + snapshotNodes.map(SavedNodeBrowserItem.snapshot)).sorted {
+                if $0.kind != $1.kind { return $0.kind == .directory }
+                let comparison = $0.name.compare(
+                    $1.name, options: [.caseInsensitive, .numeric],
+                    locale: Locale(identifier: "en_US_POSIX"))
+                if comparison != .orderedSame { return comparison == .orderedAscending }
+                return $0.id.rawValue < $1.id.rawValue
+            }
+    }
 }
 
 enum OfflineNodeBrowserResult: Equatable, Sendable {
@@ -152,6 +186,14 @@ final class OfflineNodeBrowserService: OfflineNodeBrowserServiceProtocol {
                 // P039's active-ancestry policy stops safely when it reaches an unknown row.
                 return nil
             case .found(let record, let state):
+                if record.provenance == .snapshotManifest, let ancestor = record.snapshotMetadata {
+                    let expectedParent = index == 0 ? nil : ancestry[index - 1]
+                    guard record.scope == scope, ancestor.id == ancestry[index],
+                        ancestor.kind == .directory, ancestor.state == .active,
+                        ancestor.parentId == expectedParent
+                    else { return Self.uiFailure(for: state) }
+                    continue
+                }
                 guard record.scope == scope, record.id == ancestry[index],
                     record.lifecycle == .active,
                     let ancestor = record.completeNode,
@@ -194,6 +236,15 @@ final class OfflineNodeBrowserService: OfflineNodeBrowserServiceProtocol {
                 return liveFailure.map(OfflineNodeBrowserResult.failed)
                     ?? .savedUnavailable(Self.uiFailure(for: failure))
             case .loaded(let cached):
+                var snapshotIds = Set<NodeId>()
+                guard
+                    cached.snapshotNodes.allSatisfy({ node in
+                        node.parentId == parent.expectedParentId
+                            && node.id != parent.expectedParentId
+                            && node.state == .active && snapshotIds.insert(node.id).inserted
+                            && !cached.nodes.contains(where: { $0.id == node.id })
+                    })
+                else { return .savedUnavailable(.unavailable) }
                 guard
                     Self.isValid(
                         cached.nodes, libraryId: libraryId, parent: parent
@@ -221,7 +272,7 @@ final class OfflineNodeBrowserService: OfflineNodeBrowserServiceProtocol {
                         knowledge: knowledge,
                         hasMore: cached.hasMore,
                         projection: cached.projection,
-                        liveFailure: liveFailure))
+                        liveFailure: liveFailure, snapshotNodes: cached.snapshotNodes))
             }
         } catch {
             // A failed identity capture is never a reason to read another saved scope. Preserve the

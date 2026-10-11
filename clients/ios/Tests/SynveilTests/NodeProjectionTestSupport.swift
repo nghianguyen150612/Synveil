@@ -137,6 +137,7 @@ func projectionConfirm(_ f: QueueFixture, page: SyncFeedPage? = nil) async throw
 
 /// Remove only empty P039 objects to recreate an exact P038 fixture; no queue/inbox data changes.
 func projectionDowngradeV3(_ url: URL) throws {
+    try snapshotDowngradeV4(url)
     let statements = NodeProjectionSQLiteSchema.statements
     for sql in statements where sql.contains("CREATE TRIGGER") {
         let name = sql.split(separator: " ")[2]

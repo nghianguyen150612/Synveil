@@ -146,6 +146,19 @@
 		407BCF57189B040188F9B622 /* InboundSyncRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16EEBD2222FE64206514A30F /* InboundSyncRecoveryTests.swift */; };
 		48B5C46A84D00167AEB0F06C /* InboundSyncRaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C08D8E26A94145FC6362A2C9 /* InboundSyncRaceTests.swift */; };
 		1D9E4EB06644AB6B7D438164 /* SyncStatusViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FB2DF3EA7D3D3FE25CB4EB2 /* SyncStatusViewModelTests.swift */; };
+		2D43E305C9221A8036E964E9 /* RebaselineCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFD9B7F299C222C9EEAA40CA /* RebaselineCoordinator.swift */; };
+		BAE576A2CD088EC953F9A2E7 /* RebaselineModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FD41238F3993337F6412F34 /* RebaselineModels.swift */; };
+		48D1EA7F55D3CB79967CC2D5 /* RebaselineResponseDTO.swift in Sources */ = {isa = PBXBuildFile; fileRef = 588BDD6E4DBAB1BD7D244905 /* RebaselineResponseDTO.swift */; };
+		1BABABA9F5B389C1F9089B5A /* SnapshotNodeInformationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8D39932E16668D07EBEBBAA /* SnapshotNodeInformationView.swift */; };
+		D40456C4F77C60F13C7A0882 /* RebaselineProgressView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 963FE3B7E9B4442A09E3774A /* RebaselineProgressView.swift */; };
+		4B5F96B3BB2CFA641A63B94B /* RebaselineViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 748071FD61D4A0F5C552D930 /* RebaselineViewModel.swift */; };
+		A8A7F509357EDF4286DCCE5A /* RebaselineSQLiteSchema.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D9D19510F1D0C3C99DC28C8 /* RebaselineSQLiteSchema.swift */; };
+		82562F2B90CD8C77A3A3C4DA /* RebaselineManifestTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1708FBE19416AD871E9362A /* RebaselineManifestTests.swift */; };
+		0C253BFB5EA4EBB6DD9F001B /* RebaselineRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3693670952CA52DF939D8B6F /* RebaselineRecoveryTests.swift */; };
+		E81DE4EE7F3B1FD661A9A681 /* RebaselineSQLiteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4668B9789833FF0BC08A675 /* RebaselineSQLiteTests.swift */; };
+		49B85EE43E37438039DD658E /* RebaselineTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48A50FE4074DC3FE80E150B7 /* RebaselineTestSupport.swift */; };
+		230FAECB95595FDE5642408A /* RebaselineTransportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2DF63C5E99FBCF162759DA /* RebaselineTransportTests.swift */; };
+		ACA99412EB8AD67421091948 /* RebaselineViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2216F53B7F46969E3706CD88 /* RebaselineViewModelTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -299,6 +312,19 @@
 		16EEBD2222FE64206514A30F /* InboundSyncRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/InboundSyncRecoveryTests.swift; sourceTree = SOURCE_ROOT; };
 		C08D8E26A94145FC6362A2C9 /* InboundSyncRaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/InboundSyncRaceTests.swift; sourceTree = SOURCE_ROOT; };
 		5FB2DF3EA7D3D3FE25CB4EB2 /* SyncStatusViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SyncStatusViewModelTests.swift; sourceTree = SOURCE_ROOT; };
+		EFD9B7F299C222C9EEAA40CA /* RebaselineCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Sync/RebaselineCoordinator.swift; sourceTree = SOURCE_ROOT; };
+		9FD41238F3993337F6412F34 /* RebaselineModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Sync/RebaselineModels.swift; sourceTree = SOURCE_ROOT; };
+		588BDD6E4DBAB1BD7D244905 /* RebaselineResponseDTO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Sync/RebaselineResponseDTO.swift; sourceTree = SOURCE_ROOT; };
+		F8D39932E16668D07EBEBBAA /* SnapshotNodeInformationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Node/SnapshotNodeInformationView.swift; sourceTree = SOURCE_ROOT; };
+		963FE3B7E9B4442A09E3774A /* RebaselineProgressView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Sync/RebaselineProgressView.swift; sourceTree = SOURCE_ROOT; };
+		748071FD61D4A0F5C552D930 /* RebaselineViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Sync/RebaselineViewModel.swift; sourceTree = SOURCE_ROOT; };
+		0D9D19510F1D0C3C99DC28C8 /* RebaselineSQLiteSchema.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/RebaselineSQLiteSchema.swift; sourceTree = SOURCE_ROOT; };
+		B1708FBE19416AD871E9362A /* RebaselineManifestTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RebaselineManifestTests.swift; sourceTree = SOURCE_ROOT; };
+		3693670952CA52DF939D8B6F /* RebaselineRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RebaselineRecoveryTests.swift; sourceTree = SOURCE_ROOT; };
+		E4668B9789833FF0BC08A675 /* RebaselineSQLiteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RebaselineSQLiteTests.swift; sourceTree = SOURCE_ROOT; };
+		48A50FE4074DC3FE80E150B7 /* RebaselineTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RebaselineTestSupport.swift; sourceTree = SOURCE_ROOT; };
+		CC2DF63C5E99FBCF162759DA /* RebaselineTransportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RebaselineTransportTests.swift; sourceTree = SOURCE_ROOT; };
+		2216F53B7F46969E3706CD88 /* RebaselineViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RebaselineViewModelTests.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -324,6 +350,19 @@
 		A40000012C00000000000001 = {
 			isa = PBXGroup;
 			children = (
+				EFD9B7F299C222C9EEAA40CA /* RebaselineCoordinator.swift */,
+				9FD41238F3993337F6412F34 /* RebaselineModels.swift */,
+				588BDD6E4DBAB1BD7D244905 /* RebaselineResponseDTO.swift */,
+				F8D39932E16668D07EBEBBAA /* SnapshotNodeInformationView.swift */,
+				963FE3B7E9B4442A09E3774A /* RebaselineProgressView.swift */,
+				748071FD61D4A0F5C552D930 /* RebaselineViewModel.swift */,
+				0D9D19510F1D0C3C99DC28C8 /* RebaselineSQLiteSchema.swift */,
+				B1708FBE19416AD871E9362A /* RebaselineManifestTests.swift */,
+				3693670952CA52DF939D8B6F /* RebaselineRecoveryTests.swift */,
+				E4668B9789833FF0BC08A675 /* RebaselineSQLiteTests.swift */,
+				48A50FE4074DC3FE80E150B7 /* RebaselineTestSupport.swift */,
+				CC2DF63C5E99FBCF162759DA /* RebaselineTransportTests.swift */,
+				2216F53B7F46969E3706CD88 /* RebaselineViewModelTests.swift */,
 				A40000012C00000000000002 /* App */,
 				A40000012C00000000000015 /* Features */,
 				A40000012C00000000000011 /* Domain */,
@@ -668,6 +707,13 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				2D43E305C9221A8036E964E9 /* RebaselineCoordinator.swift in Sources */,
+				BAE576A2CD088EC953F9A2E7 /* RebaselineModels.swift in Sources */,
+				48D1EA7F55D3CB79967CC2D5 /* RebaselineResponseDTO.swift in Sources */,
+				1BABABA9F5B389C1F9089B5A /* SnapshotNodeInformationView.swift in Sources */,
+				D40456C4F77C60F13C7A0882 /* RebaselineProgressView.swift in Sources */,
+				4B5F96B3BB2CFA641A63B94B /* RebaselineViewModel.swift in Sources */,
+				A8A7F509357EDF4286DCCE5A /* RebaselineSQLiteSchema.swift in Sources */,
 				9FF6AD1290B03F7D24833EC7 /* SyncStatusView.swift in Sources */,
 				B434156B38347EB11B0CD572 /* SyncStatusViewModel.swift in Sources */,
 				9D37C8EFFEAE03382E52A9AD /* InboundSyncCoordinator.swift in Sources */,
@@ -764,6 +810,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				82562F2B90CD8C77A3A3C4DA /* RebaselineManifestTests.swift in Sources */,
+				0C253BFB5EA4EBB6DD9F001B /* RebaselineRecoveryTests.swift in Sources */,
+				E81DE4EE7F3B1FD661A9A681 /* RebaselineSQLiteTests.swift in Sources */,
+				49B85EE43E37438039DD658E /* RebaselineTestSupport.swift in Sources */,
+				230FAECB95595FDE5642408A /* RebaselineTransportTests.swift in Sources */,
+				ACA99412EB8AD67421091948 /* RebaselineViewModelTests.swift in Sources */,
 				1D9E4EB06644AB6B7D438164 /* SyncStatusViewModelTests.swift in Sources */,
 				48B5C46A84D00167AEB0F06C /* InboundSyncRaceTests.swift in Sources */,
 				407BCF57189B040188F9B622 /* InboundSyncRecoveryTests.swift in Sources */,

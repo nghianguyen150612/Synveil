@@ -471,6 +471,18 @@ final class NodeBrowserViewModel {
         state = .invalidated
     }
 
+    func route(into node: RebaselineSnapshotNode) -> NodeBrowserRoute? {
+        guard isCurrentSession, contentSource == .cached,
+            let saved = cachedPresentation, saved.snapshotNodes.contains(node),
+            saved.knowledge != .staleKnown, saved.projection.completeness != .rebaselineRequired,
+            node.kind == .directory, node.state == .active,
+            node.parentId == parentScope.expectedParentId, !ancestry.contains(node.id)
+        else { return nil }
+        return NodeBrowserRoute(
+            library: library, parentScope: .directory(node.id),
+            directoryTitle: node.name, ancestry: ancestry + [node.id], initialSource: .cached)
+    }
+
     func route(into node: Node) -> NodeBrowserRoute? {
         guard isCurrentSession, node.kind == .directory, node.libraryId == library.id,
             node.parentId == parentScope.expectedParentId, node.state == .active,

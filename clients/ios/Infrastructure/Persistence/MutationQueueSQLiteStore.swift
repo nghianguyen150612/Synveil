@@ -12,6 +12,8 @@ enum MutationQueueFaultPoint: Equatable, Sendable {
     case beforeMaterialization, afterMaterialization, afterFirstNodeWrite, afterFinalNodeWrite
     case beforeProjectionCommit, afterProjectionCommit, beforeAckLeaseCommit, afterAckLeaseCommit
     case beforeAckConfirmationCommit, afterAckConfirmationCommit, beforeQuarantine
+    case beforeSnapshotPageCommit, beforeSnapshotPreparationCommit,
+        beforeSnapshotConfirmationCommit, beforeSnapshotActivationCommit
     case migration, beforeInsert, afterInsert, beforeCommit, afterCommit, beforeRollback
     case afterSubmitting, afterDispatchOwnership, beforeResultPersistence, duringConflictPersistence
 }
@@ -78,7 +80,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
     private let maximumOutstanding: Int
     private let maximumBytes: Int
     private let maximumRecords: Int
-    static let schemaVersion = 4
+    static let schemaVersion = 5
     private let processOwner = UUID().uuidString
     private var activeAckAttempts: Set<String> = []
     private static let scopePredicate = "endpoint=? AND owner_id=? AND device_id=? AND library_id=?"
@@ -195,8 +197,11 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         """,
     ]
     static let version3Schema = version2Schema + inboundSchema
-    private static let schema =
+    static let version4Schema =
         version2Schema + Array(inboundSchema.dropLast()) + NodeProjectionSQLiteSchema.statements
+    private static let schema =
+        version2Schema + Array(inboundSchema.dropLast()) + RebaselineSQLiteSchema.projection
+        + RebaselineSQLiteSchema.statements
 
     init(
         url: URL, busyTimeoutMilliseconds: Int32 = 250,
@@ -228,7 +233,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         // Initialization uses only local helpers; no actor reference escapes before schema validation.
         try Self.execute(handle, "PRAGMA foreign_keys=ON")
         let version = try Self.scalar(handle, "PRAGMA user_version")
-        guard [0, 1, 2, 3, Int64(Self.schemaVersion)].contains(version) else {
+        guard [0, 1, 2, 3, 4, Int64(Self.schemaVersion)].contains(version) else {
             throw MutationQueueFailure.unsupportedSchema
         }
         if version > 0 {
@@ -253,7 +258,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
             do {
                 for statement in Self.schema { try Self.execute(handle, statement) }
                 try fault?(.migration)
-                try Self.execute(handle, "PRAGMA user_version=4")
+                try Self.execute(handle, "PRAGMA user_version=5")
                 try Self.execute(handle, "COMMIT")
             } catch {
                 try? Self.execute(handle, "ROLLBACK")
@@ -312,6 +317,28 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
                 }
                 try fault?(.migration)
                 try Self.execute(handle, "PRAGMA user_version=4")
+                try Self.execute(handle, "COMMIT")
+            } catch {
+                try? Self.execute(handle, "ROLLBACK")
+                throw error
+            }
+        }
+        if (1...4).contains(version) {
+            try verifySchema(Self.version4Schema)
+            try Self.execute(handle, "BEGIN IMMEDIATE")
+            do {
+                for (old, new) in zip(
+                    NodeProjectionSQLiteSchema.statements, RebaselineSQLiteSchema.projection)
+                where old != new {
+                    let name = old.split(separator: " ")[2]
+                    try Self.execute(handle, "DROP TRIGGER \(name)")
+                    try Self.execute(handle, new)
+                }
+                for statement in RebaselineSQLiteSchema.statements {
+                    try Self.execute(handle, statement)
+                }
+                try fault?(.migration)
+                try Self.execute(handle, "PRAGMA user_version=5")
                 try Self.execute(handle, "COMMIT")
             } catch {
                 try? Self.execute(handle, "ROLLBACK")
@@ -438,6 +465,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
     func persistCheckpoint(_ checkpoint: SyncCheckpoint) throws -> SyncBaseStatus {
         try transaction {
             let scope = checkpoint.base.scope
+            try requireNoRebaseline(scope)
             let id = try ensureScope(scope)
             let epoch = checkpoint.base.epoch.rawValue
             let sequence = checkpoint.base.sequence.rawValue
@@ -620,6 +648,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
     {
         try transaction {
             try requireUnquarantinedScope(scope)
+            try requireNoRebaseline(scope)
             guard let row = try record(scope: scope, id: id) else {
                 throw MutationQueueFailure.notFound
             }
@@ -814,6 +843,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         try Task.checkCancellation()
         return try transaction {
             try requireFeedScope(page.scope, credentialId: credentialId)
+            try requireNoRebaseline(page.scope)
             guard let base = try syncBase(scope: page.scope), base.status == .verified,
                 base.epoch == page.start.epoch.rawValue,
                 base.sequence == page.start.sequence.rawValue
@@ -929,6 +959,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
     /// zero-byte advisory lock is released on process death. SQLite still authorizes every write.
     func claimInboundRun(scope: ClientMutationScope, credentialId: String, owner: UUID) throws {
         try requireFeedScope(scope, credentialId: credentialId)
+        try requireNoRebaseline(scope)
         try connection.acquireInboundLock(path: url.path + ".inbound.lock", owner: owner)
     }
 
@@ -941,7 +972,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
     ) async throws -> InboundSyncPageRecord? {
         try requireFeedScope(scope, credentialId: credentialId)
         let positions = try query(
-            "SELECT epoch,from_sequence FROM inbound_pages WHERE scope_id=? AND state<>'ACK_CONFIRMED' ORDER BY length(epoch),epoch,length(from_sequence),from_sequence LIMIT 1",
+            "SELECT epoch,from_sequence FROM inbound_pages WHERE scope_id=? AND state<>'ACK_CONFIRMED' AND NOT EXISTS(SELECT 1 FROM rebaseline_active a JOIN rebaseline_sessions r ON r.bootstrap_id=a.bootstrap_id WHERE a.scope_id=inbound_pages.scope_id AND (r.epoch<>inbound_pages.epoch OR length(inbound_pages.from_sequence)<length(r.cut) OR (length(inbound_pages.from_sequence)=length(r.cut) AND inbound_pages.from_sequence<r.cut))) ORDER BY length(epoch),epoch,length(from_sequence),from_sequence LIMIT 1",
             [.integer(try requireScopeId(scope))]
         ) { s in
             SyncJournalPosition(
@@ -978,7 +1009,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
     ) async throws -> InboundSyncPageRecord? {
         try requireFeedScope(scope, credentialId: credentialId)
         let positions = try query(
-            "SELECT epoch,from_sequence FROM inbound_pages WHERE scope_id=? AND state='ACK_CONFIRMED' ORDER BY length(epoch) DESC,epoch DESC,length(from_sequence) DESC,from_sequence DESC LIMIT 1",
+            "SELECT epoch,from_sequence FROM inbound_pages WHERE scope_id=? AND state='ACK_CONFIRMED' AND NOT EXISTS(SELECT 1 FROM rebaseline_active a JOIN rebaseline_sessions r ON r.bootstrap_id=a.bootstrap_id WHERE a.scope_id=inbound_pages.scope_id AND (r.epoch<>inbound_pages.epoch OR length(inbound_pages.through_sequence)<length(r.cut) OR (length(inbound_pages.through_sequence)=length(r.cut) AND inbound_pages.through_sequence<=r.cut))) ORDER BY length(epoch) DESC,epoch DESC,length(from_sequence) DESC,from_sequence DESC LIMIT 1",
             [.integer(try requireScopeId(scope))]
         ) { s in
             SyncJournalPosition(
@@ -1040,6 +1071,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
     }
 
     private func requireBase(_ mutation: PreparedClientMutation) throws {
+        try requireNoRebaseline(mutation.base.scope)
         guard let base = try syncBase(scope: mutation.base.scope) else {
             throw MutationQueueFailure.syncBaseUnavailable
         }
@@ -1148,7 +1180,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
     }
     private func checkCapacity(additionalBytes: Int) throws {
         let bytes = try scalar(
-            "SELECT coalesce((SELECT sum(length(request)+length(payload)+coalesce(length(evidence),0)) FROM mutations),0)+coalesce((SELECT sum(length(response)) FROM sync_bases),0)+coalesce((SELECT sum(length(evidence)) FROM mutation_attempt_history),0)+coalesce((SELECT sum(length(response)+length(canonical_data)) FROM inbound_pages),0)+coalesce((SELECT sum(coalesce(length(metadata),0)+length(node_id)+length(revision)+length(sequence)+coalesce(length(parent_id),0)+128) FROM cached_nodes),0)+coalesce((SELECT sum(length(metadata)+64) FROM cached_libraries),0)+coalesce((SELECT sum(length(canonical_data)+128) FROM projection_commits),0)+coalesce((SELECT count(*)*256 FROM projection_events),0)+coalesce((SELECT sum(coalesce(length(checkpoint),0)+256) FROM sync_ack_attempts),0)+coalesce((SELECT count(*)*256 FROM node_projection_state),0)"
+            "SELECT coalesce((SELECT sum(length(request)+length(payload)+coalesce(length(evidence),0)) FROM mutations),0)+coalesce((SELECT sum(length(response)) FROM sync_bases),0)+coalesce((SELECT sum(length(evidence)) FROM mutation_attempt_history),0)+coalesce((SELECT sum(length(response)+length(canonical_data)) FROM inbound_pages),0)+coalesce((SELECT sum(coalesce(length(metadata),0)+length(node_id)+length(revision)+length(sequence)+coalesce(length(parent_id),0)+128) FROM cached_nodes),0)+coalesce((SELECT sum(length(metadata)+64) FROM cached_libraries),0)+coalesce((SELECT sum(length(canonical_data)+128) FROM projection_commits),0)+coalesce((SELECT count(*)*256 FROM projection_events),0)+coalesce((SELECT sum(coalesce(length(checkpoint),0)+256) FROM sync_ack_attempts),0)+coalesce((SELECT count(*)*256 FROM node_projection_state),0)+coalesce((SELECT sum(length(response)+length(canonical)+512) FROM rebaseline_pages),0)+coalesce((SELECT sum(length(metadata)+256) FROM rebaseline_nodes),0)+coalesce((SELECT sum(length(bootstrap)+length(library)+coalesce(length(completion),0)+1024) FROM rebaseline_sessions),0)+coalesce((SELECT sum(coalesce(length(completion),0)+512) FROM rebaseline_completion_attempts),0)"
         )
         guard bytes + Int64(additionalBytes) <= Int64(maximumBytes) else {
             throw MutationQueueFailure.capacity
@@ -1391,6 +1423,38 @@ enum MutationQueueFilePolicy {
 }
 
 extension MutationQueueSQLiteStore {
+    private func activeSnapshotId(_ scope: ClientMutationScope, epoch: String) throws -> String? {
+        try query(
+            "SELECT r.bootstrap_id FROM rebaseline_active a JOIN rebaseline_sessions r ON r.bootstrap_id=a.bootstrap_id WHERE a.scope_id=? AND r.scope_id=a.scope_id AND r.epoch=? AND r.stage='ACTIVE_COMPLETE' AND r.prepared_id IS NOT NULL AND r.completion IS NOT NULL AND r.terminal_token IS NOT NULL",
+            [.integer(try requireScopeId(scope)), .text(epoch)]
+        ) { try Self.text($0, 0) }.first
+    }
+    private func activeSnapshotCut(_ scope: ClientMutationScope) throws -> SyncJournalPosition? {
+        try query(
+            "SELECT r.epoch,r.cut FROM rebaseline_active a JOIN rebaseline_sessions r ON r.bootstrap_id=a.bootstrap_id WHERE a.scope_id=? AND r.stage='ACTIVE_COMPLETE'",
+            [.integer(try requireScopeId(scope))]
+        ) {
+            SyncJournalPosition(
+                epoch: try SyncDecimalValidation.validate(Self.text($0, 0), nonzero: true),
+                sequence: try SyncDecimalValidation.validate(Self.text($0, 1)))
+        }.first
+    }
+    private func snapshotNode(
+        scope: ClientMutationScope, epoch: String, nodeId: NodeId, bridge: any RustBridgeProtocol
+    ) async throws -> RebaselineSnapshotNode? {
+        guard let id = try activeSnapshotId(scope, epoch: epoch) else { return nil }
+        let bytes = try query(
+            "SELECT metadata FROM rebaseline_nodes WHERE bootstrap_id=? AND node_id=?",
+            [.text(id), .text(nodeId.rawValue)]
+        ) { try Self.blob($0, 0, maximum: RebaselinePolicy.maximumNodeBytes) }.first
+        guard let bytes else { return nil }
+        let node = try await JSONDecoder().decode(RebaselineNodeDTO.self, from: bytes).validated(
+            bridge: bridge)
+        guard node.id == nodeId, try activeSnapshotId(scope, epoch: epoch) == id else {
+            throw SyncProjectionFailure.stalePage
+        }
+        return node
+    }
     private struct ProjectionRow: Equatable {
         let epoch: String, anchor: String, applied: String, confirmed: String
         let completeness: NodeProjectionCompleteness
@@ -1523,9 +1587,10 @@ extension MutationQueueSQLiteStore {
                 sequence: try SyncDecimalValidation.validate(value))
         }
         if let row {
+            let snapshotId = try activeSnapshotId(scope, epoch: epoch)
             guard !SyncDecimalValidation.less(row.applied, row.anchor),
                 !SyncDecimalValidation.less(row.applied, row.confirmed),
-                row.completeness != .complete
+                row.completeness != .complete || snapshotId != nil
             else { throw MutationQueueFailure.malformedRecord }
             state = NodeProjectionState(
                 completeness: base?.status == .verified ? row.completeness : .rebaselineRequired,
@@ -1559,7 +1624,20 @@ extension MutationQueueSQLiteStore {
         if let raw {
             result = try await decodeCache(raw, scope: scope, epoch: epoch, bridge: bridge)
         } else {
-            result = nil
+            if let snapshot = try await snapshotNode(
+                scope: scope, epoch: epoch, nodeId: nodeId, bridge: bridge),
+                let cut = try activeSnapshotCut(scope)
+            {
+                result = CachedNodeRecord(
+                    scope: scope, position: cut, id: snapshot.id,
+                    revision: try SyncDecimalValidation.validate(
+                        snapshot.revision.rawValue, nonzero: true),
+                    lifecycle: snapshot.state == .active ? .active : .trashed,
+                    provenance: .snapshotManifest,
+                    metadata: nil, snapshotMetadata: snapshot)
+            } else {
+                result = nil
+            }
         }
         try requireFeedScope(scope, credentialId: credentialId)
         guard try currentEpoch(scope) == epoch,
@@ -1580,6 +1658,7 @@ extension MutationQueueSQLiteStore {
         let parent = try cacheRows(scope, epoch: epoch, node: parentId).first
         let rows = try cacheRows(scope, epoch: epoch, parent: parentId, limit: limit + 1)
         var nodes: [Node] = []
+        var snapshots: [RebaselineSnapshotNode] = []
         // An inactive known ancestor cannot become an active offline directory through its children.
         let visible = try activeAncestry(scope: scope, epoch: epoch, parent: parentId)
         if visible {
@@ -1591,7 +1670,26 @@ extension MutationQueueSQLiteStore {
                 else { throw MutationQueueFailure.malformedRecord }
                 nodes.append(node)
             }
+            if let bootstrap = try activeSnapshotId(scope, epoch: epoch) {
+                let saved = try query(
+                    "SELECT n.metadata FROM rebaseline_nodes n WHERE n.bootstrap_id=? AND n.parent_id=? AND n.lifecycle='ACTIVE' AND NOT EXISTS(SELECT 1 FROM cached_nodes c WHERE c.scope_id=? AND c.epoch=? AND c.node_id=n.node_id) ORDER BY n.node_id LIMIT ?",
+                    [
+                        .text(bootstrap), .text(parentId.rawValue),
+                        .integer(try requireScopeId(scope)), .text(epoch),
+                        .integer(Int64(limit + 1)),
+                    ]
+                ) { try Self.blob($0, 0, maximum: RebaselinePolicy.maximumNodeBytes) }
+                for bytes in saved {
+                    snapshots.append(
+                        try await JSONDecoder().decode(RebaselineNodeDTO.self, from: bytes)
+                            .validated(bridge: bridge))
+                }
+            }
         }
+        let identities = (nodes.map { $0.id.rawValue } + snapshots.map { $0.id.rawValue }).sorted()
+        let included = Set(identities.prefix(limit))
+        nodes = nodes.filter { included.contains($0.id.rawValue) }
+        snapshots = snapshots.filter { included.contains($0.id.rawValue) }
         let state = try await cachedProjectionState(
             scope: scope, credentialId: credentialId, bridge: bridge)
         try requireFeedScope(scope, credentialId: credentialId)
@@ -1601,10 +1699,13 @@ extension MutationQueueSQLiteStore {
         else { throw SyncProjectionFailure.stalePage }
         let knowledge: CachedDirectoryKnowledge =
             state.completeness == .rebaselineRequired || !visible
-            ? .staleKnown : (parent == nil && rows.isEmpty ? .missing : .partial)
+            ? .staleKnown
+            : (state.completeness == .complete
+                ? .complete : (parent == nil && rows.isEmpty ? .missing : .partial))
         return CachedChildren(
-            nodes: nodes, knowledge: knowledge, hasMore: visible && rows.count > limit,
-            projection: state)
+            nodes: nodes, knowledge: knowledge,
+            hasMore: visible && (rows.count > limit || identities.count > limit),
+            projection: state, snapshotNodes: snapshots)
     }
     private func activeAncestry(scope: ClientMutationScope, epoch: String, parent: NodeId) throws
         -> Bool
@@ -1624,7 +1725,24 @@ extension MutationQueueSQLiteStore {
                     try Self.text(s, 1)
                 )
             }.first
-            guard let row else { return true }
+            guard let row else {
+                if let bootstrap = try activeSnapshotId(scope, epoch: epoch) {
+                    let snapshot = try query(
+                        "SELECT parent_id,lifecycle FROM rebaseline_nodes WHERE bootstrap_id=? AND node_id=?",
+                        [.text(bootstrap), .text(id)]
+                    ) { s in
+                        (
+                            sqlite3_column_type(s, 0) == SQLITE_NULL ? nil : try Self.text(s, 0),
+                            try Self.text(s, 1)
+                        )
+                    }.first
+                    guard let snapshot else { throw SyncProjectionFailure.invalidParent }
+                    guard snapshot.1 == "ACTIVE" else { return false }
+                    next = snapshot.0
+                    continue
+                }
+                return true
+            }
             guard row.1 == "ACTIVE" else { return false }
             next = row.0
         }
@@ -1683,6 +1801,7 @@ extension MutationQueueSQLiteStore {
         do {
             let existing = try transaction {
                 try requireFeedScope(page.scope, credentialId: credentialId)
+                try requireNoRebaseline(page.scope)
                 guard let raw = try rawInbound(scope: page.scope, position: page.start),
                     raw.canonical == page.canonicalData
                 else { throw SyncProjectionFailure.stalePage }
@@ -1754,6 +1873,28 @@ extension MutationQueueSQLiteStore {
                                 || (event.kind == .nodePurged
                                     && old.revision == event.resourceRevision.rawValue)
                         else { throw SyncProjectionFailure.revisionRegression }
+                    }
+                    if final[event.resourceId] == nil,
+                        try cacheRows(page.scope, epoch: epoch, node: event.resourceId).isEmpty,
+                        let bootstrap = try activeSnapshotId(page.scope, epoch: epoch),
+                        let revision = try query(
+                            "SELECT revision FROM rebaseline_nodes WHERE bootstrap_id=? AND node_id=?",
+                            [.text(bootstrap), .text(event.resourceId.rawValue)],
+                            map: { try Self.text($0, 0) }
+                        ).first
+                    {
+                        guard
+                            SyncDecimalValidation.less(revision, event.resourceRevision.rawValue)
+                                || (event.kind == .nodePurged
+                                    && revision == event.resourceRevision.rawValue)
+                        else { throw SyncProjectionFailure.revisionRegression }
+                    }
+                    if event.kind != .nodePurged,
+                        try scalar(
+                            "SELECT count(*) FROM projection_events WHERE scope_id=? AND node_id=? AND kind='NODE_PURGED'",
+                            [.integer(scopeId), .text(event.resourceId.rawValue)]) > 0
+                    {
+                        throw SyncProjectionFailure.reconciliationRequired
                     }
                     guard
                         try scalar(
@@ -1843,7 +1984,7 @@ extension MutationQueueSQLiteStore {
                 }
                 try fault?(.afterFinalNodeWrite)
                 try execute(
-                    "UPDATE node_projection_state SET applied_sequence=?,completeness='PARTIAL' WHERE scope_id=? AND epoch=?",
+                    "UPDATE node_projection_state SET applied_sequence=?,completeness=CASE WHEN completeness='COMPLETE' THEN 'COMPLETE' ELSE 'PARTIAL' END WHERE scope_id=? AND epoch=?",
                     [.text(page.through.rawValue), .integer(scopeId), .text(epoch)])
                 try execute(
                     "UPDATE inbound_pages SET state='APPLIED_ACK_PENDING',updated_at=? WHERE scope_id=? AND epoch=? AND from_sequence=?",
@@ -1883,6 +2024,14 @@ extension MutationQueueSQLiteStore {
         let id: String, owner: String, previous: String, applied: String
         let dispatched: Bool, completed: Bool
     }
+    private func projectionCanAcknowledge(_ row: ProjectionRow, scope: ClientMutationScope) throws
+        -> Bool
+    {
+        if row.completeness == .complete {
+            return try activeSnapshotId(scope, epoch: row.epoch) != nil
+        }
+        return row.completeness == .partial
+    }
     private func ackAttempt(_ proof: AppliedSyncPageProof) throws -> AckAttempt? {
         let parts = proof.commitIdentity.split(separator: "/")
         guard parts.count == 2 else { throw SyncFeedFailure.applicationCommitRequired }
@@ -1917,6 +2066,7 @@ extension MutationQueueSQLiteStore {
         scope: ClientMutationScope, position: SyncJournalPosition, credentialId: String,
         bridge: any RustBridgeProtocol, recovery: Bool
     ) async throws -> AppliedSyncPageProof {
+        try requireNoRebaseline(scope)
         guard
             let record = try await inboundPage(
                 scope: scope, position: position, credentialId: credentialId, bridge: bridge),
@@ -1933,7 +2083,7 @@ extension MutationQueueSQLiteStore {
             guard let raw = try rawInbound(scope: scope, position: position),
                 raw.canonical == record.page.canonicalData,
                 raw.state == (recovery ? .ackInFlight : .appliedAckPending),
-                let row = try projectionRow(scope), row.completeness == .partial,
+                let row = try projectionRow(scope), try projectionCanAcknowledge(row, scope: scope),
                 let base = try syncBase(scope: scope), base.status == .verified,
                 base.epoch == row.epoch,
                 base.sequence == row.confirmed
@@ -1997,6 +2147,7 @@ extension MutationQueueSQLiteStore {
         return proof
     }
     func validateProjectionProof(_ proof: AppliedSyncPageProof, credentialId: String) throws {
+        try requireNoRebaseline(proof.evidence.scope)
         try requireFeedScope(proof.evidence.scope, credentialId: credentialId)
         guard
             let raw = try rawInbound(
@@ -2006,7 +2157,8 @@ extension MutationQueueSQLiteStore {
             raw.state == .ackInFlight,
             let row = try projectionRow(proof.evidence.scope),
             row.epoch == proof.evidence.epoch.rawValue,
-            row.completeness == .partial, row.applied == proof.locallyApplied.sequence.rawValue,
+            try projectionCanAcknowledge(row, scope: proof.evidence.scope),
+            row.applied == proof.locallyApplied.sequence.rawValue,
             row.confirmed == proof.previouslyConfirmed.sequence.rawValue,
             let attempt = try ackAttempt(proof), !attempt.completed, attempt.owner == processOwner,
             activeAckAttempts.contains(attempt.id), attempt.previous == row.confirmed,
@@ -2119,7 +2271,11 @@ extension MutationQueueSQLiteStore {
                 "UPDATE node_projection_state SET confirmed_sequence=?,completeness=? WHERE scope_id=?",
                 [
                     .text(checkpoint.base.sequence.rawValue),
-                    .text(incompatible ? "REBASELINE_REQUIRED" : "PARTIAL"), .integer(scopeId),
+                    .text(
+                        incompatible
+                            ? "REBASELINE_REQUIRED"
+                            : (try projectionRow(proof.evidence.scope)?.completeness == .complete
+                                ? "COMPLETE" : "PARTIAL")), .integer(scopeId),
                 ])
             try execute(
                 "UPDATE sync_ack_attempts SET completed=1,checkpoint=? WHERE attempt_id=?",
@@ -2133,5 +2289,548 @@ extension MutationQueueSQLiteStore {
             try fault?(.beforeAckConfirmationCommit)
         }
         try fault?(.afterAckConfirmationCommit)
+    }
+}
+
+// MARK: - Immutable full metadata snapshots, on the same actor-owned connection
+extension MutationQueueSQLiteStore {
+    private struct SnapshotRow: Equatable {
+        let id: String, generation: String, epoch: String, cut: String
+        let bootstrap: Data, library: Data
+        let stage: RebaselineStageState
+        let cursor: String?, token: String?, prepared: String?, completion: Data?
+    }
+    private func snapshotRow(_ scope: ClientMutationScope) throws -> SnapshotRow? {
+        try query(
+            "SELECT bootstrap_id,generation,epoch,cut,bootstrap,library,stage,cursor,terminal_token,prepared_id,completion FROM rebaseline_sessions WHERE scope_id=? ORDER BY rowid DESC LIMIT 1",
+            [.integer(try requireScopeId(scope))]
+        ) { s in
+            guard let stage = RebaselineStageState(rawValue: try Self.text(s, 6)) else {
+                throw MutationQueueFailure.malformedRecord
+            }
+            func optional(_ index: Int32) throws -> String? {
+                sqlite3_column_type(s, index) == SQLITE_NULL ? nil : try Self.text(s, index)
+            }
+            return SnapshotRow(
+                id: try Self.text(s, 0), generation: try Self.text(s, 1),
+                epoch: try Self.text(s, 2), cut: try Self.text(s, 3),
+                bootstrap: try Self.blob(s, 4, maximum: 16384),
+                library: try Self.blob(s, 5, maximum: 16384), stage: stage,
+                cursor: try optional(7), token: try optional(8), prepared: try optional(9),
+                completion: sqlite3_column_type(s, 10) == SQLITE_NULL
+                    ? nil : try Self.blob(s, 10, maximum: 16384))
+        }.first
+    }
+    private func requireSnapshotOwner(_ owner: UUID) throws {
+        guard connection.inboundLockOwner == owner, connection.ackLockHeld else {
+            throw RebaselineFailure.alreadyRunning
+        }
+    }
+    private func snapshotTransaction<T>(_ owner: UUID, _ operation: () throws -> T) throws -> T {
+        try requireSnapshotOwner(owner)
+        connection.projectionAuthority = 5
+        defer { connection.projectionAuthority = 0 }
+        return try transaction(operation)
+    }
+    private func requireNoRebaseline(_ scope: ClientMutationScope) throws {
+        guard let id = try scopeId(scope) else { return }
+        guard
+            try scalar(
+                "SELECT count(*) FROM rebaseline_sessions WHERE scope_id=? AND stage NOT IN ('ACTIVE_COMPLETE','EXPIRED','BLOCKED')",
+                [.integer(id)]) == 0,
+            try scalar(
+                "SELECT count(*) FROM rebaseline_start_attempts WHERE scope_id=? AND resolved=0",
+                [.integer(id)]) == 0
+        else { throw MutationQueueFailure.reconciliationRequired }
+    }
+    private func requireSnapshotCompatibility(_ scope: ClientMutationScope) throws {
+        let id = try requireScopeId(scope)
+        guard
+            try scalar(
+                "SELECT count(*) FROM mutations WHERE scope_id=? AND state NOT IN ('APPLIED','FAILED_PERMANENT')",
+                [.integer(id)]) == 0
+        else { throw RebaselineFailure.incompatibleMutations }
+        guard
+            try scalar(
+                "SELECT count(*) FROM inbound_pages WHERE scope_id=? AND state IN ('RECEIVED_UNAPPLIED','APPLIED_ACK_PENDING','ACK_IN_FLIGHT')",
+                [.integer(id)]) == 0
+        else { throw RebaselineFailure.incompatibleSync }
+    }
+    func claimRebaselineRun(scope: ClientMutationScope, credentialId: String, owner: UUID) throws {
+        try requireFeedScope(scope, credentialId: credentialId)
+        try connection.acquireInboundLock(path: url.path + ".inbound.lock", owner: owner)
+        do { try connection.acquireAckLock(path: url.path + ".ack.lock") } catch {
+            connection.releaseInboundLock(owner: owner)
+            throw RebaselineFailure.alreadyRunning
+        }
+    }
+    func finishRebaselineRun(owner: UUID) {
+        guard connection.inboundLockOwner == owner else { return }
+        connection.releaseAckLock()
+        connection.releaseInboundLock(owner: owner)
+    }
+    func beginRebaselineStart(scope: ClientMutationScope, credentialId: String, owner: UUID) throws
+        -> String
+    {
+        try snapshotTransaction(owner) {
+            try requireFeedScope(scope, credentialId: credentialId)
+            try requireSnapshotCompatibility(scope)
+            if let saved = try snapshotRow(scope),
+                ![.expired, .blocked, .activeComplete].contains(saved.stage)
+            {
+                throw RebaselineFailure.reconciliationRequired
+            }
+            guard try scalar("SELECT count(*) FROM rebaseline_start_attempts") < 1024 else {
+                throw RebaselineFailure.capacity
+            }
+            try checkSnapshotCapacity(additional: 16384)
+            let attempt = UUID().uuidString
+            try execute(
+                "INSERT INTO rebaseline_start_attempts(scope_id,attempt_id) VALUES(?,?)",
+                [.integer(try requireScopeId(scope)), .text(attempt)])
+            return attempt
+        }
+    }
+    func saveRebaselineStart(
+        _ bootstrap: RebaselineBootstrap, response: Data, library: Library, credentialId: String,
+        owner: UUID, attempt: String
+    ) throws {
+        try snapshotTransaction(owner) {
+            let scope = bootstrap.scope
+            try requireFeedScope(scope, credentialId: credentialId)
+            try requireSnapshotCompatibility(scope)
+            guard bootstrap.state == .open, library.id == scope.libraryId,
+                library.status != .quarantined, response.count <= 16384,
+                try scalar(
+                    "SELECT count(*) FROM rebaseline_start_attempts WHERE scope_id=? AND attempt_id=? AND resolved=0",
+                    [.integer(try requireScopeId(scope)), .text(attempt)]) == 1
+            else { throw RebaselineFailure.scopeMismatch }
+            if let base = try syncBase(scope: scope),
+                base.epoch == bootstrap.position.epoch.rawValue,
+                SyncDecimalValidation.less(bootstrap.position.sequence.rawValue, base.sequence)
+            {
+                throw RebaselineFailure.reconciliationRequired
+            }
+            if let old = try snapshotRow(scope) {
+                guard old.id != bootstrap.id.rawValue,
+                    [.expired, .blocked, .activeComplete].contains(old.stage),
+                    SyncDecimalValidation.less(old.generation, bootstrap.generation.value.rawValue)
+                else { throw RebaselineFailure.generationMismatch }
+            }
+            let libraryBytes = try JSONEncoder().encode(LibraryProjectionMetadata(library))
+            try checkSnapshotCapacity(additional: response.count + libraryBytes.count + 512)
+            try execute(
+                "INSERT INTO rebaseline_sessions(scope_id,bootstrap_id,generation,epoch,cut,bootstrap,library,stage) VALUES(?,?,?,?,?,?,?,'BOOTSTRAP_OPEN')",
+                [
+                    .integer(try requireScopeId(scope)), .text(bootstrap.id.rawValue),
+                    .text(bootstrap.generation.value.rawValue),
+                    .text(bootstrap.position.epoch.rawValue),
+                    .text(bootstrap.position.sequence.rawValue), .blob(response),
+                    .blob(libraryBytes),
+                ])
+            try execute(
+                "UPDATE rebaseline_start_attempts SET resolved=1 WHERE scope_id=? AND resolved=0",
+                [.integer(try requireScopeId(scope))])
+        }
+    }
+    func rebaseline(
+        scope: ClientMutationScope, credentialId: String, bridge: any RustBridgeProtocol
+    ) async throws -> StoredRebaseline? {
+        try requireFeedScope(scope, credentialId: credentialId)
+        guard let row = try snapshotRow(scope) else { return nil }
+        let bootstrap = try await RebaselineResponseDecoder(bridge: bridge).start(
+            RebaselineCoordinator.response(row.bootstrap), scope: scope)
+        let library = try await JSONDecoder().decode(
+            LibraryProjectionMetadata.self, from: row.library
+        ).validated(bridge: bridge)
+        guard bootstrap.state == .open, row.id == bootstrap.id.rawValue,
+            row.generation == bootstrap.generation.value.rawValue,
+            row.epoch == bootstrap.position.epoch.rawValue,
+            row.cut == bootstrap.position.sequence.rawValue,
+            library.id == scope.libraryId,
+            row.cursor.map({ RebaselinePolicy.validOpaque($0, maximum: 320) }) ?? true,
+            row.token.map({ RebaselinePolicy.validOpaque($0, maximum: 336) }) ?? true
+        else { throw RebaselineFailure.protocolFailure }
+        try requireFeedScope(scope, credentialId: credentialId)
+        guard try snapshotRow(scope) == row else { throw RebaselineFailure.generationMismatch }
+        return StoredRebaseline(
+            bootstrap: bootstrap, state: row.stage, cursor: row.cursor, terminalToken: row.token,
+            preparedId: row.prepared, library: library, completion: row.completion)
+    }
+    func rebaselineProgress(
+        scope: ClientMutationScope, credentialId: String, bridge: any RustBridgeProtocol
+    ) async throws -> RebaselineProgress? {
+        try requireFeedScope(scope, credentialId: credentialId)
+        if try scalar(
+            "SELECT count(*) FROM rebaseline_start_attempts WHERE scope_id=? AND resolved=0",
+            [.integer(try requireScopeId(scope))]) > 0
+        {
+            return RebaselineProgress(
+                state: .startUnknown, pages: 0, stagedNodes: 0, expectedNodes: 0, position: nil)
+        }
+        guard
+            let saved = try await rebaseline(
+                scope: scope, credentialId: credentialId, bridge: bridge)
+        else {
+            let uncertain =
+                try scalar(
+                    "SELECT count(*) FROM rebaseline_start_attempts WHERE scope_id=? AND resolved=0",
+                    [.integer(try requireScopeId(scope))]) > 0
+            return uncertain
+                ? RebaselineProgress(
+                    state: .startUnknown, pages: 0, stagedNodes: 0, expectedNodes: 0, position: nil)
+                : nil
+        }
+        let counts = try snapshotCounts(saved.bootstrap.id.rawValue)
+        guard counts.0 <= RebaselinePolicy.maximumPages, counts.1 <= saved.bootstrap.itemCount
+        else { throw RebaselineFailure.countMismatch }
+        return RebaselineProgress(
+            state: saved.state == .completionInFlight ? .outcomeUnknown : saved.state,
+            pages: counts.0, stagedNodes: counts.1, expectedNodes: saved.bootstrap.itemCount,
+            position: saved.bootstrap.position)
+    }
+    private func snapshotCounts(_ id: String) throws -> (Int, Int) {
+        (
+            Int(
+                try scalar(
+                    "SELECT count(*) FROM rebaseline_pages WHERE bootstrap_id=?", [.text(id)])),
+            Int(
+                try scalar(
+                    "SELECT count(*) FROM rebaseline_nodes WHERE bootstrap_id=?", [.text(id)]))
+        )
+    }
+    private func checkSnapshotCapacity(additional: Int) throws {
+        let bytes = try scalar(
+            "SELECT coalesce((SELECT sum(length(response)+length(canonical)+512) FROM rebaseline_pages),0)+coalesce((SELECT sum(length(metadata)+256) FROM rebaseline_nodes),0)+coalesce((SELECT sum(length(bootstrap)+length(library)+coalesce(length(completion),0)+1024) FROM rebaseline_sessions),0)+coalesce((SELECT sum(coalesce(length(completion),0)+512) FROM rebaseline_completion_attempts),0)"
+        )
+        guard bytes + Int64(additional) <= Int64(RebaselinePolicy.maximumStoredBytes) else {
+            throw RebaselineFailure.capacity
+        }
+        try checkCapacity(additionalBytes: additional)
+    }
+    private func manifestNodeBytes(_ page: RebaselineManifestPage) throws -> [Data] {
+        let root = try JSONSerialization.jsonObject(with: page.responseBody) as! [String: Any]
+        let data = root["data"] as! [String: Any]
+        return try (data["nodes"] as! [[String: Any]]).map {
+            try JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys])
+        }
+    }
+    func stageRebaseline(
+        _ page: RebaselineManifestPage, cursor: String?, credentialId: String, owner: UUID,
+        bridge: any RustBridgeProtocol
+    ) async throws {
+        let scope = page.bootstrap.scope
+        guard
+            let saved = try await rebaseline(
+                scope: scope, credentialId: credentialId, bridge: bridge),
+            saved.bootstrap.sameManifest(as: page.bootstrap)
+        else { throw RebaselineFailure.generationMismatch }
+        let verified = try await RebaselineResponseDecoder(bridge: bridge).page(
+            RebaselineCoordinator.response(page.responseBody), expected: saved.bootstrap,
+            limit: 1000)
+        guard verified == page else { throw RebaselineFailure.protocolFailure }
+        let bytes = try manifestNodeBytes(page)
+        try Task.checkCancellation()
+        try snapshotTransaction(owner) {
+            try requireFeedScope(scope, credentialId: credentialId)
+            guard let row = try snapshotRow(scope), row.id == page.bootstrap.id.rawValue else {
+                throw RebaselineFailure.generationMismatch
+            }
+            let old = try query(
+                "SELECT canonical FROM rebaseline_pages WHERE bootstrap_id=? AND request_cursor=?",
+                [.text(row.id), .text(cursor ?? "")]
+            ) { try Self.blob($0, 0, maximum: RebaselinePolicy.maximumResponseBytes) }.first
+            if let old {
+                guard old == page.canonicalData else { throw RebaselineFailure.protocolFailure }
+                return
+            }
+            guard [.bootstrapOpen, .downloading].contains(row.stage), row.cursor == cursor,
+                page.nextCursor != cursor || page.nextCursor == nil
+            else { throw RebaselineFailure.protocolFailure }
+            if let next = page.nextCursor {
+                guard
+                    try scalar(
+                        "SELECT count(*) FROM rebaseline_pages WHERE bootstrap_id=? AND request_cursor=?",
+                        [.text(row.id), .text(next)]) == 0
+                else { throw RebaselineFailure.protocolFailure }
+            }
+            let counts = try snapshotCounts(row.id)
+            guard counts.0 < RebaselinePolicy.maximumPages,
+                counts.1 + page.nodes.count <= saved.bootstrap.itemCount
+            else { throw RebaselineFailure.countMismatch }
+            let previous = try query(
+                "SELECT node_id FROM rebaseline_nodes WHERE bootstrap_id=? ORDER BY node_id DESC LIMIT 1",
+                [.text(row.id)]
+            ) { try Self.text($0, 0) }.first
+            guard
+                page.nodes.first.map({ node in previous.map { $0 < node.id.rawValue } ?? true })
+                    ?? true
+            else { throw RebaselineFailure.protocolFailure }
+            try checkSnapshotCapacity(
+                additional: page.responseBody.count + page.canonicalData.count
+                    + bytes.reduce(0) { $0 + $1.count + 256 } + 512)
+            for (node, metadata) in zip(page.nodes, bytes) {
+                guard metadata.count <= RebaselinePolicy.maximumNodeBytes else {
+                    throw RebaselineFailure.capacity
+                }
+                try execute(
+                    "INSERT INTO rebaseline_nodes VALUES(?,?,?,?,?,?,?)",
+                    [
+                        .text(row.id), .text(node.id.rawValue),
+                        node.parentId.map { .text($0.rawValue) } ?? .null,
+                        .text(node.kind.rawValue), .text(node.state.rawValue),
+                        .text(node.revision.rawValue), .blob(metadata),
+                    ])
+            }
+            try execute(
+                "INSERT INTO rebaseline_pages VALUES(?,?,?,?,?,?)",
+                [
+                    .text(row.id), .integer(Int64(counts.0)), .text(cursor ?? ""),
+                    page.nextCursor.map(SQLValue.text) ?? .null, .blob(page.responseBody),
+                    .blob(page.canonicalData),
+                ])
+            if page.evidence != nil, counts.1 + page.nodes.count != saved.bootstrap.itemCount {
+                throw RebaselineFailure.countMismatch
+            }
+            try execute(
+                "UPDATE rebaseline_sessions SET cursor=?,terminal_token=?,stage=? WHERE bootstrap_id=?",
+                [
+                    page.nextCursor.map(SQLValue.text) ?? .null,
+                    page.evidence.map { .text($0.token) } ?? .null,
+                    .text(page.evidence == nil ? "DOWNLOADING" : "TERMINAL_RECEIVED"),
+                    .text(row.id),
+                ])
+            try fault?(.beforeSnapshotPageCommit)
+        }
+    }
+    private func verifySnapshot(
+        _ saved: StoredRebaseline, credentialId: String, bridge: any RustBridgeProtocol
+    ) async throws {
+        let id = saved.bootstrap.id.rawValue
+        let counts = try snapshotCounts(id)
+        guard counts.0 > 0, counts.0 <= RebaselinePolicy.maximumPages,
+            counts.1 == saved.bootstrap.itemCount,
+            let token = saved.terminalToken, saved.cursor == nil
+        else { throw RebaselineFailure.unverifiedManifest }
+        var cursor: String?, last: String?
+        var total = 0
+        for index in 0..<counts.0 {
+            try Task.checkCancellation()
+            let raw = try query(
+                "SELECT request_cursor,next_cursor,response,canonical FROM rebaseline_pages WHERE bootstrap_id=? AND page_index=?",
+                [.text(id), .integer(Int64(index))]
+            ) { s in
+                (
+                    try Self.text(s, 0),
+                    sqlite3_column_type(s, 1) == SQLITE_NULL ? nil : try Self.text(s, 1),
+                    try Self.blob(s, 2, maximum: RebaselinePolicy.maximumResponseBytes),
+                    try Self.blob(s, 3, maximum: RebaselinePolicy.maximumResponseBytes)
+                )
+            }.first
+            guard let raw, raw.0 == (cursor ?? "") else { throw RebaselineFailure.protocolFailure }
+            let page = try await RebaselineResponseDecoder(bridge: bridge).page(
+                RebaselineCoordinator.response(raw.2), expected: saved.bootstrap, limit: 1000)
+            guard page.canonicalData == raw.3, page.nextCursor == raw.1,
+                index == counts.0 - 1 ? page.evidence?.token == token : page.evidence == nil
+            else { throw RebaselineFailure.unverifiedManifest }
+            let bytes = try manifestNodeBytes(page)
+            for (node, metadata) in zip(page.nodes, bytes) {
+                guard last.map({ $0 < node.id.rawValue }) ?? true,
+                    try scalar(
+                        "SELECT count(*) FROM rebaseline_nodes WHERE bootstrap_id=? AND node_id=? AND metadata=? AND kind=? AND lifecycle=? AND revision=? AND parent_id IS ?",
+                        [
+                            .text(id), .text(node.id.rawValue), .blob(metadata),
+                            .text(node.kind.rawValue), .text(node.state.rawValue),
+                            .text(node.revision.rawValue),
+                            node.parentId.map { .text($0.rawValue) } ?? .null,
+                        ]) == 1
+                else { throw RebaselineFailure.protocolFailure }
+                last = node.id.rawValue
+                total += 1
+            }
+            cursor = page.nextCursor
+        }
+        guard total == saved.bootstrap.itemCount else { throw RebaselineFailure.countMismatch }
+        let topology = try query(
+            "SELECT node_id,parent_id,kind,lifecycle FROM rebaseline_nodes WHERE bootstrap_id=?",
+            [.text(id)]
+        ) { s in
+            (
+                try Self.text(s, 0),
+                sqlite3_column_type(s, 1) == SQLITE_NULL ? nil : try Self.text(s, 1),
+                try Self.text(s, 2), try Self.text(s, 3)
+            )
+        }
+        let graph = Dictionary(uniqueKeysWithValues: topology.map { ($0.0, ($0.1, $0.2, $0.3)) })
+        let root = saved.library.rootNodeId.rawValue
+        guard graph[root]?.0 == nil, graph[root]?.1 == "DIRECTORY", graph[root]?.2 == "ACTIVE",
+            topology.filter({ $0.1 == nil }).map({ $0.0 }) == [root]
+        else { throw RebaselineFailure.invalidGraph }
+        var resolved: Set<String> = [root]
+        for row in topology {
+            var path: Set<String> = [], next = row.0
+            while !resolved.contains(next) {
+                guard path.insert(next).inserted, let parent = graph[next]?.0,
+                    graph[parent]?.1 == "DIRECTORY"
+                else { throw RebaselineFailure.invalidGraph }
+                next = parent
+            }
+            resolved.formUnion(path)
+        }
+        try requireFeedScope(saved.bootstrap.scope, credentialId: credentialId)
+        guard let row = try snapshotRow(saved.bootstrap.scope), row.id == id, row.token == token
+        else { throw RebaselineFailure.generationMismatch }
+    }
+    func prepareRebaseline(
+        scope: ClientMutationScope, credentialId: String, owner: UUID,
+        bridge: any RustBridgeProtocol
+    ) async throws {
+        guard
+            let saved = try await rebaseline(
+                scope: scope, credentialId: credentialId, bridge: bridge),
+            saved.state == .terminalReceived
+        else { throw RebaselineFailure.unverifiedManifest }
+        try await verifySnapshot(saved, credentialId: credentialId, bridge: bridge)
+        try snapshotTransaction(owner) {
+            try requireFeedScope(scope, credentialId: credentialId)
+            try requireSnapshotCompatibility(scope)
+            guard try snapshotRow(scope)?.stage == .terminalReceived else {
+                throw RebaselineFailure.unverifiedManifest
+            }
+            try execute(
+                "UPDATE rebaseline_sessions SET prepared_id=?,stage='PREPARED_FOR_HANDOFF' WHERE bootstrap_id=?",
+                [.text(UUID().uuidString), .text(saved.bootstrap.id.rawValue)])
+            try fault?(.beforeSnapshotPreparationCommit)
+        }
+    }
+    func claimRebaselineCompletion(
+        scope: ClientMutationScope, credentialId: String, owner: UUID, recovering: Bool,
+        bridge: any RustBridgeProtocol
+    ) async throws -> RebaselineHandoff {
+        guard
+            let saved = try await rebaseline(
+                scope: scope, credentialId: credentialId, bridge: bridge),
+            recovering
+                ? [.outcomeUnknown, .completionInFlight].contains(saved.state)
+                : saved.state == .prepared,
+            let prepared = saved.preparedId, let token = saved.terminalToken
+        else { throw RebaselineFailure.unverifiedManifest }
+        try await verifySnapshot(saved, credentialId: credentialId, bridge: bridge)
+        return try snapshotTransaction(owner) {
+            try requireFeedScope(scope, credentialId: credentialId)
+            try requireSnapshotCompatibility(scope)
+            guard let row = try snapshotRow(scope), row.prepared == prepared,
+                row.stage == saved.state,
+                try scalar(
+                    "SELECT count(*) FROM rebaseline_completion_attempts WHERE bootstrap_id=?",
+                    [.text(row.id)]) < 8
+            else { throw RebaselineFailure.reconciliationRequired }
+            let attempt = UUID().uuidString
+            try checkSnapshotCapacity(additional: 32768)
+            try execute(
+                "INSERT INTO rebaseline_completion_attempts(bootstrap_id,attempt_id,owner,prepared_id) VALUES(?,?,?,?)",
+                [.text(row.id), .text(attempt), .text(owner.uuidString), .text(prepared)])
+            try execute(
+                "UPDATE rebaseline_sessions SET stage='SERVER_COMPLETION_IN_FLIGHT' WHERE bootstrap_id=?",
+                [.text(row.id)])
+            return RebaselineHandoff(
+                bootstrap: saved.bootstrap, credentialId: credentialId, preparedId: prepared,
+                attemptId: attempt, token: token)
+        }
+    }
+    func confirmRebaseline(
+        _ result: RebaselineCompletionResult, handoff: RebaselineHandoff, owner: UUID
+    ) throws {
+        try snapshotTransaction(owner) {
+            let scope = handoff.bootstrap.scope
+            try requireFeedScope(scope, credentialId: handoff.credentialId)
+            guard result.bootstrap.sameManifest(as: handoff.bootstrap),
+                result.bootstrap.state == .completed,
+                result.position == handoff.bootstrap.position,
+                let row = try snapshotRow(scope), row.stage == .completionInFlight,
+                row.prepared == handoff.preparedId, row.token == handoff.token,
+                try scalar(
+                    "SELECT count(*) FROM rebaseline_completion_attempts WHERE attempt_id=? AND owner=? AND prepared_id=? AND bootstrap_id=? AND completion IS NULL",
+                    [
+                        .text(handoff.attemptId), .text(owner.uuidString),
+                        .text(handoff.preparedId), .text(row.id),
+                    ]) == 1
+            else { throw RebaselineFailure.unverifiedManifest }
+            try execute(
+                "UPDATE rebaseline_completion_attempts SET completion=? WHERE attempt_id=?",
+                [.blob(result.responseBody), .text(handoff.attemptId)])
+            try execute(
+                "UPDATE rebaseline_sessions SET stage='SERVER_COMPLETION_CONFIRMED',completion=? WHERE bootstrap_id=?",
+                [.blob(result.responseBody), .text(row.id)])
+            try fault?(.beforeSnapshotConfirmationCommit)
+        }
+    }
+    func unknownRebaseline(
+        handoff: RebaselineHandoff, owner: UUID, reconciliationRequired: Bool = false
+    ) throws {
+        try snapshotTransaction(owner) {
+            try execute(
+                "UPDATE rebaseline_sessions SET stage=? WHERE bootstrap_id=? AND stage='SERVER_COMPLETION_IN_FLIGHT'",
+                [
+                    .text(reconciliationRequired ? "RECONCILIATION_REQUIRED" : "OUTCOME_UNKNOWN"),
+                    .text(handoff.bootstrap.id.rawValue),
+                ])
+        }
+    }
+    func expireRebaseline(scope: ClientMutationScope, credentialId: String, owner: UUID) throws {
+        try snapshotTransaction(owner) {
+            try requireFeedScope(scope, credentialId: credentialId)
+            guard let row = try snapshotRow(scope),
+                [.bootstrapOpen, .downloading].contains(row.stage)
+            else { throw RebaselineFailure.reconciliationRequired }
+            try execute(
+                "UPDATE rebaseline_sessions SET stage='EXPIRED' WHERE bootstrap_id=?",
+                [.text(row.id)])
+        }
+    }
+    func activateRebaseline(
+        _ result: RebaselineCompletionResult, scope: ClientMutationScope, credentialId: String,
+        owner: UUID, bridge: any RustBridgeProtocol
+    ) async throws {
+        guard
+            let saved = try await rebaseline(
+                scope: scope, credentialId: credentialId, bridge: bridge),
+            saved.state == .completionConfirmed,
+            saved.completion == result.responseBody, saved.preparedId != nil
+        else { throw RebaselineFailure.unverifiedManifest }
+        let verified = try await RebaselineResponseDecoder(bridge: bridge).completion(
+            RebaselineCoordinator.response(result.responseBody), expected: saved.bootstrap)
+        guard verified == result else { throw RebaselineFailure.protocolFailure }
+        try await verifySnapshot(saved, credentialId: credentialId, bridge: bridge)
+        try Task.checkCancellation()
+        try snapshotTransaction(owner) {
+            try requireFeedScope(scope, credentialId: credentialId)
+            try requireSnapshotCompatibility(scope)
+            guard let row = try snapshotRow(scope), row.stage == .completionConfirmed,
+                row.completion == result.responseBody
+            else { throw RebaselineFailure.unverifiedManifest }
+            let scopeId = try requireScopeId(scope)
+            // All old active membership is removed in this transaction; historical inbox/queue evidence is retained.
+            try execute("DELETE FROM cached_nodes WHERE scope_id=?", [.integer(scopeId)])
+            try execute(
+                "INSERT INTO node_projection_state VALUES(?,?,?,?,?,'COMPLETE',1) ON CONFLICT(scope_id) DO UPDATE SET epoch=excluded.epoch,anchor_sequence=excluded.anchor_sequence,applied_sequence=excluded.applied_sequence,confirmed_sequence=excluded.confirmed_sequence,completeness='COMPLETE'",
+                [
+                    .integer(scopeId), .text(row.epoch), .text(row.cut), .text(row.cut),
+                    .text(row.cut),
+                ])
+            try execute(
+                "INSERT INTO cached_libraries VALUES(?,?,?,1) ON CONFLICT(scope_id,epoch) DO UPDATE SET metadata=excluded.metadata",
+                [.integer(scopeId), .text(row.epoch), .blob(row.library)])
+            try execute(
+                "INSERT INTO rebaseline_active VALUES(?,?) ON CONFLICT(scope_id) DO UPDATE SET bootstrap_id=excluded.bootstrap_id",
+                [.integer(scopeId), .text(row.id)])
+            try execute(
+                "INSERT INTO sync_bases VALUES(?,?,?,?,'VERIFIED') ON CONFLICT(scope_id) DO UPDATE SET epoch=excluded.epoch,sequence=excluded.sequence,response=excluded.response,status='VERIFIED'",
+                [.integer(scopeId), .text(row.epoch), .text(row.cut), .blob(result.responseBody)])
+            try execute(
+                "UPDATE rebaseline_sessions SET stage='ACTIVE_COMPLETE' WHERE bootstrap_id=?",
+                [.text(row.id)])
+            try fault?(.beforeSnapshotActivationCommit)
+        }
     }
 }

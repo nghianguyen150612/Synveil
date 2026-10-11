@@ -8,6 +8,7 @@ struct LibraryCatalogView: View {
     private let metadataMutationFeature: (any MetadataMutationFeatureProtocol)?
     private let inboundSyncCoordinator: (any InboundSyncCoordinatorProtocol)?
     private let nodeProjectionRepository: (any NodeProjectionRepositoryProtocol)?
+    private let rebaselineCoordinator: RebaselineCoordinator?
     private let syncCheckpointService: (any SyncCheckpointPreparationProtocol)?
 
     @State private var viewModel: LibraryCatalogViewModel
@@ -21,6 +22,7 @@ struct LibraryCatalogView: View {
         inboundSyncCoordinator: (any InboundSyncCoordinatorProtocol)? = nil,
         nodeProjectionRepository: (any NodeProjectionRepositoryProtocol)? = nil,
         syncCheckpointService: (any SyncCheckpointPreparationProtocol)? = nil,
+        rebaselineCoordinator: RebaselineCoordinator? = nil,
         sessionController: SessionController
     ) {
         self.sessionController = sessionController
@@ -30,6 +32,7 @@ struct LibraryCatalogView: View {
         self.inboundSyncCoordinator = inboundSyncCoordinator
         self.nodeProjectionRepository = nodeProjectionRepository
         self.syncCheckpointService = syncCheckpointService
+        self.rebaselineCoordinator = rebaselineCoordinator
         _viewModel = State(
             initialValue: LibraryCatalogViewModel(
                 repository: repository,
@@ -289,7 +292,8 @@ struct LibraryCatalogView: View {
                     SyncStatusView(
                         library: library, coordinator: inboundSyncCoordinator,
                         projection: nodeProjectionRepository, checkpoint: syncCheckpointService,
-                        sessionController: sessionController
+                        sessionController: sessionController,
+                        rebaselineCoordinator: rebaselineCoordinator
                     )
                     .id(library.id)
                 } label: {

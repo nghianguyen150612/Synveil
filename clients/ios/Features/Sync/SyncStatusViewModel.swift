@@ -277,7 +277,7 @@ final class SyncStatusViewModel {
                 "Local journal position does not match the server checkpoint. Review synchronization recovery before continuing."
         case .rebaselineRequired:
             return
-                "Synchronization recovery is required. Existing metadata and pending changes are preserved. Full rebaseline is not available yet."
+                "Synchronization recovery is required. Existing metadata and pending changes are preserved. Choose Rebuild Saved Metadata to request a complete snapshot."
         case .authenticationRequired:
             return "Authentication needs recovery. Return to the session recovery screen."
         case .deviceRevoked:
@@ -306,7 +306,9 @@ final class SyncStatusViewModel {
 
     var cacheMessage: String {
         switch completeness {
-        case .complete: return "Complete metadata projection. File contents are not downloaded."
+        case .complete:
+            return
+                "Complete saved folder structure at its snapshot cut. Live fields may be unavailable. File contents are not downloaded."
         case .partial: return "Partial metadata cache. Some folders and items may be missing."
         case .uninitialized, nil: return "No complete Library snapshot has been initialized."
         case .rebaselineRequired: return "Saved metadata requires synchronization recovery."
