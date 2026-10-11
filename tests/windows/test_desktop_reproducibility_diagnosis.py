@@ -44,7 +44,11 @@ class DesktopReproducibilityDiagnosisTests(unittest.TestCase):
                 check=False,
             )
 
-            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                result.returncode,
+                0,
+                f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+            )
             binaries = (report / "binaries.txt").read_text(encoding="utf-8")
             self.assertIn("synveil-client: DIFFERS", binaries)
             self.assertIn("synveil-desktop: DIFFERS", binaries)

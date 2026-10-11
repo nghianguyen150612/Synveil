@@ -169,7 +169,9 @@ class PathAndCommandSecurity(unittest.TestCase):
             with mock.patch.dict(os.environ, {'PATH':directory,'LD_PRELOAD':'secret','PYTHONPATH':'evil','HOME':'arbitrary','https_proxy':'https://user:secret@evil'}):
                 self.assertNotEqual(str(fake), quick.system_executable('apt-get'))
                 with mock.patch.object(quick.subprocess, 'run', return_value=subprocess.CompletedProcess([],0,'','')) as run, mock.patch.object(quick.os,'geteuid',return_value=1000), mock.patch.object(quick,'system_executable', side_effect=lambda n:'/usr/bin/'+n):
-                    quick.NativeManager(quick.PROFILES['debian-x86_64'])._run(['apt-get','install','-y','--','/private/name;$(evil).deb'], mutate=True)
+                    quick.NativeManager(quick.PROFILES['debian-x86_64'])._run(
+                        ['apt-get','install','-y','--','/private/name;$(evil).deb'], requires_admin=True
+                    )
                 command = run.call_args.args[0]
                 self.assertEqual(['/usr/bin/sudo','--','/usr/bin/apt-get','install','-y','--','/private/name;$(evil).deb'],command)
                 self.assertEqual({'PATH':'/usr/sbin:/usr/bin:/sbin:/bin','LANG':'C','LC_ALL':'C'},run.call_args.kwargs['env'])
