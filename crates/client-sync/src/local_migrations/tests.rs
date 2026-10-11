@@ -379,6 +379,8 @@ async fn unrecognized_historical_columns_cannot_be_erased_by_table_rebuild() {
         3
     );
     pool.close().await;
+    // Windows can retain SQLite/WAL handles until the closed pool is dropped.
+    drop(pool);
     remove_dir_all_bounded(&directory).unwrap();
 }
 
