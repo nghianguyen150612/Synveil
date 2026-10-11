@@ -691,6 +691,7 @@ pub fn packaged_client_path_from(
 /// owns normal runtime launch; installer lifecycle commands execute in the
 /// client itself and need the same canonical sibling identity when inspecting
 /// or removing its scheduled task.
+#[cfg(any(target_os = "windows", test))]
 fn packaged_client_path_from_product_executable(
     executable: impl AsRef<Path>,
 ) -> Result<PathBuf, BackgroundLaunchError> {
