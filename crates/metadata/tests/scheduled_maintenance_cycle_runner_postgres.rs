@@ -909,11 +909,17 @@ async fn runner_scheduler_failure_boundary() {
     .execute(&fixture.db.inspection)
     .await
     .expect("corrupt successor revision must insert");
+    // The constraint requires effective_from <= updated_at. Reuse one volatile
+    // database timestamp so evaluation order cannot invert the pair.
     sqlx::query(
-        "UPDATE backup_schedules
+        "WITH activation_instant AS MATERIALIZED (
+             SELECT clock_timestamp() AS instant
+         )
+         UPDATE backup_schedules
          SET current_revision_id = $3,
-             effective_from = clock_timestamp(),
-             updated_at = clock_timestamp()
+             effective_from = activation_instant.instant,
+             updated_at = activation_instant.instant
+         FROM activation_instant
          WHERE id = $1 AND owner_user_id = $2",
     )
     .bind(schedule.id().into_uuid())
@@ -980,6 +986,29 @@ async fn runner_scheduler_failure_boundary() {
         "no claim must be created when scheduler fails"
     );
     fixture.close().await;
+}
+
+#[test]
+fn scheduler_failure_fixture_uses_one_activation_instant() {
+    let fixtures = [
+        (
+            "cycle runner",
+            include_str!("scheduled_maintenance_cycle_runner_postgres.rs"),
+        ),
+        (
+            "cycle service",
+            include_str!("backup_scheduled_maintenance_cycle_postgres.rs"),
+        ),
+    ];
+
+    for (name, source) in fixtures {
+        assert!(
+            source.contains("WITH activation_instant AS MATERIALIZED")
+                && source.contains("effective_from = activation_instant.instant")
+                && source.contains("updated_at = activation_instant.instant"),
+            "{name} failure fixture must use one timestamp for schedule activation and update",
+        );
+    }
 }
 
 #[tokio::test]

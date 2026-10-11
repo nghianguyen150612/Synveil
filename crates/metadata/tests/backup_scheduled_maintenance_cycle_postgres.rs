@@ -1641,11 +1641,17 @@ async fn scheduler_failure_prevents_worker_step() {
     .execute(&fixture.db.inspection)
     .await
     .expect("corrupt successor revision must insert");
+    // The constraint requires effective_from <= updated_at. Reuse one volatile
+    // database timestamp so evaluation order cannot invert the pair.
     sqlx::query(
-        "UPDATE backup_schedules
+        "WITH activation_instant AS MATERIALIZED (
+             SELECT clock_timestamp() AS instant
+         )
+         UPDATE backup_schedules
          SET current_revision_id = $3,
-             effective_from = clock_timestamp(),
-             updated_at = clock_timestamp()
+             effective_from = activation_instant.instant,
+             updated_at = activation_instant.instant
+         FROM activation_instant
          WHERE id = $1 AND owner_user_id = $2",
     )
     .bind(schedule.id().into_uuid())
