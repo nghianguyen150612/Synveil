@@ -128,6 +128,29 @@ synveil_export_encoded_rustflags() {
 # a canonical, checkout- and target-root-independent directory and fix only
 # the copies to SOURCE_DATE_EPOCH before invoking the real rcc. Other builds
 # retain target-local staging and do not need a global writable directory.
+synveil_run_direct_rustc() {
+    local host_toolchain="$1"
+    shift
+    if [[ "$host_toolchain" == *"msvc"* ]]; then
+        # Git Bash rewrites the /Brepro suffix in the equals-form Rust codegen
+        # argument as a POSIX path before starting rustc.exe. Exclude only this
+        # exact argument so all other path conversion remains enabled.
+        local arg_conversion_exclusions="${MSYS2_ARG_CONV_EXCL:-}"
+        case ";${arg_conversion_exclusions};" in
+            *";link-arg=/Brepro;"*) ;;
+            *)
+                if [[ -n "$arg_conversion_exclusions" ]]; then
+                    arg_conversion_exclusions+=";"
+                fi
+                arg_conversion_exclusions+="link-arg=/Brepro"
+                ;;
+        esac
+        MSYS2_ARG_CONV_EXCL="$arg_conversion_exclusions" rustc "$@"
+    else
+        rustc "$@"
+    fi
+}
+
 synveil_prepare_reproducible_qt_tools() {
     local repo_root="$1"
     local cargo_target_dir="$2"
@@ -279,7 +302,9 @@ synveil_prepare_reproducible_qt_tools() {
         SYNVEIL_QML_SOURCE_ROOT="$repo_root" \
         SYNVEIL_QML_CANONICAL_ROOT="$qml_canonical_root" \
         SYNVEIL_CANONICAL_RCC_STAGING="$enable_qmlcachegen_wrapper" \
-        rustc "${SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS[@]}" "${rustc_linker_args[@]}" --edition=2021 "${repo_root}/scripts/reproducible-qt-wrapper.rs" -o "$wrapper_binary"
+        synveil_run_direct_rustc "$host_toolchain" \
+            "${SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS[@]}" "${rustc_linker_args[@]}" \
+            --edition=2021 "${repo_root}/scripts/reproducible-qt-wrapper.rs" -o "$wrapper_binary"
     cp "$wrapper_binary" "${wrapper_dir}/qmake${wrapper_suffix}"
     cp "$wrapper_binary" "${wrapper_dir}/rcc${wrapper_suffix}"
     # Installing the wrapper under the qmlcachegen name makes CXX-Qt's
