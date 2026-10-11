@@ -38,6 +38,10 @@ def main() -> None:
     require("actions/download-artifact@v4" in workflow and
             "identity.sha256" in workflow and "GITHUB_SHA" in workflow,
             "consumer must authenticate transferred bytes and source")
+    require("candidate/windows-installer/p028-candidate.json" in workflow and
+            "candidate/windows-installer/SynveilSetup.exe" in workflow and
+            "candidate/target/windows-installer/" not in workflow,
+            "consumer paths must match the uploaded artifact's stripped target root")
     require("SYNVEIL_V0_2_WINDOWS_INSTALL_EXPERIENCE_READY" not in workflow + docs,
             "readiness marker must remain withheld before native evidence")
     for status in ("SOURCE_PRESENT", "STATIC_VERIFIED", "CI_NATIVE_SCOPED", "NATIVE_CLEAN_MACHINE", "BLOCKED", "FAIL", "PASS"):

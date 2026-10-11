@@ -153,6 +153,24 @@ def main() -> int:
         require(evidence in per_user_test, f"P025 per-user evidence: {evidence}")
     for evidence in ("SetPassword", "-Credential", "-LoadUserProfile", "WaitForExit(300000)", ".Delete('user'", "Remove-CimInstance", "::add-mask::"):
         require(evidence in per_user_invoker, f"P025 disposable-account harness: {evidence}")
+    account_set_info = per_user_invoker.index("$account.SetInfo()")
+    account_created_flag = per_user_invoker.index("$accountCreated = $true")
+    require("$accountCreationAttempted" in per_user_invoker and account_created_flag > account_set_info,
+            "P025 cleanup records account persistence only after SetInfo")
+    delete_account = per_user_invoker.index(".Delete('user',$user)")
+    account_lookup = per_user_invoker.index("Get-CimInstance -ClassName Win32_UserAccount")
+    account_identity_guard = per_user_invoker.index("$localAccount.SID -cne $sid")
+    require(account_lookup < account_identity_guard < delete_account and
+            "refusing to delete an account with an unexpected identity" in per_user_invoker,
+            "P025 cleanup must verify the exact local account identity before deletion")
+    failure_catch = per_user_invoker.index("} catch {", per_user_invoker.index("$stage = 'create_account'"))
+    cleanup_finally = per_user_invoker.index("} finally {", failure_catch)
+    primary_rethrow = per_user_invoker.index("if ($null -ne $primaryFailure)", cleanup_finally)
+    require("windows-per-user-failure.json" in per_user_invoker and
+            "STANDARD_USER_TEST_FAILURE stage=$stage" in per_user_invoker and
+            "Record-CleanupFailure" in per_user_invoker and
+            failure_catch < cleanup_finally < primary_rethrow,
+            "P025 diagnostics must preserve the primary test error and record cleanup failures separately")
     for evidence in ("Inspect compiled Setup execution level", "requestedExecutionLevel", "asInvoker", "invoke-windows-standard-user-test.ps1", "windows-per-user-evidence"):
         require(evidence in workflow, f"P025 hosted workflow evidence: {evidence}")
     for evidence in (r"\Synveil\BackgroundClient\profile-", "InteractiveToken", "LeastPrivilege", "<LogonTrigger>",
