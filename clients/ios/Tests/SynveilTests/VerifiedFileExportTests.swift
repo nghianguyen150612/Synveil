@@ -275,9 +275,19 @@ final class VerifiedFileExportTests: XCTestCase {
                 rootView: NativeFilePresenter(
                     presentation: NativeFilePresentation(lease: lease, url: url),
                     onFinished: { _ in }))
+            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 700))
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            defer {
+                window.isHidden = true
+                window.rootViewController = nil
+            }
             host.loadViewIfNeeded()
-            host.view.frame = CGRect(x: 0, y: 0, width: 320, height: 700)
-            host.view.layoutIfNeeded()
+            for _ in 0..<5 {
+                host.view.setNeedsLayout()
+                host.view.layoutIfNeeded()
+                try await Task.sleep(for: .milliseconds(20))
+            }
             let children = descendants(of: host)
 
             switch purpose {
@@ -328,9 +338,19 @@ final class VerifiedFileExportTests: XCTestCase {
                         result = value
                         cleanup = Task { _ = await coordinator.finish(lease) }
                     }))
+            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 700))
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            defer {
+                window.isHidden = true
+                window.rootViewController = nil
+            }
             host.loadViewIfNeeded()
-            host.view.frame = CGRect(x: 0, y: 0, width: 320, height: 700)
-            host.view.layoutIfNeeded()
+            for _ in 0..<5 {
+                host.view.setNeedsLayout()
+                host.view.layoutIfNeeded()
+                try await Task.sleep(for: .milliseconds(20))
+            }
             let children = descendants(of: host)
 
             switch purpose {
