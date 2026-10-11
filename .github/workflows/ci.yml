@@ -220,6 +220,14 @@ jobs:
         shell: bash
         run: scripts/verify-release-build-reproducibility.sh
 
+      - name: Upload Windows reproducibility diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synveil-windows-repro-diagnosis
+          path: target/synveil-repro-diagnosis/
+          if-no-files-found: ignore
+
       - name: Build and audit the reproducible Windows runtime ZIP
         shell: bash
         run: |

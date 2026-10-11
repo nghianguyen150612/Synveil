@@ -88,9 +88,79 @@ class DesktopReproducibilityDiagnosisTests(unittest.TestCase):
             binaries = (report / "binaries.txt").read_text(encoding="utf-8")
             self.assertIn("synveil-client: DIFFERS", binaries)
             self.assertIn("synveil-desktop: DIFFERS", binaries)
-            self.assertIn("PE executable; ELF section analysis skipped", binaries)
+            self.assertIn("PE header and section details are in windows-details.txt", binaries)
             self.assertIn("first differing byte offset: 3", binaries)
             self.assertNotIn("readelf: Error", result.stderr)
+
+    @staticmethod
+    def _minimal_pe(timestamp: int, section_byte: int) -> bytes:
+        pe_offset = 0x80
+        optional_size = 0xF0
+        section_table = pe_offset + 4 + 20 + optional_size
+        raw_offset = 0x200
+        image = bytearray(raw_offset + 0x20)
+        image[:2] = b"MZ"
+        image[0x3C:0x40] = pe_offset.to_bytes(4, "little")
+        image[pe_offset : pe_offset + 4] = b"PE\0\0"
+        coff = pe_offset + 4
+        image[coff : coff + 2] = (0x8664).to_bytes(2, "little")
+        image[coff + 2 : coff + 4] = (1).to_bytes(2, "little")
+        image[coff + 4 : coff + 8] = timestamp.to_bytes(4, "little")
+        image[coff + 16 : coff + 18] = optional_size.to_bytes(2, "little")
+        image[coff + 18 : coff + 20] = (0x22).to_bytes(2, "little")
+        optional = coff + 20
+        image[optional : optional + 2] = (0x20B).to_bytes(2, "little")
+        image[optional + 24 : optional + 32] = (0x140000000).to_bytes(8, "little")
+        image[optional + 32 : optional + 36] = (0x1000).to_bytes(4, "little")
+        image[optional + 36 : optional + 40] = (0x200).to_bytes(4, "little")
+        image[optional + 56 : optional + 60] = (0x2000).to_bytes(4, "little")
+        image[optional + 60 : optional + 64] = raw_offset.to_bytes(4, "little")
+        image[optional + 108 : optional + 112] = (16).to_bytes(4, "little")
+        section = section_table
+        image[section : section + 8] = b".text\0\0\0"
+        image[section + 8 : section + 12] = (0x20).to_bytes(4, "little")
+        image[section + 12 : section + 16] = (0x1000).to_bytes(4, "little")
+        image[section + 16 : section + 20] = (0x20).to_bytes(4, "little")
+        image[section + 20 : section + 24] = raw_offset.to_bytes(4, "little")
+        image[section + 36 : section + 40] = (0x60000020).to_bytes(4, "little")
+        image[raw_offset] = section_byte
+        return bytes(image)
+
+    def test_valid_pe_report_identifies_header_section_and_object_differences(self) -> None:
+        target_root = ROOT / "target"
+        target_root.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="synveil-valid-pe-diagnosis-", dir=target_root) as directory:
+            root = Path(directory)
+            build_a, build_b = root / "build-a", root / "build-b"
+            report = root / "windows-details.txt"
+            for build in (build_a, build_b):
+                (build / "release/deps").mkdir(parents=True)
+                (build / "release/synveil-client.exe").write_bytes(self._minimal_pe(0, 0x11))
+                (build / "release/synveil-desktop.exe").write_bytes(self._minimal_pe(0, 0x22))
+                (build / "release/deps/client.obj").write_bytes(b"object-a")
+            (build_b / "release/synveil-desktop.exe").write_bytes(self._minimal_pe(123, 0x33))
+            (build_b / "release/deps/client.obj").write_bytes(b"object-b")
+
+            result = subprocess.run(
+                [
+                    "python",
+                    str(ROOT / "scripts/diagnose-windows-reproducibility.py"),
+                    str(build_a),
+                    str(build_b),
+                    str(report),
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}")
+            details = report.read_text(encoding="utf-8")
+            self.assertIn("coff.timestamp: 0 -> 123", details)
+            self.assertIn(".text:", details)
+            self.assertIn("release/deps/client.obj", details)
+            self.assertIn("first-difference=7", details)
 
 
 if __name__ == "__main__":

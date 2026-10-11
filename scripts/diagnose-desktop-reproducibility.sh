@@ -88,6 +88,19 @@ done
 printf '[synveil-diagnosis] comparing linked binaries\n'
 : > "${REPORT_DIR}/binaries.txt"
 
+# On Windows, a PE mismatch can be in the image headers or a linked section;
+# generated-source and first-byte reports alone cannot distinguish those.
+# Compare PE fields, section hashes, and compiler/linker intermediates while
+# both clean target roots are still present.
+if [[ -f "${BUILD_A}/release/synveil-desktop.exe" && -f "${BUILD_B}/release/synveil-desktop.exe" ]]; then
+    python scripts/diagnose-windows-reproducibility.py \
+        "$BUILD_A" "$BUILD_B" "${REPORT_DIR}/windows-details.txt" || true
+    if [[ -f "${REPORT_DIR}/windows-details.txt" ]]; then
+        sed 's/^/[synveil-diagnosis]   /' "${REPORT_DIR}/windows-details.txt" |
+            tee -a "${REPORT_DIR}/binaries.txt"
+    fi
+fi
+
 # Build-script output outside the QML-specific roots can also feed linked
 # objects (for example CXX-Qt's generated source). Compare generated source
 # inputs across the entire Cargo release build tree before classifying a
@@ -154,7 +167,7 @@ for binary_name in synveil-desktop synveil-client; do
         tee -a "${REPORT_DIR}/binaries.txt"
 
     if [[ "$is_pe" == 1 ]]; then
-        printf '[synveil-diagnosis]     PE executable; ELF section analysis skipped\n' |
+        printf '[synveil-diagnosis]     PE header and section details are in windows-details.txt\n' |
             tee -a "${REPORT_DIR}/binaries.txt"
     elif command -v readelf >/dev/null 2>&1; then
         # Compare ELF section headers: identical headers with differing bytes
