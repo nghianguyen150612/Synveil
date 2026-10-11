@@ -177,10 +177,10 @@ pub(super) fn validate_root_exclusions(
         PathBuf::from("/var/lib/synveil/postgresql"),
         PathBuf::from("/run"),
     ];
-    if ["/tmp", "/var/tmp", "/dev/shm"]
-        .iter()
-        .any(|shared_root| candidate.as_path() == Path::new(shared_root))
-    {
+    if ["/tmp", "/var/tmp", "/dev/shm"].iter().any(|shared_root| {
+        let shared_root = Path::new(shared_root);
+        candidate == canonical_if_exists(shared_root).unwrap_or_else(|| shared_root.to_path_buf())
+    }) {
         return Err(PathInspectionError::PermissionUnsafe);
     }
     if let Ok(current) = std::env::current_dir() {
@@ -366,6 +366,16 @@ mod tests {
             assert!(
                 validate_root_exclusions(Path::new(rejected), &[]).is_err(),
                 "reserved path should be rejected: {rejected}"
+            );
+        }
+        for shared_root in ["/tmp", "/var/tmp", "/dev/shm"] {
+            let shared_root = Path::new(shared_root);
+            let canonical_shared_root =
+                canonical_if_exists(shared_root).unwrap_or_else(|| shared_root.to_path_buf());
+            assert!(
+                validate_root_exclusions(&canonical_shared_root, &[]).is_err(),
+                "canonical shared path should be rejected: {}",
+                canonical_shared_root.display()
             );
         }
         assert!(
