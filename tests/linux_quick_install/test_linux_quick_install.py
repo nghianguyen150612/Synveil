@@ -64,6 +64,8 @@ class QuickInstallTests(unittest.TestCase):
         self.assertIn("NATIVE_PACKAGE_MANAGER_DIAGNOSTIC systemd-tmpfiles:", diagnostics)
         self.assertNotIn("unrelated package output", diagnostics)
         self.assertNotIn("private unrelated detail", diagnostics)
+        acceptance_script = (ROOT / "scripts/run-linux-quick-install-acceptance.sh").read_text(encoding="utf-8")
+        self.assertIn("SYNVEIL_ACCEPTANCE_DIAGNOSTICS=1", acceptance_script)
 
         output = io.StringIO()
         with mock.patch.dict(os.environ, {}, clear=True):
