@@ -351,7 +351,7 @@ actor DownloadStagingStore {
             throw failure
         } catch {
             cancelUploadReservation(stagingId: stagingId)
-            throw UploadFailure.sourceUnavailable
+            throw UploadPolicy.classify(error)
         }
     }
 

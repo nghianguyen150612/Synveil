@@ -117,6 +117,9 @@ func snapshotAssertFailure<T>(
 
 /// Empty-only fixture downgrade preserves all existing v4 queue, inbox and projection evidence.
 func snapshotDowngradeV4(_ url: URL) throws {
+    try queueRawSQL(url, "DROP TRIGGER file_upload_identity")
+    try queueRawSQL(url, "DROP TRIGGER file_upload_offset")
+    try queueRawSQL(url, "DROP TABLE file_uploads")
     try queueRawSQL(url, "DROP TRIGGER file_download_identity")
     try queueRawSQL(url, "DROP TRIGGER file_download_verified")
     try queueRawSQL(url, "DROP TABLE file_downloads")

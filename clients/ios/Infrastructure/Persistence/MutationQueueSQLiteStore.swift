@@ -1470,7 +1470,8 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         ) { s in
             let texts =
                 try (0...9).map { try Self.optionalText(s, Int32($0)) }
-                + (11...19).map { try Self.optionalText(s, Int32($0)) }
+                + (11...18).map { try Self.optionalText(s, Int32($0)) }
+                + [String(sqlite3_column_int(s, 19))]
                 + [try Self.optionalText(s, 22)]
             let request = try Self.blob(s, 10, maximum: UploadPolicy.maximumJSONBytes)
             let completion =
