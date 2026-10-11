@@ -734,7 +734,7 @@ impl ffi::DesktopUiBridge {
     }
 
     fn start_controller(mut self: Pin<&mut Self>) {
-        let (started, runtime, controller, launch_manager) = {
+        let (started, runtime, controller, launch_manager, smoke_test) = {
             let state = self.rust();
             (
                 state.started,
@@ -744,6 +744,7 @@ impl ffi::DesktopUiBridge {
                     .map(|runtime| runtime.handle().clone()),
                 state.controller.clone(),
                 state.launch_manager.clone(),
+                state.smoke_test,
             )
         };
         if started {
@@ -762,6 +763,14 @@ impl ffi::DesktopUiBridge {
         runtime.spawn(async move {
             if controller.start().await.is_err() {
                 dispatcher.publish(presentation::map_snapshot(&controller.snapshot()));
+                return;
+            }
+            if !should_start_background_client(smoke_test) {
+                dispatcher.publish(presentation::map_snapshot(&controller.snapshot()));
+                while updates.changed().await.is_ok() {
+                    let snapshot = updates.borrow_and_update().clone();
+                    dispatcher.publish(presentation::map_snapshot(&snapshot));
+                }
                 return;
             }
             let restart_generation = controller.snapshot().connection_generation;
@@ -3075,6 +3084,21 @@ fn insert_u64(map: &mut QVariantMap, key: &str, value: u64) {
 
 fn safe_i32(value: usize) -> i32 {
     i32::try_from(value).unwrap_or(i32::MAX)
+}
+
+fn should_start_background_client(smoke_test: bool) -> bool {
+    !smoke_test
+}
+
+#[cfg(test)]
+mod smoke_test_startup_tests {
+    use super::should_start_background_client;
+
+    #[test]
+    fn qml_smoke_test_does_not_start_detached_client() {
+        assert!(!should_start_background_client(true));
+        assert!(should_start_background_client(false));
+    }
 }
 
 // Keep the async runtime handle type visible to rustc's generated bridge code.
