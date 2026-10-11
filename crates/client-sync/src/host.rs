@@ -4211,6 +4211,12 @@ mod tests {
             .expect("shutdown after cancelled start");
         assert_eq!(host.lifecycle(), DesktopSyncHostLifecycle::Stopped);
         assert!(host.runtime_handle().is_none());
+        drop(host);
+        assert_eq!(
+            Arc::strong_count(&fixture.state),
+            1,
+            "stopped host must release its state-store owner before fixture cleanup"
+        );
         fixture.close().await;
     }
 

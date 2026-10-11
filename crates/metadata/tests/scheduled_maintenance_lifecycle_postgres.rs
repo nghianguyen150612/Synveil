@@ -824,6 +824,7 @@ async fn lifecycle_concurrent_12_callers_zero_deadlocks_and_no_duplicates() {
     }
     let mut deadlock = 0usize;
     let mut other_db = 0usize;
+    let mut unexpected_errors = 0usize;
     for h in handles {
         match h.await.unwrap() {
             Ok(_) => {}
@@ -833,12 +834,15 @@ async fn lifecycle_concurrent_12_callers_zero_deadlocks_and_no_duplicates() {
                     deadlock += 1;
                 } else if s.contains("Database") {
                     other_db += 1;
+                } else {
+                    unexpected_errors += 1;
                 }
             }
         }
     }
     assert_eq!(deadlock, 0, "concurrent one-shot must have 0 deadlocks");
     assert_eq!(other_db, 0, "unexpected DB errors: {other_db}");
+    assert_eq!(unexpected_errors, 0, "unexpected worker errors: {unexpected_errors}");
     assert_eq!(
         count_for_set(
             &fixture.db.inspection,
@@ -866,14 +870,24 @@ async fn lifecycle_concurrent_12_callers_zero_deadlocks_and_no_duplicates() {
         .await,
         1
     );
-    assert_eq!(
-        count_for_set(
-            &fixture.db.inspection,
-            "backup_scheduled_maintenance_claims",
-            fixture.backup_set_id
+    let (claim_count, distinct_transition_count, incomplete_claim_count) =
+        sqlx::query_as::<_, (i64, i64, i64)>(
+            "SELECT count(*), count(DISTINCT expected_state),
+                    count(*) FILTER (WHERE completed_at IS NULL)
+             FROM backup_scheduled_maintenance_claims WHERE backup_set_id=$1",
         )
-        .await,
-        1
+        .bind(fixture.backup_set_id.into_uuid())
+        .fetch_one(&fixture.db.inspection)
+        .await
+        .unwrap();
+    assert!((1..=3).contains(&claim_count), "one run permits at most three state transitions");
+    assert_eq!(
+        claim_count, distinct_transition_count,
+        "concurrent callers must not create duplicate claims for one transition state"
+    );
+    assert_eq!(
+        incomplete_claim_count, 0,
+        "completed invocations must leave durable claim receipts"
     );
     // No duplicate child effect: exactly one snapshot for the capture operation.
     let svc = BackupService::new(fixture.pool());
