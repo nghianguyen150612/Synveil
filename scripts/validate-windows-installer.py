@@ -15,6 +15,7 @@ LOCK = ROOT / "deploy/windows/installer/toolchain.lock"
 ISS = ROOT / "deploy/windows/installer/Synveil.iss"
 BUILD = ROOT / "scripts/build-windows-installer.ps1"
 WORKFLOW = ROOT / ".github/workflows/windows-installer.yml"
+NATIVE_WORKFLOW = ROOT / ".github/workflows/windows-native-acceptance.yml"
 PACKAGE = ROOT / "deploy/packages/build-windows.sh"
 INSTALLED_RUNTIME_TEST = ROOT / "scripts/test-windows-installed-runtime.ps1"
 PER_USER_TEST = ROOT / "scripts/test-windows-per-user-installation.ps1"
@@ -80,6 +81,7 @@ def main() -> int:
     iss = ISS.read_text(encoding="utf-8")
     build = BUILD.read_text(encoding="utf-8")
     workflow = WORKFLOW.read_text(encoding="utf-8")
+    native_workflow = NATIVE_WORKFLOW.read_text(encoding="utf-8")
     reproducible = REPRODUCIBLE.read_text(encoding="utf-8")
     msvc_toolchain = MSVC_TOOLCHAIN.read_text(encoding="utf-8")
     package = PACKAGE.read_text(encoding="utf-8")
@@ -132,6 +134,10 @@ def main() -> int:
     require("Get-FileHash" in build and "-cne $Lock.sha256" in build, "digest before execution")
     require("windows-x86_64-installer" in build and '"windows_installer"' in build and '"SynveilSetup.exe"' in build and '"primary_installer"' in build, "artifact manifest entry")
     require("windows-latest" in workflow and "/VERYSILENT" in per_user_test and "state-sentinel" in per_user_test, "native smoke contract")
+    require('SYNVEIL_ENABLE_QMLCACHEGEN_WRAPPER: "1"' in workflow,
+            "Windows installer candidate enables canonical QML source and RCC staging")
+    require('SYNVEIL_ENABLE_QMLCACHEGEN_WRAPPER: "1"' in native_workflow,
+            "Windows P028 candidate enables canonical QML source and RCC staging")
     for evidence in ("test-windows-installed-runtime.ps1", "QT_PLUGIN_PATH", "QML2_IMPORT_PATH", "unrelatedCwd", "client probe", "missing-qwindows", "corrupt-dll", "unexpected-dll", "developer-file"):
         require(evidence in workflow or evidence in per_user_test, f"P024 hosted runtime evidence: {evidence}")
     require("select-msvc-linker.ps1" in workflow and "VCToolsInstallDir" in msvc_toolchain and "CompanyName" in msvc_toolchain and "OriginalFilename" in msvc_toolchain, "authenticated MSVC linker selection")

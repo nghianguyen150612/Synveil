@@ -14,6 +14,7 @@ concurrency:
 
 env:
   CANDIDATE_NAME: windows-p028-candidate
+  SYNVEIL_ENABLE_QMLCACHEGEN_WRAPPER: "1"
 
 jobs:
   build-windows-candidate:

@@ -8,6 +8,9 @@ on:
 permissions:
   contents: read
 
+env:
+  SYNVEIL_ENABLE_QMLCACHEGEN_WRAPPER: "1"
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
