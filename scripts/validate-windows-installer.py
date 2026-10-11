@@ -171,9 +171,11 @@ def main() -> int:
             "AR conflicts with the selected deterministic MSVC archiver" in reproducible and
             "synveil_append_msys_env_conversion_exclusion AR" in reproducible and
             "synveil_append_msys_env_conversion_exclusion SYNVEIL_MSVC_AR" in reproducible and
+            "synveil_append_msys_env_conversion_exclusion CXXFLAGS" in reproducible and
+            'existing_cxxflags+="/Brepro"' in reproducible and
             "cqD" in reproducible and "unselected AR executable" in
             (ROOT / "scripts/test-windows-rustflags.sh").read_text(encoding="utf-8"),
-            "MSVC archives use the selected absolute deterministic LLVM archiver without PATH fallback")
+            "MSVC archives use the selected absolute deterministic LLVM archiver and C++ compilation uses /Brepro without MSYS path rewriting")
     require("$banner" not in workflow and "& $linker '/?'" not in workflow, "linker identity does not depend on localized help output")
     require("CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" in reproducible and '"${rustc_linker_args[@]}"' in reproducible, "direct rustc uses selected MSVC linker")
     require("CARGO_ENCODED_RUSTFLAGS" in reproducible and "$'\\x1f'" in reproducible, "lossless Cargo flag transport")

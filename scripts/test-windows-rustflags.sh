@@ -76,7 +76,9 @@ if command -v cygpath >/dev/null 2>&1; then
     SYNVEIL_MSVC_AR="$(cygpath -w "$SYNVEIL_MSVC_AR")"
 fi
 AR="$SYNVEIL_MSVC_AR"
+CXXFLAGS='/DKEEP_CXX_FLAG'
 export MSYSTEM MSYS2_ENV_CONV_EXCL SYNVEIL_MSVC_AR AR
+export CXXFLAGS
 unset CARGO_ENCODED_RUSTFLAGS RUSTFLAGS
 synveil_prepare_reproducible_rust_build "$repo_root"
 python3 - <<'PY'
@@ -90,8 +92,11 @@ if index == 0 or flags[index - 1] != "-C":
     raise SystemExit(f"MSVC reproducible link argument was not passed as a Rust codegen option: {flags!r}")
 if os.environ.get("AR") != os.environ.get("SYNVEIL_MSVC_AR"):
     raise SystemExit("MSVC reproducible archiver was not selected by absolute path")
+cxx_flags = os.environ.get("CXXFLAGS", "").split()
+if cxx_flags.count("/Brepro") != 1 or "/DKEEP_CXX_FLAG" not in cxx_flags:
+    raise SystemExit(f"MSVC deterministic C++ flag was missing, duplicated, or replaced caller flags: {cxx_flags!r}")
 exclusions = os.environ.get("MSYS2_ENV_CONV_EXCL", "").split(";")
-for name in ("SYNVEIL_TEST_SENTINEL", "AR", "SYNVEIL_MSVC_AR", "CARGO_ENCODED_RUSTFLAGS"):
+for name in ("SYNVEIL_TEST_SENTINEL", "AR", "SYNVEIL_MSVC_AR", "CXXFLAGS", "CARGO_ENCODED_RUSTFLAGS"):
     if name not in exclusions:
         raise SystemExit(f"MSYS2_ENV_CONV_EXCL does not preserve {name}")
 PY

@@ -472,6 +472,7 @@ synveil_prepare_reproducible_rust_build() {
         local selected_archiver_fs="$selected_archiver"
         local expected_archiver_identity
         local configured_archiver_identity
+        local existing_cxxflags="${CXXFLAGS:-}"
 
         if [[ -z "$selected_archiver" ]]; then
             printf '[synveil-artifact] ERROR: MSVC reproducible builds require SYNVEIL_MSVC_AR from the authenticated Visual Studio toolchain selection\n' >&2
@@ -504,6 +505,21 @@ synveil_prepare_reproducible_rust_build() {
         export AR="$selected_archiver"
         synveil_append_msys_env_conversion_exclusion AR
         synveil_append_msys_env_conversion_exclusion SYNVEIL_MSVC_AR
+
+        # Rust's /Brepro link argument does not reach C++ files compiled by
+        # cc-rs (including cxx-qt). Give the MSVC compiler the same deterministic
+        # mode, and keep Git Bash from rewriting the leading slash as a path.
+        case " ${existing_cxxflags} " in
+            *" /Brepro "*) ;;
+            *)
+                if [[ -n "$existing_cxxflags" ]]; then
+                    existing_cxxflags+=" "
+                fi
+                existing_cxxflags+="/Brepro"
+                ;;
+        esac
+        export CXXFLAGS="$existing_cxxflags"
+        synveil_append_msys_env_conversion_exclusion CXXFLAGS
     fi
     # GNU ld's build-id note was the only differing section in two otherwise
     # identical desktop links. Do not post-process artifacts: disable that
