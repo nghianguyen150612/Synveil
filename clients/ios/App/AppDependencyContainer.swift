@@ -46,6 +46,7 @@ public final class AppDependencyContainer {
     private(set) var nodeProjectionRepository: SQLiteNodeProjectionRepository?
     private(set) var syncFeedApplicationService: SyncFeedApplicationService?
     private(set) var rebaselineCoordinator: RebaselineCoordinator?
+    private(set) var downloadCoordinator: FileDownloadCoordinator?
     private(set) var syncAckService: SyncAckService?
     private(set) var inboundSyncCoordinator: (any InboundSyncCoordinatorProtocol)?
     private(set) var metadataMutationFeature: (any MetadataMutationFeatureProtocol)?
@@ -181,8 +182,22 @@ public final class AppDependencyContainer {
                     metadataMutationFeature = feature
                 }
                 let composedRebaseline = rebaselineCoordinator
+                do {
+                    let staging = try await Task.detached {
+                        try DownloadStagingStore(root: DownloadStagingStore.productionURL())
+                    }.value
+                    downloadCoordinator = FileDownloadCoordinator(
+                        repository: AuthenticatedFileDownloadRepository(
+                            provider: browserProvider, bridge: bridge),
+                        database: database, staging: staging)
+                } catch { downloadCoordinator = nil }
+                let downloads = downloadCoordinator
                 sessionController.installMutationSessionInvalidator {
-                    [weak queue, weak composedMetadataMutationService, weak composedRebaseline] in
+                    [
+                        weak queue, weak composedMetadataMutationService, weak composedRebaseline,
+                        weak downloads
+                    ] in
+                    downloads?.invalidateSession()
                     queue?.invalidateSession()
                     composedRebaseline?.invalidateSession()
                     composedMetadataMutationService?.invalidateSession()
@@ -196,6 +211,7 @@ public final class AppDependencyContainer {
                 offlineNodeBrowserService = nil
                 syncFeedApplicationService = nil
                 rebaselineCoordinator = nil
+                downloadCoordinator = nil
                 syncAckService = nil
                 inboundSyncCoordinator = nil
                 metadataMutationFeature = nil

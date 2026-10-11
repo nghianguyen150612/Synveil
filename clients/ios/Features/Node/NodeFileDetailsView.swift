@@ -3,14 +3,17 @@ import SwiftUI
 /// State-owned details remain in the containing Library's native navigation hierarchy.
 struct NodeFileDetailsView: View {
     private let sessionController: SessionController
+    private let downloadCoordinator: FileDownloadCoordinator?
     @State private var viewModel: NodeFileDetailsViewModel
 
     init(
         repository: (any NodeRepositoryProtocol)?, sessionController: SessionController,
         offlineDetailsService: (any OfflineNodeBrowserServiceProtocol)? = nil,
+        downloadCoordinator: FileDownloadCoordinator? = nil,
         route: NodeFileDetailsRoute
     ) {
         self.sessionController = sessionController
+        self.downloadCoordinator = downloadCoordinator
         _viewModel = State(
             initialValue: NodeFileDetailsViewModel(
                 repository: repository, sessionController: sessionController,
@@ -23,7 +26,9 @@ struct NodeFileDetailsView: View {
             if viewModel.presentationState != .invalidated {
                 Section {
                     Label(
-                        "File content is not available in this version. This screen shows read-only metadata.",
+                        downloadCoordinator == nil
+                            ? "Private downloads are unavailable. Reopen Synveil to check storage setup."
+                            : "Download verified content into private storage using the explicit download action.",
                         systemImage: "info.circle"
                     )
                     .fixedSize(horizontal: false, vertical: true)
@@ -140,6 +145,15 @@ struct NodeFileDetailsView: View {
 
     @ViewBuilder
     private func metadata(_ node: Node) -> some View {
+        if node.kind == .file, node.state == .active, let version = node.currentVersionId,
+            downloadCoordinator != nil
+        {
+            FileDownloadControls(
+                coordinator: downloadCoordinator, controller: sessionController,
+                library: node.libraryId, node: node.id, version: version
+            )
+            .id(version)
+        }
         if viewModel.contentSource == .cached {
             Section {
                 Label(

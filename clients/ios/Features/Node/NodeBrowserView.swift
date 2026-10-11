@@ -7,6 +7,7 @@ struct NodeBrowserView: View {
     private let nodeRepository: (any NodeRepositoryProtocol)?
     private let offlineBrowserService: (any OfflineNodeBrowserServiceProtocol)?
     private let metadataMutationFeature: (any MetadataMutationFeatureProtocol)?
+    private let downloadCoordinator: FileDownloadCoordinator?
 
     @State private var viewModel: NodeBrowserViewModel
     @State private var mutationViewModel: MetadataMutationViewModel
@@ -18,13 +19,15 @@ struct NodeBrowserView: View {
         offlineBrowserService: (any OfflineNodeBrowserServiceProtocol)? = nil,
         sessionController: SessionController,
         route: NodeBrowserRoute,
-        metadataMutationFeature: (any MetadataMutationFeatureProtocol)? = nil
+        metadataMutationFeature: (any MetadataMutationFeatureProtocol)? = nil,
+        downloadCoordinator: FileDownloadCoordinator? = nil
     ) {
         self.sessionController = sessionController
         self.route = route
         self.nodeRepository = repository
         self.offlineBrowserService = offlineBrowserService
         self.metadataMutationFeature = metadataMutationFeature
+        self.downloadCoordinator = downloadCoordinator
         _viewModel = State(
             initialValue: NodeBrowserViewModel(
                 repository: repository,
@@ -641,7 +644,8 @@ struct NodeBrowserView: View {
         } else {
             NavigationLink {
                 SnapshotNodeInformationView(
-                    node: node, sessionController: sessionController)
+                    node: node, sessionController: sessionController,
+                    library: route.library.id, downloadCoordinator: downloadCoordinator)
             } label: {
                 Label(node.name, systemImage: node.kind == .directory ? "folder" : "doc")
                     .fixedSize(horizontal: false, vertical: true)

@@ -117,6 +117,9 @@ func snapshotAssertFailure<T>(
 
 /// Empty-only fixture downgrade preserves all existing v4 queue, inbox and projection evidence.
 func snapshotDowngradeV4(_ url: URL) throws {
+    try queueRawSQL(url, "DROP TRIGGER file_download_identity")
+    try queueRawSQL(url, "DROP TRIGGER file_download_verified")
+    try queueRawSQL(url, "DROP TABLE file_downloads")
     for sql in RebaselineSQLiteSchema.statements where sql.contains("CREATE TRIGGER") {
         try queueRawSQL(url, "DROP TRIGGER \(sql.split(separator: " ")[2])")
     }

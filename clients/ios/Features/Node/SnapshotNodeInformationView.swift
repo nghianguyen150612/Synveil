@@ -4,9 +4,16 @@ struct SnapshotNodeInformationView: View {
     private let node: RebaselineSnapshotNode
     private let sessionController: SessionController
     private let revision: UInt64
-    init(node: RebaselineSnapshotNode, sessionController: SessionController) {
+    private let library: LibraryId?
+    private let downloadCoordinator: FileDownloadCoordinator?
+    init(
+        node: RebaselineSnapshotNode, sessionController: SessionController,
+        library: LibraryId? = nil, downloadCoordinator: FileDownloadCoordinator? = nil
+    ) {
         self.node = node
         self.sessionController = sessionController
+        self.library = library
+        self.downloadCoordinator = downloadCoordinator
         revision = sessionController.lifecycleRevision
     }
     var body: some View {
@@ -14,6 +21,13 @@ struct SnapshotNodeInformationView: View {
             && sessionController.lifecycleRevision == revision
         {
             List {
+                if node.kind == .file, node.state == .active, let version = node.currentVersionId,
+                    let library, downloadCoordinator != nil
+                {
+                    FileDownloadControls(
+                        coordinator: downloadCoordinator, controller: sessionController,
+                        library: library, node: node.id, version: version)
+                }
                 Section("Saved Snapshot Metadata") {
                     Text(node.name).fixedSize(horizontal: false, vertical: true)
                     LabeledContent("Kind", value: node.kind == .file ? "File" : "Folder")
@@ -29,7 +43,7 @@ struct SnapshotNodeInformationView: View {
                 }
                 Section {
                     Text(
-                        "Live timestamps and restoration metadata are unavailable in this snapshot. File content is not stored on this device."
+                        "Live timestamps and restoration metadata are unavailable in this snapshot. Download requires online authorization."
                     )
                     .fixedSize(horizontal: false, vertical: true)
                 }

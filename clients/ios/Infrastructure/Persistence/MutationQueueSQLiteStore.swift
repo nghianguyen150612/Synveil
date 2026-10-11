@@ -80,7 +80,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
     private let maximumOutstanding: Int
     private let maximumBytes: Int
     private let maximumRecords: Int
-    static let schemaVersion = 5
+    static let schemaVersion = 6
     private let processOwner = UUID().uuidString
     private var activeAckAttempts: Set<String> = []
     private static let scopePredicate = "endpoint=? AND owner_id=? AND device_id=? AND library_id=?"
@@ -199,9 +199,10 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
     static let version3Schema = version2Schema + inboundSchema
     static let version4Schema =
         version2Schema + Array(inboundSchema.dropLast()) + NodeProjectionSQLiteSchema.statements
-    private static let schema =
+    static let version5Schema =
         version2Schema + Array(inboundSchema.dropLast()) + RebaselineSQLiteSchema.projection
         + RebaselineSQLiteSchema.statements
+    private static let schema = version5Schema + FileDownloadSQLiteSchema.statements
 
     init(
         url: URL, busyTimeoutMilliseconds: Int32 = 250,
@@ -233,7 +234,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         // Initialization uses only local helpers; no actor reference escapes before schema validation.
         try Self.execute(handle, "PRAGMA foreign_keys=ON")
         let version = try Self.scalar(handle, "PRAGMA user_version")
-        guard [0, 1, 2, 3, 4, Int64(Self.schemaVersion)].contains(version) else {
+        guard [0, 1, 2, 3, 4, 5, Int64(Self.schemaVersion)].contains(version) else {
             throw MutationQueueFailure.unsupportedSchema
         }
         if version > 0 {
@@ -258,7 +259,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
             do {
                 for statement in Self.schema { try Self.execute(handle, statement) }
                 try fault?(.migration)
-                try Self.execute(handle, "PRAGMA user_version=5")
+                try Self.execute(handle, "PRAGMA user_version=6")
                 try Self.execute(handle, "COMMIT")
             } catch {
                 try? Self.execute(handle, "ROLLBACK")
@@ -339,6 +340,21 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
                 }
                 try fault?(.migration)
                 try Self.execute(handle, "PRAGMA user_version=5")
+                try Self.execute(handle, "COMMIT")
+            } catch {
+                try? Self.execute(handle, "ROLLBACK")
+                throw error
+            }
+        }
+        if (1...5).contains(version) {
+            try verifySchema(Self.version5Schema)
+            try Self.execute(handle, "BEGIN IMMEDIATE")
+            do {
+                for statement in FileDownloadSQLiteSchema.statements {
+                    try Self.execute(handle, statement)
+                }
+                try fault?(.migration)
+                try Self.execute(handle, "PRAGMA user_version=6")
                 try Self.execute(handle, "COMMIT")
             } catch {
                 try? Self.execute(handle, "ROLLBACK")
@@ -439,6 +455,9 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
                 try fault?(.beforeQuarantine)
                 // Preserve all evidence while making every dormant authenticated scope inaccessible.
                 try execute("UPDATE scopes SET quarantined=1 WHERE quarantined=0")
+                try execute(
+                    "UPDATE file_downloads SET state='SESSION_INVALIDATED',failure='staleSession' WHERE state!='SESSION_INVALIDATED'"
+                )
             }
         } catch {
             // A failed durable logout must not leave projection/ACK authority usable in this process.
@@ -1153,6 +1172,149 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         }
         return row
     }
+    /// File bytes never enter SQLite. All offsets and lengths remain canonical decimal text.
+    func prepareDownload(_ record: DownloadRecord) throws {
+        try bindSession(scope: record.identity.scope, credentialId: record.identity.credentialId)
+        try transaction {
+            try requireFeedScope(record.identity.scope, credentialId: record.identity.credentialId)
+            guard record.state == .prepared, record.checkpoint.offset == 0,
+                record.checkpoint.prefixSHA256 == DownloadPolicy.emptyDigest,
+                record.identity.expected.byteLength <= DownloadPolicy.quota,
+                try scalar("SELECT count(*) FROM file_downloads") < 1024
+            else { throw DownloadFailure.invalidMetadata }
+            let scope = try requireScopeId(record.identity.scope)
+            let timestamp = Date().timeIntervalSince1970
+            try execute(
+                "INSERT INTO file_downloads VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                [
+                    .text(record.id.rawValue), .integer(scope),
+                    .text(record.identity.nodeId.rawValue),
+                    .text(record.identity.versionId.rawValue),
+                    .text(String(record.identity.expected.byteLength)),
+                    .text(record.identity.expected.sha256), .text(record.identity.credentialId),
+                    .text(record.identity.sessionId), .text("0"), .text(DownloadPolicy.emptyDigest),
+                    .text(record.state.rawValue), .integer(0), .null, .real(timestamp),
+                    .real(timestamp),
+                ])
+        }
+    }
+
+    func download(
+        scope: ClientMutationScope, credentialId: String, id: DownloadOperationId? = nil,
+        version: FileVersionId? = nil, bridge: any RustBridgeProtocol
+    ) async throws -> DownloadRecord? {
+        try requireFeedScope(scope, credentialId: credentialId)
+        guard id != nil || version != nil else { throw DownloadFailure.invalidMetadata }
+        let predicate = id != nil ? "operation_id=?" : "version_id=?"
+        let rows = try query(
+            "SELECT operation_id,node_id,version_id,expected_length,expected_sha256,session_id,durable_offset,prefix_sha256,state,attempt_count,failure FROM file_downloads WHERE scope_id=? AND credential_id=? AND \(predicate)",
+            [
+                .integer(requireScopeId(scope)), .text(credentialId),
+                .text(id?.rawValue ?? version!.rawValue),
+            ]
+        ) { s in
+            (
+                try (0...8).map { try Self.text(s, Int32($0)) },
+                Int(sqlite3_column_int64(s, 9)),
+                sqlite3_column_type(s, 10) == SQLITE_NULL ? nil : try Self.text(s, 10)
+            )
+        }
+        guard let row = rows.first else { return nil }
+        let values = row.0
+        guard let offset = DownloadPolicy.decimal(values[6]),
+            let state = DownloadState(rawValue: values[8]),
+            row.1 >= 0, row.1 <= 1000,
+            row.2 == nil || DownloadFailure(rawValue: row.2!) != nil,
+            LibraryWireValidation.matches(values[7], pattern: "^sha256:[0-9a-f]{64}$"),
+            UUID(uuidString: values[5]) != nil
+        else { throw DownloadFailure.invalidMetadata }
+        let identity = DownloadIdentity(
+            scope: scope, nodeId: try await NodeId.validated(values[1], using: bridge),
+            versionId: try await FileVersionId.validated(values[2], using: bridge),
+            expected: try DownloadExpectedContent(length: values[3], sha256: values[4]),
+            credentialId: credentialId, sessionId: values[5])
+        guard offset <= identity.expected.byteLength,
+            identity.expected.byteLength <= DownloadPolicy.quota
+        else {
+            throw DownloadFailure.invalidMetadata
+        }
+        guard
+            state != .verified
+                || (offset == identity.expected.byteLength
+                    && values[7] == identity.expected.sha256),
+            offset != 0 || values[7] == DownloadPolicy.emptyDigest
+        else { throw DownloadFailure.invalidMetadata }
+        try requireFeedScope(scope, credentialId: credentialId)
+        return DownloadRecord(
+            id: try DownloadOperationId(validating: values[0]), identity: identity,
+            checkpoint: DownloadCheckpoint(offset: offset, prefixSHA256: values[7]), state: state,
+            attemptCount: row.1, failure: row.2.flatMap(DownloadFailure.init(rawValue:)))
+    }
+
+    /// Compare-and-set prevents stale checkpoints and duplicate writers from advancing progress.
+    func updateDownload(
+        _ previous: DownloadRecord, checkpoint: DownloadCheckpoint? = nil,
+        state: DownloadState, failure: DownloadFailure? = nil, beginAttempt: Bool = false
+    ) throws {
+        let next = checkpoint ?? previous.checkpoint
+        guard next.offset >= previous.checkpoint.offset,
+            next.offset <= previous.identity.expected.byteLength,
+            LibraryWireValidation.matches(next.prefixSHA256, pattern: "^sha256:[0-9a-f]{64}$"),
+            state != .verified
+                || (previous.state == .verifying
+                    && next.offset == previous.identity.expected.byteLength
+                    && next.prefixSHA256 == previous.identity.expected.sha256)
+        else { throw DownloadFailure.integrityFailure }
+        try transaction {
+            try requireFeedScope(
+                previous.identity.scope, credentialId: previous.identity.credentialId)
+            try execute(
+                "UPDATE file_downloads SET durable_offset=?,prefix_sha256=?,state=?,attempt_count=attempt_count+?,failure=?,updated_at=? WHERE operation_id=? AND state=? AND durable_offset=? AND prefix_sha256=? AND attempt_count=?",
+                [
+                    .text(String(next.offset)), .text(next.prefixSHA256), .text(state.rawValue),
+                    .integer(beginAttempt ? 1 : 0), failure.map { .text($0.rawValue) } ?? .null,
+                    .real(Date().timeIntervalSince1970), .text(previous.id.rawValue),
+                    .text(previous.state.rawValue), .text(String(previous.checkpoint.offset)),
+                    .text(previous.checkpoint.prefixSHA256), .integer(Int64(previous.attemptCount)),
+                ])
+            guard sqlite3_changes(connection.handle) == 1 else {
+                throw DownloadFailure.duplicateOperation
+            }
+        }
+    }
+
+    /// Explicit restart preserves the operation and immutable identity after its files are discarded.
+    func restartDownload(_ previous: DownloadRecord) throws {
+        guard previous.state != .verified, previous.state != .sessionInvalidated else {
+            throw DownloadFailure.invalidMetadata
+        }
+        try transaction {
+            try requireFeedScope(
+                previous.identity.scope, credentialId: previous.identity.credentialId)
+            try execute(
+                "UPDATE file_downloads SET durable_offset='0',prefix_sha256=?,state='PREPARED',failure=NULL,updated_at=? WHERE operation_id=? AND state=? AND durable_offset=? AND attempt_count=?",
+                [
+                    .text(DownloadPolicy.emptyDigest), .real(Date().timeIntervalSince1970),
+                    .text(previous.id.rawValue), .text(previous.state.rawValue),
+                    .text(String(previous.checkpoint.offset)),
+                    .integer(Int64(previous.attemptCount)),
+                ])
+            guard sqlite3_changes(connection.handle) == 1 else {
+                throw DownloadFailure.duplicateOperation
+            }
+        }
+    }
+
+    func downloadReservations() throws -> [DownloadStorageReservation] {
+        try query("SELECT operation_id,expected_length FROM file_downloads") { s in
+            guard let bytes = DownloadPolicy.decimal(try Self.text(s, 1)) else {
+                throw DownloadFailure.invalidMetadata
+            }
+            return DownloadStorageReservation(
+                operationId: try DownloadOperationId(validating: Self.text(s, 0)), bytes: bytes)
+        }
+    }
+
     private func scopeValues(_ scope: ClientMutationScope) -> [SQLValue] {
         [
             .text(scope.serverEndpoint.urlString), .text(scope.ownerUserId),
