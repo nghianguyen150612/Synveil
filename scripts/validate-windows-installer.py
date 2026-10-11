@@ -218,6 +218,20 @@ def main() -> int:
     for evidence in ("LIFECYCLE_TIMEOUT_DIAGNOSTIC", "Win32_Thread", "wait_states=$waitSummary"):
         require(evidence in LIFECYCLE_TEST.read_text(encoding="utf-8"),
                 f"P027 timeout diagnostics include process state: {evidence}")
+    uninstaller_wait_start = lifecycle_test.index("function Wait-ForUninstallerSelfRemoval")
+    uninstaller_wait_end = lifecycle_test.index("\n}", uninstaller_wait_start) + 2
+    uninstaller_wait = lifecycle_test[uninstaller_wait_start:uninstaller_wait_end]
+    require("AddSeconds(30)" in uninstaller_wait and
+            "Start-Sleep -Milliseconds 100" in uninstaller_wait and
+            "Get-ChildItem -LiteralPath $rootPath -Force" in uninstaller_wait and
+            "registered uninstaller escaped the package root" in uninstaller_wait and
+            "unexpected residual package entries" in uninstaller_wait and
+            "registered uninstaller remains after bounded self-cleanup wait" in uninstaller_wait and
+            "-Recurse" not in uninstaller_wait,
+            "standard-user lifecycle waits boundedly for only the registered Inno uninstaller self-cleanup")
+    for uninstaller_name in ("productionUninstaller", "fixtureUninstaller", "reinstalledUninstaller"):
+        require(f"Wait-ForUninstallerSelfRemoval ${uninstaller_name}" in lifecycle_test,
+                f"standard-user lifecycle checks bounded self-cleanup after {uninstaller_name}")
     account_set_info = per_user_invoker.index("$account.SetInfo()")
     account_created_flag = per_user_invoker.index("$accountCreated = $true")
     require("$accountCreationAttempted" in per_user_invoker and account_created_flag > account_set_info,

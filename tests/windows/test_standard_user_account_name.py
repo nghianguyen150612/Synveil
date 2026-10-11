@@ -172,6 +172,30 @@ class StandardUserAccountNameTests(unittest.TestCase):
         self.assertIn("process_tree_terminated=$treeTerminated", timeout)
         self.assertIn('throw "LIFECYCLE_TIMEOUT: $Name', timeout)
 
+    def test_lifecycle_waits_for_registered_inno_self_cleanup_without_recursive_deletion(self) -> None:
+        lifecycle = (ROOT / "scripts/test-windows-installer-lifecycle.ps1").read_text(encoding="utf-8")
+        start = lifecycle.index("function Wait-ForUninstallerSelfRemoval")
+        end = lifecycle.index("\n}", start) + 2
+        wait = lifecycle[start:end]
+
+        self.assertIn("AddSeconds(30)", wait)
+        self.assertIn("Start-Sleep -Milliseconds 100", wait)
+        self.assertIn("Get-ChildItem -LiteralPath $rootPath -Force", wait)
+        self.assertIn("registered uninstaller escaped the package root", wait)
+        self.assertIn("unexpected residual package entries", wait)
+        self.assertIn("registered uninstaller remains after bounded self-cleanup wait", wait)
+        self.assertNotIn("-Recurse", wait)
+
+        production = lifecycle.index("$productionUninstaller = Invoke-RegisteredUninstall 'uninstall-production'")
+        production_wait = lifecycle.index("Wait-ForUninstallerSelfRemoval $productionUninstaller")
+        self.assertLess(production, production_wait)
+        fixture = lifecycle.index("$fixtureUninstaller = Invoke-RegisteredUninstall 'uninstall-fixture'")
+        fixture_wait = lifecycle.index("Wait-ForUninstallerSelfRemoval $fixtureUninstaller")
+        self.assertLess(fixture, fixture_wait)
+        reinstalled = lifecycle.index("$reinstalledUninstaller = Invoke-RegisteredUninstall 'uninstall-reinstalled'")
+        reinstalled_wait = lifecycle.index("Wait-ForUninstallerSelfRemoval $reinstalledUninstaller")
+        self.assertLess(reinstalled, reinstalled_wait)
+
     def test_standard_user_cleanup_result_updates_the_failure_record(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")
         start = source.index("$recordPath = if", source.index("if ($sid)"))

@@ -178,6 +178,37 @@ function Invoke-RegisteredUninstall([string]$Name) {
     if (!$process.WaitForExit(120000)) { $process.Kill(); throw "LIFECYCLE_TIMEOUT: $Name" }
     Assert-True ($process.ExitCode -eq 0) "LIFECYCLE_UNINSTALL_FAILURE: $Name exit $($process.ExitCode)"
     Assert-True ($null -eq [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($uninstallKey)) 'LIFECYCLE_UNINSTALL_FAILURE: registration remains'
+    return $uninstaller
+}
+function Wait-ForUninstallerSelfRemoval([string]$Path, [string]$Name) {
+    $rootPath = [IO.Path]::GetFullPath($root)
+    $uninstallerPath = [IO.Path]::GetFullPath($Path)
+    $rootPrefix = $rootPath.TrimEnd('\') + '\'
+    Assert-True ($uninstallerPath.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) `
+        "LIFECYCLE_UNINSTALL_FAILURE: registered uninstaller escaped the package root ($Name)"
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    while (Test-Path -LiteralPath $rootPath -PathType Container) {
+        if (Test-Path -LiteralPath $uninstallerPath -PathType Leaf) {
+            $entries = @(Get-ChildItem -LiteralPath $rootPath -Force)
+            $unexpected = @($entries | Where-Object {
+                [IO.Path]::GetFullPath($_.FullName) -ine $uninstallerPath
+            })
+            Assert-True ($unexpected.Count -eq 0) `
+                "LIFECYCLE_UNINSTALL_FAILURE: unexpected residual package entries during self-cleanup ($Name)"
+            if ([DateTime]::UtcNow -ge $deadline) {
+                throw "LIFECYCLE_UNINSTALL_FAILURE: registered uninstaller remains after bounded self-cleanup wait ($Name)"
+            }
+            # Inno Setup can return before its second-phase helper removes the registered uninstaller.
+            Start-Sleep -Milliseconds 100
+            continue
+        }
+        if (!(Test-Path -LiteralPath $rootPath -PathType Container)) { return }
+        $remaining = @(Get-ChildItem -LiteralPath $rootPath -Force)
+        Assert-True ($remaining.Count -eq 0) `
+            "LIFECYCLE_UNINSTALL_FAILURE: unexpected residual package entries after self-cleanup ($Name)"
+        Remove-Item -LiteralPath $rootPath -Force -ErrorAction Stop
+        return
+    }
 }
 function Interrupt-UpgradeAfterOwnedPayloadCopy([string]$Path, [string]$ExpectedLicenseHash) {
     $log = Join-Path $logRoot 'upgrade-interrupted.log'
@@ -221,10 +252,11 @@ Assert-True (Test-Path $unknown -PathType Leaf) 'LIFECYCLE_REPAIR_FAILURE: unkno
 Assert-True (Test-Path $startMenu -PathType Leaf) 'LIFECYCLE_REPAIR_FAILURE: Start Menu shortcut not restored'
 Assert-True (!(Test-Path $desktop)) 'LIFECYCLE_REPAIR_FAILURE: desktop preference changed'
 Assert-True ((Snapshot-State) -ceq $stateBefore) 'LIFECYCLE_REPAIR_FAILURE: durable state changed'
-Invoke-RegisteredUninstall 'uninstall-production'
+$productionUninstaller = Invoke-RegisteredUninstall 'uninstall-production'
 Assert-True (Test-Path $unknown -PathType Leaf) 'LIFECYCLE_UNINSTALL_FAILURE: unknown adjacent file removed'
 Assert-True ((Snapshot-State) -ceq $stateBefore) 'LIFECYCLE_UNINSTALL_FAILURE: durable state changed'
-Remove-Item -LiteralPath $unknown; Remove-Item -LiteralPath $root -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $unknown
+Wait-ForUninstallerSelfRemoval $productionUninstaller 'production uninstall'
 
 # Real Setup execution with isolated numeric fixture identities; never release artifacts.
 Invoke-Setup $OlderFixtureSetup @('/STARTUP=0','/DESKTOPICON=1') 0 'install-fixture-old'
@@ -253,12 +285,14 @@ Invoke-Setup $OlderFixtureSetup @() 1 'downgrade-fixture'
 Assert-True (((Get-Registration).version -ceq '1.1.0')) 'LIFECYCLE_DOWNGRADE_FAILURE: installed version changed'
 Assert-True ((Manifest-Hashes | ConvertTo-Json -Compress) -ceq $beforeDowngrade) 'LIFECYCLE_DOWNGRADE_FAILURE: package changed'
 Assert-True ((Snapshot-State) -ceq $stateBefore) 'LIFECYCLE_DOWNGRADE_FAILURE: state changed'
-Invoke-RegisteredUninstall 'uninstall-fixture'
+$fixtureUninstaller = Invoke-RegisteredUninstall 'uninstall-fixture'
 Assert-True ((Test-Path $unknown) -and ((Snapshot-State) -ceq $stateBefore)) 'LIFECYCLE_UNINSTALL_FAILURE: preserved data changed'
-Remove-Item -LiteralPath $unknown; Remove-Item -LiteralPath $root -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $unknown
+Wait-ForUninstallerSelfRemoval $fixtureUninstaller 'fixture uninstall'
 Invoke-Setup $Setup @('/STARTUP=0','/DESKTOPICON=0') 0 'reinstall-production'
 $null = Manifest-Hashes
-Invoke-RegisteredUninstall 'uninstall-reinstalled'
+$reinstalledUninstaller = Invoke-RegisteredUninstall 'uninstall-reinstalled'
+Wait-ForUninstallerSelfRemoval $reinstalledUninstaller 'reinstalled production uninstall'
 
 $evidence = [ordered]@{
     schema_version=1; source_commit=$env:GITHUB_SHA; artifact_sha256=(Get-FileHash $Setup -Algorithm SHA256).Hash.ToLowerInvariant()
