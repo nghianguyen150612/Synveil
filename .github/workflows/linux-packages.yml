@@ -542,9 +542,14 @@ jobs:
           fi
           useradd --create-home --user-group synveil-installer
           DNF_REAL="$(readlink -f /usr/bin/dnf)"
+          RPM_REAL="$(readlink -f /usr/bin/rpm)"
           case "$DNF_REAL" in
             /usr/bin/*) ;;
             *) echo 'Resolved DNF executable escaped /usr/bin' >&2; exit 1 ;;
+          esac
+          case "$RPM_REAL" in
+            /usr/bin/*) ;;
+            *) echo 'Resolved RPM executable escaped /usr/bin' >&2; exit 1 ;;
           esac
           test -f "$DNF_REAL"
           test ! -L "$DNF_REAL"
@@ -554,7 +559,16 @@ jobs:
             echo 'Resolved DNF executable is writable by a non-root group or user' >&2
             exit 1
           fi
-          printf 'synveil-installer ALL=(root) NOPASSWD: %s\n' "$DNF_REAL" > /etc/sudoers.d/synveil-installer
+          test -f "$RPM_REAL"
+          test ! -L "$RPM_REAL"
+          test "$(stat -c '%u' "$RPM_REAL")" = 0
+          RPM_MODE="$(stat -c '%a' "$RPM_REAL")"
+          if (( (8#$RPM_MODE & 022) != 0 )); then
+            echo 'Resolved RPM executable is writable by a non-root group or user' >&2
+            exit 1
+          fi
+          printf 'synveil-installer ALL=(root) NOPASSWD: %s, %s -V synveil\n' \
+            "$DNF_REAL" "$RPM_REAL" > /etc/sudoers.d/synveil-installer
           chmod 0440 /etc/sudoers.d/synveil-installer
           visudo -cf /etc/sudoers.d/synveil-installer
           runuser -u synveil-installer -- sudo -n -- "$DNF_REAL" --version >/dev/null

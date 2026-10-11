@@ -148,6 +148,31 @@ def _dpkg_verify_output_is_only_policy_excluded_docs(output: str) -> bool:
     return True
 
 
+def _package_verifier_output_has_permission_denied(output: str) -> bool:
+    """Identify protected paths that require a complete privileged recheck."""
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    return any(
+        re.fullmatch(r"missing\s+\S+\s+\(Permission denied\)", line, re.IGNORECASE) is not None
+        for line in lines
+    )
+
+
+def _is_authorization_failure(result: subprocess.CompletedProcess[str]) -> bool:
+    combined = (result.stdout + "\n" + result.stderr).lower()
+    return result.returncode in {126, 127} or combined.lstrip().startswith("sudo:") or any(
+        marker in combined
+        for marker in (
+            "not in the sudoers",
+            "not allowed to execute",
+            "a password is required",
+            "a terminal is required",
+            "incorrect password",
+            "sorry, try again",
+            "authentication failure",
+        )
+    )
+
+
 def resolve_profile(asserted_name: str | None, detection: linux_platform_detection.DetectionResult) -> Profile:
     """Resolve a qualified detection; an explicit profile is only an assertion."""
     if detection.qualification_status != "QUALIFIED" or detection.profile not in PROFILES:
@@ -172,9 +197,9 @@ class NativeManager:
     def __init__(self, profile: Profile):
         self.profile = profile
 
-    def _run(self, command: list[str], *, mutate: bool = False) -> subprocess.CompletedProcess[str]:
+    def _run(self, command: list[str], *, requires_admin: bool = False) -> subprocess.CompletedProcess[str]:
         command = [system_executable(command[0]), *command[1:]]
-        if mutate:
+        if requires_admin:
             if os.geteuid() == 0:
                 raise QuickInstallError("AuthorizationRequired", "The installer must run as an ordinary user.",
                                         "Use visible native package authorization.", EXIT_AUTHORIZATION)
@@ -217,7 +242,7 @@ class NativeManager:
         command = (["apt-get", "install", "-y", "--", str(package)] if self.profile.artifact_type == "deb"
                    else ["dnf", "install", "-y", str(package)])
         try:
-            result = self._run(command, mutate=True)
+            result = self._run(command, requires_admin=True)
         except KeyboardInterrupt as error:
             raise QuickInstallError("OutcomeUnknown", "The package transaction was interrupted and its outcome is unknown.",
                                     "Inspect native package state before retrying.", EXIT_UNKNOWN) from error
@@ -234,7 +259,7 @@ class NativeManager:
         if any(marker in combined for marker in ("could not get lock", "another app is currently holding", "waiting for process with pid")):
             raise QuickInstallError("PackageManagerBusy", "Another native package operation is running; no lock was removed.",
                                     "Wait for it to finish, then retry.", EXIT_PACKAGE_MANAGER)
-        if result.returncode in {126, 127} or "not in the sudoers" in combined or "a password is required" in combined:
+        if _is_authorization_failure(result):
             raise QuickInstallError("AuthorizationFailed", "Administrator authorization was not granted.",
                                     "Retry and complete the visible sudo prompt.", EXIT_AUTHORIZATION)
         raise QuickInstallError("InstallationFailed", "The native package manager did not complete successfully.",
@@ -253,9 +278,23 @@ class NativeManager:
         # and a version label alone do not prove its bytes survived mutation.
         command = ["dpkg", "--verify", "synveil"] if self.profile.artifact_type == "deb" else ["rpm", "-V", "synveil"]
         result = self._run(command)
+        output = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
+        if _package_verifier_output_has_permission_denied(output):
+            print(
+                "Administrator authorization is needed to verify protected package files.",
+                file=sys.stderr,
+            )
+            result = self._run(command, requires_admin=True)
+            if _is_authorization_failure(result):
+                raise QuickInstallError(
+                    "AuthorizationFailed",
+                    "Administrator authorization was not granted to verify protected package files.",
+                    "Complete the visible authorization request, then retry verification.",
+                    EXIT_AUTHORIZATION,
+                )
+            output = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
         if result.returncode != 0:
             return "package_database_integrity_check_failed"
-        output = result.stdout.strip()
         if output:
             expected_deb_policy_omissions = (
                 self.profile.artifact_type == "deb"

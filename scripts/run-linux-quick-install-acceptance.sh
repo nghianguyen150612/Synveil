@@ -26,10 +26,12 @@ ARGS=(--channel-url=https://localhost:4443/SYNVEIL-RELEASE-CHANNEL.json
 report_native_package_state() {
   echo "NATIVE_PACKAGE_DIAGNOSTIC type=$ARTIFACT_TYPE"
   if [[ "$ARTIFACT_TYPE" == deb ]]; then
+    verifier="$(readlink -f /usr/bin/dpkg)"
     dpkg-query -W -f='${db:Status-Abbrev} ${Version}\n' synveil || true
     if output="$(dpkg --verify synveil 2>&1)"; then verify_status=0; else verify_status=$?; fi
     echo "NATIVE_PACKAGE_DIAGNOSTIC verifier=dpkg --verify synveil exit=$verify_status"
   else
+    verifier="$(readlink -f /usr/bin/rpm)"
     rpm -q --qf '%{NAME} %{VERSION}-%{RELEASE} %{ARCH}\n' synveil || true
     if output="$(rpm -V synveil 2>&1)"; then verify_status=0; else verify_status=$?; fi
     echo "NATIVE_PACKAGE_DIAGNOSTIC verifier=rpm -V synveil exit=$verify_status"
@@ -38,6 +40,31 @@ report_native_package_state() {
     printf '%s\n' "$output" | sed -n '1,40p'
   else
     echo 'NATIVE_PACKAGE_DIAGNOSTIC verifier_output=(empty)'
+  fi
+  if [[ "$ARTIFACT_TYPE" == deb ]]; then
+    if privileged_output="$(sudo -- "$verifier" --verify synveil 2>&1)"; then
+      privileged_status=0
+    else
+      privileged_status=$?
+    fi
+  else
+    if privileged_output="$(sudo -- "$verifier" -V synveil 2>&1)"; then
+      privileged_status=0
+    else
+      privileged_status=$?
+    fi
+  fi
+  echo "NATIVE_PACKAGE_DIAGNOSTIC privileged_verifier=$verifier exit=$privileged_status"
+  if [[ -n "$privileged_output" ]]; then
+    printf '%s\n' "$privileged_output" | sed -n '1,40p'
+  fi
+  for path in /etc/synveil /etc/synveil/credentials; do
+    if [[ -e "$path" ]]; then
+      stat -c 'NATIVE_PACKAGE_DIAGNOSTIC filesystem=%n owner=%U group=%G mode=%a uid=%u gid=%g' "$path" || true
+    fi
+  done
+  if [[ "$ARTIFACT_TYPE" == rpm ]]; then
+    rpm -q --dump synveil | awk '$1 == "/etc/synveil" || $1 == "/etc/synveil/credentials" { print "NATIVE_PACKAGE_DIAGNOSTIC rpm_metadata=" $0 }' || true
   fi
 }
 set +e

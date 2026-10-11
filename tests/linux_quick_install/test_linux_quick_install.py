@@ -154,8 +154,8 @@ class QuickInstallTests(unittest.TestCase):
         manager.artifact_evidence = dict(self.evidence, artifact_type="rpm")
         invoked = []
 
-        def capture(command, *, mutate=False):
-            invoked.append((command, mutate))
+        def capture(command, *, requires_admin=False):
+            invoked.append((command, requires_admin))
             return quick.subprocess.CompletedProcess(command, 0, "", "")
 
         with mock.patch.object(quick.os, "geteuid", return_value=1000), \
@@ -167,6 +167,29 @@ class QuickInstallTests(unittest.TestCase):
             [(["dnf", "install", "-y", str(self.package)], True)],
             invoked,
         )
+
+    def test_fedora_authorization_denial_stays_an_authorization_failure(self):
+        manager = quick.NativeManager(quick.PROFILES["fedora-x86_64"])
+        manager.artifact_evidence = dict(self.evidence, artifact_type="rpm")
+        denied = quick.subprocess.CompletedProcess(
+            ["/usr/bin/dnf", "install", "-y", str(self.package)],
+            1,
+            "",
+            "sudo: user is not allowed to execute /usr/bin/dnf",
+        )
+        with (
+            mock.patch.object(quick.os, "geteuid", return_value=1000),
+            mock.patch.object(quick, "system_executable", side_effect=lambda name: "/usr/bin/" + name),
+            mock.patch.object(quick, "require_staged_evidence"),
+            mock.patch.object(manager, "_run", return_value=denied),
+            mock.patch.object(manager, "verify", return_value=False),
+            mock.patch.object(manager, "installed_version", return_value=None),
+            mock.patch.object(quick, "package_payload_present", return_value=False),
+        ):
+            with self.assertRaises(quick.QuickInstallError) as caught:
+                manager.install(self.package, "0.2.0")
+        self.assertEqual("AuthorizationFailed", caught.exception.category)
+        self.assertEqual(quick.EXIT_AUTHORIZATION, caught.exception.exit_status)
 
     def test_partial_payload_with_absent_package_metadata_stops_before_retry(self):
         partial = self.root / "partial-owned-payload"
@@ -238,9 +261,17 @@ class QuickInstallTests(unittest.TestCase):
     def test_fedora_acceptance_authorizes_resolved_dnf_path_only(self):
         workflow = (ROOT / ".github/workflows/linux-packages.yml").read_text(encoding="utf-8")
         self.assertIn('DNF_REAL="$(readlink -f /usr/bin/dnf)"', workflow)
-        self.assertIn('NOPASSWD: %s\\n\' "$DNF_REAL"', workflow)
+        self.assertIn("NOPASSWD: %s, %s -V synveil\\n", workflow)
+        self.assertIn('"$DNF_REAL" "$RPM_REAL" > /etc/sudoers.d/synveil-installer', workflow)
         self.assertIn('sudo -n -- "$DNF_REAL" --version', workflow)
-        self.assertNotIn('NOPASSWD: /usr/bin/dnf\\n\'', workflow)
+        self.assertNotIn("NOPASSWD: /usr/bin/dnf", workflow)
+
+    def test_fedora_acceptance_authorizes_only_the_exact_rpm_verifier(self):
+        workflow = (ROOT / ".github/workflows/linux-packages.yml").read_text(encoding="utf-8")
+        self.assertIn('RPM_REAL="$(readlink -f /usr/bin/rpm)"', workflow)
+        self.assertIn("NOPASSWD: %s, %s -V synveil\\n", workflow)
+        self.assertIn('"$DNF_REAL" "$RPM_REAL" > /etc/sudoers.d/synveil-installer', workflow)
+        self.assertNotIn("NOPASSWD: /usr/bin/rpm", workflow)
 
     def test_native_acceptance_reports_bounded_package_verifier_output(self):
         source = (ROOT / "scripts/run-linux-quick-install-acceptance.sh").read_text(encoding="utf-8")
@@ -248,6 +279,10 @@ class QuickInstallTests(unittest.TestCase):
         self.assertIn("report_native_package_state()", source)
         self.assertIn("dpkg --verify synveil", source)
         self.assertIn("rpm -V synveil", source)
+        self.assertIn('sudo -- "$verifier" --verify synveil', source)
+        self.assertIn('sudo -- "$verifier" -V synveil', source)
+        self.assertIn('rpm -q --dump synveil', source)
+        self.assertIn('stat -c \'NATIVE_PACKAGE_DIAGNOSTIC filesystem=', source)
         self.assertIn("sed -n '1,40p'", source)
         self.assertIn('exit "$quick_install_status"', source)
 
@@ -333,6 +368,97 @@ class DpkgPolicyVerificationTests(unittest.TestCase):
             "package_database_integrity_check_failed",
             self.verification_failure("rpm", "missing /usr/share/doc/synveil/LICENSE\n"),
         )
+
+    def test_permission_denied_verifier_result_retries_with_visible_authorization(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime_file = Path(directory) / "runtime-file"
+            runtime_file.write_text("installed", encoding="utf-8")
+            for artifact_type, command, unprivileged_status in (
+                ("deb", ["/usr/bin/dpkg", "--verify", "synveil"], 0),
+                ("rpm", ["/usr/bin/rpm", "-V", "synveil"], 1),
+            ):
+                with self.subTest(artifact_type=artifact_type):
+                    profile = quick.PROFILES[
+                        "debian-x86_64" if artifact_type == "deb" else "fedora-x86_64"
+                    ]
+                    manager = quick.NativeManager(profile)
+                    denied = quick.subprocess.CompletedProcess(
+                        command,
+                        unprivileged_status,
+                        "......G..    /etc/synveil\n"
+                        "missing     /etc/synveil/credentials (Permission denied)\n",
+                        "",
+                    )
+                    clean = quick.subprocess.CompletedProcess(command, 0, "", "")
+                    stderr = io.StringIO()
+                    with (
+                        mock.patch.object(manager, "installed_version", return_value="0.1.0"),
+                        mock.patch.object(quick, "REQUIRED_PATHS", (str(runtime_file),)),
+                        mock.patch.object(quick.os, "geteuid", return_value=1000),
+                        mock.patch.object(quick, "system_executable", side_effect=lambda name: "/usr/bin/" + name),
+                        mock.patch.object(quick.subprocess, "run", side_effect=(denied, clean)) as invoke,
+                        contextlib.redirect_stderr(stderr),
+                    ):
+                        self.assertIsNone(manager.verification_failure("0.1.0"))
+
+                    self.assertEqual(2, invoke.call_count)
+                    first, second = (call.args[0] for call in invoke.call_args_list)
+                    self.assertEqual(command, first)
+                    self.assertEqual(["/usr/bin/sudo", "--", *command], second)
+                    self.assertIn("Administrator authorization is needed", stderr.getvalue())
+
+    def test_denied_authorization_does_not_become_integrity_pass_or_prompt_bypass(self):
+        manager = quick.NativeManager(quick.PROFILES["fedora-x86_64"])
+        command = ["/usr/bin/rpm", "-V", "synveil"]
+        denied = quick.subprocess.CompletedProcess(
+            command, 1, "missing /etc/synveil/credentials (Permission denied)\n", ""
+        )
+        sudo_denied = quick.subprocess.CompletedProcess(
+            ["/usr/bin/sudo", "--", *command],
+            1,
+            "",
+            "sudo: user is not allowed to execute /usr/bin/rpm -V synveil",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            runtime_file = Path(directory) / "runtime-file"
+            runtime_file.write_text("installed", encoding="utf-8")
+            with (
+                mock.patch.object(manager, "installed_version", return_value="0.1.0"),
+                mock.patch.object(quick, "REQUIRED_PATHS", (str(runtime_file),)),
+                mock.patch.object(quick.os, "geteuid", return_value=1000),
+                mock.patch.object(quick, "system_executable", side_effect=lambda name: "/usr/bin/" + name),
+                mock.patch.object(quick.subprocess, "run", side_effect=(denied, sudo_denied)),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                with self.assertRaises(quick.QuickInstallError) as caught:
+                    manager.verification_failure("0.1.0")
+        self.assertEqual("AuthorizationFailed", caught.exception.category)
+        self.assertEqual(quick.EXIT_AUTHORIZATION, caught.exception.exit_status)
+
+    def test_privileged_verification_still_rejects_a_real_missing_file(self):
+        manager = quick.NativeManager(quick.PROFILES["fedora-x86_64"])
+        command = ["/usr/bin/rpm", "-V", "synveil"]
+        denied = quick.subprocess.CompletedProcess(
+            command, 1, "missing /etc/synveil/credentials (Permission denied)\n", ""
+        )
+        missing = quick.subprocess.CompletedProcess(
+            ["/usr/bin/sudo", "--", *command], 1, "missing /usr/bin/synveil-client\n", ""
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            runtime_file = Path(directory) / "runtime-file"
+            runtime_file.write_text("installed", encoding="utf-8")
+            with (
+                mock.patch.object(manager, "installed_version", return_value="0.1.0"),
+                mock.patch.object(quick, "REQUIRED_PATHS", (str(runtime_file),)),
+                mock.patch.object(quick.os, "geteuid", return_value=1000),
+                mock.patch.object(quick, "system_executable", side_effect=lambda name: "/usr/bin/" + name),
+                mock.patch.object(quick.subprocess, "run", side_effect=(denied, missing)),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                self.assertEqual(
+                    "package_database_integrity_check_failed",
+                    manager.verification_failure("0.1.0"),
+                )
 
 
 if __name__ == "__main__":
