@@ -29,7 +29,7 @@ No fresh/resume request sends If-None-Match or If-Range. Current Node changes ca
 
 `DownloadStagingStore` owns `Library/Caches/staging/downloads`, with separate opaque `.part` and `.verified` identities. Neither logical names nor Content-Disposition become paths. Root ancestors reject symbolic links; descriptor operations use openat/O_NOFOLLOW, regular-file and single-link checks. Creation uses exclusive ownership, 0700 directories/0600 files, backup exclusion and `completeUntilFirstUserAuthentication`, matching P035. Physical iOS protection attributes are checked on device; Simulator protection support is not assumed. The system cache can be evicted and does not provide document permanence.
 
-A separate kernel-owned foreground lease prevents duplicate writers across independent coordinators and SQLite connections, without holding a SQLite transaction during networking, and releases on process death. The actor serializes shared reservations and charges all durable downloads, private verified cache, partial bytes, unknown future upload staging and uncommitted files. Policy: 512 MiB total and 64 MiB free-space reserve. Arithmetic overflow, reservation overlap and low space fail before content GET. Available space is checked during writing as well. No file-sized memory allocation or fixed preallocation occurs. Conservative retained records continue to charge quota; cache eviction/retention management is deferred.
+A separate kernel-owned foreground lease prevents duplicate writers across independent coordinators and SQLite connections, without holding a SQLite transaction during networking, and releases on process death. The actor serializes shared reservations and charges all durable downloads, private verified cache, partial bytes, unknown transfer files within the managed root (including future upload staging placed there) and uncommitted files. Policy: 512 MiB total and 64 MiB free-space reserve. Arithmetic overflow, reservation overlap and low space fail before content GET. Available space is checked during writing as well. No file-sized memory allocation or fixed preallocation occurs. Conservative retained records continue to charge quota; cache eviction/retention management is deferred.
 
 The existing actor-owned SQLite connection migrates transactionally to schema v6. Exact v5 schema verification precedes new download objects. Existing v1–v4 upgrade paths are preserved; future v7 and altered schemas fail closed. Original mutation requests/UUIDs, attempt history, UNKNOWN/conflict evidence, feeds, ACKs, active/prepared snapshots, confirmed cuts and quarantine remain in their original tables. Download bytes and bearer credentials never enter SQLite.
 
@@ -47,18 +47,109 @@ File Details and eligible saved snapshot information provide Download File, dura
 
 ## Validation and publication evidence
 
-Local and hosted validation is being completed. Results below must be replaced with observed evidence before this manifest is finalized. No previous prompt's CI is evidence for P043.
+The following results are observed P043 evidence. Linux tests are separate from native Simulator execution.
 
-- New native tests: 131 across strict metadata/HTTP policy, recovery, storage and actual URLSession fixture suites.
-- First portable download test run: 113 passed, zero failures, prior to the final explicit restart addition. Linux harness uses official Swift 6.2, production domain/application/persistence/staging code, real filesystem/SQLite and a local Swift Crypto counterpart for CryptoKit. Native URLSession/SwiftUI/Rust platform seams are excluded or explicitly skipped in this harness; Linux results are not Simulator execution.
-- Static source validator / Python Support / docs / strict formatting: final results pending.
-- Exact final feature SHA / hosted PR / exact-head iOS Static, Build, Simulator and Rust Apple runs: pending.
-- Simulator pass/skip/fail totals: pending. Existing Keychain entitlement and Data Protection limitations retain their actual native skip status when observed.
-- Physical-device validation: NOT_AVAILABLE. No real-device Data Protection, hardware Keychain, cellular behavior, production-server download or physical power-loss durability is claimed.
-- Merge and resulting hosted `ios-app` SHA: pending. READY_FOR_PROMPT044 is not claimed until GitHub independently confirms the merge.
+Final source feature SHA: `fee2e4b8e852d2d04fcf168f2027e7265ec9c160`. Feature branch: `ios/p043-secure-file-download`. The Rust Apple workflow now also triggers on `clients/ios/**` so integration changes receive all four native gates automatically.
+
+| New native XCTest suite | Cases |
+|---|---:|
+| FileDownloadMetadataTests | 26 |
+| FileDownloadHTTPPolicyTests | 32 |
+| FileDownloadRecoveryTests | 38 |
+| FileDownloadStorageTests | 19 |
+| FileDownloadTransportTests | 13 |
+| FileDownloadViewTests | 3 |
+| Total new native cases | 131 |
+
+Native fixtures exercise real URLSession AsyncBytes through URLProtocol responses, a generated 16 MiB response with a sink bounded to 64 KiB, incremental CryptoKit hashing, the same response through the production coordinator/private filesystem/file-backed SQLite, valid 200/206/304/416 handling, redirect/TLS errors, reopen/resume, corrupted/truncated prefixes, unknown tails, injected write/fsync/rename/commit/read failures, publication reconciliation, quota, scope/logout fencing and SwiftUI hosting/rendering at the largest accessibility text size. Fixtures do not contact a production server. FileDownloadTestSupport contains helpers, not additional test cases.
+
+The successful run includes the fixes identified by genuine native CI: CRLF validation checks Unicode scalars because CRLF can be one Swift grapheme, existing-directory normalization compares canonical paths rather than URL directory-slash metadata, and the rejected-redirect URLProtocol fixture completes its original response. No failing test was removed or disabled.
+
+| Local validation at final source head | Observed result |
+|---|---|
+| Official Swift 6.2 portable suite | 1,216 executed; 1,198 passed; 18 platform skips; 0 failures |
+| Download-only portable rerun | 115 passed; 0 skips; 0 failures |
+| iOS static source/architecture validator | PASS |
+| Python Support suite | 77 passed |
+| Official strict Swift formatting and Swift syntax parsing | PASS |
+| Documentation validation | PASS |
+| git diff --check | PASS |
+
+The portable harness uses production domain/application/persistence/staging logic with real temporary files and file-backed SQLite; harness copies replace CryptoKit imports with a local Swift Crypto counterpart. Apple URLSession, SwiftUI and Rust adapter seams are excluded or explicitly skipped. It adds no repository package dependency. The 18 Linux skips are not counted as passes or as native evidence.
+
+| Exact-feature-head hosted gate | Run | Result |
+|---|---|---|
+| iOS Static Validation | [38113731710](https://github.com/nghianguyen150612/Synveil/actions/runs/38113731710) | PASS |
+| iOS Build | [38113731694](https://github.com/nghianguyen150612/Synveil/actions/runs/38113731694) | PASS |
+| iOS Simulator Tests | [38113731700](https://github.com/nghianguyen150612/Synveil/actions/runs/38113731700) | PASS |
+| iOS Rust Apple Build | [38113731711](https://github.com/nghianguyen150612/Synveil/actions/runs/38113731711) | PASS |
+
+The Simulator xcresult summary reports **1623 total: 1621 passed, 2 skipped, 0 failed**. Environment: Synveil · Built with macOS 26.6.2; iPhone 17 Pro, iOS 26.5 Simulator, arm64. Artifact: `ios-simulator-test-results`, ID `11692393491`, digest `sha256:bdbd838fc8bb4363300313db3e141cf1b146e3eafb9873dcd4f1b65b0c44f399`. The artifact's workflow head matches the final source SHA above.
+
+The two existing native skips remain explicit:
+
+- `KeychainCredentialStoreTests.testSimulatorKeychainRoundTripUsesUniqueTestService`: “The unsigned Simulator test process has no Keychain access entitlement.”
+- `MutationQueueSQLiteTests.testNativeDataProtectionAttributes`: “The Simulator filesystem does not expose Data Protection attributes; requested policy is verified separately. Physical-device round-trip remains required.”
+
+Physical-device validation: **NOT_AVAILABLE**. No real-device Data Protection, hardware Keychain, cellular behavior, production-server download or physical power-loss durability is claimed. Simulator fsync/SQLite/rename/fault fixtures prove the observed software behavior, not hardware crash guarantees.
+
+## Hosted integration
+
+[Feature PR #119](https://github.com/nghianguyen150612/Synveil/pull/119) targets `ios-app`; GitHub independently reports `merged=true`, `state=closed`, with squash integration commit `345419eea168bab7c5294eba46f1c0fb403e082f`. `origin/ios-app` was fetched and the integrated tree's source/tests/project registration/initial manifest were verified against the successful feature tree. The required baseline remains an ancestor.
+
+This evidence-only manifest finalization is a separate PR targeting `ios-app`, following P042's pattern. It changes no app, test, schema or workflow source. The finalization PR's hosted merge result and resulting `ios-app` SHA are recorded in the task's final report, avoiding a self-referential commit SHA in this file. Readiness is reported only after that hosted merge and integrated-file verification.
+
+## Unrelated CI and remaining limitations
+
+The completed final-head [Rust CI push run 38113727812](https://github.com/nghianguyen150612/Synveil/actions/runs/38113727812) reports seven failing jobs and four passing jobs. Failures are Windows Check/Test/Qt desktop (Unix-only APIs in unchanged `crates/install-engine/src/appimage.rs`); Linux Qt desktop and Quality/Clippy (double-must-use errors in unchanged `crates/object-store/src/types.rs`, lines 95 and 359); macOS Test (three `UnsafeEndpoint` IPC failures in unchanged `crates/client/src/control.rs` and `launch.rs`, also observed in PR run 38113731722); and Ubuntu Test (`systemd-tmpfiles --dry-run` unsupported in the runner, `crates/metadata/tests/linux_install_lifecycle.rs:1493`). Ubuntu Check, macOS Check, Dependency policy and Web quality passed. The [Linux AppImage PR run 38113731679](https://github.com/nghianguyen150612/Synveil/actions/runs/38113731679) also failed its artifact audit because `synveil-desktop` contained a `/home/` build-path marker. PostgreSQL and Linux package workflows were still running at the finalization snapshot. These statuses are separate from the four successful exact-head iOS gates.
+
+No desktop, server, installer or package implementation was changed for P043. The failing unrelated jobs are not claimed as passing. No blanket CI success is claimed.
+
+Private staging is a revocable cache. Conservative retained records still charge shared quota; automatic cache eviction/retention management, background execution, uploads, export, preview/Quick Look, sharing, automatic retries and production-server/device end-to-end validation remain deferred. Full SHA-256 is rechecked on capability reads, favoring integrity over read latency. Application-owned chunk bounds do not measure URLSession/OS buffers or physical-device peak RSS. Native rendering tests cover construction/layout/rendering, not a manual VoiceOver audit.
 
 ## Source inventory
 
-Added: `DownloadModels.swift`, `FileVersionResponseDecoder.swift`, `URLSessionFileContentTransport.swift`, `DownloadStagingStore.swift`, `FileDownloadSQLiteSchema.swift`, `FileDownloadCoordinator.swift`, `FileDownloadViewModel.swift`, `FileDownloadControls.swift` and six FileDownload test/support files. All are registered in the Xcode project.
+38 files relative to the required P042 baseline: 16 added, 22 modified. All eight production and six native test/support Swift files are registered in the appropriate Xcode targets; the new Python inventory guard verifies the full download membership.
 
-Modified: authenticated provider, existing SQLite store/migration, dependency container, app/root/catalog/browser/details/snapshot composition, schema-version regression expectations and fixture downgrades. Prior safety tests remain, with supported schema/future-schema assertions advanced to v6/v7 and the old unavailable-content presentation expectation updated for the now-implemented action.
+| Status | Repository path |
+|---|---|
+| Modified | `.github/workflows/ios-rust-apple-build.yml` |
+| Modified | `clients/ios/App/AppDependencyContainer.swift` |
+| Modified | `clients/ios/App/RootView.swift` |
+| Modified | `clients/ios/App/SynveilApp.swift` |
+| Modified | `clients/ios/Application/Library/AuthenticatedLibraryRequestProvider.swift` |
+| Added | `clients/ios/Application/Transfer/FileDownloadCoordinator.swift` |
+| Added | `clients/ios/Domain/Transfer/DownloadModels.swift` |
+| Added | `clients/ios/Domain/Transfer/FileVersionResponseDecoder.swift` |
+| Modified | `clients/ios/Features/Library/LibraryCatalogView.swift` |
+| Modified | `clients/ios/Features/Node/NodeBrowserView.swift` |
+| Modified | `clients/ios/Features/Node/NodeFileDetailsView.swift` |
+| Modified | `clients/ios/Features/Node/SnapshotNodeInformationView.swift` |
+| Added | `clients/ios/Features/Transfer/FileDownloadControls.swift` |
+| Added | `clients/ios/Features/Transfer/FileDownloadViewModel.swift` |
+| Added | `clients/ios/Infrastructure/Network/URLSessionFileContentTransport.swift` |
+| Added | `clients/ios/Infrastructure/Persistence/FileDownloadSQLiteSchema.swift` |
+| Modified | `clients/ios/Infrastructure/Persistence/MutationQueueSQLiteStore.swift` |
+| Added | `clients/ios/Infrastructure/Transfer/DownloadStagingStore.swift` |
+| Added | `clients/ios/Support/tests/test_file_download_registration.py` |
+| Modified | `clients/ios/Support/tests/test_inbound_sync_coordinator.py` |
+| Modified | `clients/ios/Support/tests/test_library_catalog_view_registration.py` |
+| Modified | `clients/ios/Support/tests/test_node_browser_registration.py` |
+| Modified | `clients/ios/Support/tests/test_rebaseline_snapshot.py` |
+| Modified | `clients/ios/Support/tests/test_sync_feed_foundation.py` |
+| Modified | `clients/ios/Synveil.xcodeproj/project.pbxproj` |
+| Added | `clients/ios/Tests/SynveilTests/FileDownloadMetadataTests.swift` |
+| Added | `clients/ios/Tests/SynveilTests/FileDownloadRecoveryTests.swift` |
+| Added | `clients/ios/Tests/SynveilTests/FileDownloadStorageTests.swift` |
+| Added | `clients/ios/Tests/SynveilTests/FileDownloadTestSupport.swift` |
+| Added | `clients/ios/Tests/SynveilTests/FileDownloadTransportTests.swift` |
+| Added | `clients/ios/Tests/SynveilTests/FileDownloadViewTests.swift` |
+| Modified | `clients/ios/Tests/SynveilTests/InboundSyncSQLiteTests.swift` |
+| Modified | `clients/ios/Tests/SynveilTests/MutationQueueSQLiteTests.swift` |
+| Modified | `clients/ios/Tests/SynveilTests/MutationRecoverySQLiteTests.swift` |
+| Modified | `clients/ios/Tests/SynveilTests/NodeProjectionSQLiteTests.swift` |
+| Modified | `clients/ios/Tests/SynveilTests/RebaselineSQLiteTests.swift` |
+| Modified | `clients/ios/Tests/SynveilTests/RebaselineTestSupport.swift` |
+| Added | `docs/ios/manifests/PROMPT043_MANIFEST.md` |
+
+Prior safety assertions remain. Existing schema-version/future-schema expectations advance to v6/v7, old-schema fixture downgrades remove only new download objects, and the old unavailable-content presentation expectation reflects the now-supported download action.
