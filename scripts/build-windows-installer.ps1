@@ -142,7 +142,7 @@ function Read-Payload([string]$Stage, [string]$Generated) {
         $relative = $Matches[3].Replace('\','/')
         Assert-SafeRelativeIdentity $relative
         if ([IO.Path]::IsPathRooted($relative) -or $relative.Split('/') -contains '..') { Fail "PAYLOAD_IDENTITY_FAILURE" "payload traversal" }
-        if ($relative.EndsWith('.exe',[StringComparison]::OrdinalIgnoreCase) -and $relative -notin @('synveil-desktop.exe','synveil-client.exe')) { Fail "PAYLOAD_IDENTITY_FAILURE" "unexpected payload executable" }
+        if ($relative.EndsWith('.exe',[StringComparison]::OrdinalIgnoreCase) -and $relative -notin @('synveil-desktop.exe','synveil-client.exe')) { Fail "PAYLOAD_IDENTITY_FAILURE" "unexpected payload executable: '$relative'" }
         $key = $relative.ToLowerInvariant(); if ($seen.ContainsKey($key)) { Fail "PAYLOAD_IDENTITY_FAILURE" "duplicate/case-colliding payload path" }; $seen[$key] = $true
         $file = [IO.Path]::GetFullPath((Join-Path $Stage $relative)); Assert-Under $file $Stage "PAYLOAD_IDENTITY_FAILURE"
         Assert-NoReparseAncestry $file $true
