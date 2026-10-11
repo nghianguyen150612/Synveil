@@ -4,16 +4,19 @@ import SwiftUI
 struct NodeFileDetailsView: View {
     private let sessionController: SessionController
     private let downloadCoordinator: FileDownloadCoordinator?
+    private let fileExportCoordinator: VerifiedFileExportCoordinator?
     @State private var viewModel: NodeFileDetailsViewModel
 
     init(
         repository: (any NodeRepositoryProtocol)?, sessionController: SessionController,
         offlineDetailsService: (any OfflineNodeBrowserServiceProtocol)? = nil,
         downloadCoordinator: FileDownloadCoordinator? = nil,
+        fileExportCoordinator: VerifiedFileExportCoordinator? = nil,
         route: NodeFileDetailsRoute
     ) {
         self.sessionController = sessionController
         self.downloadCoordinator = downloadCoordinator
+        self.fileExportCoordinator = fileExportCoordinator
         _viewModel = State(
             initialValue: NodeFileDetailsViewModel(
                 repository: repository, sessionController: sessionController,
@@ -150,7 +153,8 @@ struct NodeFileDetailsView: View {
         {
             FileDownloadControls(
                 coordinator: downloadCoordinator, controller: sessionController,
-                library: node.libraryId, node: node.id, version: version
+                library: node.libraryId, node: node.id, version: version,
+                displayName: node.name, exportCoordinator: fileExportCoordinator
             )
             .id(version)
         }

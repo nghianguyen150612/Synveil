@@ -12,6 +12,7 @@ struct LibraryRequestScope: Sendable, CustomStringConvertible, CustomDebugString
     }
 
     var credentialIdentifier: String { session.record.credentialId }
+    var lifecycleRevision: UInt64 { revision }
 
     func sameSession(as other: LibraryRequestScope) -> Bool {
         revision == other.revision && session == other.session

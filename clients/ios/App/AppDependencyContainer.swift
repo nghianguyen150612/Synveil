@@ -47,6 +47,7 @@ public final class AppDependencyContainer {
     private(set) var syncFeedApplicationService: SyncFeedApplicationService?
     private(set) var rebaselineCoordinator: RebaselineCoordinator?
     private(set) var downloadCoordinator: FileDownloadCoordinator?
+    private(set) var fileExportCoordinator: VerifiedFileExportCoordinator?
     private(set) var syncAckService: SyncAckService?
     private(set) var inboundSyncCoordinator: (any InboundSyncCoordinatorProtocol)?
     private(set) var metadataMutationFeature: (any MetadataMutationFeatureProtocol)?
@@ -186,18 +187,24 @@ public final class AppDependencyContainer {
                     let staging = try await Task.detached {
                         try DownloadStagingStore(root: DownloadStagingStore.productionURL())
                     }.value
+                    try? await staging.cleanupOrphanExports()
                     downloadCoordinator = FileDownloadCoordinator(
                         repository: AuthenticatedFileDownloadRepository(
                             provider: browserProvider, bridge: bridge),
                         database: database, staging: staging)
+                    if let downloadCoordinator {
+                        fileExportCoordinator = VerifiedFileExportCoordinator(downloads: downloadCoordinator)
+                    }
                 } catch { downloadCoordinator = nil }
                 let downloads = downloadCoordinator
+                let exports = fileExportCoordinator
                 sessionController.installMutationSessionInvalidator {
                     [
                         weak queue, weak composedMetadataMutationService, weak composedRebaseline,
-                        weak downloads
+                        weak downloads, weak exports
                     ] in
                     downloads?.invalidateSession()
+                    exports?.invalidateSession()
                     queue?.invalidateSession()
                     composedRebaseline?.invalidateSession()
                     composedMetadataMutationService?.invalidateSession()
@@ -212,6 +219,7 @@ public final class AppDependencyContainer {
                 syncFeedApplicationService = nil
                 rebaselineCoordinator = nil
                 downloadCoordinator = nil
+                fileExportCoordinator = nil
                 syncAckService = nil
                 inboundSyncCoordinator = nil
                 metadataMutationFeature = nil
