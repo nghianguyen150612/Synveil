@@ -39,6 +39,7 @@ jobs:
         shell: bash
         run: |
           python scripts/validate-windows-installer.py
+          python tests/windows/test_standard_user_account_name.py
           ./tests/windows/test-windows-pe-import-policy.sh
           ./scripts/test-windows-rustflags.sh
           pwsh -NoProfile -Command '$tokens=$null; $parseErrors=$null; [void][System.Management.Automation.Language.Parser]::ParseFile("scripts/invoke-windows-standard-user-test.ps1",[ref]$tokens,[ref]$parseErrors); if ($parseErrors.Count -gt 0) { $parseErrors | Out-String | Write-Error; exit 1 }'

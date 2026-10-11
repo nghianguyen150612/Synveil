@@ -42,6 +42,7 @@ jobs:
         shell: bash
         run: |
           python3 scripts/validate-windows-installer.py
+          python tests/windows/test_standard_user_account_name.py
           ./tests/windows/test-windows-pe-import-policy.sh
           python3 scripts/validate-windows-native-acceptance.py
           ./scripts/validate-install-acceptance.sh

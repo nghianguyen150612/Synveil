@@ -7,7 +7,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$user = 'synveil_p025_' + [Guid]::NewGuid().ToString('N').Substring(0,8)
+$user = 'sv_p025_' + [Guid]::NewGuid().ToString('N').Substring(0,8)
 $password = [Guid]::NewGuid().ToString('N') + '!aA7'
 Write-Output "::add-mask::$password"
 $account = $null
