@@ -308,11 +308,12 @@ final class VerifiedFileExportTests: XCTestCase {
         _ = try downloadCapability(await downloadRun(f))
         let coordinator = VerifiedFileExportCoordinator(downloads: f.coordinator)
 
-        for (purpose, expectedResult) in [
-            (VerifiedFileExportPurpose.preview, .previewDismissed),
+        let cancellations: [(VerifiedFileExportPurpose, NativeFilePresentationResult)] = [
+            (.preview, .previewDismissed),
             (.share, .shareCancelled),
             (.saveToFiles, .saveCancelled),
-        ] {
+        ]
+        for (purpose, expectedResult) in cancellations {
             let prepared = await coordinator.prepare(
                 library: f.queue.scope.libraryId, node: f.node.id, version: f.version,
                 purpose: purpose, displayName: "report.txt")
