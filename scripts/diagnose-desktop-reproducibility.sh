@@ -88,6 +88,49 @@ done
 printf '[synveil-diagnosis] comparing linked binaries\n'
 : > "${REPORT_DIR}/binaries.txt"
 
+# Build-script output outside the QML-specific roots can also feed linked
+# objects (for example CXX-Qt's generated source). Compare generated source
+# inputs across the entire Cargo release build tree before classifying a
+# machine-code-only difference as compiler nondeterminism.
+printf '[synveil-diagnosis] comparing Cargo-generated build sources\n'
+: > "${REPORT_DIR}/cargo-generated-sources.txt"
+if [[ -d "${BUILD_A}/release/build" || -d "${BUILD_B}/release/build" ]]; then
+    for label in a b; do
+        root_var="BUILD_${label^^}"
+        root="${!root_var}/release/build"
+        if [[ -d "$root" ]]; then
+            ( cd "$root" && find . -type f \
+                \( -name '*.rs' -o -name '*.cpp' -o -name '*.cc' -o -name '*.c' \
+                   -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' \) | LC_ALL=C sort ) \
+                > "${REPORT_DIR}/cargo-generated-files-${label}.txt"
+        else
+            : > "${REPORT_DIR}/cargo-generated-files-${label}.txt"
+        fi
+    done
+    if ! diff -q "${REPORT_DIR}/cargo-generated-files-a.txt" \
+        "${REPORT_DIR}/cargo-generated-files-b.txt" >/dev/null 2>&1; then
+        printf '[synveil-diagnosis] generated source file sets differ\n' |
+            tee -a "${REPORT_DIR}/cargo-generated-sources.txt"
+        diff -u "${REPORT_DIR}/cargo-generated-files-a.txt" \
+            "${REPORT_DIR}/cargo-generated-files-b.txt" |
+            head -n 80 | sed 's/^/[synveil-diagnosis]   /' |
+            tee -a "${REPORT_DIR}/cargo-generated-sources.txt" || true
+    fi
+    while IFS= read -r relative; do
+        a_file="${BUILD_A}/release/build/${relative}"
+        b_file="${BUILD_B}/release/build/${relative}"
+        [[ -f "$a_file" && -f "$b_file" ]] || continue
+        if cmp -s "$a_file" "$b_file"; then
+            continue
+        fi
+        printf '[synveil-diagnosis] DIFFERS: release/build/%s\n' "$relative" |
+            tee -a "${REPORT_DIR}/cargo-generated-sources.txt"
+        diff -u "$a_file" "$b_file" 2>/dev/null |
+            head -n 80 | sed 's/^/[synveil-diagnosis]   /' |
+            tee -a "${REPORT_DIR}/cargo-generated-sources.txt" || true
+    done < "${REPORT_DIR}/cargo-generated-files-a.txt"
+fi
+
 for binary_name in synveil-desktop synveil-client; do
     a_bin="${BUILD_A}/release/${binary_name}"
     b_bin="${BUILD_B}/release/${binary_name}"
@@ -130,6 +173,43 @@ for binary_name in synveil-desktop synveil-client; do
     if [[ -n "$first_offset" ]]; then
         printf '[synveil-diagnosis]     first differing byte offset: %s\n' "$first_offset" |
             tee -a "${REPORT_DIR}/binaries.txt"
+        zero_offset=$(( first_offset - 1 ))
+        for label in a b; do
+            root_var="BUILD_${label^^}"
+            candidate="${!root_var}/release/${binary_name}"
+            printf '[synveil-diagnosis]     build-%s differing bytes:' "$label" |
+                tee -a "${REPORT_DIR}/binaries.txt"
+            od -An -tx1 -N 32 -j "$zero_offset" "$candidate" 2>/dev/null |
+                tr -s ' ' | tee -a "${REPORT_DIR}/binaries.txt"
+            if command -v readelf >/dev/null 2>&1 && command -v addr2line >/dev/null 2>&1; then
+                while read -r section address section_offset section_size; do
+                    [[ -n "$section" ]] || continue
+                    section_start=$((16#$section_offset))
+                    section_length=$((16#$section_size))
+                    if (( zero_offset >= section_start && zero_offset < section_start + section_length )); then
+                        virtual_address=$((16#$address + zero_offset - section_start))
+                        printf '[synveil-diagnosis]     differing section: %s file_offset=0x%s virtual_address=0x%x\n' \
+                            "$section" "$section_offset" "$virtual_address" |
+                            tee -a "${REPORT_DIR}/binaries.txt"
+                        addr2line -f -C -e "$candidate" "0x$(printf '%x' "$virtual_address")" 2>/dev/null |
+                            sed 's/^/[synveil-diagnosis]       symbol: /' |
+                            tee -a "${REPORT_DIR}/binaries.txt" || true
+                        if command -v objdump >/dev/null 2>&1; then
+                            start_address=$((virtual_address > 32 ? virtual_address - 32 : 0))
+                            stop_address=$((virtual_address + 96))
+                            objdump -d --start-address="$start_address" --stop-address="$stop_address" "$candidate" 2>/dev/null |
+                                tail -n 16 | sed 's/^/[synveil-diagnosis]       /' |
+                                tee -a "${REPORT_DIR}/binaries.txt" || true
+                        fi
+                        break
+                    fi
+                done < <(
+                    readelf -S -W "$candidate" 2>/dev/null |
+                        sed -E 's/^[[:space:]]*\[[[:space:]]*[0-9]+\][[:space:]]*//' |
+                        awk '$1 ~ /^\./ && NF >= 5 { print $1, $3, $4, $5 }'
+                )
+            fi
+        done
         start=$(( first_offset > 96 ? first_offset - 96 : 1 ))
         printf '[synveil-diagnosis]     build-a context: ' | tee -a "${REPORT_DIR}/binaries.txt"
         dd if="$a_bin" bs=1 skip=$(( start - 1 )) count=160 status=none 2>/dev/null |
@@ -152,6 +232,7 @@ done
 
 printf '[synveil-diagnosis] report written under %s\n' "$REPORT_DIR"
 printf '[synveil-diagnosis] generated inputs: %s\n' "${REPORT_DIR}/generated-inputs.txt"
+printf '[synveil-diagnosis] Cargo sources:    %s\n' "${REPORT_DIR}/cargo-generated-sources.txt"
 printf '[synveil-diagnosis] binaries:         %s\n' "${REPORT_DIR}/binaries.txt"
 
 # A diagnostic never fails the build; the gate decides pass or fail.

@@ -345,9 +345,7 @@ impl InstallationJournal {
         fs::remove_file(&temp).map_err(io_error)?;
         self.maybe_fail(class, JournalFaultPoint::AfterCommit)?;
         self.maybe_fail(class, JournalFaultPoint::CommittedObjectSync)?;
-        File::open(&final_path)
-            .and_then(|f| f.sync_all())
-            .map_err(io_error)?;
+        sync_committed_file(&final_path)?;
         self.maybe_fail(class, JournalFaultPoint::AfterCommittedObjectSync)?;
         self.maybe_fail(class, JournalFaultPoint::DirectorySync)?;
         sync_directory(&self.directory)?;
@@ -556,7 +554,7 @@ fn trusted_macos_root_alias(path: &Path, metadata: &fs::Metadata) -> bool {
         _ => return false,
     };
     metadata.uid() == 0
-        && fs::read_link(path).is_ok_and(|actual| actual == target)
+        && fs::canonicalize(path).is_ok_and(|actual| actual == target)
         && fs::metadata("/").is_ok_and(|root| root.uid() == 0 && root.mode() & 0o022 == 0)
 }
 
@@ -578,9 +576,66 @@ fn secure_open(options: &mut OpenOptions) {
 }
 
 fn sync_directory(path: &Path) -> Result<(), JournalError> {
-    File::open(path)
-        .and_then(|f| f.sync_all())
-        .map_err(io_error)
+    reject_symlink(path)?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        const FILE_SHARE_READ: u32 = 0x0000_0001;
+        const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+        const FILE_SHARE_DELETE: u32 = 0x0000_0004;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+
+        // Windows requires BACKUP_SEMANTICS to open a directory handle. Keep
+        // OPEN_REPARSE_POINT and verify the handle itself so a path replacement
+        // cannot make the durability flush follow a junction or symbolic link.
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .write(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+        let directory = options.open(path).map_err(io_error)?;
+        let metadata = directory.metadata().map_err(io_error)?;
+        use std::os::windows::fs::MetadataExt;
+        if !metadata.is_dir() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+        }
+        directory.sync_all().map_err(io_error)
+    }
+    #[cfg(not(windows))]
+    {
+        File::open(path)
+            .and_then(|file| file.sync_all())
+            .map_err(io_error)
+    }
+}
+
+fn sync_committed_file(path: &Path) -> Result<(), JournalError> {
+    reject_symlink(path)?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+        let mut options = OpenOptions::new();
+        options.write(true);
+        secure_open(&mut options);
+        let file = options.open(path).map_err(io_error)?;
+        let metadata = file.metadata().map_err(io_error)?;
+        if !metadata.is_file() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(JournalError::new(JournalErrorCode::JournalCorrupt));
+        }
+        file.sync_all().map_err(io_error)
+    }
+    #[cfg(not(windows))]
+    {
+        File::open(path)
+            .and_then(|file| file.sync_all())
+            .map_err(io_error)
+    }
 }
 fn create_directory_durable(path: &Path) -> Result<(), JournalError> {
     let parent = path
@@ -612,6 +667,42 @@ fn create_directory_durable(path: &Path) -> Result<(), JournalError> {
     }
 }
 
+#[cfg(all(test, windows))]
+mod windows_directory_sync_tests {
+    use std::{fs::File, io::Write};
+
+    use super::{create_directory_durable, sync_committed_file};
+
+    #[test]
+    fn directory_flush_uses_a_real_windows_directory_handle() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let root = temporary.path().join("journal-root");
+        create_directory_durable(&root).expect("create and durably flush journal directory");
+        create_directory_durable(&root.join("nested"))
+            .expect("create and durably flush nested journal directory");
+    }
+
+    #[test]
+    fn committed_record_flush_reopens_a_writable_non_reparse_handle() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let path = temporary.path().join("checkpoint.json");
+        let mut file = File::create(&path).expect("checkpoint file");
+        file.write_all(b"durable checkpoint")
+            .expect("checkpoint bytes");
+        file.sync_all().expect("initial checkpoint flush");
+        drop(file);
+
+        assert!(
+            File::open(&path)
+                .expect("read-only checkpoint handle")
+                .sync_all()
+                .is_err(),
+            "Windows FlushFileBuffers requires a handle opened with write access"
+        );
+        sync_committed_file(&path).expect("reopen checkpoint with write access and flush it");
+    }
+}
+
 fn io_error(error: std::io::Error) -> JournalError {
     let raw_code = error.raw_os_error();
     let platform_disk_full = {
@@ -639,6 +730,30 @@ fn io_error(error: std::io::Error) -> JournalError {
         JournalErrorCode::JournalIoFailed
     })
 }
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_path_tests {
+    use super::trusted_macos_root_alias;
+    use std::{fs, os::unix::fs::MetadataExt, path::Path};
+
+    #[test]
+    fn accepts_only_canonical_os_owned_temporary_root_aliases() {
+        for (alias, canonical) in [
+            (Path::new("/var"), Path::new("/private/var")),
+            (Path::new("/tmp"), Path::new("/private/tmp")),
+        ] {
+            let Ok(metadata) = fs::symlink_metadata(alias) else {
+                continue;
+            };
+            if metadata.file_type().is_symlink() {
+                assert_eq!(metadata.uid(), 0);
+                assert_eq!(fs::canonicalize(alias).unwrap(), canonical);
+                assert!(trusted_macos_root_alias(alias, &metadata));
+            }
+        }
+    }
+}
+
 fn hex_hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }

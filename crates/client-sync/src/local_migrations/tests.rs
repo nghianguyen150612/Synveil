@@ -3,7 +3,7 @@ use std::{borrow::Cow, fs};
 use sqlx::{
     SqlitePool,
     migrate::{Migration, MigrationType, Migrator},
-    sqlite::SqliteConnectOptions,
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
 
 use crate::{
@@ -15,16 +15,25 @@ async fn fixture(version: i64) -> (std::path::PathBuf, LocalStateConfig, SqliteP
     let directory = std::env::temp_dir().join(format!("synveil-upgrade-{}", uuid::Uuid::now_v7()));
     fs::create_dir(&directory).unwrap();
     let config = LocalStateConfig::new(directory.join("state.sqlite3"));
-    let pool = SqlitePool::connect_with(
-        SqliteConnectOptions::new()
-            .filename(config.database_path())
-            .create_if_missing(true)
-            .foreign_keys(true),
-    )
-    .await
-    .unwrap();
+    let pool = migration_test_pool(config.database_path()).await;
     prefix(version).run(&pool).await.unwrap();
     (directory, config, pool)
+}
+
+async fn migration_test_pool(path: &std::path::Path) -> SqlitePool {
+    SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(path)
+                .create_if_missing(true)
+                .foreign_keys(true)
+                .journal_mode(SqliteJournalMode::Wal)
+                .synchronous(SqliteSynchronous::Full)
+                .busy_timeout(std::time::Duration::from_secs(5)),
+        )
+        .await
+        .unwrap()
 }
 
 fn prefix(version: i64) -> Migrator {
@@ -182,6 +191,7 @@ async fn damaged_or_unknown_schema_fails_closed_without_repairing_evidence() {
         sqlx::query(mutation).execute(&pool).await.unwrap();
         let before = schema(&pool).await;
         pool.close().await;
+        drop(pool);
         for _ in 0..2 {
             let error = LocalStateStore::open(&config).await.unwrap_err();
             if unsupported {
@@ -191,10 +201,7 @@ async fn damaged_or_unknown_schema_fails_closed_without_repairing_evidence() {
                 assert!(matches!(error, ClientSyncError::LocalSchemaInvalid));
             }
         }
-        let pool =
-            SqlitePool::connect_with(SqliteConnectOptions::new().filename(config.database_path()))
-                .await
-                .unwrap();
+        let pool = migration_test_pool(config.database_path()).await;
         assert_eq!(schema(&pool).await, before, "{mutation}");
         assert_eq!(
             sqlx::query_scalar::<_, String>("SELECT display_label FROM server_profiles")
@@ -204,7 +211,19 @@ async fn damaged_or_unknown_schema_fails_closed_without_repairing_evidence() {
             "preserve"
         );
         pool.close().await;
-        remove_dir_all_bounded(&directory).unwrap();
+        drop(pool);
+        remove_dir_all_bounded(&directory).unwrap_or_else(|error| {
+            let remaining = fs::read_dir(&directory)
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+            panic!(
+                "fixture cleanup after {mutation:?} failed at {}: {error}; remaining entries: {remaining:?}",
+                directory.display(),
+            )
+        });
     }
 }
 

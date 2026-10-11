@@ -30,6 +30,28 @@ function Invoke-Checked([string]$File, [string[]]$Arguments, [string]$Kind) {
         if ($process.ExitCode -ne 0) { Fail $Kind "process exited $($process.ExitCode)" }
     } finally { $process.Dispose() }
 }
+function Assert-NoSecretLikeBytes([byte[]]$Content, [string]$Label) {
+    $ascii = [Text.Encoding]::ASCII.GetString($Content)
+    $utf16 = [Text.Encoding]::Unicode.GetString($Content)
+    foreach ($marker in @('BEGIN PRIVATE KEY','ghp_','github_pat_')) {
+        if ($ascii.Contains($marker) -or $utf16.Contains($marker)) {
+            Fail "INSTALLER_VERIFY_FAILURE" "secret-like marker '$marker' in $Label"
+        }
+    }
+}
+function Test-FixtureSecretScanPath([string]$RelativePath) {
+    $leaf = [IO.Path]::GetFileName($RelativePath)
+    if ($leaf -in @('synveil-desktop.exe','synveil-client.exe','LICENSE','NOTICE')) { return $true }
+    $textExtensions = @('.conf','.ini','.js','.json','.md','.qml','.qmltypes','.qmldir','.svg','.txt','.xml')
+    return $textExtensions -contains [IO.Path]::GetExtension($RelativePath).ToLowerInvariant()
+}
+function Assert-NoPrivateSourcePath([byte[]]$Content, [string]$RepositoryRoot) {
+    $ascii = [Text.Encoding]::ASCII.GetString($Content)
+    $utf16 = [Text.Encoding]::Unicode.GetString($Content)
+    if ($ascii.Contains($RepositoryRoot) -or $utf16.Contains($RepositoryRoot)) {
+        Fail "INSTALLER_VERIFY_FAILURE" "private source path leaked into Setup"
+    }
+}
 function Get-WorkspaceVersion([string]$CargoToml) {
     $text = [IO.File]::ReadAllText($CargoToml)
     $match = [regex]::Match($text, '(?ms)^\[workspace\.package\]\s*.*?^version\s*=\s*"([^"\r\n]+)"')
@@ -126,7 +148,7 @@ function Read-Payload([string]$Stage, [string]$Generated) {
         $relative = $Matches[3].Replace('\','/')
         Assert-SafeRelativeIdentity $relative
         if ([IO.Path]::IsPathRooted($relative) -or $relative.Split('/') -contains '..') { Fail "PAYLOAD_IDENTITY_FAILURE" "payload traversal" }
-        if ($relative.EndsWith('.exe',[StringComparison]::OrdinalIgnoreCase) -and $relative -notin @('synveil-desktop.exe','synveil-client.exe')) { Fail "PAYLOAD_IDENTITY_FAILURE" "unexpected payload executable" }
+        if ($relative.EndsWith('.exe',[StringComparison]::OrdinalIgnoreCase) -and $relative -notin @('synveil-desktop.exe','synveil-client.exe')) { Fail "PAYLOAD_IDENTITY_FAILURE" "unexpected payload executable: '$relative'" }
         $key = $relative.ToLowerInvariant(); if ($seen.ContainsKey($key)) { Fail "PAYLOAD_IDENTITY_FAILURE" "duplicate/case-colliding payload path" }; $seen[$key] = $true
         $file = [IO.Path]::GetFullPath((Join-Path $Stage $relative)); Assert-Under $file $Stage "PAYLOAD_IDENTITY_FAILURE"
         Assert-NoReparseAncestry $file $true
@@ -218,9 +240,23 @@ try {
     $pe = [BitConverter]::ToInt32($bytes,0x3c); if ($pe -lt 0 -or $pe + 6 -ge $bytes.Length -or [BitConverter]::ToUInt32($bytes,$pe) -ne 0x00004550) { Fail "INSTALLER_VERIFY_FAILURE" "invalid PE header" }
     $machine = [BitConverter]::ToUInt16($bytes,$pe+4); if ($machine -notin @(0x14c,0x8664)) { Fail "INSTALLER_VERIFY_FAILURE" "unexpected Setup PE machine" }
     $metadata = [Diagnostics.FileVersionInfo]::GetVersionInfo($setup); if ($metadata.FileVersion -notmatch ('^' + [regex]::Escape($version.Windows) + '(?:\D|$)')) { Fail "INSTALLER_VERIFY_FAILURE" "Setup version metadata mismatch" }
-    $ascii = [Text.Encoding]::ASCII.GetString($bytes); $utf16 = [Text.Encoding]::Unicode.GetString($bytes)
-    foreach ($marker in @('BEGIN PRIVATE KEY','ghp_','github_pat_')) { if ($ascii.Contains($marker) -or $utf16.Contains($marker)) { Fail "INSTALLER_VERIFY_FAILURE" "secret-like marker in output" } }
-    if ($ascii.Contains($repo) -or $utf16.Contains($repo)) { Fail "INSTALLER_VERIFY_FAILURE" "private source path leaked into Setup" }
+    if (!$LifecycleFixtureVersion) {
+        Assert-NoSecretLikeBytes $bytes 'output'
+    } else {
+        # The P044 lifecycle fixture embeds 64 MiB of cryptographically random
+        # data so Inno Setup has a bounded in-flight copy to interrupt. Opaque
+        # Qt/vendor PE files can also contain credential-marker syntax as
+        # parser literals, as observed in Qt6Network.dll; scan first-party
+        # executables and text payloads, while production Setup still gets a
+        # full-byte scan and every Setup retains the private-source-path scan.
+        foreach ($payloadFile in Get-ChildItem -LiteralPath $stage -File -Recurse) {
+            $relative = [IO.Path]::GetRelativePath($stage, $payloadFile.FullName).Replace('\','/')
+            if ($relative -ceq 'runtime-payload.bin') { continue }
+            if (!(Test-FixtureSecretScanPath $relative)) { continue }
+            Assert-NoSecretLikeBytes ([IO.File]::ReadAllBytes($payloadFile.FullName)) "fixture payload $relative"
+        }
+    }
+    Assert-NoPrivateSourcePath $bytes $repo
     if (!$LifecycleFixtureVersion) {
         Invoke-Checked 'python' @((Join-Path $repo 'scripts/release_manifest.py'),'create','--artifact-root',$output,'--product-version',$version.Product,'--source-commit',$revision,'--output',(Join-Path $output 'SYNVEIL-RELEASE-MANIFEST.json'),'--artifact','{"id":"windows-x86_64-installer","artifact_type":"windows_installer","filename":"SynveilSetup.exe","platform":"windows","architecture":"x86_64","role":"primary_installer","components":["synveil-desktop","synveil-client"]}') "INSTALLER_VERIFY_FAILURE"
         Invoke-Checked 'python' @((Join-Path $repo 'scripts/release_manifest.py'),'validate','--artifact-root',$output,(Join-Path $output 'SYNVEIL-RELEASE-MANIFEST.json')) "INSTALLER_VERIFY_FAILURE"

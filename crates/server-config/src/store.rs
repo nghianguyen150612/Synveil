@@ -1481,9 +1481,9 @@ fn expected_synveil_gid() -> Option<u32> {
     None
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
-    use std::{fs, os::unix::fs::PermissionsExt};
+    use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
     use synveil_object_store::{
         CapabilityEvidence, CapabilitySupport, StorageAvailability, StorageBackendKind,
         StorageCapabilities, StorageCapability,
@@ -1500,9 +1500,18 @@ mod tests {
         StorageId, StorageRootIdentity,
     };
 
+    fn fixture_config_root(temp: &tempfile::TempDir) -> PathBuf {
+        // macOS exposes temporary directories beneath `/var`, an alias to
+        // `/private/var`. Production intentionally rejects redirected path
+        // ancestors, so resolve this disposable fixture root before use.
+        fs::canonicalize(temp.path())
+            .expect("canonical temporary fixture root")
+            .join("etc/synveil")
+    }
+
     fn fixture_store() -> (tempfile::TempDir, ServerConfigStore) {
         let temp = tempfile::tempdir().unwrap();
-        let layout = LinuxConfigLayout::at_root(temp.path().join("etc/synveil")).unwrap();
+        let layout = LinuxConfigLayout::at_root(fixture_config_root(&temp)).unwrap();
         (temp, ServerConfigStore::new(layout))
     }
 
@@ -1585,9 +1594,21 @@ mod tests {
     }
 
     #[test]
+    fn canonical_temporary_fixture_root_passes_no_follow_store_validation() {
+        let (_temp, store) = fixture_store();
+        initialize_managed(&store);
+        assert!(matches!(
+            store.inspect(),
+            ConfigInspection::ValidCurrent { .. }
+        ));
+    }
+
+    #[test]
     fn managed_override_does_not_create_unowned_missing_parent_directories() {
         let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().join("missing-parent/etc/synveil");
+        let canonical_temp_root =
+            fs::canonicalize(temp.path()).expect("canonical temporary fixture root");
+        let root = canonical_temp_root.join("missing-parent/etc/synveil");
         let layout = LinuxConfigLayout::at_managed_root(&root).unwrap();
         let store = ServerConfigStore::new(layout);
         let result = store.initialize_managed(
@@ -1597,7 +1618,7 @@ mod tests {
             ExistingServerEvidence::NoKnownServerState,
         );
         assert!(matches!(result, Err(ConfigStoreError::InvalidPath)));
-        assert!(!temp.path().join("missing-parent").exists());
+        assert!(!canonical_temp_root.join("missing-parent").exists());
     }
 
     #[test]
@@ -2223,7 +2244,7 @@ mod tests {
             WriteFailurePoint::AfterCredentialDirectoryCreate,
         ] {
             let temp = tempfile::tempdir().unwrap();
-            let layout = LinuxConfigLayout::at_root(temp.path().join("etc/synveil")).unwrap();
+            let layout = LinuxConfigLayout::at_root(fixture_config_root(&temp)).unwrap();
             let failing = ServerConfigStore {
                 layout: layout.clone(),
                 failure_point: Some(point),
@@ -2247,7 +2268,7 @@ mod tests {
         }
 
         let temp = tempfile::tempdir().unwrap();
-        let layout = LinuxConfigLayout::at_root(temp.path().join("etc/synveil")).unwrap();
+        let layout = LinuxConfigLayout::at_root(fixture_config_root(&temp)).unwrap();
         let store = ServerConfigStore {
             layout,
             failure_point: Some(WriteFailurePoint::AfterSecretFileSync),
@@ -2296,7 +2317,7 @@ mod tests {
             WriteFailurePoint::PostWriteVerification,
         ] {
             let temp = tempfile::tempdir().unwrap();
-            let layout = LinuxConfigLayout::at_root(temp.path().join("etc/synveil")).unwrap();
+            let layout = LinuxConfigLayout::at_root(fixture_config_root(&temp)).unwrap();
             let store = ServerConfigStore {
                 layout,
                 failure_point: Some(WriteFailurePoint::BeforeTemporaryCreate),

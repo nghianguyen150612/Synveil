@@ -25,42 +25,21 @@ jobs:
           version: 6.8.3
           arch: win64_msvc2022_64
           cache: true
+      - name: Pin the reproducible ZIP writer runtime
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14.7"
+      - name: Test deterministic Windows ZIP writer
+        shell: bash
+        run: python tests/windows/test_reproducible_zip.py
       - name: Select and authenticate the MSVC linker
         shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if ([string]::IsNullOrWhiteSpace($env:VCToolsInstallDir)) {
-            throw 'MSVC_LINKER_SELECTION_FAILURE: VCToolsInstallDir was not exported by the developer environment'
-          }
-          $linker = [IO.Path]::GetFullPath((Join-Path $env:VCToolsInstallDir 'bin\Hostx64\x64\link.exe'))
-          $toolsRoot = [IO.Path]::GetFullPath($env:VCToolsInstallDir).TrimEnd('\') + '\'
-          if (!$linker.StartsWith($toolsRoot, [StringComparison]::OrdinalIgnoreCase) -or !(Test-Path -LiteralPath $linker -PathType Leaf)) {
-            throw 'MSVC_LINKER_SELECTION_FAILURE: the selected linker is outside the active Visual C++ tools root or missing'
-          }
-          $linkerFile = Get-Item -LiteralPath $linker
-          if ($null -ne $linkerFile.LinkType) {
-            throw 'MSVC_LINKER_SELECTION_FAILURE: the selected linker must be a regular, non-reparse-point file'
-          }
-          $identity = [Diagnostics.FileVersionInfo]::GetVersionInfo($linker)
-          if ($identity.CompanyName -notmatch '^Microsoft Corporation$' -or $identity.OriginalFilename -notmatch '^LINK\.EXE$') {
-            throw "MSVC_LINKER_SELECTION_FAILURE: unexpected linker identity company='$($identity.CompanyName)' original='$($identity.OriginalFilename)'"
-          }
-          $bytes = [IO.File]::ReadAllBytes($linker)
-          if ($bytes.Length -lt 512 -or $bytes[0] -ne 0x4d -or $bytes[1] -ne 0x5a) {
-            throw 'MSVC_LINKER_SELECTION_FAILURE: the selected linker is not a PE executable'
-          }
-          $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
-          if ($peOffset -lt 0 -or $peOffset + 6 -ge $bytes.Length -or [BitConverter]::ToUInt32($bytes, $peOffset) -ne 0x00004550 -or [BitConverter]::ToUInt16($bytes, $peOffset + 4) -ne 0x8664) {
-            throw 'MSVC_LINKER_SELECTION_FAILURE: the selected linker is not an AMD64 PE executable'
-          }
-          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "Authenticated MSVC linker: $linker"
-          Write-Host "Version: $($identity.FileVersion)"
-          Write-Host "SHA-256: $((Get-FileHash -LiteralPath $linker -Algorithm SHA256).Hash.ToLowerInvariant())"
+        run: ./scripts/select-msvc-linker.ps1
       - name: Validate reviewed installer sources
         shell: bash
         run: |
           python scripts/validate-windows-installer.py
+          ./tests/windows/test-windows-pe-import-policy.sh
           ./scripts/test-windows-rustflags.sh
       - name: Build runtime payload
         shell: bash
@@ -79,18 +58,36 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          function Expect-Rejected([string]$Name, [scriptblock]$Mutation) {
+          function Expect-Rejected([string]$Name, [scriptblock]$Mutation, [switch]$LifecycleFixture) {
             $fixture = Join-Path $env:RUNNER_TEMP ("synveil-negative-" + $Name)
             Remove-Item $fixture -Recurse -Force -ErrorAction SilentlyContinue
             Copy-Item target/windows-installer-runtime $fixture -Recurse
             & $Mutation $fixture
-            & pwsh -NoProfile -File ./scripts/build-windows-installer.ps1 -RuntimeStagingDirectory $fixture 2>$null
+            $arguments = @('-NoProfile','-File','./scripts/build-windows-installer.ps1','-RuntimeStagingDirectory',$fixture)
+            if ($LifecycleFixture) { $arguments += @('-LifecycleFixtureVersion','1.1.0') }
+            & pwsh @arguments 2>$null
             if ($LASTEXITCODE -eq 0) { throw "NEGATIVE_RUNTIME_FAILURE: $Name fixture was accepted" }
+            # Expected child-process rejection is success for this test step;
+            # clear PowerShell's native exit status so GitHub's pwsh wrapper
+            # does not propagate the last expected non-zero child result.
+            $global:LASTEXITCODE = 0
           }
           Expect-Rejected 'missing-qwindows' { param($p) Remove-Item (Join-Path $p 'platforms/qwindows.dll') }
           Expect-Rejected 'corrupt-dll' { param($p) Add-Content -LiteralPath (Join-Path $p 'platforms/qwindows.dll') -Value 'corrupt' }
           Expect-Rejected 'unexpected-dll' { param($p) Copy-Item (Join-Path $p 'platforms/qwindows.dll') (Join-Path $p 'unexpected.dll') }
           Expect-Rejected 'developer-file' { param($p) Set-Content -LiteralPath (Join-Path $p 'leaked.lib') -Value 'not-runtime' }
+          Expect-Rejected 'private-key-marker-text' {
+            param($p)
+            $license = Join-Path $p 'LICENSE'
+            [IO.File]::AppendAllText($license, ([Environment]::NewLine + 'BEGIN PRIVATE KEY' + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            $manifest = Join-Path $p 'SYNVEIL-MANIFEST.txt'
+            $lines = [Collections.Generic.List[string]](Get-Content -LiteralPath $manifest)
+            $index = $lines.FindIndex({ param($line) $line.EndsWith(' LICENSE') })
+            if ($index -lt 0) { throw 'SECRET_SCAN_FIXTURE_FAILURE: LICENSE inventory entry missing' }
+            $hash = (Get-FileHash -LiteralPath $license -Algorithm SHA256).Hash.ToLowerInvariant()
+            $lines[$index] = "$hash $((Get-Item -LiteralPath $license).Length) LICENSE"
+            [IO.File]::WriteAllLines($manifest, $lines, [Text.UTF8Encoding]::new($false))
+          } -LifecycleFixture
       - name: Build installer twice and require reproducibility
         shell: pwsh
         run: |

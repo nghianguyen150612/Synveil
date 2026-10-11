@@ -2185,14 +2185,16 @@ impl BoundControlTransport {
             }
             #[cfg(windows)]
             Self::Windows { server, name } => {
-                let current = server
-                    .take()
+                let pending = server
+                    .as_mut()
                     .ok_or(DesktopControlServerError::ListenerFailed)?;
-                current
+                pending
                     .connect()
                     .await
                     .map_err(|_| DesktopControlServerError::ListenerFailed)?;
-                let connected = current;
+                let connected = server
+                    .take()
+                    .ok_or(DesktopControlServerError::ListenerFailed)?;
                 *server = Some(create_windows_pipe(name, false)?);
                 Ok(AcceptedControlConnection {
                     io: Box::new(connected),
@@ -3561,6 +3563,28 @@ mod tests {
         synveil_client_sync::ServerProfileId::new()
     }
 
+    #[cfg(unix)]
+    fn short_unix_socket_fixture_root() -> PathBuf {
+        #[cfg(target_os = "macos")]
+        let base = PathBuf::from("/tmp");
+        #[cfg(not(target_os = "macos"))]
+        let base = std::env::temp_dir();
+        let root = base.join(format!("sv{}", uuid::Uuid::now_v7().simple()));
+        fs::create_dir_all(&root).expect("fixture root");
+        let root = root.canonicalize().expect("canonical fixture root");
+        use std::os::unix::ffi::OsStrExt as _;
+        assert!(
+            root.join(CONTROL_ENDPOINT_DIRECTORY)
+                .join("control.sock")
+                .as_os_str()
+                .as_bytes()
+                .len()
+                < 100,
+            "Unix socket fixture path must remain below macOS and Linux limits"
+        );
+        root
+    }
+
     #[test]
     fn framing_rejects_zero_and_oversized_payloads_before_body_allocation() {
         assert_eq!(encode_frame(&[]), Err(ControlFrameError::ZeroLength));
@@ -3908,8 +3932,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn active_socket_is_never_replaced_and_stale_socket_is_recovered() {
-        let root = std::env::temp_dir().join(format!("sv96-active-{}", uuid::Uuid::now_v7()));
-        fs::create_dir_all(&root).expect("fixture root");
+        let root = short_unix_socket_fixture_root();
         let path = root.join(CONTROL_ENDPOINT_DIRECTORY).join("control.sock");
         let endpoint = DesktopControlEndpoint::UnixSocket { path: path.clone() };
 
@@ -4009,9 +4032,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn local_server_and_client_share_one_host_control_surface() {
-        let root =
-            std::env::temp_dir().join(format!("synveil-control-local-{}", uuid::Uuid::now_v7()));
-        fs::create_dir_all(&root).expect("fixture root");
+        let root = short_unix_socket_fixture_root();
         let state = Arc::new(
             LocalStateStore::open(&LocalStateConfig::new(root.join("state.sqlite3")))
                 .await

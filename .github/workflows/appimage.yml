@@ -37,13 +37,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y file shellcheck pkg-config libdbus-1-dev \
-            libfuse2
+            libfuse2 xvfb xauth
           sudo install -d -m 0777 /usr/src/synveil
       - name: Static contracts and shell checks
         run: |
           bash -n deploy/packages/build-appimage.sh scripts/validate-appimage-build.sh
           shellcheck -S warning deploy/packages/build-appimage.sh deploy/packages/appimage/AppRun scripts/validate-appimage-build.sh
           ./scripts/validate-appimage-build.sh
+          python3 -m unittest discover -s tests/appimage -v
           cargo test -p synveil-install-engine --test appimage_integration --locked
       - name: Build and independently reproduce AppImage
         run: ./deploy/packages/build-appimage.sh

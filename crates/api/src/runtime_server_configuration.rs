@@ -138,18 +138,22 @@ fn has_legacy_configuration_inputs() -> bool {
 mod tests {
     use std::env;
 
+    #[cfg(not(windows))]
     use synveil_server_config::{
         ConfigInspection, DeploymentProfile, ExistingServerEvidence, ExternalDatabaseCredential,
         NewServerConfig, StorageId, StorageRootIdentity,
     };
+    #[cfg(not(windows))]
     use synveil_storage::{
         CapabilityEvidence, CapabilitySupport, StorageAvailability, StorageBackendKind,
         StorageCapabilities, StorageCapability,
     };
 
+    #[cfg(not(windows))]
+    use super::select_server_configuration;
     use super::{
         RuntimeServerConfiguration, RuntimeServerConfigurationError, SERVER_CONFIG_FILE_ENV,
-        select_server_configuration, server_configuration_from_runtime,
+        server_configuration_from_runtime,
     };
 
     fn clear_env(f: impl FnOnce()) {
@@ -183,6 +187,9 @@ mod tests {
         }
     }
 
+    // LinuxConfigLayout accepts POSIX directory components; Windows paths have
+    // a drive prefix and are not valid fixtures for this Linux server store.
+    #[cfg(not(windows))]
     fn fixture_layout(temp: &tempfile::TempDir) -> synveil_server_config::LinuxConfigLayout {
         // macOS exposes temporary directories through `/var`, which is an
         // intentional system symlink to `/private/var`. Resolve that fixture
@@ -194,6 +201,7 @@ mod tests {
         .unwrap()
     }
 
+    #[cfg(not(windows))]
     fn ready_storage_capabilities() -> StorageCapabilities {
         [
             StorageCapability::ExclusiveCreate,
@@ -228,6 +236,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn explicit_managed_authority_rejects_mixed_operator_environment() {
         clear_env(|| {
             let temp = tempfile::tempdir().unwrap();
@@ -284,6 +293,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn advanced_external_config_uses_read_only_shared_authority() {
         clear_env(|| {
             let temp = tempfile::tempdir().unwrap();
@@ -371,6 +381,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn preparing_storage_is_not_runtime_ready() {
         clear_env(|| {
             let temp = tempfile::tempdir().unwrap();

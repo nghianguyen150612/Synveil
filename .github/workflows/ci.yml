@@ -145,12 +145,25 @@ jobs:
       - name: Select the MSVC developer environment
         uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Select and authenticate the MSVC linker and runtime
+        shell: pwsh
+        run: ./scripts/select-msvc-linker.ps1
+
       - name: Install native Qt 6
         uses: jurplel/install-qt-action@v4
         with:
           version: 6.8.3
           arch: win64_msvc2022_64
           cache: true
+
+      - name: Pin the reproducible ZIP writer runtime
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14.7"
+
+      - name: Test deterministic Windows ZIP writer
+        shell: bash
+        run: python tests/windows/test_reproducible_zip.py
 
       - name: Verify Qt 6.4 minimum
         shell: pwsh

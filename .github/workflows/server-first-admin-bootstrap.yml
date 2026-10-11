@@ -9,6 +9,7 @@ on:
       - 'crates/server-network/**'
       - 'api/openapi.yaml'
       - 'scripts/validate-server-first-admin-bootstrap.py'
+      - '.github/workflows/server-first-admin-bootstrap.yml'
       - 'docs/v0.2/SERVER_FIRST_ADMIN_BOOTSTRAP.md'
   push:
     branches: [main]
@@ -46,7 +47,11 @@ jobs:
         run: cargo test -p synveil-server-network every_synveil_managed_edge_blocks_bootstrap_mutation_before_proxying --locked
       - name: Live PostgreSQL 17 bootstrap race
         run: cargo test -p synveil-auth --test postgres postgres_authentication_bootstrap_is_atomic_and_race_safe --locked -- --ignored --exact
+      - name: Prepare a fresh database for response-loss and restart behavior
+        run: psql "$SYNVEIL_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -c 'CREATE DATABASE synveil_bootstrap_repeat'
       - name: Response-loss and restart behavior
+        env:
+          SYNVEIL_TEST_DATABASE_URL: postgres://postgres:synveil-test@127.0.0.1:5432/synveil_bootstrap_repeat
         run: cargo test -p synveil-auth --test postgres postgres_authentication_bootstrap_is_atomic_and_race_safe --locked -- --ignored --exact
       - name: Static validator
         run: python3 scripts/validate-server-first-admin-bootstrap.py

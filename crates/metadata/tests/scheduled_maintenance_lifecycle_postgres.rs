@@ -1036,15 +1036,45 @@ async fn lifecycle_overlapping_systemd_sameunit_and_multiprocess_safety() {
         ok, 12,
         "all overlapping activations must succeed without deadlock"
     );
-    // Exactly one claim, one handoff, one run: durable convergence, fencing intact.
+    // Each invocation advances at most one transition. Other independent
+    // callers may then claim a later expected state for the same run, so a
+    // bounded count of distinct state claims is valid. The occurrence must
+    // still have exactly one handoff and one maintenance run.
+    let claim_count = count_for_set(
+        &fixture.db.inspection,
+        "backup_scheduled_maintenance_claims",
+        fixture.backup_set_id,
+    )
+    .await;
+    let distinct_claim_states = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(DISTINCT expected_state)
+         FROM backup_scheduled_maintenance_claims WHERE backup_set_id = $1",
+    )
+    .bind(fixture.backup_set_id.into_uuid())
+    .fetch_one(&fixture.db.inspection)
+    .await
+    .unwrap();
+    assert!((1..=3).contains(&claim_count));
+    assert_eq!(claim_count, distinct_claim_states);
     assert_eq!(
         count_for_set(
             &fixture.db.inspection,
-            "backup_scheduled_maintenance_claims",
+            "backup_schedule_occurrence_handoffs",
             fixture.backup_set_id
         )
         .await,
-        1
+        1,
+        "all steps must keep one durable occurrence handoff"
+    );
+    assert_eq!(
+        count_for_set(
+            &fixture.db.inspection,
+            "backup_maintenance_runs",
+            fixture.backup_set_id
+        )
+        .await,
+        1,
+        "all steps must keep one canonical maintenance run"
     );
     fixture.close().await;
 }

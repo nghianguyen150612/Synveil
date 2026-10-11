@@ -404,7 +404,15 @@ async fn postgres_scheduler_tick_schema_is_current_on_postgresql_17() {
     );
     assert_eq!(
         count_table(&fixture.inspection, "_sqlx_migrations").await,
-        34
+        36
+    );
+    assert_eq!(
+        MigrationRunner::new()
+            .status(&fixture.pool)
+            .await
+            .expect("migration status must be readable")
+            .latest_applied_version(),
+        Some(20260910000000)
     );
     fixture.close().await;
 }

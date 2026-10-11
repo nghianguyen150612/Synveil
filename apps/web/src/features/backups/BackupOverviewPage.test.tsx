@@ -540,12 +540,14 @@ describe('Backup Control Center overview', () => {
       />,
     )
 
-    expect(await screen.findByRole('heading', { name: /session could not be verified/i })).toHaveFocus()
+    const recoveryErrorHeading = await screen.findByRole('heading', { name: /session could not be verified/i })
+    await waitFor(() => expect(recoveryErrorHeading).toHaveFocus())
     expect(screen.queryByRole('heading', { name: 'Backup Control Center' })).not.toBeInTheDocument()
     const retry = screen.getByRole('button', { name: /try session recovery again/i })
     fireEvent.click(retry)
 
-    expect(await screen.findByRole('heading', { name: 'Backup Control Center' })).toHaveFocus()
+    const backupHeading = await screen.findByRole('heading', { name: 'Backup Control Center' })
+    await waitFor(() => expect(backupHeading).toHaveFocus())
     expect(getCurrentSession).toHaveBeenCalledTimes(3)
     expect(authApi.getCsrfToken).toHaveBeenCalledOnce()
     expect(listBackupSets).toHaveBeenCalledTimes(2)

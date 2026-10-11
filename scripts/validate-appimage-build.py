@@ -61,6 +61,9 @@ def validate_appdir(appdir: Path) -> None:
 
 
 def run_smoke(artifact: Path) -> None:
+    xvfb_run = shutil.which("xvfb-run")
+    if not xvfb_run:
+        fail("APPIMAGE-18: xvfb-run is required to exercise the bundled xcb platform plugin")
     with tempfile.TemporaryDirectory(prefix="synveil-appimage-smoke.") as work:
         base = Path(work)
         for name in ("config", "data", "cache", "runtime", "home"):
@@ -70,9 +73,13 @@ def run_smoke(artifact: Path) -> None:
         }}
         env.update(HOME=str(base / "home"), XDG_CONFIG_HOME=str(base / "config"),
                    XDG_DATA_HOME=str(base / "data"), XDG_CACHE_HOME=str(base / "cache"),
-                   XDG_RUNTIME_DIR=str(base / "runtime"), QT_QPA_PLATFORM="offscreen",
+                   XDG_RUNTIME_DIR=str(base / "runtime"), QT_QPA_PLATFORM="xcb",
                    QML_DISABLE_DISK_CACHE="1", APPIMAGE_EXTRACT_AND_RUN="1")
-        subprocess.run(["timeout", "20s", str(artifact), "--qml-smoke-test"], cwd=base, env=env, check=True)
+        subprocess.run(
+            [xvfb_run, "--auto-servernum", "--server-args=-screen 0 1280x800x24 -nolisten tcp",
+             "timeout", "20s", str(artifact), "--qml-smoke-test"],
+            cwd=base, env=env, check=True,
+        )
 
 
 def inspect_artifact(artifact: Path, smoke: bool) -> None:
@@ -108,6 +115,23 @@ def main() -> int:
             fail(f"static builder contract missing: {token}")
     if builder.count("--custom-apprun") < 2:
         fail("static builder contract must preserve the reviewed AppRun during deployment and output")
+    for token in (
+        'rm -f "$appdir/apprun-hooks/linuxdeploy-plugin-qt-hook.sh"',
+        'rmdir "$appdir/apprun-hooks"',
+        'rm -f "$appdir/AppRun.wrapped"',
+        'install -m0755 "$SCRIPT_DIR/appimage/AppRun" "$appdir/AppRun"',
+        'cmp -s "$SCRIPT_DIR/appimage/AppRun" "$appdir/AppRun"',
+    ):
+        if token not in builder:
+            fail(f"static builder contract does not preserve the reviewed AppRun: {token}")
+    hook_cleanup = builder.index('rm -f "$appdir/apprun-hooks/linuxdeploy-plugin-qt-hook.sh"')
+    reviewed_restore = builder.index(
+        'install -m0755 "$SCRIPT_DIR/appimage/AppRun" "$appdir/AppRun"', hook_cleanup
+    )
+    output_pass = builder.index("--output appimage")
+    post_output_compare = builder.index('cmp -s "$SCRIPT_DIR/appimage/AppRun" "$appdir/AppRun"')
+    if not hook_cleanup < reviewed_restore < output_pass < post_output_compare:
+        fail("AppRun hook cleanup, restore, and post-output verification must remain ordered")
     print("APPIMAGE static/source contract: PASS")
     if args.appdir:
         validate_appdir(args.appdir.resolve()); print("AppDir inspection: PASS")

@@ -19,6 +19,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd -P)"
 source "${SCRIPT_DIR}/common/version.sh"
 # shellcheck source=deploy/packages/common/reproducible.sh
 source "${SCRIPT_DIR}/common/reproducible.sh"
+# shellcheck source=deploy/packages/common/windows-pe-import-policy.sh
+source "${SCRIPT_DIR}/common/windows-pe-import-policy.sh"
 
 OUTPUT_DIR="${REPO_ROOT}/target/windows-packages"
 STAGING_DIR=""
@@ -134,6 +136,16 @@ PACKAGE_VERSION="$(synveil_cargo_version)"
 SOURCE_DATE_EPOCH="$(synveil_source_date_epoch)"
 export SOURCE_DATE_EPOCH
 log "archive timestamp: $SOURCE_DATE_EPOCH"
+ZIP_PYTHON="${SYNVEIL_PYTHON:-}"
+if [[ -z "$ZIP_PYTHON" ]]; then
+    ZIP_PYTHON="$(command -v python3 || command -v python || true)"
+fi
+if [[ -z "$ZIP_PYTHON" ]]; then
+    printf '[synveil-windows-package] ERROR: Python 3 is required for deterministic ZIP output\n' >&2
+    exit 1
+fi
+ZIP_TOOLCHAIN="$("$ZIP_PYTHON" -c 'import platform, zlib; print("python-zipfile-" + platform.python_version() + "-zlib-" + zlib.ZLIB_VERSION + "-runtime-" + zlib.ZLIB_RUNTIME_VERSION)')"
+log "ZIP writer: $ZIP_TOOLCHAIN"
 
 if [[ -z "$DESKTOP_BINARY" || -z "$CLIENT_BINARY" ]]; then
     synveil_prepare_reproducible_rust_build "$REPO_ROOT"
@@ -243,7 +255,7 @@ if [[ "$native_windows" -eq 1 ]]; then
     log "deploying the Qt closure with windeployqt"
     "$WINDEPLOYQT" \
         --release \
-        --compiler-runtime \
+        --no-compiler-runtime \
         --no-translations \
         --no-system-d3d-compiler \
         --qmldir "${REPO_ROOT}/crates/desktop/qml" \
@@ -335,24 +347,6 @@ for executable in "${STAGE_ROOT}/synveil-desktop.exe" "${STAGE_ROOT}/synveil-cli
     assert_pe "$executable"
 done
 
-is_system_dll() {
-    local name="${1^^}"
-    case "$name" in
-        API-MS-WIN-*|EXT-MS-WIN-*|KERNEL32.DLL|KERNELBASE.DLL|NTDLL.DLL|ADVAPI32.DLL|\
-        USER32.DLL|GDI32.DLL|OLE32.DLL|OLEAUT32.DLL|SHELL32.DLL|SHLWAPI.DLL|COMDLG32.DLL|\
-        COMBASE.DLL|WS2_32.DLL|IPHLPAPI.DLL|CRYPT32.DLL|BCRYPT.DLL|BCRYPTPRIMITIVES.DLL|WINHTTP.DLL|\
-        VERSION.DLL|DWMAPI.DLL|IMM32.DLL|SETUPAPI.DLL|AUTHZ.DLL|D3D11.DLL|D3D12.DLL|\
-        D3D9.DLL|DNSAPI.DLL|DWRITE.DLL|DXGI.DLL|IMAGEHLP.DLL|MPR.DLL|MSVCRT.DLL|\
-        NETAPI32.DLL|RPCRT4.DLL|SECUR32.DLL|SHCORE.DLL|USERENV.DLL|UXTHEME.DLL|\
-        WINMM.DLL|WINSPOOL.DRV|WTSAPI32.DLL)
-            return 0
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-}
-
 pe_import_names() {
     local file="$1"
     if [[ -n "$READOBJ" && -f "$READOBJ" ]]; then
@@ -387,6 +381,57 @@ sha256_file() {
         return 1
     fi
 }
+
+copy_missing_msvc_runtime_imports() {
+    if [[ "$native_windows" -ne 1 ]]; then
+        return 0
+    fi
+    if [[ -z "${SYNVEIL_MSVC_CRT_DIR:-}" ]] || ! command -v cygpath >/dev/null 2>&1; then
+        printf '[synveil-windows-package] ERROR: native Windows packaging requires the authenticated MSVC CRT directory\n' >&2
+        exit 1
+    fi
+    local crt_dir
+    crt_dir="$(cygpath -u "$SYNVEIL_MSVC_CRT_DIR")"
+    if [[ ! -d "$crt_dir" || -L "$crt_dir" ]]; then
+        printf '[synveil-windows-package] ERROR: authenticated MSVC CRT directory is unavailable\n' >&2
+        exit 1
+    fi
+
+    # Keep Qt deployment limited to the Qt/QML closure. windeployqt otherwise
+    # stages vc_redist.x64.exe on this MSVC image, which is an installer, not
+    # an application runtime file. Add only imported MSVC runtime DLLs from
+    # the exact active redist directory; the closed import audit below still
+    # rejects every unresolved non-system dependency.
+    local changed pe_file imported runtime_file upper
+    # The loop counter is intentionally unused; only the bounded pass count matters.
+    for _ in 1 2 3 4; do
+        changed=0
+        while IFS= read -r imported; do
+            [[ -n "$imported" ]] || continue
+            upper="${imported^^}"
+            is_system_dll "$imported" && continue
+            [[ -z "$(find_stage_dll "$imported")" ]] || continue
+            case "$upper" in
+                MSVCP140*.DLL|VCRUNTIME140*.DLL|CONCRT140.DLL|VCCORLIB140.DLL) ;;
+                *) continue ;;
+            esac
+            runtime_file="$(find "$crt_dir" -maxdepth 1 -type f -iname "$imported" -print -quit)"
+            if [[ -z "$runtime_file" || -L "$runtime_file" ]]; then
+                continue
+            fi
+            copy_file "$runtime_file" "$STAGE_ROOT/$(basename "$runtime_file")"
+            log "added imported MSVC runtime from the active redistributable: $(basename "$runtime_file")"
+            changed=$((changed + 1))
+        done < <(
+            while IFS= read -r pe_file; do
+                pe_import_names "$pe_file"
+            done < <(find "$STAGE_ROOT" -type f \( -iname '*.exe' -o -iname '*.dll' \) -print | sort) | sort -fu
+        )
+        [[ "$changed" -gt 0 ]] || break
+    done
+}
+
+copy_missing_msvc_runtime_imports
 
 # Audit every shipped PE's imports. Windows system/API-set DLLs are supplied by
 # Windows; every other imported DLL must be in this ZIP. This catches Linux
@@ -434,11 +479,13 @@ write_package_manifest() {
         printf 'source_date_epoch=%s\n' "$SOURCE_DATE_EPOCH"
         printf 'rustc=%s\n' "$(synveil_toolchain_value rustc)"
         printf 'cargo=%s\n' "$(synveil_toolchain_value cargo)"
+        printf 'zip_generator=%s\n' "$ZIP_TOOLCHAIN"
         if [[ "$native_windows" -eq 1 ]]; then
             printf 'qt=%s\n' "$(qmake -query QT_VERSION 2>/dev/null || printf unknown)"
             printf 'qt_architecture=x86_64-msvc\n'
             printf 'windeployqt=%s\n' "$($WINDEPLOYQT --version 2>&1 | tr -d '\r' | head -n 1)"
             printf 'msvc=%s\n' "${VCToolsVersion:-unknown}"
+            printf 'msvc_crt=VCToolsRedistDir/x64/%s\n' "$(basename "$SYNVEIL_MSVC_CRT_DIR")"
         else
             printf 'qt=%s\n' "$("${QT_PREFIX}/bin/qmake" -query QT_VERSION 2>/dev/null || printf unknown)"
             printf 'qt_architecture=x86_64-cross\n'
@@ -538,46 +585,34 @@ if [[ -n "$STAGING_DIR" ]]; then
     log "validated runtime staging exported: $STAGING_DIR"
 fi
 
-if ! command -v zip >/dev/null 2>&1; then
-    printf '[synveil-windows-package] ERROR: zip is required for reproducible ZIP output\n' >&2
-    exit 1
-fi
-
 ZIP_PATH="${OUTPUT_DIR}/synveil-${PACKAGE_VERSION}-windows-x86_64.zip"
 rm -f "$ZIP_PATH"
-# ZIP external attributes are derived from staged modes. Normalize them so a
-# copied Qt closure cannot inherit host-specific executable bits or mtimes.
+# Normalize the staging tree for downstream consumers. The ZIP helper also
+# writes ordering, timestamps, permissions, and file metadata explicitly.
 find "$STAGE_ROOT" -type d -exec chmod 0755 {} +
 find "$STAGE_ROOT" -type f -exec chmod 0644 {} +
 chmod 0755 "${STAGE_ROOT}/synveil-desktop.exe" "${STAGE_ROOT}/synveil-client.exe"
 find "$STAGE_ROOT" -exec touch -d "@${SOURCE_DATE_EPOCH}" {} +
-(
-    cd "$STAGE_ROOT"
-    LC_ALL=C find . -type f -print | sort | zip -X -q "$ZIP_PATH" -@
-)
-
-# Final archive-level path audit, independent of the staging tree.
-if command -v unzip >/dev/null 2>&1; then
-    archive_files="$(unzip -Z1 "$ZIP_PATH" | LC_ALL=C sort)"
-    grep -Fxq 'synveil-desktop.exe' <<< "$archive_files"
-    grep -Fxq 'synveil-client.exe' <<< "$archive_files"
-    grep -Fxq 'qt.conf' <<< "$archive_files"
-    grep -Fxq 'platforms/qwindows.dll' <<< "$archive_files"
-    grep -Fxq 'LICENSE' <<< "$archive_files"
-    grep -Fxq 'NOTICE' <<< "$archive_files"
-    grep -Fxq "$MANIFEST_NAME" <<< "$archive_files"
-    if grep -Eq '(^|/)(include|lib|Headers|cmake)(/|$)|\.(a|lib|prl|so)$' <<< "$archive_files"; then
-        printf '[synveil-windows-package] ERROR: archive contains SDK/development path\n' >&2
-        exit 1
-    fi
-fi
+"$ZIP_PYTHON" "${REPO_ROOT}/scripts/create-reproducible-zip.py" \
+    --root "$STAGE_ROOT" \
+    --output "$ZIP_PATH" \
+    --source-date-epoch "$SOURCE_DATE_EPOCH" \
+    --executable synveil-desktop.exe \
+    --executable synveil-client.exe \
+    --required-file synveil-desktop.exe \
+    --required-file synveil-client.exe \
+    --required-file qt.conf \
+    --required-file platforms/qwindows.dll \
+    --required-file LICENSE \
+    --required-file NOTICE \
+    --required-file "$MANIFEST_NAME"
 
 log "ZIP built: $ZIP_PATH"
 sha256_file "$ZIP_PATH"
-python3 "${REPO_ROOT}/scripts/release_manifest.py" create \
+"$ZIP_PYTHON" "${REPO_ROOT}/scripts/release_manifest.py" create \
     --artifact-root "$OUTPUT_DIR" --product-version "$PACKAGE_VERSION" \
     --source-commit "$(git -C "$REPO_ROOT" rev-parse HEAD)" \
     --output "${OUTPUT_DIR}/SYNVEIL-RELEASE-MANIFEST.json" \
     --artifact "{\"id\":\"windows-x86_64-portable\",\"artifact_type\":\"windows_portable_zip\",\"filename\":\"$(basename "$ZIP_PATH")\",\"platform\":\"windows\",\"architecture\":\"x86_64\",\"role\":\"portable\",\"components\":[\"synveil-desktop\",\"synveil-client\"]}"
-python3 "${REPO_ROOT}/scripts/release_manifest.py" validate \
+"$ZIP_PYTHON" "${REPO_ROOT}/scripts/release_manifest.py" validate \
     --artifact-root "$OUTPUT_DIR" "${OUTPUT_DIR}/SYNVEIL-RELEASE-MANIFEST.json"

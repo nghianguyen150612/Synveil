@@ -603,7 +603,10 @@ mod live_fixture {
                 process.root_status(seed.library_id),
                 Some(synveil_client_sync::RootAvailability::Available)
             );
-            assert_eq!(process.host().state().schema_version().await.unwrap(), 7);
+            assert_eq!(
+                process.host().state().schema_version().await.unwrap(),
+                synveil_client_sync::LOCAL_SCHEMA_VERSION
+            );
             let runtime_identity = process.host().runtime_identity();
             assert_eq!(
                 process.host().runtime_identity(),

@@ -26,6 +26,7 @@ CLIENT_CONFIG = ROOT / "crates/client/src/config.rs"
 CLIENT_LIB = ROOT / "crates/client/src/lib.rs"
 DESKTOP_BRIDGE = ROOT / "crates/desktop/src/bridge.rs"
 REPRODUCIBLE = ROOT / "deploy/packages/common/reproducible.sh"
+MSVC_TOOLCHAIN = ROOT / "scripts/select-msvc-linker.ps1"
 APP_ID = "{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}"
 
 
@@ -80,6 +81,7 @@ def main() -> int:
     build = BUILD.read_text(encoding="utf-8")
     workflow = WORKFLOW.read_text(encoding="utf-8")
     reproducible = REPRODUCIBLE.read_text(encoding="utf-8")
+    msvc_toolchain = MSVC_TOOLCHAIN.read_text(encoding="utf-8")
     package = PACKAGE.read_text(encoding="utf-8")
     installed_test = INSTALLED_RUNTIME_TEST.read_text(encoding="utf-8")
     per_user_test = PER_USER_TEST.read_text(encoding="utf-8")
@@ -132,14 +134,19 @@ def main() -> int:
     require("windows-latest" in workflow and "/VERYSILENT" in per_user_test and "state-sentinel" in per_user_test, "native smoke contract")
     for evidence in ("test-windows-installed-runtime.ps1", "QT_PLUGIN_PATH", "QML2_IMPORT_PATH", "unrelatedCwd", "client probe", "missing-qwindows", "corrupt-dll", "unexpected-dll", "developer-file"):
         require(evidence in workflow or evidence in per_user_test, f"P024 hosted runtime evidence: {evidence}")
-    require("VCToolsInstallDir" in workflow and "CompanyName" in workflow and "OriginalFilename" in workflow, "authenticated MSVC linker selection")
-    require("LinkType" in workflow and "0x00004550" in workflow and "0x8664" in workflow, "regular AMD64 PE linker identity")
+    require("select-msvc-linker.ps1" in workflow and "VCToolsInstallDir" in msvc_toolchain and "CompanyName" in msvc_toolchain and "OriginalFilename" in msvc_toolchain, "authenticated MSVC linker selection")
+    require("LinkType" in msvc_toolchain and "0x00004550" in msvc_toolchain and "0x8664" in msvc_toolchain, "regular AMD64 PE linker identity")
+    require("VCToolsRedistDir" in msvc_toolchain and "VCToolsVersion" in msvc_toolchain and "SYNVEIL_MSVC_CRT_DIR" in msvc_toolchain and "Microsoft.VC*.CRT" in msvc_toolchain and "$crtCandidates.Count -ne 1" in msvc_toolchain, "authenticated exact MSVC runtime selection")
     require("$banner" not in workflow and "& $linker '/?'" not in workflow, "linker identity does not depend on localized help output")
     require("CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" in reproducible and '"${rustc_linker_args[@]}"' in reproducible, "direct rustc uses selected MSVC linker")
     require("CARGO_ENCODED_RUSTFLAGS" in reproducible and "$'\\x1f'" in reproducible, "lossless Cargo flag transport")
     require('rustc "${SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS[@]}" "${rustc_linker_args[@]}"' in reproducible, "direct rustc receives discrete remaps")
-    for runtime_rule in ("--compiler-runtime", "--qmldir", "platforms/qwindows.dll", "QmlImports=qml", "Qml2Imports=qml", "is_system_dll", "missing non-system import", "development directory leaked", 'rm -rf -- "$STAGING_DIR"'):
+    for runtime_rule in ("SYNVEIL_MSVC_CRT_DIR", "VCToolsRedistDir/x64/%s", "MSVCP140", "copy_missing_msvc_runtime_imports", "--qmldir", "platforms/qwindows.dll", "QmlImports=qml", "Qml2Imports=qml", "is_system_dll", "missing non-system import", "development directory leaked", 'rm -rf -- "$STAGING_DIR"'):
         require(runtime_rule in package, f"authoritative runtime rule: {runtime_rule}")
+    require("--compiler-runtime" not in package and "--no-compiler-runtime" in package,
+            "Windows Qt deployment must explicitly exclude the VC redistributable installer")
+    require(package.rindex("copy_missing_msvc_runtime_imports") < package.index("# Audit every shipped PE's imports"),
+            "authenticated CRT closure must be copied before the complete import audit")
     for required in ("SYNVEIL-MANIFEST.txt", "unmanifested package file", "0x8664", "platforms/qwindows.dll"):
         require(required in installed_test, f"installed runtime verification: {required}")
     for evidence in ("synthetic_standard_user", "administrator_member", "installer_elevated", "integrity_sid", "RegistryView]::Registry64", "RegistryView]::Registry32", "machine PATH changed", "Synveil service created", "Synveil scheduled task created", "PER_USER_ACL_FAILURE", "second uninstaller", "state_preservation"):
@@ -190,6 +197,24 @@ def main() -> int:
         require(evidence in lifecycle_model, f"P027 separate bounded purge model: {evidence}")
     require("LifecycleFixtureVersion" in build and "if (!$env:CI)" in build and "if (!$LifecycleFixtureVersion)" in build,
             "test-only fixture cannot alter production version/release manifest")
+    require("Assert-NoSecretLikeBytes" in build and "runtime-payload.bin" in build and
+            "secret-like marker '$marker' in $Label" in build,
+            "P044 fixture secret-marker scan remains present")
+    fixture_secret_scan = build[build.index("function Test-FixtureSecretScanPath") :
+                                build.index("function Assert-NoPrivateSourcePath")]
+    extension_policy = re.search(r"\$textExtensions = @\(([^)]*)\)", fixture_secret_scan)
+    require("$leaf -in @('synveil-desktop.exe','synveil-client.exe','LICENSE','NOTICE')" in fixture_secret_scan and
+            extension_policy is not None and "'.dll'" not in extension_policy.group(1) and
+            "private-key-marker-text" in workflow and "LifecycleFixtureVersion" in workflow and
+            "BEGIN PRIVATE KEY" in workflow,
+            "fixture scans first-party/text payloads and still rejects secret markers in text")
+    private_path_scan = build[build.index("function Assert-NoPrivateSourcePath") :
+                              build.index("function Get-WorkspaceVersion")]
+    require("[Text.Encoding]::ASCII.GetString($Content)" in private_path_scan and
+            "[Text.Encoding]::Unicode.GetString($Content)" in private_path_scan and
+            "Assert-NoPrivateSourcePath $bytes $repo" in build and
+            build.index("Assert-NoPrivateSourcePath $bytes $repo") > build.index("if (!$LifecycleFixtureVersion)"),
+            "private source path scan must inspect every compiled Setup, including P044 fixtures")
     require("Build isolated lifecycle Setup fixtures" in workflow and "OlderFixtureSetup" in workflow,
             "hosted standard-user lifecycle execution")
     with tempfile.TemporaryDirectory() as directory:
