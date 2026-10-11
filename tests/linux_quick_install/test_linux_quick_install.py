@@ -42,6 +42,35 @@ class FakeManager:
 
 
 class QuickInstallTests(unittest.TestCase):
+    def test_native_package_acceptance_diagnostics_are_filtered_and_bounded(self):
+        manager = quick.NativeManager(quick.PROFILES["fedora-x86_64"])
+        result = quick.subprocess.CompletedProcess(
+            ["dnf"],
+            0,
+            "unrelated package output\n"
+            ">>> Running %post scriptlet: synveil-0.1.0-1.x86_64\n"
+            ">>> [synveil] applying sysusers (systemd-sysusers)\n"
+            "systemd-tmpfiles: failed to create /var/lib/synveil\n"
+            "private unrelated detail\n",
+            "",
+        )
+
+        output = io.StringIO()
+        with mock.patch.dict(os.environ, {"SYNVEIL_ACCEPTANCE_DIAGNOSTICS": "1"}):
+            with contextlib.redirect_stderr(output):
+                manager._emit_acceptance_package_diagnostics(result)
+        diagnostics = output.getvalue()
+        self.assertIn("NATIVE_PACKAGE_MANAGER_DIAGNOSTIC >>> Running %post scriptlet: synveil", diagnostics)
+        self.assertIn("NATIVE_PACKAGE_MANAGER_DIAGNOSTIC systemd-tmpfiles:", diagnostics)
+        self.assertNotIn("unrelated package output", diagnostics)
+        self.assertNotIn("private unrelated detail", diagnostics)
+
+        output = io.StringIO()
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with contextlib.redirect_stderr(output):
+                manager._emit_acceptance_package_diagnostics(result)
+        self.assertEqual("", output.getvalue())
+
     def setUp(self):
         FakeManager.installed = None
         FakeManager.install_calls = []

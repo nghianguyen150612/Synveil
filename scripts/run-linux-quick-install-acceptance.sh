@@ -68,7 +68,8 @@ report_native_package_state() {
   fi
 }
 set +e
-"$ROOT/deploy/install/quick-install.sh" "${ARGS[@]}" 2>&1 | tee "$FIXTURE/first.log"
+SYNVEIL_ACCEPTANCE_DIAGNOSTICS=1 \
+  "$ROOT/deploy/install/quick-install.sh" "${ARGS[@]}" 2>&1 | tee "$FIXTURE/first.log"
 pipeline_status=("${PIPESTATUS[@]}")
 set -e
 quick_install_status=${pipeline_status[0]:-1}
