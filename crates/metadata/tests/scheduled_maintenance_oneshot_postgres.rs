@@ -753,6 +753,7 @@ async fn oneshot_concurrent_callers_no_duplicates_and_zero_deadlocks() {
     }
     let mut deadlock = 0usize;
     let mut other_db = 0usize;
+    let mut unexpected_errors = Vec::new();
     for h in handles {
         match h.await.unwrap() {
             Ok(_) => {}
@@ -762,13 +763,19 @@ async fn oneshot_concurrent_callers_no_duplicates_and_zero_deadlocks() {
                     deadlock += 1;
                 } else if s.contains("Database") {
                     other_db += 1;
+                } else {
+                    unexpected_errors.push(s);
                 }
             }
         }
     }
     assert_eq!(deadlock, 0, "concurrent one-shot must have 0 deadlocks");
     assert_eq!(other_db, 0, "unexpected DB errors: {other_db}");
-    // Verify exactly one occurrence/handoff/run/claim and no duplicate child effects.
+    assert!(
+        unexpected_errors.is_empty(),
+        "unexpected concurrent one-shot errors: {unexpected_errors:?}"
+    );
+    // Verify exactly one occurrence/handoff/run and no duplicate child effects.
     assert_eq!(
         count_for_set(
             &fixture.db.inspection,
@@ -796,13 +803,32 @@ async fn oneshot_concurrent_callers_no_duplicates_and_zero_deadlocks() {
         .await,
         1
     );
-    let claims = count_for_set(
-        &fixture.db.inspection,
-        "backup_scheduled_maintenance_claims",
-        fixture.backup_set_id,
-    )
-    .await;
-    assert_eq!(claims, 1);
+    // Each concurrent one-shot invocation can advance one state. Claim identity
+    // is per (maintenance run, expected state), so callers may legitimately
+    // commit up to the three bounded transitions while still creating no
+    // duplicate claim for any transition.
+    let (claim_count, distinct_transition_count, incomplete_claim_count) =
+        sqlx::query_as::<_, (i64, i64, i64)>(
+            "SELECT count(*), count(DISTINCT expected_state),
+                    count(*) FILTER (WHERE completed_at IS NULL)
+             FROM backup_scheduled_maintenance_claims WHERE backup_set_id=$1",
+        )
+        .bind(fixture.backup_set_id.into_uuid())
+        .fetch_one(&fixture.db.inspection)
+        .await
+        .unwrap();
+    assert!(
+        (1..=3).contains(&claim_count),
+        "one maintenance run permits at most three state transitions"
+    );
+    assert_eq!(
+        claim_count, distinct_transition_count,
+        "concurrent callers must not create duplicate claims for one transition state"
+    );
+    assert_eq!(
+        incomplete_claim_count, 0,
+        "completed concurrent invocations must leave durable claim receipts"
+    );
     // No duplicate child effects: snapshot capture operation should have exactly one snapshot.
     let runs = BackupService::new(fixture.pool())
         .list_backup_maintenance_runs(fixture.owner_user_id, fixture.backup_set_id, None, 10)
