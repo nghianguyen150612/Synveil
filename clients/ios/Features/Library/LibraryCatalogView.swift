@@ -9,6 +9,7 @@ struct LibraryCatalogView: View {
     private let inboundSyncCoordinator: (any InboundSyncCoordinatorProtocol)?
     private let nodeProjectionRepository: (any NodeProjectionRepositoryProtocol)?
     private let rebaselineCoordinator: RebaselineCoordinator?
+    private let downloadCoordinator: FileDownloadCoordinator?
     private let syncCheckpointService: (any SyncCheckpointPreparationProtocol)?
 
     @State private var viewModel: LibraryCatalogViewModel
@@ -23,6 +24,7 @@ struct LibraryCatalogView: View {
         nodeProjectionRepository: (any NodeProjectionRepositoryProtocol)? = nil,
         syncCheckpointService: (any SyncCheckpointPreparationProtocol)? = nil,
         rebaselineCoordinator: RebaselineCoordinator? = nil,
+        downloadCoordinator: FileDownloadCoordinator? = nil,
         sessionController: SessionController
     ) {
         self.sessionController = sessionController
@@ -33,6 +35,7 @@ struct LibraryCatalogView: View {
         self.nodeProjectionRepository = nodeProjectionRepository
         self.syncCheckpointService = syncCheckpointService
         self.rebaselineCoordinator = rebaselineCoordinator
+        self.downloadCoordinator = downloadCoordinator
         _viewModel = State(
             initialValue: LibraryCatalogViewModel(
                 repository: repository,
@@ -58,7 +61,8 @@ struct LibraryCatalogView: View {
                                 offlineBrowserService: offlineNodeBrowserService,
                                 sessionController: sessionController,
                                 route: .root(for: library),
-                                metadataMutationFeature: metadataMutationFeature
+                                metadataMutationFeature: metadataMutationFeature,
+                                downloadCoordinator: downloadCoordinator
                             )
                             .id(NodeBrowserRoute.root(for: library))
                         } else {
@@ -71,7 +75,8 @@ struct LibraryCatalogView: View {
                             offlineBrowserService: offlineNodeBrowserService,
                             sessionController: sessionController,
                             route: route,
-                            metadataMutationFeature: metadataMutationFeature
+                            metadataMutationFeature: metadataMutationFeature,
+                            downloadCoordinator: downloadCoordinator
                         )
                         .id(route)
                     }
@@ -80,6 +85,7 @@ struct LibraryCatalogView: View {
                             repository: nodeRepository,
                             sessionController: sessionController,
                             offlineDetailsService: offlineNodeBrowserService,
+                            downloadCoordinator: downloadCoordinator,
                             route: route
                         )
                         .id(route)

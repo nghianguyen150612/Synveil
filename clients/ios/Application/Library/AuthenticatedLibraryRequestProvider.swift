@@ -63,19 +63,22 @@ final class AuthenticatedLibraryRequestProvider: AuthenticatedLibraryRequestProv
     AuthenticatedNodeRequestProviderProtocol, AuthenticatedClientMutationRequestProviderProtocol,
     AuthenticatedSyncCheckpointRequestProviderProtocol,
     AuthenticatedSyncFeedRequestProviderProtocol,
-    AuthenticatedRebaselineRequestProviderProtocol
+    AuthenticatedRebaselineRequestProviderProtocol, AuthenticatedFileDownloadRequestProviderProtocol
 {
     private let controller: SessionController
     private let store: any SecureCredentialSinkProtocol
     private let transport: any HTTPTransportProtocol
+    private let contentTransport: any FileContentTransportProtocol
 
     init(
         controller: SessionController, store: any SecureCredentialSinkProtocol,
-        transport: any HTTPTransportProtocol
+        transport: any HTTPTransportProtocol,
+        contentTransport: any FileContentTransportProtocol = URLSessionFileContentTransport()
     ) {
         self.controller = controller
         self.store = store
         self.transport = transport
+        self.contentTransport = contentTransport
     }
 
     func begin() async throws -> LibraryRequestScope {
@@ -185,6 +188,56 @@ final class AuthenticatedLibraryRequestProvider: AuthenticatedLibraryRequestProv
         let response = try await transport.send(request)
         try await validate(session)
         return response
+    }
+
+    func requestVersion(version: FileVersionId, session: LibraryRequestScope) async throws
+        -> HTTPTransportResponse
+    {
+        try await requestGET(
+            path: "/api/v1/versions/\(version.rawValue)", queryItems: nil, scope: session)
+    }
+
+    func requestContent(
+        identity: DownloadIdentity, session: LibraryRequestScope, range: DownloadRange?,
+        revalidating: Bool = false, receive: @escaping @Sendable (Data) async throws -> Void
+    ) async throws {
+        guard session.matches(identity.scope), session.credentialIdentifier == identity.credentialId
+        else {
+            throw DownloadFailure.scopeMismatch
+        }
+        try await validate(session)
+        let endpoint = identity.scope.serverEndpoint
+        guard var components = URLComponents(url: endpoint.url, resolvingAgainstBaseURL: false)
+        else {
+            throw DownloadFailure.scopeMismatch
+        }
+        let base = components.percentEncodedPath.trimmingCharacters(
+            in: CharacterSet(charactersIn: "/"))
+        components.percentEncodedPath =
+            (base.isEmpty ? "" : "/\(base)")
+            + "/api/v1/versions/\(identity.versionId.rawValue)/content"
+        components.query = nil
+        components.fragment = nil
+        guard let url = components.url, url.scheme == "https", url.host == endpoint.host,
+            url.port == endpoint.port, components.user == nil, components.password == nil
+        else { throw DownloadFailure.scopeMismatch }
+        var headers = authenticatedHeaders(session)
+        headers["Accept"] = "application/octet-stream"
+        headers["Range"] = range?.header
+        headers["If-None-Match"] = revalidating ? identity.expected.etag : nil
+        try checkCurrent(session)
+        do {
+            try await contentTransport.stream(
+                HTTPTransportRequest(url: url, headers: headers), expected: identity.expected,
+                range: range, revalidating: revalidating, receive: receive)
+            try await validate(session)
+        } catch {
+            try checkCurrent(session)
+            let failure = DownloadPolicy.classify(error)
+            if failure == .unauthenticated { handle(.authenticationRejected, scope: session) }
+            if failure == .deviceRevoked { handle(.deviceRevoked, scope: session) }
+            throw failure
+        }
     }
 
     private func requestGET(

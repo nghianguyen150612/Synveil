@@ -23,6 +23,7 @@ struct RootView: View {
     var nodeProjectionRepository: (any NodeProjectionRepositoryProtocol)? = nil
     var rebaselineCoordinator: RebaselineCoordinator? = nil
     var syncCheckpointService: (any SyncCheckpointPreparationProtocol)? = nil
+    var downloadCoordinator: FileDownloadCoordinator? = nil
 
     var body: some View {
         switch sessionController.state {
@@ -54,6 +55,7 @@ struct RootView: View {
                 nodeProjectionRepository: nodeProjectionRepository,
                 syncCheckpointService: syncCheckpointService,
                 rebaselineCoordinator: rebaselineCoordinator,
+                downloadCoordinator: downloadCoordinator,
                 sessionController: sessionController
             )
             // A later authenticated lifecycle receives a fresh transient catalog and navigation stack.

@@ -12,7 +12,7 @@ on:
       - "scripts/build-ios-rust-artifacts.sh"
       - "scripts/generate-ios-rust-header.sh"
       - "scripts/validate_ios_rust_artifact.py"
-      - "clients/ios/Infrastructure/RustBridge/Generated/synveil_ios_ffi.h"
+      - "clients/ios/**"
       - ".github/workflows/ios-rust-apple-build.yml"
   pull_request:
     paths:
@@ -25,7 +25,7 @@ on:
       - "scripts/build-ios-rust-artifacts.sh"
       - "scripts/generate-ios-rust-header.sh"
       - "scripts/validate_ios_rust_artifact.py"
-      - "clients/ios/Infrastructure/RustBridge/Generated/synveil_ios_ffi.h"
+      - "clients/ios/**"
       - ".github/workflows/ios-rust-apple-build.yml"
   workflow_dispatch:
 
