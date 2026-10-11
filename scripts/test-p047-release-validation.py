@@ -43,7 +43,7 @@ class P047ReportTests(unittest.TestCase):
             VALIDATOR.validate_report(self.data)
 
     def test_absent_artifact_cannot_claim_source_identity(self):
-        item = next(x for x in self.data["artifact_inventory"] if x["inventory_id"] == "linux_deb")
+        item = next(x for x in self.data["artifact_inventory"] if x["inventory_id"] == "server_component")
         item["source_sha"] = self.data["source_scope"]["p047_validation_sha"]
         item["source_tree_sha"] = self.data["source_scope"]["p047_validation_tree_sha"]
         with self.assertRaises(ValueError):
@@ -51,7 +51,7 @@ class P047ReportTests(unittest.TestCase):
 
     def test_available_artifact_requires_exact_identity(self):
         item = next(x for x in self.data["artifact_inventory"] if x["inventory_id"] == "windows_installer")
-        item["status"] = "AVAILABLE"
+        item["artifact_name"] = None
         with self.assertRaises(ValueError):
             VALIDATOR.validate_report(self.data)
 
