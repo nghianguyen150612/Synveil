@@ -19,6 +19,8 @@ $primaryFailure = $null
 $primaryFailureMessage = $null
 $cleanupFailure = $null
 $cleanupFailureMessage = $null
+$lifecycleStdout = $null
+$lifecycleStderr = $null
 $evidence = Join-Path ([IO.Path]::GetFullPath($EvidenceDirectory)) 'windows-per-user-evidence.json'
 $failureEvidence = Join-Path ([IO.Path]::GetFullPath($EvidenceDirectory)) 'windows-per-user-failure.json'
 $childEvidence = Join-Path $env:SystemDrive "Users\$user\AppData\Local\Synveil\installer\windows-per-user-evidence.json"
@@ -70,8 +72,10 @@ try {
             '-RepositoryRoot',([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))),
             '-EvidencePath',$lifecycleEvidence)
         $stage = 'start_lifecycle_test'
+        $lifecycleStdout = Join-Path $EvidenceDirectory 'lifecycle.stdout.log'
+        $lifecycleStderr = Join-Path $EvidenceDirectory 'lifecycle.stderr.log'
         $lifecycle = Start-Process (Get-Command pwsh).Source -Credential $credential -LoadUserProfile -ArgumentList $lifecycleArgs `
-            -RedirectStandardOutput (Join-Path $EvidenceDirectory 'lifecycle.stdout.log') -RedirectStandardError (Join-Path $EvidenceDirectory 'lifecycle.stderr.log') -PassThru
+            -RedirectStandardOutput $lifecycleStdout -RedirectStandardError $lifecycleStderr -PassThru
         $stage = 'wait_for_lifecycle_test'
         if (!$lifecycle.WaitForExit(600000)) { $lifecycle.Kill(); throw 'STANDARD_USER_TEST_FAILURE: lifecycle child exceeded ten-minute bound' }
         if ($lifecycle.ExitCode -ne 0) { throw "STANDARD_USER_TEST_FAILURE: lifecycle child exit $($lifecycle.ExitCode); see bounded logs" }
@@ -105,11 +109,12 @@ try {
         catch { Record-CleanupFailure $_ 'copy_logs' }
     }
     if ($null -ne $primaryFailure) {
-        foreach ($childLog in @($stdout,$stderr)) {
+        foreach ($childLog in @($stdout,$stderr,$lifecycleStdout,$lifecycleStderr)) {
             if ($childLog -and (Test-Path -LiteralPath $childLog -PathType Leaf)) {
                 $label = [IO.Path]::GetFileName($childLog)
                 $failureLines = @(Get-Content -LiteralPath $childLog -ErrorAction SilentlyContinue |
-                    Where-Object { $_ -match 'PER_USER_[A-Z0-9_]+_FAILURE:' } | Select-Object -First 8)
+                    Where-Object { $_ -match '(?i)(PER_USER_[A-Z0-9_]+_FAILURE:|(?:installer|uninstaller|reinstaller|desktop smoke|client probe) (?:timed out|exit \d+, expected \d+)|exception:|at .*\.ps1:)' } |
+                    Select-Object -First 8)
                 foreach ($line in $failureLines) {
                     $safeLine = [string]$line
                     $safeLine = $safeLine.Replace("$env:SystemDrive\Users\$user", '[USER_PROFILE]')

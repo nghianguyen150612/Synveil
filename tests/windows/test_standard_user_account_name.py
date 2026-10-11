@@ -123,6 +123,16 @@ class StandardUserAccountNameTests(unittest.TestCase):
         self.assertIn("[USER_PROFILE]", diagnostics)
         self.assertIn("STANDARD_USER_DIAGNOSTIC package_root_entries=", diagnostics)
 
+    def test_lifecycle_child_failure_emits_bounded_redacted_exception_diagnostics(self) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
+        self.assertIn("$lifecycleStdout = Join-Path $EvidenceDirectory 'lifecycle.stdout.log'", source)
+        self.assertIn("$lifecycleStderr = Join-Path $EvidenceDirectory 'lifecycle.stderr.log'", source)
+        self.assertIn("@($stdout,$stderr,$lifecycleStdout,$lifecycleStderr)", source)
+        self.assertIn("uninstaller|reinstaller|desktop smoke|client probe", source)
+        self.assertIn("Select-Object -First 8", source)
+        self.assertIn("$safeLine.Replace(\"$env:SystemDrive\\Users\\$user\", '[USER_PROFILE]')", source)
+        self.assertIn("$safeLine.Replace($password,'[REDACTED]')", source)
+
 
 if __name__ == "__main__":
     unittest.main()
