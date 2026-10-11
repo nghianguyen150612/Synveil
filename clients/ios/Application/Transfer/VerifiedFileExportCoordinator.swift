@@ -61,7 +61,7 @@ final class VerifiedFileExportCoordinator {
                 versionId: capability.identity.versionId,
                 sha256: capability.identity.expected.sha256,
                 byteLength: capability.identity.expected.byteLength,
-                lifecycleRevision: capability.sessionLifecycleRevision)
+                lifecycleRevision: capability.session.lifecycleRevision)
             entries[id] = Entry(
                 lease: lease, capability: capability, displayName: displayName,
                 state: .ready)
