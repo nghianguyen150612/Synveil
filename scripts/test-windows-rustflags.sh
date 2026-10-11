@@ -78,6 +78,38 @@ if [[ ! " ${direct_flags[*]} " == *" link-arg=/Brepro "* ]]; then
     echo "MSVC direct rustc wrapper flags omit /Brepro" >&2
     exit 1
 fi
+cat > "$msvc_fixture_bin/rustc" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "${MSYS2_ARG_CONV_EXCL:-}" > "$SYNVEIL_TEST_EXCLUSION_CAPTURE"
+printf '%s\0' "$@" > "$SYNVEIL_TEST_ARG_CAPTURE"
+SH
+chmod +x "$msvc_fixture_bin/rustc"
+SYNVEIL_TEST_EXCLUSION_CAPTURE="$fixture_root/msys-exclusions"
+SYNVEIL_TEST_ARG_CAPTURE="$fixture_root/rustc-argv"
+export SYNVEIL_TEST_EXCLUSION_CAPTURE SYNVEIL_TEST_ARG_CAPTURE
+msys_arg_conv_excl_was_set="${MSYS2_ARG_CONV_EXCL+x}"
+msys_arg_conv_excl_before="${MSYS2_ARG_CONV_EXCL:-}"
+MSYS2_ARG_CONV_EXCL='--preserve-existing'
+export MSYS2_ARG_CONV_EXCL
+synveil_run_direct_rustc 'x86_64-pc-windows-msvc' -C 'link-arg=/Brepro'
+python3 - <<'PY'
+import os
+from pathlib import Path
+
+exclusions = Path(os.environ["SYNVEIL_TEST_EXCLUSION_CAPTURE"]).read_text().strip().split(";")
+if "--preserve-existing" not in exclusions or "link-arg=/Brepro" not in exclusions:
+    raise SystemExit(f"MSYS argument exclusions were not preserved: {exclusions!r}")
+argv = Path(os.environ["SYNVEIL_TEST_ARG_CAPTURE"]).read_bytes().split(b"\0")[:-1]
+if argv != [b"-C", b"link-arg=/Brepro"]:
+    raise SystemExit(f"direct MSVC rustc arguments changed before process launch: {argv!r}")
+PY
+unset SYNVEIL_TEST_EXCLUSION_CAPTURE SYNVEIL_TEST_ARG_CAPTURE
+if [[ -n "$msys_arg_conv_excl_was_set" ]]; then
+    MSYS2_ARG_CONV_EXCL="$msys_arg_conv_excl_before"
+    export MSYS2_ARG_CONV_EXCL
+else
+    unset MSYS2_ARG_CONV_EXCL
+fi
 PATH="$original_path"
 export PATH
 unset QMAKE CARGO_ENCODED_RUSTFLAGS RUSTFLAGS

@@ -164,9 +164,15 @@ def main() -> int:
     require("$banner" not in workflow and "& $linker '/?'" not in workflow, "linker identity does not depend on localized help output")
     require("CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" in reproducible and '"${rustc_linker_args[@]}"' in reproducible, "direct rustc uses selected MSVC linker")
     require("CARGO_ENCODED_RUSTFLAGS" in reproducible and "$'\\x1f'" in reproducible, "lossless Cargo flag transport")
-    require('rustc "${SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS[@]}" "${rustc_linker_args[@]}"' in reproducible, "direct rustc receives discrete remaps")
+    require('synveil_run_direct_rustc "$host_toolchain"' in reproducible and
+            '"${SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS[@]}" "${rustc_linker_args[@]}"' in reproducible,
+            "direct rustc receives discrete remaps through the selected toolchain wrapper")
     require("host_toolchain\" == *\"msvc\"" in reproducible and "link-arg=/Brepro" in reproducible,
             "MSVC release links use the deterministic PE timestamp mode")
+    require('MSYS2_ARG_CONV_EXCL="$arg_conversion_exclusions" rustc "$@"' in reproducible and
+            'arg_conversion_exclusions+="link-arg=/Brepro"' in reproducible and
+            'synveil_run_direct_rustc' in (ROOT / "scripts/test-windows-rustflags.sh").read_text(encoding="utf-8"),
+            "Git Bash preserves the MSVC /Brepro linker argument across direct rustc invocation")
     require("test-windows-rustflags.sh" in ci_workflow,
             "Windows Qt reproducibility CI runs the MSVC linker-flag regression")
     for runtime_rule in ("SYNVEIL_MSVC_CRT_DIR", "VCToolsRedistDir/x64/%s", "MSVCP140", "copy_missing_msvc_runtime_imports", "--qmldir", "platforms/qwindows.dll", "QmlImports=qml", "Qml2Imports=qml", "is_system_dll", "missing non-system import", "development directory leaked", 'rm -rf -- "$STAGING_DIR"'):
