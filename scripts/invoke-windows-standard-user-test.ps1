@@ -140,6 +140,24 @@ try {
             $truncated = if ($remaining.Count -gt $remainingPaths.Count) { ' [truncated]' } else { '' }
             Write-Host "STANDARD_USER_DIAGNOSTIC package_root_entries=$($remaining.Count) paths=$($remainingPaths -join ',')$truncated"
         }
+        try {
+            $productProcesses = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop |
+                Where-Object { $_.Name -in @('synveil-client.exe','synveil-desktop.exe') -or
+                    $_.Name -like 'unins*.exe' -or $_.Name -eq '_unins.tmp' } |
+                Select-Object -First 12)
+            foreach ($productProcess in $productProcesses) {
+                $ownerCategory = 'unknown'
+                try {
+                    $owner = Invoke-CimMethod -InputObject $productProcess -MethodName GetOwner -ErrorAction Stop
+                    if ($owner.ReturnValue -eq 0) {
+                        $ownerCategory = if ($owner.User -ieq $user) { 'standard_user' } else { 'other' }
+                    }
+                } catch { }
+                Write-Host "STANDARD_USER_DIAGNOSTIC process=$($productProcess.Name) pid=$($productProcess.ProcessId) owner=$ownerCategory"
+            }
+        } catch {
+            Write-Host "STANDARD_USER_DIAGNOSTIC process_inventory=unavailable type=$($_.Exception.GetType().FullName)"
+        }
     }
     if ($accountCreationAttempted) {
         try {

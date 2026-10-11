@@ -99,6 +99,9 @@ class StandardUserAccountNameTests(unittest.TestCase):
         self.assertIn("Select-Object -First 8", diagnostics)
         self.assertIn("Select-Object -First 20", diagnostics)
         self.assertIn("Select-Object -First 40", diagnostics)
+        self.assertIn("Win32_Process", diagnostics)
+        self.assertIn("GetOwner", diagnostics)
+        self.assertIn("Select-Object -First 12", diagnostics)
         self.assertIn("[USER_PROFILE]", diagnostics)
         self.assertIn("STANDARD_USER_DIAGNOSTIC package_root_entries=", diagnostics)
 
