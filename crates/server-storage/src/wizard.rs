@@ -972,7 +972,11 @@ fn classify_candidate(
         Err(MarkerError::Absent) => {
             match &config.storage {
                 StorageConfiguration::ConfiguredLocal { root: current, .. } if current == &root => {
-                    return StorageRootClassification::MalformedStorageIdentity;
+                    // This path was previously configured, so an empty
+                    // replacement directory is an identity conflict rather
+                    // than a new malformed candidate. Keep the saved
+                    // configuration untouched and require explicit repair.
+                    return StorageRootClassification::RootIdentityMismatch;
                 }
                 StorageConfiguration::PreparingLocal {
                     root: current,
