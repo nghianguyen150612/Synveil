@@ -87,7 +87,7 @@ export PATH
 LC_ALL=C
 export LC_ALL
 unset ENV BASH_ENV CDPATH LD_PRELOAD LD_LIBRARY_PATH PYTHONPATH
-printf '[synveil] %%post synveil (arg: %s)\n' "$1" >&2
+printf '[synveil] RPM post-install scriptlet (arg: %s)\n' "$1" >&2
 if command -v systemd-sysusers >/dev/null 2>&1; then
   printf '[synveil] applying sysusers (systemd-sysusers)\n' >&2
   systemd-sysusers /usr/lib/sysusers.d/synveil.conf
