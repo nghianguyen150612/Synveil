@@ -110,7 +110,8 @@ struct SyncStatusView: View {
             }
             RebaselineProgressView(
                 library: library, coordinator: rebaselineCoordinator,
-                sessionController: sessionController)
+                sessionController: sessionController,
+                statusDidChange: { await viewModel.loadStatus() })
             Section("Saved Metadata") {
                 Text(viewModel.cacheMessage)
                     .fixedSize(horizontal: false, vertical: true)

@@ -7,12 +7,14 @@ struct RebaselineProgressView: View {
     @State private var confirmsStart = false
     @State private var confirmsHandoff = false
     init(
-        library: Library, coordinator: RebaselineCoordinator?, sessionController: SessionController
+        library: Library, coordinator: RebaselineCoordinator?, sessionController: SessionController,
+        statusDidChange: @escaping @MainActor () async -> Void = {}
     ) {
         self.sessionController = sessionController
         _model = State(
             initialValue: RebaselineViewModel(
-                library: library, coordinator: coordinator, sessionController: sessionController))
+                library: library, coordinator: coordinator, sessionController: sessionController,
+                statusDidChange: statusDidChange))
     }
     var body: some View {
         Section("Rebuild Saved Metadata") {

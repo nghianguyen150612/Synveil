@@ -7,6 +7,7 @@ final class RebaselineViewModel {
     let library: Library
     private let coordinator: RebaselineCoordinator?
     private let sessionController: SessionController
+    private let statusDidChange: @MainActor () async -> Void
     private let revision: UInt64
     private var scope: ClientMutationScope?
     private var task: Task<Void, Never>?
@@ -15,11 +16,13 @@ final class RebaselineViewModel {
     private(set) var isBusy = false
     private(set) var invalidated = false
     init(
-        library: Library, coordinator: RebaselineCoordinator?, sessionController: SessionController
+        library: Library, coordinator: RebaselineCoordinator?, sessionController: SessionController,
+        statusDidChange: @escaping @MainActor () async -> Void = {}
     ) {
         self.library = library
         self.coordinator = coordinator
         self.sessionController = sessionController
+        self.statusDidChange = statusDidChange
         revision = sessionController.lifecycleRevision
     }
     var isCurrent: Bool {
@@ -106,6 +109,8 @@ final class RebaselineViewModel {
         }
         // The read happens outside the cancelled operation and derives counters from committed rows.
         await loadStatus()
+        guard isCurrent else { return }
+        await statusDidChange()
     }
     func cancel() { task?.cancel() }
     func sessionDidChange() {

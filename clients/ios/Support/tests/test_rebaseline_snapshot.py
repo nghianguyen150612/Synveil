@@ -59,6 +59,8 @@ class RebaselineSnapshotArchitectureTests(unittest.TestCase):
         for expected in ["Rebuild Saved Metadata", "Continue Snapshot Download", "Recover Original Snapshot Completion", ".confirmationDialog(", ".updatesFrequently", ".fixedSize(horizontal: false, vertical: true)"]:
             self.assertIn(expected, source)
         self.assertIn(".task { await model.loadStatus() }", source)
+        parent = (IOS / "Features/Sync/SyncStatusView.swift").read_text()
+        self.assertIn("statusDidChange: { await viewModel.loadStatus() }", parent)
 
 
 if __name__ == "__main__":

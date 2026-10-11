@@ -167,6 +167,37 @@ final class RebaselineViewModelTests: XCTestCase {
             presentation.orderedItems.map(\.id.rawValue),
             [queueUUID(30), queueUUID(10), queueUUID(20)])
     }
+
+    func testHandoffRefreshesSurroundingSyncStatusWithoutNetworkWork() async throws {
+        let f = try await inboundFixture(self)
+        let library = try await snapshotLibrary(f.scope)
+        let parent = SyncStatusViewModel(
+            library: library, coordinator: f.coordinator, projection: f.projection,
+            checkpoint: f.base.service, sessionController: f.base.controller)
+        await parent.loadStatus()
+        XCTAssertNotEqual(parent.completeness, .complete)
+        let before = await f.base.transport.requests().count
+        let model = RebaselineViewModel(
+            library: library, coordinator: snapshotCoordinator(f.base),
+            sessionController: f.base.controller, statusDidChange: { await parent.loadStatus() })
+        await model.loadStatus()
+        await f.base.transport.set(
+            try queueHTTP(snapshotEnvelope(snapshotBootstrapObject(f.scope))))
+        await model.start(confirmedByUser: true)
+        await f.base.transport.set(try queueHTTP(snapshotPageObject(f.scope, rows: snapshotRows())))
+        await model.continueSnapshot()
+        await model.continueSnapshot()
+        await f.base.transport.set(try queueHTTP(snapshotCompletionObject(f.scope)))
+        await model.continueSnapshot(confirmedByUser: true)
+        XCTAssertEqual(parent.completeness, .complete)
+        XCTAssertEqual(parent.progress.locallyApplied?.sequence.rawValue, "25")
+        XCTAssertEqual(parent.progress.serverConfirmed?.sequence.rawValue, "25")
+        XCTAssertTrue(parent.canSync)
+        let syncRequests = await f.wire.requests()
+        let snapshotRequests = await f.base.transport.requests()
+        XCTAssertTrue(syncRequests.isEmpty)
+        XCTAssertEqual(snapshotRequests.count, before + 3)
+    }
     #if canImport(SwiftUI)
         func testNativeRebaselineViewRendersAndSupportsAccessibilityDynamicType() async throws {
             let f = try await queueFixture(self)
