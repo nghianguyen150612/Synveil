@@ -65,6 +65,10 @@ jobs:
             & $Mutation $fixture
             & pwsh -NoProfile -File ./scripts/build-windows-installer.ps1 -RuntimeStagingDirectory $fixture 2>$null
             if ($LASTEXITCODE -eq 0) { throw "NEGATIVE_RUNTIME_FAILURE: $Name fixture was accepted" }
+            # Expected child-process rejection is success for this test step;
+            # clear PowerShell's native exit status so GitHub's pwsh wrapper
+            # does not propagate the last expected non-zero child result.
+            $global:LASTEXITCODE = 0
           }
           Expect-Rejected 'missing-qwindows' { param($p) Remove-Item (Join-Path $p 'platforms/qwindows.dll') }
           Expect-Rejected 'corrupt-dll' { param($p) Add-Content -LiteralPath (Join-Path $p 'platforms/qwindows.dll') -Value 'corrupt' }

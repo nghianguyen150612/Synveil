@@ -550,9 +550,7 @@ fi
     assert!(
         normalized.find("QObject *r2_1;").unwrap() < normalized.find("QVariant r2_2;").unwrap()
     );
-    assert!(
-        normalized.find("QVariant r2_2;").unwrap() < normalized.find("double r7_1;").unwrap()
-    );
+    assert!(normalized.find("QVariant r2_2;").unwrap() < normalized.find("double r7_1;").unwrap());
     assert!(normalized.contains(concat!(
         "while (!aotContext->loadScopeObjectPropertyLookup(478, &r2_1)) {\n",
         "            aotContext->setInstructionPointer(5);"
