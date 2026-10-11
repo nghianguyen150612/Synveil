@@ -272,7 +272,7 @@ struct FileExportControls: View {
     }
 }
 
-private struct NativeFilePresenter: View {
+struct NativeFilePresenter: View {
     let presentation: NativeFilePresentation
     let onFinished: @MainActor (NativeFilePresentationResult) -> Void
     var body: some View {
