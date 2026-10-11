@@ -4238,6 +4238,9 @@ mod tests {
         assert!(host.runtime_handle().is_none());
         host.shutdown().await.expect("faulted host shutdown");
         assert_eq!(host.lifecycle(), DesktopSyncHostLifecycle::Stopped);
+        // The faulted host still owns the configured replica until dropped.
+        // Release that handle before Windows-safe fixture cleanup.
+        drop(host);
         fixture.close().await;
     }
 
@@ -4738,6 +4741,9 @@ mod tests {
                 && intent.kind() == OutboundIntentKind::CreateFile
         }));
         host.shutdown().await.expect("recovery host shutdown");
+        // The host owns the configured filesystem replica until it is dropped.
+        // Windows refuses fixture cleanup while that handle is still alive.
+        drop(host);
         fixture.close().await;
     }
 

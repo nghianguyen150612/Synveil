@@ -501,9 +501,13 @@ synveil_artifact_build_id() {
         printf '%s' '-'
         return 0
     fi
-    readelf -n "$1" 2>/dev/null |
+    local build_id
+    build_id="$(readelf -n "$1" 2>/dev/null |
         sed -n 's/^[[:space:]]*Build ID: //p' |
-        head -n 1
+        head -n 1)"
+    # Reproducible release links omit .note.gnu.build-id. Keep the manifest's
+    # four-column schema explicit instead of emitting an empty field.
+    printf '%s' "${build_id:--}"
 }
 
 # The detection pattern below is the gate and must not be weakened: it only has
@@ -564,7 +568,7 @@ synveil_assert_linux_release_binary() {
         return 1
     }
     # Reproducible Linux release links deliberately omit GNU build-id notes.
-    [[ -z "$(synveil_artifact_build_id "$artifact")" ]] || {
+    [[ "$(synveil_artifact_build_id "$artifact")" == '-' ]] || {
         printf '[synveil-artifact] ERROR: nondeterministic ELF build ID is present: %s\n' "$label" >&2
         return 1
     }
