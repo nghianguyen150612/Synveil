@@ -555,7 +555,9 @@ export function RestoreWorkflowPage({
   backupApi = defaultBackupApi,
   fileApi = defaultFileMetadataApi,
 }: RestoreWorkflowPageProps) {
-  const { refresh: refreshAuth } = useAuth()
+  const auth = useAuth()
+  const { refresh: refreshAuth } = auth
+  const currentPrincipalId = auth.session?.user_id ?? null
   const navigate = useNavigate()
   const { backupSetId, snapshotId, restorePlanId } = useParams<{
     backupSetId: string
@@ -640,7 +642,7 @@ export function RestoreWorkflowPage({
       'execute_restore_plan',
       (scope) => scope.backupSetId === backupSetId && scope.restorePlanId === restorePlanId,
     ))
-  }, [backupSetId, restorePlanId, snapshotId])
+  }, [backupSetId, currentPrincipalId, restorePlanId, snapshotId])
 
   const loadSnapshot = useCallback(
     async (requestedSnapshotId: string) => {
