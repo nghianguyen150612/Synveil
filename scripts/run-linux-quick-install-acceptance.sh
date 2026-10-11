@@ -23,7 +23,37 @@ export SSL_CERT_FILE="$FIXTURE/cert.pem"
 ARGS=(--channel-url=https://localhost:4443/SYNVEIL-RELEASE-CHANNEL.json
   --trusted-origin=https://localhost:4443 --trusted-channel-sha256="$PIN"
   --minimum-channel-generation=17 --yes)
-"$ROOT/deploy/install/quick-install.sh" "${ARGS[@]}" | tee "$FIXTURE/first.log"
+report_native_package_state() {
+  echo "NATIVE_PACKAGE_DIAGNOSTIC type=$ARTIFACT_TYPE"
+  if [[ "$ARTIFACT_TYPE" == deb ]]; then
+    dpkg-query -W -f='${db:Status-Abbrev} ${Version}\n' synveil || true
+    if output="$(dpkg --verify synveil 2>&1)"; then verify_status=0; else verify_status=$?; fi
+    echo "NATIVE_PACKAGE_DIAGNOSTIC verifier=dpkg --verify synveil exit=$verify_status"
+  else
+    rpm -q --qf '%{NAME} %{VERSION}-%{RELEASE} %{ARCH}\n' synveil || true
+    if output="$(rpm -V synveil 2>&1)"; then verify_status=0; else verify_status=$?; fi
+    echo "NATIVE_PACKAGE_DIAGNOSTIC verifier=rpm -V synveil exit=$verify_status"
+  fi
+  if [[ -n "${output:-}" ]]; then
+    printf '%s\n' "$output" | sed -n '1,40p'
+  else
+    echo 'NATIVE_PACKAGE_DIAGNOSTIC verifier_output=(empty)'
+  fi
+}
+set +e
+"$ROOT/deploy/install/quick-install.sh" "${ARGS[@]}" 2>&1 | tee "$FIXTURE/first.log"
+pipeline_status=("${PIPESTATUS[@]}")
+set -e
+quick_install_status=${pipeline_status[0]:-1}
+tee_status=${pipeline_status[1]:-1}
+if (( quick_install_status != 0 )); then
+  report_native_package_state
+  exit "$quick_install_status"
+fi
+if (( tee_status != 0 )); then
+  echo "NATIVE_ACCEPTANCE_LOG_FAILURE tee_exit=$tee_status" >&2
+  exit "$tee_status"
+fi
 grep -F 'INSTALLED_VERIFIED' "$FIXTURE/first.log"
 "$ROOT/deploy/install/quick-install.sh" "${ARGS[@]}" | tee "$FIXTURE/second.log"
 grep -F 'ALREADY_INSTALLED_VERIFIED' "$FIXTURE/second.log"

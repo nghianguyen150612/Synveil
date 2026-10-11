@@ -242,6 +242,15 @@ class QuickInstallTests(unittest.TestCase):
         self.assertIn('sudo -n -- "$DNF_REAL" --version', workflow)
         self.assertNotIn('NOPASSWD: /usr/bin/dnf\\n\'', workflow)
 
+    def test_native_acceptance_reports_bounded_package_verifier_output(self):
+        source = (ROOT / "scripts/run-linux-quick-install-acceptance.sh").read_text(encoding="utf-8")
+
+        self.assertIn("report_native_package_state()", source)
+        self.assertIn("dpkg --verify synveil", source)
+        self.assertIn("rpm -V synveil", source)
+        self.assertIn("sed -n '1,40p'", source)
+        self.assertIn('exit "$quick_install_status"', source)
+
     def test_native_verification_failure_uses_bounded_reason_codes(self):
         manager = quick.NativeManager(quick.PROFILES["debian-x86_64"])
         with mock.patch.object(manager, "installed_version", return_value="0.2.0"), \
