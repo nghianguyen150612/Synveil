@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -42,6 +43,25 @@ class FakeManager:
 
 
 class QuickInstallTests(unittest.TestCase):
+    def test_rpm_post_diagnostic_survives_rpm_percent_expansion(self):
+        spec = (ROOT / "deploy/packages/rpm/synveil.spec.tmpl").read_text(encoding="utf-8")
+        post = spec.split("%post\n", 1)[1].split("\n%preun\n", 1)[0]
+        command = next(line.strip() for line in post.splitlines() if line.lstrip().startswith("printf "))
+
+        # RPM collapses %% to % while expanding its scriptlet. Execute the
+        # resulting shell command to catch printf formats such as %post, where
+        # bash treats %p as an invalid conversion and set -e aborts the hook.
+        expanded = command.replace("%%", "%")
+        result = subprocess.run(
+            ["sh", "-c", expanded, "synveil-rpm-scriptlet-test", "1"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("[synveil] RPM post-install scriptlet (arg: 1)\n", result.stderr)
+
     def test_native_package_acceptance_diagnostics_are_filtered_and_bounded(self):
         manager = quick.NativeManager(quick.PROFILES["fedora-x86_64"])
         result = quick.subprocess.CompletedProcess(
