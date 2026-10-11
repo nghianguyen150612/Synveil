@@ -3090,6 +3090,13 @@ fn should_start_background_client(smoke_test: bool) -> bool {
     !smoke_test
 }
 
+// Keep the async runtime handle type visible to rustc's generated bridge code.
+#[allow(dead_code)]
+fn _runtime_handle_is_send(handle: &Handle) -> bool {
+    let _ = handle;
+    true
+}
+
 #[cfg(test)]
 mod smoke_test_startup_tests {
     use super::should_start_background_client;
@@ -3099,11 +3106,4 @@ mod smoke_test_startup_tests {
         assert!(!should_start_background_client(true));
         assert!(should_start_background_client(false));
     }
-}
-
-// Keep the async runtime handle type visible to rustc's generated bridge code.
-#[allow(dead_code)]
-fn _runtime_handle_is_send(handle: &Handle) -> bool {
-    let _ = handle;
-    true
 }
