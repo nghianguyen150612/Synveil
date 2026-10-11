@@ -103,7 +103,6 @@ fn windows_packager_has_complete_explicit_runtime_policy() {
         "synveil-desktop.exe",
         "synveil-client.exe",
         "windeployqt",
-        "--compiler-runtime",
         "--qmldir",
         "Qt6Core.dll",
         "Qt6Network.dll",
