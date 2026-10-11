@@ -502,9 +502,7 @@ mod tests {
     /// the explicit pool close and final state-owner drop. Retry only native
     /// sharing/lock violations for a bounded period; other cleanup errors and
     /// persistent locks still fail this lifecycle regression.
-    fn remove_process_fixture_directory_bounded(
-        path: &std::path::Path,
-    ) -> std::io::Result<()> {
+    fn remove_process_fixture_directory_bounded(path: &std::path::Path) -> std::io::Result<()> {
         if !cfg!(windows) {
             return fs::remove_dir_all(path);
         }
