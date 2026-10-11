@@ -188,6 +188,14 @@ def main() -> int:
             "Git Bash preserves the MSVC /Brepro linker argument across direct rustc invocation")
     require("test-windows-rustflags.sh" in ci_workflow,
             "Windows Qt reproducibility CI runs the MSVC linker-flag regression")
+    rustflags_test = (ROOT / "scripts/test-windows-rustflags.sh").read_text(encoding="utf-8")
+    qmake_fixture = rustflags_test.index('QMAKE="$fixture_root/no-qmake"')
+    qmake_reset = rustflags_test.index("unset AR SYNVEIL_MSVC_AR MSYSTEM QMAKE")
+    cargo_home_cases = rustflags_test.index("# Exercise explicit and default Windows Cargo homes.")
+    require(rustflags_test.count("unset QMAKE") == 0 and
+            qmake_fixture < cargo_home_cases < qmake_reset and
+            "Keep Qt wrapper discovery disabled for every simulated Cargo-home case below." in rustflags_test,
+            "Windows flag regression keeps Qt wrapper discovery isolated when run after Qt installation")
     for runtime_rule in ("SYNVEIL_MSVC_CRT_DIR", "VCToolsRedistDir/x64/%s", "MSVCP140", "copy_missing_msvc_runtime_imports", "--qmldir", "platforms/qwindows.dll", "QmlImports=qml", "Qml2Imports=qml", "is_system_dll", "missing non-system import", "development directory leaked", 'rm -rf -- "$STAGING_DIR"'):
         require(runtime_rule in package, f"authoritative runtime rule: {runtime_rule}")
     require("--compiler-runtime" not in package and "--no-compiler-runtime" in package,
