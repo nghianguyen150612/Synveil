@@ -39,6 +39,12 @@ function Assert-NoSecretLikeBytes([byte[]]$Content, [string]$Label) {
         }
     }
 }
+function Test-FixtureSecretScanPath([string]$RelativePath) {
+    $leaf = [IO.Path]::GetFileName($RelativePath)
+    if ($leaf -in @('synveil-desktop.exe','synveil-client.exe','LICENSE','NOTICE')) { return $true }
+    $textExtensions = @('.conf','.ini','.js','.json','.md','.qml','.qmltypes','.qmldir','.svg','.txt','.xml')
+    return $textExtensions -contains [IO.Path]::GetExtension($RelativePath).ToLowerInvariant()
+}
 function Assert-NoPrivateSourcePath([byte[]]$Content, [string]$RepositoryRoot) {
     $ascii = [Text.Encoding]::ASCII.GetString($Content)
     $utf16 = [Text.Encoding]::Unicode.GetString($Content)
@@ -238,14 +244,15 @@ try {
         Assert-NoSecretLikeBytes $bytes 'output'
     } else {
         # The P044 lifecycle fixture embeds 64 MiB of cryptographically random
-        # data so Inno Setup has a bounded in-flight copy to interrupt. Scanning
-        # its compressed container for short token prefixes has a non-zero
-        # random false-positive rate. Scan every controlled staged input except
-        # that one explicitly named synthetic payload; production builds retain
-        # the whole-output scan above.
+        # data so Inno Setup has a bounded in-flight copy to interrupt. Opaque
+        # Qt/vendor PE files can also contain credential-marker syntax as
+        # parser literals, as observed in Qt6Network.dll; scan first-party
+        # executables and text payloads, while production Setup still gets a
+        # full-byte scan and every Setup retains the private-source-path scan.
         foreach ($payloadFile in Get-ChildItem -LiteralPath $stage -File -Recurse) {
             $relative = [IO.Path]::GetRelativePath($stage, $payloadFile.FullName).Replace('\','/')
             if ($relative -ceq 'runtime-payload.bin') { continue }
+            if (!(Test-FixtureSecretScanPath $relative)) { continue }
             Assert-NoSecretLikeBytes ([IO.File]::ReadAllBytes($payloadFile.FullName)) "fixture payload $relative"
         }
     }

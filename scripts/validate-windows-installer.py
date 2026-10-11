@@ -199,7 +199,15 @@ def main() -> int:
             "test-only fixture cannot alter production version/release manifest")
     require("Assert-NoSecretLikeBytes" in build and "runtime-payload.bin" in build and
             "secret-like marker '$marker' in $Label" in build,
-            "P044 synthetic random payload must be the only fixture-only secret scan exclusion")
+            "P044 fixture secret-marker scan remains present")
+    fixture_secret_scan = build[build.index("function Test-FixtureSecretScanPath") :
+                                build.index("function Assert-NoPrivateSourcePath")]
+    extension_policy = re.search(r"\$textExtensions = @\(([^)]*)\)", fixture_secret_scan)
+    require("$leaf -in @('synveil-desktop.exe','synveil-client.exe','LICENSE','NOTICE')" in fixture_secret_scan and
+            extension_policy is not None and "'.dll'" not in extension_policy.group(1) and
+            "private-key-marker-text" in workflow and "LifecycleFixtureVersion" in workflow and
+            "BEGIN PRIVATE KEY" in workflow,
+            "fixture scans first-party/text payloads and still rejects secret markers in text")
     private_path_scan = build[build.index("function Assert-NoPrivateSourcePath") :
                               build.index("function Get-WorkspaceVersion")]
     require("[Text.Encoding]::ASCII.GetString($Content)" in private_path_scan and

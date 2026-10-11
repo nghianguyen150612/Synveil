@@ -58,12 +58,14 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          function Expect-Rejected([string]$Name, [scriptblock]$Mutation) {
+          function Expect-Rejected([string]$Name, [scriptblock]$Mutation, [switch]$LifecycleFixture) {
             $fixture = Join-Path $env:RUNNER_TEMP ("synveil-negative-" + $Name)
             Remove-Item $fixture -Recurse -Force -ErrorAction SilentlyContinue
             Copy-Item target/windows-installer-runtime $fixture -Recurse
             & $Mutation $fixture
-            & pwsh -NoProfile -File ./scripts/build-windows-installer.ps1 -RuntimeStagingDirectory $fixture 2>$null
+            $arguments = @('-NoProfile','-File','./scripts/build-windows-installer.ps1','-RuntimeStagingDirectory',$fixture)
+            if ($LifecycleFixture) { $arguments += @('-LifecycleFixtureVersion','1.1.0') }
+            & pwsh @arguments 2>$null
             if ($LASTEXITCODE -eq 0) { throw "NEGATIVE_RUNTIME_FAILURE: $Name fixture was accepted" }
             # Expected child-process rejection is success for this test step;
             # clear PowerShell's native exit status so GitHub's pwsh wrapper
@@ -74,6 +76,18 @@ jobs:
           Expect-Rejected 'corrupt-dll' { param($p) Add-Content -LiteralPath (Join-Path $p 'platforms/qwindows.dll') -Value 'corrupt' }
           Expect-Rejected 'unexpected-dll' { param($p) Copy-Item (Join-Path $p 'platforms/qwindows.dll') (Join-Path $p 'unexpected.dll') }
           Expect-Rejected 'developer-file' { param($p) Set-Content -LiteralPath (Join-Path $p 'leaked.lib') -Value 'not-runtime' }
+          Expect-Rejected 'private-key-marker-text' {
+            param($p)
+            $license = Join-Path $p 'LICENSE'
+            [IO.File]::AppendAllText($license, ([Environment]::NewLine + 'BEGIN PRIVATE KEY' + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            $manifest = Join-Path $p 'SYNVEIL-MANIFEST.txt'
+            $lines = [Collections.Generic.List[string]](Get-Content -LiteralPath $manifest)
+            $index = $lines.FindIndex({ param($line) $line.EndsWith(' LICENSE') })
+            if ($index -lt 0) { throw 'SECRET_SCAN_FIXTURE_FAILURE: LICENSE inventory entry missing' }
+            $hash = (Get-FileHash -LiteralPath $license -Algorithm SHA256).Hash.ToLowerInvariant()
+            $lines[$index] = "$hash $((Get-Item -LiteralPath $license).Length) LICENSE"
+            [IO.File]::WriteAllLines($manifest, $lines, [Text.UTF8Encoding]::new($false))
+          } -LifecycleFixture
       - name: Build installer twice and require reproducibility
         shell: pwsh
         run: |
