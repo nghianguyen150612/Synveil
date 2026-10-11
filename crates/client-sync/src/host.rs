@@ -4425,6 +4425,11 @@ mod tests {
                 .is_some()
         );
         host.shutdown().await.expect("host shutdown");
+        // Drop the event receiver and host state handles before removing the
+        // on-disk fixture. Windows keeps open replica/state handles from
+        // blocking directory deletion, so shutdown alone is not sufficient.
+        drop(events);
+        drop(host);
         fixture.close().await;
     }
 
