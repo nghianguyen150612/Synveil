@@ -28,6 +28,24 @@ private final class MutationSQLiteConnection: @unchecked Sendable {
     var ackLockHeld = false
     var inboundLockDescriptor: Int32 = -1
     var inboundLockOwner: UUID?
+    var downloadLockDescriptor: Int32 = -1
+    var downloadLockOwner: UUID?
+    func acquireDownloadLock(path: String, owner: UUID) throws {
+        guard downloadLockOwner == nil else { throw DownloadFailure.duplicateOperation }
+        if downloadLockDescriptor == -1 {
+            downloadLockDescriptor = open(path, O_RDWR | O_CREAT | O_NOFOLLOW, mode_t(0o600))
+        }
+        guard downloadLockDescriptor >= 0 else { throw DownloadFailure.filesystemFailure }
+        guard flock(downloadLockDescriptor, LOCK_EX | LOCK_NB) == 0 else {
+            throw DownloadFailure.duplicateOperation
+        }
+        downloadLockOwner = owner
+    }
+    func releaseDownloadLock(owner: UUID) {
+        guard downloadLockOwner == owner else { return }
+        _ = flock(downloadLockDescriptor, LOCK_UN)
+        downloadLockOwner = nil
+    }
     func acquireInboundLock(path: String, owner: UUID) throws {
         guard inboundLockOwner == nil else { throw MutationQueueFailure.concurrentExecution }
         if inboundLockDescriptor == -1 {
@@ -66,6 +84,7 @@ private final class MutationSQLiteConnection: @unchecked Sendable {
         sqlite3_close_v2(handle)
         if ackLockDescriptor >= 0 { close(ackLockDescriptor) }
         if inboundLockDescriptor >= 0 { close(inboundLockDescriptor) }
+        if downloadLockDescriptor >= 0 { close(downloadLockDescriptor) }
     }
 }
 
@@ -1172,6 +1191,18 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         }
         return row
     }
+    /// Kernel-owned lease excludes independent coordinators/connections and releases on process
+    /// death. It is separate from sync/ACK leases and holds no SQLite transaction across awaits.
+    func claimDownloadRun(owner: UUID) throws {
+        let path = url.path + ".download-lock"
+        try connection.acquireDownloadLock(path: path, owner: owner)
+        do { try MutationQueueFilePolicy.protect(URL(fileURLWithPath: path)) } catch {
+            connection.releaseDownloadLock(owner: owner)
+            throw error
+        }
+    }
+    func finishDownloadRun(owner: UUID) { connection.releaseDownloadLock(owner: owner) }
+
     /// File bytes never enter SQLite. All offsets and lengths remain canonical decimal text.
     func prepareDownload(_ record: DownloadRecord) throws {
         try bindSession(scope: record.identity.scope, credentialId: record.identity.credentialId)

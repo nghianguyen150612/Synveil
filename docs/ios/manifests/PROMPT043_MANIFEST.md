@@ -29,7 +29,7 @@ No fresh/resume request sends If-None-Match or If-Range. Current Node changes ca
 
 `DownloadStagingStore` owns `Library/Caches/staging/downloads`, with separate opaque `.part` and `.verified` identities. Neither logical names nor Content-Disposition become paths. Root ancestors reject symbolic links; descriptor operations use openat/O_NOFOLLOW, regular-file and single-link checks. Creation uses exclusive ownership, 0700 directories/0600 files, backup exclusion and `completeUntilFirstUserAuthentication`, matching P035. Physical iOS protection attributes are checked on device; Simulator protection support is not assumed. The system cache can be evicted and does not provide document permanence.
 
-The actor serializes shared reservations and charges all durable downloads, private verified cache, partial bytes, unknown future upload staging and uncommitted files. Policy: 512 MiB total and 64 MiB free-space reserve. Arithmetic overflow, reservation overlap and low space fail before content GET. Available space is checked during writing as well. No file-sized memory allocation or fixed preallocation occurs. Conservative retained records continue to charge quota; cache eviction/retention management is deferred.
+A separate kernel-owned foreground lease prevents duplicate writers across independent coordinators and SQLite connections, without holding a SQLite transaction during networking, and releases on process death. The actor serializes shared reservations and charges all durable downloads, private verified cache, partial bytes, unknown future upload staging and uncommitted files. Policy: 512 MiB total and 64 MiB free-space reserve. Arithmetic overflow, reservation overlap and low space fail before content GET. Available space is checked during writing as well. No file-sized memory allocation or fixed preallocation occurs. Conservative retained records continue to charge quota; cache eviction/retention management is deferred.
 
 The existing actor-owned SQLite connection migrates transactionally to schema v6. Exact v5 schema verification precedes new download objects. Existing v1–v4 upgrade paths are preserved; future v7 and altered schemas fail closed. Original mutation requests/UUIDs, attempt history, UNKNOWN/conflict evidence, feeds, ACKs, active/prepared snapshots, confirmed cuts and quarantine remain in their original tables. Download bytes and bearer credentials never enter SQLite.
 
@@ -49,7 +49,7 @@ File Details and eligible saved snapshot information provide Download File, dura
 
 Local and hosted validation is being completed. Results below must be replaced with observed evidence before this manifest is finalized. No previous prompt's CI is evidence for P043.
 
-- New native tests: 127 across strict metadata/HTTP policy, recovery, storage and actual URLSession fixture suites.
+- New native tests: 131 across strict metadata/HTTP policy, recovery, storage and actual URLSession fixture suites.
 - First portable download test run: 113 passed, zero failures, prior to the final explicit restart addition. Linux harness uses official Swift 6.2, production domain/application/persistence/staging code, real filesystem/SQLite and a local Swift Crypto counterpart for CryptoKit. Native URLSession/SwiftUI/Rust platform seams are excluded or explicitly skipped in this harness; Linux results are not Simulator execution.
 - Static source validator / Python Support / docs / strict formatting: final results pending.
 - Exact final feature SHA / hosted PR / exact-head iOS Static, Build, Simulator and Rust Apple runs: pending.
@@ -59,6 +59,6 @@ Local and hosted validation is being completed. Results below must be replaced w
 
 ## Source inventory
 
-Added: `DownloadModels.swift`, `FileVersionResponseDecoder.swift`, `URLSessionFileContentTransport.swift`, `DownloadStagingStore.swift`, `FileDownloadSQLiteSchema.swift`, `FileDownloadCoordinator.swift`, `FileDownloadViewModel.swift`, `FileDownloadControls.swift` and five FileDownload test/support files. All are registered in the Xcode project.
+Added: `DownloadModels.swift`, `FileVersionResponseDecoder.swift`, `URLSessionFileContentTransport.swift`, `DownloadStagingStore.swift`, `FileDownloadSQLiteSchema.swift`, `FileDownloadCoordinator.swift`, `FileDownloadViewModel.swift`, `FileDownloadControls.swift` and six FileDownload test/support files. All are registered in the Xcode project.
 
 Modified: authenticated provider, existing SQLite store/migration, dependency container, app/root/catalog/browser/details/snapshot composition, schema-version regression expectations and fixture downgrades. Prior safety tests remain, with supported schema/future-schema assertions advanced to v6/v7 and the old unavailable-content presentation expectation updated for the now-implemented action.

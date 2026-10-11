@@ -219,4 +219,18 @@ final class FileDownloadStorageTests: XCTestCase {
             XCTFail()
         } catch {}
     }
+    func testIndependentConnectionsCannotOwnDuplicateDownloads() async throws {
+        let f = try await downloadFixture(self)
+        let reopened = try MutationQueueSQLiteStore(url: f.queue.url)
+        let first = UUID()
+        let second = UUID()
+        try await f.queue.database.claimDownloadRun(owner: first)
+        do {
+            try await reopened.claimDownloadRun(owner: second)
+            XCTFail()
+        } catch { XCTAssertEqual(error as? DownloadFailure, .duplicateOperation) }
+        await f.queue.database.finishDownloadRun(owner: first)
+        try await reopened.claimDownloadRun(owner: second)
+        await reopened.finishDownloadRun(owner: second)
+    }
 }

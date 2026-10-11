@@ -180,6 +180,22 @@ final class FileDownloadCoordinator {
 
     private func execute(
         library: LibraryId, node: NodeId, selectedVersion: FileVersionId?,
+        resume: DownloadOperationId?, restart: Bool, generation captured: UInt64,
+        progress: @escaping @MainActor (DownloadProgress) -> Void
+    ) async -> FileDownloadResult {
+        let owner = UUID()
+        do { try await database.claimDownloadRun(owner: owner) } catch {
+            return .stopped(nil, DownloadPolicy.classify(error))
+        }
+        let result = await performExecute(
+            library: library, node: node, selectedVersion: selectedVersion,
+            resume: resume, restart: restart, generation: captured, progress: progress)
+        await database.finishDownloadRun(owner: owner)
+        return result
+    }
+
+    private func performExecute(
+        library: LibraryId, node: NodeId, selectedVersion: FileVersionId?,
         resume: DownloadOperationId?, restart: Bool,
         generation captured: UInt64,
         progress: @escaping @MainActor (DownloadProgress) -> Void
