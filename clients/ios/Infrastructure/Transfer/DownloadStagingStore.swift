@@ -175,7 +175,9 @@ actor DownloadStagingStore {
             if !keep { _ = unlinkat(directory, partial, 0) }
             close(destination)
         }
-        try Self.protect(exportsRoot.appendingPathComponent(exportId, isDirectory: true), directory: true)
+        try Self.protect(
+            exportsRoot.appendingPathComponent(exportId, isDirectory: true), directory: true
+        )
         var sourceHasher = SHA256()
         var remaining = record.identity.expected.byteLength
         var total: UInt64 = 0
@@ -298,7 +300,8 @@ actor DownloadStagingStore {
         guard try length(descriptor) == expected.byteLength,
             Self.digest(try hash(descriptor, count: expected.byteLength)) == expected.sha256
         else { throw DownloadFailure.sha256Mismatch }
-        return exportsRoot.appendingPathComponent(id, isDirectory: true).appendingPathComponent(filename)
+        return exportsRoot.appendingPathComponent(id, isDirectory: true)
+            .appendingPathComponent(filename)
     }
 
     func create(_ id: DownloadOperationId) throws {
@@ -494,8 +497,12 @@ actor DownloadStagingStore {
     private func exportUsage() throws -> UInt64 {
         let actual = try exportInventory()
         var total: UInt64 = 0
-        for (id, bytes) in actual { total = try add(total, max(bytes, exportReservations[id] ?? 0)) }
-        for (id, bytes) in exportReservations where actual[id] == nil { total = try add(total, bytes) }
+        for (id, bytes) in actual {
+            total = try add(total, max(bytes, exportReservations[id] ?? 0))
+        }
+        for (id, bytes) in exportReservations where actual[id] == nil {
+            total = try add(total, bytes)
+        }
         return total
     }
     private func openExportsDirectory() throws -> Int32 {

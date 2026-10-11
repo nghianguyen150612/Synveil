@@ -5,14 +5,19 @@ import SwiftUI
 import UIKit
 
 enum NativeFilePresentationResult {
-    case previewDismissed, shareCompleted, shareCancelled, saveReportedCompleted, saveCancelled
+    case previewDismissed
+    case shareCompleted
+    case shareCancelled
+    case saveReportedCompleted
+    case saveCancelled
 
     var message: String {
         switch self {
         case .previewDismissed: "Preview dismissed"
         case .shareCompleted: "Share activity completed. Recipient import is not confirmed."
         case .shareCancelled: "Share activity was cancelled."
-        case .saveReportedCompleted: "Files export flow reported completion. Provider sync is not confirmed."
+        case .saveReportedCompleted:
+            "Files export flow reported completion. Provider sync is not confirmed."
         case .saveCancelled: "Save to Files was cancelled."
         }
     }
@@ -58,8 +63,11 @@ final class FileExportViewModel {
     }
 
     var isCurrent: Bool {
-        !invalidated && controller.state == .authenticated && controller.lifecycleRevision == revision
+        !invalidated
+            && controller.state == .authenticated
+            && controller.lifecycleRevision == revision
     }
+
     var canPresent: Bool { isCurrent && isAvailable && !isPreparing && presentation == nil }
 
     func setVerified(_ value: Bool) { isAvailable = value && isCurrent && coordinatorAvailable }
@@ -76,15 +84,16 @@ final class FileExportViewModel {
                 displayName: displayName
             ) { [weak self] state in
                 guard let self, isCurrent else { return }
-                stateText = switch state {
-                case .preparing: "Checking verified download…"
-                case .verifyingCopy: "Copying and verifying temporary file…"
-                case .ready: "Verified copy ready"
-                case .presented: "Presenting native file action…"
-                case .revoking: "Cleaning up temporary copy…"
-                case .released: "Temporary copy released"
-                case .failed: "File preparation failed"
-                }
+                stateText =
+                    switch state {
+                    case .preparing: "Checking verified download…"
+                    case .verifyingCopy: "Copying and verifying temporary file…"
+                    case .ready: "Verified copy ready"
+                    case .presented: "Presenting native file action…"
+                    case .revoking: "Cleaning up temporary copy…"
+                    case .released: "Temporary copy released"
+                    case .failed: "File preparation failed"
+                    }
             }
             guard isCurrent, !Task.isCancelled else {
                 if let lease = result.lease { await coordinator.finish(lease) }
@@ -128,7 +137,8 @@ final class FileExportViewModel {
         Task {
             let released = await coordinator?.finish(current.lease) ?? false
             if isCurrent {
-                stateText = released
+                stateText =
+                    released
                     ? (result?.message ?? "Presentation dismissed; temporary copy released")
                     : "Cleanup pending. Temporary data remains charged to private storage."
             }
@@ -151,7 +161,8 @@ final class FileExportViewModel {
         case .missing: "Verified content is missing. Download this version again."
         case .integrity: "The downloaded file failed integrity verification and cannot be exported."
         case .storage: "There is not enough private storage to prepare a safe copy."
-        case .unsupportedPreview: "Quick Look does not support this file type. Share or save it instead."
+        case .unsupportedPreview:
+            "Quick Look does not support this file type. Share or save it instead."
         case .session: "The authenticated session changed. File presentation was stopped."
         case .preparation, .none: "The verified file could not be prepared safely."
         }
@@ -167,9 +178,12 @@ struct FileExportControls: View {
         library: LibraryId, node: NodeId, version: FileVersionId, displayName: String,
         verified: Bool
     ) {
-        _model = State(initialValue: FileExportViewModel(
-            coordinator: coordinator, controller: controller, library: library, node: node,
-            version: version, displayName: displayName))
+        _model = State(
+            initialValue: FileExportViewModel(
+                coordinator: coordinator, controller: controller, library: library, node: node,
+                version: version, displayName: displayName
+            )
+        )
         initialVerified = verified
     }
 
@@ -205,7 +219,9 @@ struct FileExportControls: View {
                     Button("Share") { model.present(.share) }
                         .disabled(!model.canPresent)
                         .accessibilityLabel("Share verified downloaded version")
-                        .accessibilityHint("Prepares a verified copy and opens the iOS Share Sheet.")
+                        .accessibilityHint(
+                            "Prepares a verified copy and opens the iOS Share Sheet."
+                        )
                         .accessibilityIdentifier("synveil.export.share")
                     Button("Save to Files") { model.present(.saveToFiles) }
                         .disabled(!model.canPresent)
@@ -292,7 +308,10 @@ private struct QuickLookNativePreview: UIViewControllerRepresentable {
             self.onFinished = onFinished
         }
         func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
-        func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
+        func previewController(
+            _ controller: QLPreviewController,
+            previewItemAt index: Int
+        ) -> QLPreviewItem {
             url as NSURL
         }
         func previewControllerDidDismiss(_ controller: QLPreviewController) { onFinished() }
@@ -329,10 +348,17 @@ private struct FilesExportNativePresenter: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: UIDocumentPickerViewController, context: Context) {}
     final class Coordinator: NSObject, UIDocumentPickerDelegate {
         let onFinished: @MainActor (NativeFilePresentationResult) -> Void
-        init(onFinished: @escaping @MainActor (NativeFilePresentationResult) -> Void) { self.onFinished = onFinished }
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        init(onFinished: @escaping @MainActor (NativeFilePresentationResult) -> Void) {
+            self.onFinished = onFinished
+        }
+        func documentPicker(
+            _ controller: UIDocumentPickerViewController,
+            didPickDocumentsAt urls: [URL]
+        ) {
             onFinished(urls.isEmpty ? .saveCancelled : .saveReportedCompleted)
         }
-        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { onFinished(.saveCancelled) }
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            onFinished(.saveCancelled)
+        }
     }
 }
