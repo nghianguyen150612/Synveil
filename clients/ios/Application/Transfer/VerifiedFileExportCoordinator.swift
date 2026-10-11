@@ -75,15 +75,28 @@ final class VerifiedFileExportCoordinator {
 
     /// A lease can authorize exactly one handoff. SwiftUI receives the URL only at this point.
     func beginPresentation(_ lease: VerifiedFileExportLease) async throws -> URL {
-        guard let entry = entries[lease.id], entry.lease == lease, entry.state == .ready
+        guard var entry = entries[lease.id], entry.lease == lease, entry.state == .ready
         else { throw DownloadFailure.staleSession }
-        let validatedURL = try await downloads.validateExportCopy(
-            entry.capability, exportId: lease.id, displayName: entry.displayName)
-        guard var current = entries[lease.id], current.lease == lease
-        else { throw DownloadFailure.staleSession }
-        current.state = .presented
-        entries[lease.id] = current
-        return validatedURL
+        // Consume the lease before the first suspension point. Otherwise two callers can both
+        // observe READY while the download coordinator revalidates the same temporary copy.
+        entry.state = .presented
+        entries[lease.id] = entry
+        do {
+            let validatedURL = try await downloads.validateExportCopy(
+                entry.capability, exportId: lease.id, displayName: entry.displayName)
+            guard let current = entries[lease.id], current.lease == lease,
+                current.state == .presented
+            else { throw DownloadFailure.staleSession }
+            return validatedURL
+        } catch {
+            if var current = entries[lease.id], current.lease == lease,
+                current.state == .presented
+            {
+                current.state = .failed
+                entries[lease.id] = current
+            }
+            throw error
+        }
     }
 
     func finish(_ lease: VerifiedFileExportLease) async -> Bool {
