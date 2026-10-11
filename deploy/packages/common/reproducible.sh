@@ -645,7 +645,7 @@ synveil_assert_no_private_paths() {
     local artifact="$1"
     local label="${2:-$artifact}"
     local pattern='(/home/|/Users/|/mnt/|\.cargo/registry|[A-Za-z]:[\\/][Uu]sers[\\/]|/tmp/synveil-[^[:space:]]*|/var/tmp/synveil-[^[:space:]]*|/usr/src/synveil/target/|target[\\/]x86_64-pc-windows-gnu[\\/]release[\\/]build)'
-    local context_pattern='(/home/[!-~]*|/Users/[!-~]*|/mnt/[!-~]*|\.cargo/registry[!-~]*|[A-Za-z]:[\\/][Uu]sers[\\/][!-~]*)'
+    local context_pattern='(/home/[!-~]*|/Users/[!-~]*|/mnt/[!-~]*|\.cargo/registry[!-~]*|[A-Za-z]:[\\/][Uu]sers[\\/][!-~]*|/tmp/synveil-[!-~]*|/var/tmp/synveil-[!-~]*|/usr/src/synveil/target/[!-~]*|target[\\/][!-~]*x86_64-pc-windows-gnu[\\/]release[\\/]build[\\/][!-~]*)'
     if LC_ALL=C grep -aEq "$pattern" "$artifact"; then
         printf '[synveil-artifact] ERROR: private or temporary build path found in %s\n' "$label" >&2
         LC_ALL=C grep -aoE "$context_pattern" "$artifact" | LC_ALL=C sort -u | head -n 8 |
