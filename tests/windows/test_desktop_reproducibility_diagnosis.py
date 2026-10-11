@@ -14,8 +14,11 @@ DIAGNOSIS = ROOT / "scripts/diagnose-desktop-reproducibility.sh"
 
 class DesktopReproducibilityDiagnosisTests(unittest.TestCase):
     def test_pe_executable_mismatches_are_reported_without_elf_tools(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="synveil-pe-diagnosis-") as directory:
+        target_root = ROOT / "target"
+        target_root.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="synveil-pe-diagnosis-", dir=target_root) as directory:
             root = Path(directory)
+            relative_root = root.relative_to(ROOT).as_posix()
             build_a = root / "build-a"
             build_b = root / "build-b"
             report = root / "report"
@@ -28,7 +31,14 @@ class DesktopReproducibilityDiagnosisTests(unittest.TestCase):
             (build_b / "release/synveil-desktop.exe").write_bytes(b"MZ" + b"D" * 254)
 
             result = subprocess.run(
-                ["bash", str(DIAGNOSIS), str(build_a), str(build_b), str(report)],
+                [
+                    "bash",
+                    DIAGNOSIS.relative_to(ROOT).as_posix(),
+                    f"{relative_root}/build-a",
+                    f"{relative_root}/build-b",
+                    f"{relative_root}/report",
+                ],
+                cwd=ROOT,
                 text=True,
                 capture_output=True,
                 check=False,
