@@ -727,3 +727,33 @@ fn artifact_unit_12_absent_build_id_has_an_explicit_manifest_field() {
     assert!(common.contains("[[ \"$(synveil_artifact_build_id \"$artifact\")\" == '-' ]]"));
     assert!(validator_source.contains("^(-|[0-9a-fA-F]+)$"));
 }
+
+#[test]
+fn artifact_unit_13_private_windows_target_path_diagnostic_names_the_leak() {
+    let root = unique_test_root("private-path-diagnostic");
+    fs::create_dir_all(&root).expect("create private path diagnostic fixture");
+    let artifact = root.join("leaky.bin");
+    let marker = "target/x86_64-pc-windows-gnu/release/build/dependency-123/out";
+    fs::write(&artifact, format!("prefix {marker} suffix"))
+        .expect("write path-leak fixture artifact");
+
+    let output = Command::new("bash")
+        .arg("-c")
+        .arg("source \"$1\"; synveil_assert_no_private_paths \"$2\" test-artifact")
+        .arg("synveil-private-path-diagnostic")
+        .arg(repo_root().join("deploy/packages/common/reproducible.sh"))
+        .arg(&artifact)
+        .current_dir(repo_root())
+        .output()
+        .expect("run private path diagnostic regression");
+    let _ = fs::remove_dir_all(&root);
+    assert!(
+        !output.status.success(),
+        "private Windows target path was not rejected"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(marker),
+        "diagnostic omitted the leaked path: {stderr}"
+    );
+}
