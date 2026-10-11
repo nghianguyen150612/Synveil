@@ -125,6 +125,8 @@ class StandardUserAccountNameTests(unittest.TestCase):
 
     def test_lifecycle_child_failure_emits_bounded_redacted_exception_diagnostics(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")
+        lifecycle = (ROOT / "scripts/test-windows-installer-lifecycle.ps1").read_text(encoding="utf-8")
+        self.assertIn("$ErrorView = 'NormalView'", lifecycle)
         self.assertIn("$lifecycleStdout = Join-Path $EvidenceDirectory 'lifecycle.stdout.log'", source)
         self.assertIn("$lifecycleStderr = Join-Path $EvidenceDirectory 'lifecycle.stderr.log'", source)
         self.assertIn("@($stdout,$stderr,$lifecycleStdout,$lifecycleStderr)", source)
