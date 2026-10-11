@@ -143,7 +143,7 @@ fn run_qmlcachegen() -> Result<ExitStatus, String> {
         .iter()
         .map(|argument| canonicalize_qml_input(argument))
         .collect::<Result<Vec<_>, String>>()?;
-    Command::new(REAL_QMLCACHEGEN)
+    let status = Command::new(REAL_QMLCACHEGEN)
         .args(rewritten)
         // CXX-Qt clears the environment before invoking its configured Qt
         // tools, so the release build's global setting does not reach this
@@ -151,7 +151,114 @@ fn run_qmlcachegen() -> Result<ExitStatus, String> {
         // per-process seed changes generated local declaration order.
         .env("QT_HASH_SEED", "0")
         .status()
-        .map_err(|error| format!("could not run qmlcachegen at {REAL_QMLCACHEGEN}: {error}"))
+        .map_err(|error| format!("could not run qmlcachegen at {REAL_QMLCACHEGEN}: {error}"))?;
+
+    if status.success() && CANONICAL_RCC_STAGING_MODE == "1" {
+        if let Some(output) = qmlcachegen_output_path(&args) {
+            normalize_qmlcachegen_output(&output)?;
+        }
+    }
+    Ok(status)
+}
+
+fn qmlcachegen_output_path(args: &[std::ffi::OsString]) -> Option<PathBuf> {
+    args.windows(2)
+        .find(|pair| pair[0] == "-o")
+        .map(|pair| PathBuf::from(&pair[1]))
+}
+
+fn normalize_qmlcachegen_output(path: &Path) -> Result<(), String> {
+    let source = fs::read_to_string(path)
+        .map_err(|error| {
+            format!(
+                "could not read qmlcachegen output {}: {error}",
+                path.display()
+            )
+        })?;
+    let normalized = normalize_aot_register_declaration_order(&source);
+    if normalized != source {
+        fs::write(path, normalized).map_err(|error| {
+            format!(
+                "could not normalize qmlcachegen output {}: {error}",
+                path.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+/// Qt's AOT generator emits uninitialized register-temporary declarations by
+/// iterating a pointer-keyed QHash. Its fixed hash seed does not stabilize
+/// pointer-key iteration across clean processes, so Qt 6.4 can reorder these
+/// declaration lines even when the QML source and generated statements match.
+/// Order only those temporary declarations by their stable register name;
+/// leave types, names, AOT statements, and control flow byte-for-byte intact.
+fn normalize_aot_register_declaration_order(source: &str) -> String {
+    if !source.contains("aotBuiltFunctions") {
+        return source.to_owned();
+    }
+
+    let mut lines = source.split_inclusive('\n').collect::<Vec<_>>();
+    let mut index = 0;
+    while index < lines.len() {
+        let line = lines[index];
+        if !line.contains("wrapCall")
+            || !line.contains("aotContext")
+            || !line.contains("argumentsPtr")
+            || !line.contains("[](")
+        {
+            index += 1;
+            continue;
+        }
+
+        let mut start = index + 1;
+        while start < lines.len() {
+            let prefix = lines[start].trim();
+            if prefix.is_empty() || prefix.starts_with("Q_UNUSED(") {
+                start += 1;
+            } else {
+                break;
+            }
+        }
+        let mut end = start;
+        while end < lines.len() && aot_register_declaration_key(lines[end]).is_some() {
+            end += 1;
+        }
+        if end - start > 1 {
+            let mut declarations = lines[start..end].to_vec();
+            declarations.sort_by_key(|declaration| {
+                aot_register_declaration_key(declaration)
+                    .expect("validated AOT register declaration")
+            });
+            lines[start..end].copy_from_slice(&declarations);
+        }
+        index = end.max(index + 1);
+    }
+    lines.concat()
+}
+
+fn aot_register_declaration_key(line: &str) -> Option<(u64, u64)> {
+    let declaration = line.trim().strip_suffix(';')?.trim_end();
+    if declaration
+        .chars()
+        .any(|character| "=,(){}[]".contains(character))
+    {
+        return None;
+    }
+    let separator = declaration.rfind(|character: char| {
+        character.is_whitespace() || character == '*' || character == '&'
+    })?;
+    let name = &declaration[separator + 1..];
+    let (register, ordinal) = name.strip_prefix('r')?.split_once('_')?;
+    if register.is_empty()
+        || ordinal.is_empty()
+        || !register.bytes().all(|byte| byte.is_ascii_digit())
+        || !ordinal.bytes().all(|byte| byte.is_ascii_digit())
+        || declaration[..separator].trim().is_empty()
+    {
+        return None;
+    }
+    Some((register.parse().ok()?, ordinal.parse().ok()?))
 }
 
 /// Map a checkout-relative QML source to its canonical stand-in.

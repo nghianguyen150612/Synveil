@@ -61,6 +61,75 @@ fn compare_artifacts(expected: &Path, actual: &Path) -> std::process::Output {
         .expect("compare release artifacts")
 }
 
+fn unique_test_root(label: &str) -> PathBuf {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    std::env::temp_dir().join(format!(
+        "synveil-{label}-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock after Unix epoch")
+            .as_nanos()
+    ))
+}
+
+fn write_executable(path: &Path, contents: &str) {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::write(path, contents).expect("write test Qt tool");
+    let mut permissions = fs::metadata(path)
+        .expect("read test tool metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).expect("make test tool executable");
+}
+
+fn compile_qt_wrapper(root: &Path, real_rcc: &Path, real_qmlcachegen: &Path) -> PathBuf {
+    let repository = repo_root()
+        .canonicalize()
+        .expect("canonicalize repository root");
+    let wrapper_source = repository.join("scripts/reproducible-qt-wrapper.rs");
+    let output_path = root.join("qt-tool-wrapper");
+    let wrapper_directory = root.join("qt-tools");
+    fs::create_dir_all(&wrapper_directory).expect("create wrapper tool directory");
+    let output = Command::new("rustc")
+        .arg("--edition=2021")
+        .arg("--crate-name=synveil_reproducible_qt_wrapper")
+        .arg(&wrapper_source)
+        .arg("-o")
+        .arg(&output_path)
+        .env("SYNVEIL_REAL_QMAKE", root.join("unused-qmake"))
+        .env("SYNVEIL_REAL_RCC", real_rcc)
+        .env("SYNVEIL_REAL_QMLCACHEGEN", real_qmlcachegen)
+        .env("SYNVEIL_QT_WRAPPER_DIR", &wrapper_directory)
+        .env("SYNVEIL_SOURCE_DATE_EPOCH", "1700000000")
+        .env("SYNVEIL_QML_SOURCE_ROOT", &repository)
+        .env("SYNVEIL_QML_CANONICAL_ROOT", root.join("canonical"))
+        .env("SYNVEIL_CANONICAL_RCC_STAGING", "1")
+        .output()
+        .expect("compile Qt tool wrapper");
+    assert!(
+        output.status.success(),
+        "Qt wrapper compilation failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output_path
+}
+
+fn install_named_wrapper(binary: &Path, directory: &Path, name: &str) -> PathBuf {
+    let path = directory.join(name);
+    fs::copy(binary, &path).expect("copy wrapper under Qt tool name");
+    use std::os::unix::fs::PermissionsExt;
+    let mut permissions = fs::metadata(&path)
+        .expect("read wrapper metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&path, permissions).expect("make Qt wrapper executable");
+    path
+}
+
 fn first_artifact_line(contents: &str) -> Option<(usize, String, String)> {
     let marker = "artifacts=sha256 size build_id path";
     let marker_line = contents.lines().position(|line| line == marker)?;
@@ -322,22 +391,174 @@ fn artifact_unit_8_qmlcachegen_pins_hash_seed_at_the_child_process_boundary() {
 
 #[test]
 fn artifact_unit_9_qml_resource_staging_uses_the_canonical_root() {
-    let wrapper = read(repo_root().join("scripts/reproducible-qt-wrapper.rs"));
-    let function_start = wrapper
-        .find("fn normalize_qml_resources(")
-        .expect("QML resource normalization entrypoint");
-    let function_end = wrapper[function_start..]
-        .find("\n}")
-        .map(|offset| function_start + offset);
-    let function = &wrapper[function_start..function_end.expect("normalization function end")];
-    assert!(function.contains("canonical_root.join(\".synveil-reproducible-rcc\")"));
-    assert!(function.contains("if canonical_staging"));
-    assert!(wrapper.contains("const CANONICAL_RCC_STAGING_MODE: &str"));
-    assert!(wrapper.contains("CANONICAL_RCC_STAGING_MODE == \"1\""));
-    assert!(
-        function.contains("parent\n    }"),
-        "non-reproducibility builds retain their target-local resource staging"
+    let root = unique_test_root("canonical-rcc-staging");
+    fs::create_dir_all(&root).expect("create RCC regression root");
+    let fake_rcc = root.join("fake-rcc.sh");
+    write_executable(
+        &fake_rcc,
+        "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" > \"$FAKE_RCC_CAPTURE\"\n",
     );
+    let wrapper_binary = compile_qt_wrapper(&root, &fake_rcc, &root.join("unused-qmlcachegen"));
+    let tools = root.join("qt-tools");
+    let rcc = install_named_wrapper(&wrapper_binary, &tools, "rcc");
+    let canonical = root.join("canonical");
+    let expected_qrc = canonical.join(".synveil-reproducible-rcc/Main/resources.qrc");
+    let mut captures = Vec::new();
+    let mut normalized_qrc_bytes = Vec::new();
+    let mut normalized_resource_bytes = Vec::new();
+
+    for name in ["target-a", "target-b"] {
+        let target = root.join(name);
+        fs::create_dir_all(&target).expect("create independent target root");
+        fs::write(target.join("Main.qml"), "import QtQuick\nItem {}\n")
+            .expect("write QML resource");
+        let qrc = target.join("Main.qrc");
+        fs::write(
+            &qrc,
+            concat!(
+                "<RCC><qresource prefix=\"/qt/qml/com.synveil.desktop\">",
+                "<file alias=\"Main.qml\">Main.qml</file></qresource></RCC>\n"
+            ),
+        )
+        .expect("write QRC fixture");
+        let capture = root.join(format!("{name}.args"));
+        let output = Command::new(&rcc)
+            .args(["-o"])
+            .arg(target.join("Main.rcc.cpp"))
+            .arg(&qrc)
+            .env("FAKE_RCC_CAPTURE", &capture)
+            .output()
+            .expect("run reproducible rcc wrapper");
+        assert!(
+            output.status.success(),
+            "rcc wrapper failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let arguments = fs::read_to_string(&capture).expect("read fake rcc arguments");
+        let qrc_argument = arguments
+            .lines()
+            .find(|argument| argument.ends_with(".qrc"))
+            .expect("normalized QRC argument")
+            .to_owned();
+        assert_eq!(qrc_argument, expected_qrc.to_string_lossy().into_owned());
+        assert!(!qrc_argument.contains(&target.to_string_lossy().to_string()));
+        captures.push(qrc_argument);
+        normalized_qrc_bytes.push(fs::read(&expected_qrc).expect("read canonical QRC"));
+        normalized_resource_bytes.push(
+            fs::read(canonical.join(".synveil-reproducible-rcc/Main/resource-0000"))
+                .expect("read canonical QML resource"),
+        );
+    }
+
+    assert_eq!(captures[0], captures[1]);
+    assert_eq!(normalized_qrc_bytes[0], normalized_qrc_bytes[1]);
+    assert_eq!(normalized_resource_bytes[0], normalized_resource_bytes[1]);
+    let staged_time = fs::metadata(canonical.join(".synveil-reproducible-rcc/Main/resource-0000"))
+        .expect("read canonical resource metadata")
+        .modified()
+        .expect("read canonical resource timestamp")
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("canonical resource timestamp after epoch")
+        .as_secs();
+    assert_eq!(staged_time, 1_700_000_000);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn artifact_unit_11_qmlcachegen_aot_register_declarations_are_stable() {
+    let root = unique_test_root("qmlcachegen-order");
+    fs::create_dir_all(&root).expect("create qmlcachegen regression root");
+    let fake_qmlcachegen = root.join("fake-qmlcachegen.sh");
+    write_executable(
+        &fake_qmlcachegen,
+        r##"#!/bin/sh
+set -eu
+[ "${QT_HASH_SEED:-}" = "0" ] || exit 19
+output=""
+order=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -o) output="$2"; shift 2 ;;
+        --order=*) order="${1#*=}"; shift ;;
+        *) shift ;;
+    esac
+done
+if [ "$order" = "a" ]; then
+    cat > "$output" <<'EOF'
+static void aotBuiltFunctions() {
+    wrapCall(aotContext, dataPtr, argumentsPtr, [](const Context *aotContext, void **argumentsPtr) {
+        Q_UNUSED(aotContext)
+        Q_UNUSED(argumentsPtr)
+        double r7_1;
+        QVariant r2_2;
+        QObject *r2_1;
+        // generate_LoadQmlContextPropertyLookup
+        while (!aotContext->loadScopeObjectPropertyLookup(478, &r2_1)) {
+            aotContext->setInstructionPointer(5);
+        }
+    });
+}
+EOF
+else
+    cat > "$output" <<'EOF'
+static void aotBuiltFunctions() {
+    wrapCall(aotContext, dataPtr, argumentsPtr, [](const Context *aotContext, void **argumentsPtr) {
+        Q_UNUSED(aotContext)
+        Q_UNUSED(argumentsPtr)
+        double r7_1;
+        QObject *r2_1;
+        QVariant r2_2;
+        // generate_LoadQmlContextPropertyLookup
+        while (!aotContext->loadScopeObjectPropertyLookup(478, &r2_1)) {
+            aotContext->setInstructionPointer(5);
+        }
+    });
+}
+EOF
+fi
+"##,
+    );
+    let fake_rcc = root.join("unused-rcc");
+    let wrapper_binary = compile_qt_wrapper(&root, &fake_rcc, &fake_qmlcachegen);
+    let tools = root.join("qt-tools");
+    let qmlcachegen = install_named_wrapper(&wrapper_binary, &tools, "qmlcachegen");
+    let qml_source = repo_root()
+        .canonicalize()
+        .expect("canonicalize repository root")
+        .join("crates/desktop/qml/Main.qml");
+    let mut outputs = Vec::new();
+    for order in ["a", "b"] {
+        let output = root.join(format!("{order}.cpp"));
+        let result = Command::new(&qmlcachegen)
+            .args(["-o"])
+            .arg(&output)
+            .arg(format!("--order={order}"))
+            .arg(&qml_source)
+            .output()
+            .expect("run reproducible qmlcachegen wrapper");
+        assert!(
+            result.status.success(),
+            "qmlcachegen wrapper failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        outputs.push(fs::read(output).expect("read normalized qmlcachegen output"));
+    }
+    assert_eq!(outputs[0], outputs[1]);
+    let normalized = String::from_utf8(outputs.remove(0)).expect("UTF-8 generated C++");
+    assert!(
+        normalized.find("QObject *r2_1;").unwrap() < normalized.find("QVariant r2_2;").unwrap()
+    );
+    assert!(
+        normalized.find("QVariant r2_2;").unwrap() < normalized.find("double r7_1;").unwrap()
+    );
+    assert!(normalized.contains(concat!(
+        "while (!aotContext->loadScopeObjectPropertyLookup(478, &r2_1)) {\n",
+        "            aotContext->setInstructionPointer(5);"
+    )));
+    assert!(normalized.contains("Q_UNUSED(aotContext)\n        Q_UNUSED(argumentsPtr)"));
+    let _ = fs::remove_dir_all(&root);
 }
 
 #[test]
