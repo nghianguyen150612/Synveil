@@ -94,6 +94,9 @@ def main() -> int:
     config = CLIENT_CONFIG.read_text(encoding="utf-8")
     client_lib = CLIENT_LIB.read_text(encoding="utf-8")
     desktop_bridge = DESKTOP_BRIDGE.read_text(encoding="utf-8")
+    controller_start = desktop_bridge.index("fn start_controller(mut self: Pin<&mut Self>)")
+    controller_end = desktop_bridge.index("fn install_tray(mut self: Pin<&mut Self>)", controller_start)
+    controller_startup = desktop_bridge[controller_start:controller_end]
     lower = iss.lower()
     require(f"AppId={{{APP_ID}" in iss, "stable AppId")
     require("DefaultDirName={localappdata}\\Programs\\Synveil" in iss, "per-user path")
@@ -134,6 +137,15 @@ def main() -> int:
     require("Get-FileHash" in build and "-cne $Lock.sha256" in build, "digest before execution")
     require("windows-x86_64-installer" in build and '"windows_installer"' in build and '"SynveilSetup.exe"' in build and '"primary_installer"' in build, "artifact manifest entry")
     require("windows-latest" in workflow and "/VERYSILENT" in per_user_test and "state-sentinel" in per_user_test, "native smoke contract")
+    require("fn should_start_background_client(smoke_test: bool)" in desktop_bridge and
+            "if !should_start_background_client(smoke_test)" in controller_startup and
+            controller_startup.index("if !should_start_background_client(smoke_test)") <
+            controller_startup.index("launch_manager.ensure_running().await"),
+            "bounded QML smoke must not leave a detached background client")
+    require("profile_id=not-a-profile" in per_user_test and
+            "$env:SYNVEIL_CLIENT_CONFIG = $clientProbeConfig" in per_user_test and
+            "78 'client probe'" in per_user_test,
+            "standard-user client probe uses an isolated invalid config fixture")
     require('SYNVEIL_ENABLE_QMLCACHEGEN_WRAPPER: "1"' in workflow,
             "Windows installer candidate enables canonical QML source and RCC staging")
     require('SYNVEIL_ENABLE_QMLCACHEGEN_WRAPPER: "1"' in native_workflow,

@@ -160,7 +160,19 @@ Invoke-Bounded (Join-Path $root 'synveil-desktop.exe') @('--qml-smoke-test') $un
 $diagnostics = Get-Content $desktopErr -Raw
 Assert-True ($diagnostics -notmatch [regex]::Escape($RepositoryRoot) -and $diagnostics -notmatch 'hostedtoolcache.*Qt') 'PER_USER_RUNTIME_FAILURE: desktop used checkout/Qt SDK path'
 $env:QT_DEBUG_PLUGINS='0'
-Invoke-Bounded (Join-Path $root 'synveil-client.exe') @() $unrelatedCwd 78 'client probe' (Join-Path $logRoot 'client.stdout.log') (Join-Path $logRoot 'client.stderr.log')
+$clientProbeConfig = Join-Path $userTemp 'client-probe.conf'
+Set-Content -LiteralPath $clientProbeConfig -Value 'profile_id=not-a-profile'
+$previousClientConfig = [Environment]::GetEnvironmentVariable('SYNVEIL_CLIENT_CONFIG','Process')
+try {
+    $env:SYNVEIL_CLIENT_CONFIG = $clientProbeConfig
+    Invoke-Bounded (Join-Path $root 'synveil-client.exe') @() $unrelatedCwd 78 'client probe' (Join-Path $logRoot 'client.stdout.log') (Join-Path $logRoot 'client.stderr.log')
+} finally {
+    if ($null -eq $previousClientConfig) {
+        Remove-Item Env:SYNVEIL_CLIENT_CONFIG -ErrorAction SilentlyContinue
+    } else {
+        $env:SYNVEIL_CLIENT_CONFIG = $previousClientConfig
+    }
+}
 Assert-True ([Environment]::GetEnvironmentVariable('Path','Machine') -ceq $machinePathBefore) 'PER_USER_MUTATION_FAILURE: machine PATH changed'
 Assert-True ([Environment]::GetEnvironmentVariable('Path','User') -ceq $userPathBefore) 'PER_USER_MUTATION_FAILURE: user PATH changed'
 Assert-True ((Get-SynveilServiceCount) -eq $servicesBefore) 'PER_USER_MUTATION_FAILURE: Synveil service created'

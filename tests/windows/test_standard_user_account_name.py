@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / "scripts/invoke-windows-standard-user-test.ps1"
 PER_USER_TEST = ROOT / "scripts/test-windows-per-user-installation.ps1"
 WINDOWS_INSTALLER = ROOT / "scripts/build-windows-installer.ps1"
+DESKTOP_BRIDGE = ROOT / "crates/desktop/src/bridge.rs"
 
 
 class StandardUserAccountNameTests(unittest.TestCase):
@@ -53,6 +54,28 @@ class StandardUserAccountNameTests(unittest.TestCase):
         self.assertIn("$env:QT_QPA_PLATFORM='windows'", source)
         self.assertNotIn("QT_QPA_PLATFORM='offscreen'", source)
         self.assertIn("'platforms/qwindows.dll'", installer)
+
+    def test_qml_smoke_does_not_leave_a_background_client_running(self) -> None:
+        bridge = DESKTOP_BRIDGE.read_text(encoding="utf-8")
+        start = bridge.index("fn start_controller(mut self: Pin<&mut Self>)")
+        end = bridge.index("fn install_tray(mut self: Pin<&mut Self>)", start)
+        controller = bridge[start:end]
+        self.assertIn("fn should_start_background_client(smoke_test: bool)", bridge)
+        self.assertLess(
+            controller.index("if !should_start_background_client(smoke_test)"),
+            controller.index("launch_manager.ensure_running().await"),
+        )
+        self.assertIn("qml_smoke_test_does_not_start_detached_client", bridge)
+
+    def test_client_probe_uses_an_isolated_malformed_config_fixture(self) -> None:
+        source = PER_USER_TEST.read_text(encoding="utf-8")
+        fixture = source.index("$clientProbeConfig =")
+        probe = source.index("78 'client probe'")
+        self.assertLess(fixture, probe)
+        self.assertIn("'profile_id=not-a-profile'", source[fixture:probe])
+        self.assertIn("$env:SYNVEIL_CLIENT_CONFIG = $clientProbeConfig", source[fixture:probe])
+        self.assertIn("$previousClientConfig", source[fixture:])
+        self.assertIn("Remove-Item Env:SYNVEIL_CLIENT_CONFIG", source[fixture:])
 
     def test_installed_runtime_verifier_uses_powershell_failure_semantics(self) -> None:
         source = PER_USER_TEST.read_text(encoding="utf-8")
