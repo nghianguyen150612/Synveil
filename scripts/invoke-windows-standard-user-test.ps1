@@ -104,6 +104,43 @@ try {
         try { Copy-Item -LiteralPath $childLogs -Destination (Join-Path $EvidenceDirectory 'standard-user-logs') -Recurse -Force }
         catch { Record-CleanupFailure $_ 'copy_logs' }
     }
+    if ($null -ne $primaryFailure) {
+        foreach ($childLog in @($stdout,$stderr)) {
+            if ($childLog -and (Test-Path -LiteralPath $childLog -PathType Leaf)) {
+                $label = [IO.Path]::GetFileName($childLog)
+                $failureLines = @(Get-Content -LiteralPath $childLog -ErrorAction SilentlyContinue |
+                    Where-Object { $_ -match 'PER_USER_[A-Z0-9_]+_FAILURE:' } | Select-Object -First 8)
+                foreach ($line in $failureLines) {
+                    $safeLine = [string]$line
+                    $safeLine = $safeLine.Replace("$env:SystemDrive\Users\$user", '[USER_PROFILE]')
+                    if (![string]::IsNullOrEmpty($password)) { $safeLine = $safeLine.Replace($password,'[REDACTED]') }
+                    if ($safeLine.Length -gt 500) { $safeLine = $safeLine.Substring(0,500) + ' …' }
+                    Write-Host "STANDARD_USER_DIAGNOSTIC child_log=$label detail=$safeLine"
+                }
+            }
+        }
+        $uninstallLog = Join-Path $childLogs 'uninstall.log'
+        if (Test-Path -LiteralPath $uninstallLog -PathType Leaf) {
+            $diagnosticLines = @(Get-Content -LiteralPath $uninstallLog -ErrorAction SilentlyContinue |
+                Where-Object { $_ -match '(?i)exception|error|failed|cannot|could not|uninstallation.*complete' } |
+                Select-Object -First 20)
+            foreach ($line in $diagnosticLines) {
+                $safeLine = ([string]$line).Replace("$env:SystemDrive\Users\$user", '[USER_PROFILE]')
+                if (![string]::IsNullOrEmpty($password)) { $safeLine = $safeLine.Replace($password,'[REDACTED]') }
+                if ($safeLine.Length -gt 500) { $safeLine = $safeLine.Substring(0,500) + ' …' }
+                Write-Host "STANDARD_USER_DIAGNOSTIC uninstall_log=$safeLine"
+            }
+        }
+        $remainingRoot = Join-Path $env:SystemDrive "Users\$user\AppData\Local\Programs\Synveil"
+        if (Test-Path -LiteralPath $remainingRoot -PathType Container) {
+            $remaining = @(Get-ChildItem -LiteralPath $remainingRoot -Force -Recurse -ErrorAction SilentlyContinue)
+            $remainingPaths = @($remaining | Select-Object -First 40 | ForEach-Object {
+                [IO.Path]::GetRelativePath($remainingRoot, $_.FullName).Replace('\','/')
+            })
+            $truncated = if ($remaining.Count -gt $remainingPaths.Count) { ' [truncated]' } else { '' }
+            Write-Host "STANDARD_USER_DIAGNOSTIC package_root_entries=$($remaining.Count) paths=$($remainingPaths -join ',')$truncated"
+        }
+    }
     if ($accountCreationAttempted) {
         try {
             $filterName = $user.Replace("'", "''")

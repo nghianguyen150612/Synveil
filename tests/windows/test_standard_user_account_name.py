@@ -89,6 +89,19 @@ class StandardUserAccountNameTests(unittest.TestCase):
         self.assertIn("PER_USER_RUNTIME_FAILURE: installed manifest verifier failed:", check)
         self.assertNotIn("$LASTEXITCODE", check)
 
+    def test_standard_user_failure_emits_bounded_redacted_uninstall_diagnostics(self) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
+        start = source.index("if ($null -ne $primaryFailure) {", source.index("$childLogs ="))
+        end = source.index("if ($accountCreationAttempted)", start)
+        diagnostics = source[start:end]
+
+        self.assertIn("PER_USER_[A-Z0-9_]+_FAILURE:", diagnostics)
+        self.assertIn("Select-Object -First 8", diagnostics)
+        self.assertIn("Select-Object -First 20", diagnostics)
+        self.assertIn("Select-Object -First 40", diagnostics)
+        self.assertIn("[USER_PROFILE]", diagnostics)
+        self.assertIn("STANDARD_USER_DIAGNOSTIC package_root_entries=", diagnostics)
+
 
 if __name__ == "__main__":
     unittest.main()
