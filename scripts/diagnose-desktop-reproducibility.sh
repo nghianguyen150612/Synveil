@@ -4,7 +4,7 @@
 #
 # The reproduction verifier answers only *whether* two builds match. When they
 # do not, this script is what tells us *what* differs: the generated QML C++,
-# the other generated C++/resource inputs, and the linked ELF sections.
+# the other generated C++/resource inputs, and linked binaries.
 #
 # It is a diagnostic, not a gate. It always exits 0 so that a hosted run still
 # uploads its report when the binaries differ; the reproducibility gate itself
@@ -134,6 +134,14 @@ fi
 for binary_name in synveil-desktop synveil-client; do
     a_bin="${BUILD_A}/release/${binary_name}"
     b_bin="${BUILD_B}/release/${binary_name}"
+    is_pe=0
+    binary_suffix=""
+    if [[ -f "${a_bin}.exe" || -f "${b_bin}.exe" ]]; then
+        a_bin="${a_bin}.exe"
+        b_bin="${b_bin}.exe"
+        is_pe=1
+        binary_suffix=".exe"
+    fi
     [[ -f "$a_bin" && -f "$b_bin" ]] || continue
 
     if cmp -s "$a_bin" "$b_bin"; then
@@ -145,9 +153,12 @@ for binary_name in synveil-desktop synveil-client; do
     printf '[synveil-diagnosis]   %s: DIFFERS\n' "$binary_name" |
         tee -a "${REPORT_DIR}/binaries.txt"
 
-    if command -v readelf >/dev/null 2>&1; then
-        # Compare section headers: identical headers with differing bytes point
-        # at content, while differing headers point at layout/link order.
+    if [[ "$is_pe" == 1 ]]; then
+        printf '[synveil-diagnosis]     PE executable; ELF section analysis skipped\n' |
+            tee -a "${REPORT_DIR}/binaries.txt"
+    elif command -v readelf >/dev/null 2>&1; then
+        # Compare ELF section headers: identical headers with differing bytes
+        # point at content, while differing headers point at layout/link order.
         readelf -S -W "$a_bin" | sed 's/\[ *[0-9]*\]//' | awk '{$1=$1};1' |
             LC_ALL=C sort > "${REPORT_DIR}/sections-a.txt"
         readelf -S -W "$b_bin" | sed 's/\[ *[0-9]*\]//' | awk '{$1=$1};1' |
@@ -176,7 +187,7 @@ for binary_name in synveil-desktop synveil-client; do
         zero_offset=$(( first_offset - 1 ))
         for label in a b; do
             root_var="BUILD_${label^^}"
-            candidate="${!root_var}/release/${binary_name}"
+            candidate="${!root_var}/release/${binary_name}${binary_suffix}"
             printf '[synveil-diagnosis]     build-%s differing bytes:' "$label" |
                 tee -a "${REPORT_DIR}/binaries.txt"
             od -An -tx1 -N 32 -j "$zero_offset" "$candidate" 2>/dev/null |

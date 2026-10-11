@@ -168,6 +168,10 @@ jobs:
         shell: bash
         run: python tests/windows/test_reproducible_zip.py
 
+      - name: Test Windows binary reproducibility diagnostics
+        shell: bash
+        run: python tests/windows/test_desktop_reproducibility_diagnosis.py
+
       - name: Verify Qt 6.4 minimum
         shell: pwsh
         run: |
