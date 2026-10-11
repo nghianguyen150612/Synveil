@@ -842,7 +842,10 @@ async fn lifecycle_concurrent_12_callers_zero_deadlocks_and_no_duplicates() {
     }
     assert_eq!(deadlock, 0, "concurrent one-shot must have 0 deadlocks");
     assert_eq!(other_db, 0, "unexpected DB errors: {other_db}");
-    assert_eq!(unexpected_errors, 0, "unexpected worker errors: {unexpected_errors}");
+    assert_eq!(
+        unexpected_errors, 0,
+        "unexpected worker errors: {unexpected_errors}"
+    );
     assert_eq!(
         count_for_set(
             &fixture.db.inspection,
@@ -880,7 +883,10 @@ async fn lifecycle_concurrent_12_callers_zero_deadlocks_and_no_duplicates() {
         .fetch_one(&fixture.db.inspection)
         .await
         .unwrap();
-    assert!((1..=3).contains(&claim_count), "one run permits at most three state transitions");
+    assert!(
+        (1..=3).contains(&claim_count),
+        "one run permits at most three state transitions"
+    );
     assert_eq!(
         claim_count, distinct_transition_count,
         "concurrent callers must not create duplicate claims for one transition state"
