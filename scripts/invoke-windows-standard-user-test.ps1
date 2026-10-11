@@ -113,8 +113,8 @@ try {
             if ($childLog -and (Test-Path -LiteralPath $childLog -PathType Leaf)) {
                 $label = [IO.Path]::GetFileName($childLog)
                 $failureLines = @(Get-Content -LiteralPath $childLog -ErrorAction SilentlyContinue |
-                    Where-Object { $_ -match '(?i)((?:PER_USER|LIFECYCLE)_[A-Z0-9_]+:|(?:installer|uninstaller|reinstaller|desktop smoke|client probe) (?:timed out|exit \d+, expected \d+)|exception:|at .*\.ps1:)' } |
-                    Select-Object -First 8)
+                    Where-Object { $_ -match '(?i)((?:PER_USER|LIFECYCLE)_[A-Z0-9_]+:|LIFECYCLE_TIMEOUT_(?:PROCESS|RECOVERY)\b|(?:installer|uninstaller|reinstaller|desktop smoke|client probe) (?:timed out|exit \d+, expected \d+)|exception:|at .*\.ps1:)' } |
+                    Select-Object -First 24)
                 foreach ($line in $failureLines) {
                     $safeLine = [string]$line
                     $safeLine = $safeLine.Replace("$env:SystemDrive\Users\$user", '[USER_PROFILE]')
@@ -134,6 +134,16 @@ try {
                 if (![string]::IsNullOrEmpty($password)) { $safeLine = $safeLine.Replace($password,'[REDACTED]') }
                 if ($safeLine.Length -gt 500) { $safeLine = $safeLine.Substring(0,500) + ' …' }
                 Write-Host "STANDARD_USER_DIAGNOSTIC uninstall_log=$safeLine"
+            }
+        }
+        $repairLog = Join-Path $childLogs 'repair-production.log'
+        if (Test-Path -LiteralPath $repairLog -PathType Leaf) {
+            $repairLines = @(Get-Content -LiteralPath $repairLog -Tail 24 -ErrorAction SilentlyContinue)
+            foreach ($line in $repairLines) {
+                $safeLine = ([string]$line).Replace("$env:SystemDrive\Users\$user", '[USER_PROFILE]')
+                if (![string]::IsNullOrEmpty($password)) { $safeLine = $safeLine.Replace($password,'[REDACTED]') }
+                if ($safeLine.Length -gt 500) { $safeLine = $safeLine.Substring(0,500) + ' …' }
+                Write-Host "STANDARD_USER_DIAGNOSTIC repair_log=$safeLine"
             }
         }
         $remainingRoot = Join-Path $env:SystemDrive "Users\$user\AppData\Local\Programs\Synveil"
