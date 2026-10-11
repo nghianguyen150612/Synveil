@@ -694,8 +694,8 @@ pub fn packaged_client_path_from(
 fn packaged_client_path_from_product_executable(
     executable: impl AsRef<Path>,
 ) -> Result<PathBuf, BackgroundLaunchError> {
-    let executable = fs::canonicalize(executable.as_ref())
-        .map_err(|_| BackgroundLaunchError::NotInstalled)?;
+    let executable =
+        fs::canonicalize(executable.as_ref()).map_err(|_| BackgroundLaunchError::NotInstalled)?;
     if is_expected_desktop_name(&executable) {
         return packaged_client_path_from(executable);
     }
