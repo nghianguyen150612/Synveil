@@ -255,6 +255,7 @@ if [[ "$native_windows" -eq 1 ]]; then
     log "deploying the Qt closure with windeployqt"
     "$WINDEPLOYQT" \
         --release \
+        --no-compiler-runtime \
         --no-translations \
         --no-system-d3d-compiler \
         --qmldir "${REPO_ROOT}/crates/desktop/qml" \
@@ -396,11 +397,11 @@ copy_missing_msvc_runtime_imports() {
         exit 1
     fi
 
-    # Keep Qt deployment limited to the Qt/QML closure. Its compiler-runtime
-    # mode stages vc_redist.x64.exe, which is an installer, not an application
-    # runtime file. Add only imported MSVC runtime DLLs from the exact active
-    # redist directory; the closed import audit below still rejects every
-    # unresolved non-system dependency.
+    # Keep Qt deployment limited to the Qt/QML closure. windeployqt otherwise
+    # stages vc_redist.x64.exe on this MSVC image, which is an installer, not
+    # an application runtime file. Add only imported MSVC runtime DLLs from
+    # the exact active redist directory; the closed import audit below still
+    # rejects every unresolved non-system dependency.
     local changed pe_file imported runtime_file upper
     # The loop counter is intentionally unused; only the bounded pass count matters.
     for _ in 1 2 3 4; do
