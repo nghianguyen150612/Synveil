@@ -149,6 +149,25 @@ class QuickInstallTests(unittest.TestCase):
         self.assertIn("Inspect native package state", caught.exception.action)
         invoke.assert_called_once()
 
+    def test_fedora_dnf_local_package_argument_is_positional_after_subcommand(self):
+        manager = quick.NativeManager(quick.PROFILES["fedora-x86_64"])
+        manager.artifact_evidence = dict(self.evidence, artifact_type="rpm")
+        invoked = []
+
+        def capture(command, *, mutate=False):
+            invoked.append((command, mutate))
+            return quick.subprocess.CompletedProcess(command, 0, "", "")
+
+        with mock.patch.object(quick.os, "geteuid", return_value=1000), \
+             mock.patch.object(quick, "require_staged_evidence"), \
+             mock.patch.object(manager, "_run", side_effect=capture):
+            manager.install(self.package, "0.2.0")
+
+        self.assertEqual(
+            [(["dnf", "install", "-y", str(self.package)], True)],
+            invoked,
+        )
+
     def test_partial_payload_with_absent_package_metadata_stops_before_retry(self):
         partial = self.root / "partial-owned-payload"
         partial.write_bytes(b"interrupted package copy")
@@ -241,6 +260,70 @@ class QuickInstallTests(unittest.TestCase):
                 "package_database_integrity_check_failed",
                 manager.verification_failure("0.2.0"),
             )
+
+
+class DpkgPolicyVerificationTests(unittest.TestCase):
+    excluded_docs = "path-exclude=/usr/share/doc/*\npath-include=/usr/share/doc/*/copyright\n"
+
+    def verification_failure(self, artifact_type, output, *, policy_excludes_docs=True, returncode=0):
+        profile = quick.PROFILES["debian-x86_64" if artifact_type == "deb" else "fedora-x86_64"]
+        manager = quick.NativeManager(profile)
+        with tempfile.TemporaryDirectory() as directory:
+            required = Path(directory) / "runtime-file"
+            required.write_text("installed", encoding="utf-8")
+            completed = quick.subprocess.CompletedProcess(["package verifier"], returncode, output, "")
+            policy = self.excluded_docs if policy_excludes_docs else ""
+            path_policy = lambda path: quick._dpkg_config_excludes_path(path, (policy,))
+            with mock.patch.object(quick, "REQUIRED_PATHS", (str(required),)), \
+                 mock.patch.object(manager, "installed_version", return_value="0.1.0"), \
+                 mock.patch.object(manager, "_run", return_value=completed), \
+                 mock.patch.object(quick, "_dpkg_path_is_policy_excluded", side_effect=path_policy):
+                return manager.verification_failure("0.1.0")
+
+    def test_dpkg_policy_parser_honors_ordered_path_include(self):
+        license_path = "/usr/share/doc/synveil/LICENSE"
+        copyright_path = "/usr/share/doc/synveil/copyright"
+        re_included_license = self.excluded_docs + "path-include=/usr/share/doc/synveil/LICENSE\n"
+
+        self.assertTrue(quick._dpkg_config_excludes_path(license_path, (self.excluded_docs,)))
+        self.assertFalse(quick._dpkg_config_excludes_path(copyright_path, (self.excluded_docs,)))
+        self.assertFalse(quick._dpkg_config_excludes_path(license_path, (re_included_license,)))
+
+    def test_exact_policy_excluded_debian_notice_files_do_not_fail_integrity_check(self):
+        output = (
+            "missing     /usr/share/doc/synveil/LICENSE\n"
+            "missing     /usr/share/doc/synveil/NOTICE\n"
+        )
+
+        self.assertIsNone(self.verification_failure("deb", output))
+
+    def test_missing_notice_files_fail_without_matching_dpkg_policy(self):
+        output = "missing     /usr/share/doc/synveil/LICENSE\n"
+
+        self.assertEqual(
+            "package_database_integrity_check_failed",
+            self.verification_failure("deb", output, policy_excludes_docs=False),
+        )
+
+    def test_unexpected_missing_or_modified_files_still_fail_integrity_check(self):
+        excluded_docs = "missing     /usr/share/doc/synveil/LICENSE\n"
+        unexpected_runtime = "missing     /usr/bin/synveil-desktop\n"
+        modified_notice = "??5??????   /usr/share/doc/synveil/LICENSE\n"
+
+        self.assertEqual(
+            "package_database_integrity_check_failed",
+            self.verification_failure("deb", excluded_docs + unexpected_runtime),
+        )
+        self.assertEqual(
+            "package_database_integrity_check_failed",
+            self.verification_failure("deb", modified_notice),
+        )
+
+    def test_rpm_verification_output_remains_fail_closed(self):
+        self.assertEqual(
+            "package_database_integrity_check_failed",
+            self.verification_failure("rpm", "missing /usr/share/doc/synveil/LICENSE\n"),
+        )
 
 
 if __name__ == "__main__":
