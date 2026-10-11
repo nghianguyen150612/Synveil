@@ -8,6 +8,7 @@ struct NodeBrowserView: View {
     private let offlineBrowserService: (any OfflineNodeBrowserServiceProtocol)?
     private let metadataMutationFeature: (any MetadataMutationFeatureProtocol)?
     private let downloadCoordinator: FileDownloadCoordinator?
+    private let uploadCoordinator: FileUploadCoordinator?
     private let fileExportCoordinator: VerifiedFileExportCoordinator?
 
     @State private var viewModel: NodeBrowserViewModel
@@ -22,6 +23,7 @@ struct NodeBrowserView: View {
         route: NodeBrowserRoute,
         metadataMutationFeature: (any MetadataMutationFeatureProtocol)? = nil,
         downloadCoordinator: FileDownloadCoordinator? = nil,
+        uploadCoordinator: FileUploadCoordinator? = nil,
         fileExportCoordinator: VerifiedFileExportCoordinator? = nil
     ) {
         self.sessionController = sessionController
@@ -30,6 +32,7 @@ struct NodeBrowserView: View {
         self.offlineBrowserService = offlineBrowserService
         self.metadataMutationFeature = metadataMutationFeature
         self.downloadCoordinator = downloadCoordinator
+        self.uploadCoordinator = uploadCoordinator
         self.fileExportCoordinator = fileExportCoordinator
         _viewModel = State(
             initialValue: NodeBrowserViewModel(
@@ -48,6 +51,15 @@ struct NodeBrowserView: View {
     var body: some View {
         List {
             mutationControls
+            if viewModel.canPrepareMutationsFromVisibleResults,
+                viewModel.contentSource == .live
+            {
+                FileUploadControls(
+                    coordinator: uploadCoordinator, controller: sessionController,
+                    library: route.library.id, libraryStatus: route.library.status,
+                    createParent: route.parentScope.expectedParentId,
+                    onCommitted: { Task { await viewModel.refresh() } })
+            }
             directoryContents
         }
         .listStyle(.insetGrouped)

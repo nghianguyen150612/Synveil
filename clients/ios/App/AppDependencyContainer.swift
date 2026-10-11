@@ -47,6 +47,7 @@ public final class AppDependencyContainer {
     private(set) var syncFeedApplicationService: SyncFeedApplicationService?
     private(set) var rebaselineCoordinator: RebaselineCoordinator?
     private(set) var downloadCoordinator: FileDownloadCoordinator?
+    private(set) var uploadCoordinator: FileUploadCoordinator?
     private(set) var fileExportCoordinator: VerifiedFileExportCoordinator?
     private(set) var syncAckService: SyncAckService?
     private(set) var inboundSyncCoordinator: (any InboundSyncCoordinatorProtocol)?
@@ -192,19 +193,26 @@ public final class AppDependencyContainer {
                         repository: AuthenticatedFileDownloadRepository(
                             provider: browserProvider, bridge: bridge),
                         database: database, staging: staging)
+                    uploadCoordinator = FileUploadCoordinator(
+                        repository: AuthenticatedUploadRepository(
+                            provider: browserProvider, bridge: bridge),
+                        database: database, staging: UploadStagingStore(shared: staging),
+                        identityGenerator: bridge)
                     if let downloadCoordinator {
                         fileExportCoordinator = VerifiedFileExportCoordinator(
                             downloads: downloadCoordinator)
                     }
                 } catch { downloadCoordinator = nil }
                 let downloads = downloadCoordinator
+                let uploads = uploadCoordinator
                 let exports = fileExportCoordinator
                 sessionController.installMutationSessionInvalidator {
                     [
                         weak queue, weak composedMetadataMutationService, weak composedRebaseline,
-                        weak downloads, weak exports
+                        weak downloads, weak uploads, weak exports
                     ] in
                     downloads?.invalidateSession()
+                    uploads?.invalidateSession()
                     exports?.invalidateSession()
                     queue?.invalidateSession()
                     composedRebaseline?.invalidateSession()
@@ -220,6 +228,7 @@ public final class AppDependencyContainer {
                 syncFeedApplicationService = nil
                 rebaselineCoordinator = nil
                 downloadCoordinator = nil
+                uploadCoordinator = nil
                 fileExportCoordinator = nil
                 syncAckService = nil
                 inboundSyncCoordinator = nil

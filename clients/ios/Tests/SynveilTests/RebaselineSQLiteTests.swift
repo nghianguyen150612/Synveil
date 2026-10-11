@@ -11,7 +11,7 @@ final class RebaselineSQLiteTests: XCTestCase {
         let bytes = try queueRawScalar(f.url, "SELECT hex(request) FROM mutations")
         try snapshotDowngradeV4(f.url)
         let migrated = try MutationQueueSQLiteStore(url: f.url)
-        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "6")
+        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "7")
         XCTAssertEqual(try queueRawScalar(f.url, "SELECT hex(request) FROM mutations"), bytes)
         let records = try await migrated.records(scope: f.scope, limit: 1)
         XCTAssertEqual(records.first?.mutationId, original.mutation.id.rawValue)
@@ -41,7 +41,7 @@ final class RebaselineSQLiteTests: XCTestCase {
         XCTAssertThrowsError(try MutationQueueSQLiteStore(url: f.url, fault: { try fault.hit($0) }))
         XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "4")
         _ = try MutationQueueSQLiteStore(url: f.url)
-        try queueRawSQL(f.url, "PRAGMA user_version=7")
+        try queueRawSQL(f.url, "PRAGMA user_version=8")
         XCTAssertThrowsError(try MutationQueueSQLiteStore(url: f.url))
     }
     func testStagingPreservesOldActiveCacheUntilAtomicReplacement() async throws {
