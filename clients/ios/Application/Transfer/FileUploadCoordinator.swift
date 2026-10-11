@@ -623,7 +623,9 @@ final class FileUploadCoordinator {
         let state: UploadLocalState
         let ambiguousOutcomeFailure: Bool
         switch failure {
-        case .failedRecoverable, .completionUnknown, .offsetMismatch, .unexpectedStatus, .conflict:
+        case .offline, .dnsFailure, .timeout, .tlsFailure, .redirectRejected,
+            .serverUnavailable, .invalidMetadata, .completionUnknown, .offsetMismatch,
+            .unexpectedStatus, .conflict:
             ambiguousOutcomeFailure = true
         default:
             ambiguousOutcomeFailure = false
