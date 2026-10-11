@@ -1,4 +1,7 @@
 import Foundation
+import QuickLook
+import SwiftUI
+import UIKit
 import XCTest
 
 @testable import Synveil
@@ -223,6 +226,162 @@ final class VerifiedFileExportTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    func testSessionInvalidationRevokesActivePresentation() async throws {
+        let f = try await downloadFixture(self)
+        _ = try downloadCapability(await downloadRun(f))
+        let record = try await downloadRecord(f)
+        let originalURL = f.root.appendingPathComponent(record.id.rawValue + ".verified")
+        let originalBytes = try Data(contentsOf: originalURL)
+        let coordinator = VerifiedFileExportCoordinator(downloads: f.coordinator)
+        let prepared = await coordinator.prepare(
+            library: f.queue.scope.libraryId, node: f.node.id, version: f.version,
+            purpose: .share, displayName: "report.txt")
+        let lease = try XCTUnwrap(prepared.lease)
+        let url = try await coordinator.beginPresentation(lease)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+
+        coordinator.invalidateSession()
+        do {
+            _ = try await coordinator.beginPresentation(lease)
+            XCTFail("an invalidated session cannot authorize another handoff")
+        } catch { XCTAssertEqual(error as? DownloadFailure, .staleSession) }
+        for _ in 0..<20 where FileManager.default.fileExists(atPath: url.path) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertEqual(try Data(contentsOf: originalURL), originalBytes)
+    }
+
+    func testNativePresentersConstructFromVerifiedTemporaryCopy() async throws {
+        let f = try await downloadFixture(self)
+        _ = try downloadCapability(await downloadRun(f))
+        let record = try await downloadRecord(f)
+        let originalURL = f.root.appendingPathComponent(record.id.rawValue + ".verified")
+        let originalBytes = try Data(contentsOf: originalURL)
+        let coordinator = VerifiedFileExportCoordinator(downloads: f.coordinator)
+
+        for purpose in [VerifiedFileExportPurpose.preview, .share, .saveToFiles] {
+            let prepared = await coordinator.prepare(
+                library: f.queue.scope.libraryId, node: f.node.id, version: f.version,
+                purpose: purpose, displayName: "report.txt")
+            let lease = try XCTUnwrap(prepared.lease)
+            let url = try await coordinator.beginPresentation(lease)
+            XCTAssertNotEqual(url.standardizedFileURL, originalURL.standardizedFileURL)
+            XCTAssertTrue(url.pathComponents.contains("exports"))
+
+            let host = UIHostingController(
+                rootView: NativeFilePresenter(
+                    presentation: NativeFilePresentation(lease: lease, url: url),
+                    onFinished: { _ in }))
+            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 700))
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            defer {
+                window.isHidden = true
+                window.rootViewController = nil
+            }
+            host.loadViewIfNeeded()
+            for _ in 0..<5 {
+                host.view.setNeedsLayout()
+                host.view.layoutIfNeeded()
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            let children = descendants(of: host)
+
+            switch purpose {
+            case .preview:
+                let preview = try XCTUnwrap(
+                    children.compactMap { $0 as? QLPreviewController }.first)
+                let source = try XCTUnwrap(preview.dataSource)
+                XCTAssertEqual(source.numberOfPreviewItems(in: preview), 1)
+                let item = source.previewController(preview, previewItemAt: 0)
+                XCTAssertEqual(item.previewItemURL?.standardizedFileURL, url.standardizedFileURL)
+            case .share:
+                XCTAssertNotNil(children.compactMap { $0 as? UIActivityViewController }.first)
+            case .saveToFiles:
+                let picker = try XCTUnwrap(
+                    children.compactMap { $0 as? UIDocumentPickerViewController }.first)
+                XCTAssertNotNil(picker.delegate)
+            }
+
+            XCTAssertEqual(try Data(contentsOf: originalURL), originalBytes)
+            let released = await coordinator.finish(lease)
+            XCTAssertTrue(released)
+            host.view.removeFromSuperview()
+        }
+    }
+
+    func testNativePresenterCancellationCallbacksReleaseTemporaryCopies() async throws {
+        let f = try await downloadFixture(self)
+        _ = try downloadCapability(await downloadRun(f))
+        let coordinator = VerifiedFileExportCoordinator(downloads: f.coordinator)
+
+        let cancellations: [(VerifiedFileExportPurpose, NativeFilePresentationResult)] = [
+            (.preview, .previewDismissed),
+            (.share, .shareCancelled),
+            (.saveToFiles, .saveCancelled),
+        ]
+        for (purpose, expectedResult) in cancellations {
+            let prepared = await coordinator.prepare(
+                library: f.queue.scope.libraryId, node: f.node.id, version: f.version,
+                purpose: purpose, displayName: "report.txt")
+            let lease = try XCTUnwrap(prepared.lease)
+            let url = try await coordinator.beginPresentation(lease)
+            var result: NativeFilePresentationResult?
+            var cleanup: Task<Void, Never>?
+            let host = UIHostingController(
+                rootView: NativeFilePresenter(
+                    presentation: NativeFilePresentation(lease: lease, url: url),
+                    onFinished: { value in
+                        result = value
+                        cleanup = Task { _ = await coordinator.finish(lease) }
+                    }))
+            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 700))
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            defer {
+                window.isHidden = true
+                window.rootViewController = nil
+            }
+            host.loadViewIfNeeded()
+            for _ in 0..<5 {
+                host.view.setNeedsLayout()
+                host.view.layoutIfNeeded()
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            let children = descendants(of: host)
+
+            switch purpose {
+            case .preview:
+                let preview = try XCTUnwrap(
+                    children.compactMap { $0 as? QLPreviewController }.first)
+                let delegate = try XCTUnwrap(preview.delegate)
+                delegate.previewControllerDidDismiss?(preview)
+            case .share:
+                let sheet = try XCTUnwrap(
+                    children.compactMap { $0 as? UIActivityViewController }.first)
+                sheet.completionWithItemsHandler?(nil, false, nil, nil)
+            case .saveToFiles:
+                let picker = try XCTUnwrap(
+                    children.compactMap { $0 as? UIDocumentPickerViewController }.first)
+                let delegate = try XCTUnwrap(picker.delegate)
+                delegate.documentPickerWasCancelled?(picker)
+            }
+
+            for _ in 0..<50 where result == nil {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            XCTAssertEqual(result?.message, expectedResult.message)
+            if let cleanup { await cleanup.value }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+            host.view.removeFromSuperview()
+        }
+    }
+
+    private func descendants(of controller: UIViewController) -> [UIViewController] {
+        [controller] + controller.children.flatMap { descendants(of: $0) }
     }
 
     func testPreviewRequiresConservativeTypeAndSignature() throws {
