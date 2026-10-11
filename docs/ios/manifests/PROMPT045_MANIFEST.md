@@ -115,43 +115,91 @@ and the intended app/test target membership.
 
 ## Validation evidence
 
-Observed in the Linux workspace at the current local tree:
+Observed at implementation head `a28874350fd16abce0d2f147b2ca8ed1c9c1ffe6`:
 
 - `python3 clients/ios/Support/validate_ios_sources.py`: **PASS**.
 - `python3 -m unittest discover -s clients/ios/Support/tests`: **79 passed**.
 - `bash scripts/validate-docs.sh`: **PASS**.
 - `git diff --check`: **PASS**.
-- Native Swift/Xcode compilation and XCTest were **not available locally**; the workspace has no
-  `swift`, `xcodebuild`, or `plutil` command. No Simulator or filesystem XCTest result is claimed
-  from Linux.
-- Thirteen new XCTest methods cover canonical request bytes, strict responses and states, offset
-  validation, raw route restrictions, file-backed schema/reopen/migration/completion readback,
-  a deterministic 16 MiB + 123 byte staged source, multi-chunk reconstruction, quota failure,
-  native rendering, lost CREATE recovery, partial PATCH acceptance, authoritative GET recovery,
-  and lost COMPLETE recovery. These native tests are authored and registered; execution is pending
-  hosted macOS CI.
-- Native Keychain/Data Protection skip status is pending that run. Physical-device validation is
-  `NOT_AVAILABLE`. Real Files-provider integration, production-server upload, hardware Keychain,
-  physical Data Protection, background transfer, cellular behavior, and physical power-loss
-  guarantees are not claimed.
+- Strict Swift formatting passed with `swift:6.2.3`:
+  `swift format lint --recursive --strict clients/ios`.
+- The Linux host has no Xcode or iOS Simulator. Native build and XCTest evidence is from the
+  hosted macOS workflow below.
 
-## Exact-head CI, merge, and remaining limitations
+All **13 new XCTest methods** passed. They cover canonical request bytes, strict responses and
+states, offset validation, raw route restrictions, file-backed schema/reopen/migration/completion
+readback, a deterministic 16 MiB + 123 byte staged source, multi-chunk reconstruction, quota
+failure, native rendering, lost CREATE recovery, partial PATCH acceptance, authoritative GET
+recovery, and lost COMPLETE recovery.
 
-Required GitHub Actions evidence for **iOS Static Validation**, **iOS Build**, **iOS Simulator
-Tests**, and **iOS Rust Apple Build** is pending. The final table will identify each run and exact
-source SHA. Unrelated workflow failures will be reported separately and will not be counted as iOS
-evidence.
+## Exact-head hosted validation
+
+The four required GitHub Actions workflows passed on the exact PR source head
+`a28874350fd16abce0d2f147b2ca8ed1c9c1ffe6`:
+
+| Gate | Pull-request run | Push run | Result |
+|---|---:|---:|---|
+| iOS Static Validation and strict Swift formatting | [38149240246](https://github.com/nghianguyen150612/Synveil/actions/runs/38149240246) | [38149237118](https://github.com/nghianguyen150612/Synveil/actions/runs/38149237118) | **PASS** |
+| iOS Build | [38149240266](https://github.com/nghianguyen150612/Synveil/actions/runs/38149240266) | [38149237119](https://github.com/nghianguyen150612/Synveil/actions/runs/38149237119) | **PASS** |
+| iOS Simulator Tests | [38149240243](https://github.com/nghianguyen150612/Synveil/actions/runs/38149240243) | [38149237123](https://github.com/nghianguyen150612/Synveil/actions/runs/38149237123) | **PASS** |
+| iOS Rust Apple Build | [38149240250](https://github.com/nghianguyen150612/Synveil/actions/runs/38149240250) | [38149237099](https://github.com/nghianguyen150612/Synveil/actions/runs/38149237099) | **PASS** |
+
+The Simulator runs used Xcode 26.6 / Swift 6.3.3 on macOS 26.6.2 with an iPhone 17 Pro running
+iOS 26.5. Each executed **1,651 tests: 1,649 passed, 2 skipped, 0 failed**. Every P045
+`FileUploadTests`, `FileUploadStorageTests`, `FileUploadViewTests`, and
+`FileUploadCoordinatorTests` test passed. Result artifacts:
+
+- Pull-request run: [11706652584](https://github.com/nghianguyen150612/Synveil/actions/runs/38149240243),
+  79,867,255 bytes, SHA-256 `bd95ef52ed57bc19b0fabe9e5c8cbce97dedd3a4136b4f0fb27a834e0b817435`.
+- Push run: [11705772977](https://github.com/nghianguyen150612/Synveil/actions/runs/38149237123),
+  83,672,120 bytes, SHA-256 `cd6719dd3d6e00c9d4ebb34f50aec441a52044445b766d5c59c6c16b4a567a71`.
+
+The two existing Simulator skips remain explicit:
+
+- `KeychainCredentialStoreTests.testSimulatorKeychainRoundTripUsesUniqueTestService`: the unsigned
+  Simulator test process has no Keychain access entitlement.
+- `MutationQueueSQLiteTests.testNativeDataProtectionAttributes`: the Simulator filesystem does not
+  expose Data Protection attributes; physical-device round-trip remains required.
+
+The earlier Simulator run on `107599429ab1c26d00a0b3ebc2c2a09f79bdce1f`
+([38147606555](https://github.com/nghianguyen150612/Synveil/actions/runs/38147606555)) reported 18
+failed assertions. The failures exposed an integer SQLite field read as text, loss of the storage-reserve
+failure category, and older-schema fixtures that still contained the v7 upload table. Those issues
+were fixed on `a28874350fd16abce0d2f147b2ca8ed1c9c1ffe6`; no failing tests were removed. Final
+exact-head runs passed with zero failures.
+
+Physical-device validation is **NOT_AVAILABLE**. Real Files-provider integration,
+production-server upload, hardware Keychain, physical Data Protection, background transfer,
+cellular behavior, and physical power-loss guarantees are not claimed.
+
+## Unrelated workflow results
+
+These exact-head repository workflows do not cover the iOS changes and are not counted as P045
+evidence:
+
+| Workflow | Runs | Result / observed issue |
+|---|---|---|
+| Rust CI | [38149237108](https://github.com/nghianguyen150612/Synveil/actions/runs/38149237108) (push), [38149240245](https://github.com/nghianguyen150612/Synveil/actions/runs/38149240245) (PR) | **FAIL** — Clippy reports duplicate `#[must_use]` on `crates/object-store/src/types.rs:94` and `:358`. |
+| Linux AppImage | [38149237141](https://github.com/nghianguyen150612/Synveil/actions/runs/38149237141) (push), [38149240254](https://github.com/nghianguyen150612/Synveil/actions/runs/38149240254) (PR) | **FAIL** — artifact audit reports a private or temporary build path in `synveil-desktop`. |
+| PostgreSQL 17 scheduled maintenance | [38149237103](https://github.com/nghianguyen150612/Synveil/actions/runs/38149237103) (push), [38149240255](https://github.com/nghianguyen150612/Synveil/actions/runs/38149240255) (PR) | **FAIL** — controller-generation assertion failed; the live suite also reported missing column `d.daticulocale`. |
+| Linux native packages (DEB + RPM) | [38149237109](https://github.com/nghianguyen150612/Synveil/actions/runs/38149237109) (push), [38149240249](https://github.com/nghianguyen150612/Synveil/actions/runs/38149240249) (PR) | In progress when recorded; not used as iOS evidence. |
+
+No non-iOS failure above was changed as part of Prompt045.
+
+## Hosted integration and readiness
 
 | Record | Verified value |
 |---|---|
-| Feature implementation SHA | Pending commit |
-| GitHub PR targeting `ios-app` | Pending creation |
-| Exact-head required iOS CI | Pending hosted runs |
-| PR state / `merged` | Pending GitHub confirmation |
-| P045 resulting `ios-app` SHA | Pending GitHub confirmation |
-| Feature source/tests/manifest on `ios-app` | Pending post-merge verification |
+| Verified starting `ios-app` SHA | `3b145172b625893894732a404c306b6f0cfdb736` |
+| Final feature source SHA | `a28874350fd16abce0d2f147b2ca8ed1c9c1ffe6` |
+| Feature PR | [#125](https://github.com/nghianguyen150612/Synveil/pull/125), targeting `ios-app` |
+| PR state | `closed`, `merged=true`, merged at `2026-10-11T15:14:21Z` |
+| P045 feature integration commit | `c32d37e20f41f0064d23de0816a6c15478df150f` |
+| Post-merge source verification | `origin/ios-app` contained the upload coordinator, P045 tests, and the initial manifest at `c32d37e20f41f0064d23de0816a6c15478df150f`; this documentation-only PR records final evidence. |
+
+This final evidence update is delivered through a documentation-only PR after the feature merge, so
+the manifest does not try to include its own merge SHA. The documentation PR merge and resulting
+latest `ios-app` SHA are recorded in the final task report.
 
 Remaining limitations include the platform's normal cache-eviction risk for `Library/Caches`, no
-background uploads, and any hosted/device limitations reported by the eventual CI run. Prompt045
-must not be marked ready until GitHub confirms the PR is merged and the integrated source,
-tests, and manifest are verified on `ios-app`.
+background uploads, and the device/provider/server limitations listed above.
