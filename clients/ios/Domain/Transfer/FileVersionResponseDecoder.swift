@@ -80,7 +80,8 @@ struct DownloadResponseMetadata: Equatable, Sendable {
         var fields: [String: String] = [:]
         for (key, value) in headers {
             guard fields.updateValue(value, forKey: key.lowercased()) == nil,
-                !value.contains("\r"), !value.contains("\n")
+                !key.unicodeScalars.contains(where: { $0.value == 13 || $0.value == 10 }),
+                !value.unicodeScalars.contains(where: { $0.value == 13 || $0.value == 10 })
             else { throw DownloadFailure.unexpectedStatus }
         }
         if status == 401 { throw DownloadFailure.unauthenticated }

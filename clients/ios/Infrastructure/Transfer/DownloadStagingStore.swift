@@ -31,7 +31,9 @@ actor DownloadStagingStore {
             return size.uint64Value
         }, fault: (@Sendable (DownloadFilesystemFault) throws -> Void)? = nil
     ) throws {
-        guard root.isFileURL, root.standardizedFileURL == root else {
+        // Foundation may add a directory slash to standardizedFileURL once the directory
+        // exists. Compare paths so reopening preserves the same canonical-path policy.
+        guard root.isFileURL, root.standardizedFileURL.path == root.path else {
             throw DownloadFailure.filesystemFailure
         }
         self.root = root

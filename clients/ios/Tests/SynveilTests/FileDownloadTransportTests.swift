@@ -54,6 +54,10 @@ private final class DownloadURLProtocol: URLProtocol, @unchecked Sendable {
                 self,
                 wasRedirectedTo: URLRequest(url: URL(string: "https://other.example/content")!),
                 redirectResponse: response)
+            // A rejected redirect leaves the original response to be consumed. Complete
+            // that response, just as the native HTTP protocol does after a nil redirect.
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocolDidFinishLoading(self)
             return
         }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
