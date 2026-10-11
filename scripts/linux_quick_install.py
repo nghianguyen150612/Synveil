@@ -209,6 +209,27 @@ class NativeManager:
         environment = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "LC_ALL": "C"}
         return subprocess.run(command, env=environment, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
 
+    @staticmethod
+    def _emit_acceptance_package_diagnostics(result: subprocess.CompletedProcess[str]) -> None:
+        """Expose bounded Synveil scriptlet diagnostics only in native acceptance runs."""
+        if os.environ.get("SYNVEIL_ACCEPTANCE_DIAGNOSTICS") != "1":
+            return
+        emitted = 0
+        for stream in (result.stdout, result.stderr):
+            for raw_line in stream.splitlines():
+                lowered = raw_line.lower()
+                if not any(marker in lowered for marker in ("synveil", "systemd-sysusers", "systemd-tmpfiles")):
+                    continue
+                line = raw_line.strip()
+                if not line:
+                    continue
+                if len(line) > 500:
+                    line = line[:497] + "..."
+                print(f"NATIVE_PACKAGE_MANAGER_DIAGNOSTIC {line}", file=sys.stderr)
+                emitted += 1
+                if emitted >= 40:
+                    return
+
     def installed_version(self) -> str | None:
         command = (["dpkg-query", "-W", "-f=${Status}\t${Version}", "synveil"]
                    if self.profile.artifact_type == "deb" else ["rpm", "-q", "--qf", "%{VERSION}", "synveil"])
@@ -246,6 +267,7 @@ class NativeManager:
         except KeyboardInterrupt as error:
             raise QuickInstallError("OutcomeUnknown", "The package transaction was interrupted and its outcome is unknown.",
                                     "Inspect native package state before retrying.", EXIT_UNKNOWN) from error
+        self._emit_acceptance_package_diagnostics(result)
         combined = (result.stdout + "\n" + result.stderr).lower()
         if result.returncode == 0:
             return
