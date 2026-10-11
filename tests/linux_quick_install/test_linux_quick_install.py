@@ -43,6 +43,34 @@ class FakeManager:
 
 
 class QuickInstallTests(unittest.TestCase):
+    def test_rpm_uninstall_diagnostics_survive_rpm_percent_expansion(self):
+        spec = (ROOT / "deploy/packages/rpm/synveil.spec.tmpl").read_text(encoding="utf-8")
+
+        for scriptlet, next_scriptlet in (("preun", "postun"), ("postun", "changelog")):
+            with self.subTest(scriptlet=scriptlet):
+                body = spec.split(f"%{scriptlet}\n", 1)[1].split(
+                    f"\n%{next_scriptlet}\n", 1
+                )[0]
+                command = next(
+                    line.strip()
+                    for line in body.splitlines()
+                    if line.lstrip().startswith("printf ")
+                    and f"%%{scriptlet}" in line
+                )
+
+                # RPM expands %% to % before passing the scriptlet to /bin/sh.
+                # Keep the label in printf's data arguments, not its format,
+                # because %preun and %postun are invalid printf directives.
+                expanded = "set -e\n" + command.replace("%%", "%")
+                result = subprocess.run(
+                    ["sh", "-c", expanded, "synveil-rpm-scriptlet-test", "0"],
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f"%{scriptlet} synveil (arg: 0)", result.stderr)
+
     def test_rpm_post_diagnostic_survives_rpm_percent_expansion(self):
         spec = (ROOT / "deploy/packages/rpm/synveil.spec.tmpl").read_text(encoding="utf-8")
         post = spec.split("%post\n", 1)[1].split("\n%preun\n", 1)[0]
