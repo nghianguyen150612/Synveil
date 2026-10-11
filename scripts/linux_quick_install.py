@@ -155,13 +155,21 @@ class NativeManager:
                                 "Inspect native package state before retrying.", EXIT_PACKAGE_MANAGER)
 
     def verify(self, expected_version: str) -> bool:
-        if self.installed_version() != expected_version or not all(Path(item).is_file() and not Path(item).is_symlink() for item in REQUIRED_PATHS):
-            return False
+        return self.verification_failure(expected_version) is None
+
+    def verification_failure(self, expected_version: str) -> str | None:
+        """Return a bounded reason code for native post-install verification."""
+        if self.installed_version() != expected_version:
+            return "installed_version_mismatch"
+        if not all(Path(item).is_file() and not Path(item).is_symlink() for item in REQUIRED_PATHS):
+            return "required_payload_path_missing_or_not_regular"
         # Package database remains authority for the installed payload. Presence
         # and a version label alone do not prove its bytes survived mutation.
         command = ["dpkg", "--verify", "synveil"] if self.profile.artifact_type == "deb" else ["rpm", "-V", "synveil"]
         result = self._run(command)
-        return result.returncode == 0 and not result.stdout.strip()
+        if result.returncode != 0 or result.stdout.strip():
+            return "package_database_integrity_check_failed"
+        return None
 
 
 def sha256_file(path: Path) -> tuple[int, str]:
@@ -400,8 +408,17 @@ def run(argv: list[str] | None = None, *, manager_factory=NativeManager,
         mutation_started = True
         manager.install(Path(evidence["final_path"]), evidence["product_version"])
         if not manager.verify(evidence["product_version"]):
-            raise QuickInstallError("VerificationFailed", "Native installation completed but required state was not verified.",
-                                    "Inspect native package state and use the documented repair path.", EXIT_VERIFICATION)
+            verification_failure = getattr(manager, "verification_failure", None)
+            failure_reason = verification_failure(evidence["product_version"]) if callable(verification_failure) else None
+            message = "Native installation completed but required state was not verified"
+            if failure_reason:
+                message += f" ({failure_reason})"
+            raise QuickInstallError(
+                "VerificationFailed",
+                message + ".",
+                "Inspect native package state and use the documented repair path.",
+                EXIT_VERIFICATION,
+            )
         print(json.dumps({**evidence, "installation_result": "INSTALLED_VERIFIED"}, sort_keys=True))
         print("Synveil installed successfully.")
         print("Open Synveil from your application menu.")

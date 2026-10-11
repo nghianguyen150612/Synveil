@@ -541,8 +541,23 @@ jobs:
             exit 1
           fi
           useradd --create-home --user-group synveil-installer
-          printf 'synveil-installer ALL=(root) NOPASSWD: /usr/bin/dnf\n' > /etc/sudoers.d/synveil-installer
+          DNF_REAL="$(readlink -f /usr/bin/dnf)"
+          case "$DNF_REAL" in
+            /usr/bin/*) ;;
+            *) echo 'Resolved DNF executable escaped /usr/bin' >&2; exit 1 ;;
+          esac
+          test -f "$DNF_REAL"
+          test ! -L "$DNF_REAL"
+          test "$(stat -c '%u' "$DNF_REAL")" = 0
+          DNF_MODE="$(stat -c '%a' "$DNF_REAL")"
+          if (( (8#$DNF_MODE & 022) != 0 )); then
+            echo 'Resolved DNF executable is writable by a non-root group or user' >&2
+            exit 1
+          fi
+          printf 'synveil-installer ALL=(root) NOPASSWD: %s\n' "$DNF_REAL" > /etc/sudoers.d/synveil-installer
           chmod 0440 /etc/sudoers.d/synveil-installer
+          visudo -cf /etc/sudoers.d/synveil-installer
+          runuser -u synveil-installer -- sudo -n -- "$DNF_REAL" --version >/dev/null
           chown -R synveil-installer:synveil-installer "$PWD"
           VERSION="$(rpm -qp --qf '%{VERSION}' "$RPM")"
           runuser -u synveil-installer -- ./scripts/run-linux-quick-install-acceptance.sh \

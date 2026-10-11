@@ -37,6 +37,9 @@ class FakeManager:
     def verify(self, version):
         return self.verified
 
+    def verification_failure(self, version):
+        return None if self.verified else "fixture_verification_failure"
+
 
 class QuickInstallTests(unittest.TestCase):
     def setUp(self):
@@ -162,6 +165,7 @@ class QuickInstallTests(unittest.TestCase):
         status, _, error = self.execute()
         self.assertEqual(quick.EXIT_VERIFICATION, status)
         self.assertIn("VerificationFailed", error)
+        self.assertIn("fixture_verification_failure", error)
 
     def test_explicit_profile_cannot_override_detection(self):
         detected = quick.linux_platform_detection.DetectionResult(
@@ -211,6 +215,32 @@ class QuickInstallTests(unittest.TestCase):
         self.assertNotIn("sudo -S", source)
         self.assertNotIn("getpass", source)
         self.assertNotIn("--insecure", source)
+
+    def test_fedora_acceptance_authorizes_resolved_dnf_path_only(self):
+        workflow = (ROOT / ".github/workflows/linux-packages.yml").read_text(encoding="utf-8")
+        self.assertIn('DNF_REAL="$(readlink -f /usr/bin/dnf)"', workflow)
+        self.assertIn('NOPASSWD: %s\\n\' "$DNF_REAL"', workflow)
+        self.assertIn('sudo -n -- "$DNF_REAL" --version', workflow)
+        self.assertNotIn('NOPASSWD: /usr/bin/dnf\\n\'', workflow)
+
+    def test_native_verification_failure_uses_bounded_reason_codes(self):
+        manager = quick.NativeManager(quick.PROFILES["debian-x86_64"])
+        with mock.patch.object(manager, "installed_version", return_value="0.2.0"), \
+             mock.patch.object(quick.Path, "is_file", return_value=False):
+            self.assertEqual(
+                "required_payload_path_missing_or_not_regular",
+                manager.verification_failure("0.2.0"),
+            )
+
+        with mock.patch.object(manager, "installed_version", return_value="0.2.0"), \
+             mock.patch.object(quick, "REQUIRED_PATHS", ()), \
+             mock.patch.object(quick, "system_executable", side_effect=lambda name: "/usr/bin/" + name), \
+             mock.patch.object(quick.subprocess, "run", return_value=quick.subprocess.CompletedProcess(
+                 ["dpkg", "--verify", "synveil"], 1, "./usr/bin/synveil-desktop\n", "")):
+            self.assertEqual(
+                "package_database_integrity_check_failed",
+                manager.verification_failure("0.2.0"),
+            )
 
 
 if __name__ == "__main__":
