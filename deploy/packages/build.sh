@@ -399,9 +399,12 @@ build_deb() {
         # compression varies across distribution/tool versions (for example,
         # xz on newer Debian hosts), which changes both package bytes and the
         # expected data.tar member name.
-        local dpkg_deb_args=(--root-owner-group --compression=gzip --compression-level=9)
-        fakeroot dpkg-deb --build "${dpkg_deb_args[@]}" "$deb_stage" "$deb_path" 2>/dev/null \
-            || dpkg-deb --build "${dpkg_deb_args[@]}" "$deb_stage" "$deb_path"
+        # Use the stable short compression flags and place all global options
+        # before the command. dpkg-deb 1.22.6 on the Ubuntu runner rejected the
+        # long compression spelling used by the earlier producer invocation.
+        local dpkg_deb_args=(--root-owner-group -Zgzip -z9)
+        fakeroot dpkg-deb "${dpkg_deb_args[@]}" --build "$deb_stage" "$deb_path" 2>/dev/null \
+            || dpkg-deb "${dpkg_deb_args[@]}" --build "$deb_stage" "$deb_path"
     else
         log "dpkg-deb unavailable; building real .deb with ar+tar (equivalent format)"
         local work

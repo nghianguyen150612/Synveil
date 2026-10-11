@@ -408,17 +408,13 @@ fn payload_derives_from_manifest_not_duplicate_list() {
 fn deb_builder_pins_compression_to_the_package_layout_contract() {
     let build = read(&repo_root().join("deploy/packages/build.sh"));
     assert!(
-        build.contains(
-            "dpkg_deb_args=(--root-owner-group --compression=gzip --compression-level=9)"
-        ),
-        "dpkg-deb must not inherit host-version-specific compression defaults"
+        build.contains("dpkg_deb_args=(--root-owner-group -Zgzip -z9)"),
+        "dpkg-deb must pin gzip and level 9 using runner-compatible options"
     );
     assert_eq!(
-        build
-            .matches(r#"dpkg-deb --build "${dpkg_deb_args[@]}""#)
-            .count(),
+        build.matches(r#"dpkg-deb "${dpkg_deb_args[@]}" --build"#).count(),
         2,
-        "the fakeroot and non-fakeroot producer paths must use identical pinned options"
+        "fakeroot and fallback producers must place the same global options before the command"
     );
     assert!(
         build.contains("data.tar.gz") && build.contains("control.tar.gz"),
