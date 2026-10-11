@@ -5,7 +5,12 @@
 //! prove that the checked-in packager has a bounded, explicit payload policy
 //! and is syntactically valid.
 
-use std::{fs, path::PathBuf, process::Command};
+use std::{
+    fs,
+    io::Write,
+    path::PathBuf,
+    process::{Command, Stdio},
+};
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -18,10 +23,15 @@ fn script() -> PathBuf {
     repo_root().join("deploy/packages/build-windows.sh")
 }
 
+fn script_text() -> String {
+    fs::read_to_string(script())
+        .expect("read Windows packager")
+        .replace("\r\n", "\n")
+}
+
 #[test]
 fn windows_packager_is_shell_safe_and_syntax_clean() {
-    let path = script();
-    let content = fs::read_to_string(&path).expect("read Windows packager");
+    let content = script_text();
     assert!(content.starts_with("#!/usr/bin/env bash"));
     assert!(content.contains("set -euo pipefail"));
     assert!(!content.contains("eval "), "packager must not use eval");
@@ -34,21 +44,33 @@ fn windows_packager_is_shell_safe_and_syntax_clean() {
         "packager must not recursively remove a broad root"
     );
 
-    let output = Command::new("bash")
+    // Pass source over stdin so Git Bash does not need to reinterpret a
+    // Windows-native drive path supplied by the Rust test process.
+    let mut child = Command::new("bash")
         .arg("-n")
-        .arg(&path)
-        .output()
-        .expect("run bash -n");
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start bash -n");
+    child
+        .stdin
+        .take()
+        .expect("bash stdin")
+        .write_all(content.as_bytes())
+        .expect("send packager source to bash");
+    let output = child.wait_with_output().expect("wait for bash -n");
     assert!(
         output.status.success(),
-        "Windows packager must be syntax-clean: {}",
+        "Windows packager must be syntax-clean: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
 }
 
 #[test]
 fn windows_packager_has_complete_explicit_runtime_policy() {
-    let content = fs::read_to_string(script()).expect("read Windows packager");
+    let content = script_text();
     for required in [
         "synveil-desktop.exe",
         "synveil-client.exe",
@@ -65,7 +87,9 @@ fn windows_packager_has_complete_explicit_runtime_policy() {
         "qt.conf",
         "llvm-readobj",
         "dumpbin",
-        "zip -X",
+        "scripts/create-reproducible-zip.py",
+        "--source-date-epoch",
+        "ZIP_TOOLCHAIN",
         "LICENSE",
         "NOTICE",
     ] {
@@ -89,7 +113,7 @@ fn windows_packager_has_complete_explicit_runtime_policy() {
 
 #[test]
 fn platform_qt_plugin_discovery_matches_the_windows_manifest_layout() {
-    let content = fs::read_to_string(script()).expect("read Windows packager");
+    let content = script_text();
     let configuration = content
         .split("cat > \"${STAGE_ROOT}/qt.conf\" <<'EOF'\n")
         .nth(1)
@@ -109,7 +133,21 @@ fn platform_qt_plugin_discovery_matches_the_windows_manifest_layout() {
     assert!(content.contains("${STAGE_ROOT}/platforms/qwindows.dll"));
     // The native Windows job exercises the shipped qwindows plugin, after
     // extracting the ZIP outside the source/build tree and SDK plugin paths.
-    let ci = fs::read_to_string(repo_root().join(".github/workflows/ci.yml")).unwrap();
+    let root = repo_root();
+    let ci = fs::read_to_string(root.join(".github/workflows/ci.yml")).unwrap();
     assert!(ci.contains("Expand-Archive"));
     assert!(ci.contains("$env:QT_QPA_PLATFORM = \"windows\""));
+    for workflow in [
+        ".github/workflows/ci.yml",
+        ".github/workflows/windows-installer.yml",
+        ".github/workflows/windows-native-acceptance.yml",
+    ] {
+        let content = fs::read_to_string(root.join(workflow)).unwrap();
+        assert!(content.contains("uses: actions/setup-python@v6"), "{workflow}");
+        assert!(content.contains("python-version: \"3.14.7\""), "{workflow}");
+        assert!(
+            content.contains("python tests/windows/test_reproducible_zip.py"),
+            "{workflow}"
+        );
+    }
 }

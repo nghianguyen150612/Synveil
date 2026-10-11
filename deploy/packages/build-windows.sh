@@ -136,6 +136,16 @@ PACKAGE_VERSION="$(synveil_cargo_version)"
 SOURCE_DATE_EPOCH="$(synveil_source_date_epoch)"
 export SOURCE_DATE_EPOCH
 log "archive timestamp: $SOURCE_DATE_EPOCH"
+ZIP_PYTHON="${SYNVEIL_PYTHON:-}"
+if [[ -z "$ZIP_PYTHON" ]]; then
+    ZIP_PYTHON="$(command -v python3 || command -v python || true)"
+fi
+if [[ -z "$ZIP_PYTHON" ]]; then
+    printf '[synveil-windows-package] ERROR: Python 3 is required for deterministic ZIP output\n' >&2
+    exit 1
+fi
+ZIP_TOOLCHAIN="$("$ZIP_PYTHON" -c 'import platform, zlib; print("python-zipfile-" + platform.python_version() + "-zlib-" + zlib.ZLIB_VERSION + "-runtime-" + zlib.ZLIB_RUNTIME_VERSION)')"
+log "ZIP writer: $ZIP_TOOLCHAIN"
 
 if [[ -z "$DESKTOP_BINARY" || -z "$CLIENT_BINARY" ]]; then
     synveil_prepare_reproducible_rust_build "$REPO_ROOT"
@@ -468,6 +478,7 @@ write_package_manifest() {
         printf 'source_date_epoch=%s\n' "$SOURCE_DATE_EPOCH"
         printf 'rustc=%s\n' "$(synveil_toolchain_value rustc)"
         printf 'cargo=%s\n' "$(synveil_toolchain_value cargo)"
+        printf 'zip_generator=%s\n' "$ZIP_TOOLCHAIN"
         if [[ "$native_windows" -eq 1 ]]; then
             printf 'qt=%s\n' "$(qmake -query QT_VERSION 2>/dev/null || printf unknown)"
             printf 'qt_architecture=x86_64-msvc\n'
@@ -573,46 +584,34 @@ if [[ -n "$STAGING_DIR" ]]; then
     log "validated runtime staging exported: $STAGING_DIR"
 fi
 
-if ! command -v zip >/dev/null 2>&1; then
-    printf '[synveil-windows-package] ERROR: zip is required for reproducible ZIP output\n' >&2
-    exit 1
-fi
-
 ZIP_PATH="${OUTPUT_DIR}/synveil-${PACKAGE_VERSION}-windows-x86_64.zip"
 rm -f "$ZIP_PATH"
-# ZIP external attributes are derived from staged modes. Normalize them so a
-# copied Qt closure cannot inherit host-specific executable bits or mtimes.
+# Normalize the staging tree for downstream consumers. The ZIP helper also
+# writes ordering, timestamps, permissions, and file metadata explicitly.
 find "$STAGE_ROOT" -type d -exec chmod 0755 {} +
 find "$STAGE_ROOT" -type f -exec chmod 0644 {} +
 chmod 0755 "${STAGE_ROOT}/synveil-desktop.exe" "${STAGE_ROOT}/synveil-client.exe"
 find "$STAGE_ROOT" -exec touch -d "@${SOURCE_DATE_EPOCH}" {} +
-(
-    cd "$STAGE_ROOT"
-    LC_ALL=C find . -type f -print | sort | zip -X -q "$ZIP_PATH" -@
-)
-
-# Final archive-level path audit, independent of the staging tree.
-if command -v unzip >/dev/null 2>&1; then
-    archive_files="$(unzip -Z1 "$ZIP_PATH" | LC_ALL=C sort)"
-    grep -Fxq 'synveil-desktop.exe' <<< "$archive_files"
-    grep -Fxq 'synveil-client.exe' <<< "$archive_files"
-    grep -Fxq 'qt.conf' <<< "$archive_files"
-    grep -Fxq 'platforms/qwindows.dll' <<< "$archive_files"
-    grep -Fxq 'LICENSE' <<< "$archive_files"
-    grep -Fxq 'NOTICE' <<< "$archive_files"
-    grep -Fxq "$MANIFEST_NAME" <<< "$archive_files"
-    if grep -Eq '(^|/)(include|lib|Headers|cmake)(/|$)|\.(a|lib|prl|so)$' <<< "$archive_files"; then
-        printf '[synveil-windows-package] ERROR: archive contains SDK/development path\n' >&2
-        exit 1
-    fi
-fi
+"$ZIP_PYTHON" "${REPO_ROOT}/scripts/create-reproducible-zip.py" \
+    --root "$STAGE_ROOT" \
+    --output "$ZIP_PATH" \
+    --source-date-epoch "$SOURCE_DATE_EPOCH" \
+    --executable synveil-desktop.exe \
+    --executable synveil-client.exe \
+    --required-file synveil-desktop.exe \
+    --required-file synveil-client.exe \
+    --required-file qt.conf \
+    --required-file platforms/qwindows.dll \
+    --required-file LICENSE \
+    --required-file NOTICE \
+    --required-file "$MANIFEST_NAME"
 
 log "ZIP built: $ZIP_PATH"
 sha256_file "$ZIP_PATH"
-python3 "${REPO_ROOT}/scripts/release_manifest.py" create \
+"$ZIP_PYTHON" "${REPO_ROOT}/scripts/release_manifest.py" create \
     --artifact-root "$OUTPUT_DIR" --product-version "$PACKAGE_VERSION" \
     --source-commit "$(git -C "$REPO_ROOT" rev-parse HEAD)" \
     --output "${OUTPUT_DIR}/SYNVEIL-RELEASE-MANIFEST.json" \
     --artifact "{\"id\":\"windows-x86_64-portable\",\"artifact_type\":\"windows_portable_zip\",\"filename\":\"$(basename "$ZIP_PATH")\",\"platform\":\"windows\",\"architecture\":\"x86_64\",\"role\":\"portable\",\"components\":[\"synveil-desktop\",\"synveil-client\"]}"
-python3 "${REPO_ROOT}/scripts/release_manifest.py" validate \
+"$ZIP_PYTHON" "${REPO_ROOT}/scripts/release_manifest.py" validate \
     --artifact-root "$OUTPUT_DIR" "${OUTPUT_DIR}/SYNVEIL-RELEASE-MANIFEST.json"

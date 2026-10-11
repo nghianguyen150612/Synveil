@@ -25,6 +25,13 @@ jobs:
           version: 6.8.3
           arch: win64_msvc2022_64
           cache: true
+      - name: Pin the reproducible ZIP writer runtime
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14.7"
+      - name: Test deterministic Windows ZIP writer
+        shell: bash
+        run: python tests/windows/test_reproducible_zip.py
       - name: Select and authenticate the MSVC linker
         shell: pwsh
         run: ./scripts/select-msvc-linker.ps1
