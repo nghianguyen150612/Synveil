@@ -1,8 +1,44 @@
 # Prompt047 manifest — final release-candidate validation
 
+## Current validation checkpoint — 2026-10-11
+
+This checkpoint supersedes the older e150 snapshot later in this document. Earlier snapshots are retained as history and apply only to their stated source revisions.
+
+### Current source and PR state
+
+- Main audited for P047 remains `3851ea11927e24255614cfc38adbaccbd345ca03`.
+- Local branch is `release/p047-final-rc-validation`; local HEAD `f708a3aa57aec0dd578e33d71e6ff62f2f1c4099`, tree `34ee0932db5334e96ca8e5301e18ea683de3505a`.
+- Published branch and PR #104 head are still `e5a5ca21991803ccd267d455ad77cd7efe60c296`; the local `f708a3a` commit is not yet published.
+- PR #104 is OPEN / DRAFT / UNMERGED, targeting `main`. PR #78 is still OPEN / DRAFT / UNMERGED; P045 remains separate and unimported.
+- Product version remains `0.1.0`. No `v0.2.0` tag or release was created.
+
+### Reproduced CI results and exact artifacts
+
+| Area | Exact source and run | Result | Qualification limit |
+| --- | --- | --- | --- |
+| Rust CI / Windows Qt reproducibility | `bedfc0802497769472f23ad3eb80a17c848803cf`, run `38154022561`, failing job `114513172442` | MSVC linker and CRT identity were authenticated; all other Rust, format/Clippy, dependency, Web, and platform jobs passed. The independent Windows release rebuild failed because PE COFF timestamps differed (client first byte 249; desktop first byte 273). | Confirmed reproducibility defect; `/Brepro` and a focused linker-flag regression test were added in local commit `f708a3a`. Exact hosted rerun is pending. This is not Windows installation acceptance. |
+| Windows installer and lifecycle | `7c6817120eea3a9f3bdf2506c421add835141061`, run `38155731554`, job `114518218145` | The MSVC toolchain selection, runtime payload build, installer two-build packaging comparison, Setup execution-level inspection, fresh disposable standard-user install, runtime smoke, uninstall/reinstall, and preservation assertions ran. During `repair-production`, Inno logged `Installation process succeeded.` but Setup did not exit before 120 seconds. A remaining process then blocked disposable-profile cleanup. | Repair gate remains FAIL. Local commit `f708a3a` now records the Setup process tree and terminates descendants at timeout while preserving failure. It does not claim repair passed; exact Windows rerun must show clean process completion. This synthetic CI account is not P045 genuine interactive login evidence. |
+| DEB and RPM artifacts | `e5a5ca21991803ccd267d455ad77cd7efe60c296`, tree `b5e06d64b87c692b7f8e51b913ffc6848ead789b`, run `38156264985` | Producer job `114519775573`, independent two-tree reproduction job `114519775688`, systemd validation job `114519775665`, Ubuntu APT job `114525997909`, and Fedora 42 userspace DNF job `114525997887` passed. APT/DNF install, non-root desktop launch, removal/erase, and data-preservation checks passed in their hosted scope. | These are unsigned v0.1.0 CI artifacts and hosted lifecycle checks, not P045 clean-machine acceptance. DEB `synveil_0.1.0_amd64.deb`: 12,143,614 bytes, SHA-256 `4531e5f68fbac40019245bb963fb9885eabbc060b764e550a31a88f34fb517cf`. RPM `synveil-0.1.0-1.x86_64.rpm`: 12,155,456 bytes, SHA-256 `9d6328e20e3cbe460002b1bfeb080aad924b0c9424c0afc5d9bf1d83a46adaae`. Shared Actions artifact `11709087116`: 24,120,701 bytes, SHA-256 `77e02be5d19272b8657f5f3e4abdb6f44c0f0f0548d1c7fb987e233d8e4436da`. Toolchain: GitHub `ubuntu-24.04` image `20261004.327.1`, rustc stable `1.99.0 (b940084d7 2026-09-28)`, distro Qt 6.4.2, dpkg/rpm/systemd tooling. |
+| AppImage | `57424c39102c6a805f5fbaba7e3a6b7ca1d9ef4d`, tree `f34cb587afde132cf9822db220cfbdd18a04bcfd`, run `38150768512`, job `114503632140` | Build, in-run reproduction, inspection, host-decontaminated QML/AppRun smoke, and real current-user integration lifecycle passed. | Older-source unsigned v0.1.0 CI output; no P045 native acceptance. Raw AppImage `Synveil-0.1.0-x86_64.AppImage`: 48,675,320 bytes, SHA-256 `3df6e602439e9d915a441c2dd9f25bbccde1ad8f3b0829ff900cc91dafc03ecb`. Actions artifact `11706811287`: 48,067,493 bytes, SHA-256 `6e6398e1ad8f89cd0897125afb6114a0497fa57f5f3f339bb5758ce91c467ca8`. |
+| P035 bootstrap and PG17 maintenance | source `57424c39102c6a805f5fbaba7e3a6b7ca1d9ef4d`; runs `38150772726` and `38150768390` | First-admin bootstrap recovery after response loss and PostgreSQL 17 scheduled-maintenance suites passed; schema 8 expectations passed. | Scoped server evidence only; it does not replace P036 production Host acceptance. |
+| P036 production Host | source `57424c39102c6a805f5fbaba7e3a6b7ca1d9ef4d`, run `38150772731`, identity job `114503590894` | Contract/source passed; artifact identity prerequisite failed because `acceptance/p036/production-artifacts.json` is absent. Host and interruption jobs did not run. | BLOCKED. Do not fabricate the production inventory. |
+| P045 native acceptance | source `57424c39102c6a805f5fbaba7e3a6b7ca1d9ef4d`, run `38150772676` | Cancelled; no accepted native result. | BLOCKED. PR #78 remains open/draft/unmerged. |
+| P044 resilience | source `57424c39102c6a805f5fbaba7e3a6b7ca1d9ef4d`, run `38150772707` | P044 source/fixture workflow passed. | Does not establish real power-cycle recovery. |
+| P043 installer security hosted workflow | run `38152961649` | Failed while acquiring the pinned Inno Setup download; local P043 validator and 23 security unit tests passed. | Hosted acquisition failure is a workflow/harness result; production signing, keys, trust bootstrap and authenticated publication remain absent. |
+
+### Local validation and exact rerun plan
+
+On the local `f708a3a` tree, the focused checks passed: `./scripts/test-windows-rustflags.sh`, `python3 scripts/validate-windows-installer.py`, `python3 tests/windows/test_standard_user_account_name.py` (12 cases), `bash -n deploy/packages/common/reproducible.sh scripts/test-windows-rustflags.sh`, and `git diff --check`. Previously rerun local checks also passed for bilingual documentation/parity and links, the install-acceptance contract, Linux quick-install, RPM UX, P043 security source/fixture validation (23 tests), P044 resilience, the Windows installer contract, and the P047 report contract. Local `cargo`, `pwsh`, and `shellcheck` are unavailable. Exact hosted Rust, Windows installer, Linux package, and AppImage reruns are required for the source fix; pending or unavailable results remain BLOCKED.
+
+The full 21-gate machine-readable matrix is `acceptance/p047/release-candidate-validation-v1.json`. All release qualification gates remain BLOCKED; Windows `REPAIR` also records the reproduced FAIL pending exact rerun. Scoped package and AppImage passes are not converted into native acceptance.
+
+### External release blockers
+
+P045 remains unfinished. P036's authentic production dependency manifest and installed Host journey remain unavailable. Production signing/key custody, trusted bootstrap, authenticated channel publication, and key-rotation evidence do not exist. No complete exact v0.2.0 artifact set is published. PR #104 remains draft/unmerged. P047 must not claim release qualification until each applicable gate has exact passing evidence and these dependencies are genuinely accepted.
+
 ## Decision and branch lineage
 
-**Preparation state: complete for locally available checks and reproduced source corrections; exact e150c84 hosted validation is incomplete. Release qualification: BLOCKED.** This manifest and the machine-readable report do not approve a release.
+**Preparation state: in progress.** Current local P047 source is `f708a3aa57aec0dd578e33d71e6ff62f2f1c4099` (tree `34ee0932db5334e96ca8e5301e18ea683de3505a`), one commit ahead of published branch `e5a5ca21991803ccd267d455ad77cd7efe60c296`; exact hosted reruns for the latest Windows reproducibility and installer lifecycle fixes are pending. **Release qualification: BLOCKED.** This manifest and the machine-readable report do not approve a release.
 
 - Required branch: `release/p047-final-rc-validation`.
 - Base main SHA: `3851ea11927e24255614cfc38adbaccbd345ca03`.
@@ -77,11 +113,11 @@ P047 Windows installer run `38024448969`, job `114132184799`, verified the expli
 
 P047 AppImage run `38024448824`, job `114132184041`, built and inspected its AppDir but its bounded QML smoke then failed because the validator forced `QT_QPA_PLATFORM=offscreen` while the packaged AppDir contained `libqxcb.so` and no offscreen plugin. The built image digest printed in that failed, unpublished workflow was `8a39886bb5dedbcc17c374d329af28b2ab689c4f1b772ba18e2af95cc4a09196`; the run did not upload the image, and no byte size or Actions artifact ID is available. The validator now selects the bundled `xcb` plugin under isolated Xvfb; `tests/appimage/test_validator_smoke.py` locks that selection and the missing-Xvfb failure behavior. This harness correction is not itself evidence that the AppRun clean-machine journey passes.
 
-## Exact product-source hosted status
+## Historical exact product-source hosted status — e150 snapshot (superseded)
 
 The current product source is `e150c846695f492aabe5d4c9ae7d836c59ea8a9e` (tree `d4dcfdb8b0f8629fea12dbe1ff625408ea9451ce`). The report/manifest update is metadata-only and does not change compiled product or package inputs. PR-triggered jobs check out GitHub's synthetic merge commit (`1f47cd11e591a47fd620501fb5485582f50dd1d6`) where available; push jobs target the exact e150 source.
 
-At the recorded snapshot (`2026-10-10 12:51:48 UTC)), 23 exact-head workflows had 66 queued jobs, 13 in progress, and 6 completed jobs (5 successes, 1 failure). Run-level statuses were 14 queued, 8 in progress, and 1 completed. Completed or active results were:
+At the historical e150 snapshot (`2026-10-10 12:51:48 UTC`), 23 exact-head workflows had 66 queued jobs, 13 in progress, and 6 completed jobs (5 successes, 1 failure). Run-level statuses were 14 queued, 8 in progress, and 1 completed. Completed or active results were:
 
 - P034 network reachability run `38053023533`, job `114215830347`: PASS.
 - P036 self-host run `38053023492`: source/contract job `114215830382` passed; `artifact-identity` job `114215830337` failed because `acceptance/p036/production-artifacts.json` is absent. Host and interruption jobs were queued; no Host acceptance ran.
