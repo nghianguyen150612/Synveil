@@ -140,6 +140,92 @@ final class FileDownloadCoordinator {
         return record
     }
 
+    /// Local-only acquisition for preview and export. It consults the durable VERIFIED record,
+    /// proves immutable Node/Library/version identity, verifies bytes, and never performs HTTP.
+    func verifiedFile(
+        library: LibraryId, node: NodeId, version: FileVersionId
+    ) async throws -> VerifiedDownloadedFile {
+        let session = try await repository.provider.begin()
+        let scope = try await session.mutationScope(libraryId: library, bridge: repository.bridge)
+        try await database.bindSession(scope: scope, credentialId: session.credentialIdentifier)
+        guard
+            let record = try await database.download(
+                scope: scope, credentialId: session.credentialIdentifier,
+                version: version, bridge: repository.bridge),
+            record.state == .verified, record.identity.scope == scope,
+            record.identity.credentialId == session.credentialIdentifier,
+            record.identity.nodeId == node, record.identity.versionId == version
+        else { throw DownloadFailure.stagingMissing }
+        do {
+            try await staging.verify(record, published: true)
+        } catch {
+            let failure = DownloadPolicy.classify(error)
+            try? await database.updateDownload(record, state: failure.state, failure: failure)
+            throw failure
+        }
+        try await repository.provider.validate(session)
+        return VerifiedDownloadedFile(
+            operationId: record.id, identity: record.identity, session: session)
+    }
+
+    /// Creates a private, verified temporary presentation copy without exposing the source path.
+    func makeExportCopy(
+        _ capability: VerifiedDownloadedFile, exportId: String, displayName: String
+    ) async throws -> URL {
+        let session = capability.session
+        try await repository.provider.validate(session)
+        guard session.matches(capability.identity.scope),
+            session.credentialIdentifier == capability.identity.credentialId,
+            let record = try await database.download(
+                scope: capability.identity.scope, credentialId: capability.identity.credentialId,
+                id: capability.operationId, bridge: repository.bridge),
+            record.state == .verified, record.identity == capability.identity
+        else { throw DownloadFailure.staleSession }
+        try await staging.reserveExport(
+            id: exportId, bytes: record.identity.expected.byteLength,
+            durable: database.downloadReservations())
+        let url: URL
+        do {
+            try Task.checkCancellation()
+            url = try await staging.copyVerifiedForExport(
+                record, exportId: exportId, displayName: displayName)
+        } catch {
+            try? await staging.removeExport(exportId)
+            throw error
+        }
+        do {
+            try await repository.provider.validate(session)
+            guard session.sameSession(as: capability.session) else {
+                throw DownloadFailure.staleSession
+            }
+            return url
+        } catch {
+            try? await staging.removeExport(exportId)
+            throw error
+        }
+    }
+
+    func validateExportCopy(
+        _ capability: VerifiedDownloadedFile, exportId: String, displayName: String
+    ) async throws -> URL {
+        let session = capability.session
+        try await repository.provider.validate(session)
+        guard session.matches(capability.identity.scope),
+            session.credentialIdentifier == capability.identity.credentialId,
+            let record = try await database.download(
+                scope: capability.identity.scope, credentialId: capability.identity.credentialId,
+                id: capability.operationId, bridge: repository.bridge),
+            record.state == .verified, record.identity == capability.identity
+        else { throw DownloadFailure.staleSession }
+        let url = try await staging.verifyExport(
+            id: exportId, displayName: displayName, expected: capability.identity.expected)
+        try await repository.provider.validate(session)
+        return url
+    }
+
+    func releaseExport(_ id: String) async throws { try await staging.removeExport(id) }
+    func cleanupOrphanExports() async throws { try await staging.cleanupOrphanExports() }
+
     func read(_ capability: VerifiedDownloadedFile, offset: UInt64, count: Int) async throws -> Data
     {
         let provider = repository.provider

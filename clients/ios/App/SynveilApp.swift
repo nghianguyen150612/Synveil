@@ -23,7 +23,8 @@ struct SynveilApp: App {
                 nodeProjectionRepository: container.nodeProjectionRepository,
                 rebaselineCoordinator: container.rebaselineCoordinator,
                 syncCheckpointService: container.syncCheckpointService,
-                downloadCoordinator: container.downloadCoordinator
+                downloadCoordinator: container.downloadCoordinator,
+                fileExportCoordinator: container.fileExportCoordinator
             )
             .task {
                 await container.prepareEnrollmentSecurity()

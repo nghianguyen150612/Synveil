@@ -2,12 +2,24 @@ import SwiftUI
 
 struct FileDownloadControls: View {
     private let controller: SessionController
+    private let library: LibraryId
+    private let node: NodeId
+    private let version: FileVersionId
+    private let displayName: String
+    private let exportCoordinator: VerifiedFileExportCoordinator?
     @State private var model: FileDownloadViewModel
     init(
         coordinator: FileDownloadCoordinator?, controller: SessionController,
-        library: LibraryId, node: NodeId, version: FileVersionId
+        library: LibraryId, node: NodeId, version: FileVersionId,
+        displayName: String = "Synveil Download",
+        exportCoordinator: VerifiedFileExportCoordinator? = nil
     ) {
         self.controller = controller
+        self.library = library
+        self.node = node
+        self.version = version
+        self.displayName = displayName
+        self.exportCoordinator = exportCoordinator
         _model = State(
             initialValue: FileDownloadViewModel(
                 coordinator: coordinator,
@@ -57,7 +69,7 @@ struct FileDownloadControls: View {
                         .accessibilityIdentifier("synveil.download.restart")
                 }
                 Text(
-                    "Private cached content may be removed by the system. Preview and export are unavailable."
+                    "Private cached content may be removed by the system. Preview and export actions appear only for a verified local copy."
                 )
                 .font(.footnote).fixedSize(horizontal: false, vertical: true)
             }
@@ -65,5 +77,9 @@ struct FileDownloadControls: View {
             .onChange(of: controller.lifecycleRevision) { _, _ in model.invalidate() }
             .onDisappear { model.invalidate() }
         }
+        FileExportControls(
+            coordinator: exportCoordinator, controller: controller,
+            library: library, node: node, version: version, displayName: displayName,
+            verified: model.progress?.state == .verified)
     }
 }

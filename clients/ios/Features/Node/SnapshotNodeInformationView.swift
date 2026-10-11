@@ -6,14 +6,17 @@ struct SnapshotNodeInformationView: View {
     private let revision: UInt64
     private let library: LibraryId?
     private let downloadCoordinator: FileDownloadCoordinator?
+    private let fileExportCoordinator: VerifiedFileExportCoordinator?
     init(
         node: RebaselineSnapshotNode, sessionController: SessionController,
-        library: LibraryId? = nil, downloadCoordinator: FileDownloadCoordinator? = nil
+        library: LibraryId? = nil, downloadCoordinator: FileDownloadCoordinator? = nil,
+        fileExportCoordinator: VerifiedFileExportCoordinator? = nil
     ) {
         self.node = node
         self.sessionController = sessionController
         self.library = library
         self.downloadCoordinator = downloadCoordinator
+        self.fileExportCoordinator = fileExportCoordinator
         revision = sessionController.lifecycleRevision
     }
     var body: some View {
@@ -26,7 +29,8 @@ struct SnapshotNodeInformationView: View {
                 {
                     FileDownloadControls(
                         coordinator: downloadCoordinator, controller: sessionController,
-                        library: library, node: node.id, version: version)
+                        library: library, node: node.id, version: version,
+                        displayName: node.name, exportCoordinator: fileExportCoordinator)
                 }
                 Section("Saved Snapshot Metadata") {
                     Text(node.name).fixedSize(horizontal: false, vertical: true)

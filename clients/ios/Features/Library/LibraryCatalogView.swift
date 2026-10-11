@@ -10,6 +10,7 @@ struct LibraryCatalogView: View {
     private let nodeProjectionRepository: (any NodeProjectionRepositoryProtocol)?
     private let rebaselineCoordinator: RebaselineCoordinator?
     private let downloadCoordinator: FileDownloadCoordinator?
+    private let fileExportCoordinator: VerifiedFileExportCoordinator?
     private let syncCheckpointService: (any SyncCheckpointPreparationProtocol)?
 
     @State private var viewModel: LibraryCatalogViewModel
@@ -25,6 +26,7 @@ struct LibraryCatalogView: View {
         syncCheckpointService: (any SyncCheckpointPreparationProtocol)? = nil,
         rebaselineCoordinator: RebaselineCoordinator? = nil,
         downloadCoordinator: FileDownloadCoordinator? = nil,
+        fileExportCoordinator: VerifiedFileExportCoordinator? = nil,
         sessionController: SessionController
     ) {
         self.sessionController = sessionController
@@ -36,6 +38,7 @@ struct LibraryCatalogView: View {
         self.syncCheckpointService = syncCheckpointService
         self.rebaselineCoordinator = rebaselineCoordinator
         self.downloadCoordinator = downloadCoordinator
+        self.fileExportCoordinator = fileExportCoordinator
         _viewModel = State(
             initialValue: LibraryCatalogViewModel(
                 repository: repository,
@@ -62,7 +65,8 @@ struct LibraryCatalogView: View {
                                 sessionController: sessionController,
                                 route: .root(for: library),
                                 metadataMutationFeature: metadataMutationFeature,
-                                downloadCoordinator: downloadCoordinator
+                                downloadCoordinator: downloadCoordinator,
+                                fileExportCoordinator: fileExportCoordinator
                             )
                             .id(NodeBrowserRoute.root(for: library))
                         } else {
@@ -76,7 +80,8 @@ struct LibraryCatalogView: View {
                             sessionController: sessionController,
                             route: route,
                             metadataMutationFeature: metadataMutationFeature,
-                            downloadCoordinator: downloadCoordinator
+                            downloadCoordinator: downloadCoordinator,
+                            fileExportCoordinator: fileExportCoordinator
                         )
                         .id(route)
                     }
@@ -86,6 +91,7 @@ struct LibraryCatalogView: View {
                             sessionController: sessionController,
                             offlineDetailsService: offlineNodeBrowserService,
                             downloadCoordinator: downloadCoordinator,
+                            fileExportCoordinator: fileExportCoordinator,
                             route: route
                         )
                         .id(route)

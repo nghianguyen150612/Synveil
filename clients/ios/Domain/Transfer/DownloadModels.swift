@@ -109,11 +109,31 @@ struct DownloadStorageReservation: Sendable {
 }
 
 /// No path or URL is authority. Every use must return through the coordinator for durable,
-/// filesystem and current-session validation. No export/preview API is introduced here.
+/// filesystem and current-session validation.
 struct VerifiedDownloadedFile: Sendable {
     let operationId: DownloadOperationId
     let identity: DownloadIdentity
     let session: LibraryRequestScope
+}
+
+enum VerifiedFileExportPurpose: String, Hashable, Sendable {
+    case preview, share, saveToFiles
+}
+
+enum VerifiedFileExportState: String, Sendable {
+    case preparing, verifyingCopy, ready, presented, revoking, released, failed
+}
+
+/// Opaque, single-use authorization for one short-lived native presentation copy.
+/// It contains no URL, path, credential or bearer token.
+struct VerifiedFileExportLease: Hashable, Sendable, Identifiable {
+    let id: String
+    let purpose: VerifiedFileExportPurpose
+    let sourceOperationId: DownloadOperationId
+    let versionId: FileVersionId
+    let sha256: String
+    let byteLength: UInt64
+    let lifecycleRevision: UInt64
 }
 
 enum DownloadRecoveryDecision: Equatable, Sendable {

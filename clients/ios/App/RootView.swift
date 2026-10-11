@@ -24,6 +24,7 @@ struct RootView: View {
     var rebaselineCoordinator: RebaselineCoordinator? = nil
     var syncCheckpointService: (any SyncCheckpointPreparationProtocol)? = nil
     var downloadCoordinator: FileDownloadCoordinator? = nil
+    var fileExportCoordinator: VerifiedFileExportCoordinator? = nil
 
     var body: some View {
         switch sessionController.state {
@@ -56,6 +57,7 @@ struct RootView: View {
                 syncCheckpointService: syncCheckpointService,
                 rebaselineCoordinator: rebaselineCoordinator,
                 downloadCoordinator: downloadCoordinator,
+                fileExportCoordinator: fileExportCoordinator,
                 sessionController: sessionController
             )
             // A later authenticated lifecycle receives a fresh transient catalog and navigation stack.

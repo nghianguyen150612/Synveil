@@ -173,6 +173,10 @@
 		7DF7A439FA000652A9A2D5C2 /* FileDownloadViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F3BE8AEB820E1DB56833850 /* FileDownloadViewTests.swift */; };
 		83820A564E3A52541BBF9582 /* FileVersionResponseDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3962B8ACF4A77E1DBF3F383 /* FileVersionResponseDecoder.swift */; };
 		51EA7CAA728AE32CA30FFF44 /* URLSessionFileContentTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1DAFC3C7BFFB910A07D552B /* URLSessionFileContentTransport.swift */; };
+		B04400000000000000000001 /* VerifiedFileExportCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04400000000000000000001 /* VerifiedFileExportCoordinator.swift */; };
+		B04400000000000000000002 /* FileExportPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04400000000000000000002 /* FileExportPresentation.swift */; };
+		B04400000000000000000003 /* VerifiedFileExportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04400000000000000000003 /* VerifiedFileExportTests.swift */; };
+		B04400000000000000000004 /* QuickLook.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F04400000000000000000004 /* QuickLook.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -353,6 +357,10 @@
 		4F3BE8AEB820E1DB56833850 /* FileDownloadViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/FileDownloadViewTests.swift; sourceTree = SOURCE_ROOT; };
 		B3962B8ACF4A77E1DBF3F383 /* FileVersionResponseDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Transfer/FileVersionResponseDecoder.swift; sourceTree = SOURCE_ROOT; };
 		C1DAFC3C7BFFB910A07D552B /* URLSessionFileContentTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Network/URLSessionFileContentTransport.swift; sourceTree = SOURCE_ROOT; };
+		F04400000000000000000001 /* VerifiedFileExportCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Transfer/VerifiedFileExportCoordinator.swift; sourceTree = SOURCE_ROOT; };
+		F04400000000000000000002 /* FileExportPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Transfer/FileExportPresentation.swift; sourceTree = SOURCE_ROOT; };
+		F04400000000000000000003 /* VerifiedFileExportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/VerifiedFileExportTests.swift; sourceTree = SOURCE_ROOT; };
+		F04400000000000000000004 /* QuickLook.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuickLook.framework; path = System/Library/Frameworks/QuickLook.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -360,6 +368,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B04400000000000000000004 /* QuickLook.framework in Frameworks */,
 				A10000012C00000000000038 /* Security.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -378,6 +387,10 @@
 		A40000012C00000000000001 = {
 			isa = PBXGroup;
 			children = (
+				F04400000000000000000001 /* VerifiedFileExportCoordinator.swift */,
+				F04400000000000000000002 /* FileExportPresentation.swift */,
+				F04400000000000000000003 /* VerifiedFileExportTests.swift */,
+				F04400000000000000000004 /* QuickLook.framework */,
 				C1DAFC3C7BFFB910A07D552B /* URLSessionFileContentTransport.swift */,
 				B3962B8ACF4A77E1DBF3F383 /* FileVersionResponseDecoder.swift */,
 				4F3BE8AEB820E1DB56833850 /* FileDownloadViewTests.swift */,
@@ -749,6 +762,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B04400000000000000000001 /* VerifiedFileExportCoordinator.swift in Sources */,
+				B04400000000000000000002 /* FileExportPresentation.swift in Sources */,
 				51EA7CAA728AE32CA30FFF44 /* URLSessionFileContentTransport.swift in Sources */,
 				83820A564E3A52541BBF9582 /* FileVersionResponseDecoder.swift in Sources */,
 				59B9F6D8B03068D82508F17A /* DownloadStagingStore.swift in Sources */,
@@ -860,6 +875,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B04400000000000000000003 /* VerifiedFileExportTests.swift in Sources */,
 				7DF7A439FA000652A9A2D5C2 /* FileDownloadViewTests.swift in Sources */,
 				A4D8517B66C974D0A3609777 /* FileDownloadTransportTests.swift in Sources */,
 				3DDBE8DBD579F13243BE7833 /* FileDownloadTestSupport.swift in Sources */,
