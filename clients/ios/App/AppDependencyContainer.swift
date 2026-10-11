@@ -45,6 +45,7 @@ public final class AppDependencyContainer {
     private(set) var syncFeedService: SyncFeedService?
     private(set) var nodeProjectionRepository: SQLiteNodeProjectionRepository?
     private(set) var syncFeedApplicationService: SyncFeedApplicationService?
+    private(set) var rebaselineCoordinator: RebaselineCoordinator?
     private(set) var syncAckService: SyncAckService?
     private(set) var inboundSyncCoordinator: (any InboundSyncCoordinatorProtocol)?
     private(set) var metadataMutationFeature: (any MetadataMutationFeatureProtocol)?
@@ -139,6 +140,8 @@ public final class AppDependencyContainer {
                     transport: URLSessionHTTPTransport(
                         requestTimeout: 10, resourceTimeout: 15,
                         maxResponseBodyBytes: SyncFeedPolicy.maximumResponseBytes))
+                rebaselineCoordinator = RebaselineCoordinator(
+                    database: database, queue: queue, provider: feedProvider, bridge: bridge)
                 syncFeedService = SyncFeedService(
                     provider: feedProvider, queue: queue,
                     store: database, bridge: bridge)
@@ -177,9 +180,11 @@ public final class AppDependencyContainer {
                     composedMetadataMutationService = feature
                     metadataMutationFeature = feature
                 }
+                let composedRebaseline = rebaselineCoordinator
                 sessionController.installMutationSessionInvalidator {
-                    [weak queue, weak composedMetadataMutationService] in
+                    [weak queue, weak composedMetadataMutationService, weak composedRebaseline] in
                     queue?.invalidateSession()
+                    composedRebaseline?.invalidateSession()
                     composedMetadataMutationService?.invalidateSession()
                 }
             } catch {
@@ -190,6 +195,7 @@ public final class AppDependencyContainer {
                 nodeProjectionRepository = nil
                 offlineNodeBrowserService = nil
                 syncFeedApplicationService = nil
+                rebaselineCoordinator = nil
                 syncAckService = nil
                 inboundSyncCoordinator = nil
                 metadataMutationFeature = nil

@@ -17,7 +17,7 @@ final class InboundSyncSQLiteTests: XCTestCase {
         XCTAssertEqual(row?.state, .receivedUnapplied)
         XCTAssertEqual(row?.page.events.map(\.sequence.rawValue), ["1", "2"])
         XCTAssertEqual(row?.page.evidence?.token, "v1.sync-ack.original-evidence_123")
-        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "4")
+        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "5")
     }
     func testDuplicatePageIdempotentAcrossRequestIds() async throws {
         let f = try await queueFixture(self)
@@ -175,7 +175,7 @@ final class InboundSyncSQLiteTests: XCTestCase {
         XCTAssertEqual(history, afterHistory)
         XCTAssertEqual(try queueRawScalar(f.url, "SELECT sequence FROM sync_bases"), "0")
         XCTAssertEqual(try queueRawScalar(f.url, "SELECT quarantined FROM scopes"), "1")
-        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "4")
+        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "5")
     }
     func testV2MigrationFaultRollsBackWithoutLosingRecords() async throws {
         let f = try await queueFixture(self)

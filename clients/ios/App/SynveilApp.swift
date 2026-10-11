@@ -21,6 +21,7 @@ struct SynveilApp: App {
                 metadataMutationFeature: container.metadataMutationFeature,
                 inboundSyncCoordinator: container.inboundSyncCoordinator,
                 nodeProjectionRepository: container.nodeProjectionRepository,
+                rebaselineCoordinator: container.rebaselineCoordinator,
                 syncCheckpointService: container.syncCheckpointService
             )
             .task {

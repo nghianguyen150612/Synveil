@@ -108,6 +108,19 @@ final class DurableMutationQueue: DurableMutationQueueProtocol {
             throw stored.status == .invalid
                 ? MutationQueueFailure.invalidCheckpoint : .reconciliationRequired
         }
+        let response = HTTPTransportResponse(
+            statusCode: 200, headers: ["Content-Type": "application/json"],
+            body: stored.responseBody)
+        if let root = try? JSONSerialization.jsonObject(with: stored.responseBody)
+            as? [String: Any],
+            let data = root["data"] as? [String: Any], data["bootstrap"] != nil
+        {
+            let base = try await RebaselineResponseDecoder(bridge: checkpointDecoder.bridge)
+                .confirmedBase(response, scope: scope)
+            guard base.epoch.rawValue == stored.epoch, base.sequence.rawValue == stored.sequence
+            else { throw MutationQueueFailure.invalidCheckpoint }
+            return base
+        }
         let checkpoint = try await checkpointDecoder.decode(
             HTTPTransportResponse(
                 statusCode: 200, headers: ["Content-Type": "application/json"],

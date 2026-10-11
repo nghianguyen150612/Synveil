@@ -3,6 +3,8 @@ import SwiftUI
 struct SyncStatusView: View {
     @Environment(\.scenePhase) private var scenePhase
     private let sessionController: SessionController
+    private let library: Library
+    private let rebaselineCoordinator: RebaselineCoordinator?
     @State private var viewModel: SyncStatusViewModel
     @State private var showsRecoveryConfirmation = false
     @State private var showsSetupConfirmation = false
@@ -10,9 +12,12 @@ struct SyncStatusView: View {
     init(
         library: Library, coordinator: (any InboundSyncCoordinatorProtocol)?,
         projection: (any NodeProjectionRepositoryProtocol)?,
-        checkpoint: (any SyncCheckpointPreparationProtocol)?, sessionController: SessionController
+        checkpoint: (any SyncCheckpointPreparationProtocol)?, sessionController: SessionController,
+        rebaselineCoordinator: RebaselineCoordinator? = nil
     ) {
         self.sessionController = sessionController
+        self.library = library
+        self.rebaselineCoordinator = rebaselineCoordinator
         _viewModel = State(
             initialValue: SyncStatusViewModel(
                 library: library, coordinator: coordinator, projection: projection,
@@ -103,6 +108,9 @@ struct SyncStatusView: View {
                 .font(.footnote)
                 .fixedSize(horizontal: false, vertical: true)
             }
+            RebaselineProgressView(
+                library: library, coordinator: rebaselineCoordinator,
+                sessionController: sessionController)
             Section("Saved Metadata") {
                 Text(viewModel.cacheMessage)
                     .fixedSize(horizontal: false, vertical: true)

@@ -212,7 +212,7 @@ final class SyncStatusViewModelTests: XCTestCase {
     }
     func testRebaselineHasNoSafeRetry() async throws {
         try await shows(
-            .rebaselineRequired, state: .reconciliationRequired, text: "not available yet")
+            .rebaselineRequired, state: .reconciliationRequired, text: "Rebuild Saved Metadata")
     }
     func testMetadataRevisionChangeGuidance() async throws {
         try await shows(.metadataChanged, state: .reconciliationRequired, text: "Server changed")

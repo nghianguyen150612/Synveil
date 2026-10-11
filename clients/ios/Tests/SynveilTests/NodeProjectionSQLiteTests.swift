@@ -100,7 +100,7 @@ final class NodeProjectionSQLiteTests: XCTestCase {
     }
     func testFreshSchemaV4() async throws {
         let f = try await queueFixture(self)
-        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "4")
+        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "5")
         XCTAssertEqual(
             try queueRawScalar(
                 f.url,
@@ -126,7 +126,7 @@ final class NodeProjectionSQLiteTests: XCTestCase {
         XCTAssertEqual(staged?.page, page)
         let base = try await migrated.syncBase(scope: f.scope)
         XCTAssertEqual(base?.responseBody, checkpoint?.responseBody)
-        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "4")
+        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "5")
         XCTAssertEqual(try queueRawScalar(f.url, "SELECT quarantined FROM scopes"), "0")
     }
     func testV3MigrationPreservesQuarantinedScope() async throws {
@@ -165,7 +165,7 @@ final class NodeProjectionSQLiteTests: XCTestCase {
     }
     func testUnsupportedFutureSchemaFailsClosed() async throws {
         let f = try await queueFixture(self)
-        try queueRawSQL(f.url, "PRAGMA user_version=5")
+        try queueRawSQL(f.url, "PRAGMA user_version=6")
         XCTAssertThrowsError(try MutationQueueSQLiteStore(url: f.url))
     }
     func testStandaloneAppliedStateSetterRejected() async throws {
