@@ -130,7 +130,7 @@ export PATH
 LC_ALL=C
 export LC_ALL
 unset ENV BASH_ENV CDPATH LD_PRELOAD LD_LIBRARY_PATH PYTHONPATH
-printf '[synveil] %%preun synveil (arg: %s)\n' "$1" >&2
+printf '%s synveil (arg: %s)\n' '[synveil] %%preun' "$1" >&2
 if [ "$1" = "0" ]; then
   if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
     printf '[synveil] disabling timer (final erase)\n' >&2
@@ -154,7 +154,7 @@ export PATH
 LC_ALL=C
 export LC_ALL
 unset ENV BASH_ENV CDPATH LD_PRELOAD LD_LIBRARY_PATH PYTHONPATH
-printf '[synveil] %%postun synveil (arg: %s)\n' "$1" >&2
+printf '%s synveil (arg: %s)\n' '[synveil] %%postun' "$1" >&2
 if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
   printf '[synveil] reloading systemd manager (daemon-reload)\n' >&2
   systemctl daemon-reload
