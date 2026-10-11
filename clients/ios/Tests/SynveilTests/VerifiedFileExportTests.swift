@@ -39,6 +39,30 @@ final class VerifiedFileExportTests: XCTestCase {
         } catch { XCTAssertEqual(error as? DownloadFailure, .stagingMissing) }
     }
 
+    func testWrongNodeLibraryAndVersionCannotAcquireExportCapability() async throws {
+        let f = try await downloadFixture(self)
+        _ = try downloadCapability(await downloadRun(f))
+        let wrongNode = try await NodeId.validated(queueUUID(333), using: QueueValidator())
+        let wrongLibrary = try await LibraryId.validated(queueUUID(334), using: QueueValidator())
+        let wrongVersion = try await FileVersionId.validated(
+            queueUUID(335), using: QueueValidator())
+        let requestsBefore = await f.content.requests()
+        let mismatches = [
+            (wrongLibrary, f.node.id, f.version),
+            (f.queue.scope.libraryId, wrongNode, f.version),
+            (f.queue.scope.libraryId, f.node.id, wrongVersion),
+        ]
+        for (library, node, version) in mismatches {
+            do {
+                _ = try await f.coordinator.verifiedFile(
+                    library: library, node: node, version: version)
+                XCTFail("mismatched immutable scope must not mint an export capability")
+            } catch { XCTAssertEqual(error as? DownloadFailure, .stagingMissing) }
+        }
+        let requestsAfter = await f.content.requests()
+        XCTAssertEqual(requestsAfter.count, requestsBefore.count)
+    }
+
     func testBoundedTemporaryCopyPreservesVerifiedBytesAndUsesSafeName() async throws {
         let body = Data(repeating: 0x61, count: 16 * 1024 * 1024)
         let f = try await downloadFixture(self, body: body)
@@ -154,6 +178,51 @@ final class VerifiedFileExportTests: XCTestCase {
             _ = try await coordinator.beginPresentation(lease)
             XCTFail("released leases cannot be reused")
         } catch { XCTAssertEqual(error as? DownloadFailure, .staleSession) }
+    }
+
+    func testConcurrentPresentationConsumesLeaseOnlyOnce() async throws {
+        let f = try await downloadFixture(self)
+        _ = try downloadCapability(await downloadRun(f))
+        let coordinator = VerifiedFileExportCoordinator(downloads: f.coordinator)
+        let prepared = await coordinator.prepare(
+            library: f.queue.scope.libraryId, node: f.node.id, version: f.version,
+            purpose: .share, displayName: "report.txt")
+        let lease = try XCTUnwrap(prepared.lease)
+
+        async let first = try? await coordinator.beginPresentation(lease)
+        async let second = try? await coordinator.beginPresentation(lease)
+        let (firstURL, secondURL) = await (first, second)
+        let successfulURLs = [firstURL, secondURL].compactMap { $0 }
+        XCTAssertEqual(successfulURLs.count, 1)
+        let url = try XCTUnwrap(successfulURLs.first)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+        let released = await coordinator.finish(lease)
+        XCTAssertTrue(released)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    func testSessionInvalidationRevokesPreparedLeaseBeforeHandoff() async throws {
+        let f = try await downloadFixture(self)
+        _ = try downloadCapability(await downloadRun(f))
+        let coordinator = VerifiedFileExportCoordinator(downloads: f.coordinator)
+        let prepared = await coordinator.prepare(
+            library: f.queue.scope.libraryId, node: f.node.id, version: f.version,
+            purpose: .share, displayName: "report.txt")
+        let lease = try XCTUnwrap(prepared.lease)
+        let url = f.root.deletingLastPathComponent()
+            .appendingPathComponent("exports", isDirectory: true)
+            .appendingPathComponent(lease.id, isDirectory: true)
+            .appendingPathComponent("report.txt")
+
+        coordinator.invalidateSession()
+        do {
+            _ = try await coordinator.beginPresentation(lease)
+            XCTFail("an invalidated lifecycle cannot authorize a new handoff")
+        } catch { XCTAssertEqual(error as? DownloadFailure, .staleSession) }
+        for _ in 0..<20 where FileManager.default.fileExists(atPath: url.path) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
     }
 
     func testPreviewRequiresConservativeTypeAndSignature() throws {
