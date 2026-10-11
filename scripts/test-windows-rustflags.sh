@@ -43,6 +43,45 @@ if actual[:len(expected)] != expected:
     raise SystemExit(f"direct rustc flags changed: {actual!r}")
 PY
 
+# A clean MSVC-hosted release link must receive deterministic PE timestamp
+# policy through both Cargo's encoded environment and the wrapper's direct argv.
+msvc_fixture_bin="$fixture_root/msvc-bin"
+mkdir -p "$msvc_fixture_bin"
+cat > "$msvc_fixture_bin/rustc" <<'SH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-vV" ]]; then
+    printf 'host: x86_64-pc-windows-msvc\n'
+    exit 0
+fi
+exit 2
+SH
+chmod +x "$msvc_fixture_bin/rustc"
+original_path="$PATH"
+PATH="$msvc_fixture_bin:$PATH"
+export PATH
+QMAKE="$fixture_root/no-qmake"
+export QMAKE
+unset CARGO_ENCODED_RUSTFLAGS RUSTFLAGS
+synveil_prepare_reproducible_rust_build "$repo_root"
+python3 - <<'PY'
+import os
+
+flags = os.environ["CARGO_ENCODED_RUSTFLAGS"].split("\x1f")
+if flags.count("link-arg=/Brepro") != 1:
+    raise SystemExit(f"MSVC reproducible link argument missing or duplicated: {flags!r}")
+index = flags.index("link-arg=/Brepro")
+if index == 0 or flags[index - 1] != "-C":
+    raise SystemExit(f"MSVC reproducible link argument was not passed as a Rust codegen option: {flags!r}")
+PY
+direct_flags=("${SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS[@]}")
+if [[ ! " ${direct_flags[*]} " == *" link-arg=/Brepro "* ]]; then
+    echo "MSVC direct rustc wrapper flags omit /Brepro" >&2
+    exit 1
+fi
+PATH="$original_path"
+export PATH
+unset QMAKE CARGO_ENCODED_RUSTFLAGS RUSTFLAGS
+
 # Exercise explicit and default Windows Cargo homes. On a Windows host, use
 # the real cygpath executable so MSYS argument conversion is part of the test.
 if command -v cygpath >/dev/null 2>&1; then

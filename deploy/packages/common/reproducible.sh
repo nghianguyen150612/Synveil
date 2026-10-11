@@ -434,6 +434,17 @@ synveil_prepare_reproducible_rust_build() {
         SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS=("${rust_flags[@]}")
         synveil_export_encoded_rustflags "${rust_flags[@]}"
     fi
+    # MSVC otherwise stamps each PE image with the current link time. The
+    # hosted two-tree comparison reproduced that timestamp as the only
+    # difference between otherwise equal release binaries. Ask the selected
+    # Microsoft linker for deterministic output at the final link boundary.
+    if [[ "$host_toolchain" == *"msvc"* ]]; then
+        if [[ ! " ${rust_flags[*]} " == *" link-arg=/Brepro "* ]]; then
+            rust_flags+=("-C" "link-arg=/Brepro")
+        fi
+        SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS=("${rust_flags[@]}")
+        synveil_export_encoded_rustflags "${rust_flags[@]}"
+    fi
     if [[ "$host_toolchain" != *"msvc"* ]]; then
         # GCC/Clang use the last matching prefix map for an overlapping path.
         # Keep repository roots first and nested target directories afterward
