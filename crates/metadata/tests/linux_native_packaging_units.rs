@@ -405,6 +405,28 @@ fn payload_derives_from_manifest_not_duplicate_list() {
 }
 
 #[test]
+fn deb_builder_pins_compression_to_the_package_layout_contract() {
+    let build = read(&repo_root().join("deploy/packages/build.sh"));
+    assert!(
+        build.contains(
+            "dpkg_deb_args=(--root-owner-group --compression=gzip --compression-level=9)"
+        ),
+        "dpkg-deb must not inherit host-version-specific compression defaults"
+    );
+    assert_eq!(
+        build
+            .matches(r#"dpkg-deb --build "${dpkg_deb_args[@]}""#)
+            .count(),
+        2,
+        "the fakeroot and non-fakeroot producer paths must use identical pinned options"
+    );
+    assert!(
+        build.contains("data.tar.gz") && build.contains("control.tar.gz"),
+        "the pinned gzip output must match the deterministic DEB member contract"
+    );
+}
+
+#[test]
 fn manifest_package_set_matches_expected_gen1_payload() {
     let entries = parse_manifest();
     let package: Vec<_> = entries.iter().filter(|e| e.5 == "PACKAGE").collect();
