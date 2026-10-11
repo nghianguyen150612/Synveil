@@ -8,7 +8,7 @@ import Foundation
 #endif
 
 enum DownloadFilesystemFault: Sendable {
-    case create, write, synchronize, truncate, rename, afterRename, read
+    case create, write, synchronize, truncate, rename, afterRename, read, sourceCoordinate
 }
 
 /// A single actor accounts for all private transfer files and reservations, including unknown
@@ -318,6 +318,214 @@ actor DownloadStagingStore {
         hashers[id] = SHA256()
     }
 
+    /// Imports one Files-provider document into the same quota-managed private staging root used
+    /// by downloads and export copies. The external URL is consumed only inside this call.
+    func stageUpload(
+        from selectedURL: URL, stagingId: UploadOperationId,
+        durable: [DownloadStorageReservation]
+    ) throws -> UploadExpectedContent {
+        guard selectedURL.isFileURL else { throw UploadFailure.invalidSource }
+        let downloadId = try DownloadOperationId(validating: stagingId.rawValue)
+        let didStartScope = selectedURL.startAccessingSecurityScopedResource()
+        defer { if didStartScope { selectedURL.stopAccessingSecurityScopedResource() } }
+
+        try fault?(.sourceCoordinate)
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        var coordinationError: NSError?
+        var result: Result<UploadExpectedContent, Error>?
+        coordinator.coordinate(
+            readingItemAt: selectedURL, options: .withoutChanges, error: &coordinationError
+        ) { coordinatedURL in
+            result = Result {
+                try self.copyCoordinatedUpload(
+                    coordinatedURL, id: downloadId, durable: durable)
+            }
+        }
+        if coordinationError != nil { throw UploadFailure.sourceUnavailable }
+        guard let result else {
+            cancelUploadReservation(stagingId: stagingId)
+            throw UploadFailure.sourceUnavailable
+        }
+        do { return try result.get() } catch let failure as UploadFailure {
+            cancelUploadReservation(stagingId: stagingId)
+            throw failure
+        } catch {
+            cancelUploadReservation(stagingId: stagingId)
+            throw UploadPolicy.classify(error)
+        }
+    }
+
+    private func copyCoordinatedUpload(
+        _ sourceURL: URL, id: DownloadOperationId,
+        durable: [DownloadStorageReservation]
+    ) throws -> UploadExpectedContent {
+        let source = open(sourceURL.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard source >= 0 else { throw UploadFailure.sourceUnavailable }
+        defer { close(source) }
+        var before = stat()
+        guard fstat(source, &before) == 0, (before.st_mode & S_IFMT) == S_IFREG,
+            before.st_nlink == 1, before.st_size >= 0
+        else { throw UploadFailure.invalidSource }
+        let byteLength = UInt64(before.st_size)
+        guard byteLength <= DownloadPolicy.quota else {
+            throw UploadFailure.stagingQuotaExceeded
+        }
+        let reservation = DownloadStorageReservation(operationId: id, bytes: byteLength)
+        try reserve(reservation, durable: durable)
+
+        let directory = try openDirectory()
+        defer { close(directory) }
+        let temporary = id.rawValue + ".upload.incomplete"
+        let final = id.rawValue + ".upload"
+        let destination = openat(
+            directory, temporary,
+            O_CREAT | O_EXCL | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0o600)
+        guard destination >= 0 else { throw UploadFailure.filesystemFailure }
+        var published = false
+        defer {
+            close(destination)
+            if !published {
+                let removed = unlinkat(directory, temporary, 0) == 0 || errno == ENOENT
+                if removed, fsync(directory) == 0 { reservations[id] = nil }
+            }
+        }
+        try MutationQueueFilePolicy.protect(root.appendingPathComponent(temporary))
+        guard lseek(source, 0, SEEK_SET) == 0 else { throw UploadFailure.sourceUnavailable }
+
+        var hasher = SHA256()
+        var remaining = byteLength
+        var copied: UInt64 = 0
+        var buffer = [UInt8](repeating: 0, count: UploadPolicy.sourceBufferBytes)
+        while remaining > 0 {
+            try Task.checkCancellation()
+            guard try freeBytes(root) >= add(remaining, DownloadPolicy.freeReserve)
+            else { throw UploadFailure.insufficientStorage }
+            let requested = Int(min(UInt64(buffer.count), remaining))
+            let count = buffer.withUnsafeMutableBytes { bytes in
+                read(source, bytes.baseAddress!, requested)
+            }
+            if count < 0, errno == EINTR { continue }
+            guard count > 0 else { throw UploadFailure.sourceChanged }
+            let piece = Data(buffer[0..<count])
+            hasher.update(data: piece)
+            var offset = 0
+            while offset < count {
+                let written = piece.withUnsafeBytes { bytes in
+                    write(destination, bytes.baseAddress!.advanced(by: offset), count - offset)
+                }
+                if written < 0, errno == EINTR { continue }
+                guard written > 0 else { throw UploadFailure.filesystemFailure }
+                offset += written
+            }
+            copied = try add(copied, UInt64(count))
+            remaining -= UInt64(count)
+        }
+        var trailing: UInt8 = 0
+        let trailingCount = withUnsafeMutablePointer(to: &trailing) {
+            read(source, $0, 1)
+        }
+        var after = stat()
+        guard trailingCount == 0, fstat(source, &after) == 0,
+            sameSourceSnapshot(before, after), copied == byteLength
+        else { throw UploadFailure.sourceChanged }
+        try synchronize(destination)
+        try MutationQueueFilePolicy.protect(root.appendingPathComponent(temporary))
+        guard renameat(directory, temporary, directory, final) == 0 else {
+            throw UploadFailure.filesystemFailure
+        }
+        try synchronize(directory)
+        published = true
+        return try UploadExpectedContent(
+            byteLength: copied, sha256: digest(hasher))
+    }
+
+    /// Rehashes the complete private source after restart or before recovery network activity.
+    func verifyUploadSource(
+        stagingId: UploadOperationId, expected: UploadExpectedContent
+    ) throws {
+        let id = try DownloadOperationId(validating: stagingId.rawValue)
+        let descriptor = try openUploadFile(id)
+        defer { close(descriptor) }
+        guard try length(descriptor) == expected.byteLength,
+            digest(try hash(descriptor, count: expected.byteLength)) == expected.sha256
+        else { throw UploadFailure.integrityMismatch }
+        try synchronize(descriptor)
+    }
+
+    /// Reads no more than the requested single raw PATCH chunk from the private source.
+    func uploadChunk(
+        stagingId: UploadOperationId, expected: UploadExpectedContent,
+        offset: UInt64, count: Int
+    ) throws -> Data {
+        guard count > 0, count <= UploadPolicy.chunkBytes, offset <= expected.byteLength,
+            UInt64(count) <= expected.byteLength - offset
+        else { throw UploadFailure.invalidMetadata }
+        let id = try DownloadOperationId(validating: stagingId.rawValue)
+        let descriptor = try openUploadFile(id)
+        defer { close(descriptor) }
+        guard try length(descriptor) == expected.byteLength,
+            lseek(descriptor, off_t(offset), SEEK_SET) >= 0
+        else { throw UploadFailure.integrityMismatch }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
+        let data = try handle.read(upToCount: count) ?? Data()
+        guard data.count == count else { throw UploadFailure.integrityMismatch }
+        return data
+    }
+
+    /// Removes only an opaque upload source after durable COMMITTED evidence permits cleanup.
+    func removeUploadSource(stagingId: UploadOperationId) throws {
+        let id = try DownloadOperationId(validating: stagingId.rawValue)
+        let directory = try openDirectory()
+        defer { close(directory) }
+        guard unlinkat(directory, uploadName(id), 0) == 0 || errno == ENOENT else {
+            throw UploadFailure.filesystemFailure
+        }
+        try synchronize(directory)
+        reservations[id] = nil
+    }
+
+    func cancelUploadReservation(stagingId: UploadOperationId) {
+        guard let id = try? DownloadOperationId(validating: stagingId.rawValue),
+            !existsUpload(id)
+        else { return }
+        reservations[id] = nil
+    }
+
+    /// Removes only unreferenced upload staging artifacts. Durable upload rows retain their source
+    /// until commit cleanup or explicit terminal policy releases it.
+    func reconcileOrphanUploads(keeping stagingIds: Set<String>) throws {
+        for id in stagingIds {
+            guard UUID(uuidString: id)?.uuidString.lowercased() == id else {
+                throw UploadFailure.invalidMetadata
+            }
+        }
+        let directory = try openDirectory()
+        defer { close(directory) }
+        var changed = false
+        for entry in try FileManager.default.contentsOfDirectory(atPath: root.path) {
+            let suffix: String
+            if entry.hasSuffix(".upload.incomplete") {
+                suffix = ".upload.incomplete"
+            } else if entry.hasSuffix(".upload") {
+                suffix = ".upload"
+            } else {
+                continue
+            }
+            let id = String(entry.dropLast(suffix.count))
+            guard UUID(uuidString: id)?.uuidString.lowercased() == id,
+                !stagingIds.contains(id)
+            else { continue }
+            guard unlinkat(directory, entry, 0) == 0 || errno == ENOENT else {
+                throw UploadFailure.filesystemFailure
+            }
+            if let operationId = try? DownloadOperationId(validating: id) {
+                reservations[operationId] = nil
+            }
+            changed = true
+        }
+        if changed { try synchronize(directory) }
+    }
+
     /// Truncate only bytes not acknowledged by SQLite, then prove the entire committed prefix.
     func recover(_ record: DownloadRecord) throws -> DownloadRecoveryDecision {
         hashers[record.id] = nil
@@ -531,6 +739,15 @@ actor DownloadStagingStore {
     private func name(_ id: DownloadOperationId, verified: Bool) -> String {
         id.rawValue + (verified ? ".verified" : ".part")
     }
+    private func uploadName(_ id: DownloadOperationId) -> String { id.rawValue + ".upload" }
+    private func incompleteUploadName(_ id: DownloadOperationId) -> String {
+        id.rawValue + ".upload.incomplete"
+    }
+    private func existsUpload(_ id: DownloadOperationId) -> Bool {
+        FileManager.default.fileExists(atPath: root.appendingPathComponent(uploadName(id)).path)
+            || FileManager.default.fileExists(
+                atPath: root.appendingPathComponent(incompleteUploadName(id)).path)
+    }
     private func url(_ id: DownloadOperationId, verified: Bool) -> URL {
         root.appendingPathComponent(name(id, verified: verified))
     }
@@ -553,6 +770,20 @@ actor DownloadStagingStore {
         guard descriptor >= 0 else {
             throw errno == ENOENT
                 ? DownloadFailure.stagingMissing : DownloadFailure.filesystemFailure
+        }
+        do { _ = try length(descriptor) } catch {
+            close(descriptor)
+            throw error
+        }
+        return descriptor
+    }
+    private func openUploadFile(_ id: DownloadOperationId) throws -> Int32 {
+        let directory = try openDirectory()
+        defer { close(directory) }
+        let descriptor = openat(
+            directory, uploadName(id), O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard descriptor >= 0 else {
+            throw errno == ENOENT ? UploadFailure.stagingMissing : UploadFailure.filesystemFailure
         }
         do { _ = try length(descriptor) } catch {
             close(descriptor)
@@ -593,6 +824,22 @@ actor DownloadStagingStore {
     }
     private static func digest(_ hasher: SHA256) -> String {
         "sha256:" + hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+    private func sameSourceSnapshot(_ lhs: stat, _ rhs: stat) -> Bool {
+        guard lhs.st_dev == rhs.st_dev, lhs.st_ino == rhs.st_ino,
+            lhs.st_size == rhs.st_size
+        else { return false }
+        #if canImport(Darwin)
+            return lhs.st_mtimespec.tv_sec == rhs.st_mtimespec.tv_sec
+                && lhs.st_ctimespec.tv_sec == rhs.st_ctimespec.tv_sec
+                && lhs.st_mtimespec.tv_nsec == rhs.st_mtimespec.tv_nsec
+                && lhs.st_ctimespec.tv_nsec == rhs.st_ctimespec.tv_nsec
+        #else
+            return lhs.st_mtim.tv_sec == rhs.st_mtim.tv_sec
+                && lhs.st_ctim.tv_sec == rhs.st_ctim.tv_sec
+                && lhs.st_mtim.tv_nsec == rhs.st_mtim.tv_nsec
+                && lhs.st_ctim.tv_nsec == rhs.st_ctim.tv_nsec
+        #endif
     }
     private static func rejectLinks(_ url: URL) throws {
         var candidate = url

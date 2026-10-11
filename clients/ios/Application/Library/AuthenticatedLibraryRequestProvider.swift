@@ -60,26 +60,52 @@ protocol AuthenticatedNodeRequestProviderProtocol {
 }
 
 @MainActor
+protocol AuthenticatedUploadRequestProviderProtocol: AuthenticatedLibraryRequestProviderProtocol,
+    AuthenticatedNodeRequestProviderProtocol
+{
+    func createUploadSession(
+        intent: UploadIntent, session: LibraryRequestScope
+    ) async throws -> HTTPTransportResponse
+    func uploadStatus(
+        sessionId: String, session: LibraryRequestScope
+    ) async throws -> HTTPTransportResponse
+    func patchUploadChunk(
+        sessionId: String, offset: UInt64, bytes: Data, session: LibraryRequestScope
+    ) async throws -> HTTPTransportResponse
+    func completeUpload(
+        sessionId: String, session: LibraryRequestScope
+    ) async throws -> HTTPTransportResponse
+    func abortUpload(
+        sessionId: String, session: LibraryRequestScope
+    ) async throws -> HTTPTransportResponse
+}
+
+@MainActor
 final class AuthenticatedLibraryRequestProvider: AuthenticatedLibraryRequestProviderProtocol,
     AuthenticatedNodeRequestProviderProtocol, AuthenticatedClientMutationRequestProviderProtocol,
     AuthenticatedSyncCheckpointRequestProviderProtocol,
     AuthenticatedSyncFeedRequestProviderProtocol,
-    AuthenticatedRebaselineRequestProviderProtocol, AuthenticatedFileDownloadRequestProviderProtocol
+    AuthenticatedRebaselineRequestProviderProtocol,
+    AuthenticatedFileDownloadRequestProviderProtocol,
+    AuthenticatedUploadRequestProviderProtocol
 {
     private let controller: SessionController
     private let store: any SecureCredentialSinkProtocol
     private let transport: any HTTPTransportProtocol
     private let contentTransport: any FileContentTransportProtocol
+    private let uploadTransport: any RawUploadTransportProtocol
 
     init(
         controller: SessionController, store: any SecureCredentialSinkProtocol,
         transport: any HTTPTransportProtocol,
-        contentTransport: any FileContentTransportProtocol = URLSessionFileContentTransport()
+        contentTransport: any FileContentTransportProtocol = URLSessionFileContentTransport(),
+        uploadTransport: any RawUploadTransportProtocol = URLSessionRawUploadTransport()
     ) {
         self.controller = controller
         self.store = store
         self.transport = transport
         self.contentTransport = contentTransport
+        self.uploadTransport = uploadTransport
     }
 
     func begin() async throws -> LibraryRequestScope {
@@ -238,6 +264,100 @@ final class AuthenticatedLibraryRequestProvider: AuthenticatedLibraryRequestProv
             if failure == .unauthenticated { handle(.authenticationRejected, scope: session) }
             if failure == .deviceRevoked { handle(.deviceRevoked, scope: session) }
             throw failure
+        }
+    }
+
+    func createUploadSession(
+        intent: UploadIntent, session: LibraryRequestScope
+    ) async throws -> HTTPTransportResponse {
+        guard intent.requestBytes.count <= UploadPolicy.maximumJSONBytes else {
+            throw UploadFailure.payloadTooLarge
+        }
+        return try await uploadRequest(
+            method: .post, path: "/api/v1/upload-sessions", body: intent.requestBytes,
+            session: session, json: true)
+    }
+
+    func uploadStatus(
+        sessionId: String, session: LibraryRequestScope
+    ) async throws -> HTTPTransportResponse {
+        try await uploadRequest(
+            method: .get, path: try uploadSessionPath(sessionId), body: nil,
+            session: session, json: false)
+    }
+
+    func patchUploadChunk(
+        sessionId: String, offset: UInt64, bytes: Data, session: LibraryRequestScope
+    ) async throws -> HTTPTransportResponse {
+        guard !bytes.isEmpty, bytes.count <= UploadPolicy.chunkBytes else {
+            throw UploadFailure.chunkTooLarge
+        }
+        var headers = authenticatedHeaders(session)
+        headers["Content-Type"] = "application/octet-stream"
+        headers["Upload-Offset"] = String(offset)
+        headers["Cache-Control"] = "no-store"
+        return try await uploadRequest(
+            method: .patch, path: try uploadSessionPath(sessionId), body: bytes,
+            session: session, headers: headers)
+    }
+
+    func completeUpload(
+        sessionId: String, session: LibraryRequestScope
+    ) async throws -> HTTPTransportResponse {
+        try await uploadRequest(
+            method: .post, path: try uploadSessionPath(sessionId) + "/complete", body: nil,
+            session: session, json: false)
+    }
+
+    func abortUpload(
+        sessionId: String, session: LibraryRequestScope
+    ) async throws -> HTTPTransportResponse {
+        try await uploadRequest(
+            method: .post, path: try uploadSessionPath(sessionId) + "/abort", body: nil,
+            session: session, json: false)
+    }
+
+    private func uploadSessionPath(_ id: String) throws -> String {
+        guard UUID(uuidString: id)?.uuidString.lowercased() == id else {
+            throw UploadFailure.invalidMetadata
+        }
+        return "/api/v1/upload-sessions/\(id)"
+    }
+
+    private func uploadRequest(
+        method: HTTPMethod, path resourcePath: String, body: Data?,
+        session: LibraryRequestScope, json: Bool = false,
+        headers explicitHeaders: [String: String]? = nil
+    ) async throws -> HTTPTransportResponse {
+        try await validate(session)
+        let endpoint = session.session.serverEndpoint
+        guard var components = URLComponents(url: endpoint.url, resolvingAgainstBaseURL: false),
+            components.user == nil, components.password == nil
+        else { throw UploadFailure.scopeMismatch }
+        let base = components.percentEncodedPath.trimmingCharacters(
+            in: CharacterSet(charactersIn: "/"))
+        components.percentEncodedPath = (base.isEmpty ? "" : "/\(base)") + resourcePath
+        components.query = nil
+        components.fragment = nil
+        guard let url = components.url, url.scheme == "https", url.host == endpoint.host,
+            url.port == endpoint.port
+        else { throw UploadFailure.scopeMismatch }
+        var headers = explicitHeaders ?? authenticatedHeaders(session, jsonBody: json)
+        headers["Cache-Control"] = "no-store"
+        headers["Cookie"] = nil
+        headers["X-CSRF-Token"] = nil
+        try checkCurrent(session)
+        do {
+            let response = try await uploadTransport.send(
+                HTTPTransportRequest(url: url, method: method, headers: headers, body: body))
+            try await validate(session)
+            return response
+        } catch let failure as UploadFailure {
+            try checkCurrent(session)
+            throw failure
+        } catch {
+            try checkCurrent(session)
+            throw UploadPolicy.classify(error)
         }
     }
 

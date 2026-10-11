@@ -24,6 +24,7 @@ struct SynveilApp: App {
                 rebaselineCoordinator: container.rebaselineCoordinator,
                 syncCheckpointService: container.syncCheckpointService,
                 downloadCoordinator: container.downloadCoordinator,
+                uploadCoordinator: container.uploadCoordinator,
                 fileExportCoordinator: container.fileExportCoordinator
             )
             .task {

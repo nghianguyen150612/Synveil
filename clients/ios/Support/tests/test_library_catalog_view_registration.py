@@ -111,10 +111,10 @@ class LibraryCatalogViewRegistrationTests(unittest.TestCase):
             "SQLite",
             "Sync Now",
             "Sync now",
-            "upload",
         ]:
             self.assertNotIn(forbidden, feature)
         self.assertIn("downloadCoordinator: downloadCoordinator", feature)
+        self.assertIn("uploadCoordinator: uploadCoordinator", feature)
 
 
 if __name__ == "__main__":

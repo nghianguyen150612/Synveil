@@ -4,6 +4,7 @@ import SwiftUI
 struct NodeFileDetailsView: View {
     private let sessionController: SessionController
     private let downloadCoordinator: FileDownloadCoordinator?
+    private let uploadCoordinator: FileUploadCoordinator?
     private let fileExportCoordinator: VerifiedFileExportCoordinator?
     @State private var viewModel: NodeFileDetailsViewModel
 
@@ -11,11 +12,13 @@ struct NodeFileDetailsView: View {
         repository: (any NodeRepositoryProtocol)?, sessionController: SessionController,
         offlineDetailsService: (any OfflineNodeBrowserServiceProtocol)? = nil,
         downloadCoordinator: FileDownloadCoordinator? = nil,
+        uploadCoordinator: FileUploadCoordinator? = nil,
         fileExportCoordinator: VerifiedFileExportCoordinator? = nil,
         route: NodeFileDetailsRoute
     ) {
         self.sessionController = sessionController
         self.downloadCoordinator = downloadCoordinator
+        self.uploadCoordinator = uploadCoordinator
         self.fileExportCoordinator = fileExportCoordinator
         _viewModel = State(
             initialValue: NodeFileDetailsViewModel(
@@ -157,6 +160,13 @@ struct NodeFileDetailsView: View {
                 displayName: node.name, exportCoordinator: fileExportCoordinator
             )
             .id(version)
+        }
+        if node.kind == .file, node.state == .active, viewModel.contentSource == .live {
+            FileUploadControls(
+                coordinator: uploadCoordinator, controller: sessionController,
+                library: node.libraryId, libraryStatus: viewModel.route.library.status,
+                replaceNode: node,
+                onCommitted: { Task { await viewModel.refresh() } })
         }
         if viewModel.contentSource == .cached {
             Section {

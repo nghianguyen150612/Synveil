@@ -5,12 +5,15 @@ import XCTest
 
 @MainActor
 final class FileDownloadStorageTests: XCTestCase {
-    func testFreshSchemaV6() async throws {
+    func testFreshSchemaV7() async throws {
         let f = try await downloadFixture(self)
-        XCTAssertEqual(try queueRawScalar(f.queue.url, "PRAGMA user_version"), "6")
+        XCTAssertEqual(try queueRawScalar(f.queue.url, "PRAGMA user_version"), "7")
         XCTAssertEqual(try queueRawScalar(f.queue.url, "SELECT count(*) FROM file_downloads"), "0")
     }
     private func downgradeV5(_ url: URL) throws {
+        try queueRawSQL(url, "DROP TRIGGER file_upload_identity")
+        try queueRawSQL(url, "DROP TRIGGER file_upload_offset")
+        try queueRawSQL(url, "DROP TABLE file_uploads")
         for name in ["file_download_identity", "file_download_verified"] {
             try queueRawSQL(url, "DROP TRIGGER \(name)")
         }
@@ -25,7 +28,7 @@ final class FileDownloadStorageTests: XCTestCase {
         let rows = try await reopened.records(scope: f.scope, limit: 10)
         XCTAssertEqual(rows.first?.mutationId, original.mutation.id.rawValue)
         XCTAssertEqual(rows.first?.request, original.mutation.requestBody)
-        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "6")
+        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "7")
         for table in [
             "rebaseline_sessions", "rebaseline_nodes", "projection_commits", "inbound_pages",
             "mutation_attempt_history", "scopes",

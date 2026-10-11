@@ -177,6 +177,19 @@
 		B04400000000000000000002 /* FileExportPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04400000000000000000002 /* FileExportPresentation.swift */; };
 		B04400000000000000000003 /* VerifiedFileExportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04400000000000000000003 /* VerifiedFileExportTests.swift */; };
 		B04400000000000000000004 /* QuickLook.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F04400000000000000000004 /* QuickLook.framework */; };
+		A04500000000000000000001 /* UploadModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14500000000000000000001 /* UploadModels.swift */; };
+		A04500000000000000000002 /* UploadSessionDTO.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14500000000000000000002 /* UploadSessionDTO.swift */; };
+		A04500000000000000000003 /* AuthenticatedUploadRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14500000000000000000003 /* AuthenticatedUploadRepository.swift */; };
+		A04500000000000000000004 /* FileUploadCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14500000000000000000004 /* FileUploadCoordinator.swift */; };
+		A04500000000000000000005 /* URLSessionRawUploadTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14500000000000000000005 /* URLSessionRawUploadTransport.swift */; };
+		A04500000000000000000006 /* FileUploadSQLiteSchema.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14500000000000000000006 /* FileUploadSQLiteSchema.swift */; };
+		A04500000000000000000007 /* UploadStagingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14500000000000000000007 /* UploadStagingStore.swift */; };
+		A04500000000000000000008 /* FileUploadViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14500000000000000000008 /* FileUploadViewModel.swift */; };
+		A04500000000000000000009 /* FileUploadControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14500000000000000000009 /* FileUploadControls.swift */; };
+		B04500000000000000000001 /* FileUploadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B14500000000000000000001 /* FileUploadTests.swift */; };
+		B04500000000000000000002 /* FileUploadStorageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B14500000000000000000002 /* FileUploadStorageTests.swift */; };
+		B04500000000000000000003 /* FileUploadViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B14500000000000000000003 /* FileUploadViewTests.swift */; };
+		B04500000000000000000004 /* FileUploadCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B14500000000000000000004 /* FileUploadCoordinatorTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -361,6 +374,19 @@
 		F04400000000000000000002 /* FileExportPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Transfer/FileExportPresentation.swift; sourceTree = SOURCE_ROOT; };
 		F04400000000000000000003 /* VerifiedFileExportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/VerifiedFileExportTests.swift; sourceTree = SOURCE_ROOT; };
 		F04400000000000000000004 /* QuickLook.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuickLook.framework; path = System/Library/Frameworks/QuickLook.framework; sourceTree = SDKROOT; };
+		A14500000000000000000001 /* UploadModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Transfer/UploadModels.swift; sourceTree = SOURCE_ROOT; };
+		A14500000000000000000002 /* UploadSessionDTO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Transfer/UploadSessionDTO.swift; sourceTree = SOURCE_ROOT; };
+		A14500000000000000000003 /* AuthenticatedUploadRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Transfer/AuthenticatedUploadRepository.swift; sourceTree = SOURCE_ROOT; };
+		A14500000000000000000004 /* FileUploadCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Transfer/FileUploadCoordinator.swift; sourceTree = SOURCE_ROOT; };
+		A14500000000000000000005 /* URLSessionRawUploadTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Network/URLSessionRawUploadTransport.swift; sourceTree = SOURCE_ROOT; };
+		A14500000000000000000006 /* FileUploadSQLiteSchema.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/FileUploadSQLiteSchema.swift; sourceTree = SOURCE_ROOT; };
+		A14500000000000000000007 /* UploadStagingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Transfer/UploadStagingStore.swift; sourceTree = SOURCE_ROOT; };
+		A14500000000000000000008 /* FileUploadViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Transfer/FileUploadViewModel.swift; sourceTree = SOURCE_ROOT; };
+		A14500000000000000000009 /* FileUploadControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Transfer/FileUploadControls.swift; sourceTree = SOURCE_ROOT; };
+		B14500000000000000000001 /* FileUploadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/FileUploadTests.swift; sourceTree = SOURCE_ROOT; };
+		B14500000000000000000002 /* FileUploadStorageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/FileUploadStorageTests.swift; sourceTree = SOURCE_ROOT; };
+		B14500000000000000000003 /* FileUploadViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/FileUploadViewTests.swift; sourceTree = SOURCE_ROOT; };
+		B14500000000000000000004 /* FileUploadCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/FileUploadCoordinatorTests.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -387,6 +413,15 @@
 		A40000012C00000000000001 = {
 			isa = PBXGroup;
 			children = (
+				A14500000000000000000001 /* UploadModels.swift */,
+				A14500000000000000000002 /* UploadSessionDTO.swift */,
+				A14500000000000000000003 /* AuthenticatedUploadRepository.swift */,
+				A14500000000000000000004 /* FileUploadCoordinator.swift */,
+				A14500000000000000000005 /* URLSessionRawUploadTransport.swift */,
+				A14500000000000000000006 /* FileUploadSQLiteSchema.swift */,
+				A14500000000000000000007 /* UploadStagingStore.swift */,
+				A14500000000000000000008 /* FileUploadViewModel.swift */,
+				A14500000000000000000009 /* FileUploadControls.swift */,
 				F04400000000000000000001 /* VerifiedFileExportCoordinator.swift */,
 				F04400000000000000000002 /* FileExportPresentation.swift */,
 				F04400000000000000000003 /* VerifiedFileExportTests.swift */,
@@ -622,6 +657,10 @@
 		B40000012C00000000000002 /* SynveilTests */ = {
 			isa = PBXGroup;
 			children = (
+				B14500000000000000000001 /* FileUploadTests.swift */,
+				B14500000000000000000002 /* FileUploadStorageTests.swift */,
+				B14500000000000000000003 /* FileUploadViewTests.swift */,
+				B14500000000000000000004 /* FileUploadCoordinatorTests.swift */,
 				5FB2DF3EA7D3D3FE25CB4EB2 /* SyncStatusViewModelTests.swift */,
 				C08D8E26A94145FC6362A2C9 /* InboundSyncRaceTests.swift */,
 				16EEBD2222FE64206514A30F /* InboundSyncRecoveryTests.swift */,
@@ -762,6 +801,15 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A04500000000000000000001 /* UploadModels.swift in Sources */,
+				A04500000000000000000002 /* UploadSessionDTO.swift in Sources */,
+				A04500000000000000000003 /* AuthenticatedUploadRepository.swift in Sources */,
+				A04500000000000000000004 /* FileUploadCoordinator.swift in Sources */,
+				A04500000000000000000005 /* URLSessionRawUploadTransport.swift in Sources */,
+				A04500000000000000000006 /* FileUploadSQLiteSchema.swift in Sources */,
+				A04500000000000000000007 /* UploadStagingStore.swift in Sources */,
+				A04500000000000000000008 /* FileUploadViewModel.swift in Sources */,
+				A04500000000000000000009 /* FileUploadControls.swift in Sources */,
 				B04400000000000000000001 /* VerifiedFileExportCoordinator.swift in Sources */,
 				B04400000000000000000002 /* FileExportPresentation.swift in Sources */,
 				51EA7CAA728AE32CA30FFF44 /* URLSessionFileContentTransport.swift in Sources */,
@@ -875,6 +923,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B04500000000000000000001 /* FileUploadTests.swift in Sources */,
+				B04500000000000000000002 /* FileUploadStorageTests.swift in Sources */,
+				B04500000000000000000003 /* FileUploadViewTests.swift in Sources */,
+				B04500000000000000000004 /* FileUploadCoordinatorTests.swift in Sources */,
 				B04400000000000000000003 /* VerifiedFileExportTests.swift in Sources */,
 				7DF7A439FA000652A9A2D5C2 /* FileDownloadViewTests.swift in Sources */,
 				A4D8517B66C974D0A3609777 /* FileDownloadTransportTests.swift in Sources */,

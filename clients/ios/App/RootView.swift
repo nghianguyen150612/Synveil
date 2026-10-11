@@ -24,6 +24,7 @@ struct RootView: View {
     var rebaselineCoordinator: RebaselineCoordinator? = nil
     var syncCheckpointService: (any SyncCheckpointPreparationProtocol)? = nil
     var downloadCoordinator: FileDownloadCoordinator? = nil
+    var uploadCoordinator: FileUploadCoordinator? = nil
     var fileExportCoordinator: VerifiedFileExportCoordinator? = nil
 
     var body: some View {
@@ -57,6 +58,7 @@ struct RootView: View {
                 syncCheckpointService: syncCheckpointService,
                 rebaselineCoordinator: rebaselineCoordinator,
                 downloadCoordinator: downloadCoordinator,
+                uploadCoordinator: uploadCoordinator,
                 fileExportCoordinator: fileExportCoordinator,
                 sessionController: sessionController
             )

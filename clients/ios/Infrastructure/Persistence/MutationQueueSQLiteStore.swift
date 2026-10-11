@@ -99,7 +99,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
     private let maximumOutstanding: Int
     private let maximumBytes: Int
     private let maximumRecords: Int
-    static let schemaVersion = 6
+    static let schemaVersion = 7
     private let processOwner = UUID().uuidString
     private var activeAckAttempts: Set<String> = []
     private static let scopePredicate = "endpoint=? AND owner_id=? AND device_id=? AND library_id=?"
@@ -221,7 +221,8 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
     static let version5Schema =
         version2Schema + Array(inboundSchema.dropLast()) + RebaselineSQLiteSchema.projection
         + RebaselineSQLiteSchema.statements
-    private static let schema = version5Schema + FileDownloadSQLiteSchema.statements
+    private static let version6Schema = version5Schema + FileDownloadSQLiteSchema.statements
+    private static let schema = version6Schema + FileUploadSQLiteSchema.statements
 
     init(
         url: URL, busyTimeoutMilliseconds: Int32 = 250,
@@ -253,7 +254,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         // Initialization uses only local helpers; no actor reference escapes before schema validation.
         try Self.execute(handle, "PRAGMA foreign_keys=ON")
         let version = try Self.scalar(handle, "PRAGMA user_version")
-        guard [0, 1, 2, 3, 4, 5, Int64(Self.schemaVersion)].contains(version) else {
+        guard [0, 1, 2, 3, 4, 5, 6, Int64(Self.schemaVersion)].contains(version) else {
             throw MutationQueueFailure.unsupportedSchema
         }
         if version > 0 {
@@ -278,7 +279,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
             do {
                 for statement in Self.schema { try Self.execute(handle, statement) }
                 try fault?(.migration)
-                try Self.execute(handle, "PRAGMA user_version=6")
+                try Self.execute(handle, "PRAGMA user_version=7")
                 try Self.execute(handle, "COMMIT")
             } catch {
                 try? Self.execute(handle, "ROLLBACK")
@@ -374,6 +375,21 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
                 }
                 try fault?(.migration)
                 try Self.execute(handle, "PRAGMA user_version=6")
+                try Self.execute(handle, "COMMIT")
+            } catch {
+                try? Self.execute(handle, "ROLLBACK")
+                throw error
+            }
+        }
+        if (1...6).contains(version) {
+            try verifySchema(Self.version6Schema)
+            try Self.execute(handle, "BEGIN IMMEDIATE")
+            do {
+                for statement in FileUploadSQLiteSchema.statements {
+                    try Self.execute(handle, statement)
+                }
+                try fault?(.migration)
+                try Self.execute(handle, "PRAGMA user_version=7")
                 try Self.execute(handle, "COMMIT")
             } catch {
                 try? Self.execute(handle, "ROLLBACK")
@@ -476,6 +492,9 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
                 try execute("UPDATE scopes SET quarantined=1 WHERE quarantined=0")
                 try execute(
                     "UPDATE file_downloads SET state='SESSION_INVALIDATED',failure='staleSession' WHERE state!='SESSION_INVALIDATED'"
+                )
+                try execute(
+                    "UPDATE file_uploads SET state='SESSION_INVALIDATED',uncertain=CASE WHEN server_session_id IS NULL THEN uncertain ELSE 1 END,failure='staleSession' WHERE state NOT IN ('SESSION_INVALIDATED','COMMITTED')"
                 )
             }
         } catch {
@@ -1194,7 +1213,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
     /// Kernel-owned lease excludes independent coordinators/connections and releases on process
     /// death. It is separate from sync/ACK leases and holds no SQLite transaction across awaits.
     func claimDownloadRun(owner: UUID) throws {
-        let path = url.path + ".download-lock"
+        let path = url.path + ".transfer-lock"
         try connection.acquireDownloadLock(path: path, owner: owner)
         do { try MutationQueueFilePolicy.protect(URL(fileURLWithPath: path)) } catch {
             connection.releaseDownloadLock(owner: owner)
@@ -1202,6 +1221,18 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         }
     }
     func finishDownloadRun(owner: UUID) { connection.releaseDownloadLock(owner: owner) }
+
+    /// Uploads and downloads share one process-death-safe writer lease so reservation checks and
+    /// staging copies cannot race across independent coordinators or SQLite connections.
+    func claimUploadRun(owner: UUID) throws {
+        let path = url.path + ".transfer-lock"
+        try connection.acquireDownloadLock(path: path, owner: owner)
+        do { try MutationQueueFilePolicy.protect(URL(fileURLWithPath: path)) } catch {
+            connection.releaseDownloadLock(owner: owner)
+            throw error
+        }
+    }
+    func finishUploadRun(owner: UUID) { connection.releaseDownloadLock(owner: owner) }
 
     /// File bytes never enter SQLite. All offsets and lengths remain canonical decimal text.
     func prepareDownload(_ record: DownloadRecord) throws {
@@ -1337,12 +1368,385 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
     }
 
     func downloadReservations() throws -> [DownloadStorageReservation] {
-        try query("SELECT operation_id,expected_length FROM file_downloads") { s in
+        let downloads = try query("SELECT operation_id,expected_length FROM file_downloads") { s in
             guard let bytes = DownloadPolicy.decimal(try Self.text(s, 1)) else {
                 throw DownloadFailure.invalidMetadata
             }
             return DownloadStorageReservation(
                 operationId: try DownloadOperationId(validating: Self.text(s, 0)), bytes: bytes)
+        }
+        let uploads = try query(
+            "SELECT staging_id,expected_bytes FROM file_uploads WHERE staging_released=0"
+        ) { s in
+            guard let bytes = DownloadPolicy.decimal(try Self.text(s, 1)) else {
+                throw UploadFailure.invalidMetadata
+            }
+            return DownloadStorageReservation(
+                operationId: try DownloadOperationId(validating: Self.text(s, 0)), bytes: bytes)
+        }
+        return downloads + uploads
+    }
+
+    func unreleasedUploadStagingIds() throws -> Set<String> {
+        Set(
+            try query(
+                "SELECT staging_id FROM file_uploads WHERE staging_released=0"
+            ) { s in
+                try UploadOperationId(validating: Self.text(s, 0)).rawValue
+            })
+    }
+
+    /// Persists the canonical immutable intent only after source staging and full hashing complete.
+    func prepareUpload(_ record: UploadRecord) throws {
+        try bindSession(scope: record.scope, credentialId: record.credentialId)
+        try transaction {
+            try requireFeedScope(record.scope, credentialId: record.credentialId)
+            guard record.state == .sourceStaged, record.authoritativeOffset == 0,
+                !record.uncertain, record.attemptCount == 0, record.serverSessionId == nil,
+                !record.stagingReleased,
+                record.intent.target.library == record.scope.libraryId,
+                UUID(uuidString: record.originatingSessionId)?.uuidString.lowercased()
+                    == record.originatingSessionId,
+                record.intent.expected.byteLength <= DownloadPolicy.quota,
+                try scalar("SELECT count(*) FROM file_uploads") < 1024
+            else { throw UploadFailure.invalidMetadata }
+            let target = record.intent.target
+            let parent: SQLValue
+            let node: SQLValue
+            let name: SQLValue
+            let revision: SQLValue
+            let initialServerNode: SQLValue
+            switch target {
+            case .createFile(_, let parentId, let logicalName):
+                parent = .text(parentId.rawValue)
+                node = .null
+                name = .text(logicalName)
+                revision = .null
+                initialServerNode = .null
+                guard record.serverTargetNodeId == nil else {
+                    throw UploadFailure.invalidMetadata
+                }
+            case .replaceContent(_, let nodeId, let expectedRevision):
+                parent = .null
+                node = .text(nodeId.rawValue)
+                name = .null
+                revision = .text(expectedRevision.rawValue)
+                guard record.serverTargetNodeId == nodeId else {
+                    throw UploadFailure.invalidMetadata
+                }
+                initialServerNode = .text(nodeId.rawValue)
+            }
+            let scopeId = try requireScopeId(record.scope)
+            let now = Date().timeIntervalSince1970
+            try execute(
+                "INSERT INTO file_uploads(operation_id,scope_id,idempotency_key,operation,library_id,parent_id,node_id,target_name,expected_revision,expected_bytes,expected_sha256,request_bytes,staging_id,credential_id,originating_session_id,server_session_id,server_target_node_id,authoritative_offset,server_state,state,uncertain,attempt_count,completion,failure,staging_released,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                [
+                    .text(record.id.rawValue), .integer(scopeId),
+                    .text(record.intent.idempotencyKey.rawValue), .text(target.operation),
+                    .text(target.library.rawValue), parent, node, name, revision,
+                    .text(String(record.intent.expected.byteLength)),
+                    .text(record.intent.expected.sha256), .blob(record.intent.requestBytes),
+                    .text(record.stagingId.rawValue), .text(record.credentialId),
+                    .text(record.originatingSessionId), .null, initialServerNode, .text("0"),
+                    .null, .text(record.state.rawValue), .integer(0), .integer(0), .null, .null,
+                    .integer(0), .real(now), .real(now),
+                ])
+        }
+    }
+
+    func upload(
+        scope: ClientMutationScope, credentialId: String, id: UploadOperationId? = nil,
+        idempotencyKey: String? = nil, bridge: any RustBridgeProtocol
+    ) async throws -> UploadRecord? {
+        try requireFeedScope(scope, credentialId: credentialId)
+        guard (id == nil) != (idempotencyKey == nil) else {
+            throw UploadFailure.invalidMetadata
+        }
+        let column = id != nil ? "operation_id" : "idempotency_key"
+        let value = id?.rawValue ?? idempotencyKey!
+        let rows = try query(
+            "SELECT operation_id,idempotency_key,operation,library_id,parent_id,node_id,target_name,expected_revision,expected_bytes,expected_sha256,request_bytes,staging_id,credential_id,originating_session_id,server_session_id,server_target_node_id,authoritative_offset,server_state,state,uncertain,attempt_count,completion,failure,staging_released FROM file_uploads WHERE scope_id=? AND credential_id=? AND \(column)=?",
+            [.integer(try requireScopeId(scope)), .text(credentialId), .text(value)]
+        ) { s in
+            let texts =
+                try (0...9).map { try Self.optionalText(s, Int32($0)) }
+                + (11...18).map { try Self.optionalText(s, Int32($0)) }
+                + [String(sqlite3_column_int(s, 19))]
+                + [try Self.optionalText(s, 22)]
+            let request = try Self.blob(s, 10, maximum: UploadPolicy.maximumJSONBytes)
+            let completion =
+                sqlite3_column_type(s, 21) == SQLITE_NULL
+                ? nil : try Self.blob(s, 21, maximum: UploadPolicy.maximumResponseBytes)
+            let attempts = sqlite3_column_int64(s, 20)
+            let released = sqlite3_column_int(s, 23)
+            return (texts, request, completion, attempts, released)
+        }
+        guard let row = rows.first else { return nil }
+        guard rows.count == 1 else { throw UploadFailure.invalidMetadata }
+        let values = row.0
+        guard values.count == 20, values[0] != nil, values[1] != nil, values[2] != nil,
+            values[3] == scope.libraryId.rawValue, values[8] != nil, values[9] != nil,
+            values[11] == credentialId, values[12] != nil, values[15] != nil,
+            values[17] != nil, values[18] != nil, row.3 >= 0, row.3 <= 1000,
+            (0...1).contains(row.4)
+        else { throw UploadFailure.invalidMetadata }
+        let rawOperation = values[2]!
+        let expected = try UploadExpectedContent(length: values[8]!, sha256: values[9]!)
+        let key = try await ClientMutationId.validated(values[1]!, using: bridge)
+        let library = try await LibraryId.validated(values[3]!, using: bridge)
+        let target: UploadTarget
+        switch rawOperation {
+        case "CREATE_FILE":
+            guard let rawParent = values[4], let rawName = values[6],
+                values[5] == nil, values[7] == nil,
+                try await bridge.validateLogicalName(rawName)
+            else { throw UploadFailure.invalidMetadata }
+            target = .createFile(
+                library: library, parent: try await NodeId.validated(rawParent, using: bridge),
+                name: rawName)
+        case "REPLACE_CONTENT":
+            guard let rawNode = values[5], let rawRevision = values[7],
+                values[4] == nil, values[6] == nil
+            else { throw UploadFailure.invalidMetadata }
+            target = .replaceContent(
+                library: library, node: try await NodeId.validated(rawNode, using: bridge),
+                expectedRevision: try NodeRevision(validating: rawRevision))
+        default: throw UploadFailure.invalidMetadata
+        }
+        let intent = try UploadIntent.restore(
+            idempotencyKey: key, target: target, expected: expected, requestBytes: row.1)
+        guard let rawId = values[0], let rawStaging = values[10], let rawOrigin = values[12],
+            let rawOffset = values[15], let rawState = values[17],
+            let rawUncertain = values[18],
+            let idempotency = values[1], idempotency == key.rawValue
+        else { throw UploadFailure.invalidMetadata }
+        guard UUID(uuidString: rawOrigin)?.uuidString.lowercased() == rawOrigin else {
+            throw UploadFailure.invalidMetadata
+        }
+        let offset = DownloadPolicy.decimal(rawOffset)
+        let localState = UploadLocalState(rawValue: rawState)
+        guard let offset, offset <= expected.byteLength, let localState,
+            rawUncertain == "0" || rawUncertain == "1"
+        else { throw UploadFailure.invalidMetadata }
+        let serverSession = values[13]
+        let serverStateValue = values[16]
+        let serverState = serverStateValue.flatMap(UploadServerState.init(rawValue:))
+        guard serverStateValue == nil || serverState != nil,
+            serverSession.map({ UUID(uuidString: $0)?.uuidString.lowercased() == $0 }) ?? true
+        else { throw UploadFailure.invalidMetadata }
+        guard serverSession.map({ $0 == key.rawValue }) ?? true,
+            serverSession != nil || (serverState == nil && offset == 0)
+        else { throw UploadFailure.invalidMetadata }
+        if let serverSession {
+            _ = try await ClientMutationId.validated(serverSession, using: bridge)
+        }
+        let serverTarget: NodeId?
+        if let raw = values[14] {
+            serverTarget = try await NodeId.validated(raw, using: bridge)
+        } else {
+            serverTarget = nil
+        }
+        if case .replaceContent(_, let targetNode, _) = target {
+            guard serverTarget == targetNode else { throw UploadFailure.invalidMetadata }
+        }
+        if serverSession != nil, serverTarget == nil {
+            throw UploadFailure.invalidMetadata
+        }
+        let storedFailure: UploadFailure?
+        if let rawFailure = values[19] {
+            guard let parsed = UploadFailure(rawValue: rawFailure) else {
+                throw UploadFailure.invalidMetadata
+            }
+            storedFailure = parsed
+        } else {
+            storedFailure = nil
+        }
+        let completion: UploadCompletion?
+        if let bytes = row.2 {
+            guard let serverSession, let serverTarget else { throw UploadFailure.invalidMetadata }
+            completion = try await UploadSessionResponseDecoder(bridge: bridge).decodeCompletion(
+                HTTPTransportResponse(
+                    statusCode: 200, headers: ["Content-Type": "application/json"], body: bytes),
+                sessionId: serverSession,
+                intent: intent, targetNodeId: serverTarget)
+        } else {
+            completion = nil
+        }
+        guard (localState == .committed) == (completion != nil),
+            row.4 == 0 || localState == .committed
+        else { throw UploadFailure.invalidMetadata }
+        try requireFeedScope(scope, credentialId: credentialId)
+        return UploadRecord(
+            id: try UploadOperationId(validating: rawId),
+            stagingId: try UploadOperationId(validating: rawStaging),
+            stagingReleased: row.4 == 1, intent: intent, scope: scope,
+            credentialId: credentialId, originatingSessionId: rawOrigin,
+            serverSessionId: serverSession, serverTargetNodeId: serverTarget,
+            authoritativeOffset: offset, serverState: serverState, state: localState,
+            uncertain: rawUncertain == "1", attemptCount: Int(row.3),
+            completion: completion, failure: storedFailure)
+    }
+
+    func uploads(
+        scope: ClientMutationScope, credentialId: String, limit: Int,
+        bridge: any RustBridgeProtocol
+    ) async throws -> [UploadRecord] {
+        guard (1...100).contains(limit) else { throw UploadFailure.invalidMetadata }
+        try requireFeedScope(scope, credentialId: credentialId)
+        let ids = try query(
+            "SELECT operation_id FROM file_uploads WHERE scope_id=? AND credential_id=? ORDER BY updated_at DESC LIMIT ?",
+            [.integer(try requireScopeId(scope)), .text(credentialId), .integer(Int64(limit))]
+        ) { try Self.text($0, 0) }
+        var records: [UploadRecord] = []
+        for rawId in ids {
+            guard let id = try? UploadOperationId(validating: rawId),
+                let record = try await upload(
+                    scope: scope, credentialId: credentialId, id: id, bridge: bridge)
+            else { throw UploadFailure.invalidMetadata }
+            records.append(record)
+        }
+        return records
+    }
+
+    /// Compare-and-set state, session identity and authoritative offset before publishing progress.
+    func updateUpload(
+        _ previous: UploadRecord, state: UploadLocalState, uncertain: Bool,
+        serverSessionId: String? = nil, serverTargetNodeId: NodeId? = nil,
+        authoritativeOffset: UInt64? = nil, serverState: UploadServerState? = nil,
+        completion: UploadCompletion? = nil, failure: UploadFailure? = nil,
+        beginAttempt: Bool = false
+    ) throws {
+        let offset = authoritativeOffset ?? previous.authoritativeOffset
+        let session = serverSessionId ?? previous.serverSessionId
+        let target = serverTargetNodeId ?? previous.serverTargetNodeId
+        let result = completion ?? previous.completion
+        let server = serverState ?? previous.serverState
+        guard offset >= previous.authoritativeOffset,
+            offset <= previous.intent.expected.byteLength,
+            previous.serverSessionId == nil || session == previous.serverSessionId,
+            previous.serverTargetNodeId == nil || target == previous.serverTargetNodeId,
+            !beginAttempt || previous.attemptCount < 1000,
+            Self.uploadTransitionAllowed(from: previous.state, to: state),
+            state != .committed
+                || (server == .committed && result != nil && session != nil
+                    && offset == previous.intent.expected.byteLength && target != nil)
+        else { throw UploadFailure.invalidMetadata }
+        let completionBytes = try result?.persistedEvidence()
+        let completionTarget: NodeId?
+        switch previous.intent.target {
+        case .createFile: completionTarget = target
+        case .replaceContent(_, let node, _): completionTarget = node
+        }
+        guard previous.intent.target.library == previous.scope.libraryId,
+            session.map({ $0 == previous.intent.idempotencyKey.rawValue }) ?? true,
+            result.map({
+                $0.sessionId == session && $0.nodeId == completionTarget
+                    && $0.expected == previous.intent.expected && server == .committed
+                    && LibraryWireValidation.validRequestId($0.requestId)
+            }) ?? true
+        else { throw UploadFailure.invalidMetadata }
+        try transaction {
+            try requireFeedScope(previous.scope, credentialId: previous.credentialId)
+            try execute(
+                "UPDATE file_uploads SET server_session_id=?,server_target_node_id=?,authoritative_offset=?,server_state=?,state=?,uncertain=?,attempt_count=attempt_count+?,completion=?,failure=?,updated_at=? WHERE operation_id=? AND state=? AND authoritative_offset=? AND server_session_id IS ? AND server_target_node_id IS ? AND uncertain=? AND attempt_count=?",
+                [
+                    session.map(SQLValue.text) ?? .null,
+                    target.map { .text($0.rawValue) } ?? .null,
+                    .text(String(offset)), server.map { .text($0.rawValue) } ?? .null,
+                    .text(state.rawValue), .integer(uncertain ? 1 : 0),
+                    .integer(beginAttempt ? 1 : 0), completionBytes.map(SQLValue.blob) ?? .null,
+                    failure.map { .text($0.rawValue) } ?? .null,
+                    .real(Date().timeIntervalSince1970), .text(previous.id.rawValue),
+                    .text(previous.state.rawValue), .text(String(previous.authoritativeOffset)),
+                    previous.serverSessionId.map(SQLValue.text) ?? .null,
+                    previous.serverTargetNodeId.map { .text($0.rawValue) } ?? .null,
+                    .integer(previous.uncertain ? 1 : 0), .integer(Int64(previous.attemptCount)),
+                ])
+            guard sqlite3_changes(connection.handle) == 1 else {
+                throw UploadFailure.duplicateOperation
+            }
+        }
+    }
+
+    func releaseUploadStaging(_ record: UploadRecord) throws {
+        guard record.state == .committed, record.completion != nil else {
+            throw UploadFailure.invalidMetadata
+        }
+        try transaction {
+            try requireFeedScope(record.scope, credentialId: record.credentialId)
+            try execute(
+                "UPDATE file_uploads SET staging_released=1,updated_at=? WHERE operation_id=? AND state='COMMITTED' AND staging_released=0 AND staging_id=?",
+                [
+                    .real(Date().timeIntervalSince1970), .text(record.id.rawValue),
+                    .text(record.stagingId.rawValue),
+                ])
+            guard sqlite3_changes(connection.handle) == 1 else {
+                if try scalar(
+                    "SELECT staging_released FROM file_uploads WHERE operation_id=?",
+                    [.text(record.id.rawValue)]) == 1
+                {
+                    return
+                }
+                throw UploadFailure.duplicateOperation
+            }
+        }
+    }
+
+    private static func uploadTransitionAllowed(
+        from previous: UploadLocalState, to next: UploadLocalState
+    ) -> Bool {
+        if previous == next || next == .sessionInvalidated { return true }
+        switch previous {
+        case .sourceStaged:
+            return [
+                .sessionCreating, .cancelledLocal, .failedRecoverable, .failedPermanent,
+                .storageUnavailable, .outcomeUnknown,
+            ].contains(next)
+        case .sessionCreating:
+            return [
+                .sessionOpen, .uploading, .outcomeUnknown, .recoveryRequired, .expired,
+                .aborted, .failedRecoverable, .failedPermanent, .storageUnavailable,
+            ].contains(next)
+        case .sessionOpen:
+            return [
+                .uploading, .readyToComplete, .completing, .outcomeUnknown, .cancelledLocal,
+                .abortPending, .aborted, .expired, .failedRecoverable, .failedPermanent,
+            ].contains(next)
+        case .uploading:
+            return [
+                .uploading, .readyToComplete, .outcomeUnknown, .cancelledLocal,
+                .failedRecoverable, .failedPermanent, .storageUnavailable, .expired,
+                .aborted,
+            ].contains(next)
+        case .readyToComplete:
+            return [
+                .completing, .outcomeUnknown, .abortPending, .aborted, .expired,
+                .failedRecoverable, .failedPermanent,
+            ].contains(next)
+        case .completing:
+            return [
+                .committed, .outcomeUnknown, .recoveryRequired, .sessionOpen, .readyToComplete,
+                .failedRecoverable, .failedPermanent, .expired,
+            ].contains(next)
+        case .outcomeUnknown, .recoveryRequired, .cancelledLocal, .failedRecoverable:
+            return [
+                .sessionCreating, .sessionOpen, .uploading, .readyToComplete, .completing,
+                .committed, .outcomeUnknown, .recoveryRequired, .abortPending, .aborted,
+                .expired, .failedRecoverable, .failedPermanent, .storageUnavailable,
+            ].contains(next)
+        case .abortPending:
+            return [
+                .aborted, .committed, .sessionOpen, .outcomeUnknown,
+                .recoveryRequired, .expired,
+            ].contains(next)
+        case .failedPermanent:
+            return [
+                .abortPending, .outcomeUnknown, .committed, .aborted, .expired,
+                .failedPermanent,
+            ].contains(next)
+        case .preparingSource, .committed, .aborted, .expired,
+            .storageUnavailable, .sessionInvalidated:
+            return false
         }
     }
 
@@ -1501,6 +1905,10 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
             !text.contains("\0")
         else { throw MutationQueueFailure.malformedRecord }
         return text
+    }
+
+    private static func optionalText(_ s: OpaquePointer, _ index: Int32) throws -> String? {
+        sqlite3_column_type(s, index) == SQLITE_NULL ? nil : try text(s, index)
     }
     private static func blob(_ s: OpaquePointer, _ index: Int32, maximum: Int) throws -> Data {
         let count = Int(sqlite3_column_bytes(s, index))
