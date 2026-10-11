@@ -194,12 +194,28 @@ try {
             Record-CleanupFailure $_ 'delete_profile'
         }
     }
-    $recordPath = if (Test-Path $evidence) { $evidence } elseif (Test-Path $failureEvidence) { $failureEvidence } else { $null }
+    $recordPath = if ($null -ne $primaryFailure -and (Test-Path -LiteralPath $failureEvidence)) {
+        $failureEvidence
+    } elseif ($null -eq $primaryFailure -and (Test-Path -LiteralPath $evidence)) {
+        $evidence
+    } elseif (Test-Path -LiteralPath $failureEvidence) {
+        $failureEvidence
+    } else {
+        $null
+    }
     if ($recordPath) {
         try {
             $record = Get-Content $recordPath -Raw | ConvertFrom-Json
-            $record.cleanup = if ($null -eq $cleanupFailure) { 'pass' } else { 'fail' }
-            if ($null -ne $cleanupFailure) { $record.cleanup_error = $cleanupFailureMessage }
+            if ($null -ne $primaryFailure) {
+                $record.cleanup = if ($null -eq $cleanupFailure) { 'pass' } else { 'fail' }
+                if ($null -ne $cleanupFailure) { $record.cleanup_error = $cleanupFailureMessage }
+            } else {
+                $runnerCleanupStatus = if ($null -eq $cleanupFailure) { 'pass' } else { 'fail' }
+                $record | Add-Member -MemberType NoteProperty -Name runner_cleanup -Value $runnerCleanupStatus -Force
+                if ($null -ne $cleanupFailure) {
+                    $record | Add-Member -MemberType NoteProperty -Name runner_cleanup_error -Value $cleanupFailureMessage -Force
+                }
+            }
             $record | ConvertTo-Json | Set-Content -LiteralPath $recordPath -Encoding utf8
         } catch {
             Record-CleanupFailure $_ 'write_cleanup_status'

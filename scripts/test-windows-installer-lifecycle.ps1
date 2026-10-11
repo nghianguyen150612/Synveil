@@ -10,13 +10,52 @@ param(
 $ErrorActionPreference = 'Stop'
 $ErrorView = 'NormalView'
 . (Join-Path $PSScriptRoot 'windows-security.ps1')
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$profileRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
+if ([string]::IsNullOrWhiteSpace($profileRoot)) { $profileRoot = $env:USERPROFILE }
+if ([string]::IsNullOrWhiteSpace($profileRoot) -or !(Test-Path -LiteralPath $profileRoot -PathType Container)) {
+    throw 'LIFECYCLE_PROFILE_FAILURE: standard-user profile path is unavailable'
+}
+$profileRoot = [IO.Path]::GetFullPath($profileRoot)
+$profileName = Split-Path -Path $profileRoot -Leaf
+$identityName = $identity.Name.Split('\')[-1]
+if ($profileName -ine $identityName) {
+    throw 'LIFECYCLE_PROFILE_FAILURE: profile path does not match the standard-user identity'
+}
+$script:profileRoot = $profileRoot
+$script:profilePrefix = $profileRoot.TrimEnd('\') + '\'
+function Resolve-ProfileScopedFolder([object]$KnownFolder, [string]$FallbackRelativePath) {
+    $candidate = [Environment]::GetFolderPath($KnownFolder)
+    if (![string]::IsNullOrWhiteSpace($candidate)) {
+        $candidate = [IO.Path]::GetFullPath($candidate)
+        if ($candidate.StartsWith($script:profilePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            return $candidate
+        }
+    }
+    return [IO.Path]::GetFullPath((Join-Path $script:profileRoot $FallbackRelativePath))
+}
+$localAppData = Resolve-ProfileScopedFolder ([Environment+SpecialFolder]::LocalApplicationData) 'AppData\Local'
+$roamingAppData = Resolve-ProfileScopedFolder ([Environment+SpecialFolder]::ApplicationData) 'AppData\Roaming'
+$env:USERPROFILE = $profileRoot
+$env:LOCALAPPDATA = $localAppData
+$env:APPDATA = $roamingAppData
+$userTemp = Join-Path $localAppData 'Temp'
+New-Item -Path $userTemp -ItemType Directory -Force | Out-Null
+$env:TEMP = $userTemp
+$env:TMP = $userTemp
+$desktopFolder = [Environment]::GetFolderPath([Environment+SpecialFolder]::Desktop)
+if ([string]::IsNullOrWhiteSpace($desktopFolder)) {
+    $desktopFolder = Join-Path $profileRoot 'Desktop'
+}
+$desktopFolder = [IO.Path]::GetFullPath($desktopFolder)
+New-Item -Path $desktopFolder -ItemType Directory -Force | Out-Null
 $appId = '{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1'
 $uninstallKey = "Software\Microsoft\Windows\CurrentVersion\Uninstall\$appId"
 $root = Join-Path $env:LOCALAPPDATA 'Programs\Synveil'
 $stateRoot = Join-Path $env:LOCALAPPDATA 'Synveil'
 $logRoot = Join-Path $stateRoot 'installer\p027'
 $startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Synveil.lnk'
-$desktop = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Synveil.lnk'
+$desktop = Join-Path $desktopFolder 'Synveil.lnk'
 
 function Assert-True([bool]$Condition, [string]$Message) { if (!$Condition) { throw $Message } }
 function Invoke-Setup([string]$Path, [string[]]$Extra, [int]$Expected, [string]$Name) {

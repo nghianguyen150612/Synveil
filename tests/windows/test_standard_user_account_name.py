@@ -136,6 +136,34 @@ class StandardUserAccountNameTests(unittest.TestCase):
         self.assertIn("$safeLine.Replace(\"$env:SystemDrive\\Users\\$user\", '[USER_PROFILE]')", source)
         self.assertIn("$safeLine.Replace($password,'[REDACTED]')", source)
 
+    def test_lifecycle_reconstructs_standard_user_profile_environment_before_path_use(self) -> None:
+        lifecycle = (ROOT / "scripts/test-windows-installer-lifecycle.ps1").read_text(encoding="utf-8")
+        profile_setup = lifecycle[: lifecycle.index("$root = Join-Path $env:LOCALAPPDATA")]
+
+        for marker in (
+            "$identity = [Security.Principal.WindowsIdentity]::GetCurrent()",
+            "LIFECYCLE_PROFILE_FAILURE: standard-user profile path is unavailable",
+            "LIFECYCLE_PROFILE_FAILURE: profile path does not match the standard-user identity",
+            "$env:USERPROFILE = $profileRoot",
+            "$env:LOCALAPPDATA = $localAppData",
+            "$env:APPDATA = $roamingAppData",
+            "$env:TEMP = $userTemp",
+            "$env:TMP = $userTemp",
+            "$desktopFolder = Join-Path $profileRoot 'Desktop'",
+        ):
+            self.assertIn(marker, profile_setup)
+
+    def test_standard_user_cleanup_result_updates_the_failure_record(self) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
+        start = source.index("$recordPath = if", source.index("if ($sid)"))
+        cleanup = source[start : source.index("$password = $null", start)]
+
+        self.assertIn("$null -ne $primaryFailure", cleanup)
+        self.assertIn("$failureEvidence", cleanup)
+        self.assertIn("$record.cleanup =", cleanup)
+        self.assertIn("-Name runner_cleanup", cleanup)
+        self.assertIn("-Name runner_cleanup_error", cleanup)
+
 
 if __name__ == "__main__":
     unittest.main()
