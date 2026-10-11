@@ -84,6 +84,17 @@ public static class SynveilTokenEvidence {
 '@
 
 function Assert-True([bool]$Condition, [string]$Message) { if (!$Condition) { throw $Message } }
+function Wait-ForPackageRootRemoval([string]$UninstallName) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    while (Test-Path -LiteralPath $root -PathType Container) {
+        if ([DateTime]::UtcNow -ge $deadline) {
+            throw "PER_USER_UNINSTALL_FAILURE: package root remains after bounded cleanup wait ($UninstallName)"
+        }
+        # Inno Setup may return from the main uninstaller while its self-delete
+        # helper removes unins000.exe and the package directory.
+        Start-Sleep -Milliseconds 100
+    }
+}
 $script:observedTokens = @{}
 function Invoke-Bounded([string]$File, [string[]]$Arguments, [string]$WorkingDirectory, [int]$ExpectedExit, [string]$Name, [string]$Stdout='', [string]$Stderr='') {
     $options = @{ FilePath=$File; ArgumentList=$Arguments; WorkingDirectory=$WorkingDirectory; PassThru=$true }
@@ -179,7 +190,7 @@ Assert-True ((Get-SynveilServiceCount) -eq $servicesBefore) 'PER_USER_MUTATION_F
 Assert-True ((Get-SynveilTaskCount) -eq $tasksBefore) 'PER_USER_MUTATION_FAILURE: Synveil scheduled task created'
 
 Invoke-Bounded $uninstaller @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG=' + (Join-Path $logRoot 'uninstall.log'))) $unrelatedCwd 0 'uninstaller'
-Assert-True (!(Test-Path $root)) 'PER_USER_UNINSTALL_FAILURE: package root remains'
+Wait-ForPackageRootRemoval 'first uninstall'
 Assert-True (!(Test-Path $startMenu)) 'PER_USER_UNINSTALL_FAILURE: Start Menu shortcut remains'
 Assert-True ($null -eq [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($uninstallSubkey)) 'PER_USER_UNINSTALL_FAILURE: HKCU registration remains'
 Assert-True (Test-Path $sentinel -PathType Leaf) 'PER_USER_UNINSTALL_FAILURE: external state sentinel removed'
@@ -189,6 +200,7 @@ Assert-True (Test-Path $desktop -PathType Leaf) 'PER_USER_OPTION_FAILURE: DESKTO
 $hkcu = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($uninstallSubkey); Assert-True ($null -ne $hkcu) 'PER_USER_REINSTALL_FAILURE: HKCU registration missing'
 $uninstaller = $hkcu.GetValue('UninstallString').Trim('"'); $hkcu.Dispose()
 Invoke-Bounded $uninstaller @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG=' + (Join-Path $logRoot 'uninstall-reinstall.log'))) $unrelatedCwd 0 'second uninstaller'
+Wait-ForPackageRootRemoval 'second uninstall'
 Assert-True (!(Test-Path $desktop) -and (Test-Path $sentinel)) 'PER_USER_UNINSTALL_FAILURE: option cleanup/state preservation failed'
 
 $os = Get-CimInstance Win32_OperatingSystem

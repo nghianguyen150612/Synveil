@@ -89,6 +89,24 @@ class StandardUserAccountNameTests(unittest.TestCase):
         self.assertIn("PER_USER_RUNTIME_FAILURE: installed manifest verifier failed:", check)
         self.assertNotIn("$LASTEXITCODE", check)
 
+    def test_uninstall_waits_boundedly_for_inno_self_cleanup(self) -> None:
+        source = PER_USER_TEST.read_text(encoding="utf-8")
+        start = source.index("function Wait-ForPackageRootRemoval")
+        end = source.index("\n}", start) + 2
+        wait = source[start:end]
+
+        self.assertIn("AddSeconds(30)", wait)
+        self.assertIn("Start-Sleep -Milliseconds 100", wait)
+        self.assertIn("package root remains after bounded cleanup wait", wait)
+        self.assertIn("Inno Setup may return from the main uninstaller", wait)
+        first_uninstall = source.index("'uninstall.log'", source.index("Invoke-Bounded $uninstaller"))
+        first_wait = source.index("Wait-ForPackageRootRemoval 'first uninstall'")
+        second_uninstall_call = source.index("'second uninstaller'", first_wait)
+        second_wait = source.index("Wait-ForPackageRootRemoval 'second uninstall'")
+        self.assertLess(first_uninstall, first_wait)
+        self.assertLess(first_wait, second_uninstall_call)
+        self.assertLess(second_uninstall_call, second_wait)
+
     def test_standard_user_failure_emits_bounded_redacted_uninstall_diagnostics(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")
         start = source.index("if ($null -ne $primaryFailure) {", source.index("$childLogs ="))
