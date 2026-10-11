@@ -13,6 +13,27 @@ WORKFLOW = ROOT / ".github/workflows/ci.yml"
 
 
 class RustCiWorkflowTimeoutTests(unittest.TestCase):
+    def test_windows_qt_reproducibility_budget_covers_cold_double_build(self) -> None:
+        lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
+        start = lines.index("  desktop-windows-native:")
+        end = next(
+            (i for i in range(start + 1, len(lines)) if re.fullmatch(r"  [a-z0-9_-]+:", lines[i])),
+            len(lines),
+        )
+        job = "\n".join(lines[start:end])
+        timeout = re.search(r"(?m)^    timeout-minutes:\s*(\d+)\s*$", job)
+
+        self.assertIsNotNone(timeout, "desktop-windows-native must have an explicit timeout")
+        assert timeout is not None
+        self.assertGreaterEqual(
+            int(timeout.group(1)),
+            60,
+            "A cold Windows Qt build reached the 30-minute limit during the clean "
+            "reproducibility rebuild before ZIP and packaged-QML validation.",
+        )
+        self.assertIn("Rebuild Windows release binaries after clearing release outputs", job)
+        self.assertIn("Build and audit the reproducible Windows runtime ZIP", job)
+
     def test_cross_platform_test_budget_covers_cold_windows_build(self) -> None:
         lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
         start = lines.index("  cross-platform-test:")
