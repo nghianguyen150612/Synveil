@@ -60,7 +60,8 @@ final class FileUploadCoordinatorTests: XCTestCase {
         XCTAssertEqual(scripted.statusCount, 2)
         XCTAssertEqual(scripted.patchRequests.count, 5)
         XCTAssertEqual(scripted.patchRequests[0].offset, 0)
-        XCTAssertEqual(scripted.patchRequests[0].bytes, source.subdata(in: 0..<UploadPolicy.chunkBytes))
+        XCTAssertEqual(
+            scripted.patchRequests[0].bytes, source.subdata(in: 0..<UploadPolicy.chunkBytes))
         XCTAssertEqual(scripted.patchRequests[1].offset, 65_537)
         for request in scripted.patchRequests.dropFirst() {
             let start = Int(request.offset)
@@ -78,7 +79,8 @@ final class FileUploadCoordinatorTests: XCTestCase {
         XCTAssertFalse(
             FileManager.default.fileExists(
                 atPath: directory.appendingPathComponent(
-                    completed.stagingId.rawValue + ".upload").path))
+                    completed.stagingId.rawValue + ".upload"
+                ).path))
     }
 
     private static func digest(_ data: Data) -> String {
@@ -139,14 +141,16 @@ private final class UploadCoordinatorProvider: AuthenticatedUploadRequestProvide
         -> HTTPTransportResponse
     {
         let object: [String: Any] = [
-            "data": [[
-                "id": library.rawValue, "type": "library", "revision": "1",
-                "attributes": [
-                    "name": "Upload test", "root_node_id": parent.rawValue,
-                    "status": "ACTIVE", "created_at": "2026-10-11T12:00:00Z",
-                    "updated_at": "2026-10-11T12:00:00Z",
-                ],
-            ]],
+            "data": [
+                [
+                    "id": library.rawValue, "type": "library", "revision": "1",
+                    "attributes": [
+                        "name": "Upload test", "root_node_id": parent.rawValue,
+                        "status": "ACTIVE", "created_at": "2026-10-11T12:00:00Z",
+                        "updated_at": "2026-10-11T12:00:00Z",
+                    ],
+                ]
+            ],
             "page": ["has_more": false], "meta": ["request_id": "upload-library-01"],
         ]
         return try queueHTTP(object)
@@ -235,7 +239,8 @@ private final class UploadCoordinatorProvider: AuthenticatedUploadRequestProvide
             serverOffset == intent.expected.byteLength
         else { throw UploadFailure.offsetMismatch }
         completion = UploadCompletion(
-            sessionId: sessionId, nodeId: try await NodeId.validated(queueUUID(3), using: QueueValidator()),
+            sessionId: sessionId,
+            nodeId: try await NodeId.validated(queueUUID(3), using: QueueValidator()),
             fileVersionId: try await FileVersionId.validated(
                 queueUUID(704), using: QueueValidator()),
             revision: try NodeRevision(validating: "2"), expected: intent.expected,

@@ -148,7 +148,8 @@ final class FileUploadViewModel {
 
     private func runTransfer(
         activity: String,
-        _ operation: @MainActor (@escaping @MainActor (UploadProgress) -> Void) async
+        _ operation:
+            @MainActor (@escaping @MainActor (UploadProgress) -> Void) async
             -> FileUploadResult
     ) async -> FileUploadResult {
         isRunning = true

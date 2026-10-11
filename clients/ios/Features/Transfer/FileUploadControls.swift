@@ -230,7 +230,9 @@ struct FileUploadControls: View {
                             let result = await model.checkServerStatus(record)
                             if case .success(let updated) = result,
                                 updated.state == .committed
-                            { onCommitted?() }
+                            {
+                                onCommitted?()
+                            }
                         }
                     }
                     .disabled(model.isRunning || !model.canInspectSaved)
@@ -256,11 +258,12 @@ struct FileUploadControls: View {
                 .accessibilityAddTraits(.updatesFrequently)
             if progress.totalBytes > 0 {
                 ProgressView(
-                    value: Double(progress.acknowledgedBytes), total: Double(progress.totalBytes))
-                    .accessibilityLabel("Server-confirmed upload progress")
-                    .accessibilityValue(
-                        "\(progress.acknowledgedBytes) of \(progress.totalBytes) bytes accepted by the server"
-                    )
+                    value: Double(progress.acknowledgedBytes), total: Double(progress.totalBytes)
+                )
+                .accessibilityLabel("Server-confirmed upload progress")
+                .accessibilityValue(
+                    "\(progress.acknowledgedBytes) of \(progress.totalBytes) bytes accepted by the server"
+                )
             }
             Text("\(progress.acknowledgedBytes) of \(progress.totalBytes) bytes confirmed")
                 .font(.footnote)
@@ -358,8 +361,10 @@ private struct UploadConfirmationView: View {
                 case .replace(_, let revision):
                     Text("Expected file revision: \(revision.rawValue)")
                         .font(.footnote.monospaced())
-                    Text("A new immutable FileVersion will be created. Previous versions remain available.")
-                        .fixedSize(horizontal: false, vertical: true)
+                    Text(
+                        "A new immutable FileVersion will be created. Previous versions remain available."
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
                 }
             }
             Section {

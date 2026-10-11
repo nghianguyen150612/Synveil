@@ -16,7 +16,8 @@ final class AuthenticatedUploadRepository {
         -> ClientMutationScope
     {
         switch await AuthenticatedLibraryCatalogRepository(
-            provider: provider, bridge: bridge).listLibraries()
+            provider: provider, bridge: bridge
+        ).listLibraries()
         {
         case .loaded(let libraries):
             guard libraries.first(where: { $0.id == target.library })?.status == .active else {

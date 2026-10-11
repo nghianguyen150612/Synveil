@@ -827,14 +827,17 @@ actor DownloadStagingStore {
     }
     private func sameSourceSnapshot(_ lhs: stat, _ rhs: stat) -> Bool {
         guard lhs.st_dev == rhs.st_dev, lhs.st_ino == rhs.st_ino,
-            lhs.st_size == rhs.st_size, lhs.st_mtime == rhs.st_mtime,
-            lhs.st_ctime == rhs.st_ctime
+            lhs.st_size == rhs.st_size
         else { return false }
         #if canImport(Darwin)
-            return lhs.st_mtimespec.tv_nsec == rhs.st_mtimespec.tv_nsec
+            return lhs.st_mtimespec.tv_sec == rhs.st_mtimespec.tv_sec
+                && lhs.st_ctimespec.tv_sec == rhs.st_ctimespec.tv_sec
+                && lhs.st_mtimespec.tv_nsec == rhs.st_mtimespec.tv_nsec
                 && lhs.st_ctimespec.tv_nsec == rhs.st_ctimespec.tv_nsec
         #else
-            return lhs.st_mtim.tv_nsec == rhs.st_mtim.tv_nsec
+            return lhs.st_mtim.tv_sec == rhs.st_mtim.tv_sec
+                && lhs.st_ctim.tv_sec == rhs.st_ctim.tv_sec
+                && lhs.st_mtim.tv_nsec == rhs.st_mtim.tv_nsec
                 && lhs.st_ctim.tv_nsec == rhs.st_ctim.tv_nsec
         #endif
     }

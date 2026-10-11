@@ -1388,11 +1388,12 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
     }
 
     func unreleasedUploadStagingIds() throws -> Set<String> {
-        Set(try query(
-            "SELECT staging_id FROM file_uploads WHERE staging_released=0"
-        ) { s in
-            try UploadOperationId(validating: Self.text(s, 0)).rawValue
-        })
+        Set(
+            try query(
+                "SELECT staging_id FROM file_uploads WHERE staging_released=0"
+            ) { s in
+                try UploadOperationId(validating: Self.text(s, 0)).rawValue
+            })
     }
 
     /// Persists the canonical immutable intent only after source staging and full hashing complete.
@@ -1467,11 +1468,13 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
             "SELECT operation_id,idempotency_key,operation,library_id,parent_id,node_id,target_name,expected_revision,expected_bytes,expected_sha256,request_bytes,staging_id,credential_id,originating_session_id,server_session_id,server_target_node_id,authoritative_offset,server_state,state,uncertain,attempt_count,completion,failure,staging_released FROM file_uploads WHERE scope_id=? AND credential_id=? AND \(column)=?",
             [.integer(try requireScopeId(scope)), .text(credentialId), .text(value)]
         ) { s in
-            let texts = try (0...9).map { try Self.optionalText(s, Int32($0)) }
+            let texts =
+                try (0...9).map { try Self.optionalText(s, Int32($0)) }
                 + (11...19).map { try Self.optionalText(s, Int32($0)) }
                 + [try Self.optionalText(s, 22)]
             let request = try Self.blob(s, 10, maximum: UploadPolicy.maximumJSONBytes)
-            let completion = sqlite3_column_type(s, 21) == SQLITE_NULL
+            let completion =
+                sqlite3_column_type(s, 21) == SQLITE_NULL
                 ? nil : try Self.blob(s, 21, maximum: UploadPolicy.maximumResponseBytes)
             let attempts = sqlite3_column_int64(s, 20)
             let released = sqlite3_column_int(s, 23)
@@ -1554,7 +1557,9 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
                 throw UploadFailure.invalidMetadata
             }
             storedFailure = parsed
-        } else { storedFailure = nil }
+        } else {
+            storedFailure = nil
+        }
         let completion: UploadCompletion?
         if let bytes = row.2 {
             guard let serverSession, let serverTarget else { throw UploadFailure.invalidMetadata }
@@ -1563,7 +1568,9 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
                     statusCode: 200, headers: ["Content-Type": "application/json"], body: bytes),
                 sessionId: serverSession,
                 intent: intent, targetNodeId: serverTarget)
-        } else { completion = nil }
+        } else {
+            completion = nil
+        }
         guard (localState == .committed) == (completion != nil),
             row.4 == 0 || localState == .committed
         else { throw UploadFailure.invalidMetadata }
@@ -1668,12 +1675,17 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
             try requireFeedScope(record.scope, credentialId: record.credentialId)
             try execute(
                 "UPDATE file_uploads SET staging_released=1,updated_at=? WHERE operation_id=? AND state='COMMITTED' AND staging_released=0 AND staging_id=?",
-                [.real(Date().timeIntervalSince1970), .text(record.id.rawValue),
-                 .text(record.stagingId.rawValue)])
+                [
+                    .real(Date().timeIntervalSince1970), .text(record.id.rawValue),
+                    .text(record.stagingId.rawValue),
+                ])
             guard sqlite3_changes(connection.handle) == 1 else {
                 if try scalar(
                     "SELECT staging_released FROM file_uploads WHERE operation_id=?",
-                    [.text(record.id.rawValue)]) == 1 { return }
+                    [.text(record.id.rawValue)]) == 1
+                {
+                    return
+                }
                 throw UploadFailure.duplicateOperation
             }
         }
@@ -1685,36 +1697,54 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         if previous == next || next == .sessionInvalidated { return true }
         switch previous {
         case .sourceStaged:
-            return [.sessionCreating, .cancelledLocal, .failedRecoverable, .failedPermanent,
-                    .storageUnavailable, .outcomeUnknown].contains(next)
+            return [
+                .sessionCreating, .cancelledLocal, .failedRecoverable, .failedPermanent,
+                .storageUnavailable, .outcomeUnknown,
+            ].contains(next)
         case .sessionCreating:
-            return [.sessionOpen, .uploading, .outcomeUnknown, .recoveryRequired, .expired,
-                    .aborted, .failedRecoverable, .failedPermanent, .storageUnavailable].contains(next)
+            return [
+                .sessionOpen, .uploading, .outcomeUnknown, .recoveryRequired, .expired,
+                .aborted, .failedRecoverable, .failedPermanent, .storageUnavailable,
+            ].contains(next)
         case .sessionOpen:
-            return [.uploading, .readyToComplete, .completing, .outcomeUnknown, .cancelledLocal,
-                    .abortPending, .aborted, .expired, .failedRecoverable, .failedPermanent].contains(next)
+            return [
+                .uploading, .readyToComplete, .completing, .outcomeUnknown, .cancelledLocal,
+                .abortPending, .aborted, .expired, .failedRecoverable, .failedPermanent,
+            ].contains(next)
         case .uploading:
-            return [.uploading, .readyToComplete, .outcomeUnknown, .cancelledLocal,
-                    .failedRecoverable, .failedPermanent, .storageUnavailable, .expired,
-                    .aborted].contains(next)
+            return [
+                .uploading, .readyToComplete, .outcomeUnknown, .cancelledLocal,
+                .failedRecoverable, .failedPermanent, .storageUnavailable, .expired,
+                .aborted,
+            ].contains(next)
         case .readyToComplete:
-            return [.completing, .outcomeUnknown, .abortPending, .aborted, .expired,
-                    .failedRecoverable, .failedPermanent].contains(next)
+            return [
+                .completing, .outcomeUnknown, .abortPending, .aborted, .expired,
+                .failedRecoverable, .failedPermanent,
+            ].contains(next)
         case .completing:
-            return [.committed, .outcomeUnknown, .recoveryRequired, .sessionOpen, .readyToComplete,
-                    .failedRecoverable, .failedPermanent, .expired].contains(next)
+            return [
+                .committed, .outcomeUnknown, .recoveryRequired, .sessionOpen, .readyToComplete,
+                .failedRecoverable, .failedPermanent, .expired,
+            ].contains(next)
         case .outcomeUnknown, .recoveryRequired, .cancelledLocal, .failedRecoverable:
-            return [.sessionCreating, .sessionOpen, .uploading, .readyToComplete, .completing,
-                    .committed, .outcomeUnknown, .recoveryRequired, .abortPending, .aborted,
-                    .expired, .failedRecoverable, .failedPermanent, .storageUnavailable].contains(next)
+            return [
+                .sessionCreating, .sessionOpen, .uploading, .readyToComplete, .completing,
+                .committed, .outcomeUnknown, .recoveryRequired, .abortPending, .aborted,
+                .expired, .failedRecoverable, .failedPermanent, .storageUnavailable,
+            ].contains(next)
         case .abortPending:
-            return [.aborted, .committed, .sessionOpen, .outcomeUnknown,
-                    .recoveryRequired, .expired].contains(next)
+            return [
+                .aborted, .committed, .sessionOpen, .outcomeUnknown,
+                .recoveryRequired, .expired,
+            ].contains(next)
         case .failedPermanent:
-            return [.abortPending, .outcomeUnknown, .committed, .aborted, .expired,
-                    .failedPermanent].contains(next)
+            return [
+                .abortPending, .outcomeUnknown, .committed, .aborted, .expired,
+                .failedPermanent,
+            ].contains(next)
         case .preparingSource, .committed, .aborted, .expired,
-             .storageUnavailable, .sessionInvalidated:
+            .storageUnavailable, .sessionInvalidated:
             return false
         }
     }

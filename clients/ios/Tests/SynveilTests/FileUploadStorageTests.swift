@@ -92,7 +92,8 @@ final class FileUploadStorageTests: XCTestCase {
         let completing = try XCTUnwrap(stored)
         let completion = UploadCompletion(
             sessionId: queueUUID(701), nodeId: node,
-            fileVersionId: try await FileVersionId.validated(queueUUID(702), using: QueueValidator()),
+            fileVersionId: try await FileVersionId.validated(
+                queueUUID(702), using: QueueValidator()),
             revision: try NodeRevision(validating: "4"), expected: expected,
             committedAt: Date(timeIntervalSince1970: 1_791_720_000), requestId: "upload-commit-01")
         try await reopened.updateUpload(
@@ -141,15 +142,17 @@ final class FileUploadStorageTests: XCTestCase {
             from: source, stagingId: id, durable: [])
         XCTAssertEqual(expected.byteLength, UInt64(size))
         XCTAssertEqual(expected.sha256, Self.digest(bytes))
-        XCTAssertTrue(FileManager.default.fileExists(
-            atPath: root.appendingPathComponent(id.rawValue + ".upload").path))
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: root.appendingPathComponent(id.rawValue + ".upload").path))
         try await staging.verifyUploadSource(stagingId: id, expected: expected)
 
         var offset: UInt64 = 0
         var reconstructed = Data()
         while offset < expected.byteLength {
-            let count = Int(min(
-                UInt64(UploadPolicy.chunkBytes), expected.byteLength - offset))
+            let count = Int(
+                min(
+                    UInt64(UploadPolicy.chunkBytes), expected.byteLength - offset))
             let chunk = try await staging.uploadChunk(
                 stagingId: id, expected: expected, offset: offset, count: count)
             reconstructed.append(chunk)
@@ -159,11 +162,13 @@ final class FileUploadStorageTests: XCTestCase {
         XCTAssertEqual(reconstructed.count, size)
 
         try await staging.reconcileOrphanUploads(keeping: [id.rawValue])
-        XCTAssertTrue(FileManager.default.fileExists(
-            atPath: root.appendingPathComponent(id.rawValue + ".upload").path))
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: root.appendingPathComponent(id.rawValue + ".upload").path))
         try await staging.reconcileOrphanUploads(keeping: [])
-        XCTAssertFalse(FileManager.default.fileExists(
-            atPath: root.appendingPathComponent(id.rawValue + ".upload").path))
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: root.appendingPathComponent(id.rawValue + ".upload").path))
     }
 
     func testInsufficientReserveDoesNotPublishUploadSource() async throws {
@@ -183,10 +188,12 @@ final class FileUploadStorageTests: XCTestCase {
             _ = try await staging.stageUpload(from: source, stagingId: id, durable: [])
             XCTFail("Expected the free-space reserve to reject the import")
         } catch { XCTAssertEqual(UploadPolicy.classify(error), .insufficientStorage) }
-        XCTAssertFalse(FileManager.default.fileExists(
-            atPath: root.appendingPathComponent(id.rawValue + ".upload").path))
-        XCTAssertFalse(FileManager.default.fileExists(
-            atPath: root.appendingPathComponent(id.rawValue + ".upload.incomplete").path))
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: root.appendingPathComponent(id.rawValue + ".upload").path))
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: root.appendingPathComponent(id.rawValue + ".upload.incomplete").path))
     }
 
     private func digest(_ data: Data) -> String { Self.digest(data) }

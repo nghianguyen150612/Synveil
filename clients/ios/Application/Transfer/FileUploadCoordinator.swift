@@ -46,11 +46,15 @@ final class FileUploadCoordinator {
             resolvedTarget = .createFile(
                 library: library, parent: parent, name: selectedURL.lastPathComponent)
         }
-        guard case .transfer(let result) = await launch({ [self] captured in
-            .transfer(await executeStart(
-                selectedURL: selectedURL, target: resolvedTarget,
-                libraryStatus: libraryStatus, generation: captured, progress: progress))
-        }, failureResult: { .transfer(.stopped(nil, $0)) }) else {
+        guard
+            case .transfer(let result) = await launch(
+                { [self] captured in
+                    .transfer(
+                        await executeStart(
+                            selectedURL: selectedURL, target: resolvedTarget,
+                            libraryStatus: libraryStatus, generation: captured, progress: progress))
+                }, failureResult: { .transfer(.stopped(nil, $0)) })
+        else {
             return .stopped(nil, .duplicateOperation)
         }
         return result
@@ -60,11 +64,15 @@ final class FileUploadCoordinator {
         id: UploadOperationId, library: LibraryId, libraryStatus: LibraryStatus,
         progress: @escaping @MainActor (UploadProgress) -> Void
     ) async -> FileUploadResult {
-        guard case .transfer(let result) = await launch({ [self] captured in
-            .transfer(await executeResume(
-                id: id, library: library, libraryStatus: libraryStatus,
-                generation: captured, progress: progress))
-        }, failureResult: { .transfer(.stopped(nil, $0)) }) else {
+        guard
+            case .transfer(let result) = await launch(
+                { [self] captured in
+                    .transfer(
+                        await executeResume(
+                            id: id, library: library, libraryStatus: libraryStatus,
+                            generation: captured, progress: progress))
+                }, failureResult: { .transfer(.stopped(nil, $0)) })
+        else {
             return .stopped(nil, .duplicateOperation)
         }
         return result
@@ -73,10 +81,14 @@ final class FileUploadCoordinator {
     func checkServerStatus(
         id: UploadOperationId, library: LibraryId
     ) async -> Result<UploadRecord, UploadFailure> {
-        guard case .record(let result) = await launch({ [self] captured in
-            .record(await executeStatus(
-                id: id, library: library, generation: captured))
-        }, failureResult: { .record(.failure($0)) }) else {
+        guard
+            case .record(let result) = await launch(
+                { [self] captured in
+                    .record(
+                        await executeStatus(
+                            id: id, library: library, generation: captured))
+                }, failureResult: { .record(.failure($0)) })
+        else {
             return .failure(.duplicateOperation)
         }
         return result
@@ -85,10 +97,14 @@ final class FileUploadCoordinator {
     func abort(
         id: UploadOperationId, library: LibraryId
     ) async -> Result<UploadRecord, UploadFailure> {
-        guard case .record(let result) = await launch({ [self] captured in
-            .record(await executeAbort(
-                id: id, library: library, generation: captured))
-        }, failureResult: { .record(.failure($0)) }) else {
+        guard
+            case .record(let result) = await launch(
+                { [self] captured in
+                    .record(
+                        await executeAbort(
+                            id: id, library: library, generation: captured))
+                }, failureResult: { .record(.failure($0)) })
+        else {
             return .failure(.duplicateOperation)
         }
         return result
@@ -193,16 +209,20 @@ final class FileUploadCoordinator {
                 // The source must remain if the INSERT may have committed but exact readback
                 // itself fails. Reopen reconciliation can later distinguish an orphan safely.
                 durableRecord = true
-                guard let readBack = try await database.upload(
-                    scope: scope, credentialId: current.credentialIdentifier,
-                    id: operationId, bridge: repository.bridge),
+                guard
+                    let readBack = try await database.upload(
+                        scope: scope, credentialId: current.credentialIdentifier,
+                        id: operationId, bridge: repository.bridge),
                     readBack.intent == intent, readBack.stagingId == stagingId,
                     readBack.state == .sourceStaged
                 else { throw UploadFailure.storageFailure }
                 record = readBack
                 durableRecord = true
             }
-            if record == nil { record = prepared; durableRecord = true }
+            if record == nil {
+                record = prepared
+                durableRecord = true
+            }
             guard let currentRecord = record else { throw UploadFailure.storageFailure }
             progress(UploadProgress(currentRecord))
             return await continueUpload(
@@ -234,9 +254,10 @@ final class FileUploadCoordinator {
             let scope = try await current.mutationScope(
                 libraryId: library, bridge: repository.bridge)
             try await database.bindSession(scope: scope, credentialId: current.credentialIdentifier)
-            guard let saved = try await database.upload(
-                scope: scope, credentialId: current.credentialIdentifier,
-                id: id, bridge: repository.bridge), saved.state.canResume,
+            guard
+                let saved = try await database.upload(
+                    scope: scope, credentialId: current.credentialIdentifier,
+                    id: id, bridge: repository.bridge), saved.state.canResume,
                 !saved.stagingReleased
             else { throw UploadFailure.invalidMetadata }
             record = saved
@@ -293,9 +314,10 @@ final class FileUploadCoordinator {
             var reconciledPatchFailure = false
             while record.authoritativeOffset < record.intent.expected.byteLength {
                 try await fence(session, captured)
-                let count = Int(min(
-                    UInt64(UploadPolicy.chunkBytes),
-                    record.intent.expected.byteLength - record.authoritativeOffset))
+                let count = Int(
+                    min(
+                        UInt64(UploadPolicy.chunkBytes),
+                        record.intent.expected.byteLength - record.authoritativeOffset))
                 guard count > 0 else { throw UploadFailure.invalidMetadata }
                 let bytes = try await staging.chunk(
                     record, offset: record.authoritativeOffset, count: count)
@@ -315,9 +337,12 @@ final class FileUploadCoordinator {
                     progress(UploadProgress(record))
                 } catch {
                     let patchFailure = UploadPolicy.classify(error)
-                    if [.unauthenticated, .deviceRevoked, .staleSession, .scopeMismatch,
-                        .cancelled].contains(patchFailure)
-                    { throw patchFailure }
+                    if [
+                        .unauthenticated, .deviceRevoked, .staleSession, .scopeMismatch,
+                        .cancelled,
+                    ].contains(patchFailure) {
+                        throw patchFailure
+                    }
                     guard !reconciledPatchFailure else { throw patchFailure }
                     reconciledPatchFailure = true
                     let status = try await repository.status(record, session: session)
@@ -327,7 +352,9 @@ final class FileUploadCoordinator {
                     if record.state == .committed { return .completed(record) }
                     if patchFailure == .chunkTooLarge || patchFailure == .unsupportedMediaType
                         || patchFailure == .capacityUnavailable || patchFailure == .sessionExpired
-                    { throw patchFailure }
+                    {
+                        throw patchFailure
+                    }
                     guard record.serverState == .open else {
                         return .stopped(record, patchFailure)
                     }
@@ -342,7 +369,7 @@ final class FileUploadCoordinator {
             if record.state != .readyToComplete {
                 record = try await update(
                     record, state: .readyToComplete, uncertain: false,
-                    failure: nil, serverState: .open)
+                    serverState: .open, failure: nil)
                 progress(UploadProgress(record))
             }
             let targetNode = try targetNodeId(record)
@@ -355,9 +382,12 @@ final class FileUploadCoordinator {
                 record = try await commit(completion, record: record, progress: progress)
             } catch {
                 let completionFailure = UploadPolicy.classify(error)
-                if [.unauthenticated, .deviceRevoked, .staleSession, .scopeMismatch,
-                    .revisionConflict, .conflict, .sessionExpired].contains(completionFailure)
-                { throw completionFailure }
+                if [
+                    .unauthenticated, .deviceRevoked, .staleSession, .scopeMismatch,
+                    .revisionConflict, .conflict, .sessionExpired,
+                ].contains(completionFailure) {
+                    throw completionFailure
+                }
                 let status = try await repository.status(record, session: session)
                 record = try await accept(
                     status, for: record, session: session, generation: captured,
@@ -474,10 +504,11 @@ final class FileUploadCoordinator {
     private func cleanupCommitted(_ record: UploadRecord) async -> UploadRecord {
         guard !record.stagingReleased else { return record }
         do { try await staging.removeCommittedSource(record) } catch { return record }
-        do { try await database.releaseUploadStaging(record) } catch { }
-        guard let verified = try? await database.upload(
-            scope: record.scope, credentialId: record.credentialId,
-            id: record.id, bridge: repository.bridge), verified.state == .committed,
+        do { try await database.releaseUploadStaging(record) } catch {}
+        guard
+            let verified = try? await database.upload(
+                scope: record.scope, credentialId: record.credentialId,
+                id: record.id, bridge: repository.bridge), verified.state == .committed,
             verified.completion?.sessionId == record.completion?.sessionId,
             verified.completion?.nodeId == record.completion?.nodeId,
             verified.completion?.fileVersionId == record.completion?.fileVersionId,
@@ -493,13 +524,15 @@ final class FileUploadCoordinator {
         do {
             let session = try await repository.provider.begin()
             try await fence(session, captured)
-            guard let existing = try await locateUpload(
-                id: id, library: library, session: session)
+            guard
+                let existing = try await locateUpload(
+                    id: id, library: library, session: session)
             else {
                 throw UploadFailure.invalidMetadata
             }
-            guard existing.state.canResume || existing.state == .abortPending
-                || existing.state == .committed || existing.state == .failedPermanent
+            guard
+                existing.state.canResume || existing.state == .abortPending
+                    || existing.state == .committed || existing.state == .failedPermanent
             else {
                 throw existing.failure ?? UploadFailure.invalidMetadata
             }
@@ -521,8 +554,8 @@ final class FileUploadCoordinator {
             try await fence(session, captured)
             guard var record = try await locateUpload(id: id, library: library, session: session),
                 record.serverSessionId != nil,
-                (record.state.canResume || record.state == .abortPending
-                    || record.state == .failedPermanent),
+                record.state.canResume || record.state == .abortPending
+                    || record.state == .failedPermanent,
                 record.serverState != .committing,
                 record.serverState != .verifying
             else { throw UploadFailure.invalidMetadata }
@@ -536,7 +569,9 @@ final class FileUploadCoordinator {
                     evidence, record: record, session: session, generation: captured)
             } catch {
                 let failure = UploadPolicy.classify(error)
-                if [.unauthenticated, .deviceRevoked, .staleSession, .scopeMismatch].contains(failure) {
+                if [.unauthenticated, .deviceRevoked, .staleSession, .scopeMismatch].contains(
+                    failure)
+                {
                     throw failure
                 }
                 let evidence = try await repository.status(record, session: session)
@@ -586,6 +621,13 @@ final class FileUploadCoordinator {
             return .stopped(captured == generation ? record : nil, failure)
         }
         let state: UploadLocalState
+        let ambiguousOutcomeFailure: Bool
+        switch failure {
+        case .failedRecoverable, .completionUnknown, .offsetMismatch, .unexpectedStatus, .conflict:
+            ambiguousOutcomeFailure = true
+        default:
+            ambiguousOutcomeFailure = false
+        }
         if failure == .cancelled {
             state = record.uncertain ? .outcomeUnknown : .cancelledLocal
         } else if failure == .staleSession || failure == .scopeMismatch
@@ -594,8 +636,7 @@ final class FileUploadCoordinator {
             state = .sessionInvalidated
         } else if record.uncertain
             && [.sessionCreating, .uploading, .completing, .abortPending].contains(record.state)
-            && [.failedRecoverable, .completionUnknown, .offsetMismatch, .unexpectedStatus,
-                .conflict].contains(failure)
+            && ambiguousOutcomeFailure
         {
             state = .outcomeUnknown
         } else if failure.localState == .failedRecoverable {
@@ -635,9 +676,10 @@ final class FileUploadCoordinator {
         } catch MutationQueueFailure.commitAcknowledgementLost {
             // Exact readback below decides whether the state change committed.
         }
-        guard let stored = try await database.upload(
-            scope: previous.scope, credentialId: previous.credentialId,
-            id: previous.id, bridge: repository.bridge)
+        guard
+            let stored = try await database.upload(
+                scope: previous.scope, credentialId: previous.credentialId,
+                id: previous.id, bridge: repository.bridge)
         else { throw UploadFailure.storageFailure }
         let expectedOffset = authoritativeOffset ?? previous.authoritativeOffset
         let expectedSession = serverSessionId ?? previous.serverSessionId

@@ -85,7 +85,8 @@ final class AuthenticatedLibraryRequestProvider: AuthenticatedLibraryRequestProv
     AuthenticatedNodeRequestProviderProtocol, AuthenticatedClientMutationRequestProviderProtocol,
     AuthenticatedSyncCheckpointRequestProviderProtocol,
     AuthenticatedSyncFeedRequestProviderProtocol,
-    AuthenticatedRebaselineRequestProviderProtocol, AuthenticatedFileDownloadRequestProviderProtocol,
+    AuthenticatedRebaselineRequestProviderProtocol,
+    AuthenticatedFileDownloadRequestProviderProtocol,
     AuthenticatedUploadRequestProviderProtocol
 {
     private let controller: SessionController

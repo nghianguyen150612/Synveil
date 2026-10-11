@@ -11,9 +11,11 @@ final class URLSessionRawUploadTransport: RawUploadTransportProtocol, @unchecked
     private let transport: any HTTPTransportProtocol
 
     init(transport: (any HTTPTransportProtocol)? = nil) {
-        self.transport = transport ?? URLSessionHTTPTransport(
-            requestTimeout: 30, resourceTimeout: 300,
-            maxResponseBodyBytes: UploadPolicy.maximumResponseBytes)
+        self.transport =
+            transport
+            ?? URLSessionHTTPTransport(
+                requestTimeout: 30, resourceTimeout: 300,
+                maxResponseBodyBytes: UploadPolicy.maximumResponseBytes)
     }
 
     func send(_ request: HTTPTransportRequest) async throws -> HTTPTransportResponse {
@@ -60,17 +62,23 @@ final class URLSessionRawUploadTransport: RawUploadTransportProtocol, @unchecked
         switch routeKind {
         case .create:
             bodyLimit = UploadPolicy.maximumJSONBytes
-            guard request.headers.first(where: { $0.key.lowercased() == "content-type" })?.value
-                .components(separatedBy: ";").first?.trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased() == "application/json"
+            guard
+                request.headers.first(where: { $0.key.lowercased() == "content-type" })?.value
+                    .components(separatedBy: ";").first?.trimmingCharacters(
+                        in: .whitespacesAndNewlines
+                    )
+                    .lowercased() == "application/json"
             else { throw UploadFailure.invalidMetadata }
         case .session where request.method == .get:
             bodyLimit = 0
         case .session:
             bodyLimit = UploadPolicy.chunkBytes
-            guard request.headers.first(where: { $0.key.lowercased() == "content-type" })?.value
-                .components(separatedBy: ";").first?.trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased() == "application/octet-stream",
+            guard
+                request.headers.first(where: { $0.key.lowercased() == "content-type" })?.value
+                    .components(separatedBy: ";").first?.trimmingCharacters(
+                        in: .whitespacesAndNewlines
+                    )
+                    .lowercased() == "application/octet-stream",
                 let rawOffset = request.headers.first(where: {
                     $0.key.lowercased() == "upload-offset"
                 })?.value,

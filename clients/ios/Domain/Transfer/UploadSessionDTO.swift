@@ -55,7 +55,9 @@ struct UploadSessionResponseDecoder: Sendable {
                     "operation", "state", "received_bytes", "expected_bytes", "created_at",
                     "updated_at", "expires_at", "target",
                 ],
-                optional: ["expected_sha256", "last_error_code", "terminal_failure_code", "completion"])
+                optional: [
+                    "expected_sha256", "last_error_code", "terminal_failure_code", "completion",
+                ])
             guard let meta = envelope?["meta"] as? [String: Any],
                 let requestId = meta["request_id"] as? String,
                 LibraryWireValidation.validRequestId(requestId),
@@ -88,9 +90,12 @@ struct UploadSessionResponseDecoder: Sendable {
                 }
             }
             let target = try await decodeTarget(attributes["target"], intent: intent)
-            let createdAt = try LibraryWireValidation.timestamp(attributes["created_at"] as? String ?? "")
-            let updatedAt = try LibraryWireValidation.timestamp(attributes["updated_at"] as? String ?? "")
-            let expiresAt = try LibraryWireValidation.timestamp(attributes["expires_at"] as? String ?? "")
+            let createdAt = try LibraryWireValidation.timestamp(
+                attributes["created_at"] as? String ?? "")
+            let updatedAt = try LibraryWireValidation.timestamp(
+                attributes["updated_at"] as? String ?? "")
+            let expiresAt = try LibraryWireValidation.timestamp(
+                attributes["expires_at"] as? String ?? "")
             guard createdAt <= updatedAt else { throw UploadFailure.invalidMetadata }
 
             let completion: UploadCompletion?
@@ -176,12 +181,15 @@ struct UploadSessionResponseDecoder: Sendable {
         do {
             guard response.body.count <= UploadPolicy.maximumResponseBytes,
                 response.headers.first(where: { $0.key.lowercased() == "content-type" })?.value
-                    .components(separatedBy: ";").first?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .components(separatedBy: ";").first?.trimmingCharacters(
+                        in: .whitespacesAndNewlines
+                    )
                     .lowercased() == "application/json"
             else { return .unexpectedStatus }
             let root = try JSONSerialization.jsonObject(with: response.body)
             try LibraryWireValidation.keys(root, required: ["error"])
-            guard let envelope = root as? [String: Any], let error = envelope["error"] as? [String: Any]
+            guard let envelope = root as? [String: Any],
+                let error = envelope["error"] as? [String: Any]
             else { return .unexpectedStatus }
             try LibraryWireValidation.keys(
                 error, required: ["code", "message", "request_id", "retryable"],
@@ -193,7 +201,7 @@ struct UploadSessionResponseDecoder: Sendable {
                 let requestId = error["request_id"] as? String,
                 LibraryWireValidation.validRequestId(requestId),
                 let retryable = error["retryable"] as? Bool,
-                (error["details"] == nil || error["details"] is [String: Any]),
+                error["details"] == nil || error["details"] is [String: Any],
                 response.headers.first(where: { $0.key.lowercased() == "x-request-id" })
                     .map({ $0.value == requestId }) ?? true
             else { return .unexpectedStatus }
@@ -226,8 +234,10 @@ struct UploadSessionResponseDecoder: Sendable {
 
     private func decodeTarget(
         _ value: Any?, intent: UploadIntent
-    ) async throws -> (libraryId: LibraryId, parentId: NodeId?, nodeId: NodeId,
-        name: String?, expectedRevision: NodeRevision?) {
+    ) async throws -> (
+        libraryId: LibraryId, parentId: NodeId?, nodeId: NodeId,
+        name: String?, expectedRevision: NodeRevision?
+    ) {
         guard let target = value as? [String: Any] else {
             throw UploadFailure.invalidMetadata
         }
@@ -242,7 +252,8 @@ struct UploadSessionResponseDecoder: Sendable {
                 let nodeRaw = target["node_id"] as? String
             else { throw UploadFailure.invalidTarget }
             return (
-                library, parent, try await NodeId.validated(nodeRaw, using: bridge), name, nil)
+                library, parent, try await NodeId.validated(nodeRaw, using: bridge), name, nil
+            )
         case .replaceContent(let library, let node, let revision):
             try LibraryWireValidation.keys(
                 target, required: ["operation", "library_id", "node_id", "expected_revision"])
@@ -266,7 +277,9 @@ struct UploadSessionResponseDecoder: Sendable {
         else { throw UploadFailure.invalidMetadata }
         try LibraryWireValidation.keys(
             attributes,
-            required: ["node_id", "file_version_id", "node_revision", "bytes", "sha256", "committed_at"])
+            required: [
+                "node_id", "file_version_id", "node_revision", "bytes", "sha256", "committed_at",
+            ])
         guard let rawNode = attributes["node_id"] as? String,
             try await NodeId.validated(rawNode, using: bridge) == nodeId,
             let rawVersion = attributes["file_version_id"] as? String,
@@ -296,7 +309,8 @@ struct UploadSessionResponseDecoder: Sendable {
         Self.responseHeader(response, name)
     }
 
-    private static func responseHeader(_ response: HTTPTransportResponse, _ name: String) -> String? {
+    private static func responseHeader(_ response: HTTPTransportResponse, _ name: String) -> String?
+    {
         let values = response.headers.filter { $0.key.lowercased() == name }
         guard values.count == 1, let value = values.first?.value,
             !value.unicodeScalars.contains(where: { $0.value == 10 || $0.value == 13 })

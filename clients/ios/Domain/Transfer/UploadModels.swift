@@ -166,9 +166,11 @@ enum UploadLocalState: String, Sendable, CaseIterable {
     case sessionInvalidated = "SESSION_INVALIDATED"
 
     var canResume: Bool {
-        [.sourceStaged, .sessionCreating, .sessionOpen, .uploading, .readyToComplete,
-         .completing, .outcomeUnknown, .recoveryRequired, .cancelledLocal,
-         .failedRecoverable].contains(self)
+        [
+            .sourceStaged, .sessionCreating, .sessionOpen, .uploading, .readyToComplete,
+            .completing, .outcomeUnknown, .recoveryRequired, .cancelledLocal,
+            .failedRecoverable,
+        ].contains(self)
     }
 
     var label: String {
@@ -269,7 +271,8 @@ enum UploadFailure: String, Error, Sendable, CaseIterable {
     case revisionConflict, nameConflict, unexpectedStatus, malformedOffset, offsetMismatch
     case chunkTooLarge, unsupportedMediaType, capacityUnavailable, sessionExpired, sessionAborted
     case serverFailed, integrityMismatch, sourceUnavailable, sourceChanged, invalidSource
-    case insufficientStorage, stagingQuotaExceeded, stagingMissing, filesystemFailure, storageFailure
+    case insufficientStorage, stagingQuotaExceeded, stagingMissing, filesystemFailure,
+        storageFailure
     case cancelled, duplicateOperation, payloadTooLarge, completionUnknown, conflict
 
     var localState: UploadLocalState {
@@ -295,13 +298,15 @@ enum UploadFailure: String, Error, Sendable, CaseIterable {
             "A file with this exact name already exists in the destination folder."
         case .insufficientStorage, .stagingQuotaExceeded:
             "There is not enough private storage to stage this file. Free space and try again."
-        case .sessionExpired: "The server upload session expired. Start a new upload if you still need this file."
+        case .sessionExpired:
+            "The server upload session expired. Start a new upload if you still need this file."
         case .cancelled: "The upload was paused. Its saved source and server identity are retained."
         case .staleSession, .scopeMismatch, .unauthenticated, .deviceRevoked:
             "The authenticated device session changed. This upload cannot use the old authorization."
         case .sourceChanged, .integrityMismatch:
             "The staged source failed integrity verification and will not be uploaded."
-        default: "The upload could not be safely completed. Check server status or contact the server owner."
+        default:
+            "The upload could not be safely completed. Check server status or contact the server owner."
         }
     }
 }
@@ -353,7 +358,8 @@ enum UploadPolicy {
             case .cancelled: return .cancelled
             case .configurationError: return .scopeMismatch
             case .bodyLimitExceeded, .unexpectedContentType, .malformedResponse,
-                .protocolError, .httpError: return .invalidMetadata
+                .protocolError, .httpError:
+                return .invalidMetadata
             }
         }
         if let error = error as? URLError {
@@ -363,7 +369,8 @@ enum UploadPolicy {
             case .cannotFindHost, .dnsLookupFailed: return .dnsFailure
             case .secureConnectionFailed, .serverCertificateUntrusted, .serverCertificateHasBadDate,
                 .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid,
-                .clientCertificateRejected, .clientCertificateRequired: return .tlsFailure
+                .clientCertificateRejected, .clientCertificateRequired:
+                return .tlsFailure
             default: return .offline
             }
         }
