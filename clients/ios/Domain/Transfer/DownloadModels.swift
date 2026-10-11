@@ -134,19 +134,6 @@ struct VerifiedFileExportLease: Hashable, Sendable, Identifiable {
     let sha256: String
     let byteLength: UInt64
     let lifecycleRevision: UInt64
-
-    init(
-        id: String, purpose: VerifiedFileExportPurpose, sourceOperationId: DownloadOperationId,
-        versionId: FileVersionId, sha256: String, byteLength: UInt64, lifecycleRevision: UInt64
-    ) {
-        self.id = id
-        self.purpose = purpose
-        self.sourceOperationId = sourceOperationId
-        self.versionId = versionId
-        self.sha256 = sha256
-        self.byteLength = byteLength
-        self.lifecycleRevision = lifecycleRevision
-    }
 }
 
 enum DownloadRecoveryDecision: Equatable, Sendable {

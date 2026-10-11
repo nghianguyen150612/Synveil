@@ -193,7 +193,8 @@ public final class AppDependencyContainer {
                             provider: browserProvider, bridge: bridge),
                         database: database, staging: staging)
                     if let downloadCoordinator {
-                        fileExportCoordinator = VerifiedFileExportCoordinator(downloads: downloadCoordinator)
+                        fileExportCoordinator = VerifiedFileExportCoordinator(
+                            downloads: downloadCoordinator)
                     }
                 } catch { downloadCoordinator = nil }
                 let downloads = downloadCoordinator

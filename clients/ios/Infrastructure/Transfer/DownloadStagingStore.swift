@@ -40,7 +40,8 @@ actor DownloadStagingStore {
             throw DownloadFailure.filesystemFailure
         }
         self.root = root
-        exportsRoot = root.deletingLastPathComponent().appendingPathComponent("exports", isDirectory: true)
+        exportsRoot = root.deletingLastPathComponent().appendingPathComponent(
+            "exports", isDirectory: true)
         self.freeBytes = freeBytes
         self.fault = fault
         try Self.rejectLinks(root)
@@ -85,7 +86,10 @@ actor DownloadStagingStore {
             let present = exportActual[id] ?? 0
             if value > present { exportUnwritten = try add(exportUnwritten, value - present) }
         }
-        guard try freeBytes(root) >= add(add(unwritten, exportUnwritten), DownloadPolicy.freeReserve) else {
+        guard
+            try freeBytes(root)
+                >= add(add(unwritten, exportUnwritten), DownloadPolicy.freeReserve)
+        else {
             throw DownloadFailure.insufficientStorage
         }
         reservations = proposed
@@ -111,15 +115,20 @@ actor DownloadStagingStore {
             downloadUsage = try add(downloadUsage, max(stored, value))
             if value > stored { downloadUnwritten = try add(downloadUnwritten, value - stored) }
         }
-        for (name, size) in downloadActual where !proposed.keys.contains(where: { $0.rawValue == name }) {
+        for (name, size) in downloadActual
+        where !proposed.keys.contains(where: { $0.rawValue == name }) {
             downloadUsage = try add(downloadUsage, size)
         }
         var exportPlans = exportReservations
         exportPlans[id] = bytes
         var exportUsage: UInt64 = 0
         let actual = try exportInventory()
-        for (key, size) in actual { exportUsage = try add(exportUsage, max(size, exportPlans[key] ?? 0)) }
-        for (key, size) in exportPlans where actual[key] == nil { exportUsage = try add(exportUsage, size) }
+        for (key, size) in actual {
+            exportUsage = try add(exportUsage, max(size, exportPlans[key] ?? 0))
+        }
+        for (key, size) in exportPlans where actual[key] == nil {
+            exportUsage = try add(exportUsage, size)
+        }
         let total = try add(downloadUsage, exportUsage)
         guard total <= DownloadPolicy.quota else { throw DownloadFailure.stagingQuotaExceeded }
         let unwritten = bytes > (actual[id] ?? 0) ? bytes - (actual[id] ?? 0) : 0
@@ -128,7 +137,10 @@ actor DownloadStagingStore {
             let present = actual[key] ?? 0
             if planned > present { exportUnwritten = try add(exportUnwritten, planned - present) }
         }
-        guard try freeBytes(root) >= add(add(downloadUnwritten, exportUnwritten), DownloadPolicy.freeReserve) else {
+        guard
+            try freeBytes(root)
+                >= add(add(downloadUnwritten, exportUnwritten), DownloadPolicy.freeReserve)
+        else {
             throw DownloadFailure.insufficientStorage
         }
         exportReservations = exportPlans
@@ -159,7 +171,10 @@ actor DownloadStagingStore {
         let destination = openat(directory, partial, O_CREAT | O_EXCL | O_RDWR | O_NOFOLLOW, 0o600)
         guard destination >= 0 else { throw DownloadFailure.filesystemFailure }
         var keep = false
-        defer { if !keep { _ = unlinkat(directory, partial, 0) } ; close(destination) }
+        defer {
+            if !keep { _ = unlinkat(directory, partial, 0) }
+            close(destination)
+        }
         try Self.protect(exportsRoot.appendingPathComponent(exportId, isDirectory: true), directory: true)
         var sourceHasher = SHA256()
         var remaining = record.identity.expected.byteLength
@@ -187,7 +202,9 @@ actor DownloadStagingStore {
             total = try add(total, UInt64(count))
             remaining -= UInt64(count)
         }
-        let trailingByte = buffer.withUnsafeMutableBytes { bytes in read(source, bytes.baseAddress!, 1) }
+        let trailingByte = buffer.withUnsafeMutableBytes { bytes in
+            read(source, bytes.baseAddress!, 1)
+        }
         guard trailingByte == 0,
             total == record.identity.expected.byteLength,
             Self.digest(sourceHasher) == record.identity.expected.sha256,
@@ -201,14 +218,17 @@ actor DownloadStagingStore {
         guard Self.digest(destinationHasher) == record.identity.expected.sha256 else {
             throw DownloadFailure.sha256Mismatch
         }
-        try Self.protect(
-            exportsRoot.appendingPathComponent(exportId, isDirectory: true).appendingPathComponent(partial),
-            directory: false)
+        let partialURL = exportsRoot.appendingPathComponent(
+            exportId, isDirectory: true
+        ).appendingPathComponent(partial)
+        try Self.protect(partialURL, directory: false)
         guard renameat(directory, partial, directory, filename) == 0, fsync(directory) == 0 else {
             throw DownloadFailure.filesystemFailure
         }
         keep = true
-        return exportsRoot.appendingPathComponent(exportId, isDirectory: true).appendingPathComponent(filename)
+        return exportsRoot.appendingPathComponent(
+            exportId, isDirectory: true
+        ).appendingPathComponent(filename)
     }
 
     /// Releases quota only after all contents and the opaque directory are removed and synced.
@@ -219,14 +239,25 @@ actor DownloadStagingStore {
         let rootDescriptor = try openExportsDirectory()
         defer { close(rootDescriptor) }
         let directory = openat(rootDescriptor, id, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
-        if directory < 0, errno == ENOENT { exportReservations[id] = nil; return }
+        if directory < 0, errno == ENOENT {
+            exportReservations[id] = nil
+            return
+        }
         guard directory >= 0 else { throw DownloadFailure.filesystemFailure }
         defer { close(directory) }
-        for name in try FileManager.default.contentsOfDirectory(atPath: exportsRoot.appendingPathComponent(id).path) {
-            guard !name.contains("/") && name != "." && name != ".." else { throw DownloadFailure.filesystemFailure }
+        let exportDirectoryURL = exportsRoot.appendingPathComponent(id)
+        for name in try FileManager.default.contentsOfDirectory(atPath: exportDirectoryURL.path) {
+            guard !name.contains("/") && name != "." && name != ".." else {
+                throw DownloadFailure.filesystemFailure
+            }
             let fd = openat(directory, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
             guard fd >= 0 else { throw DownloadFailure.filesystemFailure }
-            do { _ = try length(fd) } catch { close(fd); throw error }
+            do {
+                _ = try length(fd)
+            } catch {
+                close(fd)
+                throw error
+            }
             close(fd)
             guard unlinkat(directory, name, 0) == 0 else { throw DownloadFailure.filesystemFailure }
         }
@@ -415,8 +446,14 @@ actor DownloadStagingStore {
         for file in try FileManager.default.contentsOfDirectory(atPath: root.path) {
             let descriptor = openat(directory, file, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
             guard descriptor >= 0 else { throw DownloadFailure.filesystemFailure }
-            defer { close(descriptor) }
-            let bytes = try length(descriptor)
+            let bytes: UInt64
+            do {
+                bytes = try length(descriptor)
+            } catch {
+                close(descriptor)
+                throw error
+            }
+            close(descriptor)
             let key = (file as NSString).deletingPathExtension
             result[key] = try add(result[key] ?? 0, bytes)
         }
@@ -433,10 +470,16 @@ actor DownloadStagingStore {
             guard directory >= 0 else { throw DownloadFailure.filesystemFailure }
             var size: UInt64 = 0
             do {
-                for name in try FileManager.default.contentsOfDirectory(atPath: exportsRoot.appendingPathComponent(id).path) {
+                let directoryURL = exportsRoot.appendingPathComponent(id)
+                for name in try FileManager.default.contentsOfDirectory(atPath: directoryURL.path) {
                     let fd = openat(directory, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
                     guard fd >= 0 else { throw DownloadFailure.filesystemFailure }
-                    do { size = try add(size, length(fd)) } catch { close(fd); throw error }
+                    do {
+                        size = try add(size, length(fd))
+                    } catch {
+                        close(fd)
+                        throw error
+                    }
                     close(fd)
                 }
             } catch {

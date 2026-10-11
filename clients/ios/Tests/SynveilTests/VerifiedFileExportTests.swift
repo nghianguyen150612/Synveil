@@ -29,7 +29,9 @@ final class VerifiedFileExportTests: XCTestCase {
     func testPartialRecordCannotAcquireExportCapability() async throws {
         let f = try await downloadFixture(self, body: Data(repeating: 0x61, count: 200_000))
         await f.content.configure(failAfterChunks: 1)
-        guard case .stopped = await downloadRun(f) else { return XCTFail("fixture must remain partial") }
+        guard case .stopped = await downloadRun(f) else {
+            return XCTFail("fixture must remain partial")
+        }
         do {
             _ = try await f.coordinator.verifiedFile(
                 library: f.queue.scope.libraryId, node: f.node.id, version: f.version)
@@ -38,7 +40,8 @@ final class VerifiedFileExportTests: XCTestCase {
     }
 
     func testBoundedTemporaryCopyPreservesVerifiedBytesAndUsesSafeName() async throws {
-        let f = try await downloadFixture(self, body: Data(repeating: 0x61, count: 16 * 1024 * 1024))
+        let body = Data(repeating: 0x61, count: 16 * 1024 * 1024)
+        let f = try await downloadFixture(self, body: body)
         _ = try downloadCapability(await downloadRun(f))
         let record = try await downloadRecord(f)
         let id = UUID().uuidString.lowercased()
@@ -47,17 +50,18 @@ final class VerifiedFileExportTests: XCTestCase {
             durable: try await f.queue.database.downloadReservations())
         let url = try await f.staging.copyVerifiedForExport(
             record, exportId: id, displayName: "../../合同\nfile.txt")
-        XCTAssertEqual(url.lastPathComponent, "__合同_file.txt")
-        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber,
-                       NSNumber(value: f.body.count))
+        XCTAssertEqual(url.lastPathComponent, "_.._合同_file.txt")
+        let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        XCTAssertEqual(fileAttributes[.size] as? NSNumber, NSNumber(value: body.count))
         XCTAssertEqual(try Data(contentsOf: url), f.body)
         let checked = try await f.staging.verifyExport(
             id: id, displayName: "../../合同\nfile.txt", expected: record.identity.expected)
         XCTAssertEqual(checked, url)
         try await f.staging.removeExport(id)
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
-        XCTAssertTrue(FileManager.default.fileExists(
-            atPath: f.root.appendingPathComponent(record.id.rawValue + ".verified").path))
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: f.root.appendingPathComponent(record.id.rawValue + ".verified").path))
     }
 
     func testTamperedTemporaryCopyCannotBeVerified() async throws {
@@ -89,8 +93,9 @@ final class VerifiedFileExportTests: XCTestCase {
                 durable: try await f.queue.database.downloadReservations())
             XCTFail("source plus a full quota sized copy must exceed the shared limit")
         } catch { XCTAssertEqual(error as? DownloadFailure, .stagingQuotaExceeded) }
-        XCTAssertTrue(FileManager.default.fileExists(
-            atPath: f.root.appendingPathComponent(record.id.rawValue + ".verified").path))
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: f.root.appendingPathComponent(record.id.rawValue + ".verified").path))
     }
 
     func testCrashOrphanCleanupRemovesOnlyTemporaryCopy() async throws {
@@ -106,14 +111,18 @@ final class VerifiedFileExportTests: XCTestCase {
         let reopened = try DownloadStagingStore(root: f.root)
         try await reopened.cleanupOrphanExports()
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
-        XCTAssertTrue(FileManager.default.fileExists(
-            atPath: f.root.appendingPathComponent(record.id.rawValue + ".verified").path))
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: f.root.appendingPathComponent(record.id.rawValue + ".verified").path))
     }
 
     func testFilenameSanitizationBlocksPathAndControlCharacters() {
-        XCTAssertEqual(SafeExportFilename.make("../../secret\\name\u{0000}.pdf"), "_.._secret_name_.pdf")
+        XCTAssertEqual(
+            SafeExportFilename.make("../../secret\\name\u{0000}.pdf"),
+            "_.._secret_name_.pdf")
         XCTAssertEqual(SafeExportFilename.make("..."), "Synveil Download")
-        XCTAssertLessThanOrEqual(SafeExportFilename.make(String(repeating: "界", count: 400)).utf8.count, 180)
+        let longName = SafeExportFilename.make(String(repeating: "界", count: 400))
+        XCTAssertLessThanOrEqual(longName.utf8.count, 180)
         XCTAssertEqual(SafeExportFilename.make("résumé.txt"), "résumé.txt")
         XCTAssertEqual(SafeExportFilename.make(".txt"), "Synveil Download.txt")
     }
@@ -153,12 +162,16 @@ final class VerifiedFileExportTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let pdf = root.appendingPathComponent("report.pdf")
         try Data("%PDF-1.7".utf8).write(to: pdf)
-        XCTAssertTrue(VerifiedFileExportCoordinator.supportsPreview(url: pdf, displayName: "report.pdf"))
+        XCTAssertTrue(
+            VerifiedFileExportCoordinator.supportsPreview(url: pdf, displayName: "report.pdf"))
         let mismatch = root.appendingPathComponent("report.png")
         try Data("not an image".utf8).write(to: mismatch)
-        XCTAssertFalse(VerifiedFileExportCoordinator.supportsPreview(url: mismatch, displayName: "report.png"))
+        XCTAssertFalse(
+            VerifiedFileExportCoordinator.supportsPreview(
+                url: mismatch, displayName: "report.png"))
         let html = root.appendingPathComponent("report.html")
         try Data("<html><script>alert(1)</script></html>".utf8).write(to: html)
-        XCTAssertFalse(VerifiedFileExportCoordinator.supportsPreview(url: html, displayName: "report.html"))
+        XCTAssertFalse(
+            VerifiedFileExportCoordinator.supportsPreview(url: html, displayName: "report.html"))
     }
 }

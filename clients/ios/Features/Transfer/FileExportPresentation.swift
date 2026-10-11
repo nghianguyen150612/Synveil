@@ -179,40 +179,62 @@ struct FileExportControls: View {
         Group {
             if model.isCurrent && model.isAvailable {
                 Section("Verified downloaded version") {
-                Text("These actions use the immutable downloaded version. They do not check whether a newer server version exists.")
+                    Text(
+                        "These actions use the immutable downloaded version. They do not check "
+                            + "whether a newer server version exists."
+                    )
                     .fixedSize(horizontal: false, vertical: true)
-                if model.isPreparing { ProgressView(model.stateText).accessibilityIdentifier("synveil.export.preparing") }
-                else if !model.stateText.isEmpty { Text(model.stateText).accessibilityAddTraits(.updatesFrequently) }
-                if let failure = model.failureText { Text(failure).fixedSize(horizontal: false, vertical: true) }
-                Button("Preview") { model.present(.preview) }
-                    .disabled(!model.canPresent)
-                    .accessibilityLabel("Preview verified downloaded version")
-                    .accessibilityHint("Prepares and verifies a private copy, then opens it in Quick Look when the file type is supported.")
-                    .accessibilityIdentifier("synveil.export.preview")
-                Button("Share") { model.present(.share) }
-                    .disabled(!model.canPresent)
-                    .accessibilityLabel("Share verified downloaded version")
-                    .accessibilityHint("Prepares a verified copy and opens the iOS Share Sheet.")
-                    .accessibilityIdentifier("synveil.export.share")
-                Button("Save to Files") { model.present(.saveToFiles) }
-                    .disabled(!model.canPresent)
-                    .accessibilityLabel("Save verified downloaded version to Files")
-                    .accessibilityHint("Prepares a verified copy and lets you choose a Files destination.")
-                    .accessibilityIdentifier("synveil.export.save-to-files")
-                if model.isPreparing {
-                    Button("Cancel preparation", role: .cancel) { model.cancel() }
-                        .accessibilityIdentifier("synveil.export.cancel")
+                    if model.isPreparing {
+                        ProgressView(model.stateText)
+                            .accessibilityIdentifier("synveil.export.preparing")
+                    } else if !model.stateText.isEmpty {
+                        Text(model.stateText)
+                            .accessibilityAddTraits(.updatesFrequently)
+                    }
+                    if let failure = model.failureText {
+                        Text(failure).fixedSize(horizontal: false, vertical: true)
+                    }
+                    Button("Preview") { model.present(.preview) }
+                        .disabled(!model.canPresent)
+                        .accessibilityLabel("Preview verified downloaded version")
+                        .accessibilityHint(
+                            "Prepares and verifies a private copy, then opens it in Quick Look "
+                                + "when the file type is supported."
+                        )
+                        .accessibilityIdentifier("synveil.export.preview")
+                    Button("Share") { model.present(.share) }
+                        .disabled(!model.canPresent)
+                        .accessibilityLabel("Share verified downloaded version")
+                        .accessibilityHint("Prepares a verified copy and opens the iOS Share Sheet.")
+                        .accessibilityIdentifier("synveil.export.share")
+                    Button("Save to Files") { model.present(.saveToFiles) }
+                        .disabled(!model.canPresent)
+                        .accessibilityLabel("Save verified downloaded version to Files")
+                        .accessibilityHint(
+                            "Prepares a verified copy and lets you choose a Files destination."
+                        )
+                        .accessibilityIdentifier("synveil.export.save-to-files")
+                    if model.isPreparing {
+                        Button("Cancel preparation", role: .cancel) { model.cancel() }
+                            .accessibilityIdentifier("synveil.export.cancel")
+                    }
+                    Text(
+                        "An app you choose to receive a shared file may keep its own copy. "
+                            + "Synveil cannot revoke that copy."
+                    )
+                    .font(.footnote)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
-                Text("An app you choose to receive a shared file may keep its own copy. Synveil cannot revoke that copy.")
-                    .font(.footnote).fixedSize(horizontal: false, vertical: true)
-                    .onChange(of: model.presentation?.id) { _, current in
-                        if current == nil { model.finishPresentation() }
-                    }
-                    .onChange(of: model.isCurrent) { _, current in if !current { model.invalidate() } }
-                    .onDisappear {
-                        model.cancel()
-                        model.finishPresentation()
-                    }
+                .onChange(of: model.presentation?.id) { _, current in
+                    if current == nil { model.finishPresentation() }
+                }
+                .onChange(of: model.isCurrent) { _, current in
+                    if !current { model.invalidate() }
+                }
+                .onDisappear {
+                    model.cancel()
+                    model.finishPresentation()
+                }
             }
         }
         .task { model.setVerified(initialVerified) }
@@ -226,8 +248,10 @@ struct FileExportControls: View {
             item: Binding(get: { model.presentation }, set: { _ in }),
             onDismiss: { model.finishPresentation() }
         ) { item in
-            NativeFilePresenter(presentation: item) { result in model.finishPresentation(result: result) }
-                .ignoresSafeArea()
+            NativeFilePresenter(presentation: item) { result in
+                model.finishPresentation(result: result)
+            }
+            .ignoresSafeArea()
         }
     }
 }

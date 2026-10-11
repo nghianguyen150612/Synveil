@@ -17,7 +17,6 @@ final class VerifiedFileExportCoordinator {
     private struct Entry {
         let lease: VerifiedFileExportLease
         let capability: VerifiedDownloadedFile
-        let url: URL
         let displayName: String
         var state: VerifiedFileExportState
     }
@@ -44,8 +43,9 @@ final class VerifiedFileExportCoordinator {
             let url = try await downloads.makeExportCopy(
                 capability, exportId: id, displayName: displayName)
             if purpose == .preview, !Self.supportsPreview(url: url, displayName: displayName) {
-                do { try await downloads.releaseExport(id) }
-                catch {
+                do {
+                    try await downloads.releaseExport(id)
+                } catch {
                     status(.failed)
                     return VerifiedFileExportPreparation(lease: nil, failure: .storage)
                 }
@@ -63,7 +63,7 @@ final class VerifiedFileExportCoordinator {
                 byteLength: capability.identity.expected.byteLength,
                 lifecycleRevision: capability.sessionLifecycleRevision)
             entries[id] = Entry(
-                lease: lease, capability: capability, url: url, displayName: displayName,
+                lease: lease, capability: capability, displayName: displayName,
                 state: .ready)
             status(.ready)
             return VerifiedFileExportPreparation(lease: lease, failure: nil)
@@ -120,7 +120,10 @@ final class VerifiedFileExportCoordinator {
             return header.starts(with: Data([0xFF, 0xD8, 0xFF]))
                 || header.starts(with: Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]))
         }
-        guard !header.contains(0), let prefix = String(data: header, encoding: .utf8) else { return false }
+        guard
+            !header.contains(0),
+            let prefix = String(data: header, encoding: .utf8)
+        else { return false }
         let trimmed = prefix.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !trimmed.hasPrefix("<!doctype html"), !trimmed.hasPrefix("<html"),
             !trimmed.hasPrefix("<script"), !trimmed.hasPrefix("<?xml")
@@ -132,7 +135,8 @@ final class VerifiedFileExportCoordinator {
         switch DownloadPolicy.classify(error) {
         case .stagingMissing: .missing
         case .sha256Mismatch, .integrityFailure: .integrity
-        case .insufficientStorage, .stagingQuotaExceeded, .filesystemFailure, .storageFailure: .storage
+        case .insufficientStorage, .stagingQuotaExceeded, .filesystemFailure, .storageFailure:
+            .storage
         case .staleSession, .scopeMismatch, .unauthenticated, .deviceRevoked: .session
         default: .preparation
         }
@@ -144,7 +148,9 @@ enum SafeExportFilename {
         let separators: Set<UInt32> = [0x2215, 0x2044, 0xFF0F, 0x29F8, 0xFF3C, 0x2216]
         var scalars = String.UnicodeScalarView()
         for scalar in logicalName.unicodeScalars {
-            if scalar.value < 0x20 || scalar.value == 0x7F || scalar.value == 0 || separators.contains(scalar.value) {
+            if scalar.value < 0x20 || scalar.value == 0x7F || scalar.value == 0
+                || separators.contains(scalar.value)
+            {
                 scalars.append("_".unicodeScalars.first!)
             } else if scalar == "/" || scalar == "\\" {
                 scalars.append("_".unicodeScalars.first!)
@@ -160,7 +166,9 @@ enum SafeExportFilename {
             candidate = "Synveil Download\(candidate)"
         }
         while candidate.hasPrefix(".") { candidate.removeFirst() }
-        if candidate.isEmpty || candidate == "." || candidate == ".." { candidate = "Synveil Download" }
+        if candidate.isEmpty || candidate == "." || candidate == ".." {
+            candidate = "Synveil Download"
+        }
         if candidate.utf8.count > 180 {
             var ext = (candidate as NSString).pathExtension
             while ext.utf8.count > 32 { ext.removeLast() }

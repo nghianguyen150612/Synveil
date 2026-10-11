@@ -148,15 +148,17 @@ final class FileDownloadCoordinator {
         let session = try await repository.provider.begin()
         let scope = try await session.mutationScope(libraryId: library, bridge: repository.bridge)
         try await database.bindSession(scope: scope, credentialId: session.credentialIdentifier)
-        guard let record = try await database.download(
-            scope: scope, credentialId: session.credentialIdentifier,
-            version: version, bridge: repository.bridge),
+        guard
+            let record = try await database.download(
+                scope: scope, credentialId: session.credentialIdentifier,
+                version: version, bridge: repository.bridge),
             record.state == .verified, record.identity.scope == scope,
             record.identity.credentialId == session.credentialIdentifier,
             record.identity.nodeId == node, record.identity.versionId == version
         else { throw DownloadFailure.stagingMissing }
-        do { try await staging.verify(record, published: true) }
-        catch {
+        do {
+            try await staging.verify(record, published: true)
+        } catch {
             let failure = DownloadPolicy.classify(error)
             try? await database.updateDownload(record, state: failure.state, failure: failure)
             throw failure
@@ -193,25 +195,14 @@ final class FileDownloadCoordinator {
         }
         do {
             try await repository.provider.validate(session)
-            guard session.sameSession(as: capability.session) else { throw DownloadFailure.staleSession }
+            guard session.sameSession(as: capability.session) else {
+                throw DownloadFailure.staleSession
+            }
             return url
         } catch {
             try? await staging.removeExport(exportId)
             throw error
         }
-    }
-
-    func validateForExport(_ capability: VerifiedDownloadedFile) async throws {
-        try await repository.provider.validate(capability.session)
-        guard capability.session.matches(capability.identity.scope),
-            capability.session.credentialIdentifier == capability.identity.credentialId,
-            let record = try await database.download(
-                scope: capability.identity.scope, credentialId: capability.identity.credentialId,
-                id: capability.operationId, bridge: repository.bridge),
-            record.state == .verified, record.identity == capability.identity
-        else { throw DownloadFailure.staleSession }
-        try await staging.verify(record, published: true)
-        try await repository.provider.validate(capability.session)
     }
 
     func validateExportCopy(
