@@ -11,6 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / "scripts/invoke-windows-standard-user-test.ps1"
 PER_USER_TEST = ROOT / "scripts/test-windows-per-user-installation.ps1"
+WINDOWS_INSTALLER = ROOT / "scripts/build-windows-installer.ps1"
 
 
 class StandardUserAccountNameTests(unittest.TestCase):
@@ -44,6 +45,14 @@ class StandardUserAccountNameTests(unittest.TestCase):
         self.assertIn("New-Item -Path $desktopFolder -ItemType Directory -Force", source)
         self.assertIn("$desktop = Join-Path $desktopFolder 'Synveil.lnk'", source)
         self.assertNotIn("Join-Path ([Environment]::GetFolderPath('Desktop'))", source)
+
+    def test_standard_user_smoke_uses_packaged_windows_qpa_plugin(self) -> None:
+        source = PER_USER_TEST.read_text(encoding="utf-8")
+        installer = WINDOWS_INSTALLER.read_text(encoding="utf-8")
+
+        self.assertIn("$env:QT_QPA_PLATFORM='windows'", source)
+        self.assertNotIn("QT_QPA_PLATFORM='offscreen'", source)
+        self.assertIn("'platforms/qwindows.dll'", installer)
 
     def test_installed_runtime_verifier_uses_powershell_failure_semantics(self) -> None:
         source = PER_USER_TEST.read_text(encoding="utf-8")
