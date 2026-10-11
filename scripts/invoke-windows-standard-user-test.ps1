@@ -136,7 +136,7 @@ try {
                 Write-Host "STANDARD_USER_DIAGNOSTIC uninstall_log=$safeLine"
             }
         }
-        $repairLog = Join-Path $childLogs 'repair-production.log'
+        $repairLog = Join-Path (Join-Path $childLogs 'p027') 'repair-production.log'
         if (Test-Path -LiteralPath $repairLog -PathType Leaf) {
             $repairLines = @(Get-Content -LiteralPath $repairLog -Tail 24 -ErrorAction SilentlyContinue)
             foreach ($line in $repairLines) {

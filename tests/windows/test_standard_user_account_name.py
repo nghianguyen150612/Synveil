@@ -119,6 +119,7 @@ class StandardUserAccountNameTests(unittest.TestCase):
         self.assertIn("Select-Object -First 20", diagnostics)
         self.assertIn("Select-Object -First 40", diagnostics)
         self.assertIn("repair-production.log", diagnostics)
+        self.assertIn("Join-Path (Join-Path $childLogs 'p027') 'repair-production.log'", diagnostics)
         self.assertIn("Get-Content -LiteralPath $repairLog -Tail 24", diagnostics)
         self.assertIn("Win32_Process", diagnostics)
         self.assertIn("GetOwner", diagnostics)
