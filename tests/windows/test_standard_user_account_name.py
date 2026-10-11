@@ -114,7 +114,7 @@ class StandardUserAccountNameTests(unittest.TestCase):
         diagnostics = source[start:end]
 
         self.assertIn("(?:PER_USER|LIFECYCLE)_[A-Z0-9_]+:", diagnostics)
-        self.assertIn(r"LIFECYCLE_TIMEOUT_(?:PROCESS|RECOVERY)\b", diagnostics)
+        self.assertIn(r"LIFECYCLE_TIMEOUT_(?:PROCESS|RECOVERY|DIAGNOSTIC)\b", diagnostics)
         self.assertIn("Select-Object -First 24", diagnostics)
         self.assertIn("Select-Object -First 20", diagnostics)
         self.assertIn("Select-Object -First 40", diagnostics)
@@ -136,7 +136,10 @@ class StandardUserAccountNameTests(unittest.TestCase):
         self.assertIn("@($stdout,$stderr,$lifecycleStdout,$lifecycleStderr)", source)
         self.assertIn("PER_USER|LIFECYCLE", source)
         self.assertIn("uninstaller|reinstaller|desktop smoke|client probe", source)
-        self.assertIn(r"LIFECYCLE_TIMEOUT_(?:PROCESS|RECOVERY)\b", source)
+        self.assertIn(r"LIFECYCLE_TIMEOUT_(?:PROCESS|RECOVERY|DIAGNOSTIC)\b", source)
+        self.assertIn("LIFECYCLE_TIMEOUT_DIAGNOSTIC", lifecycle)
+        self.assertIn("Win32_Thread", lifecycle)
+        self.assertIn("wait_states=$waitSummary", lifecycle)
         self.assertIn("Select-Object -First 24", source)
         self.assertIn("$safeLine.Replace(\"$env:SystemDrive\\Users\\$user\", '[USER_PROFILE]')", source)
         self.assertIn("$safeLine.Replace($password,'[REDACTED]')", source)

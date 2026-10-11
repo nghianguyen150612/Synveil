@@ -194,6 +194,9 @@ def main() -> int:
         require(evidence in per_user_test, f"P025 standard-user profile environment: {evidence}")
     for evidence in ("SetPassword", "-Credential", "-LoadUserProfile", "WaitForExit(300000)", ".Delete('user'", "Remove-CimInstance", "::add-mask::"):
         require(evidence in per_user_invoker, f"P025 disposable-account harness: {evidence}")
+    for evidence in ("LIFECYCLE_TIMEOUT_DIAGNOSTIC", "Win32_Thread", "wait_states=$waitSummary"):
+        require(evidence in LIFECYCLE_TEST.read_text(encoding="utf-8"),
+                f"P027 timeout diagnostics include process state: {evidence}")
     account_set_info = per_user_invoker.index("$account.SetInfo()")
     account_created_flag = per_user_invoker.index("$accountCreated = $true")
     require("$accountCreationAttempted" in per_user_invoker and account_created_flag > account_set_info,
@@ -233,6 +236,21 @@ def main() -> int:
                      "RemoveProvenObsoleteFiles", "FileAttributeReparsePoint",
                      "--cleanup-startup-integration", "CurUninstallStepChanged"):
         require(evidence in iss, f"P027 installer lifecycle contract: {evidence}")
+    current_manifest_lookup = iss[iss.index("function CurrentManifestOwns"):iss.index("procedure LoadCurrentManifestEntries")]
+    current_manifest_loader = iss[iss.index("procedure LoadCurrentManifestEntries"):iss.index("procedure RemoveProvenObsoleteFiles")]
+    obsolete_file_reconciliation = iss[iss.index("procedure RemoveProvenObsoleteFiles"):iss.index("function IsExplicitUpgradeSource")]
+    require("CurrentManifestEntries.IndexOf(Relative)" in current_manifest_lookup and
+            current_manifest_lookup.count("GetSHA256OfFile") == 1 and "LoadFromFile" not in current_manifest_lookup,
+            "P027 ownership lookup verifies manifest identity and uses its authenticated in-memory index")
+    require("CurrentManifestEntries.CaseSensitive := False" in current_manifest_loader and
+            "CurrentManifestEntries.Sorted := True" in current_manifest_loader and
+            current_manifest_loader.count("GetSHA256OfFile") == 2 and
+            "duplicate file identities" in current_manifest_loader,
+            "P027 target manifest is hash-verified around one strict, indexed load")
+    require(obsolete_file_reconciliation.count("LoadCurrentManifestEntries") == 1 and
+            "reconciliation progress" in obsolete_file_reconciliation and
+            "changed during ownership reconciliation" in obsolete_file_reconciliation,
+            "P027 repair reconciles the owned-file manifest in a bounded indexed pass")
     require("Root: HKCU64;" in iss, "trusted manifest identity writes to the 64-bit HKCU uninstall registry view")
     require("RegQueryStringValue(HKCU64," in iss, "recovery reads the 64-bit HKCU uninstall registry view")
     require("RegWriteStringValue(HKCU64, UninstallKey, 'SynveilManifestSha256'" in iss

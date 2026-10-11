@@ -90,6 +90,30 @@ function Invoke-Setup([string]$Path, [string[]]$Extra, [int]$Expected, [string]$
             $tree = @(Get-SetupProcessTree $process.Id)
             foreach ($entry in ($tree | Select-Object -First 16)) {
                 Write-Output "LIFECYCLE_TIMEOUT_PROCESS name=$($entry.Name) pid=$($entry.ProcessId) parent_pid=$($entry.ParentProcessId)"
+                $commandLine = [string]$entry.CommandLine
+                if (![string]::IsNullOrEmpty($commandLine)) {
+                    $commandLine = $commandLine.Replace($script:profileRoot, '[USER_PROFILE]')
+                    if ($commandLine.Length -gt 600) { $commandLine = $commandLine.Substring(0,600) + ' …' }
+                }
+                $executablePath = [string]$entry.ExecutablePath
+                if (![string]::IsNullOrEmpty($executablePath)) {
+                    $executablePath = $executablePath.Replace($script:profileRoot, '[USER_PROFILE]')
+                }
+                $processInfo = Get-Process -Id ([int]$entry.ProcessId) -ErrorAction SilentlyContinue
+                $cpuSeconds = if ($null -ne $processInfo) {
+                    $processInfo.TotalProcessorTime.TotalSeconds.ToString('F1',[Globalization.CultureInfo]::InvariantCulture)
+                } else { 'unavailable' }
+                $mainWindow = if ($null -ne $processInfo -and $processInfo.MainWindowTitle) {
+                    [string]$processInfo.MainWindowTitle
+                } else { '[none]' }
+                if ($mainWindow.Length -gt 200) { $mainWindow = $mainWindow.Substring(0,200) + ' …' }
+                $waitSummary = 'unavailable'
+                try {
+                    $threads = @(Get-CimInstance -ClassName Win32_Thread -Filter "ProcessHandle=$($entry.ProcessId)" -ErrorAction Stop)
+                    $waitSummary = @($threads | Group-Object { "$($_.ThreadState):$($_.ThreadWaitReason)" } |
+                        ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ','
+                } catch { }
+                Write-Output "LIFECYCLE_TIMEOUT_DIAGNOSTIC name=$($entry.Name) pid=$($entry.ProcessId) image=$executablePath cpu_seconds=$cpuSeconds threads=$($entry.ThreadCount) wait_states=$waitSummary window=$mainWindow command_line=$commandLine"
             }
         } catch {
             Write-Output "LIFECYCLE_TIMEOUT_PROCESS_TREE_FAILURE type=$($_.Exception.GetType().FullName)"
