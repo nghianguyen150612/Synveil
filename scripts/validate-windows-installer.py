@@ -143,7 +143,8 @@ def main() -> int:
     require('rustc "${SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS[@]}" "${rustc_linker_args[@]}"' in reproducible, "direct rustc receives discrete remaps")
     for runtime_rule in ("SYNVEIL_MSVC_CRT_DIR", "VCToolsRedistDir/x64/%s", "MSVCP140", "copy_missing_msvc_runtime_imports", "--qmldir", "platforms/qwindows.dll", "QmlImports=qml", "Qml2Imports=qml", "is_system_dll", "missing non-system import", "development directory leaked", 'rm -rf -- "$STAGING_DIR"'):
         require(runtime_rule in package, f"authoritative runtime rule: {runtime_rule}")
-    require("--compiler-runtime" not in package, "Windows Qt deployment must not stage the VC redistributable installer")
+    require("--compiler-runtime" not in package and "--no-compiler-runtime" in package,
+            "Windows Qt deployment must explicitly exclude the VC redistributable installer")
     require(package.rindex("copy_missing_msvc_runtime_imports") < package.index("# Audit every shipped PE's imports"),
             "authenticated CRT closure must be copied before the complete import audit")
     for required in ("SYNVEIL-MANIFEST.txt", "unmanifested package file", "0x8664", "platforms/qwindows.dll"):
