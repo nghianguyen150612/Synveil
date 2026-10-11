@@ -66,6 +66,9 @@ PATH="$msvc_fixture_bin:$PATH"
 export PATH
 QMAKE="$fixture_root/no-qmake"
 export QMAKE
+# Keep Qt wrapper discovery disabled for every simulated Cargo-home case below.
+# Windows installer validation runs this test after installing Qt, while the
+# Rust CI job runs it before Qt is installed.
 MSYSTEM=MINGW64
 MSYS2_ENV_CONV_EXCL='SYNVEIL_TEST_SENTINEL'
 SYNVEIL_MSVC_AR="$msvc_fixture_bin/llvm-ar.exe"
@@ -149,7 +152,7 @@ AR="$SYNVEIL_MSVC_AR"
 export AR
 PATH="$msvc_fixture_bin:$original_path"
 export PATH
-unset QMAKE CARGO_ENCODED_RUSTFLAGS RUSTFLAGS
+unset CARGO_ENCODED_RUSTFLAGS RUSTFLAGS
 
 # Exercise explicit and default Windows Cargo homes. On a Windows host, use
 # the real cygpath executable so MSYS argument conversion is part of the test.
@@ -279,5 +282,5 @@ if "CARGO_ENCODED_RUSTFLAGS" not in os.environ.get("MSYS2_ENV_CONV_EXCL", "").sp
 PY
 fi
 
-unset AR SYNVEIL_MSVC_AR MSYSTEM
+unset AR SYNVEIL_MSVC_AR MSYSTEM QMAKE
 echo "windows Rust flag transport: PASS"
