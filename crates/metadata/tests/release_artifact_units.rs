@@ -120,13 +120,18 @@ fn compile_qt_wrapper(root: &Path, real_rcc: &Path, real_qmlcachegen: &Path) -> 
 
 fn install_named_wrapper(binary: &Path, directory: &Path, name: &str) -> PathBuf {
     let path = directory.join(name);
-    fs::copy(binary, &path).expect("copy wrapper under Qt tool name");
+    // Publish the executable name atomically after the copy and mode update.
+    // Linux can reject execve with ETXTBSY if a path is made executable while
+    // another process still has that path open for writing.
+    let staged = directory.join(format!(".{name}.pending-{}", std::process::id()));
+    fs::copy(binary, &staged).expect("stage wrapper under a temporary name");
     use std::os::unix::fs::PermissionsExt;
-    let mut permissions = fs::metadata(&path)
+    let mut permissions = fs::metadata(&staged)
         .expect("read wrapper metadata")
         .permissions();
     permissions.set_mode(0o755);
-    fs::set_permissions(&path, permissions).expect("make Qt wrapper executable");
+    fs::set_permissions(&staged, permissions).expect("make staged Qt wrapper executable");
+    fs::rename(&staged, &path).expect("publish completed Qt test wrapper");
     path
 }
 
@@ -712,4 +717,13 @@ fn artifact_unit_6_validation_failure_explains_mismatch_reason() {
     assert!(stderr.contains("actual:"), "diagnostic: {stderr}");
     assert!(stderr.contains("manifest mismatch"), "diagnostic: {stderr}");
     let _ = fs::remove_file(tampered_manifest);
+}
+
+#[test]
+fn artifact_unit_12_absent_build_id_has_an_explicit_manifest_field() {
+    let common = read(repo_root().join("deploy/packages/common/reproducible.sh"));
+    let validator_source = read(validator());
+    assert!(common.contains("printf '%s' \"${build_id:--}\""));
+    assert!(common.contains("[[ \"$(synveil_artifact_build_id \"$artifact\")\" == '-' ]]"));
+    assert!(validator_source.contains("^(-|[0-9a-fA-F]+)$"));
 }
