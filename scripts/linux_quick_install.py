@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import os
@@ -14,6 +15,7 @@ import tempfile
 import re
 import stat
 import fcntl
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urljoin
@@ -60,6 +62,90 @@ REQUIRED_PATHS = (
     "/usr/share/icons/hicolor/scalable/apps/synveil.svg",
     "/usr/lib/systemd/user/synveil-client.service",
 )
+DPKG_CONFIG_FILE = Path("/etc/dpkg/dpkg.cfg")
+DPKG_CONFIG_DIR = Path("/etc/dpkg/dpkg.cfg.d")
+DPKG_POLICY_EXCLUDED_DOCS = frozenset({
+    "/usr/share/doc/synveil/LICENSE",
+    "/usr/share/doc/synveil/NOTICE",
+})
+
+
+def _trusted_dpkg_config_text(path: Path) -> str | None:
+    """Read one root-owned dpkg config file without following writable links."""
+    try:
+        for item in (path, *path.parents):
+            info = item.lstat()
+            if stat.S_ISLNK(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+                return None
+            if item == path:
+                if not stat.S_ISREG(info.st_mode):
+                    return None
+            elif not stat.S_ISDIR(info.st_mode):
+                return None
+            if item == Path("/etc"):
+                break
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def _dpkg_config_excludes_path(path: str, config_texts: tuple[str, ...]) -> bool:
+    """Apply ordered dpkg path-include/path-exclude rules to an absolute path."""
+    excluded = False
+    try:
+        for config_text in config_texts:
+            for raw_line in config_text.splitlines():
+                fields = shlex.split(raw_line, comments=True, posix=True)
+                if not fields:
+                    continue
+                option = fields[0].removeprefix("--")
+                if len(fields) == 1 and "=" in option:
+                    option, value = option.split("=", 1)
+                elif len(fields) == 2:
+                    value = fields[1]
+                else:
+                    continue
+                if option not in {"path-exclude", "path-include"}:
+                    continue
+                if fnmatch.fnmatchcase(path, value):
+                    excluded = option == "path-exclude"
+    except ValueError:
+        return False
+    return excluded
+
+
+def _dpkg_path_is_policy_excluded(path: str) -> bool:
+    if path not in DPKG_POLICY_EXCLUDED_DOCS:
+        return False
+    config_texts: list[str] = []
+    if DPKG_CONFIG_FILE.exists():
+        text = _trusted_dpkg_config_text(DPKG_CONFIG_FILE)
+        if text is None:
+            return False
+        config_texts.append(text)
+    try:
+        config_files = sorted(DPKG_CONFIG_DIR.iterdir()) if DPKG_CONFIG_DIR.exists() else []
+    except OSError:
+        return False
+    for config_file in config_files:
+        if config_file.is_dir() and not config_file.is_symlink():
+            continue
+        text = _trusted_dpkg_config_text(config_file)
+        if text is None:
+            return False
+        config_texts.append(text)
+    return _dpkg_config_excludes_path(path, tuple(config_texts))
+
+
+def _dpkg_verify_output_is_only_policy_excluded_docs(output: str) -> bool:
+    lines = [line for line in output.splitlines() if line.strip()]
+    if not lines:
+        return False
+    for line in lines:
+        match = re.fullmatch(r"\s*missing\s+(\S+)\s*", line)
+        if match is None or not _dpkg_path_is_policy_excluded(match.group(1)):
+            return False
+    return True
 
 
 def resolve_profile(asserted_name: str | None, detection: linux_platform_detection.DetectionResult) -> Profile:
@@ -129,7 +215,7 @@ class NativeManager:
                                     "Acquire trusted package evidence first.", EXIT_INTEGRITY)
         require_staged_evidence(evidence)
         command = (["apt-get", "install", "-y", "--", str(package)] if self.profile.artifact_type == "deb"
-                   else ["dnf", "install", "-y", "--", str(package)])
+                   else ["dnf", "install", "-y", str(package)])
         try:
             result = self._run(command, mutate=True)
         except KeyboardInterrupt as error:
@@ -167,8 +253,16 @@ class NativeManager:
         # and a version label alone do not prove its bytes survived mutation.
         command = ["dpkg", "--verify", "synveil"] if self.profile.artifact_type == "deb" else ["rpm", "-V", "synveil"]
         result = self._run(command)
-        if result.returncode != 0 or result.stdout.strip():
+        if result.returncode != 0:
             return "package_database_integrity_check_failed"
+        output = result.stdout.strip()
+        if output:
+            expected_deb_policy_omissions = (
+                self.profile.artifact_type == "deb"
+                and _dpkg_verify_output_is_only_policy_excluded_docs(output)
+            )
+            if not expected_deb_policy_omissions:
+                return "package_database_integrity_check_failed"
         return None
 
 
