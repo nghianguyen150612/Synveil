@@ -472,7 +472,9 @@ synveil_prepare_reproducible_rust_build() {
         local selected_archiver_fs="$selected_archiver"
         local expected_archiver_identity
         local configured_archiver_identity
-        local existing_cxxflags="${CXXFLAGS:-}"
+        local build_flag_var
+        local native_flag
+        local -a native_repro_flags=("/Brepro" "/experimental:deterministic")
 
         if [[ -z "$selected_archiver" ]]; then
             printf '[synveil-artifact] ERROR: MSVC reproducible builds require SYNVEIL_MSVC_AR from the authenticated Visual Studio toolchain selection\n' >&2
@@ -506,20 +508,34 @@ synveil_prepare_reproducible_rust_build() {
         synveil_append_msys_env_conversion_exclusion AR
         synveil_append_msys_env_conversion_exclusion SYNVEIL_MSVC_AR
 
-        # Rust's /Brepro link argument does not reach C++ files compiled by
-        # cc-rs (including cxx-qt). Give the MSVC compiler the same deterministic
-        # mode, and keep Git Bash from rewriting the leading slash as a path.
-        case " ${existing_cxxflags} " in
-            *" /Brepro "*) ;;
-            *)
-                if [[ -n "$existing_cxxflags" ]]; then
-                    existing_cxxflags+=" "
-                fi
-                existing_cxxflags+="/Brepro"
-                ;;
-        esac
-        export CXXFLAGS="$existing_cxxflags"
-        synveil_append_msys_env_conversion_exclusion CXXFLAGS
+        # MSVC's /Brepro removes COFF timestamps. /experimental:deterministic
+        # also stabilizes compiler-generated object and debug metadata, while
+        # /pathmap gives the compiler identical logical source/output roots
+        # when Cargo builds in distinct target directories. Apply the policy
+        # to C and C++ dependencies because both feed the desktop link. Keep
+        # Git Bash from rewriting these switches or paths at Cargo boundaries.
+        if [[ -n "$native_repo_root" ]]; then
+            native_repro_flags+=("/pathmap:${native_repo_root}=/usr/src/synveil")
+        fi
+        if [[ -n "$native_target_dir" ]]; then
+            native_repro_flags+=("/pathmap:${native_target_dir}=/usr/src/synveil-target")
+        fi
+        for build_flag_var in CFLAGS CXXFLAGS; do
+            local existing_native_flags="${!build_flag_var:-}"
+            for native_flag in "${native_repro_flags[@]}"; do
+                case " ${existing_native_flags} " in
+                    *" ${native_flag} "*) ;;
+                    *)
+                        if [[ -n "$existing_native_flags" ]]; then
+                            existing_native_flags+=" "
+                        fi
+                        existing_native_flags+="$native_flag"
+                        ;;
+                esac
+            done
+            export "${build_flag_var}=${existing_native_flags}"
+            synveil_append_msys_env_conversion_exclusion "$build_flag_var"
+        done
     fi
     # GNU ld's build-id note was the only differing section in two otherwise
     # identical desktop links. Do not post-process artifacts: disable that

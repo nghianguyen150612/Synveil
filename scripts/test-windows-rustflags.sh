@@ -76,9 +76,10 @@ if command -v cygpath >/dev/null 2>&1; then
     SYNVEIL_MSVC_AR="$(cygpath -w "$SYNVEIL_MSVC_AR")"
 fi
 AR="$SYNVEIL_MSVC_AR"
+CFLAGS='/DKEEP_C_FLAG'
 CXXFLAGS='/DKEEP_CXX_FLAG'
 export MSYSTEM MSYS2_ENV_CONV_EXCL SYNVEIL_MSVC_AR AR
-export CXXFLAGS
+export CFLAGS CXXFLAGS
 unset CARGO_ENCODED_RUSTFLAGS RUSTFLAGS
 synveil_prepare_reproducible_rust_build "$repo_root"
 python3 - <<'PY'
@@ -93,10 +94,17 @@ if index == 0 or flags[index - 1] != "-C":
 if os.environ.get("AR") != os.environ.get("SYNVEIL_MSVC_AR"):
     raise SystemExit("MSVC reproducible archiver was not selected by absolute path")
 cxx_flags = os.environ.get("CXXFLAGS", "").split()
-if cxx_flags.count("/Brepro") != 1 or "/DKEEP_CXX_FLAG" not in cxx_flags:
+if (cxx_flags.count("/Brepro") != 1 or
+        cxx_flags.count("/experimental:deterministic") != 1 or
+        "/DKEEP_CXX_FLAG" not in cxx_flags):
     raise SystemExit(f"MSVC deterministic C++ flag was missing, duplicated, or replaced caller flags: {cxx_flags!r}")
+c_flags = os.environ.get("CFLAGS", "").split()
+if (c_flags.count("/Brepro") != 1 or
+        c_flags.count("/experimental:deterministic") != 1 or
+        "/DKEEP_C_FLAG" not in c_flags):
+    raise SystemExit(f"MSVC deterministic C flag was missing, duplicated, or replaced caller flags: {c_flags!r}")
 exclusions = os.environ.get("MSYS2_ENV_CONV_EXCL", "").split(";")
-for name in ("SYNVEIL_TEST_SENTINEL", "AR", "SYNVEIL_MSVC_AR", "CXXFLAGS", "CARGO_ENCODED_RUSTFLAGS"):
+for name in ("SYNVEIL_TEST_SENTINEL", "AR", "SYNVEIL_MSVC_AR", "CFLAGS", "CXXFLAGS", "CARGO_ENCODED_RUSTFLAGS"):
     if name not in exclusions:
         raise SystemExit(f"MSYS2_ENV_CONV_EXCL does not preserve {name}")
 PY
@@ -222,6 +230,10 @@ case "$1" in
     -m)
         case "$2" in
             *cargo-home*|*'Users/Test User'*) printf '%s' 'C:/Users/Test User/.cargo' ;;
+            "$SYNVEIL_TEST_REPO_ROOT") printf '%s' 'D:/Synveil' ;;
+            "$SYNVEIL_TEST_REPO_ROOT"/target*)
+                printf 'D:/Synveil/target%s' "${2#"$SYNVEIL_TEST_REPO_ROOT"/target}"
+                ;;
             *) printf '%s' 'D:/Synveil' ;;
         esac
         ;;
@@ -237,6 +249,8 @@ SH
     chmod +x "$fixture_root/bin/cygpath"
     PATH="$fixture_root/bin:$PATH"
     export PATH
+    SYNVEIL_TEST_REPO_ROOT="$repo_root"
+    export SYNVEIL_TEST_REPO_ROOT
     MSYSTEM=MINGW64
     export MSYSTEM
     USERPROFILE='C:\Users\Test User'
@@ -263,6 +277,21 @@ if "CARGO_ENCODED_RUSTFLAGS" not in os.environ.get("MSYS2_ENV_CONV_EXCL", "").sp
     raise SystemExit("MSYS2_ENV_CONV_EXCL does not preserve CARGO_ENCODED_RUSTFLAGS")
 if "SYNVEIL_TEST_SENTINEL" not in os.environ.get("MSYS2_ENV_CONV_EXCL", "").split(";"):
     raise SystemExit("MSYS2_ENV_CONV_EXCL overwrote its prior exclusions")
+for name in ("CFLAGS", "CXXFLAGS"):
+    flags = os.environ.get(name, "").split()
+    expected = {
+        "/Brepro",
+        "/experimental:deterministic",
+        "/pathmap:D:/Synveil=/usr/src/synveil",
+        "/pathmap:D:/Synveil/target=/usr/src/synveil-target",
+    }
+    missing = expected - set(flags)
+    if missing:
+        raise SystemExit(f"{name} missing deterministic MSVC compiler flags: {sorted(missing)!r}; flags={flags!r}")
+    if flags.count("/Brepro") != 1 or flags.count("/experimental:deterministic") != 1:
+        raise SystemExit(f"{name} duplicates deterministic MSVC compiler flags: {flags!r}")
+    if name not in os.environ.get("MSYS2_ENV_CONV_EXCL", "").split(";"):
+        raise SystemExit(f"MSYS2_ENV_CONV_EXCL does not preserve {name}")
 PY
 
     # Exercise Cargo's default Windows home when CARGO_HOME is unset.
