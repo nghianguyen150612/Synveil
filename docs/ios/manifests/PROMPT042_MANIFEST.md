@@ -147,12 +147,48 @@ Local validation:
 
 The temporary Linux harness links official SQLite 3.50.4 and production sources; only scratch test copies adapt synchronous MainActor discovery and skip unavailable native Rust/SwiftUI cases. Native repository tests are unchanged by these portability adaptations. No local Xcode/Apple SDK, Simulator or Rust compiler is available. Native Rust/SwiftUI and full Apple integration are verified by the required hosted workflows below.
 
-## Hosted delivery record
+## Final hosted delivery record
 
-Feature SHA, PR URL, exact-head iOS Static Validation, iOS Build, iOS Simulator Tests, explicitly dispatched iOS Rust Apple Build, native result counts/artifact, merge proof and fetched integration tip are pending hosted execution. These are completed in a documentation-only delivery-record update after the source PR's actual hosted merge, avoiding fabricated future evidence or a self-referential Git commit ID.
+Frozen feature head: `7cf32fd85136fa4b36112c76ed02b9c9197ebc0b` on `ios/p042-rebaseline-snapshot`. Source PR [#117](https://github.com/nghianguyen150612/Synveil/pull/117) targeted `ios-app`, was marked ready, and was squash-merged at `2026-10-11T03:21:40Z`. GitHub independently reports `merged=true`, `state=closed`, and `draft=false`, with source merge SHA `84eb3b246b1d01c84d86c4e1608df9e0426c4947`.
 
-Native Keychain/Data Protection skip classifications and unrelated CI statuses will be recorded from the actual P042 run. P041 results are not reused as P042 validation. Physical-device validation: **NOT_AVAILABLE**. Native SQLite commit/reopen tests do not establish physical power-loss durability.
+After the merge, `origin/ios-app` was fetched and verified at `84eb3b246b1d01c84d86c4e1608df9e0426c4947`. Its tree and the tested feature tree are both `bcd057837fb568e3a4e73928254e43285b829654`. The required P041 ancestor remains intact. Sources, tests, registrations and the initial source manifest are present on the integration branch. This documentation-only finalization records the actual CI and merge evidence; it changes no application or test source. Its eventual own squash OID cannot be embedded in that same commit, so the final documentation integration tip and hosted merge state are independently verified and reported in the delivery response.
 
-Deferred: file-content cache/transfer/preview/export/upload, background rebaseline/sync/ACK/drain, automatic uncertain-completion retry, automatic mutation rebase/conflict reconciliation, cold-start offline authentication restoration, and physical-device validation. Libraries exceeding the documented local ceilings remain capacity-blocked with previous metadata preserved. An uncertain handoff whose replay evidence has expired requires authoritative reconciliation outside this foundation.
+All four required workflows succeeded for the exact frozen feature SHA; each run's `head_sha`, completed state and successful conclusion were checked independently:
 
-P042 readiness remains pending until the genuine source PR is merged into `ios-app`, required exact-head iOS workflows pass, and the final manifest update and integration contents are verified.
+| Workflow | Exact-head run | Result |
+|---|---|---|
+| iOS Static Validation | [38107042583](https://github.com/nghianguyen150612/Synveil/actions/runs/38107042583) | SUCCESS; strict official Swift formatting, 76 Python tests and source validator |
+| iOS Build | [38107042537](https://github.com/nghianguyen150612/Synveil/actions/runs/38107042537) | SUCCESS; native Xcode application build |
+| iOS Simulator Tests | [38107040319](https://github.com/nghianguyen150612/Synveil/actions/runs/38107040319) | SUCCESS; 1,492 total, 1,490 passed, 2 skipped, 0 failed |
+| iOS Rust Apple Build, explicitly dispatched | [38107046195](https://github.com/nghianguyen150612/Synveil/actions/runs/38107046195) | SUCCESS; Apple targets, Rust/C header alignment and staged artifact validation |
+
+Native Simulator: iPhone 17 Pro, iOS 26.5. All 61 new XCTest methods passed: transport 11, manifest 10, SQLite 12, recovery 17 and ViewModel/browser/native UI 11. The registered P024–P041 regression suite remained green. The native test result bundle artifact is `ios-simulator-test-results`, ID `11689459905`, size 60,830,557 bytes, digest `sha256:545ede66f619d70350c6e6786691d51bb7db6763220efd87dba50be204ee105e`, available through the Simulator run above. The artifact was not expired when verified.
+
+The native result log explicitly confirms real file-backed SQLite migration, staged multi-page cursor/prepared-generation reopen, active-cache preservation and atomic replacement, timeout/replay completion recovery, confirmation/activation fault recovery, cross-connection exclusion, and logout/credential fencing. Representative passing methods include `testStagingPreservesOldActiveCacheUntilAtomicReplacement`, `testPreparedSnapshotAndSavedCursorSurviveReopenWithoutNetwork`, `testResponseLossLeavesPreparedUnknownAndSameTokenRecoveryActivatesAfterReopen`, `testLogoutFencesLateCompletionAndQuarantinesPreparedEvidence`, and `testHandoffRefreshesSurroundingSyncStatusWithoutNetworkWork`. The last verifies surrounding Sync Status rereads the committed COMPLETE/checkpoint state without feed/ACK requests. Interrupted-process boundaries are exercised through persisted states, reopen and fault injection; these tests do not simulate physical power failure or establish hardware durability.
+
+Exactly two native Simulator tests skipped; neither is counted as passed:
+
+- `KeychainCredentialStoreTests.testSimulatorKeychainRoundTripUsesUniqueTestService`: the unsigned Simulator test process lacks the required Keychain access entitlement.
+- `MutationQueueSQLiteTests.testNativeDataProtectionAttributes`: the Simulator filesystem does not expose Data Protection attributes; requested policy is verified separately.
+
+Physical-device validation: **NOT_AVAILABLE**. No hardware-backed Keychain round-trip, physical Data Protection result, manual device accessibility session, physical process/power interruption result or live production-server exercise is claimed. The network fixtures match the authoritative server contract; the actual production rebaseline service was not contacted.
+
+## Unrelated hosted CI snapshot
+
+The source PR merged after all four required exact-head iOS gates passed. No desktop, packaging, server, PostgreSQL, shared Rust or CI workflow source was changed by P042.
+
+At the source merge:
+
+- Exact-head Linux AppImage PR run [38107042533](https://github.com/nghianguyen150612/Synveil/actions/runs/38107042533): FAILURE. Its artifact inspection reports a private/temporary `/home/` build path in unchanged `synveil-desktop` output.
+- Exact-head Rust CI PR run [38107042546](https://github.com/nghianguyen150612/Synveil/actions/runs/38107042546): QUEUED; no final conclusion inferred.
+- Exact-head PostgreSQL 17 scheduled-maintenance PR run [38107042528](https://github.com/nghianguyen150612/Synveil/actions/runs/38107042528): IN_PROGRESS; no final conclusion inferred.
+- Exact-head Linux native packages PR run [38107042555](https://github.com/nghianguyen150612/Synveil/actions/runs/38107042555): IN_PROGRESS; no final conclusion inferred.
+- Redundant non-iOS push runs on the same final head (Rust CI `38107040292`, AppImage `38107040263`, native packages `38107040245`, PostgreSQL `38107040267`) were cancelled while queued to reduce runner pressure. Their PR-triggered counterparts remained active or queued. They are not described as passed.
+
+For context, superseded P042 source head `2071857369d4bd0fee892033d1c982eb341d7d92` had shared Rust CI run [38106268290](https://github.com/nghianguyen150612/Synveil/actions/runs/38106268290) fail on unchanged object-store `clippy::double_must_use` at `crates/object-store/src/types.rs:95` and `:359` (also native desktop Linux), unchanged Windows Unix-only imports in `crates/install-engine/src/appimage.rs`, and three macOS desktop IPC tests reporting `UnsafeEndpoint` in `crates/client/src/control.rs` and `launch.rs`. This is explicitly earlier-head context, not reused as final-head evidence. The required iOS evidence above is entirely from the final feature SHA.
+
+## Remaining limits and readiness
+
+Deferred: file-content cache/transfer/preview/export/upload, background rebaseline/sync/ACK/drain, automatic uncertain-completion retry, automatic mutation rebase/conflict reconciliation, cold-start offline authentication restoration, and physical-device validation. Existing bounded navigation/listing policies remain. Libraries exceeding the documented local storage/row/page ceilings retain previous metadata and remain capacity-blocked. An uncertain handoff whose replay evidence expired requires authoritative reconciliation outside this foundation.
+
+The feature is genuinely merged into `ios-app` and all required exact-head iOS workflows passed. After this documentation-only finalization is merged and the final integration contents are verified, Prompt043 readiness is **READY_FOR_PROMPT043**.
