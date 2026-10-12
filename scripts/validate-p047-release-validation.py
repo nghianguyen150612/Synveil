@@ -74,6 +74,11 @@ def validate_report(data: dict[str, Any]) -> None:
                 require(isinstance(item.get(field), str) and SHA1.fullmatch(item[field]) is not None,
                         f"{item_id}: {field} must be an exact full Git SHA for an existing candidate")
         require(isinstance(item.get("evidence_location"), list), f"{item_id}: evidence_location must be a list")
+        if item["status"] == "UNVERIFIED" and item.get("artifact_id") is not None:
+            for field in ("artifact_name", "artifact_type", "platform", "architecture", "product_version",
+                          "toolchain_identity", "build_workflow_id", "build_job_id", "artifact_id"):
+                require(item.get(field) is not None,
+                        f"{item_id}: unverified artifact has no {field}")
         if item["status"] == "AVAILABLE":
             for field in ("artifact_name", "artifact_type", "platform", "architecture", "product_version",
                           "toolchain_identity", "build_workflow_id", "build_job_id", "artifact_id", "byte_size", "sha256"):

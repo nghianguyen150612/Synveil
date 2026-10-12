@@ -51,6 +51,14 @@ class P047ReportTests(unittest.TestCase):
 
     def test_available_artifact_requires_exact_identity(self):
         item = next(x for x in self.data["artifact_inventory"] if x["inventory_id"] == "windows_installer")
+        item["status"] = "AVAILABLE"
+        item["artifact_name"] = None
+        with self.assertRaises(ValueError):
+            VALIDATOR.validate_report(self.data)
+
+    def test_unverified_artifact_keeps_exact_producer_identity(self):
+        item = next(x for x in self.data["artifact_inventory"] if x["inventory_id"] == "windows_installer")
+        self.assertEqual(item["status"], "UNVERIFIED")
         item["artifact_name"] = None
         with self.assertRaises(ValueError):
             VALIDATOR.validate_report(self.data)
