@@ -208,7 +208,8 @@ def main() -> int:
             "Windows flag regression keeps Qt wrapper discovery isolated when run after Qt installation")
     require('"${VCToolsInstallDir:?VCToolsInstallDir is required for the MSVC path-map probe}"' in rustflags_test and
             "/bin/Hostx64/x64/cl.exe" in rustflags_test and
-            "/nologo /FC /Z7 /Od /c" in rustflags_test and
+            "/nologo /FC /Od /c" in rustflags_test and
+            "Keep debug metadata disabled" in rustflags_test and
             'PROBE_OBJECT="$probe_object" python3' in rustflags_test and
             'synveil-repro-msvc-pathmap.' in rustflags_test,
             "Windows path-map regression compiles and inspects an object with the active MSVC compiler")

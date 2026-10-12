@@ -346,8 +346,8 @@ if [[ -n "${VCToolsInstallDir:-}" ]] &&
     mkdir -p "$repo_root/target"
     probe_target_dir="$(mktemp -d "$repo_root/target/synveil-repro-msvc-pathmap.XXXXXX")"
     probe_header_dir="$probe_target_dir/release/build/synveil-desktop-pathmap/out/cxxqtbuild/include/cxx-qt"
-    probe_source="$probe_target_dir/pathmap-probe.cpp"
-    probe_object="$probe_target_dir/pathmap-probe.obj"
+    probe_source="$fixture_root/pathmap-probe.cpp"
+    probe_object="$fixture_root/pathmap-probe.obj"
     mkdir -p "$probe_header_dir"
     cat > "$probe_header_dir/thread.h" <<'CPP'
 inline const char* synveil_pathmap_probe_header() { return __FILE__; }
@@ -387,7 +387,9 @@ PY
     probe_arg_conv_excl_before="${MSYS2_ARG_CONV_EXCL:-}"
     MSYS2_ARG_CONV_EXCL='*'
     export MSYS2_ARG_CONV_EXCL
-    "$native_msvc_cl" /nologo /FC /Z7 /Od /c "${probe_cxx_flags[@]}" /I "$probe_header_root_windows" "$probe_source_windows" "/Fo$probe_object_windows"
+    # Keep debug metadata disabled so any target-root path found in the object
+    # comes from the included generated header's __FILE__ string.
+    "$native_msvc_cl" /nologo /FC /Od /c "${probe_cxx_flags[@]}" /I "$probe_header_root_windows" "$probe_source_windows" "/Fo$probe_object_windows"
     if [[ -n "$probe_arg_conv_excl_was_set" ]]; then
         MSYS2_ARG_CONV_EXCL="$probe_arg_conv_excl_before"
         export MSYS2_ARG_CONV_EXCL
