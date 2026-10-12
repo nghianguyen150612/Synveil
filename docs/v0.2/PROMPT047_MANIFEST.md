@@ -2,7 +2,7 @@
 
 ## Validation checkpoint — 2026-10-12 01:22 UTC (superseded by the blocked-resume audit below)
 
-**P047 preparation is complete for the currently available validation surface; final release qualification remains BLOCKED.** Main and PR #104 base are `3851ea11927e24255614cfc38adbaccbd345ca03` (tree `7801eb5c0d57a312072440a1f2decb463008b12c`). The product source under test was `d712e84e5bb21b1b2f845352c59ac10f0485c24c` (tree `63ee01be4861a84577331aa0579739df0f0060a7`), the published product head at the validation snapshot. The final P047 closeout commit changes only the report, manifest, and report validator/tests; it does not change the tested product tree. PR #104 remains OPEN / DRAFT / UNMERGED. P045 PR #78 is independently OPEN / DRAFT / UNMERGED at `035497c05c145e5c6129e744f9455937069680f4`.
+**P047 preparation is complete for the currently available validation surface; final release qualification remains BLOCKED.** Main and PR #104 base are `3851ea11927e24255614cfc38adbaccbd345ca03` (tree `7801eb5c0d57a312072440a1f2decb463008b12c`). The product source under test was `d712e84e5bb21b1b2f845352c59ac10f0485c24c` (tree `63ee01be4861a84577331aa0579739df0f0060a7`), the published product head at the validation snapshot. The original report-only closeout commit `1ba1c64e5cf12bf11394169012c4c7bd76b08c85` and subsequent blocked-resume commits update only the report, manifest, and report validator/tests; they do not change the tested product tree. PR #104 remains OPEN / DRAFT / UNMERGED. P045 PR #78 is independently OPEN / DRAFT / UNMERGED at `035497c05c145e5c6129e744f9455937069680f4`.
 
 ### Source and hosted-workflow provenance
 
