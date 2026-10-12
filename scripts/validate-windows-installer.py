@@ -181,6 +181,9 @@ def main() -> int:
             "cqD" in reproducible and "unselected AR executable" in
             (ROOT / "scripts/test-windows-rustflags.sh").read_text(encoding="utf-8"),
             "MSVC uses deterministic archives, compiler mode, source/output path maps, and MSYS-safe C/C++ flags")
+    require(reproducible.index('"/pathmap:${native_target_dir}=/usr/src/synveil-target"') <
+            reproducible.index('"/pathmap:${native_repo_root}=/usr/src/synveil"'),
+            "MSVC maps nested target roots before the broader checkout path")
     require("$banner" not in workflow and "& $linker '/?'" not in workflow, "linker identity does not depend on localized help output")
     require("CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" in reproducible and '"${rustc_linker_args[@]}"' in reproducible, "direct rustc uses selected MSVC linker")
     require("CARGO_ENCODED_RUSTFLAGS" in reproducible and "$'\\x1f'" in reproducible, "lossless Cargo flag transport")
@@ -203,6 +206,12 @@ def main() -> int:
             qmake_fixture < cargo_home_cases < qmake_reset and
             "Keep Qt wrapper discovery disabled for every simulated Cargo-home case below." in rustflags_test,
             "Windows flag regression keeps Qt wrapper discovery isolated when run after Qt installation")
+    require('"${VCToolsInstallDir:?VCToolsInstallDir is required for the MSVC path-map probe}"' in rustflags_test and
+            "/bin/Hostx64/x64/cl.exe" in rustflags_test and
+            "/nologo /FC /Z7 /Od /c" in rustflags_test and
+            'PROBE_OBJECT="$probe_object" python3' in rustflags_test and
+            'synveil-repro-msvc-pathmap.' in rustflags_test,
+            "Windows path-map regression compiles and inspects an object with the active MSVC compiler")
     for runtime_rule in ("SYNVEIL_MSVC_CRT_DIR", "VCToolsRedistDir/x64/%s", "MSVCP140", "copy_missing_msvc_runtime_imports", "--qmldir", "platforms/qwindows.dll", "QmlImports=qml", "Qml2Imports=qml", "is_system_dll", "missing non-system import", "development directory leaked", 'rm -rf -- "$STAGING_DIR"'):
         require(runtime_rule in package, f"authoritative runtime rule: {runtime_rule}")
     require("--compiler-runtime" not in package and "--no-compiler-runtime" in package,

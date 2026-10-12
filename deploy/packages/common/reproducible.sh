@@ -514,11 +514,15 @@ synveil_prepare_reproducible_rust_build() {
         # when Cargo builds in distinct target directories. Apply the policy
         # to C and C++ dependencies because both feed the desktop link. Keep
         # Git Bash from rewriting these switches or paths at Cargo boundaries.
-        if [[ -n "$native_repo_root" ]]; then
-            native_repro_flags+=("/pathmap:${native_repo_root}=/usr/src/synveil")
-        fi
+        # MSVC uses the first matching path map when prefixes overlap. The
+        # target directory is nested under the checkout in release CI, so map
+        # it before the broader repository prefix. Otherwise a generated
+        # source below target/ retains its randomized CARGO_TARGET_DIR suffix.
         if [[ -n "$native_target_dir" ]]; then
             native_repro_flags+=("/pathmap:${native_target_dir}=/usr/src/synveil-target")
+        fi
+        if [[ -n "$native_repo_root" ]]; then
+            native_repro_flags+=("/pathmap:${native_repo_root}=/usr/src/synveil")
         fi
         for build_flag_var in CFLAGS CXXFLAGS; do
             local existing_native_flags="${!build_flag_var:-}"
