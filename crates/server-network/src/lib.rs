@@ -149,15 +149,17 @@ pub fn render_managed_edge_config(plan: &NetworkInstallPlan) -> Result<String, P
         }
         ReachabilityMode::PrivateLan => {
             if !matches!(plan.listener, IpAddr::V4(ip) if private_v4(ip))
-                || plan.interface_id.as_ref().is_none_or(|value| value.is_empty())
+                || plan
+                    .interface_id
+                    .as_ref()
+                    .is_none_or(|value| value.is_empty())
             {
                 return Err(PlanError::InconsistentMode);
             }
             match &plan.firewall {
                 FirewallPlan::CreateOwned {
                     interface_id, port, ..
-                }
-                    if Some(interface_id) == plan.interface_id.as_ref() && *port == plan.port => {}
+                } if Some(interface_id) == plan.interface_id.as_ref() && *port == plan.port => {}
                 FirewallPlan::OperatorOwned => {}
                 _ => return Err(PlanError::InconsistentMode),
             }
