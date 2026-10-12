@@ -4,6 +4,10 @@
 
 These pages describe the intended v0.2 experience and its current limits. They are not proof that a release artifact exists, is authenticated, or has passed native acceptance. Do not install files downloaded from CI or a draft pull request. No v0.2 public download channel or production signing key is published yet.
 
+Development now prioritizes implementation with QA deferred. The
+[implementation inventory and remaining source gaps](../../v0.2/IMPLEMENTATION_COMPLETION.md)
+record why managed Host is still unfinished; this is separate from native qualification.
+
 ## Guides
 
 - [Installation](INSTALLATION.md)

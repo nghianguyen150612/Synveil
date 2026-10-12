@@ -1,0 +1,406 @@
+{
+  "schema_version": 1,
+  "mode": "DEVELOPMENT_FIRST_QA_DEFERRED",
+  "implementation_status": "IMPLEMENTATION_IN_PROGRESS_QA_DEFERRED",
+  "scope_source": "docs/v0.2/ROADMAP.md",
+  "source_checkpoint": "3b9574bbf6213a713a26b31ffe6682bc04a544fe",
+  "assessment_method": "Source call-path and ownership inspection; no new runtime or native execution evidence. Documentation-only IMPLEMENTED entries assert contracts only.",
+  "status_counts": {
+    "IMPLEMENTED": 7,
+    "DEFERRED TO QA": 6,
+    "IMPLEMENTED BUT UNTESTED": 31,
+    "PARTIALLY IMPLEMENTED": 4
+  },
+  "features": [
+    {
+      "id": "P001",
+      "title": "Effortless Installation Product Contract and Blueprint",
+      "status": "IMPLEMENTED",
+      "source": "docs/v0.2/INSTALLATION_PRODUCT_CONTRACT.md",
+      "source_assessment": "Product scope and installation/first-run boundary are specified.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P002",
+      "title": "Existing Installation Surface Audit",
+      "status": "IMPLEMENTED",
+      "source": "docs/v0.2/EXISTING_INSTALLATION_SURFACE_AUDIT.md",
+      "source_assessment": "The inherited desktop/package/server surface is inventoried.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P003",
+      "title": "Installation Architecture and Component Ownership",
+      "status": "IMPLEMENTED",
+      "source": "docs/v0.2/INSTALLATION_ARCHITECTURE.md",
+      "source_assessment": "Component, durable data, privilege and recovery ownership are specified.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P004",
+      "title": "Clean-Machine Acceptance Harness",
+      "status": "DEFERRED TO QA",
+      "source": "docs/v0.2/CLEAN_MACHINE_ACCEPTANCE.md",
+      "source_assessment": "Scenario/harness definitions exist; execution is deferred.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P005",
+      "title": "Unified Release Artifact Manifest",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "scripts/release_manifest.py",
+      "source_assessment": "Producers create and validate artifact metadata from actual bytes.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P006",
+      "title": "Release Download and Integrity Contract",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "scripts/release_download.py",
+      "source_assessment": "Bounded acquisition verifies manifest trust and exact artifact integrity.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P007",
+      "title": "Installer Common Engine",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "crates/install-engine/src/engine.rs",
+      "source_assessment": "The coordinator invokes adapter effects with preflight and verification.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P008",
+      "title": "Installation Transaction Journal",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "crates/install-engine/src/journal.rs",
+      "source_assessment": "Durable checkpoint commits and fail-closed recovery are implemented.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P009",
+      "title": "Upgrade / Repair / Uninstall Common Contract",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "crates/install-engine/src/lifecycle.rs",
+      "source_assessment": "Version/ownership-bound upgrade, repair and preserving removal plans exist.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P010",
+      "title": "Installer Error Model",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "crates/install-engine/src/error_model.rs",
+      "source_assessment": "Typed failures map to bounded user-facing categories and actions.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P011",
+      "title": "Release Channel and Version Selection",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "scripts/release_channel.py",
+      "source_assessment": "Authenticated version selection and freshness enforcement exist.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P012",
+      "title": "Linux Package Integration Reconciliation",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "crates/install-engine/src/linux_package.rs",
+      "source_assessment": "Native package authority and lifecycle reconciliation are implemented.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P013",
+      "title": "Debian/Ubuntu Desktop Package UX",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "deploy/packages/build.sh",
+      "source_assessment": "The DEB producer stages launchers, Qt dependencies and lifecycle hooks.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P014",
+      "title": "Fedora/RPM Desktop Package UX",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "deploy/packages/rpm/synveil.spec.tmpl",
+      "source_assessment": "The RPM producer installs the closed payload and preserving scriptlets.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P015",
+      "title": "AppImage Build Foundation",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "deploy/packages/build-appimage.sh",
+      "source_assessment": "AppDir/output production preserves AppRun and requires a pinned runtime input.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P016",
+      "title": "AppImage Runtime Integration",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "crates/install-engine/src/appimage.rs",
+      "source_assessment": "Current-user integration and explicit startup/repair/removal are implemented.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P017",
+      "title": "Linux Quick Install Script",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "scripts/linux_quick_install.py",
+      "source_assessment": "Verified native-manager install/repair verification and recovery are implemented.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P018",
+      "title": "Linux Distro and Architecture Detection",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "scripts/linux_platform_detection.py",
+      "source_assessment": "Bounded supported Linux platform/architecture detection is implemented.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P019",
+      "title": "Linux First Launch Integration",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "crates/client/src/launch.rs",
+      "source_assessment": "Packaged background-client resolution and explicit startup ownership exist.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P020",
+      "title": "Linux Clean-Machine Acceptance",
+      "status": "DEFERRED TO QA",
+      "source": "docs/v0.2/LINUX_CLEAN_MACHINE_ACCEPTANCE.md",
+      "source_assessment": "Native Linux graphical/lifecycle evidence is deferred.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P021",
+      "title": "Windows Installer Technology Decision",
+      "status": "IMPLEMENTED",
+      "source": "docs/v0.2/WINDOWS_INSTALLER_TECHNOLOGY_DECISION.md",
+      "source_assessment": "The Inno Setup technology and per-user privilege decision are recorded.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P022",
+      "title": "SynveilSetup.exe Skeleton",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "deploy/windows/installer/Synveil.iss",
+      "source_assessment": "A concrete per-user Setup entry point installs the closed runtime payload.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P023",
+      "title": "Windows Installer UI",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "deploy/windows/installer/Synveil.iss",
+      "source_assessment": "Terms/options, independent startup/shortcut/launch choices are implemented.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P024",
+      "title": "Windows Runtime Deployment",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "deploy/packages/build-windows.sh",
+      "source_assessment": "Qt/CRT closure, PE inventory and deterministic runtime ZIP are produced.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P025",
+      "title": "Windows Per-User Installation",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "deploy/windows/installer/Synveil.iss",
+      "source_assessment": "Lowest-privilege per-user installation is implemented; native proof deferred.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P026",
+      "title": "Windows Startup Integration",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "crates/client/src/launch.rs",
+      "source_assessment": "Profile-scoped Task Scheduler and durable startup preference are connected.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P027",
+      "title": "Windows Repair / Upgrade / Uninstall",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "deploy/windows/installer/Synveil.iss",
+      "source_assessment": "Exact repair, policy-bound upgrade and preserving uninstall are implemented.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P028",
+      "title": "Windows Native Acceptance CI",
+      "status": "DEFERRED TO QA",
+      "source": "docs/v0.2/WINDOWS_NATIVE_ACCEPTANCE.md",
+      "source_assessment": "Interactive Windows/logon/IPC acceptance is deferred.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P029",
+      "title": "Server Setup Product Contract",
+      "status": "IMPLEMENTED",
+      "source": "docs/v0.2/SERVER_SETUP_PRODUCT_CONTRACT.md",
+      "source_assessment": "Host/Connect, server owners, platform scope and readiness are specified.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P030",
+      "title": "Server Dependency Strategy",
+      "status": "IMPLEMENTED",
+      "source": "docs/v0.2/SERVER_DEPENDENCY_STRATEGY.md",
+      "source_assessment": "Managed PG17 versus operator-owned external PG17 strategy is specified.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P031",
+      "title": "Managed Server Configuration",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "crates/server-config/src/store.rs",
+      "source_assessment": "Protected configuration/secret writes and typed generation updates exist.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P032",
+      "title": "Storage Location Wizard",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "crates/server-storage/src/wizard.rs",
+      "source_assessment": "Confirmed storage selection/init, markers and existing-only reopen exist.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P033",
+      "title": "Server Service Installation",
+      "status": "PARTIALLY IMPLEMENTED",
+      "source": "crates/server-service/src/lib.rs",
+      "source_assessment": "Plans and units exist; native dependency/PG/service effects are absent (G01-G04).",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P034",
+      "title": "Server Network and Reachability Setup",
+      "status": "PARTIALLY IMPLEMENTED",
+      "source": "crates/server-network/src/lib.rs",
+      "source_assessment": "Planning/rendering exist; TLS, edge/firewall application and trust handoff absent (G05/G07).",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P035",
+      "title": "Server First-Admin Bootstrap",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "crates/auth/src/service.rs",
+      "source_assessment": "API-backed transactional first-admin creation exists; wizard invocation is G06.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P036",
+      "title": "End-to-End Self-Host Wizard",
+      "status": "PARTIALLY IMPLEMENTED",
+      "source": "crates/server-bootstrap/src/lib.rs",
+      "source_assessment": "The coordinator has no production native CanonicalOwners implementation (G01-G08).",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P037",
+      "title": "Unified Welcome Experience",
+      "status": "PARTIALLY IMPLEMENTED",
+      "source": "crates/desktop/src/bridge.rs",
+      "source_assessment": "Welcome/Connect work; Host uses UnavailableHostOwners and cannot resume real setup (G06/G08).",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P038",
+      "title": "Connection Setup Simplification",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "crates/client/src/controller.rs",
+      "source_assessment": "Ordinary address input dispatches to canonical profile readiness/configuration.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P039",
+      "title": "Authentication UX Polish",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "crates/client-sync/src/host.rs",
+      "source_assessment": "Enrollment exchange and SecretStore credential lifecycle/sign-out are wired.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P040",
+      "title": "Library First-Run Wizard",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "crates/client-sync/src/host.rs",
+      "source_assessment": "New library creation, response reconciliation and durable local binding are wired.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P041",
+      "title": "Installation-to-Sync Progress Experience",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "crates/desktop/src/presentation.rs",
+      "source_assessment": "Runtime evidence drives setup/first-sync progress without invented percentages.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P042",
+      "title": "Repair and Recovery UX",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "crates/client/src/launch.rs",
+      "source_assessment": "Reconnect, same-root restoration, supervised restart and repair guidance exist.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P043",
+      "title": "Installer Security Hardening",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "scripts/release_download.py",
+      "source_assessment": "Trust/integrity/path/privilege checks exist; production identities remain deferred.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P044",
+      "title": "Installation Resilience Hardening",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "crates/install-engine/src/journal.rs",
+      "source_assessment": "Disk-full and uncertain durability/reconciliation paths exist; power cycles deferred.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P045",
+      "title": "Cross-Platform Clean-Machine Matrix",
+      "status": "DEFERRED TO QA",
+      "source": "docs/v0.2/ROADMAP.md",
+      "source_assessment": "PR #78 cross-platform native infrastructure is kept separate; no matrix executed.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P046",
+      "title": "v0.2 Documentation and Distribution Readiness",
+      "status": "IMPLEMENTED",
+      "source": "docs/en/v0.2/README.md",
+      "source_assessment": "English/Vietnamese preview docs exist; this report corrects implementation scope.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P047",
+      "title": "v0.2 Final Release Candidate Validation",
+      "status": "DEFERRED TO QA",
+      "source": "docs/v0.2/ROADMAP.md",
+      "source_assessment": "PR #104 historical qualification evidence is preserved; no 21-gate rerun.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    },
+    {
+      "id": "P048",
+      "title": "Synveil v0.2.0 Release Gate",
+      "status": "DEFERRED TO QA",
+      "source": "docs/v0.2/ROADMAP.md",
+      "source_assessment": "Official tag/release/distribution gate is deferred; no release action taken.",
+      "execution_status": "NOT_RUN_QA_DEFERRED"
+    }
+  ],
+  "out_of_v02_scope": [
+    "Synveil iOS/mobile and Synveil OS",
+    "macOS/ARM managed Host support",
+    "unrequested automatic updater, mandatory relay and new authentication protocol",
+    "arbitrary existing remote-library attach UI beyond the existing first-library setup contract"
+  ]
+}

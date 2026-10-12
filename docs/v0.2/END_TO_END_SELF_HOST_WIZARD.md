@@ -2,6 +2,15 @@
 
 Status: **Coordinator implemented; Phase-E native qualification blocked.**
 
+Current implementation audit: the production desktop still constructs
+`UnavailableHostOwners`; its Host page contains availability feedback and a
+Back action. The storage/access/admin/login/library wizard and privileged
+native owner adapter are unfinished source, independently of deferred QA.
+See G01-G08 in [IMPLEMENTATION_COMPLETION.md](IMPLEMENTATION_COMPLETION.md).
+The qualification environment notes below describe the historical P036
+baseline; the current closeout has a configured remote and a development source
+workflow, without claiming native acceptance.
+
 ## Product path and support boundary
 
 The explicit **Host Synveil on this device** action enters the UI-neutral Host

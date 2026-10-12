@@ -1,0 +1,1176 @@
+{
+  "schema_version": 1,
+  "mode": "DEVELOPMENT_FIRST_QA_DEFERRED",
+  "starting_main": "3851ea11927e24255614cfc38adbaccbd345ca03",
+  "p047_head": "81303a469beb2edd5ae7c3f5efacfc617b405093",
+  "p045_head": "035497c05c145e5c6129e744f9455937069680f4",
+  "source_checkpoint": "3b9574bbf6213a713a26b31ffe6682bc04a544fe",
+  "import_counts": {
+    "104": 68,
+    "78": 2
+  },
+  "imports": [
+    {
+      "upstream_commit": "80cef30506cee79d8b3d2dd36ceef6d423c581e3",
+      "integration_commit": "88ca8d0c9f243e1728db9470ba5af3828b2aa0eb",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(release): repair reproduced candidate validation failures",
+      "pr": 104,
+      "paths": [
+        "crates/api/src/runtime_rebaseline_credential.rs",
+        "crates/client/src/config.rs",
+        "crates/client/src/control.rs",
+        "crates/client/src/launch.rs",
+        "crates/metadata/tests/production_packaging_units.rs",
+        "crates/server-config/src/store.rs",
+        "deploy/packages/build-appimage.sh",
+        "deploy/packages/build-windows.sh",
+        "docs/v0.2/WINDOWS_RUNTIME_DEPLOYMENT.md",
+        "scripts/select-msvc-linker.ps1",
+        "scripts/validate-appimage-build.py"
+      ]
+    },
+    {
+      "upstream_commit": "f7f597a1a4c4110ff1c64d9cdecc10bb60a53125",
+      "integration_commit": "37ac1695981b63b5bceac8a6719eec0f2e1aee7a",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(windows): resolve CRT from active toolset redistributables",
+      "pr": 104,
+      "paths": [
+        "deploy/packages/build-windows.sh",
+        "docs/v0.2/WINDOWS_RUNTIME_DEPLOYMENT.md",
+        "scripts/select-msvc-linker.ps1"
+      ]
+    },
+    {
+      "upstream_commit": "1de1d2786aecbe0f786740505726e0d75c174ae0",
+      "integration_commit": "bdeff27f0762a14c8a7fdca0148183e914d9ee69",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(client): correct cross-platform test compilation and formatting",
+      "pr": 104,
+      "paths": [
+        "crates/client/src/config.rs",
+        "crates/client/src/control.rs",
+        "crates/client/src/launch.rs"
+      ]
+    },
+    {
+      "upstream_commit": "acfd06f1e834a68e59b2eb7faa94155b083d07e9",
+      "integration_commit": "3d755a93bc0365c347d95aa08c7848691dd3bddb",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(packaging): satisfy strict shellcheck in CRT closure loop",
+      "pr": 104,
+      "paths": [
+        "deploy/packages/build-windows.sh"
+      ]
+    },
+    {
+      "upstream_commit": "3e52c01d15ded421791f01eecb1145387a3fd10c",
+      "integration_commit": "d20e14707916708409dc0cf1c39e95b45a79ed1c",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(release): correct reproduced platform validation failures",
+      "pr": 104,
+      "paths": [
+        "crates/api/src/runtime_server_configuration.rs",
+        "crates/client/src/control.rs",
+        "crates/client/src/launch.rs",
+        "deploy/packages/build-windows.sh",
+        "deploy/packages/common/windows-pe-import-policy.sh",
+        "scripts/validate-appimage-build.py",
+        "tests/windows/test-windows-pe-import-policy.sh"
+      ]
+    },
+    {
+      "upstream_commit": "381b27f4be27c77d64450f58cea08f63e98ad34b",
+      "integration_commit": "3089237e434748952cab954694f30dce1bdf3bdd",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "test(client): keep macOS IPC fixtures canonical and short",
+      "pr": 104,
+      "paths": [
+        "crates/client/src/control.rs",
+        "crates/client/src/launch.rs"
+      ]
+    },
+    {
+      "upstream_commit": "62651f05431ed5be255b7e7dd05ac1cffe8b927d",
+      "integration_commit": "40c8623e4b5046caa49a26e83e219097cd473020",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "test(server): cfg-gate POSIX-only fixture helpers",
+      "pr": 104,
+      "paths": [
+        "crates/api/src/runtime_server_configuration.rs"
+      ]
+    },
+    {
+      "upstream_commit": "1d9d157db05e58051d253e226678fdbf14fc99fa",
+      "integration_commit": "da9de180ebe091256745bd2fc890c9de7d37bc6c",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "style: restore strict rustfmt import ordering",
+      "pr": 104,
+      "paths": [
+        "crates/api/src/runtime_server_configuration.rs"
+      ]
+    },
+    {
+      "upstream_commit": "d7d75e91e59f4dc51d98ce47afa9e34ca60764d3",
+      "integration_commit": "d7c79357364e83105d08079c4f94cf31b41f45e8",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix: classify ncrypt as a Windows system dependency",
+      "pr": 104,
+      "paths": [
+        "deploy/packages/common/windows-pe-import-policy.sh",
+        "tests/windows/test-windows-pe-import-policy.sh"
+      ]
+    },
+    {
+      "upstream_commit": "fbbd71b8068601413cbea5bac88b8b20cb0b22f4",
+      "integration_commit": "3e8418d935a39635d623abcbcfdf2517b218a77c",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix: close P047 platform validation regressions",
+      "pr": 104,
+      "paths": [
+        "crates/client-sync/src/host.rs",
+        "crates/client-sync/src/rebaseline_84c.rs",
+        "crates/client-sync/src/signals.rs",
+        "crates/install-engine/src/journal.rs"
+      ]
+    },
+    {
+      "upstream_commit": "8ebda6261926e4ab8cfa087603fd52c3aac10a36",
+      "integration_commit": "8a09000cd68e011fa30e46efcd82fc7905ff00c1",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix: scope signal fixture cleanup to tests",
+      "pr": 104,
+      "paths": [
+        "crates/client-sync/src/signals.rs"
+      ]
+    },
+    {
+      "upstream_commit": "3bc3b67ab71668c8ed9445adbb5dc5e343cebf96",
+      "integration_commit": "6940a1f1f2d070ddc692e4d9fac834d25ef500bf",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "test: canonicalize server config fixture roots",
+      "pr": 104,
+      "paths": [
+        "crates/server-config/src/store.rs"
+      ]
+    },
+    {
+      "upstream_commit": "460db534d855f8c3fae1c945607c754bfa222dbd",
+      "integration_commit": "e2beaf968ad153afa750054704036a6b7cef6aa7",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(windows): flush journal directories and classify inbox DLLs",
+      "pr": 104,
+      "paths": [
+        "crates/install-engine/src/journal.rs",
+        "deploy/packages/common/windows-pe-import-policy.sh",
+        "tests/windows/test-windows-pe-import-policy.sh"
+      ]
+    },
+    {
+      "upstream_commit": "166b064335bc3ecfa1b157297e9304a33aa78087",
+      "integration_commit": "d4c67cbb7644f830b31c8845de9379cf27158653",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "test: make cross-platform lifecycle fixtures deterministic",
+      "pr": 104,
+      "paths": [
+        "crates/client-sync/src/host.rs",
+        "crates/client-sync/src/local_migrations/tests.rs",
+        "crates/client-sync/src/runtime.rs",
+        "crates/client/src/process.rs"
+      ]
+    },
+    {
+      "upstream_commit": "f884a068b534f4b7524c122c2c41e5d4dae6738c",
+      "integration_commit": "af3dff13b361e32d80b8999cf427a0c839bb0a19",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(windows): classify MSI as an inbox system DLL",
+      "pr": 104,
+      "paths": [
+        "deploy/packages/common/windows-pe-import-policy.sh",
+        "tests/windows/test-windows-pe-import-policy.sh"
+      ]
+    },
+    {
+      "upstream_commit": "15e45abdcfafabf8494f9129603a068ed6807c96",
+      "integration_commit": "7e6f8361c6b642ee4dd511036cb8b3a9d0d2b013",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(packaging): stabilize qmlcachegen and test encoded flags",
+      "pr": 104,
+      "paths": [
+        "scripts/reproducible-qt-wrapper.rs"
+      ]
+    },
+    {
+      "upstream_commit": "1fbb961239d11e7086cdecee42373f8dc1dab072",
+      "integration_commit": "d0b3a2e9e8a253ade7aeb73128b1cdded7392083",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(windows): allow inbox WININET import",
+      "pr": 104,
+      "paths": [
+        "deploy/packages/common/windows-pe-import-policy.sh",
+        "tests/windows/test-windows-pe-import-policy.sh"
+      ]
+    },
+    {
+      "upstream_commit": "a890568466c92fae82f59f3715bda1684345fc5e",
+      "integration_commit": "4d21bbb215a8fca74100faa2402ba1dcc61b643e",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(windows): allow inbox WINTRUST import",
+      "pr": 104,
+      "paths": [
+        "deploy/packages/common/windows-pe-import-policy.sh",
+        "tests/windows/test-windows-pe-import-policy.sh"
+      ]
+    },
+    {
+      "upstream_commit": "897adbe41f35d6d03578cc8f2611aff3d683b130",
+      "integration_commit": "37dec8bebcbf283ab0642937cbaa9fdbd15c3580",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(installer): flush journal records with writable handle",
+      "pr": 104,
+      "paths": [
+        "crates/install-engine/src/journal.rs"
+      ]
+    },
+    {
+      "upstream_commit": "d9da46cfa273f3cf80c3c8a3bc0a6faf3615e524",
+      "integration_commit": "fe0be57261f8e1e848da32521c16b41ace55ff42",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(sync): classify atomic saves over known files",
+      "pr": 104,
+      "paths": [
+        "crates/client-sync/src/observation.rs"
+      ]
+    },
+    {
+      "upstream_commit": "929236ad4380fba7a10571ada276d382c37ecf98",
+      "integration_commit": "f3777addf114e34609b2c5022314b4180e3cc003",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "test(sync): mirror production SQLite pool during teardown",
+      "pr": 104,
+      "paths": [
+        "crates/client-sync/src/local_migrations/tests.rs"
+      ]
+    },
+    {
+      "upstream_commit": "8b594de9cffe8dd66c6e4b66395688f9c6f1860c",
+      "integration_commit": "4db3c886b618fb9d3c2964c3c2f9267e01a1da89",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(packaging): canonicalize RCC resource staging paths",
+      "pr": 104,
+      "paths": [
+        "deploy/packages/common/reproducible.sh",
+        "scripts/reproducible-qt-wrapper.rs"
+      ]
+    },
+    {
+      "upstream_commit": "d66caf43ca3d655a22c20c23f5c522384b8fbb7a",
+      "integration_commit": "842f89f1d520e6375e9744db877430ff47ebf4dc",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(packaging): scope canonical Qt staging to reproducible builds",
+      "pr": 104,
+      "paths": [
+        "deploy/packages/common/reproducible.sh",
+        "scripts/reproducible-qt-wrapper.rs"
+      ]
+    },
+    {
+      "upstream_commit": "f770933969bb960ef1f3e83ba7a70cc5584c114e",
+      "integration_commit": "6e5a9e24f4018e4c8b1655b63a1fc4fbe51bddd2",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(sync): import SQLite pool options from sqlite",
+      "pr": 104,
+      "paths": [
+        "crates/client-sync/src/local_migrations/tests.rs"
+      ]
+    },
+    {
+      "upstream_commit": "5d6049dbc69994dccfb075aee540f11e83efc30f",
+      "integration_commit": "a3b6a6052a3bc396a376f0e25259baa592f961ff",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "style: apply strict rustfmt to focused tests",
+      "pr": 104,
+      "paths": [
+        "crates/client-sync/src/observation.rs",
+        "crates/install-engine/src/journal.rs"
+      ]
+    },
+    {
+      "upstream_commit": "e150c846695f492aabe5d4c9ae7d836c59ea8a9e",
+      "integration_commit": "4fa748354fca4f39440f0308527d59c644f4b2c1",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(packaging): compare Qt staging mode at runtime",
+      "pr": 104,
+      "paths": [
+        "scripts/reproducible-qt-wrapper.rs"
+      ]
+    },
+    {
+      "upstream_commit": "5837c9421ead8607dbd83e7f6f55f62d75ca1d6c",
+      "integration_commit": "9647ec643d8b7caf42a3dac16023c402e5286eb3",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(packaging): make Windows ZIP output deterministic",
+      "pr": 104,
+      "paths": [
+        "deploy/packages/build-windows.sh",
+        "scripts/create-reproducible-zip.py",
+        "tests/windows/test_reproducible_zip.py"
+      ]
+    },
+    {
+      "upstream_commit": "ec48e290a87b609d22d081f80f15c76a12931bfa",
+      "integration_commit": "4e3ba0cbf59856220e202bb8dbdbda5ad0c95c7a",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(build): stabilize Qt AOT register declarations",
+      "pr": 104,
+      "paths": [
+        "scripts/reproducible-qt-wrapper.rs"
+      ]
+    },
+    {
+      "upstream_commit": "146081f59507e56905d3fabd5e2f8b4ae322f56a",
+      "integration_commit": "223f29919b89ead8e815c6967055b14202152c33",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(packaging): close Windows runtime payload inventory",
+      "pr": 104,
+      "paths": [
+        "deploy/packages/build-windows.sh",
+        "docs/v0.2/WINDOWS_RUNTIME_DEPLOYMENT.md"
+      ]
+    },
+    {
+      "upstream_commit": "be23752f33e55efa96fd65e81fb895eaeea3a4d7",
+      "integration_commit": "ebdb3770d4236d026a1e58a151232d4e9fd19679",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "test(ci): correct P047 validation harness failures",
+      "pr": 104,
+      "paths": [
+        "crates/metadata/tests/production_packaging_units.rs"
+      ]
+    },
+    {
+      "upstream_commit": "860bf13c7693a6bfce79b999b481a15a9b9baf03",
+      "integration_commit": "afc96a7f9a95beb11b0384135833d552526c4233",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(packaging): exclude MSVC redistributable installer",
+      "pr": 104,
+      "paths": [
+        "deploy/packages/build-windows.sh"
+      ]
+    },
+    {
+      "upstream_commit": "2b51430d8de80c4abfd8a6cb8767a1892d987a6f",
+      "integration_commit": "5bc992362106feea521d604b5ebf43a493879286",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(ci): stabilize release validation fixtures",
+      "pr": 104,
+      "paths": [
+        "crates/client-sync/src/host.rs",
+        "deploy/packages/common/reproducible.sh",
+        "scripts/validate-release-artifacts.sh"
+      ]
+    },
+    {
+      "upstream_commit": "912f121bdb1d84954803085184529952fab11419",
+      "integration_commit": "82297630fcd6bbf0eb368a4af063a3b903629b51",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(ci): bound Windows acceptance fixtures",
+      "pr": 104,
+      "paths": [
+        "crates/server-service/src/lib.rs"
+      ]
+    },
+    {
+      "upstream_commit": "00ea36789ba42f36bac5b51dcccbbad3fe458f95",
+      "integration_commit": "a3cf8020f24de2a5b2676e99c7b31f573b7ccb9b",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(packaging): pin deterministic DEB compression",
+      "pr": 104,
+      "paths": [
+        "crates/metadata/tests/linux_native_packaging_units.rs",
+        "deploy/packages/build.sh"
+      ]
+    },
+    {
+      "upstream_commit": "df5c9917bd3600c6f6f4c00b01401ba8fb90dedd",
+      "integration_commit": "108f6727bc03789837b2897ab265ebb0219416fd",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "test(sync): drop Windows migration fixture pool",
+      "pr": 104,
+      "paths": [
+        "crates/client-sync/src/local_migrations/tests.rs"
+      ]
+    },
+    {
+      "upstream_commit": "e8e99896df1574192154dca03f64e4188f47a4b2",
+      "integration_commit": "ae969b665d90473a33681c64a72e5f7621e9e331",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(packaging): use dpkg-compatible gzip options",
+      "pr": 104,
+      "paths": [
+        "crates/metadata/tests/linux_native_packaging_units.rs",
+        "deploy/packages/build.sh"
+      ]
+    },
+    {
+      "upstream_commit": "05ba766b5d3f495484712af504841ab129f8ca3c",
+      "integration_commit": "9f52fa584bd72ab23e44ebb2fcb6d11ccb5012d4",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(packaging): preserve package builder executable mode",
+      "pr": 104,
+      "paths": [
+        "deploy/packages/build.sh"
+      ]
+    },
+    {
+      "upstream_commit": "f1c54934c30823c73ad743ce6df1ff8c6897d552",
+      "integration_commit": "be9a3ff40600a2887c1f6635bb610b5719d6c3b9",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "test(ci): repair Windows acceptance and cleanup fixtures",
+      "pr": 104,
+      "paths": [
+        "crates/client/src/process.rs",
+        "crates/metadata/tests/linux_native_packaging_units.rs"
+      ]
+    },
+    {
+      "upstream_commit": "24662a0a919857d5870f9008b61b6eeaa75f8639",
+      "integration_commit": "53b9a48cc534ad906c32063f016ade78e1623b8e",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "style: fix Windows process fixture formatting",
+      "pr": 104,
+      "paths": [
+        "crates/client/src/process.rs"
+      ]
+    },
+    {
+      "upstream_commit": "a115ea21e4451904b1b67bd51cbc9b8dbc20ba1c",
+      "integration_commit": "fcab929330f89746a7bf85ec0fb94c2b30943c88",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(windows): repair P025 fixtures and record payload inputs",
+      "pr": 104,
+      "paths": [
+        "crates/client-sync/src/local_migrations/tests.rs"
+      ]
+    },
+    {
+      "upstream_commit": "fec6f5637add17f8d9562103dca201fb97fe8e8c",
+      "integration_commit": "dce9de77f050fcf42edcb15f9554173fb66128a1",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(linux): authenticate native package verification paths",
+      "pr": 104,
+      "paths": [
+        "scripts/linux_quick_install.py"
+      ]
+    },
+    {
+      "upstream_commit": "2dad3fbce06283ab6be684aeed43bfddacbdd324",
+      "integration_commit": "6254949a75338cdf0c6db36bc9ef4eb6b212da6f",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(server-storage): normalize exclusion candidates",
+      "pr": 104,
+      "paths": [
+        "crates/server-storage/src/path.rs"
+      ]
+    },
+    {
+      "upstream_commit": "c744bea5f7e0a841c36829342e0744eedd75823f",
+      "integration_commit": "cf849bbdd1caba85b6bf1dbf1874e4d4a4cc01da",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(server-storage): canonicalize shared-root exclusions",
+      "pr": 104,
+      "paths": [
+        "crates/server-storage/src/path.rs"
+      ]
+    },
+    {
+      "upstream_commit": "67f9f9c55cdeedb07db50c897741fdb33f37450b",
+      "integration_commit": "25252ee4a740fe57e9ae791788719591905067c9",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(linux): correct native package installs and verification",
+      "pr": 104,
+      "paths": [
+        "scripts/linux_quick_install.py"
+      ]
+    },
+    {
+      "upstream_commit": "d64fe39c87e3c879101b6c9de6e295e97c2b170a",
+      "integration_commit": "919b8afe19456175918994e5d5c154fa6826dd59",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "test: release host cleanup and maintenance claims",
+      "pr": 104,
+      "paths": [
+        "crates/client-sync/src/host.rs"
+      ]
+    },
+    {
+      "upstream_commit": "48e60f19d8c10eb71040320761235b090ab91116",
+      "integration_commit": "eb753c29abb6ed3f5af49867e3693c4a3c6d58b9",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(storage): reject recreated configured roots",
+      "pr": 104,
+      "paths": [
+        "crates/server-storage/src/wizard.rs"
+      ]
+    },
+    {
+      "upstream_commit": "8d667f1c163cde6417944ea23e3bb217c88c659a",
+      "integration_commit": "cd55bf3d1d7d78de5fb342b1bd41681a81a35ef0",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(windows): isolate standard-user smoke process",
+      "pr": 104,
+      "paths": [
+        "crates/desktop/src/bridge.rs"
+      ]
+    },
+    {
+      "upstream_commit": "5a12ec06abc0743787767fe269316a50ecaf07ce",
+      "integration_commit": "660f5698cb819d3eb02adb96241ddb5d457d5d89",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(desktop): place bridge helper before test module",
+      "pr": 104,
+      "paths": [
+        "crates/desktop/src/bridge.rs"
+      ]
+    },
+    {
+      "upstream_commit": "8fd3c9774720d5ab2a2c60cc0b94adf1adae3981",
+      "integration_commit": "684f16cf822c44e12b6d62c335e774a26d098403",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(client): resolve packaged client during Windows cleanup",
+      "pr": 104,
+      "paths": [
+        "crates/client/src/launch.rs"
+      ]
+    },
+    {
+      "upstream_commit": "9d70d8437f0fb3bf7dddcd30df1c7796c77daaab",
+      "integration_commit": "d960c6cd82549cd8aea52c97ae47d0bc5d46aaf9",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "style(client): satisfy strict rustfmt",
+      "pr": 104,
+      "paths": [
+        "crates/client/src/launch.rs"
+      ]
+    },
+    {
+      "upstream_commit": "2cc1a9c6e4a31bbdc1cd68666a1616ccf68a00ac",
+      "integration_commit": "282e4b3cc9bae65e7f79ac4e80d3c15f08595d57",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(client): scope Windows task path resolver",
+      "pr": 104,
+      "paths": [
+        "crates/client/src/launch.rs"
+      ]
+    },
+    {
+      "upstream_commit": "f6107b58920deb782a4e6a131740f10133e52aea",
+      "integration_commit": "6db4467fd9652f4d666d507e6984fd2af33d0bfd",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(install): authorize protected package verification",
+      "pr": 104,
+      "paths": [
+        "scripts/linux_quick_install.py"
+      ]
+    },
+    {
+      "upstream_commit": "413aec30749eebc21d412b589a0f4d063ca3d0b6",
+      "integration_commit": "224ef950de551524080cc6124c7e212f39997e7e",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "test(linux): capture bounded package scriptlet diagnostics",
+      "pr": 104,
+      "paths": [
+        "scripts/linux_quick_install.py"
+      ]
+    },
+    {
+      "upstream_commit": "a1966f6508f2fe0b62e8fead91e0f66bb9036cb4",
+      "integration_commit": "efd53afc058041ac413149d984ee4adeefa3cc46",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(packaging): prevent RPM post scriptlet printf failure [skip ci]",
+      "pr": 104,
+      "paths": [
+        "deploy/packages/rpm/synveil.spec.tmpl"
+      ]
+    },
+    {
+      "upstream_commit": "e5a5ca21991803ccd267d455ad77cd7efe60c296",
+      "integration_commit": "a10e1b0cc557c9bcbb5580e880040cc6efac9e29",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(packaging): keep RPM uninstall scriptlets printable [skip ci]",
+      "pr": 104,
+      "paths": [
+        "deploy/packages/rpm/synveil.spec.tmpl"
+      ]
+    },
+    {
+      "upstream_commit": "f708a3aa57aec0dd578e33d71e6ff62f2f1c4099",
+      "integration_commit": "93e55188df64c75fc40d248a682a6991a00ac243",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(windows): stabilize links and bound installer cleanup",
+      "pr": 104,
+      "paths": [
+        "deploy/packages/common/reproducible.sh",
+        "scripts/test-windows-rustflags.sh"
+      ]
+    },
+    {
+      "upstream_commit": "66f0c57bb9e53a925698f6c9b8c1c4f2a4e4b736",
+      "integration_commit": "3377e3302a7f8473bb609b904096733a2d6d5dab",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(windows): preserve MSVC linker flags in Git Bash [skip ci]",
+      "pr": 104,
+      "paths": [
+        "deploy/packages/common/reproducible.sh",
+        "scripts/test-windows-rustflags.sh"
+      ]
+    },
+    {
+      "upstream_commit": "5e1b2b72ccf98895853f7cd2c19d86cbc0494d76",
+      "integration_commit": "7d9be79ace91ee3fc3e485715f5989164ff3a5f7",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(test): release Windows sync host before cleanup [skip ci]",
+      "pr": 104,
+      "paths": [
+        "crates/client-sync/src/host.rs"
+      ]
+    },
+    {
+      "upstream_commit": "81c8b3ec8770fdf839fc2ea27c300660adce588c",
+      "integration_commit": "068eb58b17423af21a036712d5cf18cc35cd3837",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(test): release dynamic host handles before cleanup [skip ci]",
+      "pr": 104,
+      "paths": [
+        "crates/client-sync/src/host.rs"
+      ]
+    },
+    {
+      "upstream_commit": "a8e1d51bf3fbae0a8dc4228732894df7e310c22d",
+      "integration_commit": "ec7eec5834441e57d4ab608e117d20ece2e7c520",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(installer): index ownership manifest during repair",
+      "pr": 104,
+      "paths": [
+        "deploy/windows/installer/Synveil.iss"
+      ]
+    },
+    {
+      "upstream_commit": "c38d6e7ba9822f153eb5386d8c5c5798bce664e9",
+      "integration_commit": "6a418043e0c993ef712ffb889751761872a0232d",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(windows): use deterministic MSVC archives",
+      "pr": 104,
+      "paths": [
+        "deploy/packages/common/reproducible.sh",
+        "scripts/select-msvc-linker.ps1",
+        "scripts/test-windows-rustflags.sh"
+      ]
+    },
+    {
+      "upstream_commit": "8edb8691541caeb514aea79550fe939e0162055a",
+      "integration_commit": "bd77730e863b1d62332ae1c5b1dfede406c76e40",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "test(windows): keep Qt disabled in flag fixture [skip ci]",
+      "pr": 104,
+      "paths": [
+        "scripts/test-windows-rustflags.sh"
+      ]
+    },
+    {
+      "upstream_commit": "100f088a8ca65d510f0aa1dd9f8174b722d5a661",
+      "integration_commit": "96f31e74e59038bf66608aaf2dcbd7339bbc460a",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(windows): make C++ release builds reproducible",
+      "pr": 104,
+      "paths": [
+        "deploy/packages/common/reproducible.sh",
+        "scripts/test-windows-rustflags.sh"
+      ]
+    },
+    {
+      "upstream_commit": "7ffd8642b916e0cb5924234a7fb290e9e6810d70",
+      "integration_commit": "9783f96764028557330a11d2dc036d71b8fa39c7",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(windows): normalize native release compiler output",
+      "pr": 104,
+      "paths": [
+        "deploy/packages/common/reproducible.sh",
+        "scripts/test-windows-rustflags.sh"
+      ]
+    },
+    {
+      "upstream_commit": "5595335443db2fb48d14b9ed620dd07fd8a1b698",
+      "integration_commit": "ba8c9d2c9d078bdc6f47ee4e43ac48b68c351094",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(web): reload mutation recovery after session restore",
+      "pr": 104,
+      "paths": [
+        "apps/web/src/features/backups/RestoreWorkflowPage.test.tsx",
+        "apps/web/src/features/backups/RestoreWorkflowPage.tsx"
+      ]
+    },
+    {
+      "upstream_commit": "acb2ea56d085ed0ed09ab993f87d496be815faab",
+      "integration_commit": "7c2af297757f88043e13c7459dc10c734e32831b",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(packaging): report Windows private path leaks [skip ci]",
+      "pr": 104,
+      "paths": [
+        "deploy/packages/common/reproducible.sh"
+      ]
+    },
+    {
+      "upstream_commit": "3cbe083c1f26105c339bd0277d8fc4aae222b97d",
+      "integration_commit": "ed7df7b972b61e20c235dc297aa7900114ceb93c",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix(windows): map nested MSVC build paths first",
+      "pr": 104,
+      "paths": [
+        "deploy/packages/common/reproducible.sh",
+        "scripts/test-windows-rustflags.sh"
+      ]
+    },
+    {
+      "upstream_commit": "d712e84e5bb21b1b2f845352c59ac10f0485c24c",
+      "integration_commit": "3f37b19c8547fbf26541fb19ce342c2cf9dfb56b",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "test(windows): isolate MSVC path map probe",
+      "pr": 104,
+      "paths": [
+        "scripts/test-windows-rustflags.sh"
+      ]
+    },
+    {
+      "upstream_commit": "08b4dcb9a0ba9f767ee574b231b203f068b1fb11",
+      "integration_commit": "0d357350fa203df65afc4640100ba10cf9bc2099",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix client startup without profile",
+      "pr": 78,
+      "paths": [
+        "crates/client/src/config.rs",
+        "crates/client/src/lib.rs"
+      ]
+    },
+    {
+      "upstream_commit": "15c00cfdce2bdd495020457826e4beed1fb3ecbe",
+      "integration_commit": "0bfdea848201c0f48b585e072abf39070e8e1a87",
+      "author": "Nguyen Nghia <nghianguyen150006@gmail.com>",
+      "subject": "fix: close P045 provisioning and migration ownership races",
+      "pr": 78,
+      "paths": [
+        "crates/client-sync/src/local_migrations.rs"
+      ]
+    }
+  ],
+  "p047_path_accounting": [
+    {
+      "path": ".github/workflows/appimage.yml",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "disposition": "SELECTIVELY_ADAPTED",
+      "reason": "Only build toolchain/input wiring integrated; qualification job and fixture changes deferred."
+    },
+    {
+      "path": ".github/workflows/linux-packages.yml",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": ".github/workflows/postgres-17.yml",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": ".github/workflows/server-first-admin-bootstrap.yml",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": ".github/workflows/windows-installer.yml",
+      "disposition": "SELECTIVELY_ADAPTED",
+      "reason": "Only build toolchain/input wiring integrated; qualification job and fixture changes deferred."
+    },
+    {
+      "path": ".github/workflows/windows-native-acceptance.yml",
+      "disposition": "SELECTIVELY_ADAPTED",
+      "reason": "Only build toolchain/input wiring integrated; qualification job and fixture changes deferred."
+    },
+    {
+      "path": "acceptance/p047/release-candidate-validation-v1.json",
+      "disposition": "PRESERVED_UPSTREAM",
+      "reason": "Historical qualification evidence retained on PR #104; not copied as this candidate evidence."
+    },
+    {
+      "path": "apps/web/src/features/backups/BackupOverviewPage.test.tsx",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "apps/web/src/features/backups/RestoreWorkflowPage.test.tsx",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "apps/web/src/features/backups/RestoreWorkflowPage.tsx",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "crates/api/src/runtime_rebaseline_credential.rs",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "crates/api/src/runtime_server_configuration.rs",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "crates/api/tests/desktop_process_postgres.rs",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "crates/api/tests/packaged_maintenance_runtime_postgres.rs",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "crates/api/tests/sync_adversarial_postgres.rs",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "crates/client-sync/src/host.rs",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "crates/client-sync/src/local_migrations/tests.rs",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "crates/client-sync/src/observation.rs",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "crates/client-sync/src/rebaseline_84c.rs",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "crates/client-sync/src/runtime.rs",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "crates/client-sync/src/signals.rs",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "crates/client/src/config.rs",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "crates/client/src/control.rs",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "crates/client/src/launch.rs",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "crates/client/src/process.rs",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "crates/desktop/src/bridge.rs",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "crates/install-engine/src/journal.rs",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "crates/metadata/tests/backup_scheduled_maintenance_cycle_postgres.rs",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "crates/metadata/tests/backup_scheduler_tick_postgres.rs",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "crates/metadata/tests/linux_native_packaging_units.rs",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "crates/metadata/tests/production_packaging_units.rs",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "crates/metadata/tests/release_artifact_units.rs",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "crates/metadata/tests/scheduled_maintenance_cycle_runner_postgres.rs",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "crates/metadata/tests/scheduled_maintenance_lifecycle_postgres.rs",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "crates/metadata/tests/scheduled_maintenance_oneshot_postgres.rs",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "crates/metadata/tests/windows_desktop_packaging_units.rs",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "crates/server-config/src/store.rs",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "crates/server-service/src/lib.rs",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "crates/server-storage/src/path.rs",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "crates/server-storage/src/wizard.rs",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "deploy/packages/build-appimage.sh",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "deploy/packages/build-windows.sh",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "deploy/packages/build.sh",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "deploy/packages/common/reproducible.sh",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "deploy/packages/common/windows-pe-import-policy.sh",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "deploy/packages/rpm/synveil.spec.tmpl",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "deploy/windows/installer/Synveil.iss",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "docs/v0.2/PROMPT015_MANIFEST.md",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "docs/v0.2/PROMPT047_MANIFEST.md",
+      "disposition": "PRESERVED_UPSTREAM",
+      "reason": "Historical qualification evidence retained on PR #104; not copied as this candidate evidence."
+    },
+    {
+      "path": "docs/v0.2/WINDOWS_RUNTIME_DEPLOYMENT.md",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "scripts/build-windows-installer.ps1",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Primarily lifecycle-fixture secret scanning and diagnostic changes; production full-byte scan remains in main."
+    },
+    {
+      "path": "scripts/create-reproducible-zip.py",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "scripts/diagnose-desktop-reproducibility.sh",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "scripts/diagnose-windows-reproducibility.py",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "scripts/invoke-windows-standard-user-test.ps1",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "scripts/linux_quick_install.py",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "scripts/reproducible-qt-wrapper.rs",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "scripts/run-linux-quick-install-acceptance.sh",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "scripts/select-msvc-linker.ps1",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "scripts/test-p047-release-validation.py",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "scripts/test-windows-installer-lifecycle.ps1",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "scripts/test-windows-per-user-installation.ps1",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "scripts/test-windows-rustflags.sh",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "scripts/validate-appimage-build.py",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "scripts/validate-linux-first-launch.sh",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "scripts/validate-p047-release-validation.py",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "scripts/validate-p047-release-validation.sh",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "scripts/validate-release-artifacts.sh",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "scripts/validate-server-first-admin-bootstrap.py",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "scripts/validate-windows-installer.py",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "scripts/validate-windows-native-acceptance.py",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "tests/appimage/test_validator_smoke.py",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "tests/installer_security/test_security.py",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "tests/linux_quick_install/test_linux_quick_install.py",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "tests/test_rust_ci_workflow_timeout.py",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "tests/windows/test-windows-pe-import-policy.sh",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "tests/windows/test_desktop_reproducibility_diagnosis.py",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    },
+    {
+      "path": "tests/windows/test_reproducible_zip.py",
+      "disposition": "IMPORTED",
+      "reason": "Reviewed source or associated regression coverage; original author and commit retained."
+    },
+    {
+      "path": "tests/windows/test_standard_user_account_name.py",
+      "disposition": "DEFERRED_TO_QA",
+      "reason": "Acceptance fixtures, workflow diagnostics, report checks or historical manifest annotations; no missing product behavior replaced by these paths."
+    }
+  ],
+  "manual_p045_adaptation": {
+    "path": "crates/client/src/control.rs",
+    "integration_commit": "62faa1e9e10df9a4ac5b63ec267237835d06351c",
+    "source_reference": "origin/feat/cross-platform-clean-machine-matrix:crates/client/src/control.rs",
+    "reason": "Retain successor instance before cancellable connect, then promote it; preserves P047 pending-listener ownership."
+  },
+  "qa_status": "NOT_RUN_QA_DEFERRED"
+}

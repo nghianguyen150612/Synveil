@@ -1,8 +1,12 @@
 # Managed server service installation
 
-Status: **Implemented foundation — Prompt033.** This contract qualifies the
-initial Ubuntu 24.04 and Fedora 42 x86_64 machine-service topology. It establishes
-`INFRASTRUCTURE_READY`; it is not whole-product readiness.
+Status: **Planning/unit foundation implemented — Prompt033; native application
+incomplete.** This contract specifies the initial Ubuntu 24.04 and Fedora 42
+x86_64 machine-service topology and the intended `INFRASTRUCTURE_READY`
+checkpoint. A contract does not qualify an installed service. The current
+source lacks the native provisioning/service reconciler; see G01-G04 in the
+[implementation audit](IMPLEMENTATION_COMPLETION.md). Native acceptance is
+separately **NOT_RUN_QA_DEFERRED**.
 
 ## Ownership and topology
 
