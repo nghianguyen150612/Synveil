@@ -72,8 +72,14 @@ old=$(rpm -q --qf '%%{VERSION}-%%{RELEASE}' synveil) || {
   exit 1
 }
 if [ "$old" != '@SYNVEIL_VERSION@-@SYNVEIL_RELEASE@%{?dist}' ]; then
-  printf '[synveil] incompatible native transition; no unpack authorized\n' >&2
-  exit 1
+  approved=0
+  for source in @SYNVEIL_RPM_UPGRADE_SOURCES@; do
+    [ "$old" != "$source" ] || approved=1
+  done
+  if [ "$approved" != 1 ]; then
+    printf '[synveil] incompatible native transition; no unpack authorized\n' >&2
+    exit 1
+  fi
 fi
 exit 0
 

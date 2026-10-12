@@ -153,6 +153,9 @@ CARGO_VERSION="$(synveil_cargo_version)"
 DEB_VERSION="$(synveil_deb_version "$CARGO_VERSION")"
 RPM_VERSION="$(synveil_rpm_version "$CARGO_VERSION")"
 RPM_RELEASE="$(synveil_rpm_release)"
+NATIVE_UPGRADE_POLICY="${REPO_ROOT}/deploy/release/native-upgrade-policy.json"
+DEB_UPGRADE_SOURCES="$(python3 "$REPO_ROOT/scripts/native_upgrade_policy.py" --policy "$NATIVE_UPGRADE_POLICY" --target-version "$CARGO_VERSION" --format deb)"
+RPM_UPGRADE_SOURCES="$(python3 "$REPO_ROOT/scripts/native_upgrade_policy.py" --policy "$NATIVE_UPGRADE_POLICY" --target-version "$CARGO_VERSION" --format rpm)"
 MACHINE="$(uname -m)"
 DEB_ARCH="$(synveil_deb_arch "$MACHINE")"
 RPM_ARCH="$(synveil_rpm_arch "$MACHINE")"
@@ -373,7 +376,9 @@ build_deb() {
         "${SCRIPT_DIR}/debian/control.tmpl" > "${deb_stage}/DEBIAN/control"
     # Maintainer scripts (must be executable, no extension inside DEBIAN).
     for script in preinst postinst prerm postrm; do
-        sed "s/@SYNVEIL_DEB_VERSION@/${DEB_VERSION}/g" "${SCRIPT_DIR}/debian/${script}" > "${deb_stage}/DEBIAN/${script}"
+        sed -e "s/@SYNVEIL_DEB_VERSION@/${DEB_VERSION}/g" \
+            -e "s/@SYNVEIL_DEB_UPGRADE_SOURCES@/${DEB_UPGRADE_SOURCES}/g" \
+            "${SCRIPT_DIR}/debian/${script}" > "${deb_stage}/DEBIAN/${script}"
         chmod 0755 "${deb_stage}/DEBIAN/${script}"
         # Syntax check now (fail fast, no masking).
         sh -n "${deb_stage}/DEBIAN/${script}"
@@ -452,6 +457,7 @@ build_rpm() {
     # Generate spec from template.
     sed -e "s/@SYNVEIL_VERSION@/${RPM_VERSION}/g" \
         -e "s/@SYNVEIL_RELEASE@/${RPM_RELEASE}/g" \
+        -e "s/@SYNVEIL_RPM_UPGRADE_SOURCES@/${RPM_UPGRADE_SOURCES}/g" \
         -e "s/@SYNVEIL_ARCH@/${RPM_ARCH}/g" \
         "${SCRIPT_DIR}/rpm/synveil.spec.tmpl" > "${top}/SPECS/synveil.spec"
     if grep -q "@SYNVEIL_" "${top}/SPECS/synveil.spec"; then
