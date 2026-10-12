@@ -1,6 +1,6 @@
 # Prompt047 manifest — final release-candidate validation
 
-## Current validation checkpoint — 2026-10-12 01:22 UTC
+## Validation checkpoint — 2026-10-12 01:22 UTC (superseded by the blocked-resume audit below)
 
 **P047 preparation is complete for the currently available validation surface; final release qualification remains BLOCKED.** Main and PR #104 base are `3851ea11927e24255614cfc38adbaccbd345ca03` (tree `7801eb5c0d57a312072440a1f2decb463008b12c`). The product source under test was `d712e84e5bb21b1b2f845352c59ac10f0485c24c` (tree `63ee01be4861a84577331aa0579739df0f0060a7`), the published product head at the validation snapshot. The final P047 closeout commit changes only the report, manifest, and report validator/tests; it does not change the tested product tree. PR #104 remains OPEN / DRAFT / UNMERGED. P045 PR #78 is independently OPEN / DRAFT / UNMERGED at `035497c05c145e5c6129e744f9455937069680f4`.
 
@@ -243,3 +243,44 @@ flowchart TD
 ```
 
 P048 prerequisites include every required gate passing at the exact candidate identities, P045 native evidence, P036 live Host evidence, a complete and authenticated artifact set, production trust/signing/channel readiness, documented upgrade/repair/uninstall preservation, power-cycle recovery, and accepted P047 work merged to main. P047 does not perform any P048 action.
+
+## Blocked-resume audit — 2026-10-12 11:01 UTC
+
+The existing P047 and P045 pull requests and their histories were fetched and checked. Main remains `3851ea11927e24255614cfc38adbaccbd345ca03`; PR #104 remains OPEN/DRAFT against `main`, and PR #78 remains OPEN/DRAFT/UNMERGED at `035497c05c145e5c6129e744f9455937069680f4`. At the snapshot, PR #104 head was `1ba1c64e5cf12bf11394169012c4c7bd76b08c85`, still testing product source `d712e84e5bb21b1b2f845352c59ac10f0485c24c`.
+
+GitHub currently reports PR #78 as `mergeable=false`, `mergeable_state=dirty`; its PR API base SHA is `a560a40c8f2fe5b91db27c1b63fa0b0ab87173bc` while the current `main` branch is `3851ea11927e24255614cfc38adbaccbd345ca03`. A local merge preview against current main found one conflict, `scripts/validate-docs.sh`: main requires the `rg` preflight and the P046 bilingual-document validator, while P045 added its matrix validator in that validator slot. The branch was left unchanged. Before accepting P045, resolve this conflict while retaining the `rg` preflight and running both independent validators; rerun source checks on the resulting source.
+
+The last exact-head P045 matrix run is `37970834983` at `035497c05c145e5c6129e744f9455937069680f4`. Its source-gates and artifact producer jobs passed, but the Windows standard-user job failed closed at “Record required unavailable surfaces honestly” because hosted Windows Server 2025 lacks Windows 11 interactive GUI, genuine logon and installed named-pipe E2E. The four Ubuntu 24.04/Fedora 42 guest jobs failed at “Boot the disposable native guest and establish readiness”; both native evidence gates failed. These are environment/acceptance failures, not product PASS evidence. The Windows workflow is hard-coded to `windows-2025`, and its own evidence records that interactive/logon/named-pipe acceptance is unavailable or unwired. The Linux workflow has the reviewed `linux_native_runner` dispatch input, but dispatch remains unauthorized until the labeled isolated KVM worker has been provisioned and verified.
+
+This execution host is Debian 13 x86_64. `/dev/kvm`, `qemu-system-x86_64`, `virsh`, Xvfb/display, Windows 11 interactive session, PowerShell, Cargo and rustc are absent. Docker is not accepted as a substitute for a native VM or hypervisor power-control worker. GitHub runner enumeration returned HTTP 403, so registered runner count is unknown; no claim is made that the repository has zero registered runners. No qualified worker was accessible or verifiable in this execution.
+
+The latest exact-source P036 workflow run `38186864905` at d712 remains queued. Contract/source job `114610955230` passed, artifact-identity job `114610955330` failed because `acceptance/p036/production-artifacts.json` is absent, and the Ubuntu (`114610955211`), Fedora (`114610955247`) and interruption (`114610955233`) self-hosted jobs remain queued. The expected native scripts `scripts/run-p036-native-acceptance.sh` and `scripts/run-p036-power-interruption.sh` are also absent. No installed Host journey or power-interruption acceptance ran.
+
+The requested `acceptance/install-scenarios-v1.json` is absent from both fetched main and P045. The actual 11-scenario inventory is emitted by `python3 scripts/install_acceptance.py inventory`; all 11 definitions still report `IMPLEMENTATION_PENDING`, and zero native journeys are recorded. The P045 static row ledger remains `deploy/acceptance/p045-matrix-v1.json`.
+
+No product code or P045 branch was changed during this resume. No native workflow was dispatched, no new candidate bytes or hashes were created, no production keys were created, no PR was merged, and no release tag was made. The existing source-quality evidence remains bound to d712 and Rust CI run `38186860837`; duplicate PR run `38186864914` remains CANCELLED. The exact d712 Windows/DEB/RPM/AppImage files remain unsigned v0.1.0 CI artifacts, with raw payload identities UNVERIFIED after the prior HTTP 403 downloads. There is no complete authenticated v0.2.0 candidate set, server bundle, production signing/trust bootstrap or authenticated channel. Gate counts remain 21 total: qualification 1 PASS / 20 BLOCKED; actual test inventory 14 PASS / 7 BLOCKED. P048 remains not ready.
+
+Continuation checks passed: `./scripts/validate-p047-release-validation.sh` (21 gates, 14 report tests), `./scripts/validate-docs.sh`, `./scripts/validate-install-acceptance.sh` (11 scenarios, 21 contract tests), the P043 and P044 validators, and `git diff --check`. No new hosted workflow or native acceptance run was started. Local Cargo/rustc and native Windows/KVM/display capabilities are unavailable as recorded above.
+
+### Operator handoff
+
+1. A repository administrator must provision isolated native workers before another acceptance dispatch. For Linux, use the P045 handoff’s ephemeral `self-hosted,linux,x64,synveil-p045-kvm` runner, verify writable `/dev/kvm`, install the documented QEMU/image/SSH tooling, restrict it to disposable guests, and keep production networks and secrets out of untrusted PR jobs. Once the exact reviewed P045 head and authenticated candidate artifacts are ready, use the documented dispatch:
+
+   ```bash
+   gh workflow run cross-platform-clean-machine.yml \
+     --repo nghianguyen150612/Synveil \
+     --ref feat/cross-platform-clean-machine-matrix \
+     -f 'linux_native_runner=["self-hosted","linux","x64","synveil-p045-kvm"]'
+   ```
+
+2. Before P045 can claim Windows acceptance, provide a disposable Windows 11 VM with an active genuine standard-user desktop session and hypervisor-owned snapshots. The current workflow only targets `windows-2025`; P045 must add a reviewed, isolated route to that Windows 11 session and a driver that observes actual GUI Setup, real logon, installed named-pipe IPC, lifecycle and preservation. The existing hosted Windows result cannot satisfy it.
+
+3. Add the reviewed mutation-boundary power-cycle driver on the hypervisor host. It must observe the product boundary, cut power to the same persistent guest disk without OS shutdown, reboot that disk, run actual recovery/reconciliation and verify preservation. Do not substitute process termination, graceful shutdown, container restart or snapshot rollback.
+
+4. The P036 owner must obtain authentic distributed desktop, server, PostgreSQL 17 and managed-edge bytes and independently verify version, source revision, platform, architecture, SHA-256, provenance and license before creating `acceptance/p036/production-artifacts.json`. The owner must also provide the two currently absent native driver scripts, controlled reachable server, protected test credentials and labeled Ubuntu 24.04/Fedora 42/hypervisor workers. Only then dispatch `server-self-host-acceptance.yml` on the reviewed source and run the actual installed Host bootstrap/login/library/sync/recovery/preservation journey.
+
+5. Release engineering must produce and authenticate the complete v0.2.0 candidate set, independently hash retrieved raw bytes, bind each artifact to its source and producer, pin the AppImage runtime base, and provision production signing custody, trusted bootstrap, rollback protection, key rotation and authenticated channel publication. Current v0.1.0 CI output is not an eligible substitute.
+
+6. After dependencies are accepted, update P045 from current main and resolve `scripts/validate-docs.sh` by retaining the main P046 bilingual validator, P045 matrix validator and `rg` preflight. Rebuild/requalify the exact candidate source, run P045 and P036 evidence on exact identities, append only observed results to the P047 machine report, rerun its validators, and keep PR #104 draft until all 21 gates pass. Do not start P048 or create `v0.2.0` from this blocked checkpoint.
+
+The machine-readable snapshot in `acceptance/p047/release-candidate-validation-v1.json` records these live refs, run/job states, local capabilities, missing files and unchanged qualification counts. It preserves the distinction between failed workflow jobs, blocked acceptance requirements and unknown runner registry state.

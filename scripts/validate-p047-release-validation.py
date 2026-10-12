@@ -136,6 +136,97 @@ def validate_report(data: dict[str, Any]) -> None:
                 require(identity["sha256"] is not None, f"{category}: a qualifying artifact must have an exact SHA-256")
     require(set(by_id) == COVERAGE, "coverage must include every required release gate")
 
+    resume = data.get("live_resume_audit")
+    require(isinstance(resume, dict), "live resume audit is required")
+    require(isinstance(resume.get("observed_at_utc"), str) and
+            re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", resume["observed_at_utc"]) is not None,
+            "live resume audit must have an exact UTC observation time")
+    for field in ("main_sha",):
+        require(isinstance(resume.get(field), str) and SHA1.fullmatch(resume[field]) is not None,
+                f"live_resume_audit.{field} must be an exact full Git SHA")
+    p047 = resume.get("p047")
+    require(isinstance(p047, dict) and p047.get("pr_number") == 104 and
+            p047.get("state") == "OPEN" and p047.get("draft") is True and
+            p047.get("base") == "main" and p047.get("mergeable") is True and
+            p047.get("mergeable_state") == "clean",
+            "live resume audit must preserve the existing open draft P047 PR")
+    for field in ("base_sha", "head_sha_at_snapshot", "validated_product_source_sha"):
+        require(isinstance(p047.get(field), str) and SHA1.fullmatch(p047[field]) is not None,
+                f"live_resume_audit.p047.{field} must be an exact full Git SHA")
+    p045 = resume.get("p045")
+    require(isinstance(p045, dict) and p045.get("pr_number") == 78 and
+            p045.get("state") == "OPEN" and p045.get("draft") is True and
+            p045.get("mergeable") is False and p045.get("mergeable_state") == "dirty",
+            "live resume audit must retain the unmerged, non-mergeable P045 PR state")
+    for field in ("pr_api_reported_base_sha", "current_main_sha", "head_sha"):
+        require(isinstance(p045.get(field), str) and SHA1.fullmatch(p045[field]) is not None,
+                f"live_resume_audit.p045.{field} must be an exact full Git SHA")
+    conflicts = p045.get("merge_preview_conflicts")
+    require(isinstance(conflicts, list) and any(
+            isinstance(item, dict) and item.get("path") == "scripts/validate-docs.sh"
+            for item in conflicts),
+            "live resume audit must preserve the observed P045 merge conflict")
+    registry = resume.get("runner_registry_query")
+    require(isinstance(registry, dict) and registry.get("result") == "ERROR" and
+            registry.get("http_status") == 403 and registry.get("registered_runner_count") is None,
+            "inaccessible runner inventory must remain unknown, not be recorded as empty")
+    environment = resume.get("execution_environment")
+    require(isinstance(environment, dict) and
+            environment.get("dev_kvm_present") is False and
+            environment.get("windows_11_interactive_session_present") is False and
+            environment.get("hypervisor_hard_power_control_present") is False and
+            environment.get("qualified_native_worker_accessible") is False,
+            "local environment cannot claim P045 native worker capability")
+    p036 = resume.get("p036")
+    require(isinstance(p036, dict) and p036.get("inventory_present") is False,
+            "P036 production inventory must remain absent until supplied")
+    p036_run = p036.get("latest_source_workflow_run")
+    require(isinstance(p036_run, dict) and p036_run.get("workflow_status") == "queued",
+            "P036 workflow status must match the observed live run")
+    p036_jobs = {job.get("name"): job for job in p036_run.get("jobs", []) if isinstance(job, dict)}
+    require(p036_jobs.get("contract-and-source", {}).get("conclusion") == "success" and
+            p036_jobs.get("artifact-identity", {}).get("conclusion") == "failure" and
+            all(p036_jobs.get(name, {}).get("status") == "queued"
+                for name in ("ubuntu-host", "fedora-host", "interruption-recovery")),
+            "P036 source, artifact prerequisite and queued native job states must remain distinct")
+    counts = resume.get("qualification_counts")
+    actual_counts = {result: sum(row["actual_test_result"]["result"] == result for row in by_id.values())
+                     for result in ("PASS", "BLOCKED")}
+    qualification_counts = {result: sum(row["qualification_decision"] == result for row in by_id.values())
+                            for result in ("PASS", "BLOCKED")}
+    require(isinstance(counts, dict) and counts.get("coverage_gate_count") == len(COVERAGE) and
+            counts.get("actual_test_result_counts") == actual_counts and
+            counts.get("qualification_decision_counts") == qualification_counts,
+            "live resume gate counts must exactly match the 21 report rows")
+    local_checks = resume.get("local_validation_results")
+    require(isinstance(local_checks, list), "live resume audit must record the checks run during this continuation")
+    check_results = {item.get("command"): item.get("result") for item in local_checks if isinstance(item, dict)}
+    required_checks = {
+        "./scripts/validate-p047-release-validation.sh",
+        "./scripts/validate-docs.sh",
+        "./scripts/validate-install-acceptance.sh",
+        "python3 scripts/install_acceptance.py inventory",
+        "python3 scripts/validate-installer-security-hardening.py",
+        "python3 scripts/validate-installation-resilience-hardening.py",
+        "git diff --check",
+    }
+    require(required_checks.issubset(check_results) and
+            all(check_results[command] == "PASS" for command in required_checks),
+            "live resume validation commands must be present with their observed results")
+    release_state = resume.get("release_state")
+    require(isinstance(release_state, dict) and
+            all(release_state.get(field) is False for field in (
+                "authenticated_v020_candidate_set_complete",
+                "current_d712_raw_payload_sha256_independently_verified",
+                "production_signing_ready", "trusted_bootstrap_ready",
+                "authenticated_distribution_channel_ready", "p047_merged", "p048_ready")),
+            "live resume audit must keep unavailable release dependencies blocked")
+    scenarios = data.get("main_product_audit", {}).get("acceptance_inventory", {})
+    require(scenarios.get("requested_definition_file", {}).get("status") == "MISSING" and
+            scenarios.get("requested_definition_file", {}).get("path") == "acceptance/install-scenarios-v1.json" and
+            scenarios.get("evidence_location", "").startswith("scripts/install_acceptance.py inventory"),
+            "scenario inventory must identify the actual command and missing requested JSON path")
+
     if data["qualification_decision"] == "PASS":
         require(all(row["qualification_decision"] == "PASS" for row in by_id.values()),
                 "overall PASS requires every release gate to pass")

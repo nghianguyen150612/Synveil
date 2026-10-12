@@ -103,6 +103,32 @@ class P047ReportTests(unittest.TestCase):
                     source_tree_sha="b" * 40)
         VALIDATOR.validate_report(self.data)
 
+    def test_live_resume_audit_keeps_runner_registry_unknown_on_403(self):
+        VALIDATOR.validate_report(self.data)
+        registry = self.data["live_resume_audit"]["runner_registry_query"]
+        self.assertEqual(registry["http_status"], 403)
+        self.assertIsNone(registry["registered_runner_count"])
+
+        registry["registered_runner_count"] = 0
+        with self.assertRaises(ValueError):
+            VALIDATOR.validate_report(self.data)
+
+    def test_live_resume_audit_keeps_p045_dirty_and_p036_prerequisites_distinct(self):
+        VALIDATOR.validate_report(self.data)
+        p045 = self.data["live_resume_audit"]["p045"]
+        self.assertFalse(p045["mergeable"])
+        self.assertEqual(p045["merge_preview_conflicts"][0]["path"], "scripts/validate-docs.sh")
+        self.assertEqual(self.data["live_resume_audit"]["p036"]["latest_source_workflow_run"]["workflow_status"], "queued")
+
+        p045["mergeable"] = True
+        with self.assertRaises(ValueError):
+            VALIDATOR.validate_report(self.data)
+
+    def test_report_records_real_scenario_inventory_location(self):
+        inventory = self.data["main_product_audit"]["acceptance_inventory"]
+        self.assertEqual(inventory["requested_definition_file"]["status"], "MISSING")
+        self.assertTrue(inventory["evidence_location"].startswith("scripts/install_acceptance.py inventory"))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

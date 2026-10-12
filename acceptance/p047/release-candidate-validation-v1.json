@@ -48,7 +48,12 @@
       "scenario_count": 11,
       "current_availability": "IMPLEMENTATION_PENDING for all 11 scenario definitions",
       "native_journeys_executed": 0,
-      "evidence_location": "acceptance/install-scenarios-v1.json and scripts/install_acceptance.py inventory"
+      "evidence_location": "scripts/install_acceptance.py inventory (11 definitions); acceptance/install-scenarios-v1.json is absent from the fetched main and P045 heads.",
+      "requested_definition_file": {
+        "path": "acceptance/install-scenarios-v1.json",
+        "status": "MISSING",
+        "actual_inventory_source": "scripts/install_acceptance.py inventory"
+      }
     },
     "user_data_compatibility": "P041 migration 0008 sets LOCAL_SCHEMA_VERSION=8; P047 corrected stale assertions to the authoritative constant and did not modify migration or data-integrity semantics.",
     "unmerged_pull_request_audit": [
@@ -5815,7 +5820,12 @@
       "pull_request": 78,
       "branch": "feat/cross-platform-clean-machine-matrix",
       "head_sha": "035497c05c145e5c6129e744f9455937069680f4",
-      "requirement": "Windows 11 interactive GUI and genuine logon/named-pipe IPC; Ubuntu/Fedora clean-machine journeys; package lifecycle, preservation, real power-cycle; authenticated exact candidate binding."
+      "requirement": "Windows 11 interactive GUI and genuine logon/named-pipe IPC; Ubuntu/Fedora clean-machine journeys; package lifecycle, preservation, real power-cycle; authenticated exact candidate binding.",
+      "current_main_sha": "3851ea11927e24255614cfc38adbaccbd345ca03",
+      "pr_api_reported_base_sha": "a560a40c8f2fe5b91db27c1b63fa0b0ab87173bc",
+      "mergeable": false,
+      "mergeable_state": "dirty",
+      "main_merge_conflict_path": "scripts/validate-docs.sh"
     },
     "p036": {
       "production_acceptance": "BLOCKED",
@@ -5828,7 +5838,7 @@
       "exact_diagnostic": "test -f acceptance/p036/production-artifacts.json exited 1",
       "latest_exact_source_workflow_run": 38186864905,
       "latest_exact_source_artifact_identity_job_id": 114610955330,
-      "latest_exact_source_status": "The contract/source job 114610955230 passed; artifact-identity job 114610955330 failed because acceptance/p036/production-artifacts.json is absent. Host and interruption jobs 114610955211, 114610955233, and 114610955247 did not run.",
+      "latest_exact_source_status": "Exact d712 run 38186864905 remains queued: contract/source job 114610955230 passed; artifact-identity job 114610955330 failed because acceptance/p036/production-artifacts.json is absent; Ubuntu job 114610955211, Fedora job 114610955247, and interruption job 114610955233 are still queued on self-hosted runners.",
       "evidence_workflow_id": 374471950
     },
     "production_signing": {
@@ -5912,14 +5922,16 @@
     "P036 acceptance/p036/production-artifacts.json is absent. Exact d712 run 38186864905 job 114610955330 failed the inventory prerequisite; Host/interruption journeys did not run.",
     "Production signing/key custody, trusted bootstrap, authenticated stable-channel publication, rollback high-water publication and independent key rotation are absent; P047 created no production keys.",
     "Available exact d712 Windows, DEB, RPM and AppImage outputs are unsigned v0.1.0 CI artifacts, not a complete target v0.2.0 candidate set. Raw artifact downloads returned HTTP 403; producer hashes are not independently rehashed. No server bundle exists; the AppImage type-2 runtime digest is unpinned.",
-    "No installed Connect/client sync or production Host first-run journey against a controlled production-equivalent service has run. PR #104 remains OPEN/DRAFT/UNMERGED; PR #78 is untouched; P048 and v0.2.0 tag are not started."
+    "No installed Connect/client sync or production Host first-run journey against a controlled production-equivalent service has run. PR #104 remains OPEN/DRAFT/UNMERGED; PR #78 is untouched; P048 and v0.2.0 tag are not started.",
+    "P045 PR #78 is not mergeable against current main: GitHub reports dirty, and a local merge preview finds a conflict in scripts/validate-docs.sh. Reconcile the main P046 bilingual-doc validator and P045 matrix validator before accepting/merging P045."
   ],
   "p048_prerequisites": [
     "Complete all 21 P047 gates against exact authenticated v0.2.0 artifact identities, with no required FAIL/BLOCKED/ERROR/SKIPPED evidence.",
     "Accept P045 Windows 11 interactive and Ubuntu/Fedora native clean-machine journeys, lifecycle/data preservation, and genuine hard power-cycle recovery.",
     "Complete P036 production artifact identity and installed Host bootstrap/login/library/sync/recovery/preservation acceptance against controlled production-equivalent services.",
     "Provision and independently verify production signing, trusted bootstrap, authenticated distribution channel, rollback protection and key rotation.",
-    "Merge the accepted P047 PR to main before P048 performs the final tag/release operation."
+    "Merge the accepted P047 PR to main before P048 performs the final tag/release operation.",
+    "Update P045 from the current main and resolve its documentation-validator conflict without dropping either P046 bilingual checks or P045 matrix checks; rerun the required source/native evidence on the resulting source."
   ],
   "p045_native_handoff": {
     "reference_only_source_sha": "035497c05c145e5c6129e744f9455937069680f4",
@@ -6155,6 +6167,41 @@
       "command": "P035 first-admin bootstrap exact-source workflow",
       "result": "PASS",
       "detail": "P035 run 38186864948 job 114610955441 passed scoped bootstrap tests; this is not installed P036 Host production acceptance."
+    },
+    {
+      "command": "./scripts/validate-p047-release-validation.sh",
+      "result": "PASS",
+      "detail": "21 release gates; 14 report-contract tests; overall qualification remains 1 PASS / 20 BLOCKED."
+    },
+    {
+      "command": "./scripts/validate-docs.sh",
+      "result": "PASS",
+      "detail": "P046 bilingual document parity, links, commands, claims and P043/P044 documentation checks passed."
+    },
+    {
+      "command": "./scripts/validate-install-acceptance.sh",
+      "result": "PASS",
+      "detail": "11 scenario definitions and 21 contract tests passed; no native execution."
+    },
+    {
+      "command": "python3 scripts/install_acceptance.py inventory",
+      "result": "PASS",
+      "detail": "Emitted 11 definitions; all remain IMPLEMENTATION_PENDING and native journey count is zero."
+    },
+    {
+      "command": "python3 scripts/validate-installer-security-hardening.py",
+      "result": "PASS",
+      "detail": "P043 source/fixture checks only; no production keys or signing operation."
+    },
+    {
+      "command": "python3 scripts/validate-installation-resilience-hardening.py",
+      "result": "PASS",
+      "detail": "P044 source/fixture checks only; no VM power interruption."
+    },
+    {
+      "command": "git diff --check",
+      "result": "PASS",
+      "detail": "Final P047 report, manifest and validator diff."
     }
   ],
   "target_release_version": "0.2.0",
@@ -7846,7 +7893,8 @@
     "Raw CI artifact hashes and sizes are producer-reported when shown in workflow logs. Actions archive digests are recorded separately. HTTP 403 prevented raw artifact rehash in this execution; signatures/trust are missing.",
     "P047 does not merge P045, begin P048, publish a release, or create v0.2.0.",
     "The final evidence closeout commit is report-only (P047 JSON/manifest/validator/tests) and does not change the tested product tree. Its own final commit SHA is verified from the published PR ref rather than self-recorded in the report.",
-    "The exact-source Rust push run 38186860837 completed successfully, including Windows Qt runtime ZIP byte reproducibility and packaged QML smoke (job 114611010669). Duplicate PR integration run 38186864914 was cancelled at its 60-minute limit while building/auditing the same runtime ZIP; its incomplete job is recorded as cancelled, not PASS or a product defect. The PR checkout tree equals the successful direct-source tree."
+    "The exact-source Rust push run 38186860837 completed successfully, including Windows Qt runtime ZIP byte reproducibility and packaged QML smoke (job 114611010669). Duplicate PR integration run 38186864914 was cancelled at its 60-minute limit while building/auditing the same runtime ZIP; its incomplete job is recorded as cancelled, not PASS or a product defect. The PR checkout tree equals the successful direct-source tree.",
+    "Live blocked-resume audit captured 2026-10-12T11:01:15Z. PR #104/#78 state, P045 mergeability/conflict, runner-registry 403, local native capability absence, P036 queued/fail-closed jobs, and unchanged qualification counts are recorded in live_resume_audit. No evidence was promoted."
   ],
   "previous_e150_hosted_validation_snapshot": {
     "source_sha": "e150c846695f492aabe5d4c9ae7d836c59ea8a9e",
@@ -12277,5 +12325,258 @@
       "target_release_version": "0.2.0",
       "release_candidate_qualification": "BLOCKED"
     }
-  ]
+  ],
+  "live_resume_audit": {
+    "observed_at_utc": "2026-10-12T11:01:15Z",
+    "main_sha": "3851ea11927e24255614cfc38adbaccbd345ca03",
+    "worktree_clean_before_report_update": true,
+    "p047": {
+      "pr_number": 104,
+      "state": "OPEN",
+      "draft": true,
+      "base": "main",
+      "base_sha": "3851ea11927e24255614cfc38adbaccbd345ca03",
+      "head_sha_at_snapshot": "1ba1c64e5cf12bf11394169012c4c7bd76b08c85",
+      "validated_product_source_sha": "d712e84e5bb21b1b2f845352c59ac10f0485c24c",
+      "mergeable": true,
+      "mergeable_state": "clean"
+    },
+    "p045": {
+      "pr_number": 78,
+      "state": "OPEN",
+      "draft": true,
+      "base": "main",
+      "pr_api_reported_base_sha": "a560a40c8f2fe5b91db27c1b63fa0b0ab87173bc",
+      "current_main_sha": "3851ea11927e24255614cfc38adbaccbd345ca03",
+      "head_sha": "035497c05c145e5c6129e744f9455937069680f4",
+      "mergeable": false,
+      "mergeable_state": "dirty",
+      "merge_preview_conflicts": [
+        {
+          "path": "scripts/validate-docs.sh",
+          "main_change": "Requires ripgrep and runs the P046 bilingual user-document validator.",
+          "p045_change": "Runs the P045 cross-platform matrix validator in the DOC-UNIT-23 slot.",
+          "required_resolution": "Keep the ripgrep preflight and run both independent validators."
+        }
+      ],
+      "main_integration_applied": false,
+      "main_integration_note": "The published P045 head was left unchanged while no qualified native worker was available to validate a new P045 head.",
+      "last_exact_head_matrix_run": {
+        "run_id": 37970834983,
+        "head_sha": "035497c05c145e5c6129e744f9455937069680f4",
+        "workflow_conclusion": "failure",
+        "source_and_artifact_producer_jobs": [
+          {
+            "job_id": 113957658928,
+            "name": "source-gates",
+            "conclusion": "success"
+          },
+          {
+            "job_id": 113961701709,
+            "name": "windows / build-windows-candidate",
+            "conclusion": "success"
+          },
+          {
+            "job_id": 113961701805,
+            "name": "linux / Build exact acceptance artifacts once",
+            "conclusion": "success"
+          }
+        ],
+        "native_job_observations": [
+          {
+            "job_id": 113972512001,
+            "name": "windows / standard-user-native",
+            "job_conclusion": "failure",
+            "failed_step": "Record required unavailable surfaces honestly",
+            "acceptance_result": "BLOCKED",
+            "reason": "GitHub-hosted Windows Server 2025 does not supply Windows 11 interactive GUI, genuine logon, or installed named-pipe E2E."
+          },
+          {
+            "job_id": 113975269187,
+            "name": "linux / fedora 42 appimage clean-machine acceptance",
+            "job_conclusion": "failure",
+            "failed_step": "Boot the disposable native guest and establish readiness"
+          },
+          {
+            "job_id": 113975269232,
+            "name": "linux / fedora 42 RPM clean-machine acceptance",
+            "job_conclusion": "failure",
+            "failed_step": "Boot the disposable native guest and establish readiness"
+          },
+          {
+            "job_id": 113975269261,
+            "name": "linux / ubuntu 24.04 appimage clean-machine acceptance",
+            "job_conclusion": "failure",
+            "failed_step": "Boot the disposable native guest and establish readiness"
+          },
+          {
+            "job_id": 113975269464,
+            "name": "linux / ubuntu 24.04 DEB clean-machine acceptance",
+            "job_conclusion": "failure",
+            "failed_step": "Boot the disposable native guest and establish readiness"
+          }
+        ],
+        "evidence_gate_jobs": [
+          {
+            "job_id": 113983459409,
+            "conclusion": "failure",
+            "failed_step": "Assert required native acceptance evidence exists and passed"
+          },
+          {
+            "job_id": 113984034695,
+            "conclusion": "failure",
+            "failed_step": "Aggregate without upgrading scoped or unavailable evidence"
+          }
+        ],
+        "qualification": "BLOCKED",
+        "interpretation": "Producer/source jobs passed; native guest and Windows environment prerequisites did not establish the required native journeys. The workflow failure is not a product PASS and no P045 acceptance was imported."
+      },
+      "workflow_routing": {
+        "linux_dispatch_input": "linux_native_runner",
+        "linux_required_label": "synveil-p045-kvm",
+        "windows_workflow": ".github/workflows/windows-native-acceptance.yml",
+        "windows_runner_selector": "windows-2025",
+        "windows_interactive_route_available": false,
+        "windows_named_pipe_e2e_wired": false,
+        "source": "P045 workflow at the published PR #78 head."
+      }
+    },
+    "runner_registry_query": {
+      "endpoint": "GET /repos/nghianguyen150612/Synveil/actions/runners",
+      "result": "ERROR",
+      "http_status": 403,
+      "registered_runner_count": null,
+      "interpretation": "The current GitHub integration cannot inspect repository runner registrations; do not infer that the registry is empty."
+    },
+    "execution_environment": {
+      "host_os": "Debian GNU/Linux 13 (trixie)",
+      "architecture": "x86_64",
+      "dev_kvm_present": false,
+      "qemu_system_x86_64_present": false,
+      "virsh_present": false,
+      "interactive_display_present": false,
+      "xvfb_present": false,
+      "windows_11_interactive_session_present": false,
+      "genuine_user_logon_present": false,
+      "hypervisor_hard_power_control_present": false,
+      "cargo_present": false,
+      "rustc_present": false,
+      "powershell_present": false,
+      "qualified_native_worker_accessible": false
+    },
+    "p036": {
+      "inventory_path": "acceptance/p036/production-artifacts.json",
+      "inventory_present": false,
+      "required_dependencies": [
+        "desktop",
+        "server",
+        "postgresql17",
+        "edge"
+      ],
+      "native_driver_scripts": {
+        "scripts/run-p036-native-acceptance.sh": false,
+        "scripts/run-p036-power-interruption.sh": false
+      },
+      "latest_source_workflow_run": {
+        "run_id": 38186864905,
+        "source_sha": "d712e84e5bb21b1b2f845352c59ac10f0485c24c",
+        "workflow_status": "queued",
+        "jobs": [
+          {
+            "job_id": 114610955230,
+            "name": "contract-and-source",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          {
+            "job_id": 114610955330,
+            "name": "artifact-identity",
+            "status": "completed",
+            "conclusion": "failure",
+            "failed_step": "Require production PG17, server, desktop, and edge inventories"
+          },
+          {
+            "job_id": 114610955211,
+            "name": "ubuntu-host",
+            "status": "queued"
+          },
+          {
+            "job_id": 114610955247,
+            "name": "fedora-host",
+            "status": "queued"
+          },
+          {
+            "job_id": 114610955233,
+            "name": "interruption-recovery",
+            "status": "queued"
+          }
+        ],
+        "interpretation": "No installed Host or power-interruption acceptance ran. The workflow remains queued while its self-hosted native jobs wait; its artifact identity prerequisite failed closed."
+      }
+    },
+    "scenario_definition_inventory": {
+      "scenario_count": 11,
+      "native_journeys_executed": 0,
+      "definition_file_path": "acceptance/install-scenarios-v1.json",
+      "definition_file_present": false,
+      "actual_inventory_command": "python3 scripts/install_acceptance.py inventory"
+    },
+    "qualification_counts": {
+      "coverage_gate_count": 21,
+      "actual_test_result_counts": {
+        "PASS": 14,
+        "BLOCKED": 7
+      },
+      "qualification_decision_counts": {
+        "PASS": 1,
+        "BLOCKED": 20
+      }
+    },
+    "release_state": {
+      "authenticated_v020_candidate_set_complete": false,
+      "production_signing_ready": false,
+      "trusted_bootstrap_ready": false,
+      "authenticated_distribution_channel_ready": false,
+      "p047_merged": false,
+      "p048_ready": false,
+      "current_d712_raw_payload_sha256_independently_verified": false
+    },
+    "local_validation_results": [
+      {
+        "command": "./scripts/validate-p047-release-validation.sh",
+        "result": "PASS",
+        "detail": "21 release gates; 14 report-contract tests; overall qualification remains 1 PASS / 20 BLOCKED."
+      },
+      {
+        "command": "./scripts/validate-docs.sh",
+        "result": "PASS",
+        "detail": "P046 bilingual document parity, links, commands, claims and P043/P044 documentation checks passed."
+      },
+      {
+        "command": "./scripts/validate-install-acceptance.sh",
+        "result": "PASS",
+        "detail": "11 scenario definitions and 21 contract tests passed; no native execution."
+      },
+      {
+        "command": "python3 scripts/install_acceptance.py inventory",
+        "result": "PASS",
+        "detail": "Emitted 11 definitions; all remain IMPLEMENTATION_PENDING and native journey count is zero."
+      },
+      {
+        "command": "python3 scripts/validate-installer-security-hardening.py",
+        "result": "PASS",
+        "detail": "P043 source/fixture checks only; no production keys or signing operation."
+      },
+      {
+        "command": "python3 scripts/validate-installation-resilience-hardening.py",
+        "result": "PASS",
+        "detail": "P044 source/fixture checks only; no VM power interruption."
+      },
+      {
+        "command": "git diff --check",
+        "result": "PASS",
+        "detail": "Final P047 report, manifest and validator diff."
+      }
+    ]
+  }
 }
