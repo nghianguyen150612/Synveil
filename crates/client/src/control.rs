@@ -2117,6 +2117,7 @@ enum BoundControlTransport {
     #[cfg(windows)]
     Windows {
         server: Option<tokio::net::windows::named_pipe::NamedPipeServer>,
+        next: Option<tokio::net::windows::named_pipe::NamedPipeServer>,
         name: String,
     },
 }
@@ -2184,7 +2185,14 @@ impl BoundControlTransport {
                 })
             }
             #[cfg(windows)]
-            Self::Windows { server, name } => {
+            Self::Windows { server, next, name } => {
+                if next.is_none() {
+                    *next = Some(create_windows_pipe(name, false)?);
+                }
+                // Both instances remain owned by the transport while this
+                // future is selected against shutdown and status events. A
+                // cancelled accept must not drop the pending listener, and
+                // successor creation must finish before promoting a client.
                 let pending = server
                     .as_mut()
                     .ok_or(DesktopControlServerError::ListenerFailed)?;
@@ -2195,7 +2203,10 @@ impl BoundControlTransport {
                 let connected = server
                     .take()
                     .ok_or(DesktopControlServerError::ListenerFailed)?;
-                *server = Some(create_windows_pipe(name, false)?);
+                *server = Some(
+                    next.take()
+                        .ok_or(DesktopControlServerError::ListenerFailed)?,
+                );
                 Ok(AcceptedControlConnection {
                     io: Box::new(connected),
                 })
@@ -3438,6 +3449,7 @@ fn bind_windows_transport(name: &str) -> Result<BoundControlTransport, DesktopCo
     validate_pipe_name(name)?;
     Ok(BoundControlTransport::Windows {
         server: Some(create_windows_pipe(name, true)?),
+        next: None,
         name: name.to_owned(),
     })
 }

@@ -12,8 +12,9 @@ pub(crate) async fn run(pool: &SqlitePool, migrator: &Migrator) -> Result<(), Cl
     let result = run_inner(&mut connection, migrator).await;
     if result.is_err() {
         // Await the SQLite worker acknowledgement before releasing the pool.
-        connection.close().await?;
+        let close_result = connection.close().await;
         pool.close().await;
+        close_result?;
     }
     result
 }
