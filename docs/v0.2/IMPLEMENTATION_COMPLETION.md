@@ -15,7 +15,7 @@ is authorized or claimed by this record.
 - Repository: <https://github.com/nghianguyen150612/Synveil>.
 - Actual fetched starting `origin/main`: `3851ea11927e24255614cfc38adbaccbd345ca03`.
 - Development branch: `feat/v02-implementation-closeout`, based on that main.
-- Product source checkpoint before documentation: `3b9574bbf6213a713a26b31ffe6682bc04a544fe`.
+- Product source checkpoint before documentation: `c134bc7d00e8a0058a1d52b80033352ac2467f82`.
   Later documentation/publication commits do not change this product checkpoint.
   The PR and final task report identify the published branch HEAD.
 - P047 PR [#104](https://github.com/nghianguyen150612/Synveil/pull/104):
@@ -217,7 +217,16 @@ producer Python), and YAML parsing for the three touched Windows workflows.
 These succeeded at the recorded source checkpoint. They are not runtime tests,
 compilation, artifact verification, native acceptance or release qualification.
 
-Cargo, rustc, rustfmt and PowerShell are unavailable in this cloud workspace.
+Automatic source checks on the first published documentation head identified
+two Rust formatting differences. Both were corrected. A focused rustfmt check
+then passed for `server-bootstrap/src/lib.rs`, `server-network/src/lib.rs`,
+`client/src/control.rs` and `client-sync/src/local_migrations.rs` using an
+isolated formatter and matching driver libraries verified against Rust's
+published stable tool manifest. No compiler or product test was invoked.
+
+Cargo, rustc and PowerShell remain unavailable in this cloud workspace.
+Rustfmt was initially unavailable; the isolated diagnostic formatter was added
+only to correct the reported source formatting.
 The `qmake` wrapper cannot execute its missing Qt backend. No compiler or Qt
 runtime result is claimed. No workspace, web, installer,
 P036, P045, P047 or power-cycle test was deliberately executed. All unexecuted

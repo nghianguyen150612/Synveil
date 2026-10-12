@@ -3,7 +3,7 @@
   "mode": "DEVELOPMENT_FIRST_QA_DEFERRED",
   "implementation_status": "IMPLEMENTATION_IN_PROGRESS_QA_DEFERRED",
   "scope_source": "docs/v0.2/ROADMAP.md",
-  "source_checkpoint": "3b9574bbf6213a713a26b31ffe6682bc04a544fe",
+  "source_checkpoint": "c134bc7d00e8a0058a1d52b80033352ac2467f82",
   "assessment_method": "Source call-path and ownership inspection; no new runtime or native execution evidence. Documentation-only IMPLEMENTED entries assert contracts only.",
   "status_counts": {
     "IMPLEMENTED": 7,
