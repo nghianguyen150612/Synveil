@@ -166,6 +166,20 @@ def validate_report(data: dict[str, Any]) -> None:
             isinstance(item, dict) and item.get("path") == "scripts/validate-docs.sh"
             for item in conflicts),
             "live resume audit must preserve the observed P045 merge conflict")
+    manifest_record = p045.get("published_manifest_latest_record")
+    require(isinstance(manifest_record, dict) and
+            manifest_record.get("workflow_run_id") == 37925347518 and
+            manifest_record.get("is_current_head_evidence") is False and
+            isinstance(manifest_record.get("inspected_at_utc"), str) and
+            re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", manifest_record["inspected_at_utc"]) is not None,
+            "historical P045 manifest evidence must not be mistaken for the current head")
+    matrix_ledger = p045.get("static_matrix_ledger")
+    require(isinstance(matrix_ledger, dict) and
+            matrix_ledger.get("status") == "acceptance-withheld" and
+            matrix_ledger.get("row_count") == 7 and
+            len(matrix_ledger.get("row_ids", [])) == 7 and
+            "not execution results" in matrix_ledger.get("interpretation", ""),
+            "P045 matrix scope rows must not be treated as executed acceptance results")
     registry = resume.get("runner_registry_query")
     require(isinstance(registry, dict) and registry.get("result") == "ERROR" and
             registry.get("http_status") == 403 and registry.get("registered_runner_count") is None,

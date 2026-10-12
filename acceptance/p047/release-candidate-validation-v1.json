@@ -7894,7 +7894,8 @@
     "P047 does not merge P045, begin P048, publish a release, or create v0.2.0.",
     "The final evidence closeout commit is report-only (P047 JSON/manifest/validator/tests) and does not change the tested product tree. Its own final commit SHA is verified from the published PR ref rather than self-recorded in the report.",
     "The exact-source Rust push run 38186860837 completed successfully, including Windows Qt runtime ZIP byte reproducibility and packaged QML smoke (job 114611010669). Duplicate PR integration run 38186864914 was cancelled at its 60-minute limit while building/auditing the same runtime ZIP; its incomplete job is recorded as cancelled, not PASS or a product defect. The PR checkout tree equals the successful direct-source tree.",
-    "Live blocked-resume audit captured 2026-10-12T11:01:15Z. PR #104/#78 state, P045 mergeability/conflict, runner-registry 403, local native capability absence, P036 queued/fail-closed jobs, and unchanged qualification counts are recorded in live_resume_audit. No evidence was promoted."
+    "Live blocked-resume audit captured 2026-10-12T11:01:15Z. PR #104/#78 state, P045 mergeability/conflict, runner-registry 403, local native capability absence, P036 queued/fail-closed jobs, and unchanged qualification counts are recorded in live_resume_audit. No evidence was promoted.",
+    "Follow-up inspection of the published P045 manifest at 2026-10-12T11:08:13Z confirmed that its latest written continuation is historical (c4a872d / run 37925347518); live head/run state remains separately recorded."
   ],
   "previous_e150_hosted_validation_snapshot": {
     "source_sha": "e150c846695f492aabe5d4c9ae7d836c59ea8a9e",
@@ -12439,6 +12440,29 @@
         "windows_interactive_route_available": false,
         "windows_named_pipe_e2e_wired": false,
         "source": "P045 workflow at the published PR #78 head."
+      },
+      "published_manifest_latest_record": {
+        "manifest_path": "docs/v0.2/PROMPT045_MANIFEST.md",
+        "source_sha": "c4a872d6a92991578562aadd5faf215ee5ada925",
+        "workflow_run_id": 37925347518,
+        "is_current_head_evidence": false,
+        "interpretation": "Historical continuation only; current PR/API and Actions status are recorded separately in this live resume audit.",
+        "inspected_at_utc": "2026-10-12T11:08:13Z"
+      },
+      "static_matrix_ledger": {
+        "path": "deploy/acceptance/p045-matrix-v1.json",
+        "status": "acceptance-withheld",
+        "row_count": 7,
+        "row_ids": [
+          "windows-11-amd64-setup",
+          "ubuntu-24.04-x86_64-deb",
+          "ubuntu-24.04-x86_64-appimage",
+          "ubuntu-24.04-x86_64-quick-install",
+          "fedora-42-x86_64-rpm",
+          "fedora-42-x86_64-appimage",
+          "fedora-42-x86_64-quick-install"
+        ],
+        "interpretation": "Static acceptance scope ledger, not execution results."
       }
     },
     "runner_registry_query": {

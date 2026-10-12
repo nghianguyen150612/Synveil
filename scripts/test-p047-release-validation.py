@@ -118,6 +118,8 @@ class P047ReportTests(unittest.TestCase):
         p045 = self.data["live_resume_audit"]["p045"]
         self.assertFalse(p045["mergeable"])
         self.assertEqual(p045["merge_preview_conflicts"][0]["path"], "scripts/validate-docs.sh")
+        self.assertFalse(p045["published_manifest_latest_record"]["is_current_head_evidence"])
+        self.assertEqual(p045["static_matrix_ledger"]["row_count"], 7)
         self.assertEqual(self.data["live_resume_audit"]["p036"]["latest_source_workflow_run"]["workflow_status"], "queued")
 
         p045["mergeable"] = True
