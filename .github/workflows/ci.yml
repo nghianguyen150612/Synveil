@@ -145,6 +145,15 @@ jobs:
       - name: Select the MSVC developer environment
         uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Select and authenticate the MSVC linker and runtime
+        shell: pwsh
+        run: ./scripts/select-msvc-linker.ps1
+
+      - name: Pin the reproducible ZIP writer runtime
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14.7"
+
       - name: Install native Qt 6
         uses: jurplel/install-qt-action@v4
         with:

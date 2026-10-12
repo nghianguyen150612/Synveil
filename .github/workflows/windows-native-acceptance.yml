@@ -14,6 +14,7 @@ concurrency:
 
 env:
   CANDIDATE_NAME: windows-p028-candidate
+  SYNVEIL_ENABLE_QMLCACHEGEN_WRAPPER: "1"
 
 jobs:
   build-windows-candidate:
@@ -23,6 +24,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: ilammy/msvc-dev-cmd@v1
+      - name: Select and authenticate the MSVC linker and runtime
+        shell: pwsh
+        run: ./scripts/select-msvc-linker.ps1
+      - name: Pin the reproducible ZIP writer runtime
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14.7"
       - uses: jurplel/install-qt-action@v4
         with:
           version: 6.8.3

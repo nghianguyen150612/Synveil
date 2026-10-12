@@ -26,6 +26,7 @@ CLIENT_CONFIG = ROOT / "crates/client/src/config.rs"
 CLIENT_LIB = ROOT / "crates/client/src/lib.rs"
 DESKTOP_BRIDGE = ROOT / "crates/desktop/src/bridge.rs"
 REPRODUCIBLE = ROOT / "deploy/packages/common/reproducible.sh"
+MSVC_TOOLCHAIN = ROOT / "scripts/select-msvc-linker.ps1"
 APP_ID = "{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}"
 
 
@@ -132,13 +133,15 @@ def main() -> int:
     require("windows-latest" in workflow and "/VERYSILENT" in per_user_test and "state-sentinel" in per_user_test, "native smoke contract")
     for evidence in ("test-windows-installed-runtime.ps1", "QT_PLUGIN_PATH", "QML2_IMPORT_PATH", "unrelatedCwd", "client probe", "missing-qwindows", "corrupt-dll", "unexpected-dll", "developer-file"):
         require(evidence in workflow or evidence in per_user_test, f"P024 hosted runtime evidence: {evidence}")
-    require("VCToolsInstallDir" in workflow and "CompanyName" in workflow and "OriginalFilename" in workflow, "authenticated MSVC linker selection")
-    require("LinkType" in workflow and "0x00004550" in workflow and "0x8664" in workflow, "regular AMD64 PE linker identity")
+    msvc_toolchain = MSVC_TOOLCHAIN.read_text(encoding="utf-8")
+    require("select-msvc-linker.ps1" in workflow and "VCToolsInstallDir" in msvc_toolchain and "CompanyName" in msvc_toolchain and "OriginalFilename" in msvc_toolchain, "authenticated MSVC linker selection")
+    require("LinkType" in msvc_toolchain and "0x00004550" in msvc_toolchain and "0x8664" in msvc_toolchain, "regular AMD64 PE linker identity")
+    require("VCToolsRedistDir" in msvc_toolchain and "SYNVEIL_MSVC_CRT_DIR" in msvc_toolchain and "SYNVEIL_MSVC_AR" in msvc_toolchain, "exact MSVC runtime and deterministic archiver selection")
     require("$banner" not in workflow and "& $linker '/?'" not in workflow, "linker identity does not depend on localized help output")
     require("CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER" in reproducible and '"${rustc_linker_args[@]}"' in reproducible, "direct rustc uses selected MSVC linker")
     require("CARGO_ENCODED_RUSTFLAGS" in reproducible and "$'\\x1f'" in reproducible, "lossless Cargo flag transport")
-    require('rustc "${SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS[@]}" "${rustc_linker_args[@]}"' in reproducible, "direct rustc receives discrete remaps")
-    for runtime_rule in ("--compiler-runtime", "--qmldir", "platforms/qwindows.dll", "QmlImports=qml", "Qml2Imports=qml", "is_system_dll", "missing non-system import", "development directory leaked", 'rm -rf -- "$STAGING_DIR"'):
+    require('synveil_run_direct_rustc "$host_toolchain"' in reproducible and '"${SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS[@]}" "${rustc_linker_args[@]}"' in reproducible, "direct rustc receives discrete remaps")
+    for runtime_rule in ("--no-compiler-runtime", "copy_missing_msvc_runtime_imports", "--qmldir", "platforms/qwindows.dll", "QmlImports=qml", "Qml2Imports=qml", "is_system_dll", "missing non-system import", "development directory leaked", 'rm -rf -- "$STAGING_DIR"'):
         require(runtime_rule in package, f"authoritative runtime rule: {runtime_rule}")
     for required in ("SYNVEIL-MANIFEST.txt", "unmanifested package file", "0x8664", "platforms/qwindows.dll"):
         require(required in installed_test, f"installed runtime verification: {required}")

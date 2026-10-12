@@ -101,9 +101,18 @@ foreach ($name in @('msvcp140.dll', 'vcruntime140.dll')) {
   }
 }
 
-"CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-"SYNVEIL_MSVC_CRT_DIR=$crtDirectory" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-"SYNVEIL_MSVC_AR=$archiver" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+function Export-SelectedTool([string]$Name, [string]$Value) {
+  [Environment]::SetEnvironmentVariable($Name, $Value, 'Process')
+  if (![string]::IsNullOrWhiteSpace($env:GITHUB_ENV)) {
+    "$Name=$Value" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+  }
+}
+# Dot-source this selector in a developer PowerShell session before launching
+# the Bash package producer. Actions additionally persists the same selection
+# for later steps; local builds do not require a GITHUB_ENV file.
+Export-SelectedTool 'CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER' $linker
+Export-SelectedTool 'SYNVEIL_MSVC_CRT_DIR' $crtDirectory
+Export-SelectedTool 'SYNVEIL_MSVC_AR' $archiver
 Write-Host "Authenticated MSVC linker: $linker"
 Write-Host "MSVC toolset version: $env:VCToolsVersion"
 Write-Host "Linker SHA-256: $((Get-FileHash -LiteralPath $linker -Algorithm SHA256).Hash.ToLowerInvariant())"

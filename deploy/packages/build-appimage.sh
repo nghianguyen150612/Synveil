@@ -19,25 +19,39 @@ DESKTOP_BINARY=""
 CLIENT_BINARY=""
 INTEGRATION_BINARY=""
 BUILD_ONLY=0
+RUNTIME_FILE="${SYNVEIL_APPIMAGE_RUNTIME_FILE:-}"
+RUNTIME_SHA256="${SYNVEIL_APPIMAGE_RUNTIME_SHA256:-}"
 
 usage() { cat <<'EOF'
 Usage: build-appimage.sh [--output-dir=DIR] [--tool-dir=DIR]
        [--desktop-binary=PATH] [--client-binary=PATH] [--build-only]
+       --runtime-file=PATH --runtime-sha256=SHA256
 
 Build Synveil-<workspace-version>-x86_64.AppImage and its exact release
 manifest. Tools are version-pinned and SHA-256 verified before execution.
 --build-only creates one artifact; the default independently rebuilds and
 requires byte identity. Binary overrides must name real release ELF files.
+Supply an exact type-2 runtime and independently trusted SHA-256, or set
+SYNVEIL_APPIMAGE_RUNTIME_FILE and SYNVEIL_APPIMAGE_RUNTIME_SHA256. The builder
+never delegates runtime acquisition to an unpinned continuous download.
 EOF
 }
 while (($#)); do case "$1" in
   --output-dir=*) OUTPUT_DIR=${1#*=};; --tool-dir=*) TOOL_DIR=${1#*=};;
   --desktop-binary=*) DESKTOP_BINARY=${1#*=};; --client-binary=*) CLIENT_BINARY=${1#*=};;
+  --runtime-file=*) RUNTIME_FILE=${1#*=};; --runtime-sha256=*) RUNTIME_SHA256=${1#*=};;
   --build-only) BUILD_ONLY=1;; --help|-h) usage; exit 0;;
   *) printf '[synveil-appimage] ERROR: unknown argument: %s\n' "$1" >&2; exit 2;;
 esac; shift; done
 
-[[ $(uname -m) == x86_64 ]] || { echo '[synveil-appimage] ERROR: only Linux x86_64 is qualified' >&2; exit 1; }
+[[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || { echo '[synveil-appimage] ERROR: Linux x86_64 build host required' >&2; exit 1; }
+[[ $RUNTIME_SHA256 =~ ^[0-9a-f]{64}$ && -f $RUNTIME_FILE && ! -L $RUNTIME_FILE && $RUNTIME_FILE != *$'\n'* && $RUNTIME_FILE != *$'\r'* ]] || {
+  echo '[synveil-appimage] ERROR: an exact runtime file and trusted SHA-256 are required before acquisition or build' >&2; exit 1;
+}
+RUNTIME_FILE=$(realpath -- "$RUNTIME_FILE")
+printf '%s  %s\n' "$RUNTIME_SHA256" "$RUNTIME_FILE" | sha256sum --check --status || {
+  echo '[synveil-appimage] ERROR: runtime checksum mismatch' >&2; exit 1;
+}
 [[ $OUTPUT_DIR == /* ]] || OUTPUT_DIR="${REPO_ROOT}/${OUTPUT_DIR}"
 [[ $TOOL_DIR == /* ]] || TOOL_DIR="${REPO_ROOT}/${TOOL_DIR}"
 [[ $OUTPUT_DIR != / && $OUTPUT_DIR != *'/../'* && $OUTPUT_DIR != */.. ]] || { echo '[synveil-appimage] ERROR: unsafe output directory' >&2; exit 1; }
@@ -71,6 +85,11 @@ done
 
 WORK=$(mktemp -d /tmp/synveil-appimage.XXXXXX)
 trap 'rm -rf "$WORK"; rm -f "$OUTPUT_DIR/$ARTIFACT.part"' EXIT
+install -m0644 "$RUNTIME_FILE" "$WORK/appimage-runtime"
+printf '%s  %s\n' "$RUNTIME_SHA256" "$WORK/appimage-runtime" | sha256sum --check --status || {
+  echo '[synveil-appimage] ERROR: staged runtime checksum mismatch' >&2; exit 1;
+}
+export LDAI_RUNTIME_FILE="$WORK/appimage-runtime"
 build_one() {
   local label=$1 appdir="$WORK/$1/Synveil.AppDir" destination="$WORK/$1/$ARTIFACT"
   mkdir -p "$appdir/usr/bin"
