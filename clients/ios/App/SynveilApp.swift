@@ -12,7 +12,7 @@ struct SynveilApp: App {
         BackgroundUploadApplicationBootstrap.shared.install {
             await dependencies.prepareEnrollmentSecurity()
             await dependencies.sessionController.start()
-            await dependencies.uploadCoordinator?.background?.restore()
+            await dependencies.restoreBackgroundTransfers()
             BackgroundUploadEventDelivery.shared.processPendingEvents()
         }
     }

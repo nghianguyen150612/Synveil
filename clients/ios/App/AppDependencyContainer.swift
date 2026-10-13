@@ -48,6 +48,7 @@ public final class AppDependencyContainer {
     private(set) var rebaselineCoordinator: RebaselineCoordinator?
     private(set) var downloadCoordinator: FileDownloadCoordinator?
     private(set) var uploadCoordinator: FileUploadCoordinator?
+    private var backgroundCancellationTransport: URLSessionBackgroundUploadTransport?
     private(set) var fileExportCoordinator: VerifiedFileExportCoordinator?
     private(set) var syncAckService: SyncAckService?
     private(set) var inboundSyncCoordinator: (any InboundSyncCoordinatorProtocol)?
@@ -67,6 +68,21 @@ public final class AppDependencyContainer {
     }
 
     /// Initializes production enrollment security dependencies. Failure leaves enrollment closed.
+    func restoreBackgroundTransfers() async {
+        if let background = uploadCoordinator?.background {
+            await background.restore()
+        } else {
+            // Incompatible schema or unavailable staging cannot authorize adoption. Reconnect
+            // only to cancel system work; retain callbacks until durable storage is available.
+            if backgroundCancellationTransport == nil {
+                backgroundCancellationTransport = URLSessionBackgroundUploadTransport()
+            }
+            if let transport = backgroundCancellationTransport {
+                for task in await transport.inventory() { await transport.cancel(task.identifier) }
+            }
+        }
+    }
+
     public func prepareEnrollmentSecurity() async {
         if let securityPreparationTask {
             await securityPreparationTask.value

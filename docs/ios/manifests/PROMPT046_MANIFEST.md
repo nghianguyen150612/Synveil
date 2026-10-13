@@ -145,7 +145,9 @@ Application-delegate launch bootstraps storage/session/recovery independently of
 SwiftUI awaits the same one-time task. A launch request arriving before composition is retained.
 The serial delegate queue submits ordered main-queue events. Callback evidence is committed before
 acknowledging the OS. Finish-events acknowledgement waits for queued durable work, occurs once, and
-is withheld if local storage fails. Network reconciliation/next-chunk execution is not required for
+is withheld if local storage fails. If startup storage/schema or staging is unavailable, the stable
+session is reconnected solely for best-effort cancellation, with no task adoption or offset mutation.
+Network reconciliation/next-chunk execution is not required for
 acknowledging already persisted callback evidence. Cold launch initializes/migrates storage,
 reconnects the session, restores inventory and binds system tasks before continuation. Application
 reopen never starts a new upload session. Paused jobs stay paused; unknown/orphan tasks are cancelled.
