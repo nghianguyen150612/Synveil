@@ -117,6 +117,7 @@ final class UploadCoordinatorProvider: AuthenticatedUploadRequestProviderProtoco
 
     var finalOffset: UInt64 { serverOffset }
     var statusFailure: UploadFailure?
+    var onStatusResponse: (() -> Void)?
     func acceptBackground(to offset: UInt64) { serverOffset = offset }
     func backgroundUploadRequest(
         record: UploadRecord, chunk: BackgroundChunkIntent,
@@ -212,7 +213,9 @@ final class UploadCoordinatorProvider: AuthenticatedUploadRequestProviderProtoco
         guard sessionId == intent?.idempotencyKey.rawValue, let intent else {
             throw UploadFailure.invalidMetadata
         }
-        return try sessionResponse(intent: intent, status: 200, includeLocation: false)
+        let response = try sessionResponse(intent: intent, status: 200, includeLocation: false)
+        onStatusResponse?()
+        return response
     }
 
     func patchUploadChunk(

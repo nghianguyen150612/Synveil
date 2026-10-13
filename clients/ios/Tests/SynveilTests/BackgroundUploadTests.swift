@@ -332,7 +332,7 @@ final class BackgroundUploadTests: XCTestCase {
         let task = try XCTUnwrap(f.transport.tasks.first)
         f.background.invalidateSession()
         try await f.queue.database.quarantineSessions()
-        await settle()
+        await f.background.waitForInvalidation()
         let asyncValue9 = await f.background.receive(
             task, evidence: evidence(offset: String(f.bytes.count)))
         XCTAssertTrue(asyncValue9)
@@ -548,6 +548,99 @@ final class BackgroundUploadTests: XCTestCase {
         XCTAssertTrue(asyncValue14)
     }
 
+    func testActivityIsInformationalAndCannotAdvanceOffset() async throws {
+        let f = try await fixture()
+        let record = try await start(f)
+        let task = try XCTUnwrap(f.transport.tasks.first)
+        let persisted = await f.background.recordActivity(task)
+        XCTAssertTrue(persisted)
+        let job = try await f.queue.database.backgroundJob(record.id)
+        let saved = try await read(f, record.id)
+        XCTAssertEqual(job?.state, .transferring)
+        XCTAssertEqual(saved.authoritativeOffset, 0)
+        XCTAssertNil(job?.evidence)
+    }
+
+    func testAcceptedOffsetBeforeCommitFailureKeepsExclusionAfterReopen() async throws {
+        let injector = QueueFaultInjector()
+        let f = try await fixture(fault: injector)
+        let record = try await start(f)
+        f.transport.tasks = []
+        f.provider.acceptBackground(to: UInt64(f.bytes.count))
+        f.provider.onStatusResponse = { injector.arm(.beforeCommit) }
+        await f.background.restore()
+        let reopened = try MutationQueueSQLiteStore(url: f.queue.url)
+        let saved = try await read(f, record.id)
+        let job = try await reopened.backgroundJob(record.id)
+        XCTAssertEqual(saved.authoritativeOffset, 0)
+        XCTAssertTrue(job?.blocksForeground == true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: f.transport.files[0].path))
+        f.provider.onStatusResponse = nil
+        await f.background.restore()
+        let recovered = try await read(f, record.id)
+        XCTAssertEqual(recovered.authoritativeOffset, UInt64(f.bytes.count))
+        XCTAssertEqual(f.transport.submissions.count, 1)
+    }
+
+    func testAcceptedOffsetAfterCommitFailureIsAtomicAndCleanupRecoverable() async throws {
+        let injector = QueueFaultInjector()
+        let f = try await fixture(fault: injector)
+        let record = try await start(f)
+        f.transport.tasks = []
+        f.provider.acceptBackground(to: UInt64(f.bytes.count))
+        f.provider.onStatusResponse = { injector.arm(.afterCommit) }
+        await f.background.restore()
+        let reopened = try MutationQueueSQLiteStore(url: f.queue.url)
+        let job = try await reopened.backgroundJob(record.id)
+        let saved = try await read(f, record.id)
+        XCTAssertEqual(saved.authoritativeOffset, UInt64(f.bytes.count))
+        XCTAssertFalse(job?.blocksForeground == true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: f.transport.files[0].path))
+        f.provider.onStatusResponse = nil
+        await f.background.restore()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.transport.files[0].path))
+        XCTAssertEqual(f.provider.completionCalls, 0)
+    }
+
+    func testPayloadRangeBoundsRejectInvalidInput() async throws {
+        let f = try await fixture()
+        let record = try await createPaused(f)
+        for count in [-1, 0, UploadPolicy.chunkBytes + 1] {
+            do {
+                _ = try await f.staging.prepareBackgroundChunk(
+                    record, id: UploadOperationId(), offset: 0, count: count, durable: [])
+                XCTFail("Invalid range must fail")
+            } catch { XCTAssertEqual(error as? UploadFailure, .invalidMetadata) }
+        }
+    }
+
+    func testRequestMetadataContainsNoBearerOrProviderPath() async throws {
+        let f = try await fixture()
+        let record = try await start(f)
+        let jobValue = try await f.queue.database.backgroundJob(record.id)
+        let job = try XCTUnwrap(jobValue)
+        let metadata = String(decoding: try JSONEncoder().encode(job), as: UTF8.self)
+        XCTAssertFalse(metadata.contains(queueBearer))
+        XCTAssertFalse(metadata.contains(f.source.path))
+        XCTAssertFalse(metadata.contains("Authorization"))
+        XCTAssertEqual(f.transport.tasks[0].intentId, job.chunk?.id)
+        XCTAssertNotEqual(f.transport.tasks[0].intentId, record.intent.idempotencyKey.rawValue)
+    }
+
+    func testViewModelShowsBackgroundStateAndInvalidationFencesControls() async throws {
+        let f = try await fixture()
+        let record = try await start(f)
+        let model = FileUploadViewModel(
+            coordinator: f.coordinator, controller: f.queue.controller,
+            library: f.queue.scope.libraryId, libraryStatus: .active)
+        await model.refreshBackgroundState()
+        XCTAssertEqual(model.backgroundJobs[record.id]?.state, .scheduled)
+        XCTAssertEqual(model.displayedProgress(for: record).acknowledgedBytes, 0)
+        model.invalidate()
+        XCTAssertFalse(model.isCurrent)
+        XCTAssertFalse(model.isAvailable)
+    }
+
     private func evidence(
         offset: String, requestId: String = "background-patch-01",
         status: Int = 204, bodyEmpty: Bool = true, failure: UploadFailure? = nil
@@ -674,7 +767,9 @@ private final class FakeBackgroundTransport: BackgroundUploadTransportProtocol {
         afterSubmit?()
         return id
     }
-    func resume(_ identifier: Int) async { resumed.append(identifier) }
+    func resume(_ identifier: Int, authorized: @escaping @MainActor () -> Bool) async {
+        if authorized() { resumed.append(identifier) } else { await cancel(identifier) }
+    }
     func cancel(_ identifier: Int) async {
         cancelled.append(identifier)
         tasks.removeAll { $0.identifier == identifier }

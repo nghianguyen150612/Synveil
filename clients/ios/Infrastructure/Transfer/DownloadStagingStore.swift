@@ -477,6 +477,10 @@ actor DownloadStagingStore {
         _ record: UploadRecord, id: UploadOperationId,
         offset: UInt64, count: Int, durable: [DownloadStorageReservation]
     ) throws -> BackgroundChunkIntent {
+        guard !record.stagingReleased, count > 0, count <= UploadPolicy.chunkBytes,
+            offset <= record.intent.expected.byteLength,
+            UInt64(count) <= record.intent.expected.byteLength - offset
+        else { throw UploadFailure.invalidMetadata }
         try verifyUploadSource(stagingId: record.stagingId, expected: record.intent.expected)
         let reservationId = try DownloadOperationId(validating: id.rawValue)
         try reserve(
@@ -506,7 +510,8 @@ actor DownloadStagingStore {
         }
         try synchronize(descriptor)
         let sha = digest(try hash(descriptor, count: UInt64(count)))
-        guard try length(descriptor) == UInt64(count), sha == Self.digest(SHA256(data: bytes))
+        guard try length(descriptor) == UInt64(count),
+            sha == "sha256:" + SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
         else {
             throw UploadFailure.integrityMismatch
         }

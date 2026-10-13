@@ -71,6 +71,15 @@ final class FileUploadViewModel {
         }
     }
 
+    func refreshBackgroundState() async {
+        guard isCurrent, !isRunning, let coordinator else { return }
+        if let saved = try? await coordinator.visibleSaved(library: library), isCurrent {
+            records = saved
+            liveProgress = nil
+            await loadBackgroundJobs()
+        }
+    }
+
     func start(selectedURL: URL, target: UploadTarget, backgroundEnabled: Bool = false) async
         -> FileUploadResult
     {

@@ -5,7 +5,7 @@ protocol BackgroundUploadTransportProtocol: AnyObject {
     func inventory() async -> [BackgroundSystemTask]
     func submit(_ request: HTTPTransportRequest, file: URL, intent: BackgroundChunkIntent) throws
         -> Int
-    func resume(_ identifier: Int) async
+    func resume(_ identifier: Int, authorized: @escaping @MainActor () -> Bool) async
     func cancel(_ identifier: Int) async
 }
 
@@ -16,6 +16,7 @@ final class URLSessionBackgroundUploadTransport: NSObject, URLSessionDataDelegat
 {
     static let identifier = "com.synveil.ios.upload.background.v1"
     private var session: URLSession!
+    private var reportedActive: Set<Int> = []
     private var nonemptyBodies: Set<Int> = []  // serial delegate queue only
 
     override init() {
@@ -51,9 +52,19 @@ final class URLSessionBackgroundUploadTransport: NSObject, URLSessionDataDelegat
     }
 
     func urlSession(
+        _ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64,
+        totalBytesSent: Int64, totalBytesExpectedToSend: Int64
+    ) {
+        guard reportedActive.insert(task.taskIdentifier).inserted else { return }
+        let snapshot = Self.snapshot(task)
+        DispatchQueue.main.async { BackgroundUploadEventDelivery.shared.receiveActivity(snapshot) }
+    }
+
+    func urlSession(
         _ session: URLSession, task: URLSessionTask,
         didCompleteWithError error: Error?
     ) {
+        reportedActive.remove(task.taskIdentifier)
         let response = task.response as? HTTPURLResponse
         let original = task.originalRequest
         let validRequest =
@@ -131,8 +142,13 @@ extension URLSessionBackgroundUploadTransport: BackgroundUploadTransportProtocol
     }
 
     @MainActor
-    func resume(_ identifier: Int) async {
-        await session.allTasks.first(where: { $0.taskIdentifier == identifier })?.resume()
+    func resume(_ identifier: Int, authorized: @escaping @MainActor () -> Bool) async {
+        let task = await session.allTasks.first(where: { $0.taskIdentifier == identifier })
+        guard authorized() else {
+            task?.cancel()
+            return
+        }
+        task?.resume()
     }
 
     @MainActor
@@ -147,7 +163,12 @@ extension URLSessionBackgroundUploadTransport: BackgroundUploadTransportProtocol
 final class BackgroundUploadEventDelivery {
     static let shared = BackgroundUploadEventDelivery()
     var handler: ((BackgroundSystemTask, BackgroundUploadEvidence) async -> Bool)?
-    private var pending: [(BackgroundSystemTask, BackgroundUploadEvidence)] = []
+    var activityHandler: ((BackgroundSystemTask) async -> Bool)?
+    private enum Event {
+        case active(BackgroundSystemTask)
+        case evidence(BackgroundSystemTask, BackgroundUploadEvidence)
+    }
+    private var pending: [Event] = []
     private var draining = false
     private var processing: Task<Void, Never>?
     private var finished = false
@@ -160,7 +181,13 @@ final class BackgroundUploadEventDelivery {
 
     func receive(_ task: BackgroundSystemTask, evidence: BackgroundUploadEvidence) {
         finished = false
-        pending.append((task, evidence))
+        pending.append(.evidence(task, evidence))
+        processPendingEvents()
+    }
+
+    func receiveActivity(_ task: BackgroundSystemTask) {
+        finished = false
+        pending.append(.active(task))
         processPendingEvents()
     }
 
@@ -178,7 +205,18 @@ final class BackgroundUploadEventDelivery {
         draining = true
         processing = Task { @MainActor in
             while let event = pending.first {
-                guard await handler(event.0, event.1) else { break }
+                let persisted: Bool
+                switch event {
+                case .active(let task):
+                    if let activityHandler {
+                        persisted = await activityHandler(task)
+                    } else {
+                        persisted = false
+                    }
+                case .evidence(let task, let evidence):
+                    persisted = await handler(task, evidence)
+                }
+                guard persisted else { break }
                 pending.removeFirst()
             }
             draining = false

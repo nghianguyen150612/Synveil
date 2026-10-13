@@ -1818,7 +1818,8 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
     /// Server evidence and release of the durable PATCH exclusion are one transaction.
     func resolveBackgroundJob(
         _ previous: BackgroundUploadJob, record: UploadRecord,
-        offset: UInt64, serverState: UploadServerState, nextState: BackgroundUploadState
+        offset: UInt64, serverState: UploadServerState, nextState: BackgroundUploadState,
+        continueAuthorized: Bool = false
     ) throws {
         guard let chunk = previous.chunk, previous.blocksForeground,
             offset >= record.authoritativeOffset, offset >= chunk.offset,
@@ -1830,6 +1831,9 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         var next = previous
         next.resolved = true
         next.state = nextState
+        next.authorized =
+            previous.authorized && continueAuthorized
+            && [.completedChunk, .awaitingFinalization].contains(nextState)
         let local: UploadLocalState =
             nextState == .failedTerminal
             ? .failedPermanent

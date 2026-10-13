@@ -204,6 +204,10 @@ public final class AppDependencyContainer {
                         [backgroundUploads] task, evidence in
                         await backgroundUploads.receive(task, evidence: evidence)
                     }
+                    BackgroundUploadEventDelivery.shared.activityHandler = {
+                        [backgroundUploads] task in
+                        await backgroundUploads.recordActivity(task)
+                    }
                     BackgroundUploadEventDelivery.shared.processPendingEvents()
                     uploadCoordinator = FileUploadCoordinator(
                         repository: uploadRepository,

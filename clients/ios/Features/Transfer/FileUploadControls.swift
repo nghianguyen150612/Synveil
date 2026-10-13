@@ -95,6 +95,9 @@ struct FileUploadControls: View {
             )
         }
         .task { await model.loadSaved() }
+        .onChange(of: coordinator?.background?.stateRevision ?? 0) { _, _ in
+            Task { await model.refreshBackgroundState() }
+        }
         .onChange(of: controller.lifecycleRevision) { _, _ in
             model.invalidate()
             pendingSelection = nil

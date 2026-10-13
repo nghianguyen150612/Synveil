@@ -144,6 +144,17 @@ final class FileUploadCoordinator {
         }
     }
 
+    /// Read-only presentation refresh; no cleanup, network transfer or ownership changes.
+    func visibleSaved(library: LibraryId) async throws -> [UploadRecord] {
+        let session = try await repository.provider.begin()
+        let scope = try await session.mutationScope(libraryId: library, bridge: repository.bridge)
+        let records = try await database.uploads(
+            scope: scope, credentialId: session.credentialIdentifier,
+            limit: 20, bridge: repository.bridge)
+        try await repository.provider.validate(session)
+        return records
+    }
+
     func cancel() { active?.cancel() }
 
     func invalidateSession() {

@@ -1,14 +1,20 @@
 import Foundation
+import Observation
 
 /// Owns only background PATCH orchestration. P045 owns CREATE, COMPLETE, abort, wire decoding,
 /// immutable target identity and publication. Every ambiguous operation requires one status GET.
+@Observable
 @MainActor
 final class BackgroundUploadCoordinator {
+    private(set) var stateRevision: UInt64 = 0
     private let repository: AuthenticatedUploadRepository
     private let database: MutationQueueSQLiteStore
     private let staging: UploadStagingStore
     private let transport: any BackgroundUploadTransportProtocol
     private var invalidated = false
+    private var authorizationRevision: UInt64 = 0
+    private var pausedUploads: Set<UploadOperationId> = []
+    private var pendingInvalidation: Task<Void, Never>?
     private var recovering = false
     private var recoveryAction: Task<Void, Never>?
 
@@ -27,7 +33,12 @@ final class BackgroundUploadCoordinator {
         _ record: UploadRecord, session: LibraryRequestScope,
         explicitAuthorization: Bool
     ) async throws {
-        if explicitAuthorization { invalidated = false }
+        if explicitAuthorization {
+            await pendingInvalidation?.value
+            invalidated = false
+            pausedUploads.remove(record.id)
+        }
+        let capturedRevision = authorizationRevision
         guard !invalidated, record.state.canResume, !record.uncertain,
             record.serverState == .open, !record.stagingReleased,
             record.serverSessionId == record.intent.idempotencyKey.rawValue,
@@ -59,6 +70,7 @@ final class BackgroundUploadCoordinator {
         try await database.saveBackgroundJob(
             job, replacing: previous, record: record,
             explicitResume: explicitAuthorization)
+        stateRevision &+= 1
         let prepared = job
         do {
             let count = Int(
@@ -70,27 +82,38 @@ final class BackgroundUploadCoordinator {
                 offset: record.authoritativeOffset, count: count,
                 durable: database.downloadReservations())
             try await repository.provider.validate(session)
-            guard !invalidated else { throw UploadFailure.staleSession }
+            guard !invalidated, authorizationRevision == capturedRevision else {
+                throw UploadFailure.staleSession
+            }
             job.generation += 1
             job.chunk = chunk
             job.resolved = false
             try job.transition(.queued)
             try await database.saveBackgroundJob(job, replacing: prepared, record: record)
+            stateRevision &+= 1
             // A lost intent COMMIT acknowledgement cannot reach task creation. Recovery enumerates
             // before doing anything with a queued intent. Never recreate it based on missing mapping.
             let request = try await repository.provider.backgroundUploadRequest(
                 record: record, chunk: chunk, session: session)
             let file = try await staging.backgroundChunkURL(chunk)
             try await repository.provider.validate(session)
-            guard !invalidated else { throw UploadFailure.staleSession }
+            guard !invalidated, authorizationRevision == capturedRevision else {
+                throw UploadFailure.staleSession
+            }
             let task = try transport.submit(request, file: file, intent: chunk)
             let queued = job
             job.taskIdentifier = task
             try job.transition(.scheduled)
             try await database.saveBackgroundJob(job, replacing: queued, record: record)
+            stateRevision &+= 1
             try await repository.provider.validate(session)
-            guard !invalidated else { throw UploadFailure.staleSession }
-            await transport.resume(task)
+            guard !invalidated, authorizationRevision == capturedRevision else {
+                throw UploadFailure.staleSession
+            }
+            await transport.resume(task) {
+                !self.invalidated && self.authorizationRevision == capturedRevision
+                    && !self.pausedUploads.contains(record.id)
+            }
         } catch {
             // Preserve prepared chunks and durable intents; do not remove or replay uncertain work.
             throw UploadPolicy.classify(error)
@@ -98,6 +121,7 @@ final class BackgroundUploadCoordinator {
     }
 
     func waitForRecoveryAction() async { await recoveryAction?.value }
+    func waitForInvalidation() async { await pendingInvalidation?.value }
 
     func job(_ id: UploadOperationId) async throws -> BackgroundUploadJob? {
         try await database.backgroundJob(id)
@@ -105,17 +129,20 @@ final class BackgroundUploadCoordinator {
 
     /// Pause persists before cancellation; late evidence is retained but cannot authorize Resume.
     func pause(_ id: UploadOperationId) async throws {
+        pausedUploads.insert(id)
         guard var job = try await database.backgroundJob(id) else { return }
         let previous = job
         try job.transition(.paused)
         job.authorized = false
         try await database.saveBackgroundJob(job, replacing: previous)
+        stateRevision &+= 1
         if let task = job.taskIdentifier { await transport.cancel(task) }
     }
 
     func invalidateSession() {
         invalidated = true
-        Task { @MainActor in
+        authorizationRevision &+= 1
+        pendingInvalidation = Task { @MainActor in
             for previous in (try? await database.backgroundInventory()) ?? [] {
                 var job = previous
                 job.state = .quarantined
@@ -143,7 +170,13 @@ final class BackgroundUploadCoordinator {
                 continue
             }
         }
+        for resolved in jobs where resolved.resolved {
+            if let chunk = resolved.chunk, !tasks.contains(where: { $0.intentId == chunk.id }) {
+                try? await staging.removeBackgroundChunk(chunk)
+            }
+        }
         for original in jobs where original.blocksForeground {
+            let capturedRevision = authorizationRevision
             let owner = UUID()
             do {
                 try await database.claimUploadRun(owner: owner)
@@ -175,7 +208,10 @@ final class BackgroundUploadCoordinator {
                     try await database.saveBackgroundJob(bound, replacing: original)
                     try await repository.provider.validate(session)
                     guard !invalidated else { throw UploadFailure.staleSession }
-                    await transport.resume(task.identifier)
+                    await transport.resume(task.identifier) {
+                        !self.invalidated && self.authorizationRevision == capturedRevision
+                            && !self.pausedUploads.contains(record.id)
+                    }
                 } else if original.authorized, original.state != .paused {
                     try await reconcile(
                         original, record: record, session: session, continueAuthorized: true)
@@ -194,6 +230,27 @@ final class BackgroundUploadCoordinator {
             }
             await database.finishUploadRun(owner: owner)
         }
+    }
+
+    func recordActivity(_ task: BackgroundSystemTask) async -> Bool {
+        do {
+            let inventory = try await database.backgroundInventory()
+            guard let previous = inventory.first(where: { $0.chunk?.id == task.intentId }) else {
+                try await database.recordBackgroundOrphan(task.identifier)
+                return true
+            }
+            guard previous.taskIdentifier == task.identifier else {
+                await quarantine(previous)
+                try await database.recordBackgroundOrphan(task.identifier)
+                return true
+            }
+            guard previous.state == .scheduled else { return true }
+            var active = previous
+            try active.transition(.transferring)
+            try await database.saveBackgroundJob(active, replacing: previous)
+            stateRevision &+= 1
+            return true
+        } catch { return false }
     }
 
     func receive(_ task: BackgroundSystemTask, evidence: BackgroundUploadEvidence) async -> Bool {
@@ -222,6 +279,7 @@ final class BackgroundUploadCoordinator {
                 try recorded.transition(.awaitingEvidence)
             }
             try await database.saveBackgroundJob(recorded, replacing: original)
+            stateRevision &+= 1
             // Evidence is durable even if credentials/lease/status are unavailable. Lifecycle
             // acknowledgement need not wait for a network operation or subsequent chunk.
             recoveryAction = Task { @MainActor in
@@ -322,7 +380,8 @@ final class BackgroundUploadCoordinator {
                     ? .awaitingFinalization : .completedChunk))
         try await database.resolveBackgroundJob(
             job, record: record, offset: evidence.receivedBytes,
-            serverState: evidence.state, nextState: next)
+            serverState: evidence.state, nextState: next, continueAuthorized: continueAuthorized)
+        stateRevision &+= 1
         try await staging.removeBackgroundChunk(chunk)
         guard continueAuthorized, job.authorized, next == .completedChunk,
             evidence.receivedBytes > chunk.offset
@@ -338,6 +397,7 @@ final class BackgroundUploadCoordinator {
         job.state = .quarantined
         job.authorized = false
         try? await database.saveBackgroundJob(job, replacing: previous)
+        stateRevision &+= 1
     }
 
     private func valid(_ task: BackgroundSystemTask, record: UploadRecord, job: BackgroundUploadJob)
