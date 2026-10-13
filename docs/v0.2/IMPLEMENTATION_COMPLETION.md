@@ -17,6 +17,15 @@ is authorized or claimed by this record.
 - Repository: <https://github.com/nghianguyen150612/Synveil>.
 - Actual fetched starting `origin/main`: `3851ea11927e24255614cfc38adbaccbd345ca03`.
 - Development branch: `feat/v02-implementation-closeout`, based on that main.
+- CI repair resumed from branch head `ad8389aa587c9d5b88edc83f15702d1be8791ed0`.
+- Source-integration repair head: `cf7716050d6b25922a03d59acafed7c7c204ea6d`.
+- Focused repair commits: `2a803e5` (Linux-only Host IPC and build paths),
+  `3517adb` (Host package inventory/ownership), `2120746` (SQLx TLS trust
+  roots), `bad6038` (desktop/bootstrap contracts), `9cd6ac3` (AppImage input
+  requirement), `0af1a83` (strict Host Clippy), `c34cb08` (binary-safe secret
+  scanning), `b40c5dd` (encoded Rust flags in the remap probe), `e604c60`
+  (remaining strict lint and Windows packaging contracts), and `cf77160`
+  (current-head CI, package-fixture and Windows workflow regressions).
 - Product source checkpoint before documentation: `c56ea4c5f9b5b4e2643e6815711a415b70883d88`.
   Later documentation/publication commits do not change this product checkpoint.
   The PR and final task report identify the published branch HEAD.
@@ -203,6 +212,109 @@ requirements remain in place and no new PASS is claimed.
 - Failed migration teardown closes the pool even if connection close fails;
   Windows pipe successor allocation precedes promotion of a connected client.
 
+## CI source-integration repair
+
+The first automatic PR checks at `ad8389aa587c9d5b88edc83f15702d1be8791ed0`
+exposed genuine source and contract defects. The repair kept Linux privileged
+Host IPC behind Linux target gates and supplied an explicit unsupported Host
+adapter for other desktop targets. Linux `nix` and privileged functionality
+remain Linux-only; Windows/macOS Host support was not added.
+
+Production storage code no longer embeds `CARGO_MANIFEST_DIR`. Development
+checkout exclusions are derived at runtime from Cargo's conventional `target`
+directory, while the reproducible Host build uses the shared Rust path-remap
+policy. The release helper was rebuilt locally with that policy and passed the
+unchanged private-path scanner. One embedded sysusers comment contained the
+literal `/home/*` example and triggered the strict scanner; its wording now
+describes an interactive home without embedding that path.
+
+The automatic clean-machine/package builds then found that the secret scanner
+joined NUL-delimited binary format fragments into a false PostgreSQL credential
+match. The scanner now confines credential matching to printable URI bytes and
+excludes braces used by public Rust format templates. It still rejects actual
+credential URLs and both device-token prefixes. Regression fixtures cover
+real credentials, tokens, NUL-separated fragments and format templates; the
+release helper passes both artifact scans. The nested target-root probe now
+decodes `CARGO_ENCODED_RUSTFLAGS`, the transport the reproducibility helper
+actually exports, instead of reading the intentionally unset `RUSTFLAGS`.
+
+The Rust CI runs at `e604c603f5d74a32ca955a13093d1e5c1491ec77` found three
+strict Clippy findings in client sync: an oversized HTTP profile enum variant
+and two collapsible conditional blocks. The profile is now boxed at the enum
+boundary and the conditions were collapsed without changing behavior. These
+warnings also stopped the Linux Qt script and the Connection Setup, Library
+Wizard, Installation Progress, and Repair/Recovery quality jobs. The affected
+client, sync and installer-engine Clippy command passes locally after the fix.
+
+The same Rust run passed Linux, Windows and macOS cross-target workspace
+checks, macOS tests, dependency policy and web quality. Ubuntu tests then found
+that the adversarial Linux install fixture omitted the now-required Host
+helper argument. Its package assertions also treated the Host helper as a
+source file and excluded its reviewed destinations. The fixture now supplies
+the disposable helper bytes, the manifest header names `BINARY_HOST_HELPER`,
+and the closed-surface test admits only four exact Host helper/registrar/polkit
+paths. All 23 local Linux adversarial cases pass. Windows tests failed while
+parsing a CRLF checkout of the packager and passing a Windows path to Bash;
+the packager is pinned to LF, the parser normalizes line endings, and the
+syntax test feeds the script to Bash over stdin. All three local Windows
+packaging contract tests pass.
+
+The Windows installer CI built its runtime payload, then stopped at the first
+negative-closure fixture. The PowerShell job suppressed child diagnostics and
+relied on `$LASTEXITCODE`; it now uses a bounded child process, captures both
+streams, and requires a nonzero exit with the expected payload-identity error.
+The Windows native-acceptance candidate producer succeeded, but its consumer
+looked under `candidate/target/windows-installer/` after `upload-artifact`
+flattened the common root. Consumer paths now match the flattened artifact,
+and the source validator asserts this layout.
+
+Linux package, clean-machine artifact-preparation, and PostgreSQL maintenance
+jobs all stopped at ShellCheck on generated Debian `preinst`: an empty approved
+upgrade list becomes `for source in ''; do`, which is SC2041. The suppression
+now targets SC2041 with that exact explanation; the generated hook passes
+ShellCheck 0.9.0 and shell syntax validation. The independent build paths were
+not run past this gate on that head.
+
+The source integration run also recorded two external-input gates. AppImage
+failed closed before acquisition/build because no exact runtime file and
+trusted SHA-256 were supplied. Server self-host acceptance stopped at artifact
+identity because authentic signed server, PostgreSQL 17 and Caddy inventories
+and publisher keyrings were absent; installed-host jobs did not run. The
+Windows native-acceptance artifact authentication failure was the flattened
+path mismatch above, so its interactive acceptance step did not run. Other
+completed workflow slices for server services, first-admin bootstrap, Unified
+Welcome, network reachability, installer security and installation resilience
+passed on that source head. The parent-head Actions snapshot is recorded in
+the updated inventory. Publication-time Actions for the repaired source head
+are reported separately in the PR description and task closeout; cancelled or
+skipped work is not a pass.
+
+The closed Linux package surface now includes the Host helper, runtime prepare
+and registration scripts, polkit policy, and read-only Host inspector service.
+Manifest modes/owners, DEB/RPM dependencies, and the package contract were
+reconciled together. The only automatic activation exception is the sandboxed,
+read-only Host inspector; client and maintenance services remain inactive.
+The older package lifecycle permission inventory now checks all five added
+paths explicitly.
+
+The remaining fixes were narrow: SQLx now uses OS trust roots without changing
+TLS verification; `NativeManager._run` preserves `mutate` and forces native
+elevation for mutation; P030 and Unified Welcome validators follow the current
+authenticated acquisition and Host routing behavior; and the P035 workflow no
+longer runs the same stateful PostgreSQL bootstrap test twice. Its source list
+includes the workflow file so that this correction is checked on the PR.
+Formatting and strict Host Clippy defects were corrected without changing Host
+authorization, reviewed-plan binding, nonce/generation fencing, canonical
+owner behavior, or the IPC JSON representation.
+
+AppImage building remains fail-closed. The operator must provide the exact
+type-2 runtime file and an independently trusted 64-character lowercase SHA-256
+using `--runtime-file`/`--runtime-sha256` or the corresponding
+`SYNVEIL_APPIMAGE_RUNTIME_FILE`/`SYNVEIL_APPIMAGE_RUNTIME_SHA256` variables.
+The current build workflow has no authenticated runtime input, so it stops
+before acquisition/build; the missing input is recorded as unavailable rather
+than as a build result.
+
 ## G01-G08 implementation status
 
 | ID | Status and production path | Owner, security boundary, persistence and recovery |
@@ -223,26 +335,56 @@ identity is fabricated or checked in.
 
 ## Checks and evidence preserved
 
-The recovered source received selective diagnostics only: Rust formatting,
-`cargo check -p synveil-desktop -p synveil-api -p synveil-client-sync`, Python
-byte-compilation for the three Host input tools, Bash/POSIX shell syntax checks,
-and `git diff --check`. These checks do not run services or qualify runtime
-artifacts. The targeted Cargo check includes Host helper and Qt/CXX source
-generation/type checking; it is not a linked desktop build or installed Host.
+Local diagnostics and focused suites that passed:
 
-Automatic source checks on the first published documentation head identified
-two Rust formatting differences. Both were corrected. A focused rustfmt check
-then passed for `server-bootstrap/src/lib.rs`, `server-network/src/lib.rs`,
-`client/src/control.rs` and `client-sync/src/local_migrations.rs` using an
-isolated formatter and matching driver libraries verified against Rust's
-published stable tool manifest. No compiler or product test was invoked.
+- `cargo fmt --all -- --check`, `git diff --check`, `bash -n` on changed shell
+  entry points, and Python byte-compilation of changed scripts.
+- `cargo check -p synveil-server-host --all-targets --locked` and
+  `cargo clippy -p synveil-server-host --all-targets --locked --no-deps -- -D warnings`.
+- `cargo clippy -p synveil-server-service --all-targets --locked --no-deps -- -D warnings`
+  and `cargo test -p synveil-server-service --locked`: pass, 4 service tests.
+- `cargo test -p synveil-metadata --test release_artifact_units --locked`:
+  8 passed, including artifact secret scanning and reproducible path remapping.
+- `cargo test -p synveil-metadata --test windows_desktop_packaging_units --locked`:
+  3 passed, checking the current bounded CRT and deterministic ZIP policy.
+- `cargo test -p synveil-metadata --test linux_deployment_adversarial_units --test windows_desktop_packaging_units --locked`:
+  23 Linux adversarial cases and 3 Windows packaging contract cases passed.
+- `cargo clippy -p synveil-client -p synveil-client-sync -p synveil-install-engine --all-targets --locked --no-deps -- -D warnings`:
+  passed after correcting the current-head client-sync findings.
+- Windows native-acceptance source validation, Python byte-compilation,
+  inventory JSON parsing, `bash -n`/`sh -n` and `git check-attr` for the pinned
+  Windows packager line endings passed.
+- `cargo test -p synveil-install-engine --locked` passed, including 124 package
+  integration tests. The metadata Linux package and lifecycle suites passed 27
+  and 37 tests; systemd unit fragments and service identity suites passed 3
+  and 13 tests.
+- Server/storage suites passed: server-storage 23 tests; local storage and
+  object-store suites passed. Six live PostgreSQL storage tests remained
+  ignored because no live database was configured.
+- Python installer-security (23), quick-installer (15), Linux platform policy
+  (11), and release manifest/download/channel suites passed. Documentation
+  validation passed all 23 validators; package-integration validation passed
+  its static checks and 124 Rust tests. Debian/RPM UX validators and exact
+  ShellCheck validation passed.
+- The local release Host helper passed both the private-path and secret-marker
+  scanners. `cargo-deny check` passed all configured policy categories.
 
-Rust and Qt build inputs used for the targeted source check were assembled in an
-isolated toolchain under `/workspace/toolchains`; no system packages were
-installed. No Host effect was run because the current Debian 13 environment is
-outside the supported Host platforms. No workspace/web/installer suite, P036,
-P045, P047, native GUI, service/reboot, or power-cycle test was executed. All
-unexecuted suites remain **NOT_RUN_QA_DEFERRED**.
+The full local workspace check could not find `dbus-1.pc`. The isolated Qt
+toolchain did let `scripts/test-desktop-ui.sh` run: 92 desktop presentation
+tests passed, then local linking failed because its static `libdbus-1.a`
+references unavailable `sd_listen_fds` and `sd_is_socket` symbols. The full
+desktop Clippy command was canceled after it began recompiling generated Qt
+C++ inputs; the affected Rust-package Clippy command above completed. No
+Windows cross linker or macOS SDK is present for local cross-target builds;
+GitHub Actions supplied cross-target evidence on the pre-repair head. These
+local constraints do not describe the corresponding hosted jobs. No Host
+effect was run on this unsupported OS.
+
+Automatic Actions are evidence only for jobs that completed. Earlier runs at
+`0af1a83` and `c34cb08` exposed and recorded the artifact-gate and test-harness
+defects described above; cancelled or superseded jobs are not counted as
+passes. The final branch-head snapshot is recorded after the documentation
+commit and includes pending, failed or cancelled runs.
 
 P047 report and historical source evidence remain unchanged on PR #104.
 Previously recorded qualification is **21 gates: 1 PASS, 20 BLOCKED**;
@@ -257,11 +399,10 @@ not silently promote the implementation or release state.
 
 ## Deferred QA, environments and release preparation
 
-All of the following are **NOT_RUN_QA_DEFERRED** for this candidate:
+The following acceptance and release qualification remains
+**NOT_RUN_QA_DEFERRED** for this candidate. Source-level Actions results are
+recorded separately and do not count as installed-Host qualification:
 
-- Product Rust/web and focused regression suites, compiler/Qt integration,
-  source quality and dependency-policy checks beyond the syntax diagnostics
-  explicitly listed above.
 - P036 installed Host: real production dependency inventories, storage/admin/
   library/first-sync journey, local HTTPS/LAN, service restart/reboot, repair,
   reinstall, response-loss recovery and preservation.
@@ -280,7 +421,7 @@ No stable release artifact or `v0.2.0` tag was published. P048 remains deferred.
 
 ## Known risks and state transitions
 
-New/imported product changes remain untested at this candidate. Windows
+New/imported product behavior still needs native acceptance. Windows
 directory flushing/pipe/task ownership, installed native authorization,
 Qt runtime behavior and Caddy rendering need their appropriate later
 verification. Existing CI source assertions and fixtures are preserved and

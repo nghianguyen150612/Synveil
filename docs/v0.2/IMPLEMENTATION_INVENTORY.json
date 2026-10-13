@@ -4,12 +4,157 @@
   "implementation_status": "IMPLEMENTATION_COMPLETE_QA_PENDING",
   "scope_source": "docs/v0.2/ROADMAP.md",
   "source_checkpoint": "c56ea4c5f9b5b4e2643e6815711a415b70883d88",
-  "assessment_method": "Production call-path and owner-boundary inspection, plus selective source diagnostics; no native runtime effects or acceptance evidence. Documentation-only IMPLEMENTED entries assert contracts only.",
+  "assessment_method": "Production call-path and owner-boundary inspection, focused compile/lint/test diagnostics, and automatic source CI; native Host acceptance and release qualification remain deferred. Documentation-only IMPLEMENTED entries assert contracts only.",
   "status_counts": {
     "IMPLEMENTED": 7,
     "DEFERRED TO QA": 6,
     "IMPLEMENTED BUT UNTESTED": 35,
     "PARTIALLY IMPLEMENTED": 0
+  },
+  "source_integration_repair": {
+    "mode": "DEVELOPMENT_FIRST_QA_DEFERRED",
+    "resumed_from": "ad8389aa587c9d5b88edc83f15702d1be8791ed0",
+    "verified_source_head": "cf7716050d6b25922a03d59acafed7c7c204ea6d",
+    "commits": [
+      "2a803e5",
+      "3517adb",
+      "2120746",
+      "bad6038",
+      "9cd6ac3",
+      "0af1a83",
+      "c34cb08",
+      "b40c5dd",
+      "e604c60",
+      "cf77160"
+    ],
+    "repaired_areas": [
+      "Linux-only privileged Host modules with explicit unsupported adapters for other desktop targets",
+      "reproducible build path remapping and removal of embedded checkout paths",
+      "closed DEB/RPM package ownership inventory and read-only Host inspector activation",
+      "SQLx OS trust roots with TLS verification retained",
+      "installer mutate/elevation contract and current P030/P037 semantic validators",
+      "single execution of the stateful P035 bootstrap test",
+      "strict Host Clippy and rustfmt findings",
+      "binary-safe credential scanning and encoded Rust flag probe",
+      "remaining server-service strict Clippy warning and current Windows runtime/ZIP contract",
+      "current-head client-sync Clippy warnings without changing profile or connection behavior",
+      "Windows native acceptance consumer paths for flattened upload-artifact layout",
+      "PowerShell negative runtime closure checks with bounded child exit and diagnostic validation",
+      "Linux adversarial package fixtures for required Host helper and exact approved Host destinations",
+      "Windows packaging contract tests for LF checkout and Bash stdin portability",
+      "generated Debian preinst SC2041 suppression with the exact empty-policy rationale"
+    ],
+    "local_verification": {
+      "format_check": "PASS",
+      "host_check_and_strict_clippy": "PASS",
+      "server_service_check_and_strict_clippy": "PASS",
+      "server_service_tests": "PASS: 4 tests",
+      "windows_packaging_contract": "PASS: 3 tests including Windows path/line-ending portability",
+      "release_artifact_units": "PASS: 8 tests",
+      "package_integration": "PASS: 124 Rust tests",
+      "documentation_validators": "PASS: 23 validators",
+      "release_artifact_private_path_and_secret_scan": "PASS: local Host helper",
+      "cargo_deny": "PASS",
+      "full_workspace_check": "LOCAL LIMITATION: dbus-1.pc unavailable",
+      "desktop_qt_smoke": "LOCAL LIMITATION: 92 presentation tests pass; final local link fails on static DBus undefined sd_listen_fds and sd_is_socket",
+      "client_sync_client_install_engine_clippy": "PASS: strict all-target Clippy",
+      "linux_deployment_adversarial_units": "PASS: 23 tests",
+      "windows_native_acceptance_contract": "PASS: static validator; native checkpoint remains blocked",
+      "preinst_shellcheck": "PASS: generated hook under ShellCheck 0.9.0; bash -n and sh -n pass"
+    },
+    "deployment_inputs": {
+      "appimage_runtime_file_and_trusted_sha256": "UNAVAILABLE; build fails closed before acquisition/build",
+      "signed_server_postgresql_caddy_payloads_and_publisher_keyrings": "UNAVAILABLE; self-host artifact identity gate fails before installed-host jobs"
+    },
+    "native_acceptance": "DEFERRED; no deliberate P036/P045/P047, Windows interactive, or Linux power-cycle run",
+    "release_qualification": "BLOCKED",
+    "automatic_ci_snapshot_before_current_repair": {
+      "source_head": "e604c603f5d74a32ca955a13093d1e5c1491ec77",
+      "runs": [
+        {
+          "workflow": "Rust CI",
+          "run_id": 38342374857,
+          "workflow_status": "completed_failure",
+          "failed_jobs": [
+            "Quality (format and clippy)",
+            "Test (ubuntu-latest)",
+            "Test (windows-latest)",
+            "Native desktop UI (Linux Qt 6)"
+          ],
+          "root_cause": "three client-sync strict Clippy findings; Ubuntu adversarial fixtures omitted BINARY_HOST_HELPER and exact Host package destinations; Windows packaging test assumed LF text and passed a Windows path to Bash. Ubuntu/macOS/Windows workspace checks, macOS tests, dependency policy and web quality passed; the Linux Qt job stopped on the Clippy findings and the Windows Qt job was canceled after successful builds when a duplicate run superseded it."
+        },
+        {
+          "workflow": "Connection setup, library setup, installation progress, repair/recovery and authentication UI",
+          "run_ids": [
+            38342374856,
+            38342374851,
+            38342374833,
+            38342374873,
+            38342374848
+          ],
+          "workflow_status": "failed or in progress with failed quality/UI jobs",
+          "root_cause": "same client-sync strict Clippy findings; focused tests and static validators passed where executed."
+        },
+        {
+          "workflow": "Windows installer",
+          "run_id": 38342374860,
+          "workflow_status": "completed_failure",
+          "failed_job": "installer-smoke / Exercise negative runtime closure cases",
+          "root_cause": "the negative runtime closure job stopped on its first fixture because it suppressed child diagnostics and relied on LASTEXITCODE; installer output and later steps were consequently skipped."
+        },
+        {
+          "workflow": "Windows native acceptance",
+          "run_id": 38342374721,
+          "workflow_status": "completed_failure",
+          "failed_job": "standard-user-native / Authenticate transferred candidate",
+          "root_cause": "candidate build/upload passed; consumer expected nested target/windows-installer paths after upload-artifact flattened the common root. Native acceptance was skipped."
+        },
+        {
+          "workflow": "Linux native packages (DEB and RPM)",
+          "run_id": 38342374733,
+          "workflow_status": "in progress at snapshot",
+          "failed_job": "Build and validate DEB + RPM / Build release binary + DEB + RPM",
+          "root_cause": "generated Debian preinst triggered ShellCheck SC2041 for the empty approved-upgrade policy; Qt reproducibility and systemd validation jobs passed."
+        },
+        {
+          "workflow": "Linux clean-machine acceptance",
+          "run_id": 38342374830,
+          "workflow_status": "completed_failure",
+          "failed_job": "Build exact acceptance artifacts once / Build DEB and RPM",
+          "root_cause": "package artifact preparation stopped at the same generated preinst SC2041 warning; native matrix stages were skipped."
+        },
+        {
+          "workflow": "PostgreSQL 17 scheduled maintenance",
+          "run_id": 38342374715,
+          "workflow_status": "completed_failure",
+          "failed_job": "PG17 live suites / Build DEB for packaged-runtime gate",
+          "root_cause": "DEB preparation stopped at the same generated preinst SC2041 warning; live PostgreSQL suites were skipped."
+        },
+        {
+          "workflow": "Linux AppImage",
+          "run_id": 38342374947,
+          "workflow_status": "completed_failure",
+          "failed_job": "Build, reproduce, inspect, and smoke AppImage / Build and independently reproduce AppImage",
+          "root_cause": "the exact type-2 runtime file and trusted SHA-256 were not supplied; fail-closed before acquisition/build; artifact inspection and smoke stages skipped."
+        },
+        {
+          "workflow": "Server self-host acceptance",
+          "run_id": 38342374963,
+          "workflow_status": "artifact gate failed; downstream jobs queued",
+          "failed_job": "artifact-identity / Require production PG17, server, desktop, and edge inventories",
+          "root_cause": "authentic signed production server, PostgreSQL 17, desktop and edge inventories were unavailable; interruption and installed-host jobs remained queued."
+        }
+      ],
+      "completed_passing_slices": [
+        38342374909,
+        38342374827,
+        38342374832,
+        38342374870,
+        38342374945,
+        38342374874
+      ],
+      "interpretation": "This is historical source-integration evidence for the parent head. Every source/test/workflow defect listed above has a focused repair in this update. Unavailable deployment inputs remain blockers, not passes; no native acceptance result is claimed."
+    }
   },
   "features": [
     {
