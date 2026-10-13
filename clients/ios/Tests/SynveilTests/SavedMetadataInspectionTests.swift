@@ -44,7 +44,8 @@ final class SavedMetadataInspectionTests: XCTestCase {
             configuration: AppConfiguration(serverEndpoint: f.scope.serverEndpoint),
             restorationService: SessionRestorationService(
                 credentialStore: f.credentials,
-                authorizationValidator: InspectionAuthorization(result: result)),
+                authorizationValidator: InspectionAuthorization(result: result),
+                authorizationEvidence: SQLiteSessionAuthorizationEvidence(database: f.database)),
             logoutService: SessionLogoutService(credentialStore: f.credentials))
         controller.installMutationSessionInvalidator { f.queue.invalidateSession() }
         await controller.start()
@@ -108,7 +109,7 @@ final class SavedMetadataInspectionTests: XCTestCase {
             do {
                 _ = try await SavedMetadataSessionProvider(
                     controller: controller, credentials: f.credentials,
-                    bridge: QueueValidator()
+                    bridge: QueueValidator(), authorizationStore: f.database
                 ).begin()
                 XCTFail("Saved access must be denied")
             } catch {}
@@ -119,7 +120,8 @@ final class SavedMetadataInspectionTests: XCTestCase {
         let f = try await queueFixture(self)
         let controller = await pending(f)
         let provider = SavedMetadataSessionProvider(
-            controller: controller, credentials: f.credentials, bridge: QueueValidator())
+            controller: controller, credentials: f.credentials, bridge: QueueValidator(),
+            authorizationStore: f.database)
         let gate = QueueGate()
         await f.credentials.suspendNextLoad(gate)
         let task = Task { try await provider.begin() }
@@ -138,7 +140,8 @@ final class SavedMetadataInspectionTests: XCTestCase {
         try await projectionCache(f).rememberLibrary(library, scope: f.scope)
         let controller = await pending(f)
         let provider = SavedMetadataSessionProvider(
-            controller: controller, credentials: f.credentials, bridge: QueueValidator())
+            controller: controller, credentials: f.credentials, bridge: QueueValidator(),
+            authorizationStore: f.database)
         let gate = QueueGate()
         await f.credentials.suspendNextLoad(gate)
         let task = Task { try await provider.begin() }
@@ -164,7 +167,8 @@ final class SavedMetadataInspectionTests: XCTestCase {
         try await projectionCache(f).rememberLibrary(library, scope: f.scope)
         let controller = await pending(f)
         let provider = SavedMetadataSessionProvider(
-            controller: controller, credentials: f.credentials, bridge: QueueValidator())
+            controller: controller, credentials: f.credentials, bridge: QueueValidator(),
+            authorizationStore: f.database)
         let session = try await provider.begin()
         try await f.database.quarantineSessions()
         let saved = try await f.database.savedLibraries(session: session, bridge: QueueValidator())
@@ -188,7 +192,8 @@ final class SavedMetadataInspectionTests: XCTestCase {
         let f = try await queueFixture(self)
         let controller = await pending(f)
         let provider = SavedMetadataSessionProvider(
-            controller: controller, credentials: f.credentials, bridge: QueueValidator())
+            controller: controller, credentials: f.credentials, bridge: QueueValidator(),
+            authorizationStore: f.database)
         let gate = QueueGate()
         await f.credentials.suspendNextLoad(gate)
         let task = Task { try await provider.begin() }
@@ -213,8 +218,11 @@ final class SavedMetadataInspectionTests: XCTestCase {
         let service = SavedMetadataInspectionService(
             controller: offline, credentials: f.credentials,
             database: reopened, bridge: QueueValidator(), liveRepository: InspectionLiveReader())
-        let saved = try await service.libraries()
-        XCTAssertTrue(saved.isEmpty)
+        XCTAssertTrue(offline.savedAuthorizationEvidenceUnresolved)
+        do {
+            _ = try await service.libraries()
+            XCTFail("Unresolved authorization cannot expose saved metadata")
+        } catch { XCTAssertEqual(error as? LibraryFailure, .unauthenticated) }
     }
 
     func testAuthoritativeMetadataPermissionDenialBlocksSavedScopeAcrossReopen() async throws {
@@ -322,6 +330,26 @@ final class SavedMetadataInspectionTests: XCTestCase {
         let view = LibraryCatalogView(
             repository: nil, savedMetadataInspection: service, sessionController: f.controller)
         XCTAssertNotNil(view.body)
+    }
+
+    func testCatalogObservationCannotRetargetAnExistingProjectionRoot() async throws {
+        let f = try await queueFixture(self)
+        let original = try await library(f)
+        let session = try await f.provider.begin()
+        try await projectionCache(f).rememberValidatedCatalog([original], session: session)
+        let changed = Library(
+            id: original.id, revision: try LibraryRevision(validating: "9"),
+            name: original.name,
+            rootNodeId: try await NodeId.validated(queueUUID(302), using: QueueValidator()),
+            status: original.status, createdAt: original.createdAt, updatedAt: original.updatedAt)
+        do {
+            try await projectionCache(f).rememberValidatedCatalog([changed], session: session)
+            XCTFail("Root identity must remain pinned to the existing projection")
+        } catch { XCTAssertEqual(error as? SyncProjectionFailure, .scopeMismatch) }
+        let state = try await f.database.cachedProjectionState(
+            scope: f.scope,
+            credentialId: queueUUID(92), bridge: QueueValidator())
+        XCTAssertEqual(state.library?.library.rootNodeId, original.rootNodeId)
     }
 
     func testMissingSavedCatalogIsUnavailableRatherThanEmptyServerCatalog() async throws {

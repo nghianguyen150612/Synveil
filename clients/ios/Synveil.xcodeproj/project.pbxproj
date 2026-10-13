@@ -202,6 +202,9 @@
 		25DDAEF8DA40A5DCC5701E49 /* SavedMetadataInspectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1947D2701B9728AC34DE5E28 /* SavedMetadataInspectionView.swift */; };
 		191FD69399B150CB423A33DA /* ClientRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F1E19F9428AF1DF73E9BFDF /* ClientRecoveryTests.swift */; };
 		3D1141A213B67791E01B0163 /* SavedMetadataInspectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A853EF3DEF7C73656541699 /* SavedMetadataInspectionTests.swift */; };
+		9FC19B71304E7DF3E9C74BEE /* SessionAuthorizationEvidence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946AD1158EBB2121EFFAF371 /* SessionAuthorizationEvidence.swift */; };
+		A393EB4A824619F6C99DBAB7 /* SessionAuthorizationSQLiteSchema.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A7E05B094D52716E1A53F2D /* SessionAuthorizationSQLiteSchema.swift */; };
+		3092856C33A86A7D4CD4A19A /* SessionAuthorizationEvidenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F26B1BBC83859745335440A /* SessionAuthorizationEvidenceTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -411,6 +414,9 @@
 		1947D2701B9728AC34DE5E28 /* SavedMetadataInspectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Node/SavedMetadataInspectionView.swift; sourceTree = SOURCE_ROOT; };
 		9F1E19F9428AF1DF73E9BFDF /* ClientRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/ClientRecoveryTests.swift; sourceTree = SOURCE_ROOT; };
 		4A853EF3DEF7C73656541699 /* SavedMetadataInspectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SavedMetadataInspectionTests.swift; sourceTree = SOURCE_ROOT; };
+		946AD1158EBB2121EFFAF371 /* SessionAuthorizationEvidence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Session/SessionAuthorizationEvidence.swift; sourceTree = SOURCE_ROOT; };
+		4A7E05B094D52716E1A53F2D /* SessionAuthorizationSQLiteSchema.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/SessionAuthorizationSQLiteSchema.swift; sourceTree = SOURCE_ROOT; };
+		7F26B1BBC83859745335440A /* SessionAuthorizationEvidenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SessionAuthorizationEvidenceTests.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -437,6 +443,9 @@
 		A40000012C00000000000001 = {
 			isa = PBXGroup;
 			children = (
+				7F26B1BBC83859745335440A /* SessionAuthorizationEvidenceTests.swift */,
+				4A7E05B094D52716E1A53F2D /* SessionAuthorizationSQLiteSchema.swift */,
+				946AD1158EBB2121EFFAF371 /* SessionAuthorizationEvidence.swift */,
 				4A853EF3DEF7C73656541699 /* SavedMetadataInspectionTests.swift */,
 				9F1E19F9428AF1DF73E9BFDF /* ClientRecoveryTests.swift */,
 				1947D2701B9728AC34DE5E28 /* SavedMetadataInspectionView.swift */,
@@ -837,6 +846,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A393EB4A824619F6C99DBAB7 /* SessionAuthorizationSQLiteSchema.swift in Sources */,
+				9FC19B71304E7DF3E9C74BEE /* SessionAuthorizationEvidence.swift in Sources */,
 				25DDAEF8DA40A5DCC5701E49 /* SavedMetadataInspectionView.swift in Sources */,
 				D30AE43D86CB8AD2E74D42B8 /* ClientRecoveryNotice.swift in Sources */,
 				65973F21CDAFEB954ECCBBE0 /* ClientRecoveryPresentation.swift in Sources */,
@@ -968,6 +979,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3092856C33A86A7D4CD4A19A /* SessionAuthorizationEvidenceTests.swift in Sources */,
 				3D1141A213B67791E01B0163 /* SavedMetadataInspectionTests.swift in Sources */,
 				191FD69399B150CB423A33DA /* ClientRecoveryTests.swift in Sources */,
 				B04500000000000000000001 /* FileUploadTests.swift in Sources */,

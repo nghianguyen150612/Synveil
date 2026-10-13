@@ -113,9 +113,10 @@ public final class AppDependencyContainer {
                     maxResponseBodyBytes: 16 * 1024
                 )
             )
-            let service = SessionRestorationService(
+            var service = SessionRestorationService(
                 credentialStore: store,
-                authorizationValidator: authenticatedProbe
+                authorizationValidator: authenticatedProbe,
+                authorizationEvidence: SQLiteSessionAuthorizationEvidence(database: nil)
             )
             let logout = SessionLogoutService(credentialStore: store)
 
@@ -144,6 +145,10 @@ public final class AppDependencyContainer {
                 }.value
                 let queue = DurableMutationQueue(
                     store: database, provider: browserProvider, bridge: bridge)
+                let guardedRestoration = SessionRestorationService(
+                    credentialStore: store, authorizationValidator: authenticatedProbe,
+                    authorizationEvidence: SQLiteSessionAuthorizationEvidence(database: database))
+                service = guardedRestoration
                 switch await queue.recoverInterruptedOperations() {
                 case .recovered: break
                 case .failed(let failure): throw failure

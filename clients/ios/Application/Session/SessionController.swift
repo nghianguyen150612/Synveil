@@ -35,6 +35,7 @@ public final class SessionController {
     /// Typed non-secret failure context; cleared on every authoritative transition.
     public private(set) var restorationFailure: SessionRestorationVerificationFailure?
     public private(set) var secureStorageFailure: SessionSecureStorageFailure?
+    private(set) var savedAuthorizationEvidenceUnresolved = false
 
     /// Used by phase view models to discard callbacks after any newer lifecycle transition.
     var lifecycleRevision: UInt64 { transitionRevision }
@@ -43,6 +44,7 @@ public final class SessionController {
     /// classified temporary verification failure can retain access to previously bound scopes.
     var canInspectSavedMetadata: Bool {
         guard state == .restorationVerificationPending, !isRestorationRetryInProgress,
+            !savedAuthorizationEvidenceUnresolved,
             pendingRestorationSession != nil
         else { return false }
         switch restorationFailure {
@@ -343,6 +345,12 @@ public final class SessionController {
 
     private func apply(_ result: SessionRestorationResult) {
         switch result {
+        case .unresolvedAuthorizationEvidence(let session, let verification):
+            serverEndpoint = session.serverEndpoint
+            pendingRestorationSession = session
+            transition(to: .restorationVerificationPending)
+            restorationFailure = verification
+            savedAuthorizationEvidenceUnresolved = true
         case .noStoredSession(let configuredEndpoint):
             pendingRestorationSession = nil
             applyNoStoredSession(configuredEndpoint: configuredEndpoint)
@@ -358,7 +366,8 @@ public final class SessionController {
         case .locallyValidStoredSession(let session, let verification):
             serverEndpoint = session.serverEndpoint
             switch verification {
-            case .serverUnavailable, .dnsFailure, .networkFailure, .timeout, .cancelled:
+            case .serverUnavailable, .dnsFailure, .networkFailure, .timeout, .cancelled,
+                .localStorageFailure:
                 pendingRestorationSession = session
                 transition(to: .restorationVerificationPending)
             case .authenticationRejected:
@@ -440,7 +449,8 @@ public final class SessionController {
         }
         switch result {
         case .remotelyVerifiedAuthorizedSession(let session),
-            .locallyValidStoredSession(let session, _):
+            .locallyValidStoredSession(let session, _),
+            .unresolvedAuthorizationEvidence(let session, _):
             return .locallyValidStoredSession(session, verification: .cancelled)
         case .noStoredSession, .keychainUnavailable, .keychainReadFailure,
             .corruptedKeychainSession,
@@ -503,6 +513,7 @@ public final class SessionController {
         }
         transitionRevision &+= 1
         restorationFailure = nil
+        savedAuthorizationEvidenceUnresolved = false
         secureStorageFailure = nil
         state = newState
     }

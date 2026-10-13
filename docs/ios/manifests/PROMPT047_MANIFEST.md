@@ -102,6 +102,40 @@ replacement and lifecycle changes. Library lists are explicitly incomplete and s
 timestamp is fabricated. The product contract records this inspection exception without relaxing
 the authenticated-state gate.
 
+## Durable authorization verification and the crash boundary
+
+Saved inspection adds a direct security dependency: a server rejection followed by termination or
+failed local persistence must not be forgotten on the next offline launch. Before the existing
+read-only verification GET, production now commits CHECKING with the original endpoint/owner/Device/
+credential identity and an opaque local attempt UUID. Verification cannot dispatch without this
+marker. Missing, full or untrusted storage produces typed localStorageFailure, retains Keychain and
+provides storage/reopen guidance; it does not issue an unrecorded request.
+
+Terminal AUTHORIZED, TRANSIENT, REJECTED and VERIFY_REQUIRED evidence is committed only for the
+original current lease after Keychain identity revalidation. A stale lease cannot overwrite a newer
+check across connections. A completed ordinary transient failure can preserve prior eligible scope
+access. An interrupted CHECKING record, rejected outcome, TLS/protocol condition or lost terminal
+commit remains a verification requirement across reopen. A later timeout/offline response cannot
+clear that requirement. Only a newly verified authorized response resolves it. Root presentation
+withholds saved inspection and explains the unconfirmed authorization evidence.
+
+A complete zero/one-Library observation in the existing limit=1 authorization response also
+withdraws eligibility for absent or quarantined Libraries atomically with confirmation. A partial,
+inconsistent or unsupported observation cannot prove absence. The full catalog still owns ordinary
+Library discovery and positive Library metadata observations; no additional GET is introduced.
+
+The v9 table contains no credential, response body, file path, token, journal position or invented
+freshness time. Immutable identity and connection-local authority triggers prevent direct marker
+forgery/deletion. Records are bounded to 1,024 identities and charged to the existing evidence budget.
+Exact v8 schema validation precedes the transactional addition, with all v1–v8 migration paths,
+FULL synchronization, corruption checks, future-version rejection and rollback retained. P046's
+background intent schema and callback lifecycle are unchanged.
+
+Library observation persistence also now compares validated, canonically encoded metadata when
+revisions match. Older valid JSON key ordering is accepted; a genuine field change at the same
+revision, malformed/unsupported metadata, revision regression or changed readback still stops.
+No unverified cache row is silently repaired by a live catalog refresh.
+
 ## Feature recovery integration
 
 | Feature | P047 behavior and preserved execution authority |
@@ -123,10 +157,10 @@ saved-state refresh, closing a late publication gap.
 
 ## Persistence, integrity and security
 
-Schema remains v8 and uses the existing SQLite actor, transactions, scope quarantine, evidence
+Schema advances transactionally from v8 to v9 and uses the existing SQLite actor, transactions, scope quarantine, evidence
 capacity accounting and FULL synchronization. No new cache database, Node truth, journal checkpoint,
 token, mutation identity, upload identity, download version or background intent encoding is added.
-No migration or rewrite of unresolved mutation/ACK/rebaseline/transfer evidence occurs. Positive
+The migration retains every P046 v8 table, intent and guard unchanged; it adds only bounded session authorization-check evidence. No unresolved mutation/ACK/rebaseline/transfer evidence is rewritten. Positive
 Library observations use existing versioned validation and transactional writes; negative access
 evidence changes only existing quarantine fields.
 
@@ -142,14 +176,14 @@ cannot be inferred while offline; the inspection surface explicitly says verific
 
 ## Validation and evidence
 
-Linux source validation, all 88 portable support tests and diff checks pass. Strict Swift 6.2.3
+Linux source validation, all 90 portable support tests and diff checks pass. Strict Swift 6.2.3
 formatting and Swift syntax parsing run in the official Linux toolchain. These checks are not Apple
 typechecking or XCTest. Native evidence is pending GitHub Actions on the feature head; it will be
 recorded below after observed completion.
 
-Twenty-seven new XCTest methods supplement all existing suites: eight recovery contract/classifier
-tests, fourteen saved inspection/security/SQLite tests, three upload status race/failure tests and two
-sync recovery tests. Existing background UI coverage also now asserts that Resume cannot compete
+Forty-three new XCTest methods supplement all existing suites: eight recovery contract/classifier
+tests, fifteen saved inspection/security/SQLite tests, four background/status/migration tests, two
+sync recovery tests and fourteen authorization-evidence tests. Existing background UI coverage also now asserts that Resume cannot compete
 with an unresolved chunk. No test or gate is disabled. Portable tests check target registration,
 local-only inspection authority, absence of generic retry/network schedulers, original-session
 fencing and fail-closed classification. The existing quarantine registration assertion is updated
@@ -178,6 +212,13 @@ stopped during test compilation because one new `queueScope` fixture supplied ow
 The argument order is corrected; no test is removed or skipped. This intermediate head is not
 native qualification. Final source-head results will be recorded after observed completion.
 
+The next source head `87b110e6d46e0adb9656308e95da6e764536bb7f` passed static, app build and Rust
+Apple gates. Simulator [38417074112](https://github.com/nghianguyen150612/Synveil/actions/runs/38417074112)
+executed 1,730 tests: 1,727 passed, two existing skips and one failure in repeated Library metadata
+observation. The failure exposed noncanonical JSON key order being treated as a revision change;
+validated canonical comparison fixes it without weakening revision guards. This is intermediate
+evidence, superseded by the final source-head results below.
+
 Physical-device evidence is **NOT_AVAILABLE**. P046's real-device scheduling, force-quit,
 first-unlock, OS header-storage and Data Protection limits remain unchanged. No production
 qualification, real-server or physical power-loss guarantee is claimed.
@@ -200,5 +241,5 @@ Before production qualification, record a signed build SHA, device/OS and contro
 
 ## Delivery status
 
-Feature PR, final head and observed exact-head CI evidence: pending.
+Feature PR: [#130](https://github.com/nghianguyen150612/Synveil/pull/130), targeting ios-app. Final source head and observed exact-head CI evidence: pending.
 Integration/merge: not requested or performed. P048 remains unauthorized.

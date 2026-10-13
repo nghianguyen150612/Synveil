@@ -8,14 +8,16 @@ final class SavedMetadataSessionProvider: LocalLibrarySessionProviderProtocol,
     private let controller: SessionController
     private let credentials: any SecureCredentialSinkProtocol
     private let bridge: any RustBridgeProtocol
+    private let authorizationStore: MutationQueueSQLiteStore
 
     init(
         controller: SessionController, credentials: any SecureCredentialSinkProtocol,
-        bridge: any RustBridgeProtocol
+        bridge: any RustBridgeProtocol, authorizationStore: MutationQueueSQLiteStore
     ) {
         self.controller = controller
         self.credentials = credentials
         self.bridge = bridge
+        self.authorizationStore = authorizationStore
     }
 
     func begin() async throws -> LibraryRequestScope {
@@ -45,6 +47,13 @@ final class SavedMetadataSessionProvider: LocalLibrarySessionProviderProtocol,
             scope.sameSession(
                 as: LibraryRequestScope(session: stored, revision: scope.lifecycleRevision))
         else { throw LibraryFailure.staleSession }
+        if controller.state == .restorationVerificationPending {
+            guard
+                try await authorizationStore.permitsPendingSavedInspection(
+                    SessionAuthorizationIdentity(stored))
+            else { throw LibraryFailure.unauthenticated }
+            try check(scope)
+        }
     }
 
     private func check(_ scope: LibraryRequestScope) throws {
@@ -90,7 +99,7 @@ final class SavedMetadataInspectionService: SavedMetadataInspectionProtocol {
     ) {
         let provider = SavedMetadataSessionProvider(
             controller: controller, credentials: credentials,
-            bridge: bridge)
+            bridge: bridge, authorizationStore: database)
         self.provider = provider
         self.database = database
         self.bridge = bridge

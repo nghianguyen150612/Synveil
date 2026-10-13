@@ -211,7 +211,7 @@ final class SessionRestorationTests: XCTestCase {
 
         let result = await probe.validateAuthorization(for: session)
 
-        XCTAssertEqual(result, .authorized)
+        XCTAssertEqual(result, .authorizedCompleteLibraryCatalog([]))
         let capturedRequest = await transport.lastRequest()
         let request = try XCTUnwrap(capturedRequest)
         XCTAssertEqual(request.headers["Authorization"], "Bearer \(bearer)")
@@ -227,7 +227,7 @@ final class SessionRestorationTests: XCTestCase {
 
         let result = try await probe.validateAuthorization(for: makeSession(endpoint: endpoint))
 
-        XCTAssertEqual(result, .authorized)
+        XCTAssertEqual(result, .authorizedCompleteLibraryCatalog([]))
         let capturedRequest = await transport.lastRequest()
         let request = try XCTUnwrap(capturedRequest)
         XCTAssertEqual(request.url.scheme, "https")

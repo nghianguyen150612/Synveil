@@ -125,6 +125,14 @@ struct RestorationVerificationPendingView: View {
                         )
                         .accessibilityIdentifier("synveil.session.inspect-saved")
                 }
+                if sessionController.savedAuthorizationEvidenceUnresolved {
+                    Label(
+                        "A previous authorization check has an unconfirmed outcome. Saved metadata remains unavailable until online verification succeeds.",
+                        systemImage: "lock.shield"
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("synveil.session.saved-authorization-unresolved")
+                }
 
                 Button("Forget saved session", role: .destructive) {
                     isShowingLogoutConfirmation = true

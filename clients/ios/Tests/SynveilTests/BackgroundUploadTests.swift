@@ -412,11 +412,12 @@ final class BackgroundUploadTests: XCTestCase {
         let f = try await fixture()
         let record = try await start(f)
         let mutation = try await queueEnqueued(f.queue)
+        try queueRawSQL(f.queue.url, "DROP TABLE session_authorization_checks")
         try queueRawSQL(f.queue.url, "DROP TABLE background_upload_orphans")
         try queueRawSQL(f.queue.url, "DROP TABLE background_upload_jobs")
         try queueRawSQL(f.queue.url, "PRAGMA user_version=7")
         let reopened = try MutationQueueSQLiteStore(url: f.queue.url)
-        XCTAssertEqual(try queueRawScalar(f.queue.url, "PRAGMA user_version"), "8")
+        XCTAssertEqual(try queueRawScalar(f.queue.url, "PRAGMA user_version"), "9")
         let rows = try await reopened.records(scope: f.queue.scope, limit: 10)
         XCTAssertEqual(rows.first?.request, mutation.mutation.requestBody)
         let saved = try await reopened.upload(
@@ -425,6 +426,25 @@ final class BackgroundUploadTests: XCTestCase {
         XCTAssertEqual(saved?.intent, record.intent)
         let asyncValue10 = try await reopened.backgroundInventory().isEmpty
         XCTAssertTrue(asyncValue10)
+    }
+
+    func testV8AuthorizationMigrationPreservesUnresolvedBackgroundIntent() async throws {
+        let f = try await fixture()
+        let record = try await start(f)
+        let original = try await f.queue.database.backgroundJob(record.id)
+        try queueRawSQL(f.queue.url, "DROP TABLE session_authorization_checks")
+        try queueRawSQL(f.queue.url, "PRAGMA user_version=8")
+        let reopened = try MutationQueueSQLiteStore(url: f.queue.url)
+        let job = try await reopened.backgroundJob(record.id)
+        XCTAssertEqual(job, original)
+        XCTAssertTrue(job?.blocksForeground == true)
+        let saved = try await reopened.upload(
+            scope: record.scope, credentialId: record.credentialId,
+            id: record.id, bridge: QueueValidator())
+        XCTAssertEqual(saved?.intent, record.intent)
+        XCTAssertEqual(saved?.authoritativeOffset, record.authoritativeOffset)
+        XCTAssertEqual(f.transport.submissions.count, 1)
+        XCTAssertEqual(f.provider.completionCalls, 0)
     }
 
     func testIntentBeforeCommitFailureCannotSubmitTask() async throws {

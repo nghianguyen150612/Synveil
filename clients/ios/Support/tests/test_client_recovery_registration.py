@@ -12,6 +12,9 @@ class ClientRecoveryRegistrationTests(unittest.TestCase):
         phases = re.findall(r'isa = PBXSourcesBuildPhase;.*?files = \((.*?)\);', project, re.S)
         paths = [
             'Application/Session/SavedMetadataInspectionService.swift',
+            'Application/Session/SessionAuthorizationEvidence.swift',
+            'Infrastructure/Persistence/SessionAuthorizationSQLiteSchema.swift',
+            'Tests/SynveilTests/SessionAuthorizationEvidenceTests.swift',
             'Domain/Recovery/ClientRecoveryPresentation.swift',
             'Features/Recovery/ClientRecoveryNotice.swift',
             'Features/Node/SavedMetadataInspectionView.swift',
@@ -62,3 +65,36 @@ class ClientRecoveryRegistrationTests(unittest.TestCase):
         transport = (IOS / 'Infrastructure/Network/URLSessionHTTPTransport.swift').read_text()
         self.assertIn('defer { bytesAsync.task.cancel() }', transport)
         self.assertIn('throw SynveilTransportError.classify(error)', transport)
+
+    def test_durable_authorization_marker_precedes_verification(self):
+        service = (IOS / 'Application/Session/SessionRestorationService.swift').read_text()
+        verify = service.split('private func verify(')[1].split('private func confirmSessionIdentity')[0]
+        self.assertLess(verify.index('authorizationEvidence?.begin(session)'), verify.index('authorizationValidator.validateAuthorization'))
+        composition = (IOS / 'App/AppDependencyContainer.swift').read_text()
+        self.assertIn('authorizationEvidence: SQLiteSessionAuthorizationEvidence(database: nil)', composition)
+        self.assertIn('service = guardedRestoration', composition)
+        inspection = (IOS / 'Application/Session/SavedMetadataInspectionService.swift').read_text()
+        self.assertIn('permitsPendingSavedInspection', inspection)
+
+    def test_authorization_schema_rejects_forgery_and_identity_rewrite(self):
+        import sqlite3
+        source = (IOS / 'Infrastructure/Persistence/SessionAuthorizationSQLiteSchema.swift').read_text()
+        statements = re.findall(r'"""(.*?)"""', source, re.S)
+        authority = [0]
+        with sqlite3.connect(':memory:') as db:
+            db.create_function('synveil_projection_authorized', 0, lambda: authority[0])
+            for sql in statements:
+                db.execute(sql)
+            values = ['https://example.test'] + ['a' * 36] * 4 + ['CHECKING', 0]
+            with self.assertRaises(sqlite3.DatabaseError):
+                db.execute('INSERT INTO session_authorization_checks VALUES(?,?,?,?,?,?,?)', values)
+            authority[0] = 9
+            db.execute('INSERT INTO session_authorization_checks VALUES(?,?,?,?,?,?,?)', values)
+            with self.assertRaises(sqlite3.DatabaseError):
+                db.execute("UPDATE session_authorization_checks SET owner_id=?", ['b' * 36])
+            with self.assertRaises(sqlite3.DatabaseError):
+                db.execute('DELETE FROM session_authorization_checks')
+            authority[0] = 0
+            with self.assertRaises(sqlite3.DatabaseError):
+                db.execute("UPDATE session_authorization_checks SET state='TRANSIENT'")
+            self.assertEqual(db.execute('SELECT state FROM session_authorization_checks').fetchone(), ('CHECKING',))
