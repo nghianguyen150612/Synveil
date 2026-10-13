@@ -222,7 +222,7 @@ final class BackgroundUploadCoordinator {
                     .staleSession, .scopeMismatch, .unauthenticated, .deviceRevoked,
                     .invalidMetadata, .duplicateOperation,
                 ].contains(failure) {
-                    await quarantine(original)
+                    try? await quarantine(original)
                     for task in tasks where task.intentId == original.chunk?.id {
                         await transport.cancel(task.identifier)
                     }
@@ -240,7 +240,7 @@ final class BackgroundUploadCoordinator {
                 return true
             }
             guard previous.taskIdentifier == task.identifier else {
-                await quarantine(previous)
+                try await quarantine(previous)
                 try await database.recordBackgroundOrphan(task.identifier)
                 return true
             }
@@ -268,7 +268,7 @@ final class BackgroundUploadCoordinator {
             guard original.taskIdentifier == nil || original.taskIdentifier == task.identifier,
                 original.evidence == nil
             else {
-                await quarantine(original)
+                try await quarantine(original)
                 try await database.recordBackgroundOrphan(task.identifier)
                 return true
             }
@@ -300,7 +300,7 @@ final class BackgroundUploadCoordinator {
                         .unauthenticated, .deviceRevoked, .staleSession, .scopeMismatch,
                         .invalidMetadata,
                     ].contains(UploadPolicy.classify(error)) {
-                        await quarantine(recorded)
+                        try? await quarantine(recorded)
                     }
                 }
                 await database.finishUploadRun(owner: owner)
@@ -311,8 +311,12 @@ final class BackgroundUploadCoordinator {
 
     /// Explicit Check/Resume cancels first, waits for OS task disappearance, then performs one GET.
     /// If cancellation has not finished, the durable exclusion stays held for a later user action.
-    func prepareForeground(_ record: UploadRecord, session: LibraryRequestScope) async throws {
+    func prepareForeground(
+        _ record: UploadRecord, session: LibraryRequestScope,
+        permitTerminalInspection: Bool = false
+    ) async throws {
         guard let previous = try await database.backgroundJob(record.id) else { return }
+        if previous.state == .failedTerminal, previous.resolved, permitTerminalInspection { return }
         guard previous.state != .quarantined, previous.state != .failedTerminal else {
             throw UploadFailure.staleSession
         }
@@ -392,12 +396,26 @@ final class BackgroundUploadCoordinator {
         try await schedule(updated, session: session, explicitAuthorization: false)
     }
 
-    private func quarantine(_ previous: BackgroundUploadJob) async {
-        var job = previous
+    private func quarantine(_ previous: BackgroundUploadJob) async throws {
+        guard
+            let current = try await database.backgroundJob(
+                UploadOperationId(validating: previous.operationId)),
+            current.generation == previous.generation, current.chunk == previous.chunk
+        else {
+            throw UploadFailure.staleSession
+        }
+        var job = current
         job.state = .quarantined
         job.authorized = false
-        try? await database.saveBackgroundJob(job, replacing: previous)
-        stateRevision &+= 1
+        do {
+            try await database.saveBackgroundJob(job, replacing: current)
+            stateRevision &+= 1
+        } catch {
+            // A storage failure cannot leave scheduling enabled in this process.
+            invalidated = true
+            authorizationRevision &+= 1
+            throw error
+        }
     }
 
     private func valid(_ task: BackgroundSystemTask, record: UploadRecord, job: BackgroundUploadJob)

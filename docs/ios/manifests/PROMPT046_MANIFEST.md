@@ -135,6 +135,8 @@ work must defer. Simulator checks cannot prove real device-lock behavior. The in
 ## Lifecycle and crash recovery
 
 `@UIApplicationDelegateAdaptor` routes the stable session event callback to a persistence barrier.
+Application-delegate launch bootstraps storage/session/recovery independently of scene creation;
+SwiftUI awaits the same one-time task. A launch request arriving before composition is retained.
 The serial delegate queue submits ordered main-queue events. Callback evidence is committed before
 acknowledging the OS. Finish-events acknowledgement waits for queued durable work, occurs once, and
 is withheld if local storage fails. Network reconciliation/next-chunk execution is not required for

@@ -1914,7 +1914,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
             ].contains(next)
         case .uploading:
             return [
-                .uploading, .readyToComplete, .outcomeUnknown, .cancelledLocal,
+                .uploading, .readyToComplete, .outcomeUnknown, .cancelledLocal, .abortPending,
                 .failedRecoverable, .failedPermanent, .storageUnavailable, .expired,
                 .aborted,
             ].contains(next)

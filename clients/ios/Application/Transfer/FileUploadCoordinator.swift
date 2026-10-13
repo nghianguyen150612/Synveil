@@ -569,7 +569,10 @@ final class FileUploadCoordinator {
                 throw existing.failure ?? UploadFailure.invalidMetadata
             }
             guard existing.serverSessionId != nil else { throw UploadFailure.invalidMetadata }
-            if let background { try await background.prepareForeground(existing, session: session) }
+            if let background {
+                try await background.prepareForeground(
+                    existing, session: session, permitTerminalInspection: true)
+            }
             guard let refreshed = try await locateUpload(id: id, library: library, session: session)
             else { throw UploadFailure.storageFailure }
             let evidence = try await repository.status(refreshed, session: session)
@@ -594,7 +597,10 @@ final class FileUploadCoordinator {
                 record.serverState != .committing,
                 record.serverState != .verifying
             else { throw UploadFailure.invalidMetadata }
-            if let background { try await background.prepareForeground(record, session: session) }
+            if let background {
+                try await background.prepareForeground(
+                    record, session: session, permitTerminalInspection: true)
+            }
             guard let refreshed = try await locateUpload(id: id, library: library, session: session)
             else { throw UploadFailure.storageFailure }
             record = refreshed

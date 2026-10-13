@@ -698,6 +698,32 @@ final class BackgroundUploadTests: XCTestCase {
         XCTAssertEqual(f.transport.submissions.count, 1)
     }
 
+    func testApplicationBootstrapRunsWithoutSceneAndOnlyOnce() async {
+        let bootstrap = BackgroundUploadApplicationBootstrap()
+        var calls = 0
+        bootstrap.start()  // UIKit launch can precede app composition.
+        bootstrap.install { calls += 1 }
+        await bootstrap.waitForStartup()
+        bootstrap.start()
+        await bootstrap.waitForStartup()
+        XCTAssertEqual(calls, 1)
+    }
+
+    func testExplicitAbortCancelsLocalTaskThenAbortsOriginalSession() async throws {
+        let f = try await fixture()
+        let record = try await start(f)
+        let result = await f.coordinator.abort(id: record.id, library: f.queue.scope.libraryId)
+        guard case .success(let aborted) = result else {
+            return XCTFail("Explicit abort should retain its original session")
+        }
+        XCTAssertEqual(aborted.state, .aborted)
+        XCTAssertEqual(aborted.serverSessionId, record.serverSessionId)
+        XCTAssertEqual(f.transport.cancelled, [1])
+        XCTAssertEqual(f.provider.createBodies.count, 1)
+        XCTAssertEqual(f.provider.completionCalls, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: f.source.path))
+    }
+
     private func evidence(
         offset: String, requestId: String = "background-patch-01",
         status: Int = 204, bodyEmpty: Bool = true, failure: UploadFailure? = nil
