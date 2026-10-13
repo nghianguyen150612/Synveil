@@ -14,7 +14,7 @@
   "source_integration_repair": {
     "mode": "DEVELOPMENT_FIRST_QA_DEFERRED",
     "resumed_from": "ad8389aa587c9d5b88edc83f15702d1be8791ed0",
-    "verified_source_head": "cf7716050d6b25922a03d59acafed7c7c204ea6d",
+    "verified_source_head": "202f1f8339a49cc9b37c6e94119ecbf3919e64a0",
     "commits": [
       "2a803e5",
       "3517adb",
@@ -25,7 +25,8 @@
       "c34cb08",
       "b40c5dd",
       "e604c60",
-      "cf77160"
+      "cf77160",
+      "202f1f8"
     ],
     "repaired_areas": [
       "Linux-only privileged Host modules with explicit unsupported adapters for other desktop targets",
@@ -42,7 +43,8 @@
       "PowerShell negative runtime closure checks with bounded child exit and diagnostic validation",
       "Linux adversarial package fixtures for required Host helper and exact approved Host destinations",
       "Windows packaging contract tests for LF checkout and Bash stdin portability",
-      "generated Debian preinst SC2041 suppression with the exact empty-policy rationale"
+      "generated Debian preinst SC2041 suppression with the exact empty-policy rationale",
+      "Linux production package ownership test updated from 13 to 18 exact manifest rows with the five approved Host payload source/mode/owner/class assertions"
     ],
     "local_verification": {
       "format_check": "PASS",
@@ -60,7 +62,8 @@
       "client_sync_client_install_engine_clippy": "PASS: strict all-target Clippy",
       "linux_deployment_adversarial_units": "PASS: 23 tests",
       "windows_native_acceptance_contract": "PASS: static validator; native checkpoint remains blocked",
-      "preinst_shellcheck": "PASS: generated hook under ShellCheck 0.9.0; bash -n and sh -n pass"
+      "preinst_shellcheck": "PASS: generated hook under ShellCheck 0.9.0; bash -n and sh -n pass",
+      "production_packaging_units": "PASS: 11 tests including exact Host payload sources, modes and root ownership"
     },
     "deployment_inputs": {
       "appimage_runtime_file_and_trusted_sha256": "UNAVAILABLE; build fails closed before acquisition/build",
@@ -154,6 +157,83 @@
         38342374874
       ],
       "interpretation": "This is historical source-integration evidence for the parent head. Every source/test/workflow defect listed above has a focused repair in this update. Unavailable deployment inputs remain blockers, not passes; no native acceptance result is claimed."
+    },
+    "automatic_ci_snapshot_after_cf771": {
+      "source_head": "c845ca3c3aa2f19ffcaeccacb77e6cd17e705039",
+      "snapshot_time_utc": "2026-10-13T04:28:30Z",
+      "run_counts_by_event": "Combined PR and push runs: 12 queued, 9 in progress, 2 completed success, 2 completed failure.",
+      "observed": [
+        {
+          "workflow": "Rust CI",
+          "run_id": 38345676686,
+          "workflow_status": "queued at snapshot",
+          "completed_jobs": [
+            "Check (ubuntu-latest): success",
+            "Check (windows-latest): success",
+            "Check (macos-latest): success",
+            "Dependency policy: success",
+            "Web quality: success"
+          ],
+          "failed_job": "Test (ubuntu-latest)",
+          "failure": "production_packaging_units expected 13 PACKAGE manifest rows but the reviewed Host package surface contains 18; fixed in commit 202f1f8. Windows/macOS tests, quality and Qt jobs were pending or in progress at snapshot."
+        },
+        {
+          "workflow": "Linux AppImage",
+          "run_ids": [
+            38345676887,
+            38345672221
+          ],
+          "workflow_status": "completed_failure",
+          "failure": "no exact runtime file and independently trusted SHA-256; both runs failed closed before artifact production."
+        },
+        {
+          "workflow": "Server self-host acceptance",
+          "run_id": 38345676796,
+          "workflow_status": "artifact gate failed; downstream jobs queued",
+          "failure": "production server, PostgreSQL 17, desktop and edge signed inventories absent; contract/source job passed."
+        },
+        {
+          "workflow": "Windows native acceptance",
+          "run_id": 38345676731,
+          "workflow_status": "in_progress",
+          "observed_job": "candidate build in progress; acceptance not yet run."
+        },
+        {
+          "workflow": "Windows installer",
+          "run_id": 38345676838,
+          "workflow_status": "in_progress",
+          "observed_job": "installer smoke in progress."
+        },
+        {
+          "workflow": "Linux native packages",
+          "run_id": 38345676821,
+          "workflow_status": "queued overall",
+          "observed_jobs": "Qt reproducibility in progress; systemd validation passed; DEB/RPM build queued."
+        },
+        {
+          "workflow": "Linux clean-machine acceptance",
+          "run_id": 38345676721,
+          "workflow_status": "in_progress",
+          "observed_jobs": "acceptance contract/adapters passed; exact package artifact build in progress."
+        },
+        {
+          "workflow": "PostgreSQL 17 scheduled maintenance",
+          "run_id": 38345676891,
+          "workflow_status": "in_progress",
+          "observed_job": "packaged-runtime gate in progress."
+        },
+        {
+          "workflow": "Prompt035 first-admin bootstrap",
+          "run_id": 38345676754,
+          "workflow_status": "completed_success"
+        },
+        {
+          "workflow": "Prompt034 server network reachability",
+          "run_id": 38345676863,
+          "workflow_status": "completed_success"
+        }
+      ],
+      "interpretation": "This interim head exposed only the stale 13-row ownership assertion among completed source tests; the exact five-row repair is locally tested and published as the next source commit. Incomplete jobs and unavailable runtime inputs are not passes."
     }
   },
   "features": [

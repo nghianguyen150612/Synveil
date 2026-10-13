@@ -18,14 +18,15 @@ is authorized or claimed by this record.
 - Actual fetched starting `origin/main`: `3851ea11927e24255614cfc38adbaccbd345ca03`.
 - Development branch: `feat/v02-implementation-closeout`, based on that main.
 - CI repair resumed from branch head `ad8389aa587c9d5b88edc83f15702d1be8791ed0`.
-- Source-integration repair head: `cf7716050d6b25922a03d59acafed7c7c204ea6d`.
+- Source-integration repair head: `202f1f8339a49cc9b37c6e94119ecbf3919e64a0`.
 - Focused repair commits: `2a803e5` (Linux-only Host IPC and build paths),
   `3517adb` (Host package inventory/ownership), `2120746` (SQLx TLS trust
   roots), `bad6038` (desktop/bootstrap contracts), `9cd6ac3` (AppImage input
   requirement), `0af1a83` (strict Host Clippy), `c34cb08` (binary-safe secret
   scanning), `b40c5dd` (encoded Rust flags in the remap probe), `e604c60`
-  (remaining strict lint and Windows packaging contracts), and `cf77160`
-  (current-head CI, package-fixture and Windows workflow regressions).
+  (remaining strict lint and Windows packaging contracts), `cf77160`
+  (current-head CI, package-fixture and Windows workflow regressions), and
+  `202f1f8` (exact Linux Host package ownership assertion).
 - Product source checkpoint before documentation: `c56ea4c5f9b5b4e2643e6815711a415b70883d88`.
   Later documentation/publication commits do not change this product checkpoint.
   The PR and final task report identify the published branch HEAD.
@@ -259,6 +260,14 @@ the packager is pinned to LF, the parser normalizes line endings, and the
 syntax test feeds the script to Bash over stdin. All three local Windows
 packaging contract tests pass.
 
+On the first run at repaired head `c845ca3c3aa2f19ffcaeccacb77e6cd17e705039`,
+Rust CI found another stale closed-surface assertion: the production packaging
+test expected 13 package entries, while the approved manifest has 18 after
+the five Host helper, registrar, policy and inspector entries. The test now
+requires 18 entries and checks the source, mode, root owner/group and
+PACKAGE-owned class for each exact Host path. All 11 production packaging
+unit tests pass locally; the 124-test package integration contract also passes.
+
 The Windows installer CI built its runtime payload, then stopped at the first
 negative-closure fixture. The PowerShell job suppressed child diagnostics and
 relied on `$LASTEXITCODE`; it now uses a bounded child process, captures both
@@ -349,6 +358,8 @@ Local diagnostics and focused suites that passed:
   3 passed, checking the current bounded CRT and deterministic ZIP policy.
 - `cargo test -p synveil-metadata --test linux_deployment_adversarial_units --test windows_desktop_packaging_units --locked`:
   23 Linux adversarial cases and 3 Windows packaging contract cases passed.
+- `cargo test -p synveil-metadata --test production_packaging_units --locked`:
+  11 passed, including the five exact Host package paths and ownership modes.
 - `cargo clippy -p synveil-client -p synveil-client-sync -p synveil-install-engine --all-targets --locked --no-deps -- -D warnings`:
   passed after correcting the current-head client-sync findings.
 - Windows native-acceptance source validation, Python byte-compilation,
