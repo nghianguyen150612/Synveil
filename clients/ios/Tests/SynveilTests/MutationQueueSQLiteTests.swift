@@ -13,7 +13,7 @@ final class MutationQueueSQLiteTests: XCTestCase {
             try queueRawScalar(
                 f.url,
                 "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-            ), "20")
+            ), "22")
     }
     func testWALAndFullDurabilityConfiguration() async throws {
         let f = try await queueFixture(self)
@@ -219,7 +219,7 @@ final class MutationQueueSQLiteTests: XCTestCase {
             XCTAssertEqual($0 as? MutationQueueFailure, .unsupportedSchema)
         }
         XCTAssertEqual(try queueRawScalar(f.url, "SELECT count(*) FROM mutations"), "1")
-        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "8")
+        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "9")
     }
     func testUnversionedNonemptyDatabaseRejected() async throws {
         let url = queueTemporaryURL(self)

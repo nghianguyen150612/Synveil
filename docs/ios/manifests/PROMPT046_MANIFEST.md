@@ -182,6 +182,28 @@ payload symlink/mutation/quota rejection and native small-screen accessibility r
 P045 and prior regression suites remain enabled. BackgroundTasks scheduler tests are inapplicable
 because no BG scheduler or BG expiration lifecycle is added.
 
+## Observed intermediate native results
+
+At `3c783a6fa8a764fcc8911f0110f712250fae900b`, the following observed PR gates ran:
+
+| Gate | Run | Observed outcome |
+|---|---|---|
+| iOS Static Validation | [38381495466](https://github.com/nghianguyen150612/Synveil/actions/runs/38381495466) | PASS |
+| iOS Build | [38381495440](https://github.com/nghianguyen150612/Synveil/actions/runs/38381495440) | PASS |
+| iOS Rust Apple Build | [38381495467](https://github.com/nghianguyen150612/Synveil/actions/runs/38381495467) | PASS |
+| iOS Simulator Tests | [38381489483](https://github.com/nghianguyen150612/Synveil/actions/runs/38381489483) | FAIL: 1,695 passed, 2 failed, 2 skipped; 1,699 total |
+
+All 48 then-present `BackgroundUploadTests` methods passed. The two failures were retained
+`MutationQueueSQLiteTests` assertions: the exact table inventory still expected 20 instead of the
+new 22 tables, and the unknown-future-schema test injected v9 but still expected v8 afterward.
+The assertions are corrected to the actual v8 inventory and preserved v9 marker; no test is removed
+or suppressed. The prior first build at `5a8b7b4dbb6862ede28a730e55fb3257bf0ce460`
+([38379945349](https://github.com/nghianguyen150612/Synveil/actions/runs/38379945349)) exposed an
+invalid CryptoKit initializer; that was corrected using `SHA256.hash(data:)`.
+
+These are intermediate results, not final-head qualification. Further source changes strengthen
+Pause, missing-callback recovery and metadata validation. Final-head native results remain pending.
+
 ## Hardware evidence and procedure
 
 All physical-device evidence is **NOT_AVAILABLE**. Before production qualification, use a signed
@@ -206,8 +228,8 @@ request IDs (redacted), accepted offsets, job inventory and final immutable File
 
 ## GitHub and P047 readiness
 
-PR publication, review acceptance, exact final feature CI, merge and resulting `ios-app` SHA are
-pending. This manifest does not invent those values or attempt to contain its own commit SHA.
+PR [#128](https://github.com/nghianguyen150612/Synveil/pull/128) is open and draft, targeting `ios-app`.
+Review acceptance, exact final feature CI, merge and resulting `ios-app` integration SHA are pending. This manifest does not invent those values or attempt to contain its own commit SHA.
 The feature must remain draft/open if mandatory gates or evidence are unavailable. An ordinary
 merge commit is permitted only after required gates and review acceptance. P047 is **NOT READY**
 at this stage and has not been started.
