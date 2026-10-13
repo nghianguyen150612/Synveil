@@ -62,8 +62,28 @@ jobs:
             Remove-Item $fixture -Recurse -Force -ErrorAction SilentlyContinue
             Copy-Item target/windows-installer-runtime $fixture -Recurse
             & $Mutation $fixture
-            & pwsh -NoProfile -File ./scripts/build-windows-installer.ps1 -RuntimeStagingDirectory $fixture 2>$null
-            if ($LASTEXITCODE -eq 0) { throw "NEGATIVE_RUNTIME_FAILURE: $Name fixture was accepted" }
+            $info = [Diagnostics.ProcessStartInfo]::new((Get-Command pwsh).Source)
+            $info.UseShellExecute = $false
+            $info.RedirectStandardOutput = $true
+            $info.RedirectStandardError = $true
+            foreach ($argument in @('-NoProfile','-File','./scripts/build-windows-installer.ps1','-RuntimeStagingDirectory',$fixture)) {
+              $info.ArgumentList.Add($argument)
+            }
+            $process = [Diagnostics.Process]::Start($info)
+            try {
+              $stdout = $process.StandardOutput.ReadToEndAsync()
+              $stderr = $process.StandardError.ReadToEndAsync()
+              if (!$process.WaitForExit(120000)) {
+                $process.Kill($true)
+                $process.WaitForExit()
+                throw "NEGATIVE_RUNTIME_TIMEOUT: $Name fixture exceeded the validation bound"
+              }
+              $diagnostics = $stdout.GetAwaiter().GetResult() + $stderr.GetAwaiter().GetResult()
+              if ($process.ExitCode -eq 0) { throw "NEGATIVE_RUNTIME_FAILURE: $Name fixture was accepted" }
+              if ($diagnostics -notmatch 'PAYLOAD_IDENTITY_FAILURE:') {
+                throw "NEGATIVE_RUNTIME_FAILURE: $Name fixture failed outside payload identity validation"
+              }
+            } finally { $process.Dispose() }
           }
           Expect-Rejected 'missing-qwindows' { param($p) Remove-Item (Join-Path $p 'platforms/qwindows.dll') }
           Expect-Rejected 'corrupt-dll' { param($p) Add-Content -LiteralPath (Join-Path $p 'platforms/qwindows.dll') -Value 'corrupt' }

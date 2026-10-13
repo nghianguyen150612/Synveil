@@ -74,7 +74,8 @@ fn run_install(root: &Path, binary: &Path, extra_env: &[(&str, &str)]) -> std::p
         // source for every executable payload.  Distinct production binary
         // parity is covered by the native package artifact suite.
         .arg(format!("--client-binary={}", binary.display()))
-        .arg(format!("--desktop-binary={}", binary.display()));
+        .arg(format!("--desktop-binary={}", binary.display()))
+        .arg(format!("--host-helper-binary={}", binary.display()));
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
@@ -921,7 +922,7 @@ fn adversarial_installed_package_artifacts_match_sources() {
         assert!(full.exists(), "PACKAGE artifact missing: {dest}");
         let expected: Vec<u8> = if matches!(
             source.as_str(),
-            "BINARY" | "BINARY_CLIENT" | "BINARY_DESKTOP"
+            "BINARY" | "BINARY_CLIENT" | "BINARY_DESKTOP" | "BINARY_HOST_HELPER"
         ) {
             fs::read(&bin).unwrap()
         } else {
@@ -963,11 +964,18 @@ fn adversarial_manifest_negative_cases_rejected() {
         "/var/lib/synveil",
         "/run/synveil",
     ];
+    let exact_host_payloads = [
+        "/usr/libexec/synveil-host-helper",
+        "/usr/libexec/synveil-host/prepare-host-runtime.py",
+        "/usr/libexec/synveil-host/register-host-inputs.py",
+        "/usr/share/polkit-1/actions/org.synveil.host.policy",
+    ];
     for (_, dest, _, _, _, _) in &manifest {
         assert!(
             allowed
                 .iter()
-                .any(|p| dest == p.trim_end_matches('/') || dest.starts_with(p)),
+                .any(|p| dest == p.trim_end_matches('/') || dest.starts_with(p))
+                || exact_host_payloads.contains(&dest.as_str()),
             "K2: path outside allowed prefix: {dest}"
         );
         assert!(

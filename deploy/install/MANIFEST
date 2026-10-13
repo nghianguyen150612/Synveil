@@ -7,9 +7,9 @@
 #
 # Format: source_path  destination_path  mode  owner  group  class
 # - source_path: repository-relative path for PACKAGE files, BINARY for the
-#   compiled scheduled-maintenance artifact, BINARY_CLIENT/BINARY_DESKTOP for
-#   the two production executables, or "-" for directories/state with no
-#   source file.
+#   compiled scheduled-maintenance artifact, BINARY_CLIENT/BINARY_DESKTOP and
+#   BINARY_HOST_HELPER for the production executables, or "-" for directories/
+#   state with no source file.
 # - destination_path: absolute installed path (prepend DESTDIR/--root at install time).
 # - mode: octal file/directory mode.
 # - owner/group: intended ownership per Prompt 75 contract.

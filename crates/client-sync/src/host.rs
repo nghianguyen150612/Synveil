@@ -327,7 +327,7 @@ impl<T> DesktopSyncRemote for T where T: SyncRemote + RebaselineSnapshotRemote {
 pub enum DesktopSyncLibrarySource {
     Executor(Arc<dyn SyncCycleExecutor>),
     Remote(Arc<dyn DesktopSyncRemote>),
-    Http { profile: crate::ServerProfile },
+    Http { profile: Box<crate::ServerProfile> },
 }
 
 impl fmt::Debug for DesktopSyncLibrarySource {
@@ -420,7 +420,9 @@ impl DesktopSyncLibraryConfig {
         Self {
             scope,
             replica,
-            source: DesktopSyncLibrarySource::Http { profile },
+            source: DesktopSyncLibrarySource::Http {
+                profile: Box::new(profile),
+            },
             watcher: None,
             observation_config: ObservationConfig::default(),
         }

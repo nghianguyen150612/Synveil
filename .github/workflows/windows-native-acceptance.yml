@@ -98,13 +98,13 @@ jobs:
       - name: Authenticate transferred candidate
         shell: pwsh
         run: |
-          $identity = Get-Content candidate/target/windows-installer/p028-candidate.json -Raw | ConvertFrom-Json
-          $actual = (Get-FileHash candidate/target/windows-installer/SynveilSetup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $identity = Get-Content candidate/p028-candidate.json -Raw | ConvertFrom-Json
+          $actual = (Get-FileHash candidate/SynveilSetup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($actual -cne $identity.sha256 -or $identity.source_commit -cne $env:GITHUB_SHA) { throw 'P028_CANDIDATE_IDENTITY_FAILURE' }
       - name: Native standard-user product acceptance
         shell: pwsh
         run: |
-          ./scripts/invoke-windows-standard-user-test.ps1 -Setup candidate/target/windows-installer/SynveilSetup.exe -EvidenceDirectory target/windows-native-evidence
+          ./scripts/invoke-windows-standard-user-test.ps1 -Setup candidate/SynveilSetup.exe -EvidenceDirectory target/windows-native-evidence
       - name: Record required unavailable surfaces honestly
         shell: pwsh
         run: |

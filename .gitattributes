@@ -1,2 +1,3 @@
 clients/android/gradlew text eol=lf
 clients/android/gradlew.bat text eol=lf
+deploy/packages/build-windows.sh text eol=lf

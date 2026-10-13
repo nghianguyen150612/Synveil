@@ -5,7 +5,12 @@
 //! prove that the checked-in packager has a bounded, explicit payload policy
 //! and is syntactically valid.
 
-use std::{fs, path::PathBuf, process::Command};
+use std::{
+    fs,
+    io::Write,
+    path::PathBuf,
+    process::{Command, Stdio},
+};
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -23,6 +28,10 @@ fn windows_packager_is_shell_safe_and_syntax_clean() {
     let path = script();
     let content = fs::read_to_string(&path).expect("read Windows packager");
     assert!(content.starts_with("#!/usr/bin/env bash"));
+    assert!(
+        !content.contains("\r\n"),
+        "packager must use LF line endings"
+    );
     assert!(content.contains("set -euo pipefail"));
     assert!(!content.contains("eval "), "packager must not use eval");
     assert!(
@@ -34,11 +43,20 @@ fn windows_packager_is_shell_safe_and_syntax_clean() {
         "packager must not recursively remove a broad root"
     );
 
-    let output = Command::new("bash")
+    let mut child = Command::new("bash")
         .arg("-n")
-        .arg(&path)
-        .output()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .expect("run bash -n");
+    child
+        .stdin
+        .take()
+        .expect("bash stdin")
+        .write_all(content.as_bytes())
+        .expect("write packager to bash stdin");
+    let output = child.wait_with_output().expect("wait for bash -n");
     assert!(
         output.status.success(),
         "Windows packager must be syntax-clean: {}",
@@ -94,7 +112,9 @@ fn windows_packager_has_complete_explicit_runtime_policy() {
 
 #[test]
 fn platform_qt_plugin_discovery_matches_the_windows_manifest_layout() {
-    let content = fs::read_to_string(script()).expect("read Windows packager");
+    let content = fs::read_to_string(script())
+        .expect("read Windows packager")
+        .replace("\r\n", "\n");
     let configuration = content
         .split("cat > \"${STAGE_ROOT}/qt.conf\" <<'EOF'\n")
         .nth(1)

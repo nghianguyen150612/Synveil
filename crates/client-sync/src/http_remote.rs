@@ -223,8 +223,8 @@ impl Transport {
         if response.status().is_redirection() {
             return Err(RemoteError::new(RemoteErrorKind::Redirect));
         }
-        if let Some(trust) = self.profile.managed_host_trust() {
-            if response
+        if let Some(trust) = self.profile.managed_host_trust()
+            && (response
                 .headers()
                 .get("x-synveil-server-installation")
                 .and_then(|v| v.to_str().ok())
@@ -233,10 +233,9 @@ impl Transport {
                     .headers()
                     .get("x-synveil-network-integration")
                     .and_then(|v| v.to_str().ok())
-                    != Some(trust.network_id())
-            {
-                return Err(protocol_error());
-            }
+                    != Some(trust.network_id()))
+        {
+            return Err(protocol_error());
         }
         Ok(response)
     }

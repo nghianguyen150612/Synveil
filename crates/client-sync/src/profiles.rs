@@ -596,10 +596,10 @@ impl LocalStateStore {
         let pending = self.host_trust_pending_path(profile_id);
         let active_bytes = read_profile_trust(&active)?;
         let pending_bytes = read_profile_trust(&pending)?;
-        if let (Some(active_bytes), Some(pending_bytes)) = (&active_bytes, &pending_bytes) {
-            if active_bytes != pending_bytes {
-                return Err(ClientSyncError::InvalidServerProfile);
-            }
+        if let (Some(active_bytes), Some(pending_bytes)) = (&active_bytes, &pending_bytes)
+            && active_bytes != pending_bytes
+        {
+            return Err(ClientSyncError::InvalidServerProfile);
         }
         if pending_bytes.is_none() {
             if active_bytes.is_none() {
