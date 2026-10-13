@@ -54,13 +54,14 @@ struct FileUploadControls: View {
                 UploadConfirmationView(
                     selection: selection,
                     onCancel: { pendingSelection = nil },
-                    onConfirm: { logicalName in
+                    onConfirm: { logicalName, backgroundEnabled in
                         pendingSelection = nil
                         let target = selection.target.makeUploadTarget(
                             library: library, name: logicalName)
                         Task {
                             let result = await model.start(
-                                selectedURL: selection.url, target: target)
+                                selectedURL: selection.url, target: target,
+                                backgroundEnabled: backgroundEnabled)
                             if case .completed = result { onCommitted?() }
                         }
                     }
@@ -94,6 +95,9 @@ struct FileUploadControls: View {
             )
         }
         .task { await model.loadSaved() }
+        .onChange(of: coordinator?.background?.stateRevision ?? 0) { _, _ in
+            Task { await model.refreshBackgroundState() }
+        }
         .onChange(of: controller.lifecycleRevision) { _, _ in
             model.invalidate()
             pendingSelection = nil
@@ -107,7 +111,11 @@ struct FileUploadControls: View {
             }
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active { model.pause() }
+            if phase != .active {
+                model.suspendForeground()
+            } else {
+                Task { await model.loadSaved() }
+            }
         }
     }
 
@@ -157,7 +165,7 @@ struct FileUploadControls: View {
                 liveProgress(progress)
             }
             if model.isRunning {
-                Button("Pause", role: .cancel) { model.pause() }
+                Button("Pause", role: .cancel) { Task { await model.pause() } }
                     .accessibilityHint(
                         "Stops this foreground transfer and preserves its saved source and server identity."
                     )
@@ -192,6 +200,11 @@ struct FileUploadControls: View {
                 .font(.headline)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.updatesFrequently)
+            if ![.committed, .aborted, .expired].contains(record.state) {
+                Text(model.backgroundJobs[record.id]?.state.label ?? "Foreground only")
+                    .accessibilityIdentifier(
+                        "synveil.upload.background.state.\(record.id.rawValue)")
+            }
             Text(progress.state.label)
                 .accessibilityIdentifier("synveil.upload.state.\(record.id.rawValue)")
             if progress.totalBytes > 0 {
@@ -210,6 +223,23 @@ struct FileUploadControls: View {
             .font(.footnote)
             if let failure = record.failure, record.id != model.liveProgress?.operationId {
                 Text(failure.message).fixedSize(horizontal: false, vertical: true)
+            }
+            if let job = model.backgroundJobs[record.id], job.authorized, job.blocksForeground {
+                Button("Pause Background Transfer") { Task { await model.pauseBackground(record) } }
+                    .accessibilityIdentifier(
+                        "synveil.upload.background.pause.\(record.id.rawValue)")
+            } else if record.state.canResume,
+                record.authoritativeOffset < record.intent.expected.byteLength,
+                coordinator?.background != nil
+            {
+                Button("Enable Background Transfer for This Upload") {
+                    Task { _ = await model.resume(record, backgroundEnabled: true) }
+                }
+                .disabled(model.isRunning || !model.isAvailable)
+                .accessibilityHint(
+                    "Authorizes only this saved upload. The system may delay execution. Completion remains explicit."
+                )
+                .accessibilityIdentifier("synveil.upload.background.enable.\(record.id.rawValue)")
             }
             HStack {
                 if record.state.canResume {
@@ -331,13 +361,14 @@ private struct PendingUploadSelection: Identifiable {
 private struct UploadConfirmationView: View {
     let selection: PendingUploadSelection
     let onCancel: () -> Void
-    let onConfirm: (String) -> Void
+    let onConfirm: (String, Bool) -> Void
     @Environment(\.dismiss) private var dismiss
+    @State private var backgroundEnabled = false
     @State private var logicalName: String
 
     init(
         selection: PendingUploadSelection, onCancel: @escaping () -> Void,
-        onConfirm: @escaping (String) -> Void
+        onConfirm: @escaping (String, Bool) -> Void
     ) {
         self.selection = selection
         self.onCancel = onCancel
@@ -367,9 +398,18 @@ private struct UploadConfirmationView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            Section("Transfer Execution") {
+                Toggle("Allow Background Transfer for This File", isOn: $backgroundEnabled)
+                    .accessibilityIdentifier("synveil.upload.background.authorization")
+                Text(
+                    "The system may delay transfers. Authorization applies only to this file and destination. Resume and Complete is required after the bytes are accepted. Pausing withdraws background authorization."
+                )
+                .font(.footnote)
+                .fixedSize(horizontal: false, vertical: true)
+            }
             Section {
                 Button(actionTitle) {
-                    onConfirm(logicalName)
+                    onConfirm(logicalName, backgroundEnabled)
                     dismiss()
                 }
                 .disabled(selection.target.isCreate && logicalName.isEmpty)

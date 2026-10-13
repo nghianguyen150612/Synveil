@@ -2,11 +2,19 @@ import SwiftUI
 
 @main
 struct SynveilApp: App {
+    @UIApplicationDelegateAdaptor(BackgroundUploadAppDelegate.self) private var appDelegate
     @State private var container: AppDependencyContainer
 
     init() {
         let configuration = AppConfiguration.load()
-        _container = State(initialValue: AppDependencyContainer(configuration: configuration))
+        let dependencies = AppDependencyContainer(configuration: configuration)
+        _container = State(initialValue: dependencies)
+        BackgroundUploadApplicationBootstrap.shared.install {
+            await dependencies.prepareEnrollmentSecurity()
+            await dependencies.sessionController.start()
+            await dependencies.restoreBackgroundTransfers()
+            BackgroundUploadEventDelivery.shared.processPendingEvents()
+        }
     }
 
     var body: some Scene {
@@ -28,9 +36,7 @@ struct SynveilApp: App {
                 fileExportCoordinator: container.fileExportCoordinator
             )
             .task {
-                await container.prepareEnrollmentSecurity()
-                guard !Task.isCancelled else { return }
-                await container.sessionController.start()
+                await BackgroundUploadApplicationBootstrap.shared.waitForStartup()
             }
         }
     }

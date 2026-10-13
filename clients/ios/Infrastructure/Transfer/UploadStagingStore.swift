@@ -28,6 +28,22 @@ actor UploadStagingStore {
             offset: offset, count: count)
     }
 
+    func prepareBackgroundChunk(
+        _ record: UploadRecord, id: UploadOperationId,
+        offset: UInt64, count: Int, durable: [DownloadStorageReservation]
+    ) async throws -> BackgroundChunkIntent {
+        try await shared.prepareBackgroundChunk(
+            record, id: id, offset: offset, count: count, durable: durable)
+    }
+
+    func backgroundChunkURL(_ chunk: BackgroundChunkIntent) async throws -> URL {
+        try await shared.backgroundChunkURL(chunk)
+    }
+
+    func removeBackgroundChunk(_ chunk: BackgroundChunkIntent) async throws {
+        try await shared.removeBackgroundChunk(chunk)
+    }
+
     func removeCommittedSource(_ record: UploadRecord) async throws {
         guard record.state == .committed, record.completion != nil else {
             throw UploadFailure.invalidMetadata

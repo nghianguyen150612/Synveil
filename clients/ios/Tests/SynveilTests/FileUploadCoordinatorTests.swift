@@ -89,7 +89,7 @@ final class FileUploadCoordinatorTests: XCTestCase {
 }
 
 @MainActor
-private final class UploadCoordinatorProvider: AuthenticatedUploadRequestProviderProtocol {
+final class UploadCoordinatorProvider: AuthenticatedUploadRequestProviderProtocol {
     struct CapturedPatch {
         let offset: UInt64
         let bytes: Data
@@ -116,6 +116,15 @@ private final class UploadCoordinatorProvider: AuthenticatedUploadRequestProvide
     private(set) var completionCalls = 0
 
     var finalOffset: UInt64 { serverOffset }
+    var statusFailure: UploadFailure?
+    var onStatusResponse: (() -> Void)?
+    func acceptBackground(to offset: UInt64) { serverOffset = offset }
+    func backgroundUploadRequest(
+        record: UploadRecord, chunk: BackgroundChunkIntent,
+        session: LibraryRequestScope
+    ) async throws -> HTTPTransportRequest {
+        try await base.backgroundUploadRequest(record: record, chunk: chunk, session: session)
+    }
 
     init(
         base: AuthenticatedLibraryRequestProvider, library: LibraryId, parent: NodeId,
@@ -200,10 +209,13 @@ private final class UploadCoordinatorProvider: AuthenticatedUploadRequestProvide
         -> HTTPTransportResponse
     {
         statusCount += 1
+        if let statusFailure { throw statusFailure }
         guard sessionId == intent?.idempotencyKey.rawValue, let intent else {
             throw UploadFailure.invalidMetadata
         }
-        return try sessionResponse(intent: intent, status: 200, includeLocation: false)
+        let response = try sessionResponse(intent: intent, status: 200, includeLocation: false)
+        onStatusResponse?()
+        return response
     }
 
     func patchUploadChunk(

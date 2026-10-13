@@ -4,6 +4,7 @@ import Observation
 @Observable
 @MainActor
 final class FileUploadViewModel {
+    private(set) var backgroundJobs: [UploadOperationId: BackgroundUploadJob] = [:]
     private(set) var records: [UploadRecord] = []
     private(set) var liveProgress: UploadProgress?
     private(set) var failure: UploadFailure?
@@ -62,6 +63,7 @@ final class FileUploadViewModel {
             let saved = try await coordinator.saved(library: library, limit: 20)
             guard isCurrent, !isRunning else { return }
             records = saved
+            await loadBackgroundJobs()
             failure = nil
         } catch {
             guard isCurrent else { return }
@@ -69,24 +71,36 @@ final class FileUploadViewModel {
         }
     }
 
-    func start(selectedURL: URL, target: UploadTarget) async -> FileUploadResult {
+    func refreshBackgroundState() async {
+        guard isCurrent, !isRunning, let coordinator else { return }
+        if let saved = try? await coordinator.visibleSaved(library: library), isCurrent {
+            records = saved
+            liveProgress = nil
+            await loadBackgroundJobs()
+        }
+    }
+
+    func start(selectedURL: URL, target: UploadTarget, backgroundEnabled: Bool = false) async
+        -> FileUploadResult
+    {
         guard isAvailable, !isRunning, let coordinator else {
             return .stopped(nil, .invalidTarget)
         }
         return await runTransfer(activity: "Preparing file and calculating SHA-256…") {
             await coordinator.start(
                 selectedURL: selectedURL, target: target, library: library,
-                libraryStatus: libraryStatus, progress: $0)
+                libraryStatus: libraryStatus, backgroundEnabled: backgroundEnabled, progress: $0)
         }
     }
 
-    func resume(_ record: UploadRecord) async -> FileUploadResult {
+    func resume(_ record: UploadRecord, backgroundEnabled: Bool = false) async -> FileUploadResult {
         guard isAvailable, !isRunning, let coordinator, record.state.canResume else {
             return .stopped(record, .invalidTarget)
         }
         return await runTransfer(activity: "Checking saved source and server status…") {
             await coordinator.resume(
-                id: record.id, library: library, libraryStatus: libraryStatus, progress: $0)
+                id: record.id, library: library, libraryStatus: libraryStatus,
+                backgroundEnabled: backgroundEnabled, progress: $0)
         }
     }
 
@@ -132,7 +146,31 @@ final class FileUploadViewModel {
         return result
     }
 
-    func pause() { coordinator?.cancel() }
+    func pause() async {
+        do { try await coordinator?.pauseUserTransfer() } catch {
+            failure = UploadPolicy.classify(error)
+        }
+    }
+
+    func pauseBackground(_ record: UploadRecord) async {
+        guard isCurrent, let background = coordinator?.background else { return }
+        do { try await background.pause(record.id) } catch {
+            failure = UploadPolicy.classify(error)
+        }
+        await loadBackgroundJobs()
+    }
+
+    func suspendForeground() { coordinator?.cancel() }
+
+    private func loadBackgroundJobs() async {
+        guard isCurrent, let background = coordinator?.background else { return }
+        var jobs: [UploadOperationId: BackgroundUploadJob] = [:]
+        for record in records {
+            if let job = try? await background.job(record.id) { jobs[record.id] = job }
+        }
+        guard isCurrent else { return }
+        backgroundJobs = jobs
+    }
 
     func reportImportFailure() { if isCurrent { failure = .sourceUnavailable } }
 
@@ -141,6 +179,7 @@ final class FileUploadViewModel {
         invalidated = true
         coordinator?.cancel()
         records = []
+        backgroundJobs = [:]
         liveProgress = nil
         failure = nil
         activityMessage = nil
@@ -172,7 +211,7 @@ final class FileUploadViewModel {
             return result
         }
         switch result {
-        case .completed(let record):
+        case .completed(let record), .scheduled(let record):
             liveProgress = UploadProgress(record)
         case .stopped(let record, let problem):
             if let record { liveProgress = UploadProgress(record) }

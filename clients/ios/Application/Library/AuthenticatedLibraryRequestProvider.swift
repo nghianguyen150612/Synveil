@@ -72,12 +72,25 @@ protocol AuthenticatedUploadRequestProviderProtocol: AuthenticatedLibraryRequest
     func patchUploadChunk(
         sessionId: String, offset: UInt64, bytes: Data, session: LibraryRequestScope
     ) async throws -> HTTPTransportResponse
+    func backgroundUploadRequest(
+        record: UploadRecord, chunk: BackgroundChunkIntent,
+        session: LibraryRequestScope
+    ) async throws -> HTTPTransportRequest
     func completeUpload(
         sessionId: String, session: LibraryRequestScope
     ) async throws -> HTTPTransportResponse
     func abortUpload(
         sessionId: String, session: LibraryRequestScope
     ) async throws -> HTTPTransportResponse
+}
+
+extension AuthenticatedUploadRequestProviderProtocol {
+    func backgroundUploadRequest(
+        record: UploadRecord, chunk: BackgroundChunkIntent,
+        session: LibraryRequestScope
+    ) async throws -> HTTPTransportRequest {
+        throw UploadFailure.scopeMismatch
+    }
 }
 
 @MainActor
@@ -299,6 +312,41 @@ final class AuthenticatedLibraryRequestProvider: AuthenticatedLibraryRequestProv
         return try await uploadRequest(
             method: .patch, path: try uploadSessionPath(sessionId), body: bytes,
             session: session, headers: headers)
+    }
+
+    func backgroundUploadRequest(
+        record: UploadRecord, chunk: BackgroundChunkIntent,
+        session: LibraryRequestScope
+    ) async throws -> HTTPTransportRequest {
+        try await validate(session)
+        guard session.matches(record.scope), session.credentialIdentifier == record.credentialId,
+            let id = record.serverSessionId, id == record.intent.idempotencyKey.rawValue,
+            chunk.offset == record.authoritativeOffset, !record.uncertain,
+            chunk.length > 0, chunk.length <= UploadPolicy.chunkBytes,
+            chunk.offset <= record.intent.expected.byteLength,
+            UInt64(chunk.length) <= record.intent.expected.byteLength - chunk.offset
+        else { throw UploadFailure.scopeMismatch }
+        let endpoint = session.session.serverEndpoint
+        guard var components = URLComponents(url: endpoint.url, resolvingAgainstBaseURL: false)
+        else {
+            throw UploadFailure.scopeMismatch
+        }
+        let base = components.percentEncodedPath.trimmingCharacters(
+            in: CharacterSet(charactersIn: "/"))
+        components.percentEncodedPath =
+            (base.isEmpty ? "" : "/\(base)") + (try uploadSessionPath(id))
+        components.query = nil
+        components.fragment = nil
+        guard let url = components.url, url.scheme == "https", url.host == endpoint.host,
+            url.port == endpoint.port, url.user == nil, url.password == nil
+        else { throw UploadFailure.scopeMismatch }
+        var headers = authenticatedHeaders(session)
+        headers["Content-Type"] = "application/octet-stream"
+        headers["Upload-Offset"] = String(chunk.offset)
+        headers["Content-Length"] = String(chunk.length)
+        headers["Cache-Control"] = "no-store"
+        try checkCurrent(session)
+        return HTTPTransportRequest(url: url, method: .patch, headers: headers)
     }
 
     func completeUpload(
