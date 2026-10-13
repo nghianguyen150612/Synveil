@@ -215,10 +215,12 @@ pub fn run_status(
                 .try_wait()
                 .map_err(|_| "native operation wait failed")?;
         }
-        if let Some(status) = completed {
-            if reader.is_finished() && err_reader.is_finished() && writer.is_finished() {
-                break status;
-            }
+        if let Some(status) = completed
+            && reader.is_finished()
+            && err_reader.is_finished()
+            && writer.is_finished()
+        {
+            break status;
         }
         if start.elapsed() > timeout {
             let _ = nix::sys::signal::killpg(
