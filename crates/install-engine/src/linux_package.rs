@@ -247,6 +247,23 @@ const EXPECTED_SURFACES: &[(&str, &str)] = &[
     ("/usr/bin/synveil-scheduled-maintenance-once", "executable"),
     ("/usr/bin/synveil-client", "executable"),
     ("/usr/bin/synveil-desktop", "executable"),
+    ("/usr/libexec/synveil-host-helper", "executable"),
+    (
+        "/usr/libexec/synveil-host/prepare-host-runtime.py",
+        "executable",
+    ),
+    (
+        "/usr/libexec/synveil-host/register-host-inputs.py",
+        "executable",
+    ),
+    (
+        "/usr/share/polkit-1/actions/org.synveil.host.policy",
+        "polkit-policy",
+    ),
+    (
+        "/usr/lib/systemd/system/synveil-host-inspector.service",
+        "static-system-unit",
+    ),
     (
         "/usr/lib/systemd/user/synveil-client.service",
         "static-user-unit",
@@ -276,6 +293,13 @@ const RPM_ARCHITECTURES: &[&str] = &["x86_64", "aarch64"];
 const DEB_HOOKS: &[&str] = &["preinst", "postinst", "prerm", "postrm"];
 const RPM_HOOKS: &[&str] = &["pre", "post", "preun", "postun"];
 const DEB_RUNTIME_DEPENDENCIES: &[&str] = &[
+    "pkexec",
+    "polkitd",
+    "openssl",
+    "iproute2",
+    "python3",
+    "gpgv",
+    "binutils",
     "systemd",
     "dbus-user-session",
     "gnome-keyring",
@@ -315,6 +339,12 @@ const RPM_RUNTIME_DEPENDENCIES: &[&str] = &[
     "qt6-qtbase-gui",
     "qt6-qtdeclarative",
     "qt6-qtquickcontrols2",
+    "polkit",
+    "openssl",
+    "iproute",
+    "python3",
+    "gnupg2",
+    "binutils",
 ];
 
 fn metadata_is_exact(actual: &[String], expected: &[&str]) -> bool {
@@ -341,7 +371,7 @@ fn validate_path(path: &str) -> Result<(), LinuxPackageError> {
     let components: Vec<_> = path.trim_start_matches('/').split('/').collect();
     if components.len() < 3
         || components[0] != "usr"
-        || !matches!(components[1], "bin" | "lib" | "share")
+        || !matches!(components[1], "bin" | "lib" | "libexec" | "share")
     {
         return Err(LinuxPackageError::InvalidPath);
     }

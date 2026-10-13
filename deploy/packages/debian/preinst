@@ -13,6 +13,7 @@ case "${1:-}" in
         # sources stop before unpack. No --force-downgrade escape exists.
         if [ "$old" != '@SYNVEIL_DEB_VERSION@' ]; then
             approved=0
+            # shellcheck disable=SC2043 # The package builder expands this placeholder to the approved source list.
             for source in @SYNVEIL_DEB_UPGRADE_SOURCES@; do
                 [ "$old" != "$source" ] || approved=1
             done

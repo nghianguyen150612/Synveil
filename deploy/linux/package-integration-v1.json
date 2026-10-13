@@ -14,6 +14,13 @@
         "arm64"
       ],
       "runtime_dependencies": [
+        "pkexec",
+        "polkitd",
+        "openssl",
+        "iproute2",
+        "python3",
+        "gpgv",
+        "binutils",
         "systemd",
         "dbus-user-session",
         "gnome-keyring",
@@ -67,7 +74,13 @@
         "qt6-qtbase",
         "qt6-qtbase-gui",
         "qt6-qtdeclarative",
-        "qt6-qtquickcontrols2"
+        "qt6-qtquickcontrols2",
+        "polkit",
+        "openssl",
+        "iproute",
+        "python3",
+        "gnupg2",
+        "binutils"
       ],
       "hooks": [
         "pre",
@@ -92,6 +105,31 @@
       "path": "/usr/bin/synveil-desktop",
       "owner": "PACKAGE_OWNED",
       "verification": "executable"
+    },
+    {
+      "path": "/usr/libexec/synveil-host-helper",
+      "owner": "PACKAGE_OWNED",
+      "verification": "executable"
+    },
+    {
+      "path": "/usr/libexec/synveil-host/prepare-host-runtime.py",
+      "owner": "PACKAGE_OWNED",
+      "verification": "executable"
+    },
+    {
+      "path": "/usr/libexec/synveil-host/register-host-inputs.py",
+      "owner": "PACKAGE_OWNED",
+      "verification": "executable"
+    },
+    {
+      "path": "/usr/share/polkit-1/actions/org.synveil.host.policy",
+      "owner": "PACKAGE_OWNED",
+      "verification": "polkit-policy"
+    },
+    {
+      "path": "/usr/lib/systemd/system/synveil-host-inspector.service",
+      "owner": "PACKAGE_OWNED",
+      "verification": "static-system-unit"
     },
     {
       "path": "/usr/lib/systemd/user/synveil-client.service",

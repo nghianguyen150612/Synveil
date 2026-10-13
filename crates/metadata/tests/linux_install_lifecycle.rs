@@ -1264,6 +1264,26 @@ fn permission_contract_matches_prompt75() {
             ("0644", 0o644, "root", "root"),
         ),
         (
+            "/usr/libexec/synveil-host-helper",
+            ("0755", 0o755, "root", "root"),
+        ),
+        (
+            "/usr/libexec/synveil-host/prepare-host-runtime.py",
+            ("0755", 0o755, "root", "root"),
+        ),
+        (
+            "/usr/libexec/synveil-host/register-host-inputs.py",
+            ("0755", 0o755, "root", "root"),
+        ),
+        (
+            "/usr/share/polkit-1/actions/org.synveil.host.policy",
+            ("0644", 0o644, "root", "root"),
+        ),
+        (
+            "/usr/lib/systemd/system/synveil-host-inspector.service",
+            ("0644", 0o644, "root", "root"),
+        ),
+        (
             "/usr/lib/sysusers.d/synveil.conf",
             ("0644", 0o644, "root", "root"),
         ),

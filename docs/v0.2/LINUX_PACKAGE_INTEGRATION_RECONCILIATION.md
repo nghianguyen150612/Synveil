@@ -23,13 +23,14 @@ closed.
 
 The package-neutral manifest supplies the actual payload. Every shipped file is
 `PACKAGE_OWNED` and mutated only by the native manager: this includes the three
-`/usr/bin/synveil-*` executables, immutable documentation/template files, the
-desktop entry and icon, static user client unit, static administrator
-maintenance units, sysusers, and tmpfiles definitions. Their semantic purpose
-is platform integration, but that does not change their package-database file
-ownership. `PLATFORM_INTEGRATION_OWNED` is reserved for non-payload semantic
-effects such as scoped post-package reconciliation; none is invented merely to
-populate that class. Installing a unit is not enabling or starting it.
+`/usr/bin/synveil-*` executables, the privileged Host helper and its two input
+tools, polkit policy, read-only Host inspector, immutable documentation and
+templates, desktop entry and icon, user client unit, administrator maintenance
+units, sysusers, and tmpfiles definitions. Their semantic purpose is platform
+integration, but that does not change their package-database file ownership.
+`PLATFORM_INTEGRATION_OWNED` is reserved for non-payload semantic effects such
+as scoped post-package reconciliation; none is invented merely to populate
+that class. Hooks enable only the hardened read-only Host inspector.
 
 Packages do **not** own application configuration, the XDG user profile, library content, client sync
 metadata, SecretStore credentials, `/etc/synveil` administrator configuration
@@ -42,7 +43,9 @@ Package hooks run as root and must not infer an interactive user from `HOME`,
 `USER`, or `LOGNAME`, edit home directories, use a graphical session, download
 code, or start the desktop/client. User-scoped integration must later run in an
 explicit user context. Static hook validation rejects network fetches,
-recursive deletion, home mutation, `sh -c`, and automatic enablement.
+recursive deletion, home mutation, `sh -c`, and automatic enablement of any
+unit except the exact read-only Host inspector. Client and scheduled-maintenance
+units remain inactive until the user or administrator explicitly enables them.
 The contract also rejects unsafe lexical paths, a symlinked/non-directory root,
 and symlink ancestors before inspecting a staged destination.
 
@@ -61,7 +64,7 @@ declared Debian runtime libraries, and has minimal `postinst`, `prerm`, and
 `postrm` hooks. RPM has the same identity and semantics with its existing
 architecture mapping, requirements, and `%post`/`%preun`/`%postun` hooks. Both
 install `/usr/bin/synveil-desktop`, application ID `synveil.desktop`, preserve
-state, and prohibit automatic startup.
+state, and prohibit automatic client or scheduled-maintenance startup.
 
 Schema 1 closes each format's metadata to the ordered architecture mappings,
 hook sets, and exact runtime dependencies declared by `arch.sh`, `build.sh`

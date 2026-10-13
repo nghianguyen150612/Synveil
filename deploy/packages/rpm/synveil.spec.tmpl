@@ -91,8 +91,9 @@ exit 0
 
 %post
 # $1 == 1 fresh install, $1 == 2 upgrade. Both: sysusers + tmpfiles +
-# daemon-reload. NEVER auto-enable timer, NEVER auto-start service,
-# NEVER run maintenance. No network. No failure masking.
+# daemon-reload and enable only the read-only Host inspector. Never activate
+# the user-level client or scheduled-maintenance timer/service. No downloads.
+# No failure masking.
 set -e
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
@@ -131,7 +132,7 @@ if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
 else
   printf '[synveil] systemd manager not running; skipping daemon-reload (offline image build)\n' >&2
 fi
-printf '[synveil] NOT auto-enabling timer; NOT auto-starting service (explicit enablement required after credential provisioning)\n' >&2
+printf '[synveil] read-only Host inspector enabled; maintenance and client services remain inactive\n' >&2
 exit 0
 
 %preun

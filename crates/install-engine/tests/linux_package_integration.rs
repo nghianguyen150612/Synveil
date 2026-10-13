@@ -374,9 +374,26 @@ surface_test!(
 );
 surface_test!(client_payload_present, "/usr/bin/synveil-client");
 surface_test!(desktop_payload_present, "/usr/bin/synveil-desktop");
+surface_test!(host_helper_present, "/usr/libexec/synveil-host-helper");
+surface_test!(
+    host_runtime_producer_present,
+    "/usr/libexec/synveil-host/prepare-host-runtime.py"
+);
+surface_test!(
+    host_input_registrar_present,
+    "/usr/libexec/synveil-host/register-host-inputs.py"
+);
+surface_test!(
+    host_polkit_policy_present,
+    "/usr/share/polkit-1/actions/org.synveil.host.policy"
+);
 surface_test!(
     user_unit_present,
     "/usr/lib/systemd/user/synveil-client.service"
+);
+surface_test!(
+    host_inspector_present,
+    "/usr/lib/systemd/system/synveil-host-inspector.service"
 );
 surface_test!(
     system_service_present,

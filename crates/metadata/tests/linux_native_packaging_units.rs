@@ -13,7 +13,7 @@
 //!
 //! Covers: version source, arch mapping, metadata, payload parity, binary
 //! hash, unit/sysusers/tmpfiles parity, modes, no secret payload, no numeric
-//! UID/GID, no auto-start/enable, upgrade-vs-remove, data preservation,
+//! UID/GID, Host-inspector-only activation, upgrade-vs-remove, data preservation,
 //! credential preservation, external-storage preservation, shell safety,
 //! install-time network rule, CI gate integrity.
 
@@ -1126,7 +1126,7 @@ fn packaged_service_preserves_credential_boundary_and_sandbox() {
 }
 
 // ---------------------------------------------------------------------------
-// Lifecycle: no auto-start/enable, upgrade-vs-remove, preservation (§32-§44)
+// Lifecycle: Host-inspector-only activation, upgrade-vs-remove, preservation
 // ---------------------------------------------------------------------------
 
 fn lifecycle_script_texts() -> Vec<(String, String)> {
@@ -1151,7 +1151,7 @@ fn lifecycle_script_texts() -> Vec<(String, String)> {
 }
 
 #[test]
-fn no_automatic_timer_enable_or_service_start() {
+fn only_the_read_only_host_inspector_is_automatically_enabled() {
     for (name, content) in lifecycle_script_texts() {
         let mut forbidden_found = None;
         for line in content.lines() {
@@ -1179,13 +1179,29 @@ fn no_automatic_timer_enable_or_service_start() {
             if t.starts_with('#') {
                 continue;
             }
-            if t.contains("systemctl enable") || t.contains("systemctl start") {
+            if (t.contains("systemctl enable")
+                && t != "systemctl enable --now synveil-host-inspector.service")
+                || t.contains("systemctl start")
+            {
                 forbidden_found = Some(t.to_string());
             }
         }
         assert!(
             forbidden_found.is_none(),
             "{name} must never auto-enable/start (found: {forbidden_found:?})"
+        );
+    }
+    let inspector = read(&repo_root().join("deploy/systemd/synveil-host-inspector.service"));
+    for required in [
+        "Description=Synveil read-only Host inspection",
+        "ExecStart=/usr/libexec/synveil-host-helper inspect-service",
+        "ProtectSystem=strict",
+        "ReadWritePaths=/run/synveil-host",
+        "NoNewPrivileges=yes",
+    ] {
+        assert!(
+            inspector.contains(required),
+            "Host inspector missing {required}"
         );
     }
     let svc = read(&repo_root().join("deploy/systemd/synveil-scheduled-maintenance.service"));
