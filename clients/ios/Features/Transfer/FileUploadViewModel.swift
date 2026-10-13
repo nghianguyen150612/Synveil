@@ -175,6 +175,7 @@ final class FileUploadViewModel {
         invalidated = true
         coordinator?.cancel()
         records = []
+        backgroundJobs = [:]
         liveProgress = nil
         failure = nil
         activityMessage = nil

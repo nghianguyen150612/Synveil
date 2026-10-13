@@ -28,6 +28,7 @@ final class URLSessionBackgroundUploadTransport: NSObject, URLSessionDataDelegat
         config.httpCookieStorage = nil
         config.httpShouldSetCookies = false
         config.urlCache = nil
+        config.urlCredentialStorage = nil
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
         config.timeoutIntervalForRequest = 60
         config.timeoutIntervalForResource = 24 * 60 * 60

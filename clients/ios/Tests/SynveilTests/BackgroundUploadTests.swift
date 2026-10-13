@@ -641,6 +641,63 @@ final class BackgroundUploadTests: XCTestCase {
         XCTAssertFalse(model.isAvailable)
     }
 
+    func testAnotherAccountCannotAdoptDelayedEvidence() async throws {
+        let f = try await fixture()
+        let record = try await start(f)
+        let task = try XCTUnwrap(f.transport.tasks.first)
+        let other = try await queueScope(device: 191, owner: 190)
+        await f.queue.credentials.replace(try queueSession(other, credential: 192))
+        f.transport.tasks = []
+        let persisted = await f.background.receive(
+            task, evidence: evidence(offset: String(f.bytes.count)))
+        XCTAssertTrue(persisted)
+        await f.background.waitForRecoveryAction()
+        let job = try await f.queue.database.backgroundJob(record.id)
+        let saved = try await read(f, record.id)
+        XCTAssertEqual(job?.state, .quarantined)
+        XCTAssertEqual(saved.authoritativeOffset, 0)
+        XCTAssertEqual(f.provider.statusCount, 0)
+    }
+
+    func testMissingCredentialCancelsAndQuarantinesRestoredTask() async throws {
+        let f = try await fixture()
+        let record = try await start(f)
+        try await f.queue.credentials.delete()
+        await f.background.restore()
+        let job = try await f.queue.database.backgroundJob(record.id)
+        XCTAssertEqual(job?.state, .quarantined)
+        XCTAssertEqual(f.transport.cancelled, [1])
+        XCTAssertEqual(f.provider.statusCount, 0)
+    }
+
+    func testPauseBetweenBindingAndNativeResumeIsFenced() async throws {
+        let f = try await fixture()
+        f.transport.beforeResume = { f.background.invalidateSession() }
+        _ = await f.coordinator.start(
+            selectedURL: f.source, target: f.target,
+            library: f.queue.scope.libraryId, libraryStatus: .active, backgroundEnabled: true,
+            progress: { _ in })
+        await f.background.waitForInvalidation()
+        XCTAssertTrue(f.transport.resumed.isEmpty)
+        XCTAssertEqual(f.transport.submissions.count, 1)
+        XCTAssertEqual(f.provider.completionCalls, 0)
+    }
+
+    func testDelayedOSCancellationCannotReleasePATCHExclusion() async throws {
+        let f = try await fixture()
+        let record = try await start(f)
+        f.transport.keepsCancelledTask = true
+        let session = try await f.provider.begin()
+        do {
+            try await f.background.prepareForeground(record, session: session)
+            XCTFail("An outstanding system task must block foreground dispatch")
+        } catch { XCTAssertEqual(error as? UploadFailure, .completionUnknown) }
+        let job = try await f.queue.database.backgroundJob(record.id)
+        XCTAssertTrue(job?.blocksForeground == true)
+        XCTAssertEqual(f.provider.statusCount, 0)
+        XCTAssertEqual(f.transport.submissions.count, 1)
+    }
+
     private func evidence(
         offset: String, requestId: String = "background-patch-01",
         status: Int = 204, bodyEmpty: Bool = true, failure: UploadFailure? = nil
@@ -693,7 +750,7 @@ final class BackgroundUploadTests: XCTestCase {
     }
 
     private func fixture(fault: QueueFaultInjector? = nil) async throws -> BackgroundFixture {
-        let queue = try await queueFixture(self, fault: fault, initializeBase: false)
+        let queue = try await queueFixture(self, fault: fault)
         let parent = try await NodeId.validated(queueUUID(2), using: QueueValidator())
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
             "BackgroundUpload-" + UUID().uuidString)
@@ -751,6 +808,8 @@ private final class FakeBackgroundTransport: BackgroundUploadTransportProtocol {
     var resumed: [Int] = []
     var cancelled: [Int] = []
     var afterSubmit: (() -> Void)?
+    var keepsCancelledTask = false
+    var beforeResume: (() -> Void)?
     func inventory() async -> [BackgroundSystemTask] { tasks }
     func submit(_ request: HTTPTransportRequest, file: URL, intent: BackgroundChunkIntent) throws
         -> Int
@@ -768,10 +827,11 @@ private final class FakeBackgroundTransport: BackgroundUploadTransportProtocol {
         return id
     }
     func resume(_ identifier: Int, authorized: @escaping @MainActor () -> Bool) async {
+        beforeResume?()
         if authorized() { resumed.append(identifier) } else { await cancel(identifier) }
     }
     func cancel(_ identifier: Int) async {
         cancelled.append(identifier)
-        tasks.removeAll { $0.identifier == identifier }
+        if !keepsCancelledTask { tasks.removeAll { $0.identifier == identifier } }
     }
 }
