@@ -99,7 +99,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
     private let maximumOutstanding: Int
     private let maximumBytes: Int
     private let maximumRecords: Int
-    static let schemaVersion = 7
+    static let schemaVersion = 8
     private let processOwner = UUID().uuidString
     private var activeAckAttempts: Set<String> = []
     private static let scopePredicate = "endpoint=? AND owner_id=? AND device_id=? AND library_id=?"
@@ -222,7 +222,8 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         version2Schema + Array(inboundSchema.dropLast()) + RebaselineSQLiteSchema.projection
         + RebaselineSQLiteSchema.statements
     private static let version6Schema = version5Schema + FileDownloadSQLiteSchema.statements
-    private static let schema = version6Schema + FileUploadSQLiteSchema.statements
+    private static let version7Schema = version6Schema + FileUploadSQLiteSchema.statements
+    private static let schema = version7Schema + BackgroundUploadSQLiteSchema.statements
 
     init(
         url: URL, busyTimeoutMilliseconds: Int32 = 250,
@@ -254,7 +255,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         // Initialization uses only local helpers; no actor reference escapes before schema validation.
         try Self.execute(handle, "PRAGMA foreign_keys=ON")
         let version = try Self.scalar(handle, "PRAGMA user_version")
-        guard [0, 1, 2, 3, 4, 5, 6, Int64(Self.schemaVersion)].contains(version) else {
+        guard [0, 1, 2, 3, 4, 5, 6, 7, Int64(Self.schemaVersion)].contains(version) else {
             throw MutationQueueFailure.unsupportedSchema
         }
         if version > 0 {
@@ -279,7 +280,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
             do {
                 for statement in Self.schema { try Self.execute(handle, statement) }
                 try fault?(.migration)
-                try Self.execute(handle, "PRAGMA user_version=7")
+                try Self.execute(handle, "PRAGMA user_version=8")
                 try Self.execute(handle, "COMMIT")
             } catch {
                 try? Self.execute(handle, "ROLLBACK")
@@ -390,6 +391,21 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
                 }
                 try fault?(.migration)
                 try Self.execute(handle, "PRAGMA user_version=7")
+                try Self.execute(handle, "COMMIT")
+            } catch {
+                try? Self.execute(handle, "ROLLBACK")
+                throw error
+            }
+        }
+        if (1...7).contains(version) {
+            try verifySchema(Self.version7Schema)
+            try Self.execute(handle, "BEGIN IMMEDIATE")
+            do {
+                for statement in BackgroundUploadSQLiteSchema.statements {
+                    try Self.execute(handle, statement)
+                }
+                try fault?(.migration)
+                try Self.execute(handle, "PRAGMA user_version=8")
                 try Self.execute(handle, "COMMIT")
             } catch {
                 try? Self.execute(handle, "ROLLBACK")
@@ -1616,6 +1632,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         completion: UploadCompletion? = nil, failure: UploadFailure? = nil,
         beginAttempt: Bool = false
     ) throws {
+        guard try !backgroundBlocks(previous.id) else { throw UploadFailure.duplicateOperation }
         let offset = authoritativeOffset ?? previous.authoritativeOffset
         let session = serverSessionId ?? previous.serverSessionId
         let target = serverTargetNodeId ?? previous.serverTargetNodeId
@@ -1690,6 +1707,185 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
                 throw UploadFailure.duplicateOperation
             }
         }
+    }
+
+    private static func backgroundBytes(_ job: BackgroundUploadJob) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(job)
+    }
+
+    func recordBackgroundOrphan(_ identifier: Int) throws {
+        guard identifier > 0 else { throw UploadFailure.invalidMetadata }
+        try transaction {
+            guard try scalar("SELECT count(*) FROM background_upload_orphans") < 4096 else {
+                throw UploadFailure.storageFailure
+            }
+            try execute(
+                "INSERT OR IGNORE INTO background_upload_orphans(task_identifier) VALUES(?)",
+                [.integer(Int64(identifier))])
+        }
+    }
+
+    func backgroundJob(_ id: UploadOperationId) throws -> BackgroundUploadJob? {
+        try query(
+            "SELECT metadata,generation,blocked FROM background_upload_jobs WHERE operation_id=?",
+            [.text(id.rawValue)]
+        ) { s in
+            let job = try JSONDecoder().decode(
+                BackgroundUploadJob.self, from: Self.blob(s, 0, maximum: 4096))
+            try job.validate()
+            guard job.operationId == id.rawValue, job.generation == Int(sqlite3_column_int(s, 1)),
+                job.blocksForeground == (sqlite3_column_int(s, 2) == 1)
+            else { throw UploadFailure.invalidMetadata }
+            return job
+        }.first
+    }
+
+    func backgroundInventory() throws -> [BackgroundUploadJob] {
+        let ids = try query("SELECT operation_id FROM background_upload_jobs ORDER BY operation_id")
+        { try Self.text($0, 0) }
+        return try ids.map { id in
+            guard let job = try backgroundJob(UploadOperationId(validating: id)) else {
+                throw UploadFailure.invalidMetadata
+            }
+            return job
+        }
+    }
+
+    func backgroundBlocks(_ id: UploadOperationId) throws -> Bool {
+        try backgroundJob(id)?.blocksForeground ?? false
+    }
+
+    /// Exact blob CAS fences repeated delegates and stale generations across connections/processes.
+    func saveBackgroundJob(
+        _ job: BackgroundUploadJob, replacing previous: BackgroundUploadJob?,
+        record: UploadRecord? = nil, explicitResume: Bool = false
+    ) throws {
+        try job.validate()
+        if let previous {
+            guard previous.operationId == job.operationId,
+                previous.state.permits(job.state, explicitResume: explicitResume),
+                job.generation == previous.generation
+                    || (previous.resolved && job.generation == previous.generation + 1),
+                previous.resolved || job.chunk == previous.chunk,
+                !previous.blocksForeground || !job.resolved
+            else { throw UploadFailure.invalidMetadata }
+        } else {
+            guard job.state == .preparing, job.authorized, job.resolved, record != nil else {
+                throw UploadFailure.invalidMetadata
+            }
+        }
+        let bytes = try Self.backgroundBytes(job)
+        guard bytes.count <= 4096 else { throw UploadFailure.invalidMetadata }
+        try transaction {
+            if let record {
+                try requireFeedScope(record.scope, credentialId: record.credentialId)
+                guard record.id.rawValue == job.operationId, record.state.canResume,
+                    record.serverState == .open,
+                    record.serverSessionId == record.intent.idempotencyKey.rawValue,
+                    !record.uncertain, !record.stagingReleased,
+                    try scalar(
+                        "SELECT count(*) FROM file_uploads WHERE operation_id=? AND authoritative_offset=? AND state=? AND uncertain=0",
+                        [
+                            .text(job.operationId), .text(String(record.authoritativeOffset)),
+                            .text(record.state.rawValue),
+                        ]) == 1
+                else { throw UploadFailure.invalidMetadata }
+            }
+            if let previous {
+                try execute(
+                    "UPDATE background_upload_jobs SET generation=?,blocked=?,metadata=? WHERE operation_id=? AND metadata=?",
+                    [
+                        .integer(Int64(job.generation)), .integer(job.blocksForeground ? 1 : 0),
+                        .blob(bytes), .text(job.operationId),
+                        .blob(try Self.backgroundBytes(previous)),
+                    ])
+            } else {
+                try execute(
+                    "INSERT INTO background_upload_jobs(operation_id,generation,blocked,metadata) VALUES(?,?,?,?)",
+                    [
+                        .text(job.operationId), .integer(Int64(job.generation)),
+                        .integer(job.blocksForeground ? 1 : 0), .blob(bytes),
+                    ])
+            }
+            guard sqlite3_changes(connection.handle) == 1 else {
+                throw UploadFailure.duplicateOperation
+            }
+        }
+    }
+
+    /// Server evidence and release of the durable PATCH exclusion are one transaction.
+    func resolveBackgroundJob(
+        _ previous: BackgroundUploadJob, record: UploadRecord,
+        offset: UInt64, serverState: UploadServerState, nextState: BackgroundUploadState
+    ) throws {
+        guard let chunk = previous.chunk, previous.blocksForeground,
+            offset >= record.authoritativeOffset, offset >= chunk.offset,
+            offset <= chunk.offset + UInt64(chunk.length),
+            previous.state.permits(nextState),
+            [.completedChunk, .awaitingFinalization, .paused, .failedTerminal, .aborted].contains(
+                nextState)
+        else { throw UploadFailure.offsetMismatch }
+        var next = previous
+        next.resolved = true
+        next.state = nextState
+        let local: UploadLocalState =
+            nextState == .failedTerminal
+            ? .failedPermanent
+            : (serverState == .aborted
+                ? .aborted
+                : (serverState == .expired
+                    ? .expired
+                    : (serverState == .failed
+                        ? .failedPermanent
+                        : (offset == record.intent.expected.byteLength
+                            ? .readyToComplete : .uploading))))
+        guard [.open, .failed, .expired, .aborted].contains(serverState) else {
+            throw UploadFailure.invalidMetadata
+        }
+        try transaction {
+            try requireFeedScope(record.scope, credentialId: record.credentialId)
+            try execute(
+                "UPDATE background_upload_jobs SET blocked=0,metadata=? WHERE operation_id=? AND metadata=?",
+                [
+                    .blob(try Self.backgroundBytes(next)), .text(previous.operationId),
+                    .blob(try Self.backgroundBytes(previous)),
+                ])
+            guard sqlite3_changes(connection.handle) == 1 else {
+                throw UploadFailure.duplicateOperation
+            }
+            try execute(
+                "UPDATE file_uploads SET authoritative_offset=?,server_state=?,state=?,uncertain=0,failure=NULL,updated_at=? WHERE operation_id=? AND authoritative_offset=? AND state=? AND credential_id=? AND server_session_id=?",
+                [
+                    .text(String(offset)), .text(serverState.rawValue), .text(local.rawValue),
+                    .real(Date().timeIntervalSince1970), .text(record.id.rawValue),
+                    .text(String(record.authoritativeOffset)), .text(record.state.rawValue),
+                    .text(record.credentialId), .text(record.serverSessionId ?? ""),
+                ])
+            guard sqlite3_changes(connection.handle) == 1 else {
+                throw UploadFailure.duplicateOperation
+            }
+        }
+    }
+
+    func backgroundRecord(
+        _ job: BackgroundUploadJob, session: LibraryRequestScope,
+        bridge: any RustBridgeProtocol
+    ) async throws -> UploadRecord {
+        let libraries = try query(
+            "SELECT library_id FROM file_uploads WHERE operation_id=? AND credential_id=?",
+            [.text(job.operationId), .text(session.credentialIdentifier)]
+        ) { try Self.text($0, 0) }
+        guard let library = libraries.first else { throw UploadFailure.scopeMismatch }
+        let scope = try await session.mutationScope(
+            libraryId: LibraryId.validated(library, using: bridge), bridge: bridge)
+        guard
+            let record = try await upload(
+                scope: scope, credentialId: session.credentialIdentifier,
+                id: UploadOperationId(validating: job.operationId), bridge: bridge)
+        else { throw UploadFailure.scopeMismatch }
+        return record
     }
 
     private static func uploadTransitionAllowed(

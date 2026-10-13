@@ -14,7 +14,7 @@ final class MutationRecoverySQLiteTests: XCTestCase {
         let row = try await MutationPersistenceCodec(bridge: QueueValidator()).rehydrate(
             XCTUnwrap(raw))
         XCTAssertEqual(row, old)
-        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "7")
+        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "8")
         XCTAssertEqual(
             try queueRawScalar(f.url, "SELECT count(*) FROM mutation_attempt_history"), "0")
     }

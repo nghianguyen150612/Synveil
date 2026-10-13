@@ -8,7 +8,7 @@ import XCTest
 final class MutationQueueSQLiteTests: XCTestCase {
     func testDatabaseInitializationRegistersSchema() async throws {
         let f = try await queueFixture(self)
-        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "7")
+        XCTAssertEqual(try queueRawScalar(f.url, "PRAGMA user_version"), "8")
         XCTAssertEqual(
             try queueRawScalar(
                 f.url,
@@ -214,7 +214,7 @@ final class MutationQueueSQLiteTests: XCTestCase {
     func testUnknownFutureSchemaDoesNotResetDatabase() async throws {
         let f = try await queueFixture(self)
         _ = try await queueEnqueued(f)
-        try queueRawSQL(f.url, "PRAGMA user_version=8")
+        try queueRawSQL(f.url, "PRAGMA user_version=9")
         XCTAssertThrowsError(try MutationQueueSQLiteStore(url: f.url)) {
             XCTAssertEqual($0 as? MutationQueueFailure, .unsupportedSchema)
         }
@@ -241,7 +241,7 @@ final class MutationQueueSQLiteTests: XCTestCase {
             try queueRawScalar(
                 url, "SELECT count(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"), "0")
         _ = try MutationQueueSQLiteStore(url: url)
-        XCTAssertEqual(try queueRawScalar(url, "PRAGMA user_version"), "7")
+        XCTAssertEqual(try queueRawScalar(url, "PRAGMA user_version"), "8")
     }
     func testMalformedCurrentSchemaRejectedWithoutRecreation() async throws {
         let f = try await queueFixture(self)

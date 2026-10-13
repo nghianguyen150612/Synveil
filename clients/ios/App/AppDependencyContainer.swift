@@ -193,11 +193,22 @@ public final class AppDependencyContainer {
                         repository: AuthenticatedFileDownloadRepository(
                             provider: browserProvider, bridge: bridge),
                         database: database, staging: staging)
+                    let uploadRepository = AuthenticatedUploadRepository(
+                        provider: browserProvider, bridge: bridge)
+                    let uploadStaging = UploadStagingStore(shared: staging)
+                    let backgroundUploads = BackgroundUploadCoordinator(
+                        repository: uploadRepository,
+                        database: database, staging: uploadStaging,
+                        transport: URLSessionBackgroundUploadTransport())
+                    BackgroundUploadEventDelivery.shared.handler = {
+                        [backgroundUploads] task, evidence in
+                        await backgroundUploads.receive(task, evidence: evidence)
+                    }
+                    BackgroundUploadEventDelivery.shared.processPendingEvents()
                     uploadCoordinator = FileUploadCoordinator(
-                        repository: AuthenticatedUploadRepository(
-                            provider: browserProvider, bridge: bridge),
-                        database: database, staging: UploadStagingStore(shared: staging),
-                        identityGenerator: bridge)
+                        repository: uploadRepository,
+                        database: database, staging: uploadStaging, identityGenerator: bridge,
+                        background: backgroundUploads)
                     if let downloadCoordinator {
                         fileExportCoordinator = VerifiedFileExportCoordinator(
                             downloads: downloadCoordinator)

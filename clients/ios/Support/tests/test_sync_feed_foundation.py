@@ -57,7 +57,7 @@ class SyncFeedFoundationTests(unittest.TestCase):
         self.assertRegex(provider, r"func submitSyncAck\(\s*_ receipt: AppliedFeedCommitReceipt")
         self.assertIn('URLQueryItem(name: "limit", value: String(limit))', provider)
         store = (IOS / "Infrastructure/Persistence/MutationQueueSQLiteStore.swift").read_text()
-        self.assertIn("static let schemaVersion = 7", store)
+        self.assertIn("static let schemaVersion = 8", store)
         self.assertIn("try verifySchema(Self.version2Schema)", store)
 
     def test_actual_schema_rejects_ack_from_staging_and_retains_evidence(self):

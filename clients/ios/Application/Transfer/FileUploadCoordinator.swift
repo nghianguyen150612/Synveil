@@ -2,6 +2,7 @@ import Foundation
 
 enum FileUploadResult: Sendable {
     case completed(UploadRecord)
+    case scheduled(UploadRecord)
     case stopped(UploadRecord?, UploadFailure)
 }
 
@@ -10,13 +11,14 @@ private enum UploadActionResult: Sendable {
     case record(Result<UploadRecord, UploadFailure>)
 }
 
-/// Foreground-only upload owner. All progress is a SQLite-confirmed server offset, never bytes
+/// Shared foreground/upload business-logic owner. All progress is a SQLite-confirmed server offset, never bytes
 /// handed to URLSession. Each user action performs at most one recovery/status pass.
 @MainActor
 final class FileUploadCoordinator {
     private let repository: AuthenticatedUploadRepository
     private let database: MutationQueueSQLiteStore
     private let staging: UploadStagingStore
+    let background: BackgroundUploadCoordinator?
     private let identityGenerator: any ClientMutationIdentityGeneratorProtocol
     private var active: Task<UploadActionResult, Never>?
     private var generation: UInt64 = 0
@@ -24,17 +26,19 @@ final class FileUploadCoordinator {
     init(
         repository: AuthenticatedUploadRepository, database: MutationQueueSQLiteStore,
         staging: UploadStagingStore,
-        identityGenerator: any ClientMutationIdentityGeneratorProtocol
+        identityGenerator: any ClientMutationIdentityGeneratorProtocol,
+        background: BackgroundUploadCoordinator? = nil
     ) {
         self.repository = repository
         self.database = database
         self.staging = staging
         self.identityGenerator = identityGenerator
+        self.background = background
     }
 
     func start(
         selectedURL: URL, target: UploadTarget? = nil, library: LibraryId,
-        parent: NodeId? = nil, libraryStatus: LibraryStatus,
+        parent: NodeId? = nil, libraryStatus: LibraryStatus, backgroundEnabled: Bool = false,
         progress: @escaping @MainActor (UploadProgress) -> Void
     ) async -> FileUploadResult {
         guard active == nil else { return .stopped(nil, .duplicateOperation) }
@@ -52,7 +56,8 @@ final class FileUploadCoordinator {
                     .transfer(
                         await executeStart(
                             selectedURL: selectedURL, target: resolvedTarget,
-                            libraryStatus: libraryStatus, generation: captured, progress: progress))
+                            libraryStatus: libraryStatus, backgroundEnabled: backgroundEnabled,
+                            generation: captured, progress: progress))
                 }, failureResult: { .transfer(.stopped(nil, $0)) })
         else {
             return .stopped(nil, .duplicateOperation)
@@ -62,6 +67,7 @@ final class FileUploadCoordinator {
 
     func resume(
         id: UploadOperationId, library: LibraryId, libraryStatus: LibraryStatus,
+        backgroundEnabled: Bool = false,
         progress: @escaping @MainActor (UploadProgress) -> Void
     ) async -> FileUploadResult {
         guard
@@ -70,7 +76,8 @@ final class FileUploadCoordinator {
                     .transfer(
                         await executeResume(
                             id: id, library: library, libraryStatus: libraryStatus,
-                            generation: captured, progress: progress))
+                            backgroundEnabled: backgroundEnabled, generation: captured,
+                            progress: progress))
                 }, failureResult: { .transfer(.stopped(nil, $0)) })
         else {
             return .stopped(nil, .duplicateOperation)
@@ -140,6 +147,7 @@ final class FileUploadCoordinator {
     func cancel() { active?.cancel() }
 
     func invalidateSession() {
+        background?.invalidateSession()
         generation &+= 1
         active?.cancel()
     }
@@ -171,7 +179,8 @@ final class FileUploadCoordinator {
 
     private func executeStart(
         selectedURL: URL, target: UploadTarget, libraryStatus: LibraryStatus,
-        generation captured: UInt64, progress: @escaping @MainActor (UploadProgress) -> Void
+        backgroundEnabled: Bool, generation captured: UInt64,
+        progress: @escaping @MainActor (UploadProgress) -> Void
     ) async -> FileUploadResult {
         var record: UploadRecord?
         var session: LibraryRequestScope?
@@ -227,7 +236,7 @@ final class FileUploadCoordinator {
             progress(UploadProgress(currentRecord))
             return await continueUpload(
                 currentRecord, session: current, generation: captured, progress: progress,
-                createIfNeeded: true)
+                createIfNeeded: true, backgroundEnabled: backgroundEnabled)
         } catch {
             let failure = UploadPolicy.classify(error)
             if !durableRecord, let stagedId {
@@ -242,7 +251,7 @@ final class FileUploadCoordinator {
 
     private func executeResume(
         id: UploadOperationId, library: LibraryId, libraryStatus: LibraryStatus,
-        generation captured: UInt64,
+        backgroundEnabled: Bool, generation captured: UInt64,
         progress: @escaping @MainActor (UploadProgress) -> Void
     ) async -> FileUploadResult {
         var record: UploadRecord?
@@ -260,15 +269,19 @@ final class FileUploadCoordinator {
                     id: id, bridge: repository.bridge), saved.state.canResume,
                 !saved.stagingReleased
             else { throw UploadFailure.invalidMetadata }
-            record = saved
+            if let background { try await background.prepareForeground(saved, session: current) }
+            guard let refreshed = try await locateUpload(id: id, library: library, session: current)
+            else { throw UploadFailure.storageFailure }
+            record = refreshed
             _ = try await repository.preflight(
-                saved.intent.target, session: current, verifyRevision: false)
-            try await staging.verify(saved)
+                refreshed.intent.target, session: current, verifyRevision: false)
+            try await staging.verify(refreshed)
             try await fence(current, captured)
-            progress(UploadProgress(saved))
+            progress(UploadProgress(refreshed))
             return await continueUpload(
-                saved, session: current, generation: captured, progress: progress,
-                createIfNeeded: saved.serverSessionId == nil)
+                refreshed, session: current, generation: captured, progress: progress,
+                createIfNeeded: refreshed.serverSessionId == nil,
+                backgroundEnabled: backgroundEnabled)
         } catch {
             return await stopped(
                 record, failure: UploadPolicy.classify(error), session: session,
@@ -279,7 +292,7 @@ final class FileUploadCoordinator {
     private func continueUpload(
         _ initial: UploadRecord, session: LibraryRequestScope, generation captured: UInt64,
         progress: @escaping @MainActor (UploadProgress) -> Void,
-        createIfNeeded: Bool
+        createIfNeeded: Bool, backgroundEnabled: Bool = false
     ) async -> FileUploadResult {
         var record = initial
         do {
@@ -310,6 +323,14 @@ final class FileUploadCoordinator {
             if record.state == .committed { return .completed(record) }
             guard record.serverState == .open, record.serverSessionId != nil else {
                 return .stopped(record, record.failure ?? .completionUnknown)
+            }
+            if backgroundEnabled {
+                guard let background else { throw UploadFailure.invalidMetadata }
+                if record.authoritativeOffset < record.intent.expected.byteLength {
+                    try await background.schedule(
+                        record, session: session, explicitAuthorization: true)
+                }
+                return .scheduled(record)
             }
             var reconciledPatchFailure = false
             while record.authoritativeOffset < record.intent.expected.byteLength {
@@ -537,9 +558,12 @@ final class FileUploadCoordinator {
                 throw existing.failure ?? UploadFailure.invalidMetadata
             }
             guard existing.serverSessionId != nil else { throw UploadFailure.invalidMetadata }
-            let evidence = try await repository.status(existing, session: session)
+            if let background { try await background.prepareForeground(existing, session: session) }
+            guard let refreshed = try await locateUpload(id: id, library: library, session: session)
+            else { throw UploadFailure.storageFailure }
+            let evidence = try await repository.status(refreshed, session: session)
             let record = try await accept(
-                evidence, for: existing, session: session, generation: captured,
+                evidence, for: refreshed, session: session, generation: captured,
                 progress: { _ in })
             return .success(record)
         } catch { return .failure(UploadPolicy.classify(error)) }
@@ -559,6 +583,10 @@ final class FileUploadCoordinator {
                 record.serverState != .committing,
                 record.serverState != .verifying
             else { throw UploadFailure.invalidMetadata }
+            if let background { try await background.prepareForeground(record, session: session) }
+            guard let refreshed = try await locateUpload(id: id, library: library, session: session)
+            else { throw UploadFailure.storageFailure }
+            record = refreshed
             record = try await update(
                 record, state: .abortPending, uncertain: true, failure: nil,
                 beginAttempt: true)

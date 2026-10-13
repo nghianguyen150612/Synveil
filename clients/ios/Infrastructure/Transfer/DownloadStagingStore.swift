@@ -472,6 +472,78 @@ actor DownloadStagingStore {
         return data
     }
 
+    /// Immutable file payload, charged to the same quota as its retained upload source.
+    func prepareBackgroundChunk(
+        _ record: UploadRecord, id: UploadOperationId,
+        offset: UInt64, count: Int, durable: [DownloadStorageReservation]
+    ) throws -> BackgroundChunkIntent {
+        try verifyUploadSource(stagingId: record.stagingId, expected: record.intent.expected)
+        let reservationId = try DownloadOperationId(validating: id.rawValue)
+        try reserve(
+            DownloadStorageReservation(operationId: reservationId, bytes: UInt64(count)),
+            durable: durable)
+        let bytes = try uploadChunk(
+            stagingId: record.stagingId, expected: record.intent.expected, offset: offset,
+            count: count)
+        let directory = try openDirectory()
+        defer { close(directory) }
+        let filename = id.rawValue + ".bgchunk"
+        try fault?(.create)
+        let descriptor = openat(
+            directory, filename, O_CREAT | O_EXCL | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0o600)
+        guard descriptor >= 0 else { throw UploadFailure.filesystemFailure }
+        defer { close(descriptor) }
+        try Self.protect(root.appendingPathComponent(filename), directory: false)
+        var written = 0
+        while written < bytes.count {
+            try fault?(.write)
+            let n = bytes.withUnsafeBytes {
+                write(descriptor, $0.baseAddress!.advanced(by: written), bytes.count - written)
+            }
+            if n < 0, errno == EINTR { continue }
+            guard n > 0 else { throw UploadFailure.filesystemFailure }
+            written += n
+        }
+        try synchronize(descriptor)
+        let sha = digest(try hash(descriptor, count: UInt64(count)))
+        guard try length(descriptor) == UInt64(count), sha == Self.digest(SHA256(data: bytes))
+        else {
+            throw UploadFailure.integrityMismatch
+        }
+        // Read-only permission does not substitute for private ownership or integrity validation.
+        guard fchmod(descriptor, 0o400) == 0 else { throw UploadFailure.filesystemFailure }
+        try synchronize(descriptor)
+        try synchronize(directory)
+        return BackgroundChunkIntent(id: id.rawValue, offset: offset, length: count, sha256: sha)
+    }
+
+    func backgroundChunkURL(_ chunk: BackgroundChunkIntent) throws -> URL {
+        let id = try UploadOperationId(validating: chunk.id)
+        let directory = try openDirectory()
+        defer { close(directory) }
+        let descriptor = openat(
+            directory, id.rawValue + ".bgchunk", O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard descriptor >= 0 else { throw UploadFailure.stagingMissing }
+        defer { close(descriptor) }
+        guard try length(descriptor) == UInt64(chunk.length),
+            digest(try hash(descriptor, count: UInt64(chunk.length))) == chunk.sha256
+        else {
+            throw UploadFailure.integrityMismatch
+        }
+        return root.appendingPathComponent(id.rawValue + ".bgchunk")
+    }
+
+    func removeBackgroundChunk(_ chunk: BackgroundChunkIntent) throws {
+        let id = try UploadOperationId(validating: chunk.id)
+        let directory = try openDirectory()
+        defer { close(directory) }
+        guard unlinkat(directory, id.rawValue + ".bgchunk", 0) == 0 || errno == ENOENT else {
+            throw UploadFailure.filesystemFailure
+        }
+        try synchronize(directory)
+        reservations[try DownloadOperationId(validating: id.rawValue)] = nil
+    }
+
     /// Removes only an opaque upload source after durable COMMITTED evidence permits cleanup.
     func removeUploadSource(stagingId: UploadOperationId) throws {
         let id = try DownloadOperationId(validating: stagingId.rawValue)

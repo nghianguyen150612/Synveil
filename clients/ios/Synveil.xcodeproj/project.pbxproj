@@ -190,6 +190,12 @@
 		B04500000000000000000002 /* FileUploadStorageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B14500000000000000000002 /* FileUploadStorageTests.swift */; };
 		B04500000000000000000003 /* FileUploadViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B14500000000000000000003 /* FileUploadViewTests.swift */; };
 		B04500000000000000000004 /* FileUploadCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B14500000000000000000004 /* FileUploadCoordinatorTests.swift */; };
+		A04600000000000000000001 /* BackgroundUploadAppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14600000000000000000001 /* BackgroundUploadAppDelegate.swift */; };
+		A04600000000000000000002 /* BackgroundUploadModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14600000000000000000002 /* BackgroundUploadModels.swift */; };
+		A04600000000000000000003 /* URLSessionBackgroundUploadTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14600000000000000000003 /* URLSessionBackgroundUploadTransport.swift */; };
+		A04600000000000000000004 /* BackgroundUploadSQLiteSchema.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14600000000000000000004 /* BackgroundUploadSQLiteSchema.swift */; };
+		A04600000000000000000005 /* BackgroundUploadCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14600000000000000000005 /* BackgroundUploadCoordinator.swift */; };
+		B04600000000000000000001 /* BackgroundUploadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B14600000000000000000001 /* BackgroundUploadTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -387,6 +393,12 @@
 		B14500000000000000000002 /* FileUploadStorageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/FileUploadStorageTests.swift; sourceTree = SOURCE_ROOT; };
 		B14500000000000000000003 /* FileUploadViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/FileUploadViewTests.swift; sourceTree = SOURCE_ROOT; };
 		B14500000000000000000004 /* FileUploadCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/FileUploadCoordinatorTests.swift; sourceTree = SOURCE_ROOT; };
+		A14600000000000000000001 /* BackgroundUploadAppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/BackgroundUploadAppDelegate.swift; sourceTree = SOURCE_ROOT; };
+		A14600000000000000000002 /* BackgroundUploadModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Transfer/BackgroundUploadModels.swift; sourceTree = SOURCE_ROOT; };
+		A14600000000000000000003 /* URLSessionBackgroundUploadTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Network/URLSessionBackgroundUploadTransport.swift; sourceTree = SOURCE_ROOT; };
+		A14600000000000000000004 /* BackgroundUploadSQLiteSchema.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/BackgroundUploadSQLiteSchema.swift; sourceTree = SOURCE_ROOT; };
+		A14600000000000000000005 /* BackgroundUploadCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Transfer/BackgroundUploadCoordinator.swift; sourceTree = SOURCE_ROOT; };
+		B14600000000000000000001 /* BackgroundUploadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/BackgroundUploadTests.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -422,6 +434,11 @@
 				A14500000000000000000007 /* UploadStagingStore.swift */,
 				A14500000000000000000008 /* FileUploadViewModel.swift */,
 				A14500000000000000000009 /* FileUploadControls.swift */,
+				A14600000000000000000005 /* BackgroundUploadCoordinator.swift */,
+				A14600000000000000000004 /* BackgroundUploadSQLiteSchema.swift */,
+				A14600000000000000000003 /* URLSessionBackgroundUploadTransport.swift */,
+				A14600000000000000000002 /* BackgroundUploadModels.swift */,
+				A14600000000000000000001 /* BackgroundUploadAppDelegate.swift */,
 				F04400000000000000000001 /* VerifiedFileExportCoordinator.swift */,
 				F04400000000000000000002 /* FileExportPresentation.swift */,
 				F04400000000000000000003 /* VerifiedFileExportTests.swift */,
@@ -661,6 +678,7 @@
 				B14500000000000000000002 /* FileUploadStorageTests.swift */,
 				B14500000000000000000003 /* FileUploadViewTests.swift */,
 				B14500000000000000000004 /* FileUploadCoordinatorTests.swift */,
+				B14600000000000000000001 /* BackgroundUploadTests.swift */,
 				5FB2DF3EA7D3D3FE25CB4EB2 /* SyncStatusViewModelTests.swift */,
 				C08D8E26A94145FC6362A2C9 /* InboundSyncRaceTests.swift */,
 				16EEBD2222FE64206514A30F /* InboundSyncRecoveryTests.swift */,
@@ -810,6 +828,11 @@
 				A04500000000000000000007 /* UploadStagingStore.swift in Sources */,
 				A04500000000000000000008 /* FileUploadViewModel.swift in Sources */,
 				A04500000000000000000009 /* FileUploadControls.swift in Sources */,
+				A04600000000000000000005 /* BackgroundUploadCoordinator.swift in Sources */,
+				A04600000000000000000004 /* BackgroundUploadSQLiteSchema.swift in Sources */,
+				A04600000000000000000003 /* URLSessionBackgroundUploadTransport.swift in Sources */,
+				A04600000000000000000002 /* BackgroundUploadModels.swift in Sources */,
+				A04600000000000000000001 /* BackgroundUploadAppDelegate.swift in Sources */,
 				B04400000000000000000001 /* VerifiedFileExportCoordinator.swift in Sources */,
 				B04400000000000000000002 /* FileExportPresentation.swift in Sources */,
 				51EA7CAA728AE32CA30FFF44 /* URLSessionFileContentTransport.swift in Sources */,
@@ -927,6 +950,7 @@
 				B04500000000000000000002 /* FileUploadStorageTests.swift in Sources */,
 				B04500000000000000000003 /* FileUploadViewTests.swift in Sources */,
 				B04500000000000000000004 /* FileUploadCoordinatorTests.swift in Sources */,
+				B04600000000000000000001 /* BackgroundUploadTests.swift in Sources */,
 				B04400000000000000000003 /* VerifiedFileExportTests.swift in Sources */,
 				7DF7A439FA000652A9A2D5C2 /* FileDownloadViewTests.swift in Sources */,
 				A4D8517B66C974D0A3609777 /* FileDownloadTransportTests.swift in Sources */,

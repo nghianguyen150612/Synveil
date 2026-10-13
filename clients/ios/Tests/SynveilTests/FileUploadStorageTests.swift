@@ -111,13 +111,15 @@ final class FileUploadStorageTests: XCTestCase {
     func testV6ToV7MigrationPreservesExistingMutationEvidence() async throws {
         let fixture = try await queueFixture(self)
         let original = try await queueEnqueued(fixture)
+        try queueRawSQL(fixture.url, "DROP TABLE background_upload_orphans")
+        try queueRawSQL(fixture.url, "DROP TABLE background_upload_jobs")
         try queueRawSQL(fixture.url, "DROP TRIGGER file_upload_identity")
         try queueRawSQL(fixture.url, "DROP TRIGGER file_upload_offset")
         try queueRawSQL(fixture.url, "DROP TABLE file_uploads")
         try queueRawSQL(fixture.url, "PRAGMA user_version=6")
 
         let migrated = try MutationQueueSQLiteStore(url: fixture.url)
-        XCTAssertEqual(try queueRawScalar(fixture.url, "PRAGMA user_version"), "7")
+        XCTAssertEqual(try queueRawScalar(fixture.url, "PRAGMA user_version"), "8")
         let retained = try await migrated.records(scope: fixture.scope, limit: 10)
         XCTAssertEqual(retained.first?.mutationId, original.mutation.id.rawValue)
         XCTAssertEqual(retained.first?.request, original.mutation.requestBody)

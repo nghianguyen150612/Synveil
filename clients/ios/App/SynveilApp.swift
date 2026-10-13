@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct SynveilApp: App {
+    @UIApplicationDelegateAdaptor(BackgroundUploadAppDelegate.self) private var appDelegate
     @State private var container: AppDependencyContainer
 
     init() {
@@ -31,6 +32,8 @@ struct SynveilApp: App {
                 await container.prepareEnrollmentSecurity()
                 guard !Task.isCancelled else { return }
                 await container.sessionController.start()
+                await container.uploadCoordinator?.background?.restore()
+                BackgroundUploadEventDelivery.shared.processPendingEvents()
             }
         }
     }
