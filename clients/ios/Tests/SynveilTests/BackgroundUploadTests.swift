@@ -640,9 +640,64 @@ final class BackgroundUploadTests: XCTestCase {
         await model.refreshBackgroundState()
         XCTAssertEqual(model.backgroundJobs[record.id]?.state, .scheduled)
         XCTAssertEqual(model.displayedProgress(for: record).acknowledgedBytes, 0)
+        XCTAssertFalse(model.canResume(record))
+        let blocked = await model.resume(record)
+        guard case .stopped(_, .invalidTarget) = blocked else {
+            return XCTFail("Foreground Resume must wait for background ownership")
+        }
+        XCTAssertEqual(f.transport.submissions.count, 1)
+        XCTAssertEqual(f.provider.statusCount, 0)
+        XCTAssertEqual(
+            ClientRecoveryPresentation.upload(
+                record,
+                background: model.backgroundJobs[record.id])?.actions,
+            [.waitForBackgroundTask, .checkUploadStatus])
         model.invalidate()
         XCTAssertFalse(model.isCurrent)
         XCTAssertFalse(model.isAvailable)
+    }
+
+    func testFailedBackgroundStatusReadCannotEnableForegroundResume() async throws {
+        let f = try await fixture()
+        let record = try await start(f)
+        let reader = RecoveryUploadActivityReader(f.coordinator)
+        let model = FileUploadViewModel(
+            coordinator: f.coordinator, controller: f.queue.controller,
+            library: f.queue.scope.libraryId, libraryStatus: .active, activityReader: reader)
+        await model.refreshBackgroundState()
+        XCTAssertTrue(model.backgroundJobs[record.id]?.blocksForeground == true)
+        reader.failure = .storageFailure
+        await model.refreshBackgroundState()
+        XCTAssertEqual(model.failure, .storageFailure)
+        XCTAssertTrue(model.savedStatusUnavailable)
+        XCTAssertFalse(model.canResume(record))
+        XCTAssertTrue(model.backgroundJobs[record.id]?.blocksForeground == true)
+        reader.failure = nil
+        await model.refreshBackgroundState()
+        XCTAssertFalse(model.savedStatusUnavailable)
+        XCTAssertNil(model.failure)
+        XCTAssertFalse(model.canResume(record))
+        XCTAssertEqual(f.transport.submissions.count, 1)
+    }
+
+    func testDelayedSavedUploadReadCannotPublishAfterLogout() async throws {
+        let f = try await fixture()
+        _ = try await start(f)
+        let reader = RecoveryUploadActivityReader(f.coordinator)
+        let gate = QueueGate()
+        reader.gate = gate
+        let model = FileUploadViewModel(
+            coordinator: f.coordinator, controller: f.queue.controller,
+            library: f.queue.scope.libraryId, libraryStatus: .active, activityReader: reader)
+        let loading = Task { await model.loadSaved() }
+        await gate.wait()
+        await f.queue.controller.requestLogout()
+        await gate.release()
+        await loading.value
+        XCTAssertTrue(model.records.isEmpty)
+        XCTAssertTrue(model.backgroundJobs.isEmpty)
+        XCTAssertNil(model.failure)
+        XCTAssertFalse(model.isCurrent)
     }
 
     func testAnotherAccountCannotAdoptDelayedEvidence() async throws {
@@ -956,5 +1011,25 @@ private final class FakeBackgroundTransport: BackgroundUploadTransportProtocol {
                 $0.identifier == identifier && (intentId == nil || $0.intentId == intentId)
             }
         }
+    }
+}
+
+@MainActor
+private final class RecoveryUploadActivityReader: FileUploadActivityReaderProtocol {
+    private let coordinator: FileUploadCoordinator
+    var failure: UploadFailure?
+    var gate: QueueGate?
+    init(_ coordinator: FileUploadCoordinator) { self.coordinator = coordinator }
+    func saved(library: LibraryId, limit: Int) async throws -> [UploadRecord] {
+        try await visibleSaved(library: library)
+    }
+    func visibleSaved(library: LibraryId) async throws -> [UploadRecord] {
+        let records = try await coordinator.visibleSaved(library: library)
+        if let gate { await gate.arrive() }
+        return records
+    }
+    func backgroundJob(_ id: UploadOperationId) async throws -> BackgroundUploadJob? {
+        if let failure { throw failure }
+        return try await coordinator.backgroundJob(id)
     }
 }

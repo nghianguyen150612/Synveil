@@ -12,19 +12,24 @@ final class FileUploadViewModel {
     private(set) var isPreparingSource = false
     private(set) var isLoadingSaved = false
     private(set) var activityMessage: String?
+    private(set) var savedStatusUnavailable = false
 
     private let coordinator: FileUploadCoordinator?
+    private let activityReader: (any FileUploadActivityReaderProtocol)?
     private let controller: SessionController
     private let library: LibraryId
     private let libraryStatus: LibraryStatus
     private let sessionRevision: UInt64
     @ObservationIgnored private var invalidated = false
+    @ObservationIgnored private var statusGeneration: UInt64 = 0
 
     init(
         coordinator: FileUploadCoordinator?, controller: SessionController,
-        library: LibraryId, libraryStatus: LibraryStatus
+        library: LibraryId, libraryStatus: LibraryStatus,
+        activityReader: (any FileUploadActivityReaderProtocol)? = nil
     ) {
         self.coordinator = coordinator
+        self.activityReader = activityReader ?? coordinator
         self.controller = controller
         self.library = library
         self.libraryStatus = libraryStatus
@@ -38,6 +43,11 @@ final class FileUploadViewModel {
 
     var isAvailable: Bool { isCurrent && coordinator != nil && libraryStatus == .active }
     var canInspectSaved: Bool { isCurrent && coordinator != nil }
+
+    func canResume(_ record: UploadRecord) -> Bool {
+        isAvailable && !isRunning && !isLoadingSaved && !savedStatusUnavailable
+            && record.state.canResume && backgroundJobs[record.id]?.blocksForeground != true
+    }
 
     var unavailableMessage: String {
         guard coordinator != nil else {
@@ -56,34 +66,50 @@ final class FileUploadViewModel {
     }
 
     func loadSaved() async {
-        guard isCurrent, !isLoadingSaved, !isRunning, let coordinator else { return }
+        await readSaved(visibleOnly: false)
+    }
+
+    private func readSaved(visibleOnly: Bool) async {
+        guard isCurrent, !isLoadingSaved, !isRunning, let activityReader else { return }
+        statusGeneration &+= 1
+        let generation = statusGeneration
         isLoadingSaved = true
-        defer { isLoadingSaved = false }
+        defer { if generation == statusGeneration { isLoadingSaved = false } }
         do {
-            let saved = try await coordinator.saved(library: library, limit: 20)
-            guard isCurrent, !isRunning else { return }
+            let saved: [UploadRecord]
+            if visibleOnly {
+                saved = try await activityReader.visibleSaved(library: library)
+            } else {
+                saved = try await activityReader.saved(library: library, limit: 20)
+            }
+            guard isCurrent, !isRunning, generation == statusGeneration else { return }
+            var jobs: [UploadOperationId: BackgroundUploadJob] = [:]
+            for record in saved {
+                if let job = try await activityReader.backgroundJob(record.id) {
+                    jobs[record.id] = job
+                }
+                guard isCurrent, !isRunning, generation == statusGeneration else { return }
+            }
             records = saved
-            await loadBackgroundJobs()
+            backgroundJobs = jobs
+            savedStatusUnavailable = false
+            if visibleOnly { liveProgress = nil }
             failure = nil
         } catch {
-            guard isCurrent else { return }
+            guard isCurrent, generation == statusGeneration else { return }
+            savedStatusUnavailable = true
             failure = UploadPolicy.classify(error)
         }
     }
 
     func refreshBackgroundState() async {
-        guard isCurrent, !isRunning, let coordinator else { return }
-        if let saved = try? await coordinator.visibleSaved(library: library), isCurrent {
-            records = saved
-            liveProgress = nil
-            await loadBackgroundJobs()
-        }
+        await readSaved(visibleOnly: true)
     }
 
     func start(selectedURL: URL, target: UploadTarget, backgroundEnabled: Bool = false) async
         -> FileUploadResult
     {
-        guard isAvailable, !isRunning, let coordinator else {
+        guard isAvailable, !isRunning, !isLoadingSaved, let coordinator else {
             return .stopped(nil, .invalidTarget)
         }
         return await runTransfer(activity: "Preparing file and calculating SHA-256…") {
@@ -94,7 +120,7 @@ final class FileUploadViewModel {
     }
 
     func resume(_ record: UploadRecord, backgroundEnabled: Bool = false) async -> FileUploadResult {
-        guard isAvailable, !isRunning, let coordinator, record.state.canResume else {
+        guard canResume(record), let coordinator else {
             return .stopped(record, .invalidTarget)
         }
         return await runTransfer(activity: "Checking saved source and server status…") {
@@ -105,7 +131,9 @@ final class FileUploadViewModel {
     }
 
     func checkServerStatus(_ record: UploadRecord) async -> Result<UploadRecord, UploadFailure> {
-        guard canInspectSaved, !isRunning, let coordinator, record.serverSessionId != nil else {
+        guard canInspectSaved, !isRunning, !isLoadingSaved, !savedStatusUnavailable,
+            let coordinator, record.serverSessionId != nil
+        else {
             return .failure(.invalidTarget)
         }
         isRunning = true
@@ -119,6 +147,7 @@ final class FileUploadViewModel {
         switch result {
         case .success(let updated):
             await refreshRecords()
+            guard isCurrent else { return .failure(.staleSession) }
             if updated.state == .committed { liveProgress = UploadProgress(updated) }
         case .failure(let problem): failure = problem
         }
@@ -126,7 +155,9 @@ final class FileUploadViewModel {
     }
 
     func abort(_ record: UploadRecord) async -> Result<UploadRecord, UploadFailure> {
-        guard canInspectSaved, !isRunning, let coordinator, record.serverSessionId != nil else {
+        guard canInspectSaved, !isRunning, !isLoadingSaved, !savedStatusUnavailable,
+            let coordinator, record.serverSessionId != nil
+        else {
             return .failure(.invalidTarget)
         }
         isRunning = true
@@ -140,6 +171,7 @@ final class FileUploadViewModel {
         switch result {
         case .success(let updated):
             await refreshRecords()
+            guard isCurrent else { return .failure(.staleSession) }
             if updated.state == .committed { liveProgress = UploadProgress(updated) }
         case .failure(let problem): failure = problem
         }
@@ -147,7 +179,9 @@ final class FileUploadViewModel {
     }
 
     func pause() async {
+        guard isCurrent else { return }
         do { try await coordinator?.pauseUserTransfer() } catch {
+            guard isCurrent else { return }
             failure = UploadPolicy.classify(error)
         }
     }
@@ -155,28 +189,21 @@ final class FileUploadViewModel {
     func pauseBackground(_ record: UploadRecord) async {
         guard isCurrent, let background = coordinator?.background else { return }
         do { try await background.pause(record.id) } catch {
+            guard isCurrent else { return }
             failure = UploadPolicy.classify(error)
         }
-        await loadBackgroundJobs()
+        await refreshBackgroundState()
     }
 
     func suspendForeground() { coordinator?.cancel() }
-
-    private func loadBackgroundJobs() async {
-        guard isCurrent, let background = coordinator?.background else { return }
-        var jobs: [UploadOperationId: BackgroundUploadJob] = [:]
-        for record in records {
-            if let job = try? await background.job(record.id) { jobs[record.id] = job }
-        }
-        guard isCurrent else { return }
-        backgroundJobs = jobs
-    }
 
     func reportImportFailure() { if isCurrent { failure = .sourceUnavailable } }
 
     func invalidate() {
         guard !invalidated else { return }
         invalidated = true
+        statusGeneration &+= 1
+        isLoadingSaved = false
         coordinator?.cancel()
         records = []
         backgroundJobs = [:]
@@ -222,11 +249,9 @@ final class FileUploadViewModel {
     }
 
     private func refreshRecords() async {
-        guard isCurrent, !isRunning, let coordinator else { return }
-        do {
-            records = try await coordinator.saved(library: library, limit: 20)
-        } catch {
-            failure = UploadPolicy.classify(error)
-        }
+        // Reload both durable operation state and background ownership before offering Resume.
+        let operationFailure = failure
+        await readSaved(visibleOnly: false)
+        if isCurrent, !savedStatusUnavailable { failure = operationFailure }
     }
 }

@@ -52,6 +52,48 @@ private final class StatusCoordinatorFixture: InboundSyncCoordinatorProtocol {
 
 @MainActor
 final class SyncStatusViewModelTests: XCTestCase {
+    func testOfflineAckRecoveryRetainsUnknownStatusAndBlocksOrdinaryRetry() async throws {
+        let f = try await inboundFixture(self)
+        let injected = StatusCoordinatorFixture(f.scope)
+        let recovery = SyncRecoveryAction(position: try feedPosition(), attempts: 1)
+        injected.local = InboundSyncStatus(
+            progress: .initial, completeness: .partial,
+            pendingState: .ackInFlight, recovery: recovery, stopReason: .awaitingAckRecovery)
+        injected.result = InboundSyncRunResult(
+            reason: .offline, progress: .initial, recovery: recovery)
+        let model = try await model(f, coordinator: injected)
+        await model.loadStatus()
+        await model.recoverAcknowledgement(confirmedByUser: true)
+        XCTAssertEqual(model.state, .unknownAck)
+        XCTAssertTrue(model.canRecover)
+        XCTAssertFalse(model.canSync)
+        XCTAssertFalse(model.canRetryTransientFailure)
+        await model.retryWhenConnectionAvailable()
+        XCTAssertEqual(injected.runs, 0)
+        XCTAssertEqual(injected.recoveries, 1)
+    }
+
+    func testServerUnavailableOffersOnlyAnExplicitBoundedSyncRetry() async throws {
+        let f = try await inboundFixture(self)
+        let injected = StatusCoordinatorFixture(f.scope)
+        injected.result = InboundSyncRunResult(
+            reason: .serverUnavailable, progress: .initial, recovery: nil)
+        let model = try await model(f, coordinator: injected)
+        await model.loadStatus()
+        await model.syncNow()
+        XCTAssertTrue(model.canRetryTransientFailure)
+        XCTAssertEqual(injected.runs, 1)
+        let gate = QueueGate()
+        injected.gate = gate
+        let retry = Task { await model.retryWhenConnectionAvailable() }
+        await gate.wait()
+        await model.retryWhenConnectionAvailable()
+        XCTAssertEqual(injected.runs, 2)
+        await gate.release()
+        await retry.value
+        XCTAssertEqual(injected.runs, 2)
+    }
+
     private func model(
         _ f: InboundFixture, coordinator: (any InboundSyncCoordinatorProtocol)? = nil,
         status: LibraryStatus = .active

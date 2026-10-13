@@ -212,7 +212,7 @@ struct UploadSessionResponseDecoder: Sendable {
         }
         switch response.statusCode {
         case 401: return code == "device_revoked" ? .deviceRevoked : .unauthenticated
-        case 403: return .scopeMismatch
+        case 403: return .permissionDenied
         case 404: return .sourceUnavailable
         case 409:
             switch code {

@@ -39,6 +39,27 @@ public final class SessionController {
     /// Used by phase view models to discard callbacks after any newer lifecycle transition.
     var lifecycleRevision: UInt64 { transitionRevision }
 
+    /// Local inspection never upgrades a pending session to authenticated. Only a narrowly
+    /// classified temporary verification failure can retain access to previously bound scopes.
+    var canInspectSavedMetadata: Bool {
+        guard state == .restorationVerificationPending, !isRestorationRetryInProgress,
+            pendingRestorationSession != nil
+        else { return false }
+        switch restorationFailure {
+        case .serverUnavailable, .dnsFailure, .networkFailure, .timeout: return true
+        default: return false
+        }
+    }
+
+    func savedMetadataSession() throws -> DeviceCredentialSession {
+        guard canInspectSavedMetadata, let pendingRestorationSession else {
+            throw LibraryFailure.unauthenticated
+        }
+        return pendingRestorationSession
+    }
+
+    var permitsSavedMetadataInspection: Bool { state == .authenticated || canInspectSavedMetadata }
+
     /// Non-secret cleanup failure retained while the user retries secure deletion.
     public private(set) var logoutFailure: SessionLogoutError?
 
@@ -467,7 +488,19 @@ public final class SessionController {
     }
 
     private func transition(to newState: AppStartupState) {
-        if state == .authenticated { mutationSessionInvalidator?() }
+        let authorizationRejected: Bool
+        switch newState {
+        case .recoveryRequired(.authentication), .recoveryRequired(.deviceRevoked):
+            authorizationRejected = true
+        default: authorizationRejected = false
+        }
+        if state == .authenticated
+            || authorizationRejected
+            || (state == .restorationVerificationPending
+                && newState != .restorationVerificationPending && newState != .authenticated)
+        {
+            mutationSessionInvalidator?()
+        }
         transitionRevision &+= 1
         restorationFailure = nil
         secureStorageFailure = nil

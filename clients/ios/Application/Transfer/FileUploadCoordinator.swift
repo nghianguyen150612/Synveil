@@ -14,11 +14,22 @@ private enum UploadActionResult: Sendable {
 /// Shared foreground/upload business-logic owner. All progress is a SQLite-confirmed server offset, never bytes
 /// handed to URLSession. Each user action performs at most one recovery/status pass.
 @MainActor
-final class FileUploadCoordinator {
+protocol FileUploadActivityReaderProtocol {
+    func saved(library: LibraryId, limit: Int) async throws -> [UploadRecord]
+    func visibleSaved(library: LibraryId) async throws -> [UploadRecord]
+    func backgroundJob(_ id: UploadOperationId) async throws -> BackgroundUploadJob?
+}
+
+@MainActor
+final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
     private let repository: AuthenticatedUploadRepository
     private let database: MutationQueueSQLiteStore
     private let staging: UploadStagingStore
     let background: BackgroundUploadCoordinator?
+
+    func backgroundJob(_ id: UploadOperationId) async throws -> BackgroundUploadJob? {
+        try await background?.job(id)
+    }
     private let identityGenerator: any ClientMutationIdentityGeneratorProtocol
     private var active: Task<UploadActionResult, Never>?
     private var activeUploadId: UploadOperationId?

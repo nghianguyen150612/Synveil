@@ -6,6 +6,13 @@ public final class AuthenticatedNodeRepository: NodeRepositoryProtocol {
     private let provider: any AuthenticatedNodeRequestProviderProtocol
     private let bridge: any RustBridgeProtocol
     private let decoder: NodeResponseDecoder
+    private var readDenialHandler: (@MainActor (LibraryId, LibraryRequestScope) async -> Void)?
+
+    func installReadDenialHandler(
+        _ handler: @escaping @MainActor (LibraryId, LibraryRequestScope) async -> Void
+    ) {
+        readDenialHandler = handler
+    }
 
     init(provider: any AuthenticatedNodeRequestProviderProtocol, bridge: any RustBridgeProtocol) {
         self.provider = provider
@@ -67,7 +74,12 @@ public final class AuthenticatedNodeRepository: NodeRepositoryProtocol {
             let failure =
                 Task.isCancelled
                 ? NodeFailure.cancelled : AuthenticatedLibraryCatalogRepository.classify(error)
-            if let scope { provider.handle(failure, scope: scope) }
+            if let scope {
+                if failure == .httpFailure(statusCode: 403) {
+                    await readDenialHandler?(libraryId, scope)
+                }
+                provider.handle(failure, scope: scope)
+            }
             return .failed(failure)
         }
     }
@@ -121,7 +133,12 @@ public final class AuthenticatedNodeRepository: NodeRepositoryProtocol {
             let failure =
                 Task.isCancelled
                 ? NodeFailure.cancelled : AuthenticatedLibraryCatalogRepository.classify(error)
-            if let scope { provider.handle(failure, scope: scope) }
+            if let scope {
+                if failure == .httpFailure(statusCode: 403) {
+                    await readDenialHandler?(libraryId, scope)
+                }
+                provider.handle(failure, scope: scope)
+            }
             return .failed(failure)
         }
     }

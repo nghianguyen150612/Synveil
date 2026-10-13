@@ -5,6 +5,15 @@ struct LibraryRequestScope: Sendable, CustomStringConvertible, CustomDebugString
     fileprivate let session: DeviceCredentialSession
     fileprivate let revision: UInt64
 
+    init(session: DeviceCredentialSession, revision: UInt64) {
+        self.session = session
+        self.revision = revision
+    }
+
+    var serverEndpoint: ServerEndpoint { session.serverEndpoint }
+    var ownerUserId: String { session.record.ownerUserId }
+    var deviceIdentifier: String { session.record.deviceId }
+
     func matches(_ scope: ClientMutationScope) -> Bool {
         session.serverEndpoint == scope.serverEndpoint
             && session.record.ownerUserId == scope.ownerUserId
@@ -38,11 +47,15 @@ struct LibraryRequestScope: Sendable, CustomStringConvertible, CustomDebugString
 
 /// Internal security boundary: the repository supplies opaque cursors, never URLs or headers.
 @MainActor
-protocol AuthenticatedLibraryRequestProviderProtocol {
+protocol LocalLibrarySessionProviderProtocol {
     func begin() async throws -> LibraryRequestScope
+    func validate(_ scope: LibraryRequestScope) async throws
+}
+
+@MainActor
+protocol AuthenticatedLibraryRequestProviderProtocol: LocalLibrarySessionProviderProtocol {
     func requestPage(cursor: String?, scope: LibraryRequestScope) async throws
         -> HTTPTransportResponse
-    func validate(_ scope: LibraryRequestScope) async throws
     func handle(_ failure: LibraryFailure, scope: LibraryRequestScope)
 }
 

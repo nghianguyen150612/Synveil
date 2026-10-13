@@ -132,9 +132,10 @@ enum LibraryCatalogUIFailure: Equatable {
         return switch failure {
         case .offline, .dnsFailure, .timeout, .serverUnavailable:
             true
+        case .httpFailure(let statusCode): (500...599).contains(statusCode)
         case .unauthenticated, .credentialUnavailable, .invalidCredential, .originMismatch,
             .staleSession, .authenticationRejected, .deviceRevoked, .tlsFailure,
-            .redirectRejected, .httpFailure, .unexpectedContentType, .protocolFailure,
+            .redirectRejected, .unexpectedContentType, .protocolFailure,
             .resourceLimit, .repeatedCursor, .cancelled:
             false
         }

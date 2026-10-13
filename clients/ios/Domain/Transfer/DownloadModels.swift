@@ -148,6 +148,7 @@ enum DownloadFailure: String, Error, Sendable, CaseIterable {
     case sha256Mismatch, insufficientStorage, stagingQuotaExceeded, stagingMissing,
         filesystemFailure
     case storageFailure, cancelled, integrityFailure, duplicateOperation
+    case permissionDenied
 
     var state: DownloadState {
         switch self {
@@ -171,6 +172,8 @@ enum DownloadFailure: String, Error, Sendable, CaseIterable {
         case .staleSession, .scopeMismatch, .unauthenticated, .deviceRevoked:
             "The authenticated session changed. File access has been revoked."
         case .sourceUnavailable: "The server no longer authorizes this file version."
+        case .permissionDenied:
+            "The server denied access to this file. Restore permission before trying again."
         case .sha256Mismatch, .integrityFailure:
             "The file failed integrity verification. It is unavailable; contact the server owner."
         case .stagingMissing: "Private cached content is missing. Start a new download."
@@ -209,21 +212,21 @@ enum DownloadPolicy {
             case .redirectRejected: return .redirectRejected
             case .serverUnavailable: return .serverUnavailable
             case .cancelled: return .cancelled
-            case .httpFailure(let code): return code == 404 ? .sourceUnavailable : .unexpectedStatus
+            case .httpFailure(let code):
+                if code == 403 { return .permissionDenied }
+                if (500...599).contains(code) { return .serverUnavailable }
+                return code == 404 ? .sourceUnavailable : .unexpectedStatus
             default: return .invalidMetadata
             }
         }
         if let error = error as? URLError {
-            switch error.code {
+            switch SynveilTransportError.classify(error) {
+            case .offline: return .offline
+            case .dnsFailure: return .dnsFailure
+            case .timeout: return .timeout
+            case .tlsError: return .tlsFailure
             case .cancelled: return .cancelled
-            case .timedOut: return .timeout
-            case .cannotFindHost, .dnsLookupFailed: return .dnsFailure
-            case .secureConnectionFailed, .serverCertificateUntrusted,
-                .serverCertificateHasBadDate, .serverCertificateHasUnknownRoot,
-                .serverCertificateNotYetValid, .clientCertificateRejected,
-                .clientCertificateRequired:
-                return .tlsFailure
-            default: return .offline
+            default: return .invalidMetadata
             }
         }
         return .storageFailure

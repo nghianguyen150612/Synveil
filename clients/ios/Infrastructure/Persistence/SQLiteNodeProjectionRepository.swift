@@ -5,11 +5,11 @@ import Foundation
 @MainActor
 final class SQLiteNodeProjectionRepository: NodeProjectionRepositoryProtocol {
     private let database: MutationQueueSQLiteStore
-    private let provider: any AuthenticatedSyncFeedRequestProviderProtocol
+    private let provider: any LocalLibrarySessionProviderProtocol
     private let bridge: any RustBridgeProtocol
     init(
         database: MutationQueueSQLiteStore,
-        provider: any AuthenticatedSyncFeedRequestProviderProtocol, bridge: any RustBridgeProtocol
+        provider: any LocalLibrarySessionProviderProtocol, bridge: any RustBridgeProtocol
     ) {
         self.database = database
         self.provider = provider
@@ -21,6 +21,38 @@ final class SQLiteNodeProjectionRepository: NodeProjectionRepositoryProtocol {
         try await provider.validate(session)
         return session
     }
+
+    /// An authenticated metadata read denial invalidates offline eligibility for that Library.
+    /// The original session is rechecked; an old response cannot affect a replacement account.
+    func rejectReadAuthorization(libraryId: LibraryId, session: LibraryRequestScope) async throws {
+        try await provider.validate(session)
+        let scope = try await session.mutationScope(libraryId: libraryId, bridge: bridge)
+        try await provider.validate(session)
+        try await database.quarantineMetadataScope(
+            scope: scope, credentialId: session.credentialIdentifier)
+    }
+    /// A complete live catalog can update Library observations only for already bound scopes.
+    /// Missing/forbidden Libraries lose saved-read eligibility; no scope or checkpoint is created.
+    func rememberValidatedCatalog(_ libraries: [Library], session: LibraryRequestScope) async throws
+    {
+        try await provider.validate(session)
+        var observed: Set<String> = []
+        for library in libraries {
+            _ = try await LibraryProjectionMetadata(library).validated(bridge: bridge)
+            if library.status != .quarantined { observed.insert(library.id.rawValue) }
+        }
+        try await provider.validate(session)
+        let eligible = try await database.retainObservedLibraryAccess(observed, session: session)
+        for library in libraries where eligible.contains(library.id.rawValue) {
+            let scope = try await session.mutationScope(libraryId: library.id, bridge: bridge)
+            try await provider.validate(session)
+            try await database.rememberLibrary(
+                library, scope: scope,
+                credentialId: session.credentialIdentifier, bridge: bridge)
+        }
+        try await provider.validate(session)
+    }
+
     func node(scope: ClientMutationScope, nodeId: NodeId) async -> CachedNodeResult {
         do {
             let session = try await session(scope)

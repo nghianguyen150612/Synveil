@@ -18,6 +18,7 @@ struct RootView: View {
     var libraryCatalog: (any LibraryCatalogRepositoryProtocol)? = nil
     var nodeRepository: (any NodeRepositoryProtocol)? = nil
     var offlineNodeBrowserService: (any OfflineNodeBrowserServiceProtocol)? = nil
+    var savedMetadataInspection: (any SavedMetadataInspectionProtocol)? = nil
     var metadataMutationFeature: (any MetadataMutationFeatureProtocol)? = nil
     var inboundSyncCoordinator: (any InboundSyncCoordinatorProtocol)? = nil
     var nodeProjectionRepository: (any NodeProjectionRepositoryProtocol)? = nil
@@ -46,12 +47,15 @@ struct RootView: View {
                 )
             )
         case .restorationVerificationPending:
-            RestorationVerificationPendingView(sessionController: sessionController)
+            RestorationVerificationPendingView(
+                sessionController: sessionController,
+                savedMetadataInspection: savedMetadataInspection)
         case .authenticated:
             LibraryCatalogView(
                 repository: libraryCatalog,
                 nodeRepository: nodeRepository,
                 offlineNodeBrowserService: offlineNodeBrowserService,
+                savedMetadataInspection: savedMetadataInspection,
                 metadataMutationFeature: metadataMutationFeature,
                 inboundSyncCoordinator: inboundSyncCoordinator,
                 nodeProjectionRepository: nodeProjectionRepository,
@@ -96,7 +100,9 @@ struct LaunchView: View {
 /// Minimal retry surface for a locally valid session whose server status is not yet known.
 struct RestorationVerificationPendingView: View {
     let sessionController: SessionController
+    var savedMetadataInspection: (any SavedMetadataInspectionProtocol)? = nil
     @State private var isShowingLogoutConfirmation = false
+    @State private var isInspectingSavedMetadata = false
 
     var body: some View {
         ScrollView {
@@ -112,6 +118,14 @@ struct RestorationVerificationPendingView: View {
                     await sessionController.retrySessionRestoration()
                 }
 
+                if sessionController.canInspectSavedMetadata, savedMetadataInspection != nil {
+                    Button("Inspect Saved Metadata") { isInspectingSavedMetadata = true }
+                        .accessibilityHint(
+                            "Reads eligible previously saved metadata without authorizing network operations."
+                        )
+                        .accessibilityIdentifier("synveil.session.inspect-saved")
+                }
+
                 Button("Forget saved session", role: .destructive) {
                     isShowingLogoutConfirmation = true
                 }
@@ -120,6 +134,12 @@ struct RestorationVerificationPendingView: View {
             .padding()
         }
         .accessibilityIdentifier("synveil.root.verification-pending")
+        .sheet(isPresented: $isInspectingSavedMetadata) {
+            if let savedMetadataInspection {
+                SavedMetadataInspectionView(
+                    service: savedMetadataInspection, controller: sessionController)
+            }
+        }
         .confirmationDialog(
             "Forget this device session?",
             isPresented: $isShowingLogoutConfirmation,

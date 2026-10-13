@@ -36,6 +36,12 @@ struct SyncStatusView: View {
                     .textSelection(.enabled)
             }
             Section("Synchronization") {
+                if let recovery = ClientRecoveryPresentation.sync(
+                    viewModel.stopReason,
+                    recovery: viewModel.recovery)
+                {
+                    ClientRecoveryNotice(presentation: recovery)
+                }
                 Text(viewModel.message)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.updatesFrequently)
@@ -66,7 +72,7 @@ struct SyncStatusView: View {
                     Button("Cancel Synchronization", role: .cancel) { viewModel.cancel() }
                         .accessibilityIdentifier("synveil.sync.cancel")
                 }
-                if viewModel.state == .offline {
+                if viewModel.canRetryTransientFailure {
                     Button("Try Sync Again When Connected") {
                         Task { await viewModel.retryWhenConnectionAvailable() }
                     }

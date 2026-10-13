@@ -520,6 +520,58 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         }
     }
 
+    func retainObservedLibraryAccess(_ observed: Set<String>, session: LibraryRequestScope) throws
+        -> Set<String>
+    {
+        guard !projectionQuarantineFailed else { throw MutationQueueFailure.unavailable }
+        do {
+            return try transaction {
+                let rows = try query(
+                    "SELECT scope_id,library_id FROM scopes WHERE endpoint=? AND owner_id=? AND device_id=? AND credential_id=? AND quarantined=0",
+                    [
+                        .text(session.serverEndpoint.urlString), .text(session.ownerUserId),
+                        .text(session.deviceIdentifier), .text(session.credentialIdentifier),
+                    ]
+                ) {
+                    (sqlite3_column_int64($0, 0), try Self.text($0, 1))
+                }
+                var retained: Set<String> = []
+                for row in rows {
+                    if observed.contains(row.1) {
+                        retained.insert(row.1)
+                    } else {
+                        try fault?(.beforeQuarantine)
+                        try execute(
+                            "UPDATE scopes SET quarantined=1 WHERE scope_id=?", [.integer(row.0)])
+                    }
+                }
+                return retained
+            }
+        } catch {
+            projectionQuarantineFailed = true
+            throw error
+        }
+    }
+
+    func quarantineMetadataScope(scope: ClientMutationScope, credentialId: String) throws {
+        guard let id = try scopeId(scope) else { return }
+        do {
+            try transaction {
+                guard
+                    try scalar(
+                        "SELECT count(*) FROM scopes WHERE scope_id=? AND credential_id=?",
+                        [.integer(id), .text(credentialId)]) == 1
+                else { throw MutationQueueFailure.scopeMismatch }
+                try fault?(.beforeQuarantine)
+                try execute("UPDATE scopes SET quarantined=1 WHERE scope_id=?", [.integer(id)])
+            }
+        } catch {
+            // Failure to persist a known read denial cannot leave local projection authority open.
+            projectionQuarantineFailed = true
+            throw error
+        }
+    }
+
     func syncBase(scope: ClientMutationScope) throws -> StoredSyncBase? {
         guard let id = try scopeId(scope) else { return nil }
         return try query(
@@ -2362,6 +2414,40 @@ extension MutationQueueSQLiteStore {
             scope: scope, position: position, id: id, revision: revision, lifecycle: raw.lifecycle,
             provenance: raw.provenance, metadata: node)
     }
+    /// Existing authenticated scope bindings are the eligibility evidence. This read never
+    /// creates a scope and never clears quarantine. A saved catalog is always a partial catalog.
+    func savedLibraries(session: LibraryRequestScope, bridge: any RustBridgeProtocol) async throws
+        -> [Library]
+    {
+        let bindings: [SQLValue] = [
+            .text(session.serverEndpoint.urlString), .text(session.ownerUserId),
+            .text(session.deviceIdentifier), .text(session.credentialIdentifier),
+        ]
+        let sql =
+            "SELECT library_id FROM scopes WHERE endpoint=? AND owner_id=? AND device_id=? AND credential_id=? AND quarantined=0 ORDER BY library_id LIMIT 1025"
+        let ids = try query(sql, bindings) { try Self.text($0, 0) }
+        guard ids.count <= 1024 else { throw MutationQueueFailure.capacity }
+        var libraries: [Library] = []
+        for raw in ids {
+            try Task.checkCancellation()
+            let id = try await LibraryId.validated(raw, using: bridge)
+            let scope = try await session.mutationScope(libraryId: id, bridge: bridge)
+            let state = try await cachedProjectionState(
+                scope: scope, credentialId: session.credentialIdentifier, bridge: bridge)
+            if let library = state.library?.library, library.status != .quarantined {
+                libraries.append(library)
+            }
+        }
+        guard try query(sql, bindings, map: { try Self.text($0, 0) }) == ids else {
+            throw SyncProjectionFailure.staleSession
+        }
+        return libraries.sorted {
+            let order = $0.name.compare($1.name, options: [.caseInsensitive, .numeric])
+            return order == .orderedSame
+                ? $0.id.rawValue < $1.id.rawValue : order == .orderedAscending
+        }
+    }
+
     func cachedProjectionState(
         scope: ClientMutationScope, credentialId: String, bridge: any RustBridgeProtocol
     ) async throws -> NodeProjectionState {

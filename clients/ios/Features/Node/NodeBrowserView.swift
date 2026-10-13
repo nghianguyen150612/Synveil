@@ -576,6 +576,7 @@ struct NodeBrowserView: View {
     @ViewBuilder
     private func savedDirectory(_ presentation: NodeCachedDirectoryPresentation) -> some View {
         Section {
+            ClientRecoveryNotice(presentation: .saved(presentation))
             VStack(alignment: .leading, spacing: 8) {
                 Label(savedTitle(presentation), systemImage: savedSymbol(presentation))
                     .font(.headline)

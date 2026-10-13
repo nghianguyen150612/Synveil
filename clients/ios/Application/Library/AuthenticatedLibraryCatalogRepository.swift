@@ -5,6 +5,13 @@ import Foundation
 public final class AuthenticatedLibraryCatalogRepository: LibraryCatalogRepositoryProtocol {
     private let provider: any AuthenticatedLibraryRequestProviderProtocol
     private let decoder: LibraryResponseDecoder
+    private var observationHandler: (@MainActor ([Library], LibraryRequestScope) async -> Void)?
+
+    func installObservationHandler(
+        _ handler: @escaping @MainActor ([Library], LibraryRequestScope) async -> Void
+    ) {
+        observationHandler = handler
+    }
 
     init(provider: any AuthenticatedLibraryRequestProviderProtocol, bridge: any RustBridgeProtocol)
     {
@@ -42,6 +49,8 @@ public final class AuthenticatedLibraryCatalogRepository: LibraryCatalogReposito
                 libraries.append(contentsOf: page.libraries)
                 if !page.hasMore {
                     try Task.checkCancellation()
+                    await observationHandler?(libraries, current)
+                    try await provider.validate(current)
                     return .loaded(libraries)
                 }
                 guard let next = page.nextCursor else { throw LibraryFailure.protocolFailure }
@@ -84,7 +93,8 @@ public final class AuthenticatedLibraryCatalogRepository: LibraryCatalogReposito
     static func classify(_ error: any Error) -> LibraryFailure {
         if let failure = error as? LibraryFailure { return failure }
         if error is CancellationError { return .cancelled }
-        guard let transport = error as? SynveilTransportError else { return .offline }
+        if let error = error as? URLError { return classify(SynveilTransportError.classify(error)) }
+        guard let transport = error as? SynveilTransportError else { return .protocolFailure }
         switch transport {
         case .offline: return .offline
         case .dnsFailure: return .dnsFailure

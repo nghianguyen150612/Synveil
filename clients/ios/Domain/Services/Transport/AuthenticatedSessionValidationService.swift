@@ -70,7 +70,8 @@ public final class AuthenticatedSessionValidationService:
         } catch is CancellationError {
             return .cancelled
         } catch {
-            return Task.isCancelled ? .cancelled : .networkFailure
+            return Task.isCancelled
+                ? .cancelled : mapTransportError(SynveilTransportError.classify(error))
         }
 
         if Task.isCancelled {

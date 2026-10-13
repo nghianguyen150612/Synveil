@@ -274,6 +274,7 @@ enum UploadFailure: String, Error, Sendable, CaseIterable {
     case insufficientStorage, stagingQuotaExceeded, stagingMissing, filesystemFailure,
         storageFailure
     case cancelled, duplicateOperation, payloadTooLarge, completionUnknown, conflict
+    case permissionDenied
 
     var localState: UploadLocalState {
         switch self {
@@ -296,6 +297,8 @@ enum UploadFailure: String, Error, Sendable, CaseIterable {
             "This file changed on the server. Refresh it and start a new replacement with the current revision."
         case .nameConflict:
             "A file with this exact name already exists in the destination folder."
+        case .permissionDenied:
+            "The server denied this upload. Restore permission before continuing; the original identity is retained."
         case .insufficientStorage, .stagingQuotaExceeded:
             "There is not enough private storage to stage this file. Free space and try again."
         case .sessionExpired:
@@ -345,6 +348,9 @@ enum UploadPolicy {
             case .redirectRejected: return .redirectRejected
             case .serverUnavailable: return .serverUnavailable
             case .cancelled: return .cancelled
+            case .httpFailure(let code):
+                if code == 403 { return .permissionDenied }
+                return (500...599).contains(code) ? .serverUnavailable : .unexpectedStatus
             default: return .unexpectedStatus
             }
         }
@@ -363,16 +369,7 @@ enum UploadPolicy {
             }
         }
         if let error = error as? URLError {
-            switch error.code {
-            case .cancelled: return .cancelled
-            case .timedOut: return .timeout
-            case .cannotFindHost, .dnsLookupFailed: return .dnsFailure
-            case .secureConnectionFailed, .serverCertificateUntrusted, .serverCertificateHasBadDate,
-                .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid,
-                .clientCertificateRejected, .clientCertificateRequired:
-                return .tlsFailure
-            default: return .offline
-            }
+            return classify(SynveilTransportError.classify(error))
         }
         return .storageFailure
     }

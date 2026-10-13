@@ -196,6 +196,12 @@
 		A04600000000000000000004 /* BackgroundUploadSQLiteSchema.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14600000000000000000004 /* BackgroundUploadSQLiteSchema.swift */; };
 		A04600000000000000000005 /* BackgroundUploadCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14600000000000000000005 /* BackgroundUploadCoordinator.swift */; };
 		B04600000000000000000001 /* BackgroundUploadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B14600000000000000000001 /* BackgroundUploadTests.swift */; };
+		96E2C0F9285597AF0932C920 /* SavedMetadataInspectionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F31907F25107A94AB4B6A8E1 /* SavedMetadataInspectionService.swift */; };
+		65973F21CDAFEB954ECCBBE0 /* ClientRecoveryPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BC94AA66A9ECC8E87A1ED9A /* ClientRecoveryPresentation.swift */; };
+		D30AE43D86CB8AD2E74D42B8 /* ClientRecoveryNotice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6558A9B854C1C7BA499D83F2 /* ClientRecoveryNotice.swift */; };
+		25DDAEF8DA40A5DCC5701E49 /* SavedMetadataInspectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1947D2701B9728AC34DE5E28 /* SavedMetadataInspectionView.swift */; };
+		191FD69399B150CB423A33DA /* ClientRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F1E19F9428AF1DF73E9BFDF /* ClientRecoveryTests.swift */; };
+		3D1141A213B67791E01B0163 /* SavedMetadataInspectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A853EF3DEF7C73656541699 /* SavedMetadataInspectionTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -399,6 +405,12 @@
 		A14600000000000000000004 /* BackgroundUploadSQLiteSchema.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/BackgroundUploadSQLiteSchema.swift; sourceTree = SOURCE_ROOT; };
 		A14600000000000000000005 /* BackgroundUploadCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Transfer/BackgroundUploadCoordinator.swift; sourceTree = SOURCE_ROOT; };
 		B14600000000000000000001 /* BackgroundUploadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/BackgroundUploadTests.swift; sourceTree = SOURCE_ROOT; };
+		F31907F25107A94AB4B6A8E1 /* SavedMetadataInspectionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Session/SavedMetadataInspectionService.swift; sourceTree = SOURCE_ROOT; };
+		0BC94AA66A9ECC8E87A1ED9A /* ClientRecoveryPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Recovery/ClientRecoveryPresentation.swift; sourceTree = SOURCE_ROOT; };
+		6558A9B854C1C7BA499D83F2 /* ClientRecoveryNotice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Recovery/ClientRecoveryNotice.swift; sourceTree = SOURCE_ROOT; };
+		1947D2701B9728AC34DE5E28 /* SavedMetadataInspectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Node/SavedMetadataInspectionView.swift; sourceTree = SOURCE_ROOT; };
+		9F1E19F9428AF1DF73E9BFDF /* ClientRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/ClientRecoveryTests.swift; sourceTree = SOURCE_ROOT; };
+		4A853EF3DEF7C73656541699 /* SavedMetadataInspectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SavedMetadataInspectionTests.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -425,6 +437,12 @@
 		A40000012C00000000000001 = {
 			isa = PBXGroup;
 			children = (
+				4A853EF3DEF7C73656541699 /* SavedMetadataInspectionTests.swift */,
+				9F1E19F9428AF1DF73E9BFDF /* ClientRecoveryTests.swift */,
+				1947D2701B9728AC34DE5E28 /* SavedMetadataInspectionView.swift */,
+				6558A9B854C1C7BA499D83F2 /* ClientRecoveryNotice.swift */,
+				0BC94AA66A9ECC8E87A1ED9A /* ClientRecoveryPresentation.swift */,
+				F31907F25107A94AB4B6A8E1 /* SavedMetadataInspectionService.swift */,
 				A14500000000000000000001 /* UploadModels.swift */,
 				A14500000000000000000002 /* UploadSessionDTO.swift */,
 				A14500000000000000000003 /* AuthenticatedUploadRepository.swift */,
@@ -819,6 +837,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				25DDAEF8DA40A5DCC5701E49 /* SavedMetadataInspectionView.swift in Sources */,
+				D30AE43D86CB8AD2E74D42B8 /* ClientRecoveryNotice.swift in Sources */,
+				65973F21CDAFEB954ECCBBE0 /* ClientRecoveryPresentation.swift in Sources */,
+				96E2C0F9285597AF0932C920 /* SavedMetadataInspectionService.swift in Sources */,
 				A04500000000000000000001 /* UploadModels.swift in Sources */,
 				A04500000000000000000002 /* UploadSessionDTO.swift in Sources */,
 				A04500000000000000000003 /* AuthenticatedUploadRepository.swift in Sources */,
@@ -946,6 +968,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3D1141A213B67791E01B0163 /* SavedMetadataInspectionTests.swift in Sources */,
+				191FD69399B150CB423A33DA /* ClientRecoveryTests.swift in Sources */,
 				B04500000000000000000001 /* FileUploadTests.swift in Sources */,
 				B04500000000000000000002 /* FileUploadStorageTests.swift in Sources */,
 				B04500000000000000000003 /* FileUploadViewTests.swift in Sources */,

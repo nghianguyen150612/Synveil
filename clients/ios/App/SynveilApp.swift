@@ -26,6 +26,7 @@ struct SynveilApp: App {
                 libraryCatalog: container.libraryCatalog,
                 nodeRepository: container.nodeRepository,
                 offlineNodeBrowserService: container.offlineNodeBrowserService,
+                savedMetadataInspection: container.savedMetadataInspection,
                 metadataMutationFeature: container.metadataMutationFeature,
                 inboundSyncCoordinator: container.inboundSyncCoordinator,
                 nodeProjectionRepository: container.nodeProjectionRepository,

@@ -60,9 +60,13 @@ struct InboundSyncRunResult: Equatable, Sendable {
 }
 
 @MainActor
-protocol InboundSyncCoordinatorProtocol {
+protocol NodeBrowserScopeProviderProtocol {
     /// Local authenticated identity capture only; does not call a checkpoint endpoint.
     func scope(libraryId: LibraryId) async throws -> ClientMutationScope
+}
+
+@MainActor
+protocol InboundSyncCoordinatorProtocol: NodeBrowserScopeProviderProtocol {
     func status(scope: ClientMutationScope) async -> InboundSyncStatus
     func synchronize(
         scope: ClientMutationScope, configuration: InboundSyncRunConfiguration,

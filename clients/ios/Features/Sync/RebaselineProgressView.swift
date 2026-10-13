@@ -18,6 +18,11 @@ struct RebaselineProgressView: View {
     }
     var body: some View {
         Section("Rebuild Saved Metadata") {
+            if let recovery = ClientRecoveryPresentation.rebaseline(
+                model.progress, failure: model.failure)
+            {
+                ClientRecoveryNotice(presentation: recovery)
+            }
             Text(model.message).fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("synveil.rebaseline.status")
             if let progress = model.progress {

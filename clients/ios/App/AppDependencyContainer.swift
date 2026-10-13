@@ -34,6 +34,7 @@ public final class AppDependencyContainer {
 
     /// Live-first browser composition with authenticated reads from the durable P039 projection.
     private(set) var offlineNodeBrowserService: (any OfflineNodeBrowserServiceProtocol)?
+    private(set) var savedMetadataInspection: (any SavedMetadataInspectionProtocol)?
 
     /// Foundation only: no durable authorizer is installed and no SwiftUI write interface is exposed.
     private(set) var clientMutationRepository: (any ClientMutationRepositoryProtocol)?
@@ -167,6 +168,32 @@ public final class AppDependencyContainer {
                 if let nodeRepository {
                     nodeProjectionRepository = SQLiteNodeProjectionRepository(
                         database: database, provider: feedProvider, bridge: bridge)
+                    if let projection = nodeProjectionRepository,
+                        let nodes = nodeRepository as? AuthenticatedNodeRepository
+                    {
+                        nodes.installReadDenialHandler { [weak self] libraryId, session in
+                            // Projection denial fails closed internally; the HTTP 403 remains
+                            // authoritative even when its local quarantine cannot be persisted.
+                            do {
+                                try await projection.rejectReadAuthorization(
+                                    libraryId: libraryId, session: session)
+                            } catch {
+                                self?.mutationQueueFailure = DurableMutationQueue.classify(error)
+                            }
+                        }
+                    }
+                    if let projection = nodeProjectionRepository,
+                        let catalog = libraryCatalog as? AuthenticatedLibraryCatalogRepository
+                    {
+                        catalog.installObservationHandler { [weak self] libraries, session in
+                            do {
+                                try await projection.rememberValidatedCatalog(
+                                    libraries, session: session)
+                            } catch {
+                                self?.mutationQueueFailure = DurableMutationQueue.classify(error)
+                            }
+                        }
+                    }
                     syncFeedApplicationService = SyncFeedApplicationService(
                         provider: feedProvider, queue: queue, database: database,
                         nodes: nodeRepository, bridge: bridge)
@@ -188,6 +215,9 @@ public final class AppDependencyContainer {
                         liveRepository: nodeRepository,
                         projection: nodeProjectionRepository,
                         scopeProvider: inboundSyncCoordinator)
+                    savedMetadataInspection = SavedMetadataInspectionService(
+                        controller: sessionController, credentials: store, database: database,
+                        bridge: bridge, liveRepository: nodeRepository)
                 }
                 var composedMetadataMutationService: MetadataMutationService?
                 if let nodeRepository {
