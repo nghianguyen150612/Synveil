@@ -174,10 +174,9 @@ without authoritative reconciliation and never treats OS byte counters as eviden
 ## Automated and native validation
 
 Observed local checks pass: the iOS source validator, all 84 portable support tests,
-`scripts/validate-docs.sh`, `git diff --check`, Swift parsing, and strict recursive formatting/lint
-with the official `swift:6.2.3` toolchain. Linux has no Xcode or iOS Simulator. Native build and XCTest must be observed on macOS GitHub Actions. Run URLs, XCTest counts,
-PR state and merge evidence will be recorded only after genuine publication/observation; they are
-not yet available at this implementation stage. No earlier P045 run is counted for P046.
+`scripts/validate-docs.sh`, `git diff --check`, and strict recursive formatting/lint with the
+official `swift:6.2.3` toolchain. Linux has no Xcode or iOS Simulator. Native evidence below is
+observed from macOS GitHub Actions on the final feature head; no earlier P045 run is counted for P046.
 
 The source contains 52 new deterministic background XCTest methods. Coverage includes typed transitions/terminal protections, explicit opt-in,
 file-backed exact range/digest, foreground exclusion across reopen, 204/GET agreement, partial and
@@ -208,7 +207,50 @@ or suppressed. The prior first build at `5a8b7b4dbb6862ede28a730e55fb3257bf0ce46
 invalid CryptoKit initializer; that was corrected using `SHA256.hash(data:)`.
 
 These are intermediate results, not final-head qualification. Further source changes strengthen
-Pause, missing-callback recovery and metadata validation. Final-head native results remain pending.
+Pause, missing-callback recovery and metadata validation. The final-head results below supersede
+these intermediate outcomes.
+
+## Verified final-head native validation
+
+All four required PR workflows completed successfully on exact feature head
+`ca5df5ac4490b1a67a112ff0291bc8f603c6af7c`:
+
+| Gate | Observed run | Result |
+|---|---|---|
+| iOS Static Validation | [38387443777](https://github.com/nghianguyen150612/Synveil/actions/runs/38387443777) | PASS |
+| iOS Build | [38387443834](https://github.com/nghianguyen150612/Synveil/actions/runs/38387443834) | PASS |
+| iOS Simulator Tests | [38387443724](https://github.com/nghianguyen150612/Synveil/actions/runs/38387443724) | PASS |
+| iOS Rust Apple Build | [38387443801](https://github.com/nghianguyen150612/Synveil/actions/runs/38387443801) | PASS |
+
+The Simulator run used Xcode 26.6 / Swift 6.3.3 and iPhone 17 Pro on iOS 26.5. The observed
+xcresult summary contains **1,703 total tests: 1,701 passed, 0 failed, 2 skipped**.
+All **52 BackgroundUploadTests** passed, including the task-identifier reuse test. The retained
+P045 upload/replacement/pause/abort and existing regression suites remain enabled.
+
+The two existing skips are explicit:
+
+- `KeychainCredentialStoreTests.testSimulatorKeychainRoundTripUsesUniqueTestService`: unsigned
+  Simulator test execution has no Keychain access entitlement.
+- `MutationQueueSQLiteTests.testNativeDataProtectionAttributes`: Simulator storage does not expose
+  physical Data Protection attributes; real-device validation remains required.
+
+Result artifact: `ios-simulator-test-results`, ID `11807509914`, 63,952,645 bytes,
+SHA-256 `443c18f0db921a89bbfc6e4e24e203a719e5fd594a75c1a5e67512237010fd0c`,
+[associated run](https://github.com/nghianguyen150612/Synveil/actions/runs/38387443724).
+No unresolved P046 test failure was observed on this final head. Simulator evidence does not
+qualify real OS suspension, device-lock behavior or production-server execution.
+
+Other repository workflows are not iOS gates and did report failures on the same feature head:
+
+| Workflow | Run | Observed issue |
+|---|---|---|
+| Rust CI | [38387443868](https://github.com/nghianguyen150612/Synveil/actions/runs/38387443868) | Clippy double `must_use`, Linux lifecycle artifact assertion, and macOS host IPC tests |
+| Linux AppImage | [38387443705](https://github.com/nghianguyen150612/Synveil/actions/runs/38387443705) | Private or temporary build path in desktop artifact |
+| PostgreSQL 17 scheduled-maintenance | [38387443706](https://github.com/nghianguyen150612/Synveil/actions/runs/38387443706) | Scheduler schema/controller-generation assertion |
+
+These failures concern unchanged server/desktop/installer sources. P045 also records the Clippy,
+AppImage and scheduler issues. No unrelated implementation or workflow suppression was introduced;
+these results are disclosed separately from the four passing P046 gates.
 
 ## Hardware evidence and procedure
 
@@ -234,10 +276,23 @@ request IDs (redacted), accepted offsets, job inventory and final immutable File
 
 ## GitHub and P047 readiness
 
-PR [#128](https://github.com/nghianguyen150612/Synveil/pull/128) is open and draft, targeting `ios-app`.
-The user accepted the implementation in this task conversation on 2026-10-13. Exact final feature
-CI, merge and resulting `ios-app` integration SHA remain pending. This manifest does not invent
-those values or attempt to contain its own commit SHA.
-The feature must remain draft/open if mandatory gates or evidence are unavailable. An ordinary
-merge commit is permitted only after required gates and review acceptance. P047 is **NOT READY**
-at this stage and has not been started.
+| Record | Verified value |
+|---|---|
+| Starting `ios-app` SHA | `a06e17f481b9b3f1a1c4e47366dcaa88eea399d7` |
+| Feature branch | `ios/p046-background-transfer-recovery` |
+| Final feature SHA | `ca5df5ac4490b1a67a112ff0291bc8f603c6af7c` |
+| Feature PR | [#128](https://github.com/nghianguyen150612/Synveil/pull/128), targeting `ios-app`, MERGED |
+| Review acceptance | User accepted implementation in the task conversation on 2026-10-13 |
+| Merge method and time | Ordinary two-parent merge commit, 2026-10-13 11:18:17 UTC |
+| Verified feature integration SHA | `dc849942bc20eae35b273e57b807b609079d6aa1` |
+
+After all four final-head gates passed and review acceptance was recorded, PR #128 was marked
+ready and merged. A fresh remote fetch confirmed the feature SHA as an ancestor and the merge
+parents as the starting integration and final feature heads. No force push, squash, rebase or
+unrelated source cleanup was used. This post-merge evidence update is documentation only and is
+published separately; its resulting integration SHA is verified in the task's final report rather
+than attempting a self-referential commit hash in this manifest.
+
+Decision: **COMPLETE_READY_FOR_P047** for the reviewed foundation and its required automated gates.
+Physical-device qualification remains **NOT_AVAILABLE**, with the procedure above; this is not a
+production qualification claim. P047 has not been started.
