@@ -16,6 +16,8 @@ final class BackgroundUploadCoordinator {
     private var pausedUploads: Set<UploadOperationId> = []
     private var pendingInvalidation: Task<Void, Never>?
     private var recovering = false
+    private var readyForRecovery = false
+    private var recoveryRequested = false
     private var recoveryAction: Task<Void, Never>?
 
     init(
@@ -67,6 +69,7 @@ final class BackgroundUploadCoordinator {
             guard explicitAuthorization else { throw UploadFailure.staleSession }
         }
         try await repository.provider.validate(session)
+        readyForRecovery = true
         try await database.saveBackgroundJob(
             job, replacing: previous, record: record,
             explicitResume: explicitAuthorization)
@@ -163,7 +166,18 @@ final class BackgroundUploadCoordinator {
     func restore() async {
         guard !recovering else { return }
         recovering = true
-        defer { recovering = false }
+        readyForRecovery = false
+        recoveryRequested = false
+        defer {
+            recovering = false
+            readyForRecovery = true
+            if recoveryRequested {
+                // Coalesce only fresh persisted delegate events received during this pass.
+                // No timer, zero-progress replay or failure-driven resubmission is scheduled.
+                recoveryRequested = false
+                recoveryAction = Task { @MainActor in await restore() }
+            }
+        }
         let tasks = await transport.inventory()
         guard let jobs = try? await database.backgroundInventory() else {
             for task in tasks { await transport.cancel(task.identifier) }
@@ -192,7 +206,7 @@ final class BackgroundUploadCoordinator {
                     record.state.canResume
                 else { throw UploadFailure.staleSession }
                 let matching = tasks.filter { $0.intentId == original.chunk?.id }
-                guard matching.count <= 1 else { throw UploadFailure.duplicateOperation }
+                guard matching.count <= 1 else { throw UploadFailure.invalidMetadata }
                 if let task = matching.first {
                     guard valid(task, record: record, job: original),
                         original.taskIdentifier == nil || original.taskIdentifier == task.identifier
@@ -204,12 +218,24 @@ final class BackgroundUploadCoordinator {
                         await database.finishUploadRun(owner: owner)
                         continue
                     }
+                    if original.evidence != nil {
+                        // A completed delegate event can race the OS inventory snapshot. Do not
+                        // turn that ordinary race into quarantine or resume the completed task.
+                        await transport.cancel(task.identifier)
+                        try await reconcile(
+                            original, record: record, session: session, continueAuthorized: true)
+                        await database.finishUploadRun(owner: owner)
+                        continue
+                    }
                     if let chunk = original.chunk {
                         _ = try await staging.backgroundChunkURL(chunk)
                     }
                     var bound = original
                     bound.taskIdentifier = task.identifier
-                    try bound.transition(original.state == .queued ? .scheduled : .transferring)
+                    let state: BackgroundUploadState =
+                        [.transferring, .suspended].contains(original.state)
+                        ? .suspended : .scheduled
+                    try bound.transition(state)
                     try await database.saveBackgroundJob(bound, replacing: original)
                     try await repository.provider.validate(session)
                     guard !invalidated else { throw UploadFailure.staleSession }
@@ -226,7 +252,7 @@ final class BackgroundUploadCoordinator {
                 let failure = UploadPolicy.classify(error)
                 if [
                     .staleSession, .scopeMismatch, .unauthenticated, .deviceRevoked,
-                    .invalidMetadata, .duplicateOperation,
+                    .invalidMetadata,
                 ].contains(failure) {
                     try? await quarantine(original)
                     for task in tasks where task.intentId == original.chunk?.id {
@@ -250,7 +276,7 @@ final class BackgroundUploadCoordinator {
                 try await database.recordBackgroundOrphan(task.identifier)
                 return true
             }
-            guard previous.state == .scheduled else { return true }
+            guard [.scheduled, .suspended].contains(previous.state) else { return true }
             var active = previous
             try active.transition(.transferring)
             try await database.saveBackgroundJob(active, replacing: previous)
@@ -287,6 +313,10 @@ final class BackgroundUploadCoordinator {
             }
             try await database.saveBackgroundJob(recorded, replacing: original)
             stateRevision &+= 1
+            guard readyForRecovery else {
+                recoveryRequested = true
+                return true
+            }
             // Evidence is durable even if credentials/lease/status are unavailable. Lifecycle
             // acknowledgement need not wait for a network operation or subsequent chunk.
             recoveryAction = Task { @MainActor in

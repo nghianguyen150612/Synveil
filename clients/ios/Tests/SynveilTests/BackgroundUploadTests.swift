@@ -767,6 +767,30 @@ final class BackgroundUploadTests: XCTestCase {
             try BackgroundUploadJob.decodeStored(JSONSerialization.data(withJSONObject: object)))
     }
 
+    func testColdLaunchCallbackPersistsBeforeAuthenticatedRecoveryBecomesReady() async throws {
+        let f = try await fixture()
+        let record = try await start(f)
+        let task = try XCTUnwrap(f.transport.tasks.first)
+        let cold = BackgroundUploadCoordinator(
+            repository: f.repository, database: f.queue.database,
+            staging: f.staging, transport: f.transport)
+        f.provider.acceptBackground(to: UInt64(f.bytes.count))
+        f.transport.tasks = []
+        let persisted = await cold.receive(task, evidence: evidence(offset: String(f.bytes.count)))
+        XCTAssertTrue(persisted)
+        await cold.waitForRecoveryAction()
+        XCTAssertEqual(f.provider.statusCount, 0)
+        let pending = try await f.queue.database.backgroundJob(record.id)
+        XCTAssertEqual(pending?.state, .awaitingEvidence)
+        let prior = try await read(f, record.id)
+        XCTAssertEqual(prior.authoritativeOffset, 0)
+        await cold.restore()  // application bootstrap has now restored credentials
+        let confirmed = try await read(f, record.id)
+        XCTAssertEqual(confirmed.authoritativeOffset, UInt64(f.bytes.count))
+        XCTAssertEqual(f.provider.statusCount, 1)
+        XCTAssertEqual(f.provider.completionCalls, 0)
+    }
+
     private func evidence(
         offset: String, requestId: String = "background-patch-01",
         status: Int = 204, bodyEmpty: Bool = true, failure: UploadFailure? = nil
