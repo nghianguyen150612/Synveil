@@ -77,7 +77,8 @@ remains authoritative for file operations. Only a strict server response can adv
 accepted offset. Final chunk acceptance leaves `READY_TO_COMPLETE`, never `COMMITTED`.
 
 - One unresolved chunk intent per upload is enforced by the durable job primary key and exact blob
-  CAS. Unresolved intent blocks foreground state/offset mutation even across reopened connections.
+  CAS, with a globally unique intent index. Unresolved intent blocks foreground state/offset mutation
+  even across reopened connections.
 - The shared transfer lease serializes preparation, foreground actions, recovery and continuation.
 - Offset acceptance and durable release of PATCH exclusion occur in one SQLite transaction.
 - Canonical, sorted-key metadata permits exact CAS independently of JSON dictionary ordering.
@@ -87,7 +88,9 @@ accepted offset. Final chunk acceptance leaves `READY_TO_COMPLETE`, never `COMMI
 - Every automatically continued chunk belongs to the same explicitly approved upload. No file
   selection, session creation, COMPLETE, replacement retargeting, ACK or rebaseline occurs.
 - Recovery only continues after server GET agrees with the original chunk range and immutable target.
-  Zero accepted progress stops; no speculative PATCH replay is allowed.
+  Zero accepted progress stops; no speculative PATCH replay is allowed. If task completion evidence
+  is missing after relaunch, GET may confirm progress but continuation requires an explicit user action.
+  A delivered cancellation withdraws background continuation even when the original Pause write failed.
 
 ## Protocol, security and account isolation
 
@@ -117,7 +120,8 @@ SQLite schema v7 migrates transactionally to v8 with `background_upload_jobs` an
 `background_upload_orphans`. Earlier v1–v7 migration paths and all prior data remain. Exact schema
 verification, quick_check, foreign_key_check, FULL synchronization, future-version rejection,
 capacity limits and existing scope quarantine remain enabled. Job metadata has a 4 KiB bound;
-operation identity references `file_uploads`. No bearer values are persisted. Unknown decoding and
+operation identity references `file_uploads`. Metadata encoding v1 requires explicit version and
+allowlisted fields; future versions or fields are rejected. No bearer values are persisted. Unknown decoding and
 corrupt state halt inventory and cancel system work, without schema downgrade or speculative repair.
 
 Each chunk is at most P045's 4 MiB. It is copied from the rehashed private source at the planned
@@ -151,7 +155,7 @@ reopen never starts a new upload session. Paused jobs stay paused; unknown/orpha
 | Intent commit acknowledgement lost | Intent may exist, task not created by this invocation | Enumerate tasks and reconcile before continuation |
 | OS task created, binding commit fails | Durable unique intent, suspended task may exist | Enumerate/match full request; never submit another PATCH because mapping is absent |
 | Binding committed, process ends before resume | Exact task and intent persisted | Validate scope/payload and resume existing task only |
-| Cancellation/timeout/lost callback | Intent and planned range retained | Wait for task disappearance, GET once; server offset remains authoritative |
+| Cancellation/timeout/lost callback | Intent and planned range retained | Wait for task disappearance, GET once; missing callback or cancellation cannot automatically continue |
 | Callback write fails | Offset unchanged; original intent retained | Retain queued event; withhold system acknowledgement and retry on a later lifecycle pass |
 | GET interrupted or invalid | Chunk range and exclusion retained | No continuation; explicit Check Server Status / Resume recovery |
 | Offset commit fails or acknowledgement lost | Offset/job transaction is all-or-nothing | Reopen/read inventory, never infer commit from memory |

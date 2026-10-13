@@ -44,6 +44,18 @@ class BackgroundUploadRegistrationTests(unittest.TestCase):
         self.assertIn('database.resolveBackgroundJob(', source)
         self.assertNotIn('countOfBytesSent', source)
 
+    def test_two_uploads_cannot_own_the_same_durable_intent(self):
+        import sqlite3
+        schema = (IOS / 'Infrastructure/Persistence/BackgroundUploadSQLiteSchema.swift').read_text()
+        statement = re.search(r'"""\n(.*?)\n\s*"""', schema, re.S).group(1)
+        with sqlite3.connect(':memory:') as db:
+            db.execute('CREATE TABLE file_uploads(operation_id TEXT PRIMARY KEY)')
+            db.execute(statement)
+            db.executemany('INSERT INTO file_uploads VALUES(?)', [('upload-a',), ('upload-b',)])
+            db.execute('INSERT INTO background_upload_jobs VALUES(?,1,?,1,?)', ('upload-a', 'same-intent', b'{}'))
+            with self.assertRaises(sqlite3.IntegrityError):
+                db.execute('INSERT INTO background_upload_jobs VALUES(?,1,?,1,?)', ('upload-b', 'same-intent', b'{}'))
+
     def test_lifecycle_opt_in_and_schema_are_registered(self):
         app = (IOS / 'App/SynveilApp.swift').read_text()
         ui = (IOS / 'Features/Transfer/FileUploadControls.swift').read_text()

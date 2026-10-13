@@ -165,7 +165,7 @@ struct FileUploadControls: View {
                 liveProgress(progress)
             }
             if model.isRunning {
-                Button("Pause", role: .cancel) { model.pause() }
+                Button("Pause", role: .cancel) { Task { await model.pause() } }
                     .accessibilityHint(
                         "Stops this foreground transfer and preserves its saved source and server identity."
                     )

@@ -134,8 +134,13 @@ final class BackgroundUploadCoordinator {
         let previous = job
         try job.transition(.paused)
         job.authorized = false
-        try await database.saveBackgroundJob(job, replacing: previous)
-        stateRevision &+= 1
+        do {
+            try await database.saveBackgroundJob(job, replacing: previous)
+            stateRevision &+= 1
+        } catch {
+            if let task = job.taskIdentifier { await transport.cancel(task) }
+            throw error
+        }
         if let task = job.taskIdentifier { await transport.cancel(task) }
     }
 
@@ -214,7 +219,8 @@ final class BackgroundUploadCoordinator {
                     }
                 } else if original.authorized, original.state != .paused {
                     try await reconcile(
-                        original, record: record, session: session, continueAuthorized: true)
+                        original, record: record, session: session,
+                        continueAuthorized: original.evidence != nil)
                 }
             } catch {
                 let failure = UploadPolicy.classify(error)
@@ -275,6 +281,7 @@ final class BackgroundUploadCoordinator {
             var recorded = original
             recorded.taskIdentifier = task.identifier
             recorded.evidence = evidence
+            if evidence.failure == UploadFailure.cancelled.rawValue { recorded.authorized = false }
             if ![.paused, .quarantined, .failedTerminal].contains(recorded.state) {
                 try recorded.transition(.awaitingEvidence)
             }

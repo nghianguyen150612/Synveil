@@ -21,6 +21,7 @@ final class FileUploadCoordinator {
     let background: BackgroundUploadCoordinator?
     private let identityGenerator: any ClientMutationIdentityGeneratorProtocol
     private var active: Task<UploadActionResult, Never>?
+    private var activeUploadId: UploadOperationId?
     private var generation: UInt64 = 0
 
     init(
@@ -157,6 +158,14 @@ final class FileUploadCoordinator {
 
     func cancel() { active?.cancel() }
 
+    /// User Pause withdraws the exact job's durable background policy. Scene suspension uses
+    /// cancel() instead, so an already approved system transfer can continue.
+    func pauseUserTransfer() async throws {
+        let id = activeUploadId
+        active?.cancel()
+        if let id, let background { try await background.pause(id) }
+    }
+
     func invalidateSession() {
         background?.invalidateSession()
         generation &+= 1
@@ -185,6 +194,7 @@ final class FileUploadCoordinator {
             task.cancel()
         }
         active = nil
+        activeUploadId = nil
         return result
     }
 
@@ -204,6 +214,7 @@ final class FileUploadCoordinator {
             let scope = try await repository.preflight(target, session: current)
             try await database.bindSession(scope: scope, credentialId: current.credentialIdentifier)
             let operationId = UploadOperationId()
+            activeUploadId = operationId
             let stagingId = UploadOperationId()
             stagedId = stagingId
             let reservations = try await database.downloadReservations()
@@ -265,6 +276,7 @@ final class FileUploadCoordinator {
         backgroundEnabled: Bool, generation captured: UInt64,
         progress: @escaping @MainActor (UploadProgress) -> Void
     ) async -> FileUploadResult {
+        activeUploadId = id
         var record: UploadRecord?
         var session: LibraryRequestScope?
         do {
@@ -553,6 +565,7 @@ final class FileUploadCoordinator {
         id: UploadOperationId, library: LibraryId,
         generation captured: UInt64
     ) async -> Result<UploadRecord, UploadFailure> {
+        activeUploadId = id
         do {
             let session = try await repository.provider.begin()
             try await fence(session, captured)
@@ -587,6 +600,7 @@ final class FileUploadCoordinator {
         id: UploadOperationId, library: LibraryId,
         generation captured: UInt64
     ) async -> Result<UploadRecord, UploadFailure> {
+        activeUploadId = id
         do {
             let session = try await repository.provider.begin()
             try await fence(session, captured)

@@ -146,7 +146,11 @@ final class FileUploadViewModel {
         return result
     }
 
-    func pause() { coordinator?.cancel() }
+    func pause() async {
+        do { try await coordinator?.pauseUserTransfer() } catch {
+            failure = UploadPolicy.classify(error)
+        }
+    }
 
     func pauseBackground(_ record: UploadRecord) async {
         guard isCurrent, let background = coordinator?.background else { return }

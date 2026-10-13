@@ -170,8 +170,12 @@ final class BackgroundUploadTests: XCTestCase {
         let f = try await fixture()
         let record = try await start(f)
         f.provider.acceptBackground(to: 123)
+        let task = try XCTUnwrap(f.transport.tasks.first)
         f.transport.tasks = []
-        await f.background.restore()
+        let persisted = await f.background.receive(
+            task, evidence: evidence(offset: "0", failure: .timeout))
+        XCTAssertTrue(persisted)
+        await f.background.waitForRecoveryAction()
         let saved = try await read(f, record.id)
         XCTAssertEqual(saved.authoritativeOffset, 123)
         XCTAssertEqual(f.transport.submissions.count, 2)
@@ -724,6 +728,45 @@ final class BackgroundUploadTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: f.source.path))
     }
 
+    func testUserPauseDuringSubmissionWithdrawsDurableAuthorization() async throws {
+        let f = try await fixture()
+        f.transport.beforeResume = {
+            do { try await f.coordinator.pauseUserTransfer() } catch {
+                XCTFail("Pause persistence failed")
+            }
+        }
+        let result = await f.coordinator.start(
+            selectedURL: f.source, target: f.target,
+            library: f.queue.scope.libraryId, libraryStatus: .active, backgroundEnabled: true,
+            progress: { _ in })
+        guard case .scheduled(let record) = result else {
+            return XCTFail("The durable job should remain inspectable")
+        }
+        let paused = try await f.queue.database.backgroundJob(record.id)
+        XCTAssertEqual(paused?.state, .paused)
+        XCTAssertEqual(paused?.authorized, false)
+        XCTAssertTrue(f.transport.resumed.isEmpty)
+        await f.background.restore()
+        XCTAssertTrue(f.transport.resumed.isEmpty)
+        XCTAssertEqual(f.transport.submissions.count, 1)
+        XCTAssertEqual(f.provider.completionCalls, 0)
+    }
+
+    func testFutureMetadataEncodingAndUnknownFieldsFailClosed() throws {
+        var job = BackgroundUploadJob(
+            operationId: UploadOperationId().rawValue, generation: 0,
+            authorized: true, state: .preparing, chunk: nil, resolved: true,
+            taskIdentifier: nil, evidence: nil)
+        let encoded = try JSONEncoder().encode(job)
+        XCTAssertEqual(try BackgroundUploadJob.decodeStored(encoded), job)
+        job.encodingVersion = 2
+        XCTAssertThrowsError(try BackgroundUploadJob.decodeStored(JSONEncoder().encode(job)))
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object["futureAuthorization"] = true
+        XCTAssertThrowsError(
+            try BackgroundUploadJob.decodeStored(JSONSerialization.data(withJSONObject: object)))
+    }
+
     private func evidence(
         offset: String, requestId: String = "background-patch-01",
         status: Int = 204, bodyEmpty: Bool = true, failure: UploadFailure? = nil
@@ -835,7 +878,7 @@ private final class FakeBackgroundTransport: BackgroundUploadTransportProtocol {
     var cancelled: [Int] = []
     var afterSubmit: (() -> Void)?
     var keepsCancelledTask = false
-    var beforeResume: (() -> Void)?
+    var beforeResume: (() async -> Void)?
     func inventory() async -> [BackgroundSystemTask] { tasks }
     func submit(_ request: HTTPTransportRequest, file: URL, intent: BackgroundChunkIntent) throws
         -> Int
@@ -853,7 +896,7 @@ private final class FakeBackgroundTransport: BackgroundUploadTransportProtocol {
         return id
     }
     func resume(_ identifier: Int, authorized: @escaping @MainActor () -> Bool) async {
-        beforeResume?()
+        await beforeResume?()
         if authorized() { resumed.append(identifier) } else { await cancel(identifier) }
     }
     func cancel(_ identifier: Int) async {

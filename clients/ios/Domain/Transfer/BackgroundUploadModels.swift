@@ -87,6 +87,7 @@ struct BackgroundUploadEvidence: Codable, Equatable, Sendable {
 
 struct BackgroundUploadJob: Codable, Equatable, Sendable {
     let operationId: String
+    var encodingVersion: Int = 1
     var generation: Int
     var authorized: Bool
     var state: BackgroundUploadState
@@ -104,9 +105,37 @@ struct BackgroundUploadJob: Codable, Equatable, Sendable {
         state = next
     }
 
+    static func decodeStored(_ bytes: Data) throws -> Self {
+        let root = try JSONSerialization.jsonObject(with: bytes)
+        try LibraryWireValidation.keys(
+            root,
+            required: [
+                "operationId", "encodingVersion", "generation", "authorized", "state", "resolved",
+            ],
+            optional: ["chunk", "taskIdentifier", "evidence"])
+        guard let object = root as? [String: Any] else { throw UploadFailure.invalidMetadata }
+        if let chunk = object["chunk"] {
+            try LibraryWireValidation.keys(chunk, required: ["id", "offset", "length", "sha256"])
+        }
+        if let evidence = object["evidence"] {
+            try LibraryWireValidation.keys(
+                evidence, required: ["taskIdentifier", "bodyWasEmpty"],
+                optional: ["status", "offset", "requestId", "failure"])
+        }
+        let job = try JSONDecoder().decode(Self.self, from: bytes)
+        try job.validate()
+        return job
+    }
+
     func validate() throws {
         _ = try UploadOperationId(validating: operationId)
-        guard (0...1000).contains(generation), taskIdentifier.map({ $0 > 0 }) ?? true,
+        guard encodingVersion == 1, (0...1000).contains(generation),
+            taskIdentifier.map({ $0 > 0 }) ?? true,
+            evidence.map({ $0.taskIdentifier > 0 && $0.taskIdentifier == taskIdentifier }) ?? true,
+            evidence?.status.map({ (100...599).contains($0) }) ?? true,
+            !authorized
+                || ![.paused, .quarantined, .failedTerminal, .aborted, .foregroundOnly].contains(
+                    state),
             evidence?.offset.map({ $0.utf8.count <= 32 }) ?? true,
             evidence?.requestId.map({ $0.utf8.count <= 128 }) ?? true,
             evidence?.failure.map({ UploadFailure(rawValue: $0) != nil }) ?? true

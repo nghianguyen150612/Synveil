@@ -1729,13 +1729,14 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
 
     func backgroundJob(_ id: UploadOperationId) throws -> BackgroundUploadJob? {
         try query(
-            "SELECT metadata,generation,blocked FROM background_upload_jobs WHERE operation_id=?",
+            "SELECT metadata,generation,blocked,intent_id FROM background_upload_jobs WHERE operation_id=?",
             [.text(id.rawValue)]
         ) { s in
-            let job = try JSONDecoder().decode(
-                BackgroundUploadJob.self, from: Self.blob(s, 0, maximum: 4096))
+            let job = try BackgroundUploadJob.decodeStored(Self.blob(s, 0, maximum: 4096))
             try job.validate()
-            guard job.operationId == id.rawValue, job.generation == Int(sqlite3_column_int(s, 1)),
+            let intentId = sqlite3_column_type(s, 3) == SQLITE_NULL ? nil : try Self.text(s, 3)
+            guard job.chunk?.id == intentId, job.operationId == id.rawValue,
+                job.generation == Int(sqlite3_column_int(s, 1)),
                 job.blocksForeground == (sqlite3_column_int(s, 2) == 1)
             else { throw UploadFailure.invalidMetadata }
             return job
@@ -1795,17 +1796,19 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
             }
             if let previous {
                 try execute(
-                    "UPDATE background_upload_jobs SET generation=?,blocked=?,metadata=? WHERE operation_id=? AND metadata=?",
+                    "UPDATE background_upload_jobs SET generation=?,intent_id=?,blocked=?,metadata=? WHERE operation_id=? AND metadata=?",
                     [
-                        .integer(Int64(job.generation)), .integer(job.blocksForeground ? 1 : 0),
+                        .integer(Int64(job.generation)), job.chunk.map { .text($0.id) } ?? .null,
+                        .integer(job.blocksForeground ? 1 : 0),
                         .blob(bytes), .text(job.operationId),
                         .blob(try Self.backgroundBytes(previous)),
                     ])
             } else {
                 try execute(
-                    "INSERT INTO background_upload_jobs(operation_id,generation,blocked,metadata) VALUES(?,?,?,?)",
+                    "INSERT INTO background_upload_jobs(operation_id,generation,intent_id,blocked,metadata) VALUES(?,?,?,?,?)",
                     [
                         .text(job.operationId), .integer(Int64(job.generation)),
+                        job.chunk.map { .text($0.id) } ?? .null,
                         .integer(job.blocksForeground ? 1 : 0), .blob(bytes),
                     ])
             }
