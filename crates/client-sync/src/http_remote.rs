@@ -155,7 +155,7 @@ impl Transport {
         // The typed base URL is the only HTTP exception boundary: its explicit
         // development constructor accepts literal loopback addresses only.
         let production = profile.base_url().as_url().scheme() == "https";
-        let client = Client::builder()
+        let mut builder = Client::builder()
             .https_only(production)
             .use_rustls_tls()
             .min_tls_version(reqwest::tls::Version::TLS_1_2)
@@ -173,9 +173,22 @@ impl Transport {
             .timeout(config.metadata_timeout)
             .pool_idle_timeout(Duration::from_secs(30))
             .pool_max_idle_per_host(2)
-            .user_agent(USER_AGENT)
-            .build()
-            .map_err(map_network_error)?;
+            .user_agent(USER_AGENT);
+        if let Some(trust) = profile.managed_host_trust() {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| protocol_error())?
+                .as_secs() as i64;
+            let der = trust
+                .validate(profile.base_url().as_str(), now)
+                .map_err(|_| protocol_error())?;
+            if let Some(der) = der {
+                builder = builder.tls_built_in_root_certs(false).add_root_certificate(
+                    reqwest::Certificate::from_der(&der).map_err(map_network_error)?,
+                );
+            }
+        }
+        let client = builder.build().map_err(map_network_error)?;
         Ok(Self {
             profile,
             config,
@@ -209,6 +222,21 @@ impl Transport {
         }
         if response.status().is_redirection() {
             return Err(RemoteError::new(RemoteErrorKind::Redirect));
+        }
+        if let Some(trust) = self.profile.managed_host_trust() {
+            if response
+                .headers()
+                .get("x-synveil-server-installation")
+                .and_then(|v| v.to_str().ok())
+                != Some(trust.server_id())
+                || response
+                    .headers()
+                    .get("x-synveil-network-integration")
+                    .and_then(|v| v.to_str().ok())
+                    != Some(trust.network_id())
+            {
+                return Err(protocol_error());
+            }
         }
         Ok(response)
     }
@@ -1070,6 +1098,9 @@ pub struct EnrollmentCredentials {
 }
 
 impl EnrollmentCredentials {
+    pub(crate) fn verified_profile(&self) -> &ServerProfile {
+        &self.profile
+    }
     #[must_use]
     pub const fn profile_id(&self) -> ServerProfileId {
         self.profile.profile_id()

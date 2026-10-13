@@ -1207,6 +1207,24 @@ impl DesktopController {
             .await
     }
 
+    pub async fn attach_host_library(
+        &self,
+        library_id: String,
+        root_path: String,
+    ) -> Result<DesktopControllerCommandResult, DesktopControllerError> {
+        self.dispatch_command(CommandAction::AttachHostLibrary(library_id, root_path))
+            .await
+    }
+
+    pub async fn configure_managed_host(
+        &self,
+        profile_id: ServerProfileId,
+        descriptor: String,
+    ) -> Result<DesktopControllerCommandResult, DesktopControllerError> {
+        self.dispatch_command(CommandAction::ConfigureManagedHost(profile_id, descriptor))
+            .await
+    }
+
     /// Parse and dispatch one transient enrollment secret. Invalid input is
     /// rejected before IPC, so it cannot create a task, contact the host, or
     /// write the SecretStore. Valid input is retained only by the bounded
@@ -1533,6 +1551,8 @@ enum CommandAction {
     Shutdown,
     ValidateProfile(String, String),
     ConfigureProfile(ServerProfileId, String, String),
+    ConfigureManagedHost(ServerProfileId, String),
+    AttachHostLibrary(String, String),
 }
 
 impl CommandAction {
@@ -1543,7 +1563,11 @@ impl CommandAction {
     fn is_configure(&self) -> bool {
         matches!(
             self,
-            Self::ValidateProfile(..) | Self::ConfigureProfile(..) | Self::SetupLibrary(..)
+            Self::ValidateProfile(..)
+                | Self::ConfigureProfile(..)
+                | Self::ConfigureManagedHost(..)
+                | Self::AttachHostLibrary(..)
+                | Self::SetupLibrary(..)
         )
     }
 
@@ -2449,6 +2473,13 @@ async fn execute_command(
             .await?;
             Ok(map_library_setup_result(result))
         }
+        CommandAction::AttachHostLibrary(library_id, root_path) => Ok(map_library_setup_result(
+            bounded(
+                timeout,
+                client.attach_host_library(library_id.clone(), root_path.clone()),
+            )
+            .await?,
+        )),
         CommandAction::Authenticate(secret) => {
             let result = bounded(timeout, client.authenticate(secret)).await?;
             Ok(map_auth_result(result))
@@ -2481,6 +2512,13 @@ async fn execute_command(
             .await?;
             Ok(map_profile_result(result))
         }
+        CommandAction::ConfigureManagedHost(profile_id, descriptor) => Ok(map_profile_result(
+            bounded(
+                timeout,
+                client.configure_managed_host(profile_id.to_string(), descriptor.clone()),
+            )
+            .await?,
+        )),
     }
 }
 

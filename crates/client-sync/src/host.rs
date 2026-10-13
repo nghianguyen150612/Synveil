@@ -2317,6 +2317,26 @@ impl DesktopSyncHostHandle {
         name: String,
         root: PathBuf,
     ) -> Result<DesktopSyncLibrarySetup, DesktopLibrarySetupError> {
+        self.prepare_library_inner(library_id, name, root, false)
+            .await
+    }
+    /// Narrow local Host handoff: only the approved Host's actual empty first
+    /// Library. This does not enable arbitrary existing remote Libraries.
+    pub async fn prepare_host_library(
+        &self,
+        library_id: LibraryId,
+        root: PathBuf,
+    ) -> Result<DesktopSyncLibrarySetup, DesktopLibrarySetupError> {
+        self.prepare_library_inner(library_id, "Primary".to_owned(), root, true)
+            .await
+    }
+    async fn prepare_library_inner(
+        &self,
+        library_id: LibraryId,
+        name: String,
+        root: PathBuf,
+        host_existing: bool,
+    ) -> Result<DesktopSyncLibrarySetup, DesktopLibrarySetupError> {
         if self.lifecycle() != DesktopSyncHostLifecycle::Running {
             return Err(DesktopLibrarySetupError::HostUnavailable);
         }
@@ -2351,6 +2371,9 @@ impl DesktopSyncHostHandle {
             .await
             .map_err(DesktopLibrarySetupError::Client)?
             .ok_or(DesktopLibrarySetupError::AuthenticationRequired)?;
+        if host_existing && profile.managed_host_trust().is_none() {
+            return Err(DesktopLibrarySetupError::ServerIdentityConflict);
+        }
         let scope = ReplicaScope::new(loaded.owner_user_id(), loaded.device_id(), library_id);
         if !self.inner.process_scope_matches(scope) {
             return Err(DesktopLibrarySetupError::Client(
@@ -2378,41 +2401,68 @@ impl DesktopSyncHostHandle {
         )
         .map_err(DesktopLibrarySetupError::Remote)?;
 
-        let authoritative = match remote
-            .create_library(scope, library_id, &logical_name)
-            .await
-        {
-            Ok(library) => library,
-            Err(error) if setup_response_may_be_unknown(error) => {
-                let libraries = remote
-                    .list_libraries(scope)
-                    .await
-                    .map_err(|_| DesktopLibrarySetupError::ResponseUnknown)?;
-                match libraries
-                    .into_iter()
-                    .find(|library| library.id() == library_id)
-                {
-                    Some(library) if library.name().as_str() == logical_name.as_str() => {
-                        remote
-                            .verify_new_library_empty(scope, &library)
-                            .await
-                            .map_err(|error| {
-                                if error.kind() == RemoteErrorKind::Conflict {
-                                    DesktopLibrarySetupError::ServerIdentityConflict
-                                } else {
-                                    DesktopLibrarySetupError::ResponseUnknown
-                                }
-                            })?;
-                        library
+        let authoritative = if host_existing {
+            let library = remote
+                .list_libraries(scope)
+                .await
+                .map_err(DesktopLibrarySetupError::Remote)?
+                .into_iter()
+                .find(|library| library.id() == library_id)
+                .ok_or(DesktopLibrarySetupError::ServerIdentityConflict)?;
+            remote
+                .verify_new_library_empty(scope, &library)
+                .await
+                .map_err(DesktopLibrarySetupError::Remote)?;
+            library
+        } else {
+            match remote
+                .create_library(scope, library_id, &logical_name)
+                .await
+            {
+                Ok(library) => library,
+                Err(error) if setup_response_may_be_unknown(error) => {
+                    let libraries = remote
+                        .list_libraries(scope)
+                        .await
+                        .map_err(|_| DesktopLibrarySetupError::ResponseUnknown)?;
+                    match libraries
+                        .into_iter()
+                        .find(|library| library.id() == library_id)
+                    {
+                        Some(library) if library.name().as_str() == logical_name.as_str() => {
+                            remote
+                                .verify_new_library_empty(scope, &library)
+                                .await
+                                .map_err(|error| {
+                                    if error.kind() == RemoteErrorKind::Conflict {
+                                        DesktopLibrarySetupError::ServerIdentityConflict
+                                    } else {
+                                        DesktopLibrarySetupError::ResponseUnknown
+                                    }
+                                })?;
+                            library
+                        }
+                        Some(_) => return Err(DesktopLibrarySetupError::ServerIdentityConflict),
+                        None => return Err(DesktopLibrarySetupError::ResponseUnknown),
                     }
-                    Some(_) => return Err(DesktopLibrarySetupError::ServerIdentityConflict),
-                    None => return Err(DesktopLibrarySetupError::ResponseUnknown),
                 }
+                Err(error) => return Err(DesktopLibrarySetupError::Remote(error)),
             }
-            Err(error) => return Err(DesktopLibrarySetupError::Remote(error)),
         };
         if authoritative.id() != library_id
             || authoritative.name().as_str() != logical_name.as_str()
+        {
+            return Err(DesktopLibrarySetupError::ServerIdentityConflict);
+        }
+        let current_profile = self
+            .inner
+            .state
+            .server_profile(profile_id)
+            .await
+            .map_err(DesktopLibrarySetupError::Client)?
+            .ok_or(DesktopLibrarySetupError::ProfileUnavailable)?;
+        if current_profile.base_url() != profile.base_url()
+            || current_profile.managed_host_trust() != profile.managed_host_trust()
         {
             return Err(DesktopLibrarySetupError::ServerIdentityConflict);
         }
@@ -2469,8 +2519,17 @@ impl DesktopSyncHostHandle {
         }
         let base_url = CanonicalBaseUrl::parse(&base_url)
             .map_err(|_| DesktopProfileConfigurationOutcome::InvalidServerAddress)?;
-        let profile = ServerProfile::new_with_id(profile_id, base_url, display_label)
-            .map_err(|_| DesktopProfileConfigurationOutcome::InvalidConfiguration)?;
+        let existing = self
+            .inner
+            .state
+            .server_profile(profile_id)
+            .await
+            .map_err(map_profile_client_error)?;
+        let profile = match existing {
+            Some(profile) => profile.reconfigured(base_url, display_label),
+            None => ServerProfile::new_with_id(profile_id, base_url, display_label),
+        }
+        .map_err(|_| DesktopProfileConfigurationOutcome::InvalidConfiguration)?;
         let enrollment_client =
             HttpEnrollmentClient::new(profile.clone(), self.inner.config.http())
                 .map_err(map_profile_remote_error)?;
@@ -2528,6 +2587,89 @@ impl DesktopSyncHostHandle {
         if matches!(change, ServerProfileConfigurationChange::Updated) {
             let _ = self.credentials_changed();
         }
+        match change {
+            ServerProfileConfigurationChange::Created => {
+                DesktopProfileConfigurationOutcome::Created
+            }
+            ServerProfileConfigurationChange::Updated => {
+                DesktopProfileConfigurationOutcome::Updated
+            }
+            ServerProfileConfigurationChange::AlreadyConfigured => {
+                DesktopProfileConfigurationOutcome::AlreadyConfigured
+            }
+        }
+    }
+
+    /// Explicitly approved local Host handoff. The same profile lifecycle and
+    /// enrollment transport are used; only this profile receives the public CA.
+    pub async fn configure_managed_host(
+        &self,
+        profile_id: crate::ServerProfileId,
+        descriptor: String,
+    ) -> DesktopProfileConfigurationOutcome {
+        if descriptor.len() > 32 * 1024
+            || self.lifecycle() != DesktopSyncHostLifecycle::Running
+            || self.inner.authentication_profile_id() != Some(profile_id)
+        {
+            return DesktopProfileConfigurationOutcome::InvalidConfiguration;
+        }
+        let trust: synveil_core::host_trust::HostTrust = match serde_json::from_str(&descriptor) {
+            Ok(trust) => trust,
+            Err(_) => return DesktopProfileConfigurationOutcome::InvalidConfiguration,
+        };
+        let base_url = match CanonicalBaseUrl::parse(trust.origin()) {
+            Ok(url) => url,
+            Err(_) => return DesktopProfileConfigurationOutcome::InvalidServerAddress,
+        };
+        let stored_state = match self.inner.state.host_profile_for_approval(profile_id).await {
+            Ok(profile) => profile,
+            Err(error) => return map_profile_client_error(error),
+        };
+        let (stored, previous_trust) = match stored_state {
+            Some((profile, trust)) => (Some(profile), trust),
+            None => (None, None),
+        };
+        if let Some(stored) = &stored {
+            if let Some(old) = previous_trust.as_ref() {
+                if old.server_id() != trust.server_id()
+                    || old.network_id() != trust.network_id()
+                    || matches!(
+                        (old.ca_sha256(), trust.ca_sha256()),
+                        (Some(previous), Some(next)) if previous != next
+                    )
+                    || old.generation() > trust.generation()
+                {
+                    return DesktopProfileConfigurationOutcome::InvalidConfiguration;
+                }
+            } else if stored.base_url().as_str() != trust.origin() {
+                return DesktopProfileConfigurationOutcome::InvalidConfiguration;
+            }
+        }
+        let candidate = match stored {
+            Some(profile) => profile.reconfigured(base_url, "This Synveil Host"),
+            None => ServerProfile::new_with_id(profile_id, base_url, "This Synveil Host"),
+        };
+        let profile = match candidate.and_then(|profile| profile.with_managed_host_trust(trust)) {
+            Ok(profile) => profile,
+            Err(error) => return map_profile_client_error(error),
+        };
+        let client = match HttpEnrollmentClient::new(profile.clone(), self.inner.config.http()) {
+            Ok(client) => client,
+            Err(error) => return map_profile_remote_error(error),
+        };
+        if let Err(error) = client.probe_ready().await {
+            return map_profile_remote_error(error);
+        }
+        let change = match self
+            .inner
+            .state
+            .configure_and_approve_managed_host(&profile, self.inner.secret_store.as_ref())
+            .await
+        {
+            Ok(change) => change,
+            Err(error) => return map_profile_client_error(error),
+        };
+        let _ = self.credentials_changed();
         match change {
             ServerProfileConfigurationChange::Created => {
                 DesktopProfileConfigurationOutcome::Created

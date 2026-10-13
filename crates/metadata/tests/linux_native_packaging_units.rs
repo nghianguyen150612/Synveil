@@ -433,6 +433,11 @@ fn manifest_package_set_matches_expected_gen1_payload() {
         "/usr/bin/synveil-client",
         "/usr/bin/synveil-desktop",
         "/usr/bin/synveil-scheduled-maintenance-once",
+        "/usr/libexec/synveil-host-helper",
+        "/usr/share/polkit-1/actions/org.synveil.host.policy",
+        "/usr/lib/systemd/system/synveil-host-inspector.service",
+        "/usr/libexec/synveil-host/prepare-host-runtime.py",
+        "/usr/libexec/synveil-host/register-host-inputs.py",
         "/usr/lib/systemd/user/synveil-client.service",
         "/usr/lib/systemd/system/synveil-scheduled-maintenance.service",
         "/usr/lib/systemd/system/synveil-scheduled-maintenance.timer",
@@ -451,8 +456,8 @@ fn manifest_package_set_matches_expected_gen1_payload() {
     }
     assert_eq!(
         package.len(),
-        13,
-        "desktop PACKAGE set must be exactly 13 entries"
+        18,
+        "Linux desktop and Host PACKAGE set must be exactly 18 entries"
     );
     // Modes per Prompt 75 contract.
     let modes: BTreeMap<&str, &str> = package
@@ -463,11 +468,16 @@ fn manifest_package_set_matches_expected_gen1_payload() {
         "/usr/bin/synveil-client",
         "/usr/bin/synveil-desktop",
         "/usr/bin/synveil-scheduled-maintenance-once",
+        "/usr/libexec/synveil-host-helper",
+        "/usr/libexec/synveil-host/prepare-host-runtime.py",
+        "/usr/libexec/synveil-host/register-host-inputs.py",
     ] {
         assert_eq!(modes[p], "0755", "mode for {p}");
     }
     for p in [
         "/usr/lib/systemd/user/synveil-client.service",
+        "/usr/share/polkit-1/actions/org.synveil.host.policy",
+        "/usr/lib/systemd/system/synveil-host-inspector.service",
         "/usr/lib/systemd/system/synveil-scheduled-maintenance.service",
         "/usr/lib/systemd/system/synveil-scheduled-maintenance.timer",
         "/usr/lib/sysusers.d/synveil.conf",

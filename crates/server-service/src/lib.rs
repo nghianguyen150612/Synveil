@@ -3,6 +3,10 @@
 //! UI-neutral planning and inspection for the privileged Linux server-service
 //! coordinator.  This crate deliberately exposes no arbitrary command runner.
 
+#[cfg(target_os = "linux")]
+pub mod native;
+pub mod runtime;
+
 use std::{fmt, path::Path};
 
 use serde::{Deserialize, Serialize};

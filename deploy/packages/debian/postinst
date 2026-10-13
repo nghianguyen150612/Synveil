@@ -51,6 +51,8 @@ chmod 0700 /etc/synveil/credentials
 if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
     log "reloading systemd manager (daemon-reload)"
     systemctl daemon-reload
+    # Read-only status service; no Host resource is provisioned on installation.
+    systemctl enable --now synveil-host-inspector.service
 else
     log "systemd manager not running (no /run/systemd/system); skipping daemon-reload (offline image build)"
 fi

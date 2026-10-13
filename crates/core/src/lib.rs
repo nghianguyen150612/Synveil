@@ -10,6 +10,7 @@ mod device_secrets;
 mod domain;
 mod errors;
 mod hashes;
+pub mod host_trust;
 mod ids;
 mod numbers;
 mod time;

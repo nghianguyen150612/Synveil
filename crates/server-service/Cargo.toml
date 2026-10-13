@@ -12,6 +12,12 @@ serde_json.workspace = true
 sha2.workspace = true
 synveil-server-config.workspace = true
 uuid.workspace = true
+zeroize.workspace = true
+object = { version = "0.37", default-features = false, features = ["read", "std", "elf"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nix = { workspace = true, features = ["signal", "process"] }
+libc.workspace = true
 
 [dev-dependencies]
 tempfile = "3"

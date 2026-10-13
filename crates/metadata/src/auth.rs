@@ -46,6 +46,29 @@ impl<'pool> AuthRepository<'pool> {
         Self { pool }
     }
 
+    /// Canonical read-only evidence for a verified Host administrator. The
+    /// first-admin transaction already creates this Library and root; setup
+    /// must reconcile them instead of inserting a duplicate Library.
+    pub async fn host_owner_library(
+        &self,
+        owner: UserId,
+    ) -> Result<Option<LibraryRow>, MetadataError> {
+        sqlx::query_as::<_, LibraryRow>(
+            "SELECT l.id, l.owner_user_id, l.name, l.root_node_id, l.dedup_domain_id,
+                    l.status, l.created_at, l.updated_at, l.revision::TEXT AS revision
+             FROM libraries l JOIN users u ON u.id = l.owner_user_id
+             JOIN nodes n ON n.id = l.root_node_id AND n.library_id = l.id
+             WHERE u.id = $1 AND u.status = 'ACTIVE' AND u.is_instance_admin
+               AND l.status = 'ACTIVE' AND n.kind = 'DIRECTORY'
+               AND n.state = 'ACTIVE' AND n.parent_node_id IS NULL
+             ORDER BY l.created_at, l.id LIMIT 1",
+        )
+        .bind(owner.into_uuid())
+        .fetch_optional(self.pool.sqlx_pool())
+        .await
+        .map_err(MetadataError::from)
+    }
+
     pub async fn bootstrap_state(&self) -> Result<BootstrapState, MetadataError> {
         let row = sqlx::query_as::<_, BootstrapStateRow>(
             "SELECT state, closed_at

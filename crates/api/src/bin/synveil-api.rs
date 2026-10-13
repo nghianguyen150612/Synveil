@@ -42,7 +42,10 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut state =
         ApiState::from_current_platform().with_trash_retention_policy(trash_retention_policy);
     if let Some(config) = managed_config {
-        if let NetworkConfiguration::Configured(network) = &config.network {
+        state = state.with_helper_owned_bootstrap();
+        if let NetworkConfiguration::Preparing(network)
+        | NetworkConfiguration::Configured(network) = &config.network
+        {
             state = state.with_allowed_origin(network.canonical_origin.trim_end_matches('/'));
         }
     } else if let Ok(origin) = env::var("SYNVEIL_PUBLIC_ORIGIN") {
@@ -115,7 +118,33 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // migrations and the selected object-store adapter have been validated.
     let listener = TcpListener::bind(bind_address).await?;
     tracing::info!(address = %listener.local_addr()?, "Synveil API listening");
-    axum::serve(listener, router(state))
+    let mut application = router(state);
+    if let Some(config) = managed_config {
+        if let NetworkConfiguration::Preparing(network)
+        | NetworkConfiguration::Configured(network) = &config.network
+        {
+            let server_id = axum::http::HeaderValue::from_str(&config.server_installation_id)?;
+            let network_id =
+                axum::http::HeaderValue::from_str(network.network_integration_id.as_str())?;
+            application = application.layer(axum::middleware::from_fn(
+                move |request: axum::extract::Request, next: axum::middleware::Next| {
+                    let server_id = server_id.clone();
+                    let network_id = network_id.clone();
+                    async move {
+                        let mut response = next.run(request).await;
+                        response
+                            .headers_mut()
+                            .insert("x-synveil-server-installation", server_id);
+                        response
+                            .headers_mut()
+                            .insert("x-synveil-network-integration", network_id);
+                        response
+                    }
+                },
+            ));
+        }
+    }
+    axum::serve(listener, application)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())

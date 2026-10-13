@@ -720,7 +720,7 @@ ApplicationWindow {
                 objectName: "hostSynveilButton"
                 Layout.fillWidth: true
                 Layout.minimumHeight: 94
-                enabled: !bridge.welcome_action_busy
+                enabled: bridge.host_available && !bridge.welcome_action_busy
                 text: qsTr("Host Synveil\nStore your Synveil data on this device and make it available to your devices.")
                 Accessible.name: qsTr("Host Synveil")
                 Accessible.description: qsTr("Store your Synveil data on this device and make it available to your devices. %1").arg(bridge.host_feedback)
@@ -770,14 +770,113 @@ ApplicationWindow {
         objectName: "hostSetupPage"
         anchors.fill: parent
         visible: bridge.welcome_destination === "host_setup"
-        ColumnLayout {
-            anchors.centerIn: parent
-            width: Math.min(560, hostSetupPage.availableWidth)
-            spacing: 16
-            Label { Layout.fillWidth: true; text: qsTr("Host Synveil"); font.pixelSize: 28; font.weight: Font.DemiBold }
-            Label { Layout.fillWidth: true; text: bridge.host_feedback; wrapMode: Text.WordWrap; Accessible.name: text }
-            Button { objectName: "welcomeBackButton"; text: qsTr("Back"); onClicked: bridge.showWelcome(); Accessible.name: qsTr("Back to Welcome") }
+        Timer {
+            interval: 15000; repeat: true
+            running: hostSetupPage.visible && bridge.host_available && !bridge.host_busy && bridge.host_saved_selection !== "null" && (bridge.host_step === "selection" || bridge.host_step === "recovery")
+            onTriggered: bridge.hostInspect()
         }
+        Connections {
+            target: bridge
+            function onHost_saved_selectionChanged() {
+                try {
+                    const selected = JSON.parse(bridge.host_saved_selection);
+                    if (!selected) return;
+                    hostProfile.currentIndex = selected.profile === "advanced_external" ? 1 : 0;
+                    hostStorage.text = selected.storage_root;
+                    hostAccess.currentIndex = selected.mode === "private_lan" ? 1 : selected.mode === "advanced_external_https" ? 2 : 0;
+                    hostExternalOrigin.text = selected.canonical_origin;
+                    const choice = selected.interface_id + "|" + selected.listener_address;
+                    for (let index = 0; index < hostLan.model.length; ++index) { if (hostLan.model[index].choice === choice) { hostLan.currentIndex = index; break; } }
+                } catch (error) { }
+            }
+        }
+        ScrollView {
+            anchors.fill: parent
+            clip: true
+            ColumnLayout {
+                width: Math.min(680, hostSetupPage.availableWidth - 36)
+                x: Math.max(18, (hostSetupPage.availableWidth - width) / 2)
+                spacing: 14
+                Label { Layout.fillWidth: true; text: qsTr("Host Synveil"); font.pixelSize: 28; font.weight: Font.DemiBold }
+                Label { Layout.fillWidth: true; text: bridge.host_feedback; wrapMode: Text.WordWrap; Accessible.name: text }
+                BusyIndicator { running: bridge.host_busy; visible: running; Accessible.name: qsTr("Preparing and checking server owners") }
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    enabled: bridge.host_available && !bridge.host_busy
+                    visible: bridge.host_step === "selection" || bridge.host_step === "recovery"
+                    Label { text: qsTr("Setup profile") }
+                    ComboBox { id: hostProfile; Layout.fillWidth: true; model: [qsTr("Home — managed system database"), qsTr("Advanced — operator PostgreSQL")]; Accessible.name: qsTr("Setup profile") }
+                    Label { text: qsTr("Server storage location") }
+                    TextField { id: hostStorage; Layout.fillWidth: true; text: "/var/lib/synveil/storage"; Accessible.name: qsTr("Server storage location") }
+                    Label { Layout.fillWidth: true; text: qsTr("Use a dedicated server folder. Existing files and server identities are preserved. Your desktop sync folder will be selected separately."); wrapMode: Text.WordWrap }
+                    Button { text: qsTr("Choose server folder…"); onClicked: hostServerFolderDialog.open() }
+                    Label { text: qsTr("Device access") }
+                    ComboBox { id: hostAccess; Layout.fillWidth: true; model: hostProfile.currentIndex === 0 ? [qsTr("Local Only"), qsTr("Private LAN")] : [qsTr("Local Only"), qsTr("Private LAN"), qsTr("Operator HTTPS")]; Accessible.name: qsTr("Device access") }
+                    ComboBox {
+                        id: hostLan; Layout.fillWidth: true; visible: hostAccess.currentIndex === 1; textRole: "label"; valueRole: "choice"
+                        model: {
+                            try { return JSON.parse(bridge.host_network_candidates).map(function(candidate) { return { label: candidate.address + " (" + candidate.interface_id + ")", choice: candidate.interface_id + "|" + candidate.address }; }); }
+                            catch (error) { return []; }
+                        }
+                        Accessible.name: qsTr("Private LAN interface")
+                    }
+                    TextField { id: hostExternalOrigin; Layout.fillWidth: true; visible: hostAccess.currentIndex === 2; placeholderText: qsTr("https://your-server.example/"); Accessible.name: qsTr("Operator HTTPS origin") }
+                    Label { Layout.fillWidth: true; visible: hostProfile.currentIndex === 1; text: qsTr("Advanced mode uses PostgreSQL 17 supplied and maintained by your operator. Synveil will not install, stop, or replace that database."); wrapMode: Text.WordWrap }
+                    TextField { id: hostExternalDatabase; Layout.fillWidth: true; visible: hostProfile.currentIndex === 1; echoMode: TextInput.Password; placeholderText: qsTr("Operator PostgreSQL credential URL (blank reuses existing)"); Accessible.name: qsTr("Protected external PostgreSQL credential") }
+                    RowLayout {
+                        Button { text: qsTr("Check this device"); onClicked: bridge.hostPreflight() }
+                        Button {
+                            text: bridge.host_step === "recovery" ? qsTr("Review preserving repair") : qsTr("Review setup")
+                            onClicked: { bridge.hostReview(hostProfile.currentIndex === 0 ? "home" : "advanced", hostStorage.text, hostAccess.currentIndex === 0 ? "local" : hostAccess.currentIndex === 1 ? "lan" : "external", hostLan.currentValue || "", hostExternalOrigin.text, hostExternalDatabase.text); hostExternalDatabase.clear(); }
+                        }
+                        Button {
+                            visible: bridge.host_server_id.length > 0
+                            text: qsTr("Review access change")
+                            onClicked: bridge.hostReviewNetwork(hostProfile.currentIndex === 0 ? "home" : "advanced", hostStorage.text, hostAccess.currentIndex === 0 ? "local" : hostAccess.currentIndex === 1 ? "lan" : "external", hostLan.currentValue || "", hostExternalOrigin.text)
+                        }
+                    }
+                }
+                ColumnLayout {
+                    Layout.fillWidth: true; visible: bridge.host_step === "review"; enabled: !bridge.host_busy
+                    Label { text: qsTr("Review changes"); font.pixelSize: 20 }
+                    Label { Layout.fillWidth: true; text: bridge.host_review_text; wrapMode: Text.WordWrap }
+                    Label { Layout.fillWidth: true; text: qsTr("Server identity: ") + bridge.host_server_id; wrapMode: Text.WordWrap }
+                    Button { text: qsTr("Confirm reviewed changes"); onClicked: bridge.hostConfirm("") }
+                }
+                ColumnLayout {
+                    Layout.fillWidth: true; visible: bridge.host_step === "account" || bridge.host_step === "sign_in"; enabled: !bridge.host_busy
+                    Label { text: bridge.host_step === "account" ? qsTr("Create the owner account") : qsTr("Verify the existing owner"); font.pixelSize: 20 }
+                    TextField { id: hostOwnerLogin; Layout.fillWidth: true; placeholderText: qsTr("Owner login"); Accessible.name: qsTr("Owner login") }
+                    TextField { id: hostOwnerPassword; Layout.fillWidth: true; echoMode: TextInput.Password; placeholderText: qsTr("Owner password"); Accessible.name: qsTr("Owner password") }
+                    Button { text: bridge.host_step === "account" ? qsTr("Create owner and verify login") : qsTr("Sign in and verify Library"); onClicked: { bridge.hostAccount(hostOwnerLogin.text, hostOwnerPassword.text, bridge.host_step === "account"); hostOwnerPassword.clear(); } }
+                }
+                ColumnLayout {
+                    Layout.fillWidth: true; visible: bridge.host_step === "ready"; enabled: !bridge.host_busy
+                    Label { text: qsTr("Server Ready"); font.pixelSize: 22; font.weight: Font.DemiBold }
+                    Label { Layout.fillWidth: true; text: bridge.host_origin; wrapMode: Text.WordWrap }
+                    Label { Layout.fillWidth: true; text: qsTr("Server health, protected storage, the owner account, initial Library and HTTPS identity have been checked. Sign in to approve connecting this desktop."); wrapMode: Text.WordWrap }
+                    TextField { id: hostConnectLogin; Layout.fillWidth: true; placeholderText: qsTr("Owner login"); Accessible.name: qsTr("Owner login for this desktop connection") }
+                    TextField { id: hostConnectPassword; Layout.fillWidth: true; echoMode: TextInput.Password; placeholderText: qsTr("Owner password"); Accessible.name: qsTr("Owner password for this desktop connection") }
+                    TextField { id: hostClientFolder; Layout.fillWidth: true; placeholderText: qsTr("Dedicated local sync folder"); Accessible.name: qsTr("Local desktop sync folder") }
+                    Button { text: qsTr("Choose desktop folder…"); onClicked: hostClientFolderDialog.open() }
+                    Button { text: qsTr("Approve trust and connect this desktop"); onClicked: { bridge.hostHandoff(hostConnectLogin.text, hostConnectPassword.text, hostClientFolder.text); hostConnectPassword.clear(); } }
+                    Button { text: qsTr("Verify server health again"); onClicked: bridge.hostVerify() }
+                    Button { text: qsTr("Review access change"); onClicked: bridge.hostReviewNetwork(hostProfile.currentIndex === 0 ? "home" : "advanced", hostStorage.text, hostAccess.currentIndex === 0 ? "local" : hostAccess.currentIndex === 1 ? "lan" : "external", hostLan.currentValue || "", hostExternalOrigin.text) }
+                    Button { text: qsTr("Review stopping this server"); onClicked: bridge.hostReviewStop() }
+                    Button { text: qsTr("Review removing server software — preserve data"); onClicked: bridge.hostReviewRemove() }
+                    Button { text: qsTr("Review verified runtime update"); onClicked: bridge.hostReviewUpgrade() }
+                }
+                RowLayout {
+                    enabled: !bridge.host_busy
+                    Button { text: qsTr("Inspect saved setup"); onClicked: bridge.hostInspect() }
+                    Button { text: qsTr("Resume a reviewed runtime update"); visible: bridge.host_step === "recovery"; onClicked: bridge.hostReviewUpgrade() }
+                    Button { text: qsTr("Cancel setup"); onClicked: { hostOwnerPassword.clear(); hostConnectPassword.clear(); hostExternalDatabase.clear(); bridge.hostCancel(); } }
+                    Button { objectName: "welcomeBackButton"; text: qsTr("Back"); onClicked: { hostOwnerPassword.clear(); hostConnectPassword.clear(); hostExternalDatabase.clear(); bridge.showWelcome(); } Accessible.name: qsTr("Back to Welcome") }
+                }
+            }
+        }
+        FolderDialog { id: hostServerFolderDialog; title: qsTr("Choose a dedicated server storage folder"); onAccepted: hostStorage.text = bridge.hostFolderPath(String(selectedFolder)) }
+        FolderDialog { id: hostClientFolderDialog; title: qsTr("Choose a dedicated desktop sync folder"); onAccepted: hostClientFolder.text = bridge.hostFolderPath(String(selectedFolder)) }
     }
 
     RowLayout {
@@ -804,6 +903,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     Layout.leftMargin: 14
                     Layout.rightMargin: 14
+                    Button { text: qsTr("Manage this Host"); visible: bridge.host_available; enabled: !bridge.host_busy; onClicked: bridge.hostInspect() }
 
                     Label {
                         text: qsTr("Libraries")

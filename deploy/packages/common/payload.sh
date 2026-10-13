@@ -17,6 +17,7 @@ synveil_stage_payload() {
     local binary_src="$2"
     local client_binary_src="$3"
     local desktop_binary_src="$4"
+    local host_helper_binary_src="${5:-${SYNVEIL_INSTALL_HOST_HELPER_BINARY:-}}"
     if [[ -z "$staged_root" || -z "$binary_src" || -z "$client_binary_src" || -z "$desktop_binary_src" ]]; then
         printf '[synveil-packages] ERROR: synveil_stage_payload requires <staged-root> <maintenance> <client> <desktop>\n' >&2
         return 1
@@ -31,7 +32,8 @@ synveil_stage_payload() {
         "--root=${staged_root}" \
         "--binary=${binary_src}" \
         "--client-binary=${client_binary_src}" \
-        "--desktop-binary=${desktop_binary_src}"
+        "--desktop-binary=${desktop_binary_src}" \
+        "--host-helper-binary=${host_helper_binary_src}"
 }
 
 # Print the normalized expected payload manifest: "<dest> <mode> <class>" for every

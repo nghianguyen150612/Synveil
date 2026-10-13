@@ -169,6 +169,7 @@ pub struct ApiState {
     conflict_cursor_key: Arc<ConflictCursorKey>,
     cookie_config: CookieConfig,
     allowed_origin: Option<String>,
+    helper_owned_bootstrap: bool,
     body_limit_bytes: usize,
     trash_retention_policy: TrashRetentionPolicy,
     scheduled_maintenance_cycle_runner: Option<ScheduledMaintenanceCycleRunner>,
@@ -204,6 +205,7 @@ impl ApiState {
             conflict_cursor_key: Arc::new(ConflictCursorKey::generate()),
             cookie_config: CookieConfig::production(),
             allowed_origin: None,
+            helper_owned_bootstrap: false,
             body_limit_bytes: crate::DEFAULT_BODY_LIMIT_BYTES,
             trash_retention_policy: TrashRetentionPolicy::default(),
             scheduled_maintenance_cycle_runner: None,
@@ -241,6 +243,7 @@ impl ApiState {
             conflict_cursor_key: Arc::new(ConflictCursorKey::generate()),
             cookie_config: CookieConfig::production(),
             allowed_origin: None,
+            helper_owned_bootstrap: false,
             body_limit_bytes: crate::DEFAULT_BODY_LIMIT_BYTES,
             trash_retention_policy: TrashRetentionPolicy::default(),
             scheduled_maintenance_cycle_runner: None,
@@ -468,6 +471,16 @@ impl ApiState {
         let origin = origin.into();
         self.allowed_origin = (!origin.trim().is_empty()).then_some(origin);
         self
+    }
+    /// Managed first-owner creation is performed by the authenticated local
+    /// helper through P035's canonical transaction. Loopback HTTP is not an
+    /// authorization credential for another local account.
+    pub fn with_helper_owned_bootstrap(mut self) -> Self {
+        self.helper_owned_bootstrap = true;
+        self
+    }
+    pub(crate) fn helper_owned_bootstrap(&self) -> bool {
+        self.helper_owned_bootstrap
     }
 
     #[must_use]

@@ -34,6 +34,18 @@ impl DatabasePool {
             .map_err(DatabaseError::readiness)
     }
 
+    /// Read-only P033 evidence; no general SQL escapes the metadata owner.
+    pub async fn host_database_boundary(&self) -> Result<(i32, String, String), DatabaseError> {
+        sqlx::query_as(
+            "SELECT current_setting('server_version_num')::INTEGER / 10000,
+                              COALESCE(inet_server_addr()::TEXT, ''),
+                              current_setting('listen_addresses')",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(DatabaseError::readiness)
+    }
+
     /// Check one known relation name without exposing SQLx rows or provider
     /// errors. This is intentionally a bounded metadata probe for migration
     /// and readiness tests, not an arbitrary query surface.

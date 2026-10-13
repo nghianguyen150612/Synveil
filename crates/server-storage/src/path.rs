@@ -47,6 +47,16 @@ impl PathInspectionError {
 }
 
 pub(super) fn inspect_candidate(path: &Path) -> Result<CandidatePath, PathInspectionError> {
+    inspect_candidate_for_review(path, None)
+}
+
+/// Read-only preflight may recognize the single package-owned parent whose
+/// ownership handoff will be explicitly reviewed. Mutation always calls the
+/// strict inspect_candidate entry point again after that handoff.
+pub(super) fn inspect_candidate_for_review(
+    path: &Path,
+    handoff: Option<(u32, u32)>,
+) -> Result<CandidatePath, PathInspectionError> {
     validate_spelling(path)?;
     if !cfg!(target_os = "linux") {
         return Err(PathInspectionError::Unsupported);
@@ -68,7 +78,7 @@ pub(super) fn inspect_candidate(path: &Path) -> Result<CandidatePath, PathInspec
                 if !metadata.is_dir() {
                     return Err(PathInspectionError::WrongType);
                 }
-                if unsafe_directory(&metadata) {
+                if unsafe_directory(&metadata) && !reviewed_parent(&current, &metadata, handoff) {
                     return Err(PathInspectionError::PermissionUnsafe);
                 }
             }
@@ -100,7 +110,7 @@ pub(super) fn inspect_candidate(path: &Path) -> Result<CandidatePath, PathInspec
     if !parent_meta.is_dir() {
         return Err(PathInspectionError::WrongType);
     }
-    if unsafe_directory(&parent_meta) {
+    if unsafe_directory(&parent_meta) && !reviewed_parent(parent, &parent_meta, handoff) {
         return Err(PathInspectionError::PermissionUnsafe);
     }
     let canonical_parent =
@@ -149,6 +159,21 @@ pub(super) fn inspect_candidate(path: &Path) -> Result<CandidatePath, PathInspec
         identity,
         is_mount_point,
     })
+}
+
+#[cfg(unix)]
+fn reviewed_parent(path: &Path, metadata: &fs::Metadata, handoff: Option<(u32, u32)>) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    handoff.is_some_and(|(uid, gid)| {
+        path == Path::new("/var/lib/synveil")
+            && metadata.uid() == uid
+            && metadata.gid() == gid
+            && metadata.mode() & 0o777 == 0o750
+    })
+}
+#[cfg(not(unix))]
+fn reviewed_parent(_path: &Path, _metadata: &fs::Metadata, _handoff: Option<(u32, u32)>) -> bool {
+    false
 }
 
 pub(super) fn validate_root_exclusions(

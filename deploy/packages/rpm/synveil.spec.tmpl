@@ -5,6 +5,7 @@ Summary:        Private file synchronization desktop application
 License:        MIT
 BuildArch:      @SYNVEIL_ARCH@
 Requires:       systemd, systemd-libs, glibc, libgcc, libstdc++, dbus-daemon, dbus-libs, gnome-keyring, qt6-qtbase, qt6-qtbase-gui, qt6-qtdeclarative, qt6-qtquickcontrols2
+Requires:       polkit, openssl, iproute, python3, gnupg2, binutils
 # Preserve byte-identical release binary (Prompt 79 binary integrity): disable
 # automatic stripping so the packaged binary SHA256 equals the cargo release
 # binary SHA256. The release profile already applies its own optimizations;
@@ -42,6 +43,11 @@ cp -a "$staged"/. "%{buildroot}"/
 %files
 %attr(0755,root,root) /usr/bin/synveil-client
 %attr(0755,root,root) /usr/bin/synveil-desktop
+%attr(0755,root,root) /usr/libexec/synveil-host-helper
+%attr(0755,root,root) /usr/libexec/synveil-host/prepare-host-runtime.py
+%attr(0755,root,root) /usr/libexec/synveil-host/register-host-inputs.py
+%attr(0644,root,root) /usr/share/polkit-1/actions/org.synveil.host.policy
+%attr(0644,root,root) /usr/lib/systemd/system/synveil-host-inspector.service
 %attr(0755,root,root) /usr/bin/synveil-scheduled-maintenance-once
 %attr(0644,root,root) /usr/lib/systemd/user/synveil-client.service
 %attr(0644,root,root) /usr/lib/systemd/system/synveil-scheduled-maintenance.service
@@ -121,6 +127,7 @@ chmod 0700 /etc/synveil/credentials
 if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
   printf '[synveil] reloading systemd manager (daemon-reload)\n' >&2
   systemctl daemon-reload
+  systemctl enable --now synveil-host-inspector.service
 else
   printf '[synveil] systemd manager not running; skipping daemon-reload (offline image build)\n' >&2
 fi
@@ -143,6 +150,7 @@ if [ "$1" = "0" ]; then
     systemctl disable --now synveil-scheduled-maintenance.timer
     printf '[synveil] stopping service if active (bounded completion)\n' >&2
     systemctl stop synveil-scheduled-maintenance.service
+    systemctl disable --now synveil-host-inspector.service
   else
     printf '[synveil] systemd manager not running; skipping disable/stop (offline erase)\n' >&2
   fi

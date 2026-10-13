@@ -40,7 +40,8 @@ pub enum ProgressStage {
 }
 
 /// One fresh, non-secret observation assembled from P031--P035 owners.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OwnerObservation {
     pub supported_platform: bool,
     pub blocked: bool,
@@ -135,7 +136,8 @@ impl OwnerObservation {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReviewedHostPlan {
     pub generation: u64,
     pub server_installation_id: String,
@@ -148,13 +150,16 @@ pub struct ReviewedHostPlan {
     pub expected_privileged_effects: Vec<PrivilegedEffect>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PrivilegedEffect {
     PrepareConfiguration,
     PrepareStorage,
     InstallVerifiedDependencies,
     ReconcileOwnedServices,
     ConfigureOwnedReachability,
+    StopOwnedServices,
+    RemoveOwnedSoftwarePreservingData,
 }
 
 impl ReviewedHostPlan {
@@ -189,6 +194,8 @@ impl ReviewedHostPlan {
                 PrivilegedEffect::InstallVerifiedDependencies => 2,
                 PrivilegedEffect::ReconcileOwnedServices => 3,
                 PrivilegedEffect::ConfigureOwnedReachability => 4,
+                PrivilegedEffect::StopOwnedServices => 5,
+                PrivilegedEffect::RemoveOwnedSoftwarePreservingData => 6,
             }]);
         }
         format!("{:x}", digest.finalize())
@@ -229,6 +236,11 @@ pub struct ServerBootstrapCoordinator<O> {
 }
 
 impl<O: CanonicalOwners> ServerBootstrapCoordinator<O> {
+    /// The native adapter must install the complete helper authorization context
+    /// before confirm. This accessor grants no coordinator consent by itself.
+    pub fn owners_mut(&mut self) -> &mut O {
+        &mut self.owners
+    }
     pub fn new(owners: O) -> Self {
         Self {
             owners,
@@ -260,6 +272,14 @@ impl<O: CanonicalOwners> ServerBootstrapCoordinator<O> {
         plan: &ReviewedHostPlan,
         binding: &str,
     ) -> Result<(), CoordinatorError> {
+        self.confirm_with_progress(plan, binding, |_, _| {})
+    }
+    pub fn confirm_with_progress(
+        &mut self,
+        plan: &ReviewedHostPlan,
+        binding: &str,
+        mut progress: impl FnMut(PrivilegedEffect, &OwnerObservation),
+    ) -> Result<(), CoordinatorError> {
         if !self.intent {
             return Err(CoordinatorError::ExplicitHostIntentRequired);
         }
@@ -277,7 +297,8 @@ impl<O: CanonicalOwners> ServerBootstrapCoordinator<O> {
             self.owners.apply(*effect)?;
             // Reinspect after every uncertain external effect. The owner, not
             // this coordinator, decides whether it is complete or resumable.
-            let _ = self.owners.inspect()?;
+            let observation = self.owners.inspect()?;
+            progress(*effect, &observation);
         }
         Ok(())
     }

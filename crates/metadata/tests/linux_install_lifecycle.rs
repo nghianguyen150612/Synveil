@@ -119,11 +119,12 @@ fn run_install(root: &Path, binary: &Path, extra_env: &[(&str, &str)]) -> std::p
         .arg(format!("--root={}", root.display()))
         .arg(format!("--binary={}", binary.display()))
         // The lifecycle tests use one disposable executable as the byte
-        // source for all three package-owned binaries.  Native package tests
+        // source for each package-owned executable. Native package tests
         // exercise distinct release artifacts; these tests only need a valid
         // staged payload for install/upgrade/uninstall mechanics.
         .arg(format!("--client-binary={}", binary.display()))
-        .arg(format!("--desktop-binary={}", binary.display()));
+        .arg(format!("--desktop-binary={}", binary.display()))
+        .arg(format!("--host-helper-binary={}", binary.display()));
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
@@ -324,6 +325,11 @@ fn package_artifact_manifest_is_authoritative_and_collision_free() {
         "/usr/bin/synveil-client",
         "/usr/bin/synveil-desktop",
         "/usr/bin/synveil-scheduled-maintenance-once",
+        "/usr/libexec/synveil-host-helper",
+        "/usr/share/polkit-1/actions/org.synveil.host.policy",
+        "/usr/lib/systemd/system/synveil-host-inspector.service",
+        "/usr/libexec/synveil-host/prepare-host-runtime.py",
+        "/usr/libexec/synveil-host/register-host-inputs.py",
         "/usr/lib/systemd/user/synveil-client.service",
         "/usr/share/applications/synveil.desktop",
         "/usr/share/icons/hicolor/scalable/apps/synveil.svg",

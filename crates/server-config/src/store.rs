@@ -352,7 +352,7 @@ impl ServerConfigStore {
         request: NewServerConfig,
         evidence: ExistingServerEvidence,
     ) -> Result<InitializeResult, ConfigStoreError> {
-        self.initialize(request, evidence, None)
+        self.initialize(request, evidence, None, None, false)
     }
 
     /// Create Advanced / Server Mode with an explicitly supplied external
@@ -364,7 +364,27 @@ impl ServerConfigStore {
         evidence: ExistingServerEvidence,
         credential: ExternalDatabaseCredential,
     ) -> Result<InitializeResult, ConfigStoreError> {
-        self.initialize(request, evidence, Some(credential))
+        self.initialize(request, evidence, Some(credential), None, false)
+    }
+
+    /// Native Host-only initialization. The caller must hold the setup lock and
+    /// a root-owned journal binding the reviewed installation identity. Resume
+    /// accepts only valid known secrets and never replaces secret bytes.
+    pub fn initialize_for_host(
+        &self,
+        request: NewServerConfig,
+        installation_id: String,
+        credential: Option<ExternalDatabaseCredential>,
+        resume_owned_intent: bool,
+    ) -> Result<InitializeResult, ConfigStoreError> {
+        ServerConfig::proposed_host(request.deployment_profile, installation_id.clone())?;
+        self.initialize(
+            request,
+            ExistingServerEvidence::NoKnownServerState,
+            credential,
+            Some(installation_id),
+            resume_owned_intent,
+        )
     }
 
     fn initialize(
@@ -372,10 +392,16 @@ impl ServerConfigStore {
         request: NewServerConfig,
         evidence: ExistingServerEvidence,
         external_credential: Option<ExternalDatabaseCredential>,
+        reviewed_id: Option<String>,
+        resume_owned_intent: bool,
     ) -> Result<InitializeResult, ConfigStoreError> {
         match self.inspect() {
             ConfigInspection::ValidCurrent { config, .. } => {
-                if config.deployment_profile != request.deployment_profile {
+                if config.deployment_profile != request.deployment_profile
+                    || reviewed_id
+                        .as_ref()
+                        .is_some_and(|id| id != &config.server_installation_id)
+                {
                     return Err(ConfigStoreError::NeedsRepair(
                         ConfigInspection::IdentityConflict,
                     ));
@@ -383,6 +409,12 @@ impl ServerConfigStore {
                 return Ok(InitializeResult::Reused(*config));
             }
             ConfigInspection::Absent => {}
+            ConfigInspection::PartialConfiguration
+                if resume_owned_intent
+                    && self
+                        .load_config_read_only()
+                        .map_err(ConfigStoreError::NeedsRepair)?
+                        .is_none() => {}
             other => return Err(ConfigStoreError::NeedsRepair(other)),
         }
         if evidence == ExistingServerEvidence::ExistingOrAmbiguousState {
@@ -407,37 +439,130 @@ impl ServerConfigStore {
             {
                 return Ok(InitializeResult::Reused(*config));
             }
+            ConfigInspection::PartialConfiguration
+                if resume_owned_intent
+                    && self
+                        .load_config_read_only()
+                        .map_err(ConfigStoreError::NeedsRepair)?
+                        .is_none() => {}
             problem => return Err(ConfigStoreError::NeedsRepair(problem)),
         }
-        let installation_id = uuid::Uuid::now_v7().to_string();
+        let installation_id = reviewed_id.unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
         let mut config = ServerConfig::initial(request.deployment_profile, installation_id);
         if let Some(credential) = external_credential.as_ref() {
             config.database.endpoint = credential.non_secret_endpoint();
         }
         config.validate()?;
 
-        let rebaseline = generate_hex_secret()?;
-        self.create_secret(
+        self.create_or_reuse_host_secret(
             CredentialId::RebaselineTokenKey,
-            rebaseline.expose_for_storage(),
+            None,
+            resume_owned_intent,
         )?;
         match request.deployment_profile {
             DeploymentProfile::PersonalHomeManaged => {
-                let password = generate_hex_secret()?;
-                self.create_secret(
+                self.create_or_reuse_host_secret(
                     CredentialId::DatabasePassword,
-                    password.expose_for_storage(),
+                    None,
+                    resume_owned_intent,
                 )?;
             }
             DeploymentProfile::AdvancedExternal => {
                 let credential = external_credential
                     .as_ref()
                     .ok_or(ConfigStoreError::ExternalCredentialRequired)?;
-                self.create_secret(CredentialId::DatabaseUrl, credential.expose_for_storage())?;
+                self.create_or_reuse_host_secret(
+                    CredentialId::DatabaseUrl,
+                    Some(credential.expose_for_storage()),
+                    resume_owned_intent,
+                )?;
             }
         }
         self.atomic_write_config(&config, None)?;
         Ok(InitializeResult::Created(config))
+    }
+
+    fn create_or_reuse_host_secret(
+        &self,
+        id: CredentialId,
+        supplied: Option<&[u8]>,
+        resume: bool,
+    ) -> Result<(), ConfigStoreError> {
+        if resume && self.secret_exists(id) {
+            self.validate_secret(
+                id,
+                if id == CredentialId::DatabaseUrl {
+                    SecretKind::DatabaseUrl
+                } else {
+                    SecretKind::HexKey
+                },
+            )
+            .map_err(ConfigStoreError::NeedsRepair)?;
+            if let Some(value) = supplied {
+                let current = self.read_host_secret(id)?;
+                if !current.with_secret(|secret| secret.as_bytes() == value) {
+                    return Err(ConfigStoreError::NeedsRepair(
+                        ConfigInspection::IdentityConflict,
+                    ));
+                }
+            }
+            return Ok(());
+        }
+        if let Some(value) = supplied {
+            self.create_secret(id, value)
+        } else {
+            let secret = generate_hex_secret()?;
+            self.create_secret(id, secret.expose_for_storage())
+        }
+    }
+
+    fn read_host_secret(
+        &self,
+        id: CredentialId,
+    ) -> Result<crate::SecretMaterial, ConfigStoreError> {
+        let bytes = read_regular_bounded(
+            &self.secret_path(id),
+            MAX_SECRET_BYTES,
+            SECRET_FILE_MODE,
+            self.layout.require_managed_ownership,
+        )?
+        .ok_or(ConfigStoreError::NeedsRepair(
+            ConfigInspection::SecretMissing { id },
+        ))?;
+        let value = String::from_utf8(bytes)
+            .map_err(|_| ConfigStoreError::NeedsRepair(ConfigInspection::SecretInvalid { id }))?;
+        Ok(crate::SecretMaterial::new(value))
+    }
+
+    /// Protected material for a canonical native owner, never an IPC response.
+    pub fn host_database_url(&self) -> Result<crate::SecretMaterial, ConfigStoreError> {
+        self.validate_secret(CredentialId::DatabaseUrl, SecretKind::DatabaseUrl)
+            .map_err(ConfigStoreError::NeedsRepair)?;
+        self.read_host_secret(CredentialId::DatabaseUrl)
+    }
+    pub fn host_network_key(&self, ca: bool) -> Result<crate::SecretMaterial, ConfigStoreError> {
+        self.read_host_secret(if ca {
+            CredentialId::NetworkCaKey
+        } else {
+            CredentialId::NetworkTlsKey
+        })
+    }
+    /// Creation is immutable. Leaf rotation requires a separate owner-controlled
+    /// generation and is deliberately not an arbitrary secret replacement API.
+    pub fn create_host_network_key(&self, ca: bool, pem: &str) -> Result<(), ConfigStoreError> {
+        if !pem.starts_with("-----BEGIN PRIVATE KEY-----")
+            || !pem.contains("-----END PRIVATE KEY-----")
+        {
+            return Err(ConfigStoreError::InvalidPath);
+        }
+        self.create_secret(
+            if ca {
+                CredentialId::NetworkCaKey
+            } else {
+                CredentialId::NetworkTlsKey
+            },
+            pem.as_bytes(),
+        )
     }
 
     /// Durably record the confirmed storage intent before any filesystem
@@ -601,7 +726,17 @@ impl ServerConfigStore {
         expected: ConfigFingerprint,
         endpoint: DatabaseEndpoint,
     ) -> Result<ServerConfig, ConfigStoreError> {
-        let mut config = self.current_for_update(expected)?;
+        // Recover the secret-written/config-not-yet-published boundary using
+        // the same endpoint and password. Existing URL bytes must match exactly.
+        let (mut config, actual) = self
+            .load_config_read_only()
+            .map_err(ConfigStoreError::NeedsRepair)?
+            .ok_or(ConfigStoreError::NeedsRepair(ConfigInspection::Absent))?;
+        if actual != expected {
+            return Err(ConfigStoreError::ConcurrentModification);
+        }
+        self.validate_secret(CredentialId::RebaselineTokenKey, SecretKind::HexKey)
+            .map_err(ConfigStoreError::NeedsRepair)?;
         if config.deployment_profile != DeploymentProfile::PersonalHomeManaged
             || config.database.credential_state != DatabaseCredentialState::PendingManagedEndpoint
         {
@@ -653,7 +788,18 @@ impl ServerConfigStore {
                 })?;
                 Ok::<_, ConfigStoreError>(rendered)
             })?;
-        self.create_secret(CredentialId::DatabaseUrl, database_url.expose_for_storage())?;
+        if self.secret_exists(CredentialId::DatabaseUrl) {
+            if !self
+                .host_database_url()?
+                .with_secret(|existing| existing.as_bytes() == database_url.expose_for_storage())
+            {
+                return Err(ConfigStoreError::NeedsRepair(
+                    ConfigInspection::IdentityConflict,
+                ));
+            }
+        } else {
+            self.create_secret(CredentialId::DatabaseUrl, database_url.expose_for_storage())?;
+        }
         self.atomic_write_config(&config, Some(expected))?;
         Ok(config)
     }

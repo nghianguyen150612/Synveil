@@ -7,7 +7,7 @@
 
 use std::{pin::Pin, sync::Arc};
 
-use cxx_qt::{casting::Upcast, CxxQtThread, CxxQtType, Threading};
+use cxx_qt::{CxxQtThread, CxxQtType, Threading, casting::Upcast};
 use cxx_qt_lib::{QList, QMap, QMapPair_QString_QVariant, QString, QVariant};
 use synveil_client::{
     AutostartState, BackgroundClientManager, BackgroundLaunchError, BackgroundLaunchResult,
@@ -17,19 +17,164 @@ use synveil_client::{
 };
 #[cfg(target_os = "linux")]
 use synveil_install_engine::{AppImageIntegration, AppImageIntegrationStatus};
-use synveil_server_bootstrap::{
-    CanonicalOwners, CoordinatorError, OwnerObservation, PrivilegedEffect,
-    ServerBootstrapCoordinator,
-};
 use tokio::runtime::{Builder, Handle, Runtime};
 use zeroize::Zeroizing;
 
+use crate::host_ui::{HostAction, HostSession};
 use crate::{actions, presentation, profile};
 use actions::{LatestValue, ReconciliationFence, StartupIntentGate, SyncRequestGate};
 use presentation::{UiAttentionItem, UiLibrary, UiRecoveryItem, UiSnapshot};
 
 type QVariantList = QList<QVariant>;
 type QVariantMap = QMap<QMapPair_QString_QVariant>;
+
+fn run_host_action(mut object: Pin<&mut ffi::DesktopUiBridge>, action: HostAction) {
+    if object.rust().host_busy {
+        return;
+    }
+    let Some(runtime) = object
+        .rust()
+        .runtime
+        .as_ref()
+        .map(|runtime| runtime.handle().clone())
+    else {
+        return;
+    };
+    object.as_mut().set_host_busy(true);
+    object
+        .as_mut()
+        .set_host_feedback(QString::from("Checking the approved server owners…"));
+    let session = Arc::clone(&object.rust().host_session);
+    let generation = object.rust().host_generation.wrapping_add(1);
+    object.as_mut().rust_mut().get_mut().host_generation = generation;
+    let qt_thread = object.as_ref().get_ref().qt_thread();
+    let progress_thread = qt_thread.clone();
+    runtime.spawn(async move {
+        let result = tokio::task::spawn_blocking(move || {
+            session
+                .lock()
+                .map_err(|_| "Host session unavailable".to_owned())?
+                .run_with_progress(action, move |effect, observation| {
+                    let state = observation.derive_state();
+                    let message = match effect {
+                        synveil_server_bootstrap::PrivilegedEffect::InstallVerifiedDependencies => "Verified server dependencies prepared",
+                        synveil_server_bootstrap::PrivilegedEffect::PrepareConfiguration => "Protected server configuration prepared",
+                        synveil_server_bootstrap::PrivilegedEffect::PrepareStorage => "Server storage verified",
+                        synveil_server_bootstrap::PrivilegedEffect::ReconcileOwnedServices => "System database and server services reconciled",
+                        synveil_server_bootstrap::PrivilegedEffect::ConfigureOwnedReachability => "Device access and HTTPS checked",
+                        synveil_server_bootstrap::PrivilegedEffect::StopOwnedServices => "Owned server services stopped",
+                        synveil_server_bootstrap::PrivilegedEffect::RemoveOwnedSoftwarePreservingData => "Owned software removed; server data preserved",
+                    };
+                    let text = format!("{message} ({state:?}). Continuing the reviewed operation…");
+                    let _ = progress_thread.queue(move |mut object| { if object.rust().host_generation == generation && !object.rust().stopping { object.as_mut().set_host_feedback(QString::from(text)); } });
+                })
+        })
+        .await
+        .unwrap_or_else(|_| {
+            Err("Host action stopped. Inspect before reviewing a new plan.".to_owned())
+        });
+        let _ = qt_thread.queue(move |mut object| {
+            if object.rust().host_generation != generation || object.rust().stopping {
+                return;
+            }
+            object.as_mut().set_host_busy(false);
+            match result {
+                Ok(view) => {
+                    object.as_mut().set_host_step(QString::from(view.step));
+                    object
+                        .as_mut()
+                        .set_host_feedback(QString::from(view.feedback));
+                    object
+                        .as_mut()
+                        .set_host_review_text(QString::from(view.review));
+                    if !view.selection.is_empty() {
+                        object
+                            .as_mut()
+                            .set_host_saved_selection(QString::from(view.selection));
+                    }
+                    if !view.candidates.is_empty() {
+                        object
+                            .as_mut()
+                            .set_host_network_candidates(QString::from(view.candidates));
+                    }
+                    object
+                        .as_mut()
+                        .set_host_server_id(QString::from(view.server_id));
+                    object.as_mut().set_host_origin(QString::from(view.origin));
+                }
+                Err(error) => {
+                    object.as_mut().set_host_step(QString::from("recovery"));
+                    object.as_mut().set_host_feedback(QString::from(error));
+                }
+            }
+        });
+    });
+}
+
+fn run_host_handoff(
+    mut object: Pin<&mut ffi::DesktopUiBridge>,
+    login: String,
+    password: Zeroizing<String>,
+    client_folder: String,
+) {
+    if object.rust().host_busy || client_folder.is_empty() || client_folder.len() > 4096 {
+        return;
+    }
+    let Some(runtime) = object
+        .rust()
+        .runtime
+        .as_ref()
+        .map(|runtime| runtime.handle().clone())
+    else {
+        return;
+    };
+    let Ok(profile_id) = profile::load_profile_id() else {
+        return;
+    };
+    let session = Arc::clone(&object.rust().host_session);
+    let controller = object.rust().controller.clone();
+    let manager = object.rust().launch_manager.clone();
+    let generation = object.rust().host_generation.wrapping_add(1);
+    object.as_mut().rust_mut().get_mut().host_generation = generation;
+    object.as_mut().set_host_busy(true);
+    object.as_mut().set_host_feedback(QString::from(
+        "Verifying this Host and connecting this desktop…",
+    ));
+    let qt_thread = object.as_ref().get_ref().qt_thread();
+    runtime.spawn(async move {
+        let result: Result<(), String> = async {
+            use synveil_server_host::protocol::{Request, Response};
+            let verified_session = Arc::clone(&session);
+            let (descriptor, library_id) = tokio::task::spawn_blocking(move || {
+                let mut session = verified_session.lock().map_err(|_| "Host session unavailable".to_owned())?;
+                session.coordinator.owners_mut().authorize().map_err(str::to_owned)?;
+                match session.coordinator.owners_mut().request(Request::Verify).map_err(str::to_owned)? { Response::Ready { descriptor, library_id } => Ok((descriptor, library_id)), Response::Error { code } => Err(code), _ => Err("Host is not Ready".to_owned()) }
+            }).await.map_err(|_| "Host verification stopped".to_owned())??;
+            if !matches!(manager.ensure_running().await, BackgroundLaunchResult::StartedDirect | BackgroundLaunchResult::StartedSupervised | BackgroundLaunchResult::StartRequested | BackgroundLaunchResult::AlreadyStarting | BackgroundLaunchResult::AlreadyRunning) { return Err("Start the desktop client and retry the explicit connection.".to_owned()); }
+            controller.refresh_state();
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+            while controller.snapshot().connection_state != synveil_client::DesktopControllerConnectionState::Connected {
+                if tokio::time::Instant::now() >= deadline { return Err("The desktop client has not connected. Inspect its status and retry this explicit handoff.".to_owned()); }
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+            let configured = controller.configure_managed_host(profile_id, descriptor).await.map_err(|_| "Desktop profile configuration unavailable".to_owned())?;
+            if !matches!(configured, DesktopControllerCommandResult::ProfileConfigured | DesktopControllerCommandResult::ProfileAlreadyConfigured) { return Err(format!("Desktop profile was not configured ({configured:?}). Inspect the connection and retry.")); }
+            let token = tokio::task::spawn_blocking(move || {
+                let mut session = session.lock().map_err(|_| "Host session unavailable".to_owned())?;
+                match session.coordinator.owners_mut().request(Request::EnrollDesktop { login, password: password.to_string() }).map_err(str::to_owned)? { Response::Enrollment { token } => Ok(Zeroizing::new(token)), Response::Error { code } => Err(code), _ => Err("Desktop enrollment was not issued".to_owned()) }
+            }).await.map_err(|_| "Enrollment outcome unknown; inspect the owned desktop device before retrying.".to_owned())??;
+            if controller.authenticate(token.as_str()).await.map_err(|_| "Enrollment outcome unknown".to_owned())? != DesktopControllerCommandResult::Authenticated { return Err("Desktop enrollment did not complete. Inspect this device before explicitly re-enrolling.".to_owned()); }
+            let attached = controller.attach_host_library(library_id, client_folder).await.map_err(|_| "Local Library binding outcome unknown".to_owned())?;
+            if !matches!(attached, DesktopControllerCommandResult::LibraryConfigured | DesktopControllerCommandResult::LibraryAlreadyConfigured) { return Err(format!("The initial Library was not bound ({attached:?}). Inspect the selected client folder and resume setup.")); }
+            controller.refresh_state(); Ok(())
+        }.await;
+        let _ = qt_thread.queue(move |mut object| {
+            if object.rust().host_generation != generation || object.rust().stopping { return; }
+            object.as_mut().set_host_busy(false);
+            match result { Ok(()) => { object.as_mut().set_host_feedback(QString::from("This desktop is connected to the verified Host and its initial Library.")); object.as_mut().set_welcome_destination(QString::from("existing_client")); }, Err(error) => { object.as_mut().set_host_step(QString::from("ready")); object.as_mut().set_host_feedback(QString::from(error)); } }
+        });
+    });
+}
 
 #[cxx_qt::bridge]
 pub mod ffi {
@@ -159,6 +304,13 @@ pub mod ffi {
         #[qproperty(QString, welcome_destination)]
         #[qproperty(bool, host_available)]
         #[qproperty(QString, host_feedback)]
+        #[qproperty(QString, host_step)]
+        #[qproperty(QString, host_saved_selection)]
+        #[qproperty(QString, host_review_text)]
+        #[qproperty(QString, host_network_candidates)]
+        #[qproperty(QString, host_server_id)]
+        #[qproperty(QString, host_origin)]
+        #[qproperty(bool, host_busy)]
         #[qproperty(bool, welcome_action_busy)]
         #[qproperty(bool, smoke_test)]
         #[qproperty(bool, live_test)]
@@ -175,6 +327,65 @@ pub mod ffi {
         #[cxx_name = "chooseHost"]
         #[qinvokable]
         fn choose_host(self: Pin<&mut Self>);
+        #[cxx_name = "hostPreflight"]
+        #[qinvokable]
+        fn host_preflight(self: Pin<&mut Self>);
+        #[cxx_name = "hostInspect"]
+        #[qinvokable]
+        fn host_inspect(self: Pin<&mut Self>);
+        #[cxx_name = "hostReview"]
+        #[qinvokable]
+        fn host_review(
+            self: Pin<&mut Self>,
+            profile: QString,
+            storage: QString,
+            access: QString,
+            choice: QString,
+            external_origin: QString,
+            external_database: QString,
+        );
+        #[cxx_name = "hostReviewNetwork"]
+        #[qinvokable]
+        fn host_review_network(
+            self: Pin<&mut Self>,
+            profile: QString,
+            storage: QString,
+            access: QString,
+            choice: QString,
+            external_origin: QString,
+        );
+        #[cxx_name = "hostConfirm"]
+        #[qinvokable]
+        fn host_confirm(self: Pin<&mut Self>, external_database: QString);
+        #[cxx_name = "hostAccount"]
+        #[qinvokable]
+        fn host_account(self: Pin<&mut Self>, login: QString, password: QString, create: bool);
+        #[cxx_name = "hostVerify"]
+        #[qinvokable]
+        fn host_verify(self: Pin<&mut Self>);
+        #[cxx_name = "hostCancel"]
+        #[qinvokable]
+        fn host_cancel(self: Pin<&mut Self>);
+        #[cxx_name = "hostHandoff"]
+        #[qinvokable]
+        fn host_handoff(
+            self: Pin<&mut Self>,
+            login: QString,
+            password: QString,
+            client_folder: QString,
+        );
+        #[cxx_name = "hostFolderPath"]
+        #[qinvokable]
+        fn host_folder_path(self: &Self, folder_url: QString) -> QString;
+        #[cxx_name = "hostReviewStop"]
+        #[qinvokable]
+        fn host_review_stop(self: Pin<&mut Self>);
+        #[cxx_name = "hostReviewRemove"]
+        #[qinvokable]
+        fn host_review_remove(self: Pin<&mut Self>);
+        #[cxx_name = "hostReviewUpgrade"]
+        #[qinvokable]
+        fn host_review_upgrade(self: Pin<&mut Self>);
 
         #[cxx_name = "chooseConnect"]
         #[qinvokable]
@@ -405,6 +616,13 @@ pub struct DesktopUiBridgeRust {
     pub(crate) welcome_destination: QString,
     pub(crate) host_available: bool,
     pub(crate) host_feedback: QString,
+    pub(crate) host_step: QString,
+    pub(crate) host_saved_selection: QString,
+    pub(crate) host_review_text: QString,
+    pub(crate) host_network_candidates: QString,
+    pub(crate) host_server_id: QString,
+    pub(crate) host_origin: QString,
+    pub(crate) host_busy: bool,
     pub(crate) welcome_action_busy: bool,
     pub(crate) smoke_test: bool,
     pub(crate) live_test: bool,
@@ -437,30 +655,8 @@ pub struct DesktopUiBridgeRust {
     started: bool,
     stopping: bool,
     tray: Option<cxx::UniquePtr<ffi::NativeTray>>,
-    host_coordinator: ServerBootstrapCoordinator<UnavailableHostOwners>,
-}
-
-/// P036 has not yet supplied a production desktop privileged adapter. This
-/// bounded adapter reports that fact and can never apply a machine effect.
-#[derive(Default)]
-struct UnavailableHostOwners;
-
-impl CanonicalOwners for UnavailableHostOwners {
-    fn inspect(&mut self) -> Result<OwnerObservation, CoordinatorError> {
-        Ok(OwnerObservation::default())
-    }
-
-    fn current_generation(&mut self) -> Result<u64, CoordinatorError> {
-        Ok(0)
-    }
-
-    fn apply(&mut self, _effect: PrivilegedEffect) -> Result<(), CoordinatorError> {
-        Err(CoordinatorError::OwnerRejected)
-    }
-
-    fn trust_descriptor(&mut self) -> Result<String, CoordinatorError> {
-        Err(CoordinatorError::NotReady)
-    }
+    host_session: Arc<std::sync::Mutex<HostSession>>,
+    host_generation: u64,
 }
 
 impl Default for DesktopUiBridgeRust {
@@ -600,8 +796,17 @@ impl Default for DesktopUiBridgeRust {
             tray_available: false,
             profile_ready,
             welcome_destination: QString::from("initializing"),
-            host_available: false,
-            host_feedback: QString::from("Hosting isn't available on this device yet."),
+            host_available: synveil_server_host::supported_platform().is_some(),
+            host_feedback: QString::from(
+                "Choose storage and device access, then review the changes to prepare this Host.",
+            ),
+            host_step: QString::from("selection"),
+            host_saved_selection: QString::from("null"),
+            host_review_text: QString::default(),
+            host_network_candidates: QString::from("[]"),
+            host_server_id: QString::default(),
+            host_origin: QString::default(),
+            host_busy: false,
             welcome_action_busy: false,
             smoke_test,
             live_test,
@@ -633,7 +838,8 @@ impl Default for DesktopUiBridgeRust {
             started: false,
             stopping: false,
             tray: None,
-            host_coordinator: ServerBootstrapCoordinator::new(UnavailableHostOwners),
+            host_session: Arc::new(std::sync::Mutex::new(HostSession::default())),
+            host_generation: 0,
         }
     }
 }
@@ -690,28 +896,221 @@ impl SnapshotDispatcher {
 }
 
 impl ffi::DesktopUiBridge {
+    fn host_review_upgrade(self: Pin<&mut Self>) {
+        run_host_action(
+            self,
+            HostAction::Lifecycle(synveil_server_host::protocol::HostPurpose::Upgrade),
+        );
+    }
+    fn host_review_stop(self: Pin<&mut Self>) {
+        run_host_action(
+            self,
+            HostAction::Lifecycle(synveil_server_host::protocol::HostPurpose::Stop),
+        );
+    }
+    fn host_review_remove(self: Pin<&mut Self>) {
+        run_host_action(
+            self,
+            HostAction::Lifecycle(synveil_server_host::protocol::HostPurpose::RemoveSoftware),
+        );
+    }
+    fn host_folder_path(&self, folder_url: QString) -> QString {
+        url::Url::parse(&String::from(folder_url))
+            .ok()
+            .and_then(|url| url.to_file_path().ok())
+            .and_then(|path| {
+                path.to_str()
+                    .filter(|value| value.len() <= 4096)
+                    .map(QString::from)
+            })
+            .unwrap_or_default()
+    }
+    fn host_preflight(self: Pin<&mut Self>) {
+        run_host_action(self, HostAction::Preflight);
+    }
+    fn host_inspect(mut self: Pin<&mut Self>) {
+        self.as_mut()
+            .set_welcome_destination(QString::from("host_setup"));
+        run_host_action(self, HostAction::Inspect);
+    }
+    fn host_verify(self: Pin<&mut Self>) {
+        run_host_action(self, HostAction::Verify);
+    }
+    fn host_cancel(self: Pin<&mut Self>) {
+        run_host_action(self, HostAction::Cancel);
+    }
+    fn host_confirm(self: Pin<&mut Self>, external_database: QString) {
+        let external = Zeroizing::new(String::from(external_database));
+        run_host_action(
+            self,
+            HostAction::Confirm(if external.is_empty() {
+                None
+            } else {
+                Some(external)
+            }),
+        );
+    }
+    fn host_account(self: Pin<&mut Self>, login: QString, password: QString, create: bool) {
+        run_host_action(
+            self,
+            HostAction::Account {
+                login: String::from(login),
+                password: Zeroizing::new(String::from(password)),
+                create,
+            },
+        );
+    }
+    fn host_review(
+        mut self: Pin<&mut Self>,
+        profile: QString,
+        storage: QString,
+        access: QString,
+        choice: QString,
+        external_origin: QString,
+        external_database: QString,
+    ) {
+        use synveil_server_config::{DeploymentProfile, ReachabilityMode};
+        use synveil_server_host::protocol::HostSelection;
+        let profile = match String::from(profile).as_str() {
+            "home" => DeploymentProfile::PersonalHomeManaged,
+            "advanced" => DeploymentProfile::AdvancedExternal,
+            _ => return,
+        };
+        let mode = match String::from(access).as_str() {
+            "local" => ReachabilityMode::LocalOnly,
+            "lan" => ReachabilityMode::PrivateLan,
+            "external" if profile == DeploymentProfile::AdvancedExternal => {
+                ReachabilityMode::AdvancedExternalHttps
+            }
+            _ => return,
+        };
+        let (interface_id, listener_address, canonical_origin) = match mode {
+            ReachabilityMode::LocalOnly => (
+                None,
+                "127.0.0.1".to_owned(),
+                "https://localhost/".to_owned(),
+            ),
+            ReachabilityMode::PrivateLan => {
+                let selected = String::from(choice);
+                let Some((interface, address)) = selected.split_once('|') else {
+                    self.as_mut().set_host_feedback(QString::from(
+                        "Select a private LAN interface found on this device.",
+                    ));
+                    return;
+                };
+                (
+                    Some(interface.to_owned()),
+                    address.to_owned(),
+                    format!("https://{address}/"),
+                )
+            }
+            ReachabilityMode::AdvancedExternalHttps => {
+                (None, "127.0.0.1".to_owned(), String::from(external_origin))
+            }
+        };
+        run_host_action(
+            self,
+            HostAction::Review(
+                HostSelection {
+                    profile,
+                    mode,
+                    storage_root: String::from(storage),
+                    interface_id,
+                    listener_address,
+                    canonical_origin,
+                    external_database_target: None,
+                },
+                {
+                    let url = Zeroizing::new(String::from(external_database));
+                    if url.is_empty() { None } else { Some(url) }
+                },
+            ),
+        );
+    }
+    fn host_review_network(
+        mut self: Pin<&mut Self>,
+        profile: QString,
+        storage: QString,
+        access: QString,
+        choice: QString,
+        external_origin: QString,
+    ) {
+        use synveil_server_config::{DeploymentProfile, ReachabilityMode};
+        use synveil_server_host::protocol::HostSelection;
+        let profile = match String::from(profile).as_str() {
+            "home" => DeploymentProfile::PersonalHomeManaged,
+            "advanced" => DeploymentProfile::AdvancedExternal,
+            _ => return,
+        };
+        let mode = match String::from(access).as_str() {
+            "local" => ReachabilityMode::LocalOnly,
+            "lan" => ReachabilityMode::PrivateLan,
+            "external" if profile == DeploymentProfile::AdvancedExternal => {
+                ReachabilityMode::AdvancedExternalHttps
+            }
+            _ => return,
+        };
+        let (interface_id, listener_address, canonical_origin) = match mode {
+            ReachabilityMode::LocalOnly => (
+                None,
+                "127.0.0.1".to_owned(),
+                "https://localhost/".to_owned(),
+            ),
+            ReachabilityMode::PrivateLan => {
+                let selected = String::from(choice);
+                let Some((interface, address)) = selected.split_once('|') else {
+                    self.as_mut().set_host_feedback(QString::from(
+                        "Select a private LAN interface found on this device.",
+                    ));
+                    return;
+                };
+                (
+                    Some(interface.to_owned()),
+                    address.to_owned(),
+                    format!("https://{address}/"),
+                )
+            }
+            ReachabilityMode::AdvancedExternalHttps => {
+                (None, "127.0.0.1".to_owned(), String::from(external_origin))
+            }
+        };
+        run_host_action(
+            self,
+            HostAction::ReconfigureNetwork(HostSelection {
+                profile,
+                mode,
+                storage_root: String::from(storage),
+                interface_id,
+                listener_address,
+                canonical_origin,
+                external_database_target: None,
+            }),
+        );
+    }
+    fn host_handoff(
+        self: Pin<&mut Self>,
+        login: QString,
+        password: QString,
+        client_folder: QString,
+    ) {
+        run_host_handoff(
+            self,
+            String::from(login),
+            Zeroizing::new(String::from(password)),
+            String::from(client_folder),
+        );
+    }
     fn choose_host(mut self: Pin<&mut Self>) {
         if self.rust().welcome_action_busy || self.rust().profile_configured {
             return;
         }
-        self.as_mut().set_welcome_action_busy(true);
-        // This is the sole explicit P037 Host intent boundary. Inspection and
-        // the unavailable presentation below perform no privileged apply.
-        self.as_mut()
-            .rust_mut()
-            .get_mut()
-            .host_coordinator
-            .begin_host();
-        let inspected = self.as_mut().rust_mut().get_mut().host_coordinator.status();
         self.as_mut()
             .set_welcome_destination(QString::from("host_setup"));
+        let available = self.rust().host_available;
         self.as_mut()
-            .set_host_feedback(QString::from(if inspected.is_ok() {
-                "Hosting isn't available on this device yet."
-            } else {
-                "Synveil couldn't check hosting status."
-            }));
-        self.as_mut().set_welcome_action_busy(false);
+            .set_host_feedback(QString::from(if available {
+                "Choose your setup preferences. Check this device to inspect an existing Host without changing it."
+            } else { "Managed Host supports Ubuntu 24.04 and Fedora 42 x86_64." }));
     }
 
     fn choose_connect(mut self: Pin<&mut Self>) {

@@ -9,6 +9,7 @@ members = [
     "crates/server-service",
     "crates/server-network",
     "crates/server-bootstrap",
+    "crates/server-host",
     "crates/object-store",
     "crates/storage",
     "crates/api",
@@ -44,6 +45,7 @@ synveil-server-config = { path = "crates/server-config" }
 synveil-server-storage = { path = "crates/server-storage" }
 synveil-server-network = { path = "crates/server-network" }
 synveil-server-bootstrap = { path = "crates/server-bootstrap" }
+synveil-server-host = { path = "crates/server-host" }
 synveil-object-store = { path = "crates/object-store" }
 synveil-storage = { path = "crates/storage" }
 synveil-client-sync = { path = "crates/client-sync" }
@@ -66,7 +68,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 subtle = "2"
-sqlx = { version = "0.8", default-features = false, features = ["macros", "postgres", "sqlite", "runtime-tokio", "migrate", "time", "uuid"] }
+sqlx = { version = "0.8", default-features = false, features = ["macros", "postgres", "sqlite", "runtime-tokio", "tls-rustls-ring-webpki", "migrate", "time", "uuid"] }
 argon2 = "0.5"
 tokio = { version = "1", default-features = false, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time", "test-util"] }
 tower = "0.5"
