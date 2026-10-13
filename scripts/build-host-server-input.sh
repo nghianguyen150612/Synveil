@@ -3,10 +3,12 @@
 # qualify, publish a release, install a helper, or manufacture dependency bytes.
 set -euo pipefail
 export LC_ALL=C
-host_input_repo=$(cd "$(dirname "$0")/.." && pwd)
+host_input_repo=$(cd "$(dirname "$0")/.." && pwd -P)
 host_input_out=${1:-"$host_input_repo/target/host-server-input"}
 [[ $# -le 1 && $(uname -s) == Linux && $(uname -m) == x86_64 ]] || exit 2
 [[ -z $(git -C "$host_input_repo" status --porcelain) ]] || { printf 'A clean committed source tree is required for an input identity.\n' >&2; exit 1; }
+source "$host_input_repo/deploy/packages/common/reproducible.sh"
+synveil_prepare_reproducible_rust_build "$host_input_repo"
 host_input_revision=$(git -C "$host_input_repo" rev-parse HEAD)
 host_input_os=$(python3 - <<'PY'
 from pathlib import Path

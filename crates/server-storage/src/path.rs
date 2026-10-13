@@ -214,10 +214,7 @@ pub(super) fn validate_root_exclusions(
             return Err(PathInspectionError::Invalid);
         }
     }
-    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(2)
-        .map(Path::to_path_buf);
+    let workspace = build_workspace_root();
     if let Some(workspace) = workspace {
         reserved.push(workspace);
     }
@@ -235,6 +232,17 @@ pub(super) fn validate_root_exclusions(
         }
     }
     Ok(())
+}
+
+// Infer a development checkout from Cargo's conventional target directory at
+// runtime. Embedding CARGO_MANIFEST_DIR would leak the private build path into
+// installed Host binaries and cannot be repaired by rustc path remapping.
+pub(crate) fn build_workspace_root() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let target = executable
+        .ancestors()
+        .find(|path| path.file_name() == Some(std::ffi::OsStr::new("target")))?;
+    target.parent().map(Path::to_path_buf)
 }
 
 pub(super) fn paths_overlap(first: &Path, second: &Path) -> bool {

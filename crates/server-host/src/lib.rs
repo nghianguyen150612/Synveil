@@ -1,5 +1,12 @@
 #![forbid(unsafe_code)]
 //! Production composition only; resource ownership remains with P031--P035.
+// The bounded pkexec/Unix IPC client is a Linux implementation detail. Keep a
+// typed unsupported adapter available to the desktop crate on other targets so
+// its Connect code remains buildable without pretending that Host is supported.
+#[cfg(target_os = "linux")]
+pub mod client;
+#[cfg(not(target_os = "linux"))]
+#[path = "unsupported_client.rs"]
 pub mod client;
 #[cfg(target_os = "linux")]
 pub mod native;

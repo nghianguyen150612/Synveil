@@ -1531,9 +1531,8 @@ fn validate_storage_root_sync(root: &Path) -> Result<PathBuf, ObjectStoreError> 
         .into_iter()
         .filter_map(std::env::var_os)
         .any(|profile| canonical_path_matches(&canonical, Path::new(&profile)));
-    let is_build_workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(2)
+    let is_build_workspace = build_workspace_root()
+        .as_deref()
         .is_some_and(|workspace| canonical_path_matches(&canonical, workspace));
 
     if canonical.parent().is_none()
@@ -1545,6 +1544,14 @@ fn validate_storage_root_sync(root: &Path) -> Result<PathBuf, ObjectStoreError> 
         return Err(ObjectStoreError::InvalidRequest);
     }
     Ok(canonical)
+}
+
+fn build_workspace_root() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let target = executable
+        .ancestors()
+        .find(|path| path.file_name() == Some(std::ffi::OsStr::new("target")))?;
+    target.parent().map(Path::to_path_buf)
 }
 
 fn canonical_path_matches(canonical: &Path, candidate: &Path) -> bool {

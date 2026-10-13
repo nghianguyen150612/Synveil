@@ -880,8 +880,8 @@ pub fn open_existing_managed_local_storage(
             return Err(StorageSetupError::InvalidLocation);
         }
     }
-    if let Some(workspace) = Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(2) {
-        reserved.push(workspace.to_path_buf());
+    if let Some(workspace) = crate::path::build_workspace_root() {
+        reserved.push(workspace);
     }
     if validate_root_exclusions(&candidate.canonical, &reserved).is_err() {
         return Err(StorageSetupError::InvalidLocation);
