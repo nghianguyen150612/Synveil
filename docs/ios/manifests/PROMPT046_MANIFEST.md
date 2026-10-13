@@ -60,7 +60,8 @@ credential, token, file path, upload ID or target. Task descriptions contain onl
 chunk-intent UUID. `uploadTask(with:fromFile:)` is used, never Data or stream upload tasks.
 Tasks are created suspended, bound durably, then resumed. System inventory uses `getAllTasks` via
 Foundation's async `allTasks` API and validates intent, generation, task ID and original authenticated
-request URL/method/offset/length. A task identifier alone cannot authorize adoption.
+request URL/method/offset/length. A task identifier alone cannot authorize adoption. Native Resume and scoped cancellation recheck
+its opaque intent immediately before acting, protecting against OS task-identifier reuse.
 
 BackgroundTasks was evaluated and omitted: background URLSession already handles OS execution and
 relaunch. There is no independent bounded maintenance operation that justifies another wakeup path.
@@ -178,7 +179,7 @@ with the official `swift:6.2.3` toolchain. Linux has no Xcode or iOS Simulator. 
 PR state and merge evidence will be recorded only after genuine publication/observation; they are
 not yet available at this implementation stage. No earlier P045 run is counted for P046.
 
-The source contains 51 new deterministic background XCTest methods. Coverage includes typed transitions/terminal protections, explicit opt-in,
+The source contains 52 new deterministic background XCTest methods. Coverage includes typed transitions/terminal protections, explicit opt-in,
 file-backed exact range/digest, foreground exclusion across reopen, 204/GET agreement, partial and
 lost-response recovery, zero-progress stop, stale CAS/generation, pause/logout fencing, duplicate and
 orphan callbacks, wrong-origin/duplicate/missing task mapping, interrupted/unauthenticated GET,
@@ -234,7 +235,9 @@ request IDs (redacted), accepted offsets, job inventory and final immutable File
 ## GitHub and P047 readiness
 
 PR [#128](https://github.com/nghianguyen150612/Synveil/pull/128) is open and draft, targeting `ios-app`.
-Review acceptance, exact final feature CI, merge and resulting `ios-app` integration SHA are pending. This manifest does not invent those values or attempt to contain its own commit SHA.
+The user accepted the implementation in this task conversation on 2026-10-13. Exact final feature
+CI, merge and resulting `ios-app` integration SHA remain pending. This manifest does not invent
+those values or attempt to contain its own commit SHA.
 The feature must remain draft/open if mandatory gates or evidence are unavailable. An ordinary
 merge commit is permitted only after required gates and review acceptance. P047 is **NOT READY**
 at this stage and has not been started.

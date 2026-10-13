@@ -791,6 +791,19 @@ final class BackgroundUploadTests: XCTestCase {
         XCTAssertEqual(f.provider.completionCalls, 0)
     }
 
+    func testReusedSystemTaskIdentifierCannotResumeAnotherIntent() async throws {
+        let f = try await fixture()
+        f.transport.beforeResume = {
+            f.transport.tasks = [
+                BackgroundSystemTask(identifier: 1, intentId: UploadOperationId().rawValue)
+            ]
+        }
+        _ = try await start(f)
+        XCTAssertTrue(f.transport.resumed.isEmpty)
+        XCTAssertEqual(f.transport.submissions.count, 1)
+        XCTAssertEqual(f.provider.completionCalls, 0)
+    }
+
     private func evidence(
         offset: String, requestId: String = "background-patch-01",
         status: Int = 204, bodyEmpty: Bool = true, failure: UploadFailure? = nil
@@ -919,12 +932,29 @@ private final class FakeBackgroundTransport: BackgroundUploadTransportProtocol {
         afterSubmit?()
         return id
     }
-    func resume(_ identifier: Int, authorized: @escaping @MainActor () -> Bool) async {
+    func resume(_ identifier: Int, intentId: String, authorized: @escaping @MainActor () -> Bool)
+        async
+    {
         await beforeResume?()
-        if authorized() { resumed.append(identifier) } else { await cancel(identifier) }
+        guard tasks.contains(where: { $0.identifier == identifier && $0.intentId == intentId })
+        else { return }
+        if authorized() {
+            resumed.append(identifier)
+        } else {
+            await cancel(identifier, intentId: intentId)
+        }
     }
-    func cancel(_ identifier: Int) async {
+    func cancel(_ identifier: Int, intentId: String?) async {
+        guard
+            tasks.contains(where: {
+                $0.identifier == identifier && (intentId == nil || $0.intentId == intentId)
+            })
+        else { return }
         cancelled.append(identifier)
-        if !keepsCancelledTask { tasks.removeAll { $0.identifier == identifier } }
+        if !keepsCancelledTask {
+            tasks.removeAll {
+                $0.identifier == identifier && (intentId == nil || $0.intentId == intentId)
+            }
+        }
     }
 }

@@ -113,7 +113,7 @@ final class BackgroundUploadCoordinator {
             guard !invalidated, authorizationRevision == capturedRevision else {
                 throw UploadFailure.staleSession
             }
-            await transport.resume(task) {
+            await transport.resume(task, intentId: chunk.id) {
                 !self.invalidated && self.authorizationRevision == capturedRevision
                     && !self.pausedUploads.contains(record.id)
             }
@@ -141,10 +141,12 @@ final class BackgroundUploadCoordinator {
             try await database.saveBackgroundJob(job, replacing: previous)
             stateRevision &+= 1
         } catch {
-            if let task = job.taskIdentifier { await transport.cancel(task) }
+            if let task = job.taskIdentifier {
+                await transport.cancel(task, intentId: job.chunk?.id)
+            }
             throw error
         }
-        if let task = job.taskIdentifier { await transport.cancel(task) }
+        if let task = job.taskIdentifier { await transport.cancel(task, intentId: job.chunk?.id) }
     }
 
     func invalidateSession() {
@@ -157,7 +159,9 @@ final class BackgroundUploadCoordinator {
                 job.authorized = false
                 try? await database.saveBackgroundJob(job, replacing: previous)
             }
-            for task in await transport.inventory() { await transport.cancel(task.identifier) }
+            for task in await transport.inventory() {
+                await transport.cancel(task.identifier, intentId: task.intentId)
+            }
         }
     }
 
@@ -180,12 +184,12 @@ final class BackgroundUploadCoordinator {
         }
         let tasks = await transport.inventory()
         guard let jobs = try? await database.backgroundInventory() else {
-            for task in tasks { await transport.cancel(task.identifier) }
+            for task in tasks { await transport.cancel(task.identifier, intentId: task.intentId) }
             return
         }
         for task in tasks {
             guard jobs.contains(where: { $0.chunk?.id == task.intentId && !$0.resolved }) else {
-                await transport.cancel(task.identifier)
+                await transport.cancel(task.identifier, intentId: task.intentId)
                 continue
             }
         }
@@ -214,14 +218,14 @@ final class BackgroundUploadCoordinator {
                         throw UploadFailure.invalidMetadata
                     }
                     if original.state == .paused || !original.authorized {
-                        await transport.cancel(task.identifier)
+                        await transport.cancel(task.identifier, intentId: task.intentId)
                         await database.finishUploadRun(owner: owner)
                         continue
                     }
                     if original.evidence != nil {
                         // A completed delegate event can race the OS inventory snapshot. Do not
                         // turn that ordinary race into quarantine or resume the completed task.
-                        await transport.cancel(task.identifier)
+                        await transport.cancel(task.identifier, intentId: task.intentId)
                         try await reconcile(
                             original, record: record, session: session, continueAuthorized: true)
                         await database.finishUploadRun(owner: owner)
@@ -239,7 +243,7 @@ final class BackgroundUploadCoordinator {
                     try await database.saveBackgroundJob(bound, replacing: original)
                     try await repository.provider.validate(session)
                     guard !invalidated else { throw UploadFailure.staleSession }
-                    await transport.resume(task.identifier) {
+                    await transport.resume(task.identifier, intentId: original.chunk?.id ?? "") {
                         !self.invalidated && self.authorizationRevision == capturedRevision
                             && !self.pausedUploads.contains(record.id)
                     }
@@ -256,7 +260,7 @@ final class BackgroundUploadCoordinator {
                 ].contains(failure) {
                     try? await quarantine(original)
                     for task in tasks where task.intentId == original.chunk?.id {
-                        await transport.cancel(task.identifier)
+                        await transport.cancel(task.identifier, intentId: task.intentId)
                     }
                 }
             }
@@ -358,7 +362,13 @@ final class BackgroundUploadCoordinator {
             throw UploadFailure.staleSession
         }
         if previous.blocksForeground {
-            if let task = previous.taskIdentifier { await transport.cancel(task) }
+            let matching = await transport.inventory().filter { $0.intentId == previous.chunk?.id }
+            guard matching.count <= 1,
+                matching.allSatisfy({ valid($0, record: record, job: previous) })
+            else { throw UploadFailure.invalidMetadata }
+            for task in matching {
+                await transport.cancel(task.identifier, intentId: task.intentId)
+            }
             let tasks = await transport.inventory()
             guard !tasks.contains(where: { $0.intentId == previous.chunk?.id }) else {
                 throw UploadFailure.completionUnknown

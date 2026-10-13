@@ -5,8 +5,13 @@ protocol BackgroundUploadTransportProtocol: AnyObject {
     func inventory() async -> [BackgroundSystemTask]
     func submit(_ request: HTTPTransportRequest, file: URL, intent: BackgroundChunkIntent) throws
         -> Int
-    func resume(_ identifier: Int, authorized: @escaping @MainActor () -> Bool) async
-    func cancel(_ identifier: Int) async
+    func resume(_ identifier: Int, intentId: String, authorized: @escaping @MainActor () -> Bool)
+        async
+    func cancel(_ identifier: Int, intentId: String?) async
+}
+
+extension BackgroundUploadTransportProtocol {
+    func cancel(_ identifier: Int) async { await cancel(identifier, intentId: nil) }
 }
 
 /// The OS can persist Authorization headers outside Keychain. Cancel is best effort and cannot
@@ -143,8 +148,12 @@ extension URLSessionBackgroundUploadTransport: BackgroundUploadTransportProtocol
     }
 
     @MainActor
-    func resume(_ identifier: Int, authorized: @escaping @MainActor () -> Bool) async {
-        let task = await session.allTasks.first(where: { $0.taskIdentifier == identifier })
+    func resume(_ identifier: Int, intentId: String, authorized: @escaping @MainActor () -> Bool)
+        async
+    {
+        let task = await session.allTasks.first(where: {
+            $0.taskIdentifier == identifier && $0.taskDescription == intentId
+        })
         guard authorized() else {
             task?.cancel()
             return
@@ -153,8 +162,10 @@ extension URLSessionBackgroundUploadTransport: BackgroundUploadTransportProtocol
     }
 
     @MainActor
-    func cancel(_ identifier: Int) async {
-        await session.allTasks.first(where: { $0.taskIdentifier == identifier })?.cancel()
+    func cancel(_ identifier: Int, intentId: String?) async {
+        await session.allTasks.first(where: {
+            $0.taskIdentifier == identifier && (intentId == nil || $0.taskDescription == intentId)
+        })?.cancel()
     }
 }
 
