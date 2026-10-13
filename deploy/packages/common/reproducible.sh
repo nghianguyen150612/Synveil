@@ -662,7 +662,12 @@ synveil_assert_no_private_paths() {
 synveil_assert_no_secret_markers() {
     local artifact="$1"
     local label="${2:-$artifact}"
-    local pattern='(svd1_[A-Za-z0-9_-]+|sve1_[A-Za-z0-9_-]+|SYNVEIL_DATABASE_URL=postgresql://[^[:space:]]*:[^[:space:]]*@|DATABASE_URL=postgresql://[^[:space:]]*:[^[:space:]]*@|postgresql://[^[:space:]]+:[^[:space:]@]+@[^[:space:]]+)'
+    # Keep URL matching within printable URI bytes. A binary's NUL-delimited
+    # format fragments (for example `postgresql://` plus runtime fields) must
+    # not be joined by grep's `[^[:space:]]` into a fake credential URL.
+    # Unescaped braces are excluded because Rust format templates such as
+    # `postgresql://{role}:{password}@...` are public code, not credentials.
+    local pattern='(svd1_[A-Za-z0-9_-]+|sve1_[A-Za-z0-9_-]+|(SYNVEIL_DATABASE_URL=|DATABASE_URL=)?postgresql://[^[:space:][:cntrl:]@{}]+:[^[:space:][:cntrl:]@{}]+@)'
     if LC_ALL=C grep -aEiq "$pattern" "$artifact"; then
         printf '[synveil-artifact] ERROR: secret-like marker found in %s\n' "$label" >&2
         return 1
