@@ -32,7 +32,10 @@ checks = {
     "uninstall preserves database": "server-software removal" in strategy and "preserves" in strategy,
     "private listener": "never opens a PostgreSQL firewall port" in strategy,
     "DATABASE_URL hidden": "never requests or" in strategy and "`DATABASE_URL`" in strategy,
-    "authenticated P006/P011 acquisition": all(token in strategy for token in ("P006", "P011", "authenticate metadata")),
+    "authenticated P006/P011 acquisition": all(
+        token in strategy
+        for token in ("P006", "P011", "verify publisher signature", "closed inventory")
+    ),
     "Linux implementation targets": "Ubuntu 24.04" in strategy and "Fedora 42" in strategy,
     "Windows Host not qualified": "Windows 11" in strategy and "**NOT_YET_QUALIFIED**" in strategy,
     "ADR-060 accepted": "**Accepted / Chấp thuận — Prompt030 strategy contract**" in adr,

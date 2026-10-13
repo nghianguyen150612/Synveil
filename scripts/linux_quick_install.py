@@ -197,8 +197,13 @@ class NativeManager:
     def __init__(self, profile: Profile):
         self.profile = profile
 
-    def _run(self, command: list[str], *, requires_admin: bool = False) -> subprocess.CompletedProcess[str]:
+    def _run(self, command: list[str], *, mutate: bool = False,
+             requires_admin: bool = False) -> subprocess.CompletedProcess[str]:
         command = [system_executable(command[0]), *command[1:]]
+        # Filesystem/package-database mutation is always an explicitly declared
+        # administrator action. `requires_admin` also supports read-only checks
+        # of protected package metadata when the native verifier demands it.
+        requires_admin = requires_admin or mutate
         if requires_admin:
             if os.geteuid() == 0:
                 raise QuickInstallError("AuthorizationRequired", "The installer must run as an ordinary user.",
@@ -263,7 +268,7 @@ class NativeManager:
         command = (["apt-get", "install", "-y", "--", str(package)] if self.profile.artifact_type == "deb"
                    else ["dnf", "install", "-y", str(package)])
         try:
-            result = self._run(command, requires_admin=True)
+            result = self._run(command, mutate=True)
         except KeyboardInterrupt as error:
             raise QuickInstallError("OutcomeUnknown", "The package transaction was interrupted and its outcome is unknown.",
                                     "Inspect native package state before retrying.", EXIT_UNKNOWN) from error

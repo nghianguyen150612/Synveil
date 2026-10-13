@@ -7,7 +7,7 @@
 
 use std::{pin::Pin, sync::Arc};
 
-use cxx_qt::{CxxQtThread, CxxQtType, Threading, casting::Upcast};
+use cxx_qt::{casting::Upcast, CxxQtThread, CxxQtType, Threading};
 use cxx_qt_lib::{QList, QMap, QMapPair_QString_QVariant, QString, QVariant};
 use synveil_client::{
     AutostartState, BackgroundClientManager, BackgroundLaunchError, BackgroundLaunchResult,
@@ -1031,7 +1031,11 @@ impl ffi::DesktopUiBridge {
                 },
                 {
                     let url = Zeroizing::new(String::from(external_database));
-                    if url.is_empty() { None } else { Some(url) }
+                    if url.is_empty() {
+                        None
+                    } else {
+                        Some(url)
+                    }
                 },
             ),
         );
