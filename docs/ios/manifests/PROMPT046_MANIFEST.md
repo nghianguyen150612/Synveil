@@ -172,12 +172,13 @@ without authoritative reconciliation and never treats OS byte counters as eviden
 
 ## Automated and native validation
 
-Portable checks and strict formatting are being run on Linux with the official `swift:6.2.3`
-toolchain. Native build and XCTest must be observed on macOS GitHub Actions. Run URLs, XCTest counts,
+Observed local checks pass: the iOS source validator, all 84 portable support tests,
+`scripts/validate-docs.sh`, `git diff --check`, Swift parsing, and strict recursive formatting/lint
+with the official `swift:6.2.3` toolchain. Linux has no Xcode or iOS Simulator. Native build and XCTest must be observed on macOS GitHub Actions. Run URLs, XCTest counts,
 PR state and merge evidence will be recorded only after genuine publication/observation; they are
 not yet available at this implementation stage. No earlier P045 run is counted for P046.
 
-New deterministic XCTest coverage includes typed transitions/terminal protections, explicit opt-in,
+The source contains 51 new deterministic background XCTest methods. Coverage includes typed transitions/terminal protections, explicit opt-in,
 file-backed exact range/digest, foreground exclusion across reopen, 204/GET agreement, partial and
 lost-response recovery, zero-progress stop, stale CAS/generation, pause/logout fencing, duplicate and
 orphan callbacks, wrong-origin/duplicate/missing task mapping, interrupted/unauthenticated GET,

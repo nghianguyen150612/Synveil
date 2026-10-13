@@ -200,8 +200,11 @@ struct FileUploadControls: View {
                 .font(.headline)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.updatesFrequently)
-            Text(model.backgroundJobs[record.id]?.state.label ?? "Foreground only")
-                .accessibilityIdentifier("synveil.upload.background.state.\(record.id.rawValue)")
+            if ![.committed, .aborted, .expired].contains(record.state) {
+                Text(model.backgroundJobs[record.id]?.state.label ?? "Foreground only")
+                    .accessibilityIdentifier(
+                        "synveil.upload.background.state.\(record.id.rawValue)")
+            }
             Text(progress.state.label)
                 .accessibilityIdentifier("synveil.upload.state.\(record.id.rawValue)")
             if progress.totalBytes > 0 {
