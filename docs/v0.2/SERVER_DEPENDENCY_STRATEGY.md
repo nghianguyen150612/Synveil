@@ -1,6 +1,6 @@
 # Synveil v0.2 server dependency strategy
 
-> Prompt033 implementation note: PostgreSQL 17 now has a distinct immutable runtime/cluster identity and systemd lifecycle described in [SERVER_SERVICE_INSTALLATION](SERVER_SERVICE_INSTALLATION.md); clean-machine acquisition remains P036 and CI packages remain fixtures.
+> Implementation status: native source verifies and stages signed PostgreSQL 17, Caddy and Synveil server inputs, and the Host helper consumes a root-owned closed catalog. Authentic production inputs and native P036 acceptance remain pending. See [HOST_RUNTIME_INPUTS](HOST_RUNTIME_INPUTS.md) and [SERVER_SERVICE_INSTALLATION](SERVER_SERVICE_INSTALLATION.md).
 
 ## Status and scope
 
@@ -9,28 +9,31 @@
 flow. Advanced / Server Mode retains explicit **external operator-managed
 PostgreSQL 17**. PostgreSQL remains the sole canonical production server
 metadata and transaction authority; there is no SQLite production fallback or
-second schema model. This document selects ownership and lifecycle policy. It
-does not implement provisioning, services, storage, networking, first-admin,
-or the final Host wizard and makes no v0.2 readiness claim.
+second schema model. This document selects ownership and lifecycle policy.
+Production owners now implement provisioning, services, storage, networking,
+first-admin and the Host wizard; their source and pending native qualification
+are recorded in [IMPLEMENTATION_COMPLETION](IMPLEMENTATION_COMPLETION.md).
 
-This inherits P029: desktop installation and Connect do not install server
-dependencies; Host invokes the separate Server Bootstrap Coordinator. Durable
-state is preserved, unknown state fails closed, and uncertain effects are
-inspected before retry.
+This inherits P029: desktop installation and Connect do not install or register
+server dependencies; Host invokes the separate Server Bootstrap Coordinator.
+The bounded root registrar is an explicit operator action. Durable state is
+preserved, unknown state fails closed, and uncertain effects are inspected
+before retry.
 
 ## Current evidence
 
-- ADR-002 selects PostgreSQL. The API and worker require explicit database
-  configuration today; no managed Personal / Home database exists.
+- ADR-002 selects PostgreSQL. This branch implements the managed Personal / Home
+  provisioning path; an installed managed database is not available until
+  authentic signed runtime inputs are supplied and native acceptance passes.
 - `.github/workflows/postgres-17.yml` and numerous ignored live suites qualify
   disposable PostgreSQL **17** databases. Evidence does not qualify 15, 16,
   18, or a future major.
 - `MigrationRunner` and ordered migrations are the forward schema authority.
   Unknown/future schema fails closed; neither reset nor binary rollback is a
   substitute for recovery.
-- Current deployment is operator-managed. Linux package/service, permission,
-  and credential-delivery foundations exist for Ubuntu 24.04 and Fedora 42
-  x86_64. Windows native acceptance is still withheld; there is no macOS
+- Existing deployments remain operator-managed. This branch adds native Linux
+  Host owners for Ubuntu 24.04 and Fedora 42 x86_64. Installed-host behavior is
+  unqualified; Windows native acceptance is withheld, and there is no macOS
   native server/service acceptance.
 - Synveil is MIT licensed. Redistribution of PostgreSQL adds separate upstream
   license/notice and provenance duties; this decision is not legal approval
@@ -112,29 +115,30 @@ not part of every desktop installer and not `SERVER_DATABASE`. Its authenticated
 identity binds component, full upstream PG version and major, platform,
 architecture, Synveil packaging/artifact version, SHA-256, source/build
 provenance, upstream license/notices, compatibility range, runtime inventory,
-and P005 release/P011 channel identity. The future manifest may extend the
-existing schema compatibly; P030 does not change production schemas or invent
-hashes. Opaque executables, unsigned arbitrary URLs, `latest.zip`, mutable
-unpinned downloads, and integrity bypass are forbidden.
+and exact P011 platform identity. Runtime manifests are closed and bind exact
+version, architecture, OS, SHA-256, signed provenance, licenses/notices and
+compatibility. Opaque executables, unsigned arbitrary URLs, `latest.zip`,
+mutable unpinned downloads, and integrity bypass are forbidden.
 
-Host-time acquisition reuses P005 release identity, P006 trust/integrity, and
-P011 selection:
+The implemented supplied-input path uses P006 trust/integrity and exact P011
+platform selection:
 
 ```text
 select exact compatible dependency
-→ authenticate metadata
-→ bounded download
-→ verify digest and trust
-→ private staging
-→ inspect inventory
+→ supply signed manifest, signature, trusted keyring and payload
+→ verify publisher signature and each closed inventory member
+→ privately assemble supplied inputs
+→ explicitly register on the target as root
+→ verify again and atomically publish digest cache/catalog
+→ review and consent in the desktop Host flow
 → install/provision
 → verify
 ```
 
-Nothing executes from the download location. A future exact, already-verified
-artifact may come from a release cache, offline Host bundle, or operator supply
-without changing database semantics. Internet access is neither a permanent
-runtime requirement nor a desktop-install requirement.
+Nothing executes from the supplied bundle location. A verified artifact may
+come from an offline Host bundle or operator supply without changing database
+semantics. Internet access is neither a permanent runtime requirement nor a
+desktop-install requirement.
 
 The artifact lifecycle is Acquire, Verify, Stage, Install, Inspect, Repair,
 compatible Update, and Remove-software-preserving-data. It contains no database
@@ -161,17 +165,18 @@ exact paths, ACLs, and identities. It must not be world-readable/writable;
 credentials are not placed there for convenience.
 
 After preflight, explicit Host consent, verified dependency, and validated
-target ownership, a future adapter is authorized to run `initdb`, initialize a
-private cluster, and create roles/database. Directory existence is insufficient
-identity and unknown/foreign data is never initialized over. It must reconcile
-finite states: **Absent, ArtifactReady, RuntimeReady, ClusterInitialized,
-DatabaseReady, NeedsRepair, UnsupportedVersion, External, and Blocked**. It must
-also distinguish partial initialization, compatible managed, foreign/unknown,
-and corrupt/unavailable clusters. Unknown maps to Blocked, not a wizard page.
+target ownership, the native helper runs the supplied `initdb`, initializes a
+private cluster, and creates least-privilege roles/database. Directory
+existence is insufficient identity and unknown/foreign data is never
+initialized over. Recovery distinguishes partial initialization,
+compatible-managed state, foreign/unknown data, and corrupt/unavailable
+clusters. Unknown maps to Blocked, not a wizard page.
 
 If artifact installation, initialization, role creation, or database creation
 has an unknown outcome, inspect authoritative state before retry: never blind
-second `initdb`, role recreation, or drop/create.
+second `initdb`, role recreation, or drop/create. Readiness checks the live
+local PostgreSQL protocol for the expected system identifier and persisted
+port alongside the protected data-directory identity and unit.
 
 ## Roles, secrets, and schema authority
 
@@ -200,22 +205,21 @@ when explicitly authorized, credentials, and migrations. It must not stop or
 upgrade the server, affect unrelated databases, remove the cluster, delete
 unrelated data, or change global settings without separate authorization.
 
-Before mutation, later implementation validates PG17 major, connectivity,
-TLS/trust policy, capabilities, database identity, permissions/credentials,
-migration compatibility, and schema state. “Connection succeeded” alone is
-not qualification. Protected administrator configuration may accept external
-connection secrets, but ordinary config, UI, diagnostics, and logs may not
-expose them.
+Before mutation, the native Host path validates the PG17 target, connectivity,
+TLS policy, database identity, and protected credential handoff; service
+readiness also runs the canonical migration and schema checks. “Connection
+succeeded” alone is not qualification. Protected administrator configuration
+may accept external connection secrets, but ordinary config, UI, diagnostics,
+and logs may not expose them. Native acceptance remains deferred.
 
 ## Lifecycle, repair, recovery, and preservation
 
-- The eventual runtime must provide controlled start/stop (not reboot as
-  success), boot persistence, health inspection, least privilege, repair,
-  updates, and data-preserving software removal. Unexpected required reboot is
-  Blocked until explicitly supported. P033 selects the service mechanism and
-  dedicated restricted identity; desktop/API/PostgreSQL do not run permanently
-  as root. Setup elevation is visible, purpose-specific, short-lived, and
-  adapter-owned.
+- The production Linux owner provides controlled start/stop (not reboot as
+  success), boot persistence, health inspection, dedicated service identities,
+  repair, compatible runtime updates, and data-preserving software removal.
+  These paths remain unqualified until native acceptance. Unexpected required
+  reboot is Blocked until explicitly supported. Setup elevation is visible,
+  purpose-specific, short-lived, and adapter-owned.
 - Repair verifies artifact identity, restores managed runtime files, reconciles
   supported service integration, and validates cluster/database availability
   and compatibility. It never initializes over data, drops a database, blindly

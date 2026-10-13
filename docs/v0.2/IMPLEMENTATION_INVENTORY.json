@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "mode": "DEVELOPMENT_FIRST_QA_DEFERRED",
-  "implementation_status": "IMPLEMENTATION_IN_PROGRESS_QA_DEFERRED",
+  "implementation_status": "IMPLEMENTATION_COMPLETE_QA_PENDING",
   "scope_source": "docs/v0.2/ROADMAP.md",
-  "source_checkpoint": "c134bc7d00e8a0058a1d52b80033352ac2467f82",
-  "assessment_method": "Source call-path and ownership inspection; no new runtime or native execution evidence. Documentation-only IMPLEMENTED entries assert contracts only.",
+  "source_checkpoint": "c56ea4c5f9b5b4e2643e6815711a415b70883d88",
+  "assessment_method": "Production call-path and owner-boundary inspection, plus selective source diagnostics; no native runtime effects or acceptance evidence. Documentation-only IMPLEMENTED entries assert contracts only.",
   "status_counts": {
     "IMPLEMENTED": 7,
     "DEFERRED TO QA": 6,
-    "IMPLEMENTED BUT UNTESTED": 31,
-    "PARTIALLY IMPLEMENTED": 4
+    "IMPLEMENTED BUT UNTESTED": 35,
+    "PARTIALLY IMPLEMENTED": 0
   },
   "features": [
     {
@@ -271,17 +271,17 @@
     {
       "id": "P033",
       "title": "Server Service Installation",
-      "status": "PARTIALLY IMPLEMENTED",
-      "source": "crates/server-service/src/lib.rs",
-      "source_assessment": "Plans and units exist; native dependency/PG/service effects are absent (G01-G04).",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "crates/server-host/src/native/services.rs",
+      "source_assessment": "Implemented native PG17/service provisioning and reconciliation owners; installed-host behavior remains NOT_RUN_QA_DEFERRED.",
       "execution_status": "NOT_RUN_QA_DEFERRED"
     },
     {
       "id": "P034",
       "title": "Server Network and Reachability Setup",
-      "status": "PARTIALLY IMPLEMENTED",
-      "source": "crates/server-network/src/lib.rs",
-      "source_assessment": "Planning/rendering exist; TLS, edge/firewall application and trust handoff absent (G05/G07).",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "crates/server-host/src/native/network.rs",
+      "source_assessment": "Implemented TLS, Caddy, exact firewall ownership, and durable reviewed network reconfiguration; native acceptance remains deferred.",
       "execution_status": "NOT_RUN_QA_DEFERRED"
     },
     {
@@ -295,17 +295,17 @@
     {
       "id": "P036",
       "title": "End-to-End Self-Host Wizard",
-      "status": "PARTIALLY IMPLEMENTED",
-      "source": "crates/server-bootstrap/src/lib.rs",
-      "source_assessment": "The coordinator has no production native CanonicalOwners implementation (G01-G08).",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "crates/server-host/src/native.rs",
+      "source_assessment": "Production NativeHostOwners invokes the canonical coordinator through the purpose-specific root helper; real dependencies and native acceptance remain pending.",
       "execution_status": "NOT_RUN_QA_DEFERRED"
     },
     {
       "id": "P037",
       "title": "Unified Welcome Experience",
-      "status": "PARTIALLY IMPLEMENTED",
-      "source": "crates/desktop/src/bridge.rs",
-      "source_assessment": "Welcome/Connect work; Host uses UnavailableHostOwners and cannot resume real setup (G06/G08).",
+      "status": "IMPLEMENTED BUT UNTESTED",
+      "source": "crates/desktop/src/host_ui.rs",
+      "source_assessment": "Qt/QML Host wizard is wired to preflight, reviewed consent, provisioning, account, library, readiness, and Connect handoff; runtime acceptance remains deferred.",
       "execution_status": "NOT_RUN_QA_DEFERRED"
     },
     {

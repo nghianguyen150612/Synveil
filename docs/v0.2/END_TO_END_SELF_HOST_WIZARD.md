@@ -1,15 +1,13 @@
 # End-to-end self-host wizard
 
-Status: **Coordinator implemented; Phase-E native qualification blocked.**
+Status: **Production source path implemented; Phase-E native qualification deferred.**
 
-Current implementation audit: the production desktop still constructs
-`UnavailableHostOwners`; its Host page contains availability feedback and a
-Back action. The storage/access/admin/login/library wizard and privileged
-native owner adapter are unfinished source, independently of deferred QA.
-See G01-G08 in [IMPLEMENTATION_COMPLETION.md](IMPLEMENTATION_COMPLETION.md).
-The qualification environment notes below describe the historical P036
-baseline; the current closeout has a configured remote and a development source
-workflow, without claiming native acceptance.
+The production desktop invokes the typed Host controller and canonical
+`CanonicalOwners` adapter through the bounded native helper. The wizard covers
+preflight, storage/access selection, review/consent, provisioning progress,
+owner account/sign-in, first Library and verified client handoff. Source
+implementation and remaining input/native QA blockers are detailed in
+[IMPLEMENTATION_COMPLETION.md](IMPLEMENTATION_COMPLETION.md).
 
 ## Product path and support boundary
 
@@ -48,6 +46,11 @@ configured storage, database outage, or edge outage makes readiness fail
 without replacement or identity rotation. Repair and server-software reinstall
 may restore owned replaceable integration only; configuration, secrets,
 database, object data, bootstrap, and logical Library remain preserved.
+If `initdb` stops after creating a partial directory, the Host requires a new
+explicit review. It records the exact directory identity, atomically archives
+that directory intact under a root-only recovery path, and resumes in a fresh
+empty directory. It never reruns `initdb` over nonempty data or deletes the
+preserved copy.
 
 ## Ready and handoff
 
@@ -64,10 +67,9 @@ the local synchronized-folder choice; the Library checked here is server-side.
 
 ## Qualification and known limitations
 
-No exact production PostgreSQL 17 artifact or Caddy artifact inventory/digest
-is present in this baseline. This environment also has no configured Git
-remote, native Ubuntu/Fedora disposable VMs, graphical session, systemd boot
-control, or hard-power controller. Consequently restart/reboot, interruption,
-repair/reinstall, LocalOnly HTTPS, PrivateLan, data-preservation, and clean
-machine evidence cannot be honestly recorded here. FIRST-RUN-2 remains
-`IMPLEMENTATION_PENDING`, and the Phase-E readiness marker is withheld.
+No authenticated production PostgreSQL 17/Caddy bytes, trusted publisher
+keyrings, or signatures are supplied in this repository. The fail-closed
+supplied-input registrar is implemented; deployment remains blocked until
+operators provide those authentic inputs. Native Ubuntu/Fedora GUI, service,
+power-cycle, and clean-machine acceptance remains deferred. No native readiness
+or release qualification is claimed.
