@@ -588,6 +588,267 @@ fn verify_persisted_port(
     }
     Ok(())
 }
+fn archive_name(server_id: &str, index: usize) -> String {
+    format!("interrupted-initdb-{server_id}-{index}")
+}
+fn preserved_parent() -> PathBuf {
+    Path::new("/var/lib/synveil/postgresql/17/preserved").to_path_buf()
+}
+/// Return the exact directory identity that an explicit preserving repair may
+/// archive. It never adopts a directory that was not recorded before initdb.
+pub fn review_postgres_repair(
+    owner: &NativeOwners,
+    catalog: &RuntimeCatalog,
+    selection: &HostSelection,
+) -> Result<Option<(String, u64, u64)>> {
+    if selection.profile != DeploymentProfile::PersonalHomeManaged {
+        return Ok(None);
+    }
+    let journal = owner.journal()?.ok_or("Host intent missing")?;
+    let data = Path::new(MANAGED_DATA_DIRECTORY);
+    let marker_path = data
+        .parent()
+        .ok_or("invalid cluster path")?
+        .join(CLUSTER_MARKER_NAME);
+    if !marker_path.exists() {
+        if !data.exists()
+            && journal.postgres_data_identity.is_none()
+            && journal.pending_postgres_archive.is_none()
+            && journal.preserved_postgres_data.is_empty()
+        {
+            return Ok(None);
+        }
+        return Err("PostgreSQL ownership marker is missing; preserve and inspect the data");
+    }
+    let (postgres_uid, _) = native::service_user("synveil-postgres")?;
+    let marker: ManagedClusterIdentity =
+        serde_json::from_slice(&native::read_owned(&marker_path, 16 * 1024)?)
+            .map_err(|_| "managed PostgreSQL marker needs preserving repair")?;
+    marker
+        .validate()
+        .map_err(|_| "managed PostgreSQL identity conflict")?;
+    if marker.server_installation_id != journal.server_id
+        || catalog.artifacts.get("postgresql") != Some(&marker.runtime_artifact_id)
+    {
+        return Err("PostgreSQL state is not an inactive interrupted initialization");
+    }
+    if journal.preserved_postgres_data.len() >= 16 {
+        return Err("PostgreSQL preservation archive limit reached; operator recovery required");
+    }
+    let expected_name = archive_name(&journal.server_id, journal.preserved_postgres_data.len());
+    let target_name = if let Some(pending) = &journal.pending_postgres_archive {
+        if pending.archive_name != expected_name {
+            return Err("PostgreSQL preservation journal needs operator repair");
+        }
+        pending.archive_name.clone()
+    } else {
+        expected_name
+    };
+    let preserved = preserved_parent();
+    if preserved.exists() {
+        native::root_path(&preserved)?;
+        let metadata = fs::symlink_metadata(&preserved)
+            .map_err(|_| "PostgreSQL preservation directory unavailable")?;
+        if metadata.uid() != 0 || metadata.mode() & 0o7777 != 0o700 {
+            return Err("PostgreSQL preservation directory needs operator repair");
+        }
+    } else if journal.pending_postgres_archive.is_some() {
+        return Err("pending PostgreSQL preservation directory is missing");
+    }
+    if !journal.preserved_postgres_data.is_empty() {
+        native::root_path(&preserved)?;
+        for (index, entry) in journal.preserved_postgres_data.iter().enumerate() {
+            if entry.archive_name != archive_name(&journal.server_id, index) {
+                return Err("PostgreSQL preservation archive inventory needs operator repair");
+            }
+            let path = preserved.join(&entry.archive_name);
+            let saved = fs::symlink_metadata(path)
+                .map_err(|_| "previously preserved PostgreSQL data is missing")?;
+            if !saved.is_dir()
+                || saved.file_type().is_symlink()
+                || (saved.dev(), saved.ino()) != (entry.device, entry.inode)
+            {
+                return Err("previously preserved PostgreSQL data identity changed");
+            }
+        }
+    }
+    let source_metadata = match fs::symlink_metadata(data) {
+        Ok(metadata) => Some(metadata),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => return Err("PostgreSQL data directory inspection failed"),
+    };
+    let archive = preserved.join(&target_name);
+    let archive_metadata = match fs::symlink_metadata(&archive) {
+        Ok(metadata) => Some(metadata),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => return Err("PostgreSQL preservation archive inspection failed"),
+    };
+    if let Some(pending) = &journal.pending_postgres_archive {
+        if journal.postgres_data_identity != Some((pending.device, pending.inode)) {
+            return Err("pending PostgreSQL preservation identity changed");
+        }
+        let source_matches = source_metadata.as_ref().is_some_and(|metadata| {
+            metadata.is_dir()
+                && !metadata.file_type().is_symlink()
+                && [0, postgres_uid].contains(&metadata.uid())
+                && metadata.mode() & 0o077 == 0
+                && (metadata.dev(), metadata.ino()) == (pending.device, pending.inode)
+        });
+        let archive_matches = archive_metadata.as_ref().is_some_and(|metadata| {
+            metadata.is_dir()
+                && !metadata.file_type().is_symlink()
+                && [0, postgres_uid].contains(&metadata.uid())
+                && metadata.mode() & 0o077 == 0
+                && (metadata.dev(), metadata.ino()) == (pending.device, pending.inode)
+        });
+        if source_matches == archive_matches {
+            return Err("PostgreSQL interrupted preservation outcome is ambiguous");
+        }
+        return Ok(Some((target_name, pending.device, pending.inode)));
+    }
+    let Some(metadata) = source_metadata.as_ref() else {
+        if journal.postgres_data_identity.is_none() || !journal.preserved_postgres_data.is_empty() {
+            return Ok(None);
+        }
+        return Err("PostgreSQL data directory is missing from its recorded identity");
+    };
+    if !metadata.is_dir()
+        || metadata.file_type().is_symlink()
+        || ![0, postgres_uid].contains(&metadata.uid())
+        || metadata.mode() & 0o077 != 0
+        || archive_metadata.is_some()
+    {
+        return Err("PostgreSQL data directory needs preserving operator repair");
+    }
+    let identity = (metadata.dev(), metadata.ino());
+    if fs::read_dir(data)
+        .map_err(|_| "PostgreSQL data directory unavailable")?
+        .next()
+        .is_none()
+    {
+        if marker.postgres_system_identifier.is_some() || journal.postgres_system_id.is_some() {
+            return Err("initialized PostgreSQL identity has an empty data directory");
+        }
+        if journal
+            .postgres_data_identity
+            .is_some_and(|old| old != identity)
+        {
+            return Err("empty PostgreSQL data directory identity changed");
+        }
+        return Ok(None);
+    }
+    if journal.postgres_data_identity != Some(identity) {
+        return Err("nonempty PostgreSQL data directory is not owned by this Host journal");
+    }
+    if marker.postgres_system_identifier.is_some() || journal.postgres_system_id.is_some() {
+        let actual = system_id(catalog)?;
+        if marker
+            .postgres_system_identifier
+            .as_ref()
+            .is_some_and(|expected| expected != &actual)
+            || journal
+                .postgres_system_id
+                .as_ref()
+                .is_some_and(|expected| expected != &actual)
+        {
+            return Err("initialized PostgreSQL identity needs preserving operator repair");
+        }
+        return Ok(None);
+    }
+    if unit_active("synveil-postgresql.service") {
+        return Err("stop the owned PostgreSQL service before preserving an interrupted directory");
+    }
+    if archive_metadata.is_some() {
+        return Err("PostgreSQL preservation target already exists");
+    }
+    Ok(Some((target_name, identity.0, identity.1)))
+}
+fn preserve_interrupted_postgres(
+    owner: &NativeOwners,
+    catalog: &RuntimeCatalog,
+    selection: &HostSelection,
+    journal: &mut Journal,
+) -> Result<()> {
+    if owner
+        .authorization
+        .as_ref()
+        .is_none_or(|authorization| authorization.context.purpose != HostPurpose::RepairHost)
+    {
+        return Err("interrupted initdb needs a separately reviewed preserving repair");
+    }
+    let Some((name, device, inode)) = review_postgres_repair(owner, catalog, selection)? else {
+        return Ok(());
+    };
+    let parent = preserved_parent();
+    if !parent.exists() {
+        native::directory(&parent, 0o700)?;
+    }
+    let parent_metadata = fs::symlink_metadata(&parent)
+        .map_err(|_| "PostgreSQL preservation directory unavailable")?;
+    if !parent_metadata.is_dir()
+        || parent_metadata.file_type().is_symlink()
+        || parent_metadata.uid() != 0
+        || parent_metadata.mode() & 0o7777 != 0o700
+    {
+        return Err("PostgreSQL preservation directory needs operator repair");
+    }
+    let archive = parent.join(&name);
+    if journal.pending_postgres_archive.is_none() {
+        journal.pending_postgres_archive = Some(PendingPostgresArchive {
+            archive_name: name.clone(),
+            device,
+            inode,
+        });
+        owner.persist(journal)?;
+    }
+    let data = Path::new(MANAGED_DATA_DIRECTORY);
+    match (fs::symlink_metadata(data), fs::symlink_metadata(&archive)) {
+        (Ok(source), Err(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            if !source.is_dir()
+                || source.file_type().is_symlink()
+                || (source.dev(), source.ino()) != (device, inode)
+            {
+                return Err("PostgreSQL data directory changed before preservation");
+            }
+            fs::rename(data, &archive).map_err(|_| "PostgreSQL directory preservation failed")?;
+            fs::File::open(data.parent().ok_or("invalid PostgreSQL path")?)
+                .and_then(|file| file.sync_all())
+                .map_err(|_| "PostgreSQL preservation sync failed")?;
+            fs::File::open(&parent)
+                .and_then(|file| file.sync_all())
+                .map_err(|_| "PostgreSQL preservation sync failed")?;
+        }
+        (Err(source), Ok(saved)) if source.kind() == std::io::ErrorKind::NotFound => {
+            if !saved.is_dir()
+                || saved.file_type().is_symlink()
+                || (saved.dev(), saved.ino()) != (device, inode)
+            {
+                return Err("PostgreSQL preservation archive identity changed");
+            }
+        }
+        _ => return Err("PostgreSQL preservation outcome is ambiguous"),
+    }
+    let saved = fs::symlink_metadata(&archive)
+        .map_err(|_| "PostgreSQL preservation archive unavailable")?;
+    if (saved.dev(), saved.ino()) != (device, inode) {
+        return Err("PostgreSQL preservation archive identity changed");
+    }
+    if !journal
+        .preserved_postgres_data
+        .iter()
+        .any(|entry| entry.archive_name == name)
+    {
+        journal.preserved_postgres_data.push(PreservedPostgresData {
+            archive_name: name,
+            device,
+            inode,
+        });
+    }
+    journal.pending_postgres_archive = None;
+    journal.postgres_data_identity = None;
+    journal.postgres_system_id = None;
+    owner.persist(journal)
+}
 fn prepare_postgres(owner: &NativeOwners, catalog: &RuntimeCatalog) -> Result<()> {
     let mut journal = owner.journal()?.ok_or("Host intent missing")?;
     let (uid, gid) = native::service_user("synveil-postgres")?;
@@ -649,6 +910,14 @@ fn prepare_postgres(owner: &NativeOwners, catalog: &RuntimeCatalog) -> Result<()
         )?;
         marker
     };
+    if owner
+        .authorization
+        .as_ref()
+        .is_some_and(|authorization| authorization.context.purpose == HostPurpose::RepairHost)
+    {
+        let selection = journal.selection.clone();
+        preserve_interrupted_postgres(owner, catalog, &selection, &mut journal)?;
+    }
     if !data.exists() {
         native::directory(data, 0o700)?;
     }

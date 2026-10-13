@@ -16,6 +16,7 @@ pub enum HostPurpose {
     RemoveSoftware,
     Upgrade,
     ReconfigureNetwork,
+    RepairHost,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

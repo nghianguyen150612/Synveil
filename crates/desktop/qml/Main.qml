@@ -827,7 +827,14 @@ ApplicationWindow {
                         Button { text: qsTr("Check this device"); onClicked: bridge.hostPreflight() }
                         Button {
                             text: bridge.host_step === "recovery" ? qsTr("Review preserving repair") : qsTr("Review setup")
-                            onClicked: { bridge.hostReview(hostProfile.currentIndex === 0 ? "home" : "advanced", hostStorage.text, hostAccess.currentIndex === 0 ? "local" : hostAccess.currentIndex === 1 ? "lan" : "external", hostLan.currentValue || "", hostExternalOrigin.text, hostExternalDatabase.text); hostExternalDatabase.clear(); }
+                            onClicked: {
+                                if (bridge.host_step === "recovery") {
+                                    bridge.hostReviewRepair()
+                                } else {
+                                    bridge.hostReview(hostProfile.currentIndex === 0 ? "home" : "advanced", hostStorage.text, hostAccess.currentIndex === 0 ? "local" : hostAccess.currentIndex === 1 ? "lan" : "external", hostLan.currentValue || "", hostExternalOrigin.text, hostExternalDatabase.text)
+                                    hostExternalDatabase.clear()
+                                }
+                            }
                         }
                         Button {
                             visible: bridge.host_server_id.length > 0

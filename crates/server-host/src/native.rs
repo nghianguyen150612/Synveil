@@ -96,6 +96,10 @@ struct Journal {
     runtime_intents: BTreeMap<String, String>,
     #[serde(default)]
     retained_runtimes: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    pending_postgres_archive: Option<PendingPostgresArchive>,
+    #[serde(default)]
+    preserved_postgres_data: Vec<PreservedPostgresData>,
     postgres_port: Option<u16>,
     postgres_data_identity: Option<(u64, u64)>,
     postgres_system_id: Option<String>,
@@ -111,6 +115,20 @@ struct Journal {
 struct FileIntent {
     old_sha256: Option<String>,
     new_sha256: String,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PendingPostgresArchive {
+    archive_name: String,
+    device: u64,
+    inode: u64,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreservedPostgresData {
+    archive_name: String,
+    device: u64,
+    inode: u64,
 }
 impl Journal {
     fn owns_file_outcome(&self, path: &str, actual: &str) -> bool {
@@ -167,6 +185,9 @@ impl NativeOwners {
         if journal.schema_version != 1
             || journal.actor_uid != self.actor
             || journal.consumed_nonces.len() > 1024
+            || journal.preserved_postgres_data.len() > 16
+            || (journal.pending_postgres_archive.is_some()
+                && journal.preserved_postgres_data.len() >= 16)
         {
             return Err("Host belongs to another local account or journal needs repair");
         }
@@ -345,7 +366,9 @@ impl NativeOwners {
         }
         let journal = self.journal()?;
         if let Some(journal) = journal.as_ref() {
-            if journal.pending_network_selection.is_some() && purpose == HostPurpose::Setup {
+            if journal.pending_network_selection.is_some()
+                && matches!(purpose, HostPurpose::Setup | HostPurpose::RepairHost)
+            {
                 return Err("a pending access change requires a fresh network review");
             }
             let effective = journal
@@ -420,6 +443,11 @@ impl NativeOwners {
         let (catalog, manifests) = self.catalog(selection.profile, selection.mode)?;
         services::preflight(self, &catalog, &selection)?;
         let service_inventory = services::units(&catalog, &selection)?;
+        let postgres_repair = if purpose == HostPurpose::RepairHost {
+            services::review_postgres_repair(self, &catalog, &selection)?
+        } else {
+            None
+        };
         let old_artifacts = if purpose == HostPurpose::Upgrade {
             services::review_upgrade(self, &catalog, &selection)?
         } else {
@@ -489,10 +517,27 @@ impl NativeOwners {
                     PrivilegedEffect::ReconcileOwnedServices,
                     PrivilegedEffect::ConfigureOwnedReachability,
                 ],
+                HostPurpose::RepairHost => vec![
+                    PrivilegedEffect::InstallVerifiedDependencies,
+                    PrivilegedEffect::PrepareConfiguration,
+                    PrivilegedEffect::PrepareStorage,
+                    PrivilegedEffect::ReconcileOwnedServices,
+                    PrivilegedEffect::ConfigureOwnedReachability,
+                ],
             },
         };
         let mut plan = plan;
         plan.artifact_fingerprints.extend(old_artifacts);
+        plan.artifact_fingerprints
+            .push(format!("host-purpose:{purpose:?}"));
+        if let Some((archive_name, device, inode)) = &postgres_repair {
+            plan.artifact_fingerprints.push(format!(
+                "postgresql-preserve-partial:{archive_name}:{device}:{inode}"
+            ));
+        } else if purpose == HostPurpose::RepairHost {
+            plan.artifact_fingerprints
+                .push("postgresql-preserving-resume:no-directory-move".to_owned());
+        }
         let binding = plan.binding();
         let mut summary = vec![
             format!("Server identity: {}", plan.server_installation_id),
@@ -537,12 +582,19 @@ impl NativeOwners {
                 HostPurpose::ReconfigureNetwork => {
                     "Apply the reviewed access mode, origin, listener and interface to this existing Host. Stop and reconcile only owned services, replace only the exact owned firewall rule, preserve server identity, database, storage, credentials, administrator, Library and CA, then verify the new HTTPS authority before committing it."
                 }
+                HostPurpose::RepairHost => {
+                    "Preserve the exact interrupted PostgreSQL initialization directory intact under the protected recovery archive, then initialize and verify a new managed PostgreSQL 17 directory. No existing cluster is overwritten or deleted."
+                }
                 HostPurpose::Setup => unreachable!(),
             };
             summary = vec![
                 format!("Server identity: {}", plan.server_installation_id),
                 format!("Reviewed operation: {purpose:?}"),
                 change.to_owned(),
+                postgres_repair.as_ref().map_or_else(
+                    || "No PostgreSQL directory move is planned; continue only from verified or empty owned state.".to_owned(),
+                    |(name, _, _)| format!("Preserved PostgreSQL directory: /var/lib/synveil/postgresql/17/preserved/{name}"),
+                ),
                 format!(
                     "Owned service inventory: {}",
                     service_inventory
@@ -623,6 +675,8 @@ impl NativeOwners {
             pending_files: BTreeMap::new(),
             runtime_intents: BTreeMap::new(),
             retained_runtimes: BTreeMap::new(),
+            pending_postgres_archive: None,
+            preserved_postgres_data: Vec::new(),
             postgres_port: None,
             postgres_data_identity: None,
             postgres_system_id: None,

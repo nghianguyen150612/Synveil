@@ -386,6 +386,9 @@ pub mod ffi {
         #[cxx_name = "hostReviewUpgrade"]
         #[qinvokable]
         fn host_review_upgrade(self: Pin<&mut Self>);
+        #[cxx_name = "hostReviewRepair"]
+        #[qinvokable]
+        fn host_review_repair(self: Pin<&mut Self>);
 
         #[cxx_name = "chooseConnect"]
         #[qinvokable]
@@ -896,6 +899,12 @@ impl SnapshotDispatcher {
 }
 
 impl ffi::DesktopUiBridge {
+    fn host_review_repair(self: Pin<&mut Self>) {
+        run_host_action(
+            self,
+            HostAction::Lifecycle(synveil_server_host::protocol::HostPurpose::RepairHost),
+        );
+    }
     fn host_review_upgrade(self: Pin<&mut Self>) {
         run_host_action(
             self,
