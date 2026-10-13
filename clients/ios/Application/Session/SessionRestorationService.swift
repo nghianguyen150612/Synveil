@@ -182,7 +182,8 @@ public final class SessionRestorationService: SessionRestorationServiceProtocol,
                 case .authenticationRejected, .deviceRevoked: outcome = .rejected
                 default: outcome = .verificationRequired
                 }
-            default: return result  // Leave the original check unresolved after identity/storage loss.
+            // Identity or storage loss leaves the original check unresolved.
+            default: return result
             }
             do { try await authorizationEvidence.finish(lease, outcome: outcome) } catch {
                 return .locallyValidStoredSession(session, verification: .localStorageFailure)
