@@ -52,7 +52,7 @@ impl NativeHostOwners {
         external_database_url: Option<String>,
     ) -> Result<(), &'static str> {
         self.request(Request::Confirm {
-            context,
+            context: Box::new(context),
             external_database_url,
         })
         .map(|_| ())

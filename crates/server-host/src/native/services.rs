@@ -1331,18 +1331,17 @@ fn effective_unit(owner: &NativeOwners, name: &str) -> Result<()> {
     ])?;
     let text = String::from_utf8(output).map_err(|_| "invalid systemd inspection")?;
     let declared = std::str::from_utf8(&unit_bytes).map_err(|_| "invalid owned systemd unit")?;
-    if let Some(user) = declared.lines().find_map(|line| line.strip_prefix("User=")) {
-        if !text.lines().any(|line| line == format!("User={user}")) {
-            return Err("effective service user differs from the owned unit");
-        }
+    if let Some(user) = declared.lines().find_map(|line| line.strip_prefix("User="))
+        && !text.lines().any(|line| line == format!("User={user}"))
+    {
+        return Err("effective service user differs from the owned unit");
     }
     if let Some(group) = declared
         .lines()
         .find_map(|line| line.strip_prefix("Group="))
+        && !text.lines().any(|line| line == format!("Group={group}"))
     {
-        if !text.lines().any(|line| line == format!("Group={group}")) {
-            return Err("effective service group differs from the owned unit");
-        }
+        return Err("effective service group differs from the owned unit");
     }
     if let Some(program) = declared
         .lines()

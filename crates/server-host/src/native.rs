@@ -966,7 +966,7 @@ impl NativeOwners {
                 context,
                 external_database_url,
             } => {
-                self.confirm(context, external_database_url)?;
+                self.confirm(*context, external_database_url)?;
                 Ok(Response::Complete)
             }
             Request::Apply {
@@ -1066,11 +1066,10 @@ impl NativeOwners {
         );
         if let StorageConfiguration::ConfiguredLocal { root, .. }
         | StorageConfiguration::PreparingLocal { root, .. } = &config.storage
+            && root != &selection.storage_root
         {
-            if root != &selection.storage_root {
-                observation.needs_repair = true;
-                return Ok((observation, "Canonical storage differs from the reviewed Host; a preserving migration is required".to_owned()));
-            }
+            observation.needs_repair = true;
+            return Ok((observation, "Canonical storage differs from the reviewed Host; a preserving migration is required".to_owned()));
         }
         observation.storage_ready =
             matches!(config.storage, StorageConfiguration::ConfiguredLocal { .. })

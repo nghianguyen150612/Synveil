@@ -99,7 +99,7 @@ fn run() -> Result<(), &'static str> {
         fs::set_permissions(INSPECT_SOCKET, fs::Permissions::from_mode(0o666))
             .map_err(|_| "inspection socket permissions failed")?;
         for connection in listener.incoming() {
-            let Ok(mut socket) = connection else {
+            let Ok(socket) = connection else {
                 continue;
             };
             let Ok(peer) = getsockopt(&socket, PeerCredentials) else {

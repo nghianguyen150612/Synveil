@@ -362,15 +362,13 @@ fn certificates(owner: &NativeOwners, selection: &HostSelection) -> Result<Manag
     }
     if let NetworkConfiguration::Preparing(network) | NetworkConfiguration::Configured(network) =
         &config.network
-    {
-        if network.network_integration_id.as_str() != journal.network_id
+        && (network.network_integration_id.as_str() != journal.network_id
             || network.trust
                 != (NetworkTrust::ManagedPrivateCa {
                     ca_certificate_sha256: descriptor.ca_certificate_sha256.clone(),
-                })
-        {
-            return Err("CA or network identity changed; fresh operator approval is required");
-        }
+                }))
+    {
+        return Err("CA or network identity changed; fresh operator approval is required");
     }
     let leaf = Path::new("/etc/synveil/network/server-certificate.pem");
     let key_public = openssl(
@@ -864,17 +862,16 @@ pub fn configure(
 ) -> Result<()> {
     validate_selection(selection)?;
     let journal = owner.journal()?.ok_or("network intent missing")?;
-    if let Some(config) = owner.config()? {
-        if let NetworkConfiguration::Preparing(previous)
+    if let Some(config) = owner.config()?
+        && let NetworkConfiguration::Preparing(previous)
         | NetworkConfiguration::Configured(previous) = &config.network
-        {
-            let changed = previous.mode != selection.mode
-                || previous.canonical_origin != selection.canonical_origin
-                || previous.listener.address.to_string() != selection.listener_address
-                || previous.listener.interface_id != selection.interface_id;
-            if changed && previous.mode == ReachabilityMode::PrivateLan {
-                remove_owned_firewall(owner)?;
-            }
+    {
+        let changed = previous.mode != selection.mode
+            || previous.canonical_origin != selection.canonical_origin
+            || previous.listener.address.to_string() != selection.listener_address
+            || previous.listener.interface_id != selection.interface_id;
+        if changed && previous.mode == ReachabilityMode::PrivateLan {
+            remove_owned_firewall(owner)?;
         }
     }
     let (trust, descriptor) = if selection.mode == ReachabilityMode::AdvancedExternalHttps {

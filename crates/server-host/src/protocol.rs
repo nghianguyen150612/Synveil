@@ -83,7 +83,7 @@ pub enum Request {
         selection: HostSelection,
     },
     Confirm {
-        context: ReviewedContext,
+        context: Box<ReviewedContext>,
         external_database_url: Option<String>,
     },
     Apply {

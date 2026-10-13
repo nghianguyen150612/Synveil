@@ -143,7 +143,7 @@ impl NativeHostOwners {
     ) -> Result<(), &'static str> {
         let binding = context.binding.clone();
         match self.request(Request::Confirm {
-            context,
+            context: Box::new(context),
             external_database_url,
         })? {
             Response::Complete => {
