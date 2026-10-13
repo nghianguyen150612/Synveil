@@ -73,6 +73,7 @@ STAGED_ROOT="${DESTDIR:-}"
 BINARY_SRC="${SYNVEIL_INSTALL_BINARY:-}"
 CLIENT_BINARY_SRC="${SYNVEIL_INSTALL_CLIENT_BINARY:-}"
 DESKTOP_BINARY_SRC="${SYNVEIL_INSTALL_DESKTOP_BINARY:-}"
+HOST_HELPER_BINARY_SRC="${SYNVEIL_INSTALL_HOST_HELPER_BINARY:-}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -94,6 +95,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --desktop-binary=*)
             DESKTOP_BINARY_SRC="${1#--desktop-binary=}"
+            shift
+            ;;
+        --host-helper-binary=*)
+            HOST_HELPER_BINARY_SRC="${1#--host-helper-binary=}"
             shift
             ;;
         --help|-h)
@@ -170,8 +175,9 @@ resolve_desktop_binary() {
 
 CLIENT_BINARY_SRC="$(resolve_desktop_binary "$CLIENT_BINARY_SRC" synveil-client)"
 DESKTOP_BINARY_SRC="$(resolve_desktop_binary "$DESKTOP_BINARY_SRC" synveil-desktop)"
+HOST_HELPER_BINARY_SRC="$(resolve_desktop_binary "$HOST_HELPER_BINARY_SRC" synveil-host-helper)"
 
-for binary_source in "$CLIENT_BINARY_SRC" "$DESKTOP_BINARY_SRC"; do
+for binary_source in "$CLIENT_BINARY_SRC" "$DESKTOP_BINARY_SRC" "$HOST_HELPER_BINARY_SRC"; do
     if [[ ! -f "$binary_source" ]]; then
         synveil_err "binary source does not exist: $binary_source"
         exit 1
@@ -236,6 +242,8 @@ install_one() {
                 src_path="$CLIENT_BINARY_SRC"
             elif [[ "$source" == "BINARY_DESKTOP" ]]; then
                 src_path="$DESKTOP_BINARY_SRC"
+            elif [[ "$source" == "BINARY_HOST_HELPER" ]]; then
+                src_path="$HOST_HELPER_BINARY_SRC"
             elif [[ "$source" == "-" ]]; then
                 synveil_err "PACKAGE entry must have source file, got '-' for $dest"
                 return 1

@@ -38,6 +38,18 @@ AppImage construction path; its Qt plugin handles libraries, platform plugins,
 and imported QML modules. This is smaller and more maintainable than a custom
 ELF/QML dependency resolver.
 
+The type-2 AppImage runtime is a separate operator-supplied input. Before any
+tool acquisition or build, the operator must provide the exact runtime file and
+its independently trusted 64-character lowercase SHA-256, either as
+`--runtime-file=/path/to/runtime --runtime-sha256=<trusted-sha256>` or through
+`SYNVEIL_APPIMAGE_RUNTIME_FILE` and `SYNVEIL_APPIMAGE_RUNTIME_SHA256`. The
+digest must come from an authenticated source independent of the bytes being
+checked; it must not be guessed or computed from an unauthenticated download.
+Without both values, the builder stops before acquisition. The current
+development workflow has no authenticated runtime input, so its AppImage job
+remains blocked at this gate; it must not fetch an unpinned runtime or report a
+build as successful.
+
 `SOURCE_DATE_EPOCH` comes from the shared release helper (explicit input, then
 the checked-out commit timestamp, then zero for a source archive). AppDir
 mtimes are normalized before image creation. The two images are independently

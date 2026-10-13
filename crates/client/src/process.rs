@@ -489,7 +489,7 @@ mod tests {
             Arc,
             atomic::{AtomicUsize, Ordering},
         },
-        time::Duration,
+        time::{Duration, Instant},
     };
 
     use async_trait::async_trait;
@@ -497,6 +497,30 @@ mod tests {
     use tokio::sync::oneshot;
 
     use super::*;
+
+    /// Windows can briefly retain SQLite WAL/SHM or writer-lock handles after
+    /// the explicit pool close and final state-owner drop. Retry only native
+    /// sharing/lock violations for a bounded period; other cleanup errors and
+    /// persistent locks still fail this lifecycle regression.
+    fn remove_process_fixture_directory_bounded(path: &std::path::Path) -> std::io::Result<()> {
+        if !cfg!(windows) {
+            return fs::remove_dir_all(path);
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match fs::remove_dir_all(path) {
+                Ok(()) => return Ok(()),
+                Err(error)
+                    if matches!(error.raw_os_error(), Some(32 | 33))
+                        && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
 
     struct OneShotLifecycle {
         receiver: Option<oneshot::Receiver<DesktopLifecycleEvent>>,
@@ -593,11 +617,26 @@ mod tests {
             .await
             .expect("idempotent process shutdown");
 
-        state.close_pool().await;
         drop(process);
         drop(host);
+        assert_eq!(
+            Arc::strong_count(&state),
+            1,
+            "stopped process and host must release every state-store owner before fixture cleanup"
+        );
+        state.close_pool().await;
         drop(state);
-        fs::remove_dir_all(&directory).expect("process fixture cleanup");
+        remove_process_fixture_directory_bounded(&directory).unwrap_or_else(|error| {
+            let remaining = fs::read_dir(&directory)
+                .map(|entries| {
+                    entries
+                        .filter_map(Result::ok)
+                        .map(|entry| entry.file_name())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            panic!("process fixture cleanup failed: {error}; remaining entries: {remaining:?}");
+        });
     }
 
     #[test]

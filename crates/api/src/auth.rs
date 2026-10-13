@@ -458,6 +458,9 @@ pub(crate) async fn bootstrap_boundary(
     request: Request,
     next: Next,
 ) -> Response {
+    if state.helper_owned_bootstrap() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     if let Err(error) = csrf::validate_provenance(&state, &request) {
         return error.into_response();
     }

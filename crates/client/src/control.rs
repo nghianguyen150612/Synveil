@@ -173,6 +173,10 @@ pub enum ControlCommand {
         name: String,
         root_path: String,
     },
+    AttachHostLibrary {
+        library_id: String,
+        root_path: String,
+    },
     Shutdown,
     SubscribeEvents,
     Authenticate {
@@ -191,6 +195,10 @@ pub enum ControlCommand {
         profile_id: String,
         base_url: String,
         display_label: String,
+    },
+    ConfigureManagedHost {
+        profile_id: String,
+        descriptor: String,
     },
     /// Update the connection configuration for an existing profile.
     UpdateProfileConfiguration {
@@ -1370,7 +1378,12 @@ impl DesktopControlHandle {
         wire_outcome
     }
 
-    async fn setup_library(&self, name: String, root_path: String) -> ControlLibrarySetupOutcome {
+    async fn setup_library(
+        &self,
+        name: String,
+        root_path: String,
+        host_library_id: Option<String>,
+    ) -> ControlLibrarySetupOutcome {
         let Some(_guard) = LibrarySetupGuard::try_acquire(&self.inner.library_setup_in_flight)
         else {
             return ControlLibrarySetupOutcome::Busy;
@@ -1420,7 +1433,17 @@ impl DesktopControlHandle {
                 Err(error) => return map_library_setup_config_error(error),
             }
         }
-        let library_id = pending_id.unwrap_or_else(LibraryId::new);
+        let library_id = if let Some(id) = &host_library_id {
+            let Ok(id) = id.parse::<LibraryId>() else {
+                return ControlLibrarySetupOutcome::ServerIdentityConflict;
+            };
+            if pending_id.is_some_and(|pending| pending != id) {
+                return ControlLibrarySetupOutcome::ServerIdentityConflict;
+            }
+            id
+        } else {
+            pending_id.unwrap_or_else(LibraryId::new)
+        };
         if let Err(error) = crate::DesktopClientConfig::append_pending_library_binding(
             context.platform.as_ref(),
             context.profile_id,
@@ -1429,12 +1452,18 @@ impl DesktopControlHandle {
         ) {
             return map_library_setup_config_error(error);
         }
-        let setup = match self
-            .inner
-            .host
-            .prepare_library(library_id, name, canonical_root)
-            .await
-        {
+        let prepared = if host_library_id.is_some() {
+            self.inner
+                .host
+                .prepare_host_library(library_id, canonical_root)
+                .await
+        } else {
+            self.inner
+                .host
+                .prepare_library(library_id, name, canonical_root)
+                .await
+        };
+        let setup = match prepared {
             Ok(setup) => setup,
             Err(error) => return map_library_setup_error(error),
         };
@@ -1453,6 +1482,32 @@ impl DesktopControlHandle {
             }
             Err(error) => map_library_setup_error(error),
         }
+    }
+
+    async fn configure_managed_host(
+        &self,
+        profile_id: String,
+        descriptor: String,
+    ) -> ControlProfileConfigurationOutcome {
+        let Some(_guard) =
+            ProfileConfigurationGuard::try_acquire(&self.inner.profile_configuration_in_flight)
+        else {
+            return ControlProfileConfigurationOutcome::Busy;
+        };
+        let Ok(profile_id) = profile_id.parse() else {
+            return ControlProfileConfigurationOutcome::InvalidConfiguration;
+        };
+        if descriptor.len() > 32 * 1024 {
+            return ControlProfileConfigurationOutcome::InvalidConfiguration;
+        }
+        let outcome = map_profile_outcome(
+            self.inner
+                .host
+                .configure_managed_host(profile_id, descriptor)
+                .await,
+        );
+        self.emit(ControlEvent::ProfileConfigurationChanged);
+        outcome
     }
 
     /// Request the outer process lifecycle to perform graceful shutdown. This
@@ -2117,6 +2172,7 @@ enum BoundControlTransport {
     #[cfg(windows)]
     Windows {
         server: Option<tokio::net::windows::named_pipe::NamedPipeServer>,
+        next: Option<tokio::net::windows::named_pipe::NamedPipeServer>,
         name: String,
     },
 }
@@ -2184,16 +2240,28 @@ impl BoundControlTransport {
                 })
             }
             #[cfg(windows)]
-            Self::Windows { server, name } => {
-                let current = server
-                    .take()
+            Self::Windows { server, next, name } => {
+                if next.is_none() {
+                    *next = Some(create_windows_pipe(name, false)?);
+                }
+                // Both instances remain owned by the transport while this
+                // future is selected against shutdown and status events. A
+                // cancelled accept must not drop the pending listener, and
+                // successor creation must finish before promoting a client.
+                let pending = server
+                    .as_mut()
                     .ok_or(DesktopControlServerError::ListenerFailed)?;
-                current
+                pending
                     .connect()
                     .await
                     .map_err(|_| DesktopControlServerError::ListenerFailed)?;
-                let connected = current;
-                *server = Some(create_windows_pipe(name, false)?);
+                let connected = server
+                    .take()
+                    .ok_or(DesktopControlServerError::ListenerFailed)?;
+                *server = Some(
+                    next.take()
+                        .ok_or(DesktopControlServerError::ListenerFailed)?,
+                );
                 Ok(AcceptedControlConnection {
                     io: Box::new(connected),
                 })
@@ -2532,7 +2600,15 @@ async fn dispatch_request(
             result: control.set_sync_paused(false).await,
         },
         ControlCommand::SetupLibrary { name, root_path } => ControlResponseBody::LibrarySetup {
-            outcome: control.setup_library(name, root_path).await,
+            outcome: control.setup_library(name, root_path, None).await,
+        },
+        ControlCommand::AttachHostLibrary {
+            library_id,
+            root_path,
+        } => ControlResponseBody::LibrarySetup {
+            outcome: control
+                .setup_library("Primary".to_owned(), root_path, Some(library_id))
+                .await,
         },
         ControlCommand::Authenticate { enrollment_token } => ControlResponseBody::Authenticate {
             result: control.authenticate(enrollment_token).await,
@@ -2578,6 +2654,12 @@ async fn dispatch_request(
                 .await;
             ControlResponseBody::ProfileConfigurationResult { outcome }
         }
+        ControlCommand::ConfigureManagedHost {
+            profile_id,
+            descriptor,
+        } => ControlResponseBody::ProfileConfigurationResult {
+            outcome: control.configure_managed_host(profile_id, descriptor).await,
+        },
         ControlCommand::UpdateProfileConfiguration {
             profile_id,
             base_url,
@@ -2672,6 +2754,22 @@ impl fmt::Debug for DesktopControlClient {
 }
 
 impl DesktopControlClient {
+    pub async fn attach_host_library(
+        &mut self,
+        library_id: String,
+        root_path: String,
+    ) -> Result<ControlLibrarySetupOutcome, DesktopControlClientError> {
+        match self
+            .exchange(ControlCommand::AttachHostLibrary {
+                library_id,
+                root_path,
+            })
+            .await?
+        {
+            ControlResponseBody::LibrarySetup { outcome } => Ok(outcome),
+            _ => Err(DesktopControlClientError::UnexpectedResponse),
+        }
+    }
     /// Local kernel peer identity for the lifecycle owner only. Never part of
     /// status serialization, UI presentation, or a process-kill target.
     #[cfg(target_os = "linux")]
@@ -2910,6 +3008,23 @@ impl DesktopControlClient {
                 profile_id,
                 base_url,
                 display_label,
+            })
+            .await?
+        {
+            ControlResponseBody::ProfileConfigurationResult { outcome } => Ok(outcome),
+            _ => Err(DesktopControlClientError::UnexpectedResponse),
+        }
+    }
+
+    pub async fn configure_managed_host(
+        &mut self,
+        profile_id: String,
+        descriptor: String,
+    ) -> Result<ControlProfileConfigurationOutcome, DesktopControlClientError> {
+        match self
+            .exchange(ControlCommand::ConfigureManagedHost {
+                profile_id,
+                descriptor,
             })
             .await?
         {
@@ -3436,6 +3551,7 @@ fn bind_windows_transport(name: &str) -> Result<BoundControlTransport, DesktopCo
     validate_pipe_name(name)?;
     Ok(BoundControlTransport::Windows {
         server: Some(create_windows_pipe(name, true)?),
+        next: None,
         name: name.to_owned(),
     })
 }
@@ -3559,6 +3675,28 @@ mod tests {
 
     fn test_profile() -> synveil_client_sync::ServerProfileId {
         synveil_client_sync::ServerProfileId::new()
+    }
+
+    #[cfg(unix)]
+    fn short_unix_socket_fixture_root() -> PathBuf {
+        #[cfg(target_os = "macos")]
+        let base = PathBuf::from("/tmp");
+        #[cfg(not(target_os = "macos"))]
+        let base = std::env::temp_dir();
+        let root = base.join(format!("sv{}", uuid::Uuid::now_v7().simple()));
+        fs::create_dir_all(&root).expect("fixture root");
+        let root = root.canonicalize().expect("canonical fixture root");
+        use std::os::unix::ffi::OsStrExt as _;
+        assert!(
+            root.join(CONTROL_ENDPOINT_DIRECTORY)
+                .join("control.sock")
+                .as_os_str()
+                .as_bytes()
+                .len()
+                < 100,
+            "Unix socket fixture path must remain below macOS and Linux limits"
+        );
+        root
     }
 
     #[test]
@@ -3908,8 +4046,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn active_socket_is_never_replaced_and_stale_socket_is_recovered() {
-        let root = std::env::temp_dir().join(format!("sv96-active-{}", uuid::Uuid::now_v7()));
-        fs::create_dir_all(&root).expect("fixture root");
+        let root = short_unix_socket_fixture_root();
         let path = root.join(CONTROL_ENDPOINT_DIRECTORY).join("control.sock");
         let endpoint = DesktopControlEndpoint::UnixSocket { path: path.clone() };
 
@@ -4009,9 +4146,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn local_server_and_client_share_one_host_control_surface() {
-        let root =
-            std::env::temp_dir().join(format!("synveil-control-local-{}", uuid::Uuid::now_v7()));
-        fs::create_dir_all(&root).expect("fixture root");
+        let root = short_unix_socket_fixture_root();
         let state = Arc::new(
             LocalStateStore::open(&LocalStateConfig::new(root.join("state.sqlite3")))
                 .await

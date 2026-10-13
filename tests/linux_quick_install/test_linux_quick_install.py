@@ -145,6 +145,7 @@ class QuickInstallTests(unittest.TestCase):
         self.assertEqual("OutcomeUnknown", caught.exception.category)
         self.assertIn("Inspect native package state", caught.exception.action)
         invoke.assert_called_once()
+        self.assertEqual("/usr/bin/sudo", invoke.call_args.args[0][0])
 
     def test_partial_payload_with_absent_package_metadata_stops_before_retry(self):
         partial = self.root / "partial-owned-payload"

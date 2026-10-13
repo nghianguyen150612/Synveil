@@ -3,6 +3,10 @@
 //! UI-neutral planning and inspection for the privileged Linux server-service
 //! coordinator.  This crate deliberately exposes no arbitrary command runner.
 
+#[cfg(target_os = "linux")]
+pub mod native;
+pub mod runtime;
+
 use std::{fmt, path::Path};
 
 use serde::{Deserialize, Serialize};
@@ -325,6 +329,9 @@ mod tests {
         );
     }
 
+    // This validates Linux systemd path semantics. Windows considers `/srv`
+    // drive-relative, so running the Linux contract there is not meaningful.
+    #[cfg(target_os = "linux")]
     #[test]
     fn systemd_path_escaping_rejects_directive_injection() {
         assert_eq!(

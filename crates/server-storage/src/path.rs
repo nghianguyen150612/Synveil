@@ -47,6 +47,16 @@ impl PathInspectionError {
 }
 
 pub(super) fn inspect_candidate(path: &Path) -> Result<CandidatePath, PathInspectionError> {
+    inspect_candidate_for_review(path, None)
+}
+
+/// Read-only preflight may recognize the single package-owned parent whose
+/// ownership handoff will be explicitly reviewed. Mutation always calls the
+/// strict inspect_candidate entry point again after that handoff.
+pub(super) fn inspect_candidate_for_review(
+    path: &Path,
+    handoff: Option<(u32, u32)>,
+) -> Result<CandidatePath, PathInspectionError> {
     validate_spelling(path)?;
     if !cfg!(target_os = "linux") {
         return Err(PathInspectionError::Unsupported);
@@ -68,7 +78,7 @@ pub(super) fn inspect_candidate(path: &Path) -> Result<CandidatePath, PathInspec
                 if !metadata.is_dir() {
                     return Err(PathInspectionError::WrongType);
                 }
-                if unsafe_directory(&metadata) {
+                if unsafe_directory(&metadata) && !reviewed_parent(&current, &metadata, handoff) {
                     return Err(PathInspectionError::PermissionUnsafe);
                 }
             }
@@ -100,7 +110,7 @@ pub(super) fn inspect_candidate(path: &Path) -> Result<CandidatePath, PathInspec
     if !parent_meta.is_dir() {
         return Err(PathInspectionError::WrongType);
     }
-    if unsafe_directory(&parent_meta) {
+    if unsafe_directory(&parent_meta) && !reviewed_parent(parent, &parent_meta, handoff) {
         return Err(PathInspectionError::PermissionUnsafe);
     }
     let canonical_parent =
@@ -151,10 +161,30 @@ pub(super) fn inspect_candidate(path: &Path) -> Result<CandidatePath, PathInspec
     })
 }
 
+#[cfg(unix)]
+fn reviewed_parent(path: &Path, metadata: &fs::Metadata, handoff: Option<(u32, u32)>) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    handoff.is_some_and(|(uid, gid)| {
+        path == Path::new("/var/lib/synveil")
+            && metadata.uid() == uid
+            && metadata.gid() == gid
+            && metadata.mode() & 0o777 == 0o750
+    })
+}
+#[cfg(not(unix))]
+fn reviewed_parent(_path: &Path, _metadata: &fs::Metadata, _handoff: Option<(u32, u32)>) -> bool {
+    false
+}
+
 pub(super) fn validate_root_exclusions(
     candidate: &Path,
     additional_roots: &[PathBuf],
 ) -> Result<(), PathInspectionError> {
+    // Normalize existing candidates before comparing them with canonical roots.
+    // On Windows, current_dir() and canonicalize() can represent the same path
+    // with different prefixes; comparing the raw candidate would miss the
+    // current-directory exclusion on that platform.
+    let candidate = canonical_if_exists(candidate).unwrap_or_else(|| candidate.to_path_buf());
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from);
@@ -172,10 +202,10 @@ pub(super) fn validate_root_exclusions(
         PathBuf::from("/var/lib/synveil/postgresql"),
         PathBuf::from("/run"),
     ];
-    if ["/tmp", "/var/tmp", "/dev/shm"]
-        .iter()
-        .any(|shared_root| candidate == Path::new(shared_root))
-    {
+    if ["/tmp", "/var/tmp", "/dev/shm"].iter().any(|shared_root| {
+        let shared_root = Path::new(shared_root);
+        candidate == canonical_if_exists(shared_root).unwrap_or_else(|| shared_root.to_path_buf())
+    }) {
         return Err(PathInspectionError::PermissionUnsafe);
     }
     if let Ok(current) = std::env::current_dir() {
@@ -184,10 +214,7 @@ pub(super) fn validate_root_exclusions(
             return Err(PathInspectionError::Invalid);
         }
     }
-    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(2)
-        .map(Path::to_path_buf);
+    let workspace = build_workspace_root();
     if let Some(workspace) = workspace {
         reserved.push(workspace);
     }
@@ -200,11 +227,22 @@ pub(super) fn validate_root_exclusions(
 
     for root in reserved {
         let root = canonical_if_exists(&root).unwrap_or(root);
-        if paths_overlap(candidate, &root) {
+        if paths_overlap(&candidate, &root) {
             return Err(PathInspectionError::Invalid);
         }
     }
     Ok(())
+}
+
+// Infer a development checkout from Cargo's conventional target directory at
+// runtime. Embedding CARGO_MANIFEST_DIR would leak the private build path into
+// installed Host binaries and cannot be repaired by rustc path remapping.
+pub(crate) fn build_workspace_root() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let target = executable
+        .ancestors()
+        .find(|path| path.file_name() == Some(std::ffi::OsStr::new("target")))?;
+    target.parent().map(Path::to_path_buf)
 }
 
 pub(super) fn paths_overlap(first: &Path, second: &Path) -> bool {
@@ -363,6 +401,16 @@ mod tests {
                 "reserved path should be rejected: {rejected}"
             );
         }
+        for shared_root in ["/tmp", "/var/tmp", "/dev/shm"] {
+            let shared_root = Path::new(shared_root);
+            let canonical_shared_root =
+                canonical_if_exists(shared_root).unwrap_or_else(|| shared_root.to_path_buf());
+            assert!(
+                validate_root_exclusions(&canonical_shared_root, &[]).is_err(),
+                "canonical shared path should be rejected: {}",
+                canonical_shared_root.display()
+            );
+        }
         assert!(
             validate_root_exclusions(
                 Path::new("/data/Synveil2"),
@@ -383,6 +431,9 @@ mod tests {
     fn current_directory_home_and_workspace_roots_are_rejected() {
         if let Ok(current) = std::env::current_dir() {
             assert!(validate_root_exclusions(&current, &[]).is_err());
+            if let Ok(canonical_current) = current.canonicalize() {
+                assert!(validate_root_exclusions(&canonical_current, &[]).is_err());
+            }
         }
         if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
             assert!(validate_root_exclusions(&home, &[]).is_err());

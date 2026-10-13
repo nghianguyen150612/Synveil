@@ -60,6 +60,7 @@ var
   LaunchCheck: TNewCheckBox;
   NoticeButton: TNewButton;
   PreviousManifest: TStringList;
+  CurrentManifestEntries: TStringList;
 
 const
   UninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{7DDE2E8A-376A-4FC8-96FF-7DB529F0945D}_is1';
@@ -296,36 +297,68 @@ begin
 end;
 
 function CurrentManifestOwns(const Relative: String): Boolean;
+begin
+  if not Assigned(CurrentManifestEntries) then
+    RaiseException('The target package ownership list was not authenticated.');
+  if CompareText(GetSHA256OfFile(PackageRoot() + '\SYNVEIL-MANIFEST.txt'),
+       '{#SynveilManifestSha256}') <> 0 then
+    RaiseException('The target package manifest identity changed during reconciliation.');
+  Result := CurrentManifestEntries.IndexOf(Relative) >= 0;
+end;
+
+procedure LoadCurrentManifestEntries;
 var
   Lines: TStringList;
   I, Marker: Integer;
+  Relative: String;
 begin
-  Result := False;
   if CompareText(GetSHA256OfFile(PackageRoot() + '\SYNVEIL-MANIFEST.txt'),
        '{#SynveilManifestSha256}') <> 0 then
     RaiseException('The target package manifest identity is not trusted.');
   Lines := TStringList.Create;
   try
     Lines.LoadFromFile(PackageRoot() + '\SYNVEIL-MANIFEST.txt');
+    if (Lines.Count < 6) or
+       (Lines[0] <> 'Synveil Windows portable package manifest') or
+       (Lines[1] <> 'format=1') or
+       (Lines[2] <> 'version={#SynveilVersion}') or
+       (Lines[3] <> 'platform=windows-x86_64') then
+      RaiseException('The target package manifest is incomplete or has an unexpected identity.');
     Marker := Lines.IndexOf('files=sha256 size path');
     if Marker < 0 then RaiseException('The target package manifest is incomplete.');
-    for I := Marker + 1 to Lines.Count - 1 do
-      if CompareText(ManifestEntryPath(Lines[I]), Relative) = 0 then begin
-        Result := True;
-        exit;
-      end;
+
+    CurrentManifestEntries := TStringList.Create;
+    CurrentManifestEntries.CaseSensitive := False;
+    CurrentManifestEntries.Sorted := True;
+    for I := Marker + 1 to Lines.Count - 1 do begin
+      Relative := ManifestEntryPath(Lines[I]);
+      if Relative = '' then RaiseException('The target package manifest is malformed.');
+      if CurrentManifestEntries.IndexOf(Relative) >= 0 then
+        RaiseException('The target package manifest has duplicate file identities.');
+      CurrentManifestEntries.Add(Relative);
+    end;
   finally
     Lines.Free;
   end;
+  { Bind the in-memory ownership set to the exact target manifest bytes after
+    parsing. Each lookup still verifies the on-disk digest, while the sorted
+    set avoids reparsing and rescanning the full manifest for every old file. }
+  if CompareText(GetSHA256OfFile(PackageRoot() + '\SYNVEIL-MANIFEST.txt'),
+       '{#SynveilManifestSha256}') <> 0 then
+    RaiseException('The target package manifest changed while it was being read.');
 end;
 
 procedure RemoveProvenObsoleteFiles;
 var
-  I: Integer;
+  I, RemovedCount: Integer;
   Relative, Candidate, Root: String;
   Attributes: LongWord;
 begin
   Root := AddBackslash(ExpandConstant('{app}'));
+  LoadCurrentManifestEntries;
+  RemovedCount := 0;
+  Log('P027 owned-file reconciliation started: prior entries=' + IntToStr(PreviousManifest.Count) +
+    ', target entries=' + IntToStr(CurrentManifestEntries.Count));
   for I := 0 to PreviousManifest.Count - 1 do begin
     Relative := PreviousManifest[I];
     if not CurrentManifestOwns(Relative) then begin
@@ -340,9 +373,18 @@ begin
           RaiseException('Obsolete package object has ambiguous reparse-point identity.');
         if not DeleteFile(Candidate) then
           RaiseException('An obsolete Synveil package file could not be removed.');
+        RemovedCount := RemovedCount + 1;
       end;
     end;
+    if ((I + 1) mod 100) = 0 then
+      Log('P027 owned-file reconciliation progress: checked=' + IntToStr(I + 1) +
+        ', removed=' + IntToStr(RemovedCount));
   end;
+  if CompareText(GetSHA256OfFile(PackageRoot() + '\SYNVEIL-MANIFEST.txt'),
+       '{#SynveilManifestSha256}') <> 0 then
+    RaiseException('The target package manifest changed during ownership reconciliation.');
+  Log('P027 owned-file reconciliation completed: checked=' + IntToStr(PreviousManifest.Count) +
+    ', removed=' + IntToStr(RemovedCount));
 end;
 
 function IsExplicitUpgradeSource(const Value: String): Boolean;
@@ -577,6 +619,10 @@ end;
 
 procedure DeinitializeSetup();
 begin
+  if Assigned(CurrentManifestEntries) then begin
+    CurrentManifestEntries.Free;
+    CurrentManifestEntries := nil;
+  end;
   if Assigned(PreviousManifest) then begin
     PreviousManifest.Free;
     PreviousManifest := nil;

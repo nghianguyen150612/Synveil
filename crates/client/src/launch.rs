@@ -687,6 +687,57 @@ pub fn packaged_client_path_from(
     Ok(client)
 }
 
+/// Resolve the packaged client from either product executable. The desktop
+/// owns normal runtime launch; installer lifecycle commands execute in the
+/// client itself and need the same canonical sibling identity when inspecting
+/// or removing its scheduled task.
+#[cfg(any(target_os = "windows", test))]
+fn packaged_client_path_from_product_executable(
+    executable: impl AsRef<Path>,
+) -> Result<PathBuf, BackgroundLaunchError> {
+    let executable =
+        fs::canonicalize(executable.as_ref()).map_err(|_| BackgroundLaunchError::NotInstalled)?;
+    if is_expected_desktop_name(&executable) {
+        return packaged_client_path_from(executable);
+    }
+    if !executable.is_file() || !is_expected_client_name(&executable) {
+        return Err(BackgroundLaunchError::NotInstalled);
+    }
+    let desktop_name = if cfg!(windows) {
+        "synveil-desktop.exe"
+    } else {
+        SYNVEIL_DESKTOP_EXECUTABLE
+    };
+    let desktop = fs::canonicalize(
+        executable
+            .parent()
+            .ok_or(BackgroundLaunchError::NotInstalled)?
+            .join(desktop_name),
+    )
+    .map_err(|_| BackgroundLaunchError::NotInstalled)?;
+    if !desktop.is_file()
+        || !is_expected_desktop_name(&desktop)
+        || desktop.parent() != executable.parent()
+    {
+        return Err(BackgroundLaunchError::NotInstalled);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if executable
+            .metadata()
+            .map_err(|_| BackgroundLaunchError::NotInstalled)?
+            .permissions()
+            .mode()
+            & 0o111
+            == 0
+        {
+            return Err(BackgroundLaunchError::LaunchDenied);
+        }
+    }
+    Ok(executable)
+}
+
 fn is_expected_desktop_name(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
@@ -1793,8 +1844,8 @@ fn decode_windows_username(buffer: &[u16], length: usize) -> Result<String, Back
 fn native_windows_task_definition(
     profile_id: ServerProfileId,
 ) -> Result<WindowsTaskDefinition, BackgroundLaunchError> {
-    let desktop = std::env::current_exe().map_err(|_| BackgroundLaunchError::NotInstalled)?;
-    let client = packaged_client_path_from(desktop)?;
+    let executable = std::env::current_exe().map_err(|_| BackgroundLaunchError::NotInstalled)?;
+    let client = packaged_client_path_from_product_executable(executable)?;
     WindowsTaskDefinition::from_canonical_path(profile_id, client, current_windows_user()?)
 }
 
@@ -2263,7 +2314,17 @@ mod tests {
         let resolved = packaged_client_path_from(&desktop).expect("sibling client");
         assert_eq!(
             resolved,
-            fs::canonicalize(client).expect("canonical client")
+            fs::canonicalize(&client).expect("canonical client")
+        );
+        assert_eq!(
+            packaged_client_path_from_product_executable(&client)
+                .expect("client lifecycle handoff resolves its own packaged executable"),
+            fs::canonicalize(&client).expect("canonical client")
+        );
+        assert_eq!(
+            packaged_client_path_from_product_executable(&desktop)
+                .expect("desktop runtime resolves its packaged sibling"),
+            fs::canonicalize(&client).expect("canonical client")
         );
         let _ = fs::remove_dir_all(root);
     }
@@ -2354,12 +2415,28 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn platform_supervised_stop_requests_canonical_shutdown_over_ipc() {
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::{ffi::OsStrExt as _, fs::PermissionsExt};
         use synveil_client_sync::{
             DesktopSyncHost, DesktopSyncHostConfig, LocalStateConfig, LocalStateStore,
         };
-        let root = std::env::temp_dir().join(format!("sv116-{}", ServerProfileId::new()));
+        #[cfg(target_os = "macos")]
+        let base = std::path::PathBuf::from("/tmp");
+        #[cfg(not(target_os = "macos"))]
+        let base = std::env::temp_dir();
+        let root = base.join(format!(
+            "sv{}",
+            ServerProfileId::new().to_string().replace('-', "")
+        ));
         fs::create_dir_all(root.join("runtime/control")).unwrap();
+        let root = root.canonicalize().unwrap();
+        assert!(
+            root.join("runtime/control/client.sock")
+                .as_os_str()
+                .as_bytes()
+                .len()
+                < 100,
+            "Unix socket fixture path must remain below macOS and Linux limits"
+        );
         fs::set_permissions(root.join("runtime"), fs::Permissions::from_mode(0o700)).unwrap();
         fs::set_permissions(
             root.join("runtime/control"),

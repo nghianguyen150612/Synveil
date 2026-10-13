@@ -119,7 +119,12 @@ require(
 )
 require(
     "path exclusions cover config, credentials, PostgreSQL, runtime, home, workspace, and current directory",
-    all(token in path_source for token in ('"/etc/synveil"', '"/etc/synveil/credentials"', '"/var/lib/synveil/postgresql"', '"/run"', '"/tmp"', '"/var/tmp"', '"HOME"', "current_dir()", "CARGO_MANIFEST_DIR")),
+    all(token in path_source for token in ('"/etc/synveil"', '"/etc/synveil/credentials"', '"/var/lib/synveil/postgresql"', '"/run"', '"/tmp"', '"/var/tmp"', '"HOME"', "current_dir()", "build_workspace_root()", 'OsStr::new("target")')),
+)
+require(
+    "production storage code does not embed Cargo's private manifest path",
+    'env!("CARGO_MANIFEST_DIR")' not in production_part(path_source)
+    and 'env!("CARGO_MANIFEST_DIR")' not in production_part(storage_adapter),
 )
 require(
     "client-library overlap uses component-aware path identity and has wizard tests",

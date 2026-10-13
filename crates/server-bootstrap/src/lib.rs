@@ -40,7 +40,8 @@ pub enum ProgressStage {
 }
 
 /// One fresh, non-secret observation assembled from P031--P035 owners.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OwnerObservation {
     pub supported_platform: bool,
     pub blocked: bool,
@@ -122,12 +123,21 @@ impl OwnerObservation {
             && self.bootstrap_closed
             && self.explicit_admin_login_verified
             && self.initial_library_root_coherent
-            && self.canonical_origin.is_some()
-            && self.server_installation_id.is_some()
+            && self.supported_platform
+            && self.reachability_mode.is_some()
+            && self
+                .canonical_origin
+                .as_ref()
+                .is_some_and(|value| !value.is_empty())
+            && self
+                .server_installation_id
+                .as_ref()
+                .is_some_and(|value| !value.is_empty())
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReviewedHostPlan {
     pub generation: u64,
     pub server_installation_id: String,
@@ -140,13 +150,16 @@ pub struct ReviewedHostPlan {
     pub expected_privileged_effects: Vec<PrivilegedEffect>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PrivilegedEffect {
     PrepareConfiguration,
     PrepareStorage,
     InstallVerifiedDependencies,
     ReconcileOwnedServices,
     ConfigureOwnedReachability,
+    StopOwnedServices,
+    RemoveOwnedSoftwarePreservingData,
 }
 
 impl ReviewedHostPlan {
@@ -161,10 +174,29 @@ impl ReviewedHostPlan {
             self.service_plan_fingerprint.clone(),
             self.network_plan_fingerprint.clone(),
             self.platform_qualification.clone(),
-            self.artifact_fingerprints.join(","),
         ] {
+            digest.update((value.len() as u64).to_be_bytes());
             digest.update(value.as_bytes());
-            digest.update([0]);
+        }
+        // Bind each artifact separately: joining with a delimiter can make
+        // different inventories produce the same reviewed representation.
+        digest.update((self.artifact_fingerprints.len() as u64).to_be_bytes());
+        for artifact in &self.artifact_fingerprints {
+            digest.update((artifact.len() as u64).to_be_bytes());
+            digest.update(artifact.as_bytes());
+        }
+        // Consent covers the ordered machine effects, not just owner inputs.
+        digest.update((self.expected_privileged_effects.len() as u64).to_be_bytes());
+        for effect in &self.expected_privileged_effects {
+            digest.update([match effect {
+                PrivilegedEffect::PrepareConfiguration => 0,
+                PrivilegedEffect::PrepareStorage => 1,
+                PrivilegedEffect::InstallVerifiedDependencies => 2,
+                PrivilegedEffect::ReconcileOwnedServices => 3,
+                PrivilegedEffect::ConfigureOwnedReachability => 4,
+                PrivilegedEffect::StopOwnedServices => 5,
+                PrivilegedEffect::RemoveOwnedSoftwarePreservingData => 6,
+            }]);
         }
         format!("{:x}", digest.finalize())
     }
@@ -204,6 +236,11 @@ pub struct ServerBootstrapCoordinator<O> {
 }
 
 impl<O: CanonicalOwners> ServerBootstrapCoordinator<O> {
+    /// The native adapter must install the complete helper authorization context
+    /// before confirm. This accessor grants no coordinator consent by itself.
+    pub fn owners_mut(&mut self) -> &mut O {
+        &mut self.owners
+    }
     pub fn new(owners: O) -> Self {
         Self {
             owners,
@@ -213,10 +250,12 @@ impl<O: CanonicalOwners> ServerBootstrapCoordinator<O> {
     }
 
     pub fn begin_host(&mut self) {
+        self.reviewed_binding = None;
         self.intent = true;
     }
 
     pub fn review(&mut self, plan: &ReviewedHostPlan) -> Result<String, CoordinatorError> {
+        self.reviewed_binding = None;
         if !self.intent {
             return Err(CoordinatorError::ExplicitHostIntentRequired);
         }
@@ -233,17 +272,33 @@ impl<O: CanonicalOwners> ServerBootstrapCoordinator<O> {
         plan: &ReviewedHostPlan,
         binding: &str,
     ) -> Result<(), CoordinatorError> {
+        self.confirm_with_progress(plan, binding, |_, _| {})
+    }
+    pub fn confirm_with_progress(
+        &mut self,
+        plan: &ReviewedHostPlan,
+        binding: &str,
+        mut progress: impl FnMut(PrivilegedEffect, &OwnerObservation),
+    ) -> Result<(), CoordinatorError> {
+        if !self.intent {
+            return Err(CoordinatorError::ExplicitHostIntentRequired);
+        }
         if self.reviewed_binding.as_deref() != Some(binding) || plan.binding() != binding {
             return Err(CoordinatorError::ReviewRequired);
         }
         if self.owners.current_generation()? != plan.generation {
+            self.reviewed_binding = None;
             return Err(CoordinatorError::StalePlan);
         }
+        // Consume consent before the first effect, including on unknown
+        // outcomes. Resumption must inspect owners and review a fresh plan.
+        self.reviewed_binding = None;
         for effect in &plan.expected_privileged_effects {
             self.owners.apply(*effect)?;
             // Reinspect after every uncertain external effect. The owner, not
             // this coordinator, decides whether it is complete or resumable.
-            let _ = self.owners.inspect()?;
+            let observation = self.owners.inspect()?;
+            progress(*effect, &observation);
         }
         Ok(())
     }
@@ -276,6 +331,7 @@ impl<O: CanonicalOwners> ServerBootstrapCoordinator<O> {
         // Before confirmation this drops only ephemeral consent. After mutation
         // canonical owner state remains intact and a later inspection resumes.
         self.reviewed_binding = None;
+        self.intent = false;
     }
 }
 
@@ -340,11 +396,50 @@ mod tests {
         let binding = coordinator.review(&plan()).unwrap();
         coordinator.confirm(&plan(), &binding).unwrap();
         assert_eq!(coordinator.owners.effects.len(), 2);
+        assert_eq!(
+            coordinator.confirm(&plan(), &binding),
+            Err(CoordinatorError::ReviewRequired)
+        );
+        let binding = coordinator.review(&plan()).unwrap();
         coordinator.owners.generation = 8;
         assert_eq!(
             coordinator.confirm(&plan(), &binding),
             Err(CoordinatorError::StalePlan)
         );
+    }
+    #[test]
+    fn reviewed_binding_covers_effect_order_and_exact_artifact_inventory() {
+        let original = plan();
+        let mut changed = original.clone();
+        changed.expected_privileged_effects.reverse();
+        assert_ne!(original.binding(), changed.binding());
+        changed = original.clone();
+        changed
+            .expected_privileged_effects
+            .push(PrivilegedEffect::ConfigureOwnedReachability);
+        assert_ne!(original.binding(), changed.binding());
+        let mut first = original.clone();
+        first.artifact_fingerprints = vec!["first,second".into(), "third".into()];
+        let mut second = original;
+        second.artifact_fingerprints = vec!["first".into(), "second,third".into()];
+        assert_ne!(first.binding(), second.binding());
+    }
+    #[test]
+    fn cancellation_requires_new_explicit_intent_and_review() {
+        let owners = Owners {
+            generation: 7,
+            observation: OwnerObservation::default(),
+            effects: vec![],
+        };
+        let mut coordinator = ServerBootstrapCoordinator::new(owners);
+        coordinator.begin_host();
+        let binding = coordinator.review(&plan()).unwrap();
+        coordinator.cancel();
+        assert_eq!(
+            coordinator.confirm(&plan(), &binding),
+            Err(CoordinatorError::ExplicitHostIntentRequired)
+        );
+        assert!(coordinator.owners.effects.is_empty());
     }
     #[test]
     fn infrastructure_is_not_server_ready_without_login() {

@@ -14,6 +14,7 @@ concurrency:
 
 env:
   CANDIDATE_NAME: windows-p028-candidate
+  SYNVEIL_ENABLE_QMLCACHEGEN_WRAPPER: "1"
 
 jobs:
   build-windows-candidate:
@@ -23,6 +24,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: ilammy/msvc-dev-cmd@v1
+      - name: Select and authenticate the MSVC linker and runtime
+        shell: pwsh
+        run: ./scripts/select-msvc-linker.ps1
+      - name: Pin the reproducible ZIP writer runtime
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14.7"
       - uses: jurplel/install-qt-action@v4
         with:
           version: 6.8.3
@@ -90,13 +98,13 @@ jobs:
       - name: Authenticate transferred candidate
         shell: pwsh
         run: |
-          $identity = Get-Content candidate/target/windows-installer/p028-candidate.json -Raw | ConvertFrom-Json
-          $actual = (Get-FileHash candidate/target/windows-installer/SynveilSetup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $identity = Get-Content candidate/p028-candidate.json -Raw | ConvertFrom-Json
+          $actual = (Get-FileHash candidate/SynveilSetup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($actual -cne $identity.sha256 -or $identity.source_commit -cne $env:GITHUB_SHA) { throw 'P028_CANDIDATE_IDENTITY_FAILURE' }
       - name: Native standard-user product acceptance
         shell: pwsh
         run: |
-          ./scripts/invoke-windows-standard-user-test.ps1 -Setup candidate/target/windows-installer/SynveilSetup.exe -EvidenceDirectory target/windows-native-evidence
+          ./scripts/invoke-windows-standard-user-test.ps1 -Setup candidate/SynveilSetup.exe -EvidenceDirectory target/windows-native-evidence
       - name: Record required unavailable surfaces honestly
         shell: pwsh
         run: |

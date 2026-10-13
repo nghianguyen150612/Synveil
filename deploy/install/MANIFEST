@@ -7,9 +7,9 @@
 #
 # Format: source_path  destination_path  mode  owner  group  class
 # - source_path: repository-relative path for PACKAGE files, BINARY for the
-#   compiled scheduled-maintenance artifact, BINARY_CLIENT/BINARY_DESKTOP for
-#   the two production executables, or "-" for directories/state with no
-#   source file.
+#   compiled scheduled-maintenance artifact, BINARY_CLIENT/BINARY_DESKTOP and
+#   BINARY_HOST_HELPER for the production executables, or "-" for directories/
+#   state with no source file.
 # - destination_path: absolute installed path (prepend DESTDIR/--root at install time).
 # - mode: octal file/directory mode.
 # - owner/group: intended ownership per Prompt 75 contract.
@@ -33,6 +33,11 @@
 BINARY  /usr/bin/synveil-scheduled-maintenance-once  0755  root  root  PACKAGE
 BINARY_CLIENT  /usr/bin/synveil-client  0755  root  root  PACKAGE
 BINARY_DESKTOP  /usr/bin/synveil-desktop  0755  root  root  PACKAGE
+BINARY_HOST_HELPER /usr/libexec/synveil-host-helper 0755 root root PACKAGE
+deploy/server/prepare-host-runtime.py /usr/libexec/synveil-host/prepare-host-runtime.py 0755 root root PACKAGE
+deploy/server/register-host-inputs.py /usr/libexec/synveil-host/register-host-inputs.py 0755 root root PACKAGE
+deploy/polkit/org.synveil.host.policy /usr/share/polkit-1/actions/org.synveil.host.policy 0644 root root PACKAGE
+deploy/systemd/synveil-host-inspector.service /usr/lib/systemd/system/synveil-host-inspector.service 0644 root root PACKAGE
 
 # User-level supervision: never install synveil-client.service under
 # /usr/lib/systemd/system/ (that would create a root/system service).

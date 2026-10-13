@@ -1,6 +1,10 @@
 # Managed server network reachability
 
-Status: **NETWORK_READY foundation — Prompt034.** Ordinary choices are **Only
+Status: **Planning/rendering foundation — Prompt034; native application
+incomplete.** The source implements plans and bounded edge rendering, but
+not the native TLS/firewall/edge lifecycle or profile trust consumer. See G05
+and G07 in the [implementation audit](IMPLEMENTATION_COMPLETION.md). Native
+acceptance is separately **NOT_RUN_QA_DEFERRED**. Ordinary choices are **Only
 this device**, **Devices on my local network**, and **Use an existing HTTPS
 address**. First-admin and the complete Host wizard remain P035 and P036.
 
@@ -45,6 +49,11 @@ distinct leaf key. Both private keys are protected `SERVER_SECRET` credentials
 (`network-ca-key`, `network-tls-key`), never JSON, arguments, logs, environment,
 or Caddyfile. The public CA certificate and SHA-256 fingerprint are non-secret.
 The edge receives only the leaf key; issuance alone reads the CA key.
+
+The rendered config refers to the non-secret leaf certificate at
+`/etc/synveil/network/server-certificate.pem` and the service's systemd
+`CREDENTIALS_DIRECTORY` leaf-key file. Native issuance and atomic certificate
+installation remain unimplemented; rendering these paths does not create them.
 
 Leaf SANs contain only the approved endpoint. Renewal atomically replaces a
 leaf under the same CA and then reloads and verifies the edge. Ordinary repair

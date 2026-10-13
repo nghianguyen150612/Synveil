@@ -150,6 +150,7 @@ impl std::error::Error for StorageSetupError {}
 pub struct StorageLocationWizard {
     store: ServerConfigStore,
     exclusions: StorageExclusionSet,
+    review_parent_handoff: Option<(u32, u32)>,
 }
 
 struct ConfigSnapshot {
@@ -160,7 +161,11 @@ struct ConfigSnapshot {
 impl StorageLocationWizard {
     #[must_use]
     pub fn new(store: ServerConfigStore, exclusions: StorageExclusionSet) -> Self {
-        Self { store, exclusions }
+        Self {
+            store,
+            exclusions,
+            review_parent_handoff: None,
+        }
     }
 
     #[must_use]
@@ -173,6 +178,37 @@ impl StorageLocationWizard {
     pub fn inspect_location(&self, path: &Path) -> Result<StorageLocationView, StorageSetupError> {
         let snapshot = self.snapshot()?;
         self.inspect_with_config(path, &snapshot.config, None)
+    }
+
+    /// Preflight before configuration creation, with the exact reviewed server
+    /// identity. This is read-only and grants no authority to create storage.
+    pub fn inspect_proposed_host(
+        &self,
+        path: &Path,
+        config: &ServerConfig,
+    ) -> Result<StorageLocationView, StorageSetupError> {
+        config
+            .validate()
+            .map_err(|_| StorageSetupError::NeedsRepair)?;
+        self.inspect_with_config(path, config, None)
+    }
+
+    /// Read-only Home preflight for the exact P075 package state parent. The
+    /// returned view cannot be confirmed; mutations still require a new strict
+    /// selection after the privileged reviewed ownership handoff.
+    pub fn inspect_proposed_parent_handoff(
+        &self,
+        path: &Path,
+        config: &ServerConfig,
+        service_uid: u32,
+        service_gid: u32,
+    ) -> Result<StorageLocationView, StorageSetupError> {
+        config
+            .validate()
+            .map_err(|_| StorageSetupError::NeedsRepair)?;
+        let mut read_only = self.clone();
+        read_only.review_parent_handoff = Some((service_uid, service_gid));
+        read_only.inspect_with_config(path, config, None)
     }
 
     /// Build a confirmation plan bound to the current config fingerprint,
@@ -388,27 +424,28 @@ impl StorageLocationWizard {
                 ),
             ));
         }
-        let candidate = match inspect_candidate(path) {
-            Ok(candidate) => candidate,
-            Err(error) => {
-                return Ok((
-                    CandidatePath {
-                        requested: path.to_path_buf(),
-                        canonical: path.to_path_buf(),
-                        parent: path.parent().unwrap_or(Path::new("/")).to_path_buf(),
-                        exists: false,
-                        identity: PathIdentity {
-                            device: 0,
-                            inode: 0,
-                            parent_device: 0,
-                            parent_inode: 0,
+        let candidate =
+            match crate::path::inspect_candidate_for_review(path, self.review_parent_handoff) {
+                Ok(candidate) => candidate,
+                Err(error) => {
+                    return Ok((
+                        CandidatePath {
+                            requested: path.to_path_buf(),
+                            canonical: path.to_path_buf(),
+                            parent: path.parent().unwrap_or(Path::new("/")).to_path_buf(),
+                            exists: false,
+                            identity: PathIdentity {
+                                device: 0,
+                                inode: 0,
+                                parent_device: 0,
+                                parent_inode: 0,
+                            },
+                            is_mount_point: false,
                         },
-                        is_mount_point: false,
-                    },
-                    view(path, error.classification(), None, None),
-                ));
-            }
-        };
+                        view(path, error.classification(), None, None),
+                    ));
+                }
+            };
         let mut reserved = vec![
             self.store.layout().root().to_path_buf(),
             self.store.layout().credential_directory(),
@@ -843,8 +880,8 @@ pub fn open_existing_managed_local_storage(
             return Err(StorageSetupError::InvalidLocation);
         }
     }
-    if let Some(workspace) = Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(2) {
-        reserved.push(workspace.to_path_buf());
+    if let Some(workspace) = crate::path::build_workspace_root() {
+        reserved.push(workspace);
     }
     if validate_root_exclusions(&candidate.canonical, &reserved).is_err() {
         return Err(StorageSetupError::InvalidLocation);
@@ -972,7 +1009,11 @@ fn classify_candidate(
         Err(MarkerError::Absent) => {
             match &config.storage {
                 StorageConfiguration::ConfiguredLocal { root: current, .. } if current == &root => {
-                    return StorageRootClassification::MalformedStorageIdentity;
+                    // This path was previously configured, so an empty
+                    // replacement directory is an identity conflict rather
+                    // than a new malformed candidate. Keep the saved
+                    // configuration untouched and require explicit repair.
+                    return StorageRootClassification::RootIdentityMismatch;
                 }
                 StorageConfiguration::PreparingLocal {
                     root: current,

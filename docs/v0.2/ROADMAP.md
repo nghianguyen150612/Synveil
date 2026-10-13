@@ -1,6 +1,16 @@
 # Synveil v0.2 roadmap — Effortless Setup
 
 Status: **Authoritative Prompt001–048 roadmap; implementation targets, not shipped claims**.
+
+Current operating mode: **DEVELOPMENT_FIRST_QA_DEFERRED**. The owner has
+prioritized implementation on `feat/v02-implementation-closeout`; native
+acceptance and release qualification remain separate later work. See the
+[current implementation audit](IMPLEMENTATION_COMPLETION.md) and its complete
+48-prompt inventory. P033/P034/P036/P037 have concrete unfinished managed-Host
+integration, so the current state is **IMPLEMENTATION_IN_PROGRESS_QA_DEFERRED**.
+Historical checkpoint/evidence requirements below remain release requirements;
+they are not prerequisites for the development implementation milestone.
+
 Target release: `v0.2.0`. Development starts from released v0.1.0 at
 `fa23232ff0154f627ebdd221ec5435134f177af0`.
 

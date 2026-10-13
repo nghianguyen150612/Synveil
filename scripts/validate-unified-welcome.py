@@ -50,7 +50,16 @@ for forbidden in ("serverUrlField", "Password", "PostgreSQL", "DATABASE_URL", "s
 require("typed presentation enum", "enum WelcomeDestination" in presentation)
 require("configured profile bypass", "if profile_configured" in presentation)
 require("partial Host resume", "HostSetupState::StorageReady" in presentation and "HostResume" in presentation)
-require("explicit P036 Host intent", ".begin_host();" in bridge)
+choose_host_start = bridge.rindex("fn choose_host")
+choose_host_end = bridge.index("fn choose_connect", choose_host_start)
+choose_host = bridge[choose_host_start:choose_host_end]
+host_ui = read("crates/desktop/src/host_ui.rs")
+require(
+    "explicit P036 Host intent",
+    'set_welcome_destination(QString::from("host_setup"))' in choose_host
+    and "HostAction::Preflight" in host_ui
+    and "self.coordinator.begin_host();" in host_ui,
+)
 connect_body = bridge[bridge.index("fn choose_connect") : bridge.index("fn show_welcome")]
 require("Connect invokes no Host owner", "host_coordinator" not in connect_body and "begin_host" not in connect_body)
 require("Connect retains controller authority", "DesktopController" in bridge and "configure_profile" in bridge)

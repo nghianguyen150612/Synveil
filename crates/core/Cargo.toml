@@ -7,6 +7,9 @@ publish.workspace = true
 description = "Platform-neutral foundation boundary for Synveil domain contracts"
 
 [dependencies]
+serde.workspace = true
+url.workspace = true
+x509-parser = { version = "0.18", features = ["verify"] }
 chrono.workspace = true
 chrono-tz.workspace = true
 sha2.workspace = true

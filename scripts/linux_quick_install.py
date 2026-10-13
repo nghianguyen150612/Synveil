@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import os
@@ -14,6 +15,7 @@ import tempfile
 import re
 import stat
 import fcntl
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urljoin
@@ -60,6 +62,115 @@ REQUIRED_PATHS = (
     "/usr/share/icons/hicolor/scalable/apps/synveil.svg",
     "/usr/lib/systemd/user/synveil-client.service",
 )
+DPKG_CONFIG_FILE = Path("/etc/dpkg/dpkg.cfg")
+DPKG_CONFIG_DIR = Path("/etc/dpkg/dpkg.cfg.d")
+DPKG_POLICY_EXCLUDED_DOCS = frozenset({
+    "/usr/share/doc/synveil/LICENSE",
+    "/usr/share/doc/synveil/NOTICE",
+})
+
+
+def _trusted_dpkg_config_text(path: Path) -> str | None:
+    """Read one root-owned dpkg config file without following writable links."""
+    try:
+        for item in (path, *path.parents):
+            info = item.lstat()
+            if stat.S_ISLNK(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+                return None
+            if item == path:
+                if not stat.S_ISREG(info.st_mode):
+                    return None
+            elif not stat.S_ISDIR(info.st_mode):
+                return None
+            if item == Path("/etc"):
+                break
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def _dpkg_config_excludes_path(path: str, config_texts: tuple[str, ...]) -> bool:
+    """Apply ordered dpkg path-include/path-exclude rules to an absolute path."""
+    excluded = False
+    try:
+        for config_text in config_texts:
+            for raw_line in config_text.splitlines():
+                fields = shlex.split(raw_line, comments=True, posix=True)
+                if not fields:
+                    continue
+                option = fields[0].removeprefix("--")
+                if len(fields) == 1 and "=" in option:
+                    option, value = option.split("=", 1)
+                elif len(fields) == 2:
+                    value = fields[1]
+                else:
+                    continue
+                if option not in {"path-exclude", "path-include"}:
+                    continue
+                if fnmatch.fnmatchcase(path, value):
+                    excluded = option == "path-exclude"
+    except ValueError:
+        return False
+    return excluded
+
+
+def _dpkg_path_is_policy_excluded(path: str) -> bool:
+    if path not in DPKG_POLICY_EXCLUDED_DOCS:
+        return False
+    config_texts: list[str] = []
+    if DPKG_CONFIG_FILE.exists():
+        text = _trusted_dpkg_config_text(DPKG_CONFIG_FILE)
+        if text is None:
+            return False
+        config_texts.append(text)
+    try:
+        config_files = sorted(DPKG_CONFIG_DIR.iterdir()) if DPKG_CONFIG_DIR.exists() else []
+    except OSError:
+        return False
+    for config_file in config_files:
+        if config_file.is_dir() and not config_file.is_symlink():
+            continue
+        text = _trusted_dpkg_config_text(config_file)
+        if text is None:
+            return False
+        config_texts.append(text)
+    return _dpkg_config_excludes_path(path, tuple(config_texts))
+
+
+def _dpkg_verify_output_is_only_policy_excluded_docs(output: str) -> bool:
+    lines = [line for line in output.splitlines() if line.strip()]
+    if not lines:
+        return False
+    for line in lines:
+        match = re.fullmatch(r"\s*missing\s+(\S+)\s*", line)
+        if match is None or not _dpkg_path_is_policy_excluded(match.group(1)):
+            return False
+    return True
+
+
+def _package_verifier_output_has_permission_denied(output: str) -> bool:
+    """Identify protected paths that require a complete privileged recheck."""
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    return any(
+        re.fullmatch(r"missing\s+\S+\s+\(Permission denied\)", line, re.IGNORECASE) is not None
+        for line in lines
+    )
+
+
+def _is_authorization_failure(result: subprocess.CompletedProcess[str]) -> bool:
+    combined = (result.stdout + "\n" + result.stderr).lower()
+    return result.returncode in {126, 127} or combined.lstrip().startswith("sudo:") or any(
+        marker in combined
+        for marker in (
+            "not in the sudoers",
+            "not allowed to execute",
+            "a password is required",
+            "a terminal is required",
+            "incorrect password",
+            "sorry, try again",
+            "authentication failure",
+        )
+    )
 
 
 def resolve_profile(asserted_name: str | None, detection: linux_platform_detection.DetectionResult) -> Profile:
@@ -86,9 +197,14 @@ class NativeManager:
     def __init__(self, profile: Profile):
         self.profile = profile
 
-    def _run(self, command: list[str], *, mutate: bool = False) -> subprocess.CompletedProcess[str]:
+    def _run(self, command: list[str], *, mutate: bool = False,
+             requires_admin: bool = False) -> subprocess.CompletedProcess[str]:
         command = [system_executable(command[0]), *command[1:]]
-        if mutate:
+        # Filesystem/package-database mutation is always an explicitly declared
+        # administrator action. `requires_admin` also supports read-only checks
+        # of protected package metadata when the native verifier demands it.
+        requires_admin = requires_admin or mutate
+        if requires_admin:
             if os.geteuid() == 0:
                 raise QuickInstallError("AuthorizationRequired", "The installer must run as an ordinary user.",
                                         "Use visible native package authorization.", EXIT_AUTHORIZATION)
@@ -97,6 +213,27 @@ class NativeManager:
             command = [system_executable("sudo"), "--", *command]
         environment = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "LC_ALL": "C"}
         return subprocess.run(command, env=environment, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+
+    @staticmethod
+    def _emit_acceptance_package_diagnostics(result: subprocess.CompletedProcess[str]) -> None:
+        """Expose bounded Synveil scriptlet diagnostics only in native acceptance runs."""
+        if os.environ.get("SYNVEIL_ACCEPTANCE_DIAGNOSTICS") != "1":
+            return
+        emitted = 0
+        for stream in (result.stdout, result.stderr):
+            for raw_line in stream.splitlines():
+                lowered = raw_line.lower()
+                if not any(marker in lowered for marker in ("synveil", "systemd-sysusers", "systemd-tmpfiles")):
+                    continue
+                line = raw_line.strip()
+                if not line:
+                    continue
+                if len(line) > 500:
+                    line = line[:497] + "..."
+                print(f"NATIVE_PACKAGE_MANAGER_DIAGNOSTIC {line}", file=sys.stderr)
+                emitted += 1
+                if emitted >= 40:
+                    return
 
     def installed_version(self) -> str | None:
         command = (["dpkg-query", "-W", "-f=${Status}\t${Version}", "synveil"]
@@ -129,12 +266,13 @@ class NativeManager:
                                     "Acquire trusted package evidence first.", EXIT_INTEGRITY)
         require_staged_evidence(evidence)
         command = (["apt-get", "install", "-y", "--", str(package)] if self.profile.artifact_type == "deb"
-                   else ["dnf", "install", "-y", "--", str(package)])
+                   else ["dnf", "install", "-y", str(package)])
         try:
             result = self._run(command, mutate=True)
         except KeyboardInterrupt as error:
             raise QuickInstallError("OutcomeUnknown", "The package transaction was interrupted and its outcome is unknown.",
                                     "Inspect native package state before retrying.", EXIT_UNKNOWN) from error
+        self._emit_acceptance_package_diagnostics(result)
         combined = (result.stdout + "\n" + result.stderr).lower()
         if result.returncode == 0:
             return
@@ -148,20 +286,50 @@ class NativeManager:
         if any(marker in combined for marker in ("could not get lock", "another app is currently holding", "waiting for process with pid")):
             raise QuickInstallError("PackageManagerBusy", "Another native package operation is running; no lock was removed.",
                                     "Wait for it to finish, then retry.", EXIT_PACKAGE_MANAGER)
-        if result.returncode in {126, 127} or "not in the sudoers" in combined or "a password is required" in combined:
+        if _is_authorization_failure(result):
             raise QuickInstallError("AuthorizationFailed", "Administrator authorization was not granted.",
                                     "Retry and complete the visible sudo prompt.", EXIT_AUTHORIZATION)
         raise QuickInstallError("InstallationFailed", "The native package manager did not complete successfully.",
                                 "Inspect native package state before retrying.", EXIT_PACKAGE_MANAGER)
 
     def verify(self, expected_version: str) -> bool:
-        if self.installed_version() != expected_version or not all(Path(item).is_file() and not Path(item).is_symlink() for item in REQUIRED_PATHS):
-            return False
+        return self.verification_failure(expected_version) is None
+
+    def verification_failure(self, expected_version: str) -> str | None:
+        """Return a bounded reason code for native post-install verification."""
+        if self.installed_version() != expected_version:
+            return "installed_version_mismatch"
+        if not all(Path(item).is_file() and not Path(item).is_symlink() for item in REQUIRED_PATHS):
+            return "required_payload_path_missing_or_not_regular"
         # Package database remains authority for the installed payload. Presence
         # and a version label alone do not prove its bytes survived mutation.
         command = ["dpkg", "--verify", "synveil"] if self.profile.artifact_type == "deb" else ["rpm", "-V", "synveil"]
         result = self._run(command)
-        return result.returncode == 0 and not result.stdout.strip()
+        output = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
+        if _package_verifier_output_has_permission_denied(output):
+            print(
+                "Administrator authorization is needed to verify protected package files.",
+                file=sys.stderr,
+            )
+            result = self._run(command, requires_admin=True)
+            if _is_authorization_failure(result):
+                raise QuickInstallError(
+                    "AuthorizationFailed",
+                    "Administrator authorization was not granted to verify protected package files.",
+                    "Complete the visible authorization request, then retry verification.",
+                    EXIT_AUTHORIZATION,
+                )
+            output = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
+        if result.returncode != 0:
+            return "package_database_integrity_check_failed"
+        if output:
+            expected_deb_policy_omissions = (
+                self.profile.artifact_type == "deb"
+                and _dpkg_verify_output_is_only_policy_excluded_docs(output)
+            )
+            if not expected_deb_policy_omissions:
+                return "package_database_integrity_check_failed"
+        return None
 
 
 def sha256_file(path: Path) -> tuple[int, str]:
@@ -400,8 +568,17 @@ def run(argv: list[str] | None = None, *, manager_factory=NativeManager,
         mutation_started = True
         manager.install(Path(evidence["final_path"]), evidence["product_version"])
         if not manager.verify(evidence["product_version"]):
-            raise QuickInstallError("VerificationFailed", "Native installation completed but required state was not verified.",
-                                    "Inspect native package state and use the documented repair path.", EXIT_VERIFICATION)
+            verification_failure = getattr(manager, "verification_failure", None)
+            failure_reason = verification_failure(evidence["product_version"]) if callable(verification_failure) else None
+            message = "Native installation completed but required state was not verified"
+            if failure_reason:
+                message += f" ({failure_reason})"
+            raise QuickInstallError(
+                "VerificationFailed",
+                message + ".",
+                "Inspect native package state and use the documented repair path.",
+                EXIT_VERIFICATION,
+            )
         print(json.dumps({**evidence, "installation_result": "INSTALLED_VERIFIED"}, sort_keys=True))
         print("Synveil installed successfully.")
         print("Open Synveil from your application menu.")

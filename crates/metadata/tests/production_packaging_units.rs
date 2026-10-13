@@ -270,7 +270,7 @@ fn package_unit_6_upgrade_preserves_state() {
             .lines()
             .find(|line| line.contains("LOCAL_SCHEMA_VERSION"))
             .map(str::trim),
-        Some("pub const LOCAL_SCHEMA_VERSION: i64 = 7;")
+        Some("pub const LOCAL_SCHEMA_VERSION: i64 = 8;")
     );
 }
 
@@ -310,19 +310,23 @@ fn package_unit_8_runtime_dependency_closure() {
 fn package_unit_9_windows_package_manifest() {
     let root = repo_root();
     let builder = read(root.join("deploy/packages/build-windows.sh"));
+    let zip_builder = read(root.join("scripts/create-reproducible-zip.py"));
     for required in [
         "SYNVEIL-MANIFEST.txt",
         "write_package_manifest",
         "validate_package_manifest",
         "sha256_file",
         "platform=windows-x86_64",
-        "grep -Fxq \"$MANIFEST_NAME\"",
+        "scripts/create-reproducible-zip.py",
+        "--required-file \"$MANIFEST_NAME\"",
+        "ZIP_TOOLCHAIN",
     ] {
         assert!(
             builder.contains(required),
             "Windows manifest contract lacks {required}"
         );
     }
+    assert!(zip_builder.contains("missing required files:"));
     let zip_files = windows_package_files("zip");
     let Some(zip) = zip_files.first() else {
         eprintln!(
@@ -355,7 +359,54 @@ fn package_unit_10_linux_ownership_and_modes() {
         .iter()
         .filter(|row| row.5 == "PACKAGE")
         .collect::<Vec<_>>();
-    assert_eq!(package_rows.len(), 13, "unexpected PACKAGE manifest count");
+    assert_eq!(package_rows.len(), 18, "unexpected PACKAGE manifest count");
+    let approved_host_payloads = [
+        (
+            "BINARY_HOST_HELPER",
+            "/usr/libexec/synveil-host-helper",
+            "0755",
+        ),
+        (
+            "deploy/server/prepare-host-runtime.py",
+            "/usr/libexec/synveil-host/prepare-host-runtime.py",
+            "0755",
+        ),
+        (
+            "deploy/server/register-host-inputs.py",
+            "/usr/libexec/synveil-host/register-host-inputs.py",
+            "0755",
+        ),
+        (
+            "deploy/polkit/org.synveil.host.policy",
+            "/usr/share/polkit-1/actions/org.synveil.host.policy",
+            "0644",
+        ),
+        (
+            "deploy/systemd/synveil-host-inspector.service",
+            "/usr/lib/systemd/system/synveil-host-inspector.service",
+            "0644",
+        ),
+    ];
+    for (source, destination, mode) in approved_host_payloads {
+        let row = package_rows
+            .iter()
+            .find(|row| row.1 == destination)
+            .unwrap_or_else(|| panic!("approved Host package payload missing: {destination}"));
+        assert_eq!(row.0, source, "wrong source for {destination}");
+        assert_eq!(row.2, mode, "wrong mode for {destination}");
+        assert_eq!(
+            row.3, "root",
+            "Host package owner must be root: {destination}"
+        );
+        assert_eq!(
+            row.4, "root",
+            "Host package group must be root: {destination}"
+        );
+        assert_eq!(
+            row.5, "PACKAGE",
+            "Host payload must be package-owned: {destination}"
+        );
+    }
     for row in package_rows {
         assert_eq!(row.3, "root", "PACKAGE owner must be root: {}", row.1);
         assert_eq!(row.4, "root", "PACKAGE group must be root: {}", row.1);

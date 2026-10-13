@@ -23,14 +23,15 @@ library or synchronized folder that P040 will select.
 
 ## Intent boundaries
 
-Host activation is bounded and calls P036 `begin_host()` exactly at explicit
-user intent. QML performs no machine operation. This stacked baseline has no
-production desktop `CanonicalOwners` adapter, so it truthfully renders Hosting
-as unavailable and never fakes Ready. Connect only reveals the existing
-profile form; configuration remains QML → `DesktopUiBridge` →
-`DesktopController` → local IPC → `synveil-client`, retaining canonical HTTPS,
-TLS, credential fencing, and unknown-outcome behavior. Back before mutation
-returns to Welcome.
+Host activation is bounded and starts P036 intent only after the explicit
+`chooseHost` action. QML performs no machine operation. The native desktop
+delegates inspection and mutation to the production `CanonicalOwners` adapter
+and its bounded Linux helper; on unsupported targets the adapter reports
+Managed Host as unsupported and never emulates the helper or claims Ready.
+Connect only reveals the existing profile form; configuration remains QML →
+`DesktopUiBridge` → `DesktopController` → local IPC → `synveil-client`,
+retaining canonical HTTPS, TLS, credential fencing, and unknown-outcome
+behavior. Back before mutation returns to Welcome.
 
 ## Presentation, sequencing, and accessibility
 

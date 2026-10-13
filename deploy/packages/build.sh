@@ -71,6 +71,7 @@ OUTPUT_DIR="$DEFAULT_OUTPUT_DIR"
 BINARY_OVERRIDE=""
 CLIENT_BINARY_OVERRIDE=""
 DESKTOP_BINARY_OVERRIDE=""
+HOST_HELPER_BINARY_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -92,6 +93,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --desktop-binary=*)
             DESKTOP_BINARY_OVERRIDE="${1#--desktop-binary=}"
+            shift
+            ;;
+        --host-helper-binary=*)
+            HOST_HELPER_BINARY_OVERRIDE="${1#--host-helper-binary=}"
             shift
             ;;
         --help|-h)
@@ -153,6 +158,9 @@ CARGO_VERSION="$(synveil_cargo_version)"
 DEB_VERSION="$(synveil_deb_version "$CARGO_VERSION")"
 RPM_VERSION="$(synveil_rpm_version "$CARGO_VERSION")"
 RPM_RELEASE="$(synveil_rpm_release)"
+NATIVE_UPGRADE_POLICY="${REPO_ROOT}/deploy/release/native-upgrade-policy.json"
+DEB_UPGRADE_SOURCES="$(python3 "$REPO_ROOT/scripts/native_upgrade_policy.py" --policy "$NATIVE_UPGRADE_POLICY" --target-version "$CARGO_VERSION" --format deb)"
+RPM_UPGRADE_SOURCES="$(python3 "$REPO_ROOT/scripts/native_upgrade_policy.py" --policy "$NATIVE_UPGRADE_POLICY" --target-version "$CARGO_VERSION" --format rpm)"
 MACHINE="$(uname -m)"
 DEB_ARCH="$(synveil_deb_arch "$MACHINE")"
 RPM_ARCH="$(synveil_rpm_arch "$MACHINE")"
@@ -165,7 +173,7 @@ log "archive timestamp: $SOURCE_DATE_EPOCH"
 # All default release builds use the same path-remapped, non-incremental
 # compiler environment. Explicit binary overrides are still audited below;
 # they do not bypass the release artifact policy.
-if [[ -z "$BINARY_OVERRIDE" || -z "$CLIENT_BINARY_OVERRIDE" || -z "$DESKTOP_BINARY_OVERRIDE" ]]; then
+if [[ -z "$BINARY_OVERRIDE" || -z "$CLIENT_BINARY_OVERRIDE" || -z "$DESKTOP_BINARY_OVERRIDE" || -z "$HOST_HELPER_BINARY_OVERRIDE" ]]; then
     synveil_prepare_reproducible_rust_build "$REPO_ROOT"
 fi
 
@@ -202,7 +210,13 @@ if [[ -z "$DESKTOP_BINARY_SRC" ]]; then
     DESKTOP_BINARY_SRC="${REPO_ROOT}/target/release/synveil-desktop"
 fi
 
-for binary_source in "$BINARY_SRC" "$CLIENT_BINARY_SRC" "$DESKTOP_BINARY_SRC"; do
+HOST_HELPER_BINARY_SRC="$HOST_HELPER_BINARY_OVERRIDE"
+if [[ -z "$HOST_HELPER_BINARY_SRC" ]]; then
+    (cd "$REPO_ROOT" && cargo build --release --locked -p synveil-server-host --bin synveil-host-helper)
+    HOST_HELPER_BINARY_SRC="$REPO_ROOT/target/release/synveil-host-helper"
+fi
+
+for binary_source in "$BINARY_SRC" "$CLIENT_BINARY_SRC" "$DESKTOP_BINARY_SRC" "$HOST_HELPER_BINARY_SRC"; do
     if [[ ! -f "$binary_source" ]]; then
         printf '[synveil-packages] ERROR: binary not found: %s\n' "$binary_source" >&2
         exit 1
@@ -226,7 +240,8 @@ ARTIFACT_MANIFEST="${OUTPUT_DIR}/SYNVEIL-LINUX-ARTIFACT-MANIFEST.txt"
 synveil_write_linux_artifact_manifest "$ARTIFACT_MANIFEST" "$REPO_ROOT" "$SOURCE_DATE_EPOCH" \
     "target/release/synveil-scheduled-maintenance-once:$BINARY_SRC" \
     "target/release/synveil-client:$CLIENT_BINARY_SRC" \
-    "target/release/synveil-desktop:$DESKTOP_BINARY_SRC"
+    "target/release/synveil-desktop:$DESKTOP_BINARY_SRC" \
+    "target/release/synveil-host-helper:$HOST_HELPER_BINARY_SRC"
 log "release artifact manifest: $ARTIFACT_MANIFEST"
 
 # Dynamic-link audit (evidence for dependency declarations; informational here,
@@ -259,7 +274,7 @@ fi
 STAGE_ROOT="$(mktemp -d /tmp/synveil-pkg-stage.XXXXXX)"
 trap 'rm -rf "$STAGE_ROOT"' EXIT
 log "staging payload via install.sh into $STAGE_ROOT"
-synveil_stage_payload "$STAGE_ROOT" "$BINARY_SRC" "$CLIENT_BINARY_SRC" "$DESKTOP_BINARY_SRC"
+synveil_stage_payload "$STAGE_ROOT" "$BINARY_SRC" "$CLIENT_BINARY_SRC" "$DESKTOP_BINARY_SRC" "$HOST_HELPER_BINARY_SRC"
 synveil_assert_no_secret_payload "$STAGE_ROOT"
 
 # Byte-parity guards: packaged inputs must equal authoritative sources.
@@ -350,7 +365,7 @@ INSTALLED_SIZE="$(( (INSTALLED_BYTES + 1023) / 1024 ))"
 # PostgreSQL server/CLI, Docker, Nginx, or Redis is packaged or required.
 # Debian splits QML modules and QPA plugins from the shared libraries. They
 # are required even when installation disables Recommends or has no Qt SDK.
-DEB_DEPENDS="systemd, dbus-user-session, gnome-keyring, libc6 (>= 2.34), libgcc-s1, libstdc++6, libdbus-1-3, libsystemd0, libqt6core6, libqt6gui6, libqt6widgets6, libqt6qml6, libqt6quick6, libqt6quickcontrols2-6, libqt6network6, qt6-qpa-plugins, qml6-module-qtqml, qml6-module-qtqml-models, qml6-module-qtqml-workerscript, qml6-module-qtquick, qml6-module-qtquick-controls, qml6-module-qtquick-dialogs, qml6-module-qtquick-layouts, qml6-module-qtquick-templates, qml6-module-qtquick-window"
+DEB_DEPENDS="pkexec, polkitd, openssl, iproute2, python3, gpgv, binutils, systemd, dbus-user-session, gnome-keyring, libc6 (>= 2.34), libgcc-s1, libstdc++6, libdbus-1-3, libsystemd0, libqt6core6, libqt6gui6, libqt6widgets6, libqt6qml6, libqt6quick6, libqt6quickcontrols2-6, libqt6network6, qt6-qpa-plugins, qml6-module-qtqml, qml6-module-qtqml-models, qml6-module-qtqml-workerscript, qml6-module-qtquick, qml6-module-qtquick-controls, qml6-module-qtquick-dialogs, qml6-module-qtquick-layouts, qml6-module-qtquick-templates, qml6-module-qtquick-window"
 
 # tar flags for determinism: sorted names, root ownership, and normalized mtime.
 tar_owner_flags=(--owner=0 --group=0 --numeric-owner --sort=name)
@@ -373,7 +388,9 @@ build_deb() {
         "${SCRIPT_DIR}/debian/control.tmpl" > "${deb_stage}/DEBIAN/control"
     # Maintainer scripts (must be executable, no extension inside DEBIAN).
     for script in preinst postinst prerm postrm; do
-        sed "s/@SYNVEIL_DEB_VERSION@/${DEB_VERSION}/g" "${SCRIPT_DIR}/debian/${script}" > "${deb_stage}/DEBIAN/${script}"
+        sed -e "s/@SYNVEIL_DEB_VERSION@/${DEB_VERSION}/g" \
+            -e "s/@SYNVEIL_DEB_UPGRADE_SOURCES@/${DEB_UPGRADE_SOURCES}/g" \
+            "${SCRIPT_DIR}/debian/${script}" > "${deb_stage}/DEBIAN/${script}"
         chmod 0755 "${deb_stage}/DEBIAN/${script}"
         # Syntax check now (fail fast, no masking).
         sh -n "${deb_stage}/DEBIAN/${script}"
@@ -394,8 +411,17 @@ build_deb() {
     find "$deb_stage" -exec touch -d "@${SOURCE_DATE_EPOCH}" {} +
     if command -v dpkg-deb >/dev/null 2>&1; then
         log "building with dpkg-deb --build"
-        fakeroot dpkg-deb --build "$deb_stage" "$deb_path" 2>/dev/null \
-            || dpkg-deb --build "$deb_stage" "$deb_path"
+        # Keep the actual archive layout aligned with the deterministic fallback
+        # below and the release package contract. dpkg-deb's default data member
+        # compression varies across distribution/tool versions (for example,
+        # xz on newer Debian hosts), which changes both package bytes and the
+        # expected data.tar member name.
+        # Use the stable short compression flags and place all global options
+        # before the command. dpkg-deb 1.22.6 on the Ubuntu runner rejected the
+        # long compression spelling used by the earlier producer invocation.
+        local dpkg_deb_args=(--root-owner-group -Zgzip -z9)
+        fakeroot dpkg-deb "${dpkg_deb_args[@]}" --build "$deb_stage" "$deb_path" 2>/dev/null \
+            || dpkg-deb "${dpkg_deb_args[@]}" --build "$deb_stage" "$deb_path"
     else
         log "dpkg-deb unavailable; building real .deb with ar+tar (equivalent format)"
         local work
@@ -443,6 +469,7 @@ build_rpm() {
     # Generate spec from template.
     sed -e "s/@SYNVEIL_VERSION@/${RPM_VERSION}/g" \
         -e "s/@SYNVEIL_RELEASE@/${RPM_RELEASE}/g" \
+        -e "s/@SYNVEIL_RPM_UPGRADE_SOURCES@/${RPM_UPGRADE_SOURCES}/g" \
         -e "s/@SYNVEIL_ARCH@/${RPM_ARCH}/g" \
         "${SCRIPT_DIR}/rpm/synveil.spec.tmpl" > "${top}/SPECS/synveil.spec"
     if grep -q "@SYNVEIL_" "${top}/SPECS/synveil.spec"; then

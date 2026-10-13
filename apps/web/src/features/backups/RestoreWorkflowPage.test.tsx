@@ -12,7 +12,7 @@ import {
   type BackupSnapshot,
 } from '../../api/backups'
 import { ApiRequestError, type ApiErrorPayload } from '../../api/errors'
-import { mutationRecoveryStore } from '../../api/mutationRecovery'
+import { bindMutationRecoveryPrincipal, mutationRecoveryStore } from '../../api/mutationRecovery'
 import type {
   FileMetadataApi,
   LiveLibraryResource,
@@ -635,12 +635,14 @@ describe('restore workflow', () => {
   })
 
   it('[recovery] clears an impossible reload retry when GET says the restore plan is STALE', async () => {
+    bindMutationRecoveryPrincipal(session.data.user_id)
     mutationRecoveryStore.add({
       action_kind: 'execute_restore_plan',
       idempotency_key: '00000000-0000-7000-8000-000000000657',
       request_scope: { backupSetId: 'set-1', snapshotId: 'snapshot-1', restorePlanId: 'plan-1' },
       request: {},
     })
+    bindMutationRecoveryPrincipal(null)
     const executePlan = vi.fn<BackupApi['executeBackupRestorePlan']>()
     renderRestore(planPath(), makeBackupApi({
       getBackupRestorePlan: vi.fn().mockResolvedValue({ data: stalePlan, meta: { request_id: 'stale' } }),

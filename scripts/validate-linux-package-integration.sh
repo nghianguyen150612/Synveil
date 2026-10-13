@@ -41,10 +41,10 @@ if not deb_match:
     raise SystemExit('DEB_DEPENDS source not found')
 deb_dependencies = deb_match.group(1).split(', ')
 rpm_source = (root/'deploy/packages/rpm/synveil.spec.tmpl').read_text()
-rpm_match = re.search(r'^Requires:\s+(.+)$', rpm_source, re.MULTILINE)
-if not rpm_match:
+rpm_matches = re.findall(r'^Requires:\s+(.+)$', rpm_source, re.MULTILINE)
+if not rpm_matches:
     raise SystemExit('RPM Requires source not found')
-rpm_dependencies = rpm_match.group(1).split(', ')
+rpm_dependencies = [dependency for requirement in rpm_matches for dependency in requirement.split(', ')]
 formats = {item['format']: item for item in contract['formats']}
 if formats['DEB']['runtime_dependencies'] != deb_dependencies:
     raise SystemExit('DEB dependency drift between build.sh and package integration contract')
@@ -72,11 +72,14 @@ for path in files:
       'recursive deletion': r'\brm\s+(?:-[A-Za-z]*r[A-Za-z]*f?|-[A-Za-z]*f[A-Za-z]*r)\b',
       'user-home mutation': r'(?<![A-Za-z_])(\$HOME|\$USER|\$LOGNAME|/home/)',
       'shell command interpolation': r'\b(sh|bash)\s+-c\b',
-      'automatic enablement': r'(^|[;&|]\s*)\s*systemctl\s+(?:--user\s+)?enable\b',
     }
     for label, pattern in forbidden.items():
         if re.search(pattern, executable, re.MULTILINE):
             raise SystemExit(f"{path}: forbidden {label}")
+    enables = [line.strip() for line in executable.splitlines()
+               if re.match(r'^\s*systemctl\s+enable\b', line)]
+    if any(line != 'systemctl enable --now synveil-host-inspector.service' for line in enables):
+        raise SystemExit(f"{path}: only the read-only Host inspector may be auto-enabled")
 
 desktop = (root/'deploy/applications/synveil.desktop').read_text()
 assert 'Exec=/usr/bin/synveil-desktop' in desktop
@@ -87,6 +90,13 @@ deb = (root/'deploy/packages/debian/control.tmpl').read_text()
 rpm = (root/'deploy/packages/rpm/synveil.spec.tmpl').read_text()
 assert 'Package: synveil' in deb and 'Name:           synveil' in rpm
 assert 'NOT auto-enabled' in deb and 'NOT auto-enabled' in rpm
+inspector = (root/'deploy/systemd/synveil-host-inspector.service').read_text()
+for required in ('Description=Synveil read-only Host inspection',
+                 'ExecStart=/usr/libexec/synveil-host-helper inspect-service',
+                 'ProtectSystem=strict', 'ReadWritePaths=/run/synveil-host',
+                 'NoNewPrivileges=yes'):
+    if required not in inspector:
+        raise SystemExit(f"Host inspector safety contract missing {required}")
 print('linux package contract/static hook audit: PASS')
 PY
 

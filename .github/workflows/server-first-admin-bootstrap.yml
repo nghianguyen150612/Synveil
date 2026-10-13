@@ -10,6 +10,7 @@ on:
       - 'api/openapi.yaml'
       - 'scripts/validate-server-first-admin-bootstrap.py'
       - 'docs/v0.2/SERVER_FIRST_ADMIN_BOOTSTRAP.md'
+      - '.github/workflows/server-first-admin-bootstrap.yml'
   push:
     branches: [main]
 
@@ -44,9 +45,7 @@ jobs:
         run: cargo test -p synveil-api --lib bootstrap --locked
       - name: Managed edge blocking
         run: cargo test -p synveil-server-network every_synveil_managed_edge_blocks_bootstrap_mutation_before_proxying --locked
-      - name: Live PostgreSQL 17 bootstrap race
-        run: cargo test -p synveil-auth --test postgres postgres_authentication_bootstrap_is_atomic_and_race_safe --locked -- --ignored --exact
-      - name: Response-loss and restart behavior
+      - name: PostgreSQL 17 race, response-loss, and restart behavior
         run: cargo test -p synveil-auth --test postgres postgres_authentication_bootstrap_is_atomic_and_race_safe --locked -- --ignored --exact
       - name: Static validator
         run: python3 scripts/validate-server-first-admin-bootstrap.py

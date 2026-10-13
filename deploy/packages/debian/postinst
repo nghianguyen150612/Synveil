@@ -1,7 +1,7 @@
 #!/bin/sh
 # postinst — DEB configure step for synveil (Prompt 79).
-# Safe Gen-1 policy: create account/directories, install units, daemon-reload.
-# DO NOT auto-enable timer, DO NOT auto-start service, DO NOT run maintenance.
+# Create account/directories and enable only the read-only Host inspector.
+# Never activate the user-level client or scheduled-maintenance timer/service.
 # No network downloads. Idempotent. POSIX sh.
 # SPDX-License-Identifier: MIT
 set -e
@@ -51,13 +51,14 @@ chmod 0700 /etc/synveil/credentials
 if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
     log "reloading systemd manager (daemon-reload)"
     systemctl daemon-reload
+    # Read-only status service; no Host resource is provisioned on installation.
+    systemctl enable --now synveil-host-inspector.service
 else
     log "systemd manager not running (no /run/systemd/system); skipping daemon-reload (offline image build)"
 fi
 
-# 4. Fresh-install activation policy: NEVER auto-enable or auto-start.
-# Credential/database configuration may not exist yet; failing periodic jobs
-# must not start immediately after package installation.
+# 4. Fresh-install activation policy: the read-only Host inspector above is
+# the only auto-enabled service. The client and maintenance remain inactive.
 log "NOT auto-enabling synveil-scheduled-maintenance.timer (explicit administrator enablement required)"
 log "NOT auto-starting synveil-scheduled-maintenance.service (credential configuration required first)"
 log "next steps: provision /etc/synveil/credentials/database-url (root:root 0600), validate, then: systemctl enable --now synveil-scheduled-maintenance.timer"

@@ -4,6 +4,10 @@
 
 Các trang này mô tả trải nghiệm dự kiến của v0.2 và những giới hạn hiện tại. Nội dung không chứng minh rằng đã có tệp phân phối, tệp đã được xác thực hoặc sản phẩm đã vượt qua kiểm thử chấp nhận trên máy thật. Không cài tệp tải từ CI hoặc pull request bản nháp. Chưa có kênh tải công khai hay khóa ký production cho v0.2.
 
+Giai đoạn hiện tại ưu tiên hoàn thiện triển khai và hoãn QA.
+[Danh mục triển khai và các phần mã nguồn còn thiếu](../../v0.2/IMPLEMENTATION_COMPLETION.md)
+ghi rõ Host được quản lý chưa hoàn tất; đây là vấn đề riêng với chứng nhận trên máy thật.
+
 ## Hướng dẫn
 
 - [Cài đặt](INSTALLATION.md)

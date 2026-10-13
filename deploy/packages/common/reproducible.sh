@@ -88,6 +88,30 @@ synveil_append_unique_build_flag() {
 # A unit-separator is Cargo's documented argument delimiter; unlike RUSTFLAGS,
 # neither Bash word splitting nor MSYS path rewriting can turn one remap into
 # several rustc arguments.
+synveil_append_msys_env_conversion_exclusion() {
+    local name="$1"
+    [[ -n "${MSYSTEM:-}" ]] || return 0
+
+    local exclusions="${MSYS2_ENV_CONV_EXCL:-}"
+    case ";${exclusions};" in
+        *";${name};"*) return 0 ;;
+    esac
+    if [[ -n "$exclusions" ]]; then
+        exclusions+=";"
+    fi
+    exclusions+="$name"
+    export MSYS2_ENV_CONV_EXCL="$exclusions"
+}
+
+synveil_msvc_tool_path_identity() {
+    local path="$1"
+    if command -v cygpath >/dev/null 2>&1; then
+        path="$(cygpath -w "$path" 2>/dev/null || printf '%s' "$path")"
+    fi
+    path="${path//\\//}"
+    printf '%s' "$path" | tr '[:upper:]' '[:lower:]'
+}
+
 synveil_export_encoded_rustflags() {
     local encoded=""
     local flag
@@ -107,26 +131,38 @@ synveil_export_encoded_rustflags() {
     # MSYS converts path-like environment values when starting native
     # executables. Cargo decodes this variable into individual rustc argv
     # entries, so preserve the encoded value exactly across the Bash boundary.
-    if [[ -n "${MSYSTEM:-}" ]]; then
-        local env_conversion_exclusions="${MSYS2_ENV_CONV_EXCL:-}"
-        case ";${env_conversion_exclusions};" in
-            *";CARGO_ENCODED_RUSTFLAGS;"*) ;;
-            *)
-                if [[ -n "$env_conversion_exclusions" ]]; then
-                    env_conversion_exclusions+=";"
-                fi
-                env_conversion_exclusions+="CARGO_ENCODED_RUSTFLAGS"
-                export MSYS2_ENV_CONV_EXCL="$env_conversion_exclusions"
-                ;;
-        esac
-    fi
+    synveil_append_msys_env_conversion_exclusion CARGO_ENCODED_RUSTFLAGS
 }
 
 # CXX-Qt's QML-module build asks Qt's rcc tool to embed a generated qmldir and
-# the QML source files. rcc records their filesystem mtimes in generated C++.
-# Use a build-host wrapper that copies those QML resources under OUT_DIR and
-# fixes only the copies to SOURCE_DATE_EPOCH before invoking the real rcc.
-# This keeps source files untouched and makes clean release rebuilds stable.
+# the QML source files. rcc records source paths and filesystem mtimes in
+# generated C++. In explicit reproducibility mode, stage resource copies under
+# a canonical, checkout- and target-root-independent directory and fix only
+# the copies to SOURCE_DATE_EPOCH before invoking the real rcc. Other builds
+# retain target-local staging and do not need a global writable directory.
+synveil_run_direct_rustc() {
+    local host_toolchain="$1"
+    shift
+    if [[ "$host_toolchain" == *"msvc"* ]]; then
+        # Git Bash rewrites the /Brepro suffix in the equals-form Rust codegen
+        # argument as a POSIX path before starting rustc.exe. Exclude only this
+        # exact argument so all other path conversion remains enabled.
+        local arg_conversion_exclusions="${MSYS2_ARG_CONV_EXCL:-}"
+        case ";${arg_conversion_exclusions};" in
+            *";link-arg=/Brepro;"*) ;;
+            *)
+                if [[ -n "$arg_conversion_exclusions" ]]; then
+                    arg_conversion_exclusions+=";"
+                fi
+                arg_conversion_exclusions+="link-arg=/Brepro"
+                ;;
+        esac
+        MSYS2_ARG_CONV_EXCL="$arg_conversion_exclusions" rustc "$@"
+    else
+        rustc "$@"
+    fi
+}
+
 synveil_prepare_reproducible_qt_tools() {
     local repo_root="$1"
     local cargo_target_dir="$2"
@@ -233,7 +269,10 @@ synveil_prepare_reproducible_qt_tools() {
     # binary, so it must be checkout-independent and must not look like a
     # private path. It matches the Rust/C++ remap prefix already in force.
     local qml_canonical_root="${SYNVEIL_QML_CANONICAL_ROOT:-/usr/src/synveil}"
-    if [[ -n "$real_qmlcachegen" ]]; then
+    # Reproducibility mode uses the stable root for both qmlcachegen and rcc:
+    # the generated source embeds both source and staged-resource paths.
+    # Ordinary package consumers do not need that global build location.
+    if [[ "$enable_qmlcachegen_wrapper" == 1 ]]; then
         synveil_ensure_writable_root "$qml_canonical_root" || return 1
     fi
 
@@ -274,7 +313,10 @@ synveil_prepare_reproducible_qt_tools() {
         SYNVEIL_SOURCE_DATE_EPOCH="$source_date_epoch" \
         SYNVEIL_QML_SOURCE_ROOT="$repo_root" \
         SYNVEIL_QML_CANONICAL_ROOT="$qml_canonical_root" \
-        rustc "${SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS[@]}" "${rustc_linker_args[@]}" --edition=2021 "${repo_root}/scripts/reproducible-qt-wrapper.rs" -o "$wrapper_binary"
+        SYNVEIL_CANONICAL_RCC_STAGING="$enable_qmlcachegen_wrapper" \
+        synveil_run_direct_rustc "$host_toolchain" \
+            "${SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS[@]}" "${rustc_linker_args[@]}" \
+            --edition=2021 "${repo_root}/scripts/reproducible-qt-wrapper.rs" -o "$wrapper_binary"
     cp "$wrapper_binary" "${wrapper_dir}/qmake${wrapper_suffix}"
     cp "$wrapper_binary" "${wrapper_dir}/rcc${wrapper_suffix}"
     # Installing the wrapper under the qmlcachegen name makes CXX-Qt's
@@ -421,11 +463,101 @@ synveil_prepare_reproducible_rust_build() {
     # understand these flags and must not receive them.
     local host_toolchain=""
     host_toolchain="$(rustc -vV 2>/dev/null | sed -n 's/^host: //p' | head -n 1 || true)"
+    if [[ -z "$host_toolchain" ]]; then
+        printf '[synveil-artifact] ERROR: cannot identify the active rustc host for reproducible build policy\n' >&2
+        return 1
+    fi
+    if [[ "$host_toolchain" == *"msvc"* ]]; then
+        local selected_archiver="${SYNVEIL_MSVC_AR:-}"
+        local selected_archiver_fs="$selected_archiver"
+        local expected_archiver_identity
+        local configured_archiver_identity
+        local build_flag_var
+        local native_flag
+        local -a native_repro_flags=("/Brepro" "/experimental:deterministic")
+
+        if [[ -z "$selected_archiver" ]]; then
+            printf '[synveil-artifact] ERROR: MSVC reproducible builds require SYNVEIL_MSVC_AR from the authenticated Visual Studio toolchain selection\n' >&2
+            return 1
+        fi
+        if [[ "$selected_archiver" =~ ^[A-Za-z]:[/\\] ]]; then
+            if ! command -v cygpath >/dev/null 2>&1; then
+                printf '[synveil-artifact] ERROR: cygpath is required to validate the selected MSVC archiver path\n' >&2
+                return 1
+            fi
+            selected_archiver_fs="$(cygpath -u "$selected_archiver" 2>/dev/null || true)"
+        fi
+        if [[ -z "$selected_archiver_fs" || ! -x "$selected_archiver_fs" ]]; then
+            printf '[synveil-artifact] ERROR: selected MSVC archiver is not executable: %s\n' "$selected_archiver" >&2
+            return 1
+        fi
+        expected_archiver_identity="$(synveil_msvc_tool_path_identity "$selected_archiver")"
+        if [[ -n "${AR:-}" ]]; then
+            configured_archiver_identity="$(synveil_msvc_tool_path_identity "$AR")"
+            if [[ "$configured_archiver_identity" != "$expected_archiver_identity" ]]; then
+                printf '[synveil-artifact] ERROR: AR conflicts with the selected deterministic MSVC archiver (AR=%s, SYNVEIL_MSVC_AR=%s)\n' "$AR" "$selected_archiver" >&2
+                return 1
+            fi
+        fi
+
+        # cc-rs selects LLVM's deterministic COFF archive mode by the chosen
+        # `llvm-ar` executable name. Preserve this absolute native path across
+        # the Git Bash to Cargo environment boundary.
+        # cc-rs uses llvm-ar's deterministic cqD archive command.
+        export AR="$selected_archiver"
+        synveil_append_msys_env_conversion_exclusion AR
+        synveil_append_msys_env_conversion_exclusion SYNVEIL_MSVC_AR
+
+        # MSVC's /Brepro removes COFF timestamps. /experimental:deterministic
+        # also stabilizes compiler-generated object and debug metadata, while
+        # /pathmap gives the compiler identical logical source/output roots
+        # when Cargo builds in distinct target directories. Apply the policy
+        # to C and C++ dependencies because both feed the desktop link. Keep
+        # Git Bash from rewriting these switches or paths at Cargo boundaries.
+        # MSVC uses the first matching path map when prefixes overlap. The
+        # target directory is nested under the checkout in release CI, so map
+        # it before the broader repository prefix. Otherwise a generated
+        # source below target/ retains its randomized CARGO_TARGET_DIR suffix.
+        if [[ -n "$native_target_dir" ]]; then
+            native_repro_flags+=("/pathmap:${native_target_dir}=/usr/src/synveil-target")
+        fi
+        if [[ -n "$native_repo_root" ]]; then
+            native_repro_flags+=("/pathmap:${native_repo_root}=/usr/src/synveil")
+        fi
+        for build_flag_var in CFLAGS CXXFLAGS; do
+            local existing_native_flags="${!build_flag_var:-}"
+            for native_flag in "${native_repro_flags[@]}"; do
+                case " ${existing_native_flags} " in
+                    *" ${native_flag} "*) ;;
+                    *)
+                        if [[ -n "$existing_native_flags" ]]; then
+                            existing_native_flags+=" "
+                        fi
+                        existing_native_flags+="$native_flag"
+                        ;;
+                esac
+            done
+            export "${build_flag_var}=${existing_native_flags}"
+            synveil_append_msys_env_conversion_exclusion "$build_flag_var"
+        done
+    fi
     # GNU ld's build-id note was the only differing section in two otherwise
     # identical desktop links. Do not post-process artifacts: disable that
     # non-semantic note for every Linux release package at link time.
     if [[ "$host_toolchain" == *"linux"* ]]; then
         rust_flags+=("-C" "link-arg=-Wl,--build-id=none")
+        SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS=("${rust_flags[@]}")
+        synveil_export_encoded_rustflags "${rust_flags[@]}"
+    fi
+    # MSVC otherwise stamps PE images with build-time metadata. /Brepro makes
+    # the Rust client reproducible, but the hosted desktop comparison still
+    # found a COFF timestamp difference in a linked C++-bearing artifact; the
+    # selected LLVM archiver above makes its MSVC input archives deterministic.
+    # Keep /Brepro at the final Microsoft linker boundary as well.
+    if [[ "$host_toolchain" == *"msvc"* ]]; then
+        if [[ ! " ${rust_flags[*]} " == *" link-arg=/Brepro "* ]]; then
+            rust_flags+=("-C" "link-arg=/Brepro")
+        fi
         SYNVEIL_REPRODUCIBLE_RUSTC_FLAGS=("${rust_flags[@]}")
         synveil_export_encoded_rustflags "${rust_flags[@]}"
     fi
@@ -496,9 +628,13 @@ synveil_artifact_build_id() {
         printf '%s' '-'
         return 0
     fi
-    readelf -n "$1" 2>/dev/null |
+    local build_id
+    build_id="$(readelf -n "$1" 2>/dev/null |
         sed -n 's/^[[:space:]]*Build ID: //p' |
-        head -n 1
+        head -n 1)"
+    # Reproducible release links omit .note.gnu.build-id. Keep the manifest's
+    # four-column schema explicit instead of emitting an empty field.
+    printf '%s' "${build_id:--}"
 }
 
 # The detection pattern below is the gate and must not be weakened: it only has
@@ -513,7 +649,7 @@ synveil_assert_no_private_paths() {
     local artifact="$1"
     local label="${2:-$artifact}"
     local pattern='(/home/|/Users/|/mnt/|\.cargo/registry|[A-Za-z]:[\\/][Uu]sers[\\/]|/tmp/synveil-[^[:space:]]*|/var/tmp/synveil-[^[:space:]]*|/usr/src/synveil/target/|target[\\/]x86_64-pc-windows-gnu[\\/]release[\\/]build)'
-    local context_pattern='(/home/[!-~]*|/Users/[!-~]*|/mnt/[!-~]*|\.cargo/registry[!-~]*|[A-Za-z]:[\\/][Uu]sers[\\/][!-~]*)'
+    local context_pattern='(/home/[!-~]*|/Users/[!-~]*|/mnt/[!-~]*|\.cargo/registry[!-~]*|[A-Za-z]:[\\/][Uu]sers[\\/][!-~]*|/tmp/synveil-[!-~]*|/var/tmp/synveil-[!-~]*|/usr/src/synveil/target/[!-~]*|target[\\/][!-~]*x86_64-pc-windows-gnu[\\/]release[\\/]build[\\/][!-~]*)'
     if LC_ALL=C grep -aEq "$pattern" "$artifact"; then
         printf '[synveil-artifact] ERROR: private or temporary build path found in %s\n' "$label" >&2
         LC_ALL=C grep -aoE "$context_pattern" "$artifact" | LC_ALL=C sort -u | head -n 8 |
@@ -526,7 +662,12 @@ synveil_assert_no_private_paths() {
 synveil_assert_no_secret_markers() {
     local artifact="$1"
     local label="${2:-$artifact}"
-    local pattern='(svd1_[A-Za-z0-9_-]+|sve1_[A-Za-z0-9_-]+|SYNVEIL_DATABASE_URL=postgresql://[^[:space:]]*:[^[:space:]]*@|DATABASE_URL=postgresql://[^[:space:]]*:[^[:space:]]*@|postgresql://[^[:space:]]+:[^[:space:]@]+@[^[:space:]]+)'
+    # Keep URL matching within printable URI bytes. A binary's NUL-delimited
+    # format fragments (for example `postgresql://` plus runtime fields) must
+    # not be joined by grep's `[^[:space:]]` into a fake credential URL.
+    # Unescaped braces are excluded because Rust format templates such as
+    # `postgresql://{role}:{password}@...` are public code, not credentials.
+    local pattern='(svd1_[A-Za-z0-9_-]+|sve1_[A-Za-z0-9_-]+|(SYNVEIL_DATABASE_URL=|DATABASE_URL=)?postgresql://[^[:space:][:cntrl:]@{}]+:[^[:space:][:cntrl:]@{}]+@)'
     if LC_ALL=C grep -aEiq "$pattern" "$artifact"; then
         printf '[synveil-artifact] ERROR: secret-like marker found in %s\n' "$label" >&2
         return 1
@@ -559,7 +700,7 @@ synveil_assert_linux_release_binary() {
         return 1
     }
     # Reproducible Linux release links deliberately omit GNU build-id notes.
-    [[ -z "$(synveil_artifact_build_id "$artifact")" ]] || {
+    [[ "$(synveil_artifact_build_id "$artifact")" == '-' ]] || {
         printf '[synveil-artifact] ERROR: nondeterministic ELF build ID is present: %s\n' "$label" >&2
         return 1
     }

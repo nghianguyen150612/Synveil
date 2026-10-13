@@ -332,7 +332,7 @@ mod tests {
     use super::*;
     use crate::{
         LocalFingerprint, LocalNode, LocalStateConfig, ManagedRelativePath, ReplicaScope,
-        RootBindingId, ServerProfile,
+        RootBindingId, ServerProfile, test_support::remove_dir_all_bounded,
     };
 
     struct RecordingNotifier {
@@ -536,7 +536,7 @@ mod tests {
     async fn close_fixture(directory: PathBuf, state: Arc<LocalStateStore>) {
         state.close_pool().await;
         drop(state);
-        fs::remove_dir_all(directory).expect("fixture cleanup");
+        remove_dir_all_bounded(&directory).expect("fixture cleanup");
     }
 
     #[tokio::test]
@@ -579,6 +579,8 @@ mod tests {
         );
         assert_eq!(duplicate.notification().wake_result(), None);
         assert_eq!(notifier.calls().len(), 1);
+        drop(producer);
+        drop(notifier);
         close_fixture(directory, state).await;
     }
 
@@ -607,6 +609,8 @@ mod tests {
                 .is_some()
         );
         assert_eq!(notifier.calls().len(), 1);
+        drop(producer);
+        drop(notifier);
         close_fixture(directory, state).await;
     }
 
@@ -626,6 +630,8 @@ mod tests {
             Some(SyncRuntimeWakeResult::Queued)
         );
         assert!(notifier.intent_visible_at_wake());
+        drop(producer);
+        drop(notifier);
         close_fixture(directory, state).await;
     }
 

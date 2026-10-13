@@ -362,6 +362,16 @@ impl fmt::Display for ConfigValidationError {
 impl std::error::Error for ConfigValidationError {}
 
 impl ServerConfig {
+    /// Read-only preflight representation. The privileged Host journal records
+    /// this identity before initialize_for_host creates any secret.
+    pub fn proposed_host(
+        profile: DeploymentProfile,
+        installation_id: String,
+    ) -> Result<Self, ConfigValidationError> {
+        let config = Self::initial(profile, installation_id);
+        config.validate()?;
+        Ok(config)
+    }
     pub(crate) fn canonical_bytes(&self) -> Result<Vec<u8>, ConfigValidationError> {
         self.validate()?;
         let mut bytes =

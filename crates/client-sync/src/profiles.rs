@@ -232,6 +232,7 @@ impl CanonicalBaseUrl {
 /// in the current server protocol: verified origin/TLS is the present binding.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ServerProfile {
+    managed_host_trust: Option<synveil_core::host_trust::HostTrust>,
     profile_id: ServerProfileId,
     base_url: CanonicalBaseUrl,
     display_label: String,
@@ -259,6 +260,7 @@ impl ServerProfile {
         validate_label(&display_label)?;
         Ok(Self {
             profile_id,
+            managed_host_trust: None,
             base_url,
             display_label,
             created_at_ms: now_ms()?,
@@ -279,6 +281,11 @@ impl ServerProfile {
         let origin_unchanged = self.base_url == base_url;
         Ok(Self {
             profile_id: self.profile_id,
+            managed_host_trust: if origin_unchanged {
+                self.managed_host_trust.clone()
+            } else {
+                None
+            },
             base_url,
             display_label,
             created_at_ms: self.created_at_ms,
@@ -291,6 +298,21 @@ impl ServerProfile {
     #[must_use]
     pub const fn profile_id(&self) -> ServerProfileId {
         self.profile_id
+    }
+
+    pub fn managed_host_trust(&self) -> Option<&synveil_core::host_trust::HostTrust> {
+        self.managed_host_trust.as_ref()
+    }
+    /// Explicit Host review is the only caller of this attachment boundary.
+    pub fn with_managed_host_trust(
+        mut self,
+        descriptor: synveil_core::host_trust::HostTrust,
+    ) -> Result<Self, ClientSyncError> {
+        descriptor
+            .validate(self.base_url.as_str(), now_ms()? / 1000)
+            .map_err(|_| ClientSyncError::WrongServerProfile)?;
+        self.managed_host_trust = Some(descriptor);
+        Ok(self)
     }
 
     #[must_use]
@@ -558,6 +580,131 @@ fn decode_credential_envelope(
 }
 
 impl LocalStateStore {
+    fn host_trust_path(&self, profile_id: ServerProfileId) -> std::path::PathBuf {
+        self.database_path()
+            .with_extension(format!("profile-{profile_id}.host-trust.json"))
+    }
+    fn host_trust_pending_path(&self, profile_id: ServerProfileId) -> std::path::PathBuf {
+        self.database_path()
+            .with_extension(format!("profile-{profile_id}.host-trust-pending.json"))
+    }
+    fn retain_pending_host_trust(
+        &self,
+        profile_id: ServerProfileId,
+    ) -> Result<(), ClientSyncError> {
+        let active = self.host_trust_path(profile_id);
+        let pending = self.host_trust_pending_path(profile_id);
+        let active_bytes = read_profile_trust(&active)?;
+        let pending_bytes = read_profile_trust(&pending)?;
+        if let (Some(active_bytes), Some(pending_bytes)) = (&active_bytes, &pending_bytes)
+            && active_bytes != pending_bytes
+        {
+            return Err(ClientSyncError::InvalidServerProfile);
+        }
+        if pending_bytes.is_none() {
+            if active_bytes.is_none() {
+                return Ok(());
+            }
+            std::fs::rename(&active, &pending).map_err(|_| ClientSyncError::InvalidState)?;
+            std::fs::File::open(pending.parent().ok_or(ClientSyncError::InvalidState)?)
+                .and_then(|file| file.sync_all())
+                .map_err(|_| ClientSyncError::InvalidState)?;
+        } else if active_bytes.is_some() {
+            std::fs::remove_file(&active).map_err(|_| ClientSyncError::InvalidState)?;
+            std::fs::File::open(active.parent().ok_or(ClientSyncError::InvalidState)?)
+                .and_then(|file| file.sync_all())
+                .map_err(|_| ClientSyncError::InvalidState)?;
+        }
+        Ok(())
+    }
+    fn hydrate_host_trust(
+        &self,
+        mut profile: ServerProfile,
+    ) -> Result<ServerProfile, ClientSyncError> {
+        let path = self.host_trust_path(profile.profile_id());
+        let bytes = match read_profile_trust(&path)? {
+            Some(bytes) => bytes,
+            None => return Ok(profile),
+        };
+        let envelope: ProfileHostTrust =
+            serde_json::from_slice(&bytes).map_err(|_| ClientSyncError::InvalidServerProfile)?;
+        if envelope.profile_id != profile.profile_id().to_string() {
+            return Err(ClientSyncError::WrongServerProfile);
+        }
+        envelope
+            .descriptor
+            .validate(profile.base_url().as_str(), now_ms()? / 1000)
+            .map_err(|_| ClientSyncError::WrongServerProfile)?;
+        profile.managed_host_trust = Some(envelope.descriptor);
+        Ok(profile)
+    }
+    /// Persist only public material for this exact approved profile. Existing
+    /// CA/server/network authority cannot be replaced by a setup retry.
+    pub async fn approve_managed_host_trust(
+        &self,
+        profile: &ServerProfile,
+    ) -> Result<(), ClientSyncError> {
+        let _guard = self.credential_lifecycle_lock.lock().await;
+        self.approve_managed_host_trust_locked(profile).await
+    }
+
+    async fn approve_managed_host_trust_locked(
+        &self,
+        profile: &ServerProfile,
+    ) -> Result<(), ClientSyncError> {
+        let descriptor = profile
+            .managed_host_trust()
+            .ok_or(ClientSyncError::InvalidServerProfile)?;
+        descriptor
+            .validate(profile.base_url().as_str(), now_ms()? / 1000)
+            .map_err(|_| ClientSyncError::WrongServerProfile)?;
+        let stored = sqlx::query("SELECT * FROM server_profiles WHERE profile_id = ?")
+            .bind(profile.profile_id().to_string())
+            .fetch_optional(&self.pool)
+            .await?
+            .map(decode_profile)
+            .transpose()?
+            .ok_or(ClientSyncError::InvalidServerProfile)?;
+        if stored.base_url() != profile.base_url() {
+            return Err(ClientSyncError::WrongServerProfile);
+        }
+        let active = read_profile_trust(&self.host_trust_path(profile.profile_id()))?;
+        let pending = read_profile_trust(&self.host_trust_pending_path(profile.profile_id()))?;
+        if let Some(bytes) = active.or(pending) {
+            let envelope: ProfileHostTrust = serde_json::from_slice(&bytes)
+                .map_err(|_| ClientSyncError::InvalidServerProfile)?;
+            if envelope.profile_id != profile.profile_id().to_string() {
+                return Err(ClientSyncError::WrongServerProfile);
+            }
+            let old = &envelope.descriptor;
+            if old.server_id() != descriptor.server_id()
+                || old.network_id() != descriptor.network_id()
+                || matches!(
+                    (old.ca_sha256(), descriptor.ca_sha256()),
+                    (Some(previous), Some(next)) if previous != next
+                )
+                || old.generation() > descriptor.generation()
+            {
+                return Err(ClientSyncError::WrongServerProfile);
+            }
+        }
+        let envelope = ProfileHostTrust {
+            profile_id: profile.profile_id().to_string(),
+            descriptor: descriptor.clone(),
+        };
+        write_profile_trust(
+            &self.host_trust_path(profile.profile_id()),
+            &serde_json::to_vec(&envelope).map_err(|_| ClientSyncError::InvalidServerProfile)?,
+        )?;
+        let pending = self.host_trust_pending_path(profile.profile_id());
+        if read_profile_trust(&pending)?.is_some() {
+            std::fs::remove_file(&pending).map_err(|_| ClientSyncError::InvalidState)?;
+            std::fs::File::open(pending.parent().ok_or(ClientSyncError::InvalidState)?)
+                .and_then(|file| file.sync_all())
+                .map_err(|_| ClientSyncError::InvalidState)?;
+        }
+        Ok(())
+    }
     /// Inserts non-secret connection configuration. Re-saving the exact same
     /// profile is idempotent; changing an existing ID is forbidden. Explicit
     /// URL/label edits use [`Self::configure_server_profile`].
@@ -606,7 +753,27 @@ impl LocalStateStore {
         secret_store: &dyn SecretStore,
     ) -> Result<ServerProfileConfigurationChange, ClientSyncError> {
         let _guard = self.credential_lifecycle_lock.lock().await;
-        let Some(existing) = self.server_profile(profile.profile_id()).await? else {
+        self.configure_server_profile_locked(profile, secret_store, false)
+            .await
+    }
+
+    async fn configure_server_profile_locked(
+        &self,
+        profile: &ServerProfile,
+        secret_store: &dyn SecretStore,
+        host_reapproval: bool,
+    ) -> Result<ServerProfileConfigurationChange, ClientSyncError> {
+        let existing = if host_reapproval {
+            sqlx::query("SELECT * FROM server_profiles WHERE profile_id = ?")
+                .bind(profile.profile_id().to_string())
+                .fetch_optional(&self.pool)
+                .await?
+                .map(decode_profile)
+                .transpose()?
+        } else {
+            self.server_profile(profile.profile_id()).await?
+        };
+        let Some(existing) = existing else {
             self.save_server_profile(profile).await?;
             return Ok(ServerProfileConfigurationChange::Created);
         };
@@ -643,6 +810,7 @@ impl LocalStateStore {
             // the envelope against `existing`, before the origin changes.
             self.cleanup_profile_secrets_inner(profile.profile_id(), secret_store)
                 .await?;
+            self.retain_pending_host_trust(profile.profile_id())?;
         }
 
         let changed = sqlx::query(
@@ -673,6 +841,55 @@ impl LocalStateStore {
         Ok(ServerProfileConfigurationChange::Updated)
     }
 
+    /// Read the canonical profile and old public descriptor for an explicit
+    /// Host trust handoff. The prior descriptor is returned only as a fencing
+    /// identity; callers must validate and probe the newly supplied authority.
+    pub async fn host_profile_for_approval(
+        &self,
+        profile_id: ServerProfileId,
+    ) -> Result<Option<(ServerProfile, Option<synveil_core::host_trust::HostTrust>)>, ClientSyncError>
+    {
+        let Some(profile) = sqlx::query("SELECT * FROM server_profiles WHERE profile_id = ?")
+            .bind(profile_id.to_string())
+            .fetch_optional(&self.pool)
+            .await?
+            .map(decode_profile)
+            .transpose()?
+        else {
+            return Ok(None);
+        };
+        let trust_bytes = read_profile_trust(&self.host_trust_path(profile_id))?.or(
+            read_profile_trust(&self.host_trust_pending_path(profile_id))?,
+        );
+        let trust = trust_bytes
+            .map(|bytes| {
+                let envelope: ProfileHostTrust = serde_json::from_slice(&bytes)
+                    .map_err(|_| ClientSyncError::InvalidServerProfile)?;
+                if envelope.profile_id != profile_id.to_string() {
+                    return Err(ClientSyncError::WrongServerProfile);
+                }
+                Ok(envelope.descriptor)
+            })
+            .transpose()?;
+        Ok(Some((profile, trust)))
+    }
+
+    /// Commit a Host-origin profile change, fence old credentials while their
+    /// origin is still canonical, and persist the newly verified descriptor
+    /// under the same lifecycle lock.
+    pub async fn configure_and_approve_managed_host(
+        &self,
+        profile: &ServerProfile,
+        secret_store: &dyn SecretStore,
+    ) -> Result<ServerProfileConfigurationChange, ClientSyncError> {
+        let _guard = self.credential_lifecycle_lock.lock().await;
+        let change = self
+            .configure_server_profile_locked(profile, secret_store, true)
+            .await?;
+        self.approve_managed_host_trust_locked(profile).await?;
+        Ok(change)
+    }
+
     pub async fn server_profile(
         &self,
         profile_id: ServerProfileId,
@@ -681,7 +898,7 @@ impl LocalStateStore {
             .bind(profile_id.to_string())
             .fetch_optional(&self.pool)
             .await?
-            .map(decode_profile)
+            .map(|row| decode_profile(row).and_then(|profile| self.hydrate_host_trust(profile)))
             .transpose()
     }
 
@@ -694,7 +911,9 @@ impl LocalStateStore {
         if rows.len() > MAX_PROFILES {
             return Err(ClientSyncError::ResourceLimit);
         }
-        rows.into_iter().map(decode_profile).collect()
+        rows.into_iter()
+            .map(|row| decode_profile(row).and_then(|profile| self.hydrate_host_trust(profile)))
+            .collect()
     }
 
     pub async fn mark_profile_connected(
@@ -730,13 +949,15 @@ impl LocalStateStore {
         secret_store: &dyn SecretStore,
     ) -> Result<DeviceEnrollmentRecord, ClientSyncError> {
         self.validate_enrollment_origin(enrollment).await?;
-        self.store_device_enrollment(
+        self.persist_device_enrollment(
             enrollment.profile_id(),
             enrollment.owner_user_id(),
             enrollment.device_id(),
             enrollment.credential_id(),
             enrollment.secret(),
             secret_store,
+            false,
+            Some(enrollment.verified_profile()),
         )
         .await
     }
@@ -749,13 +970,15 @@ impl LocalStateStore {
         secret_store: &dyn SecretStore,
     ) -> Result<DeviceEnrollmentRecord, ClientSyncError> {
         self.validate_enrollment_origin(enrollment).await?;
-        self.replace_device_enrollment(
+        self.persist_device_enrollment(
             enrollment.profile_id(),
             enrollment.owner_user_id(),
             enrollment.device_id(),
             enrollment.credential_id(),
             enrollment.secret(),
             secret_store,
+            true,
+            Some(enrollment.verified_profile()),
         )
         .await
     }
@@ -768,7 +991,9 @@ impl LocalStateStore {
             .server_profile(enrollment.profile_id())
             .await?
             .ok_or(ClientSyncError::InvalidServerProfile)?;
-        if profile.base_url() != enrollment.base_url() {
+        if profile.base_url() != enrollment.base_url()
+            || profile.managed_host_trust() != enrollment.verified_profile().managed_host_trust()
+        {
             return Err(ClientSyncError::WrongServerProfile);
         }
         Ok(())
@@ -777,6 +1002,7 @@ impl LocalStateStore {
     /// Internal lifecycle implementation. Public entry requires a verified
     /// origin-bound enrollment receipt; raw import is unavailable.
     #[allow(clippy::too_many_arguments)]
+    #[cfg(test)]
     pub(crate) async fn store_device_enrollment(
         &self,
         profile_id: ServerProfileId,
@@ -794,6 +1020,7 @@ impl LocalStateStore {
             secret,
             secret_store,
             false,
+            None,
         )
         .await
     }
@@ -801,6 +1028,7 @@ impl LocalStateStore {
     /// Explicit replacement, restricted to the already bound owner and Device.
     /// A forgotten profile still cannot be silently rebound to another Device.
     #[allow(clippy::too_many_arguments)]
+    #[cfg(test)]
     pub(crate) async fn replace_device_enrollment(
         &self,
         profile_id: ServerProfileId,
@@ -818,6 +1046,7 @@ impl LocalStateStore {
             secret,
             secret_store,
             true,
+            None,
         )
         .await
     }
@@ -832,8 +1061,20 @@ impl LocalStateStore {
         secret: &DeviceCredentialSecret,
         secret_store: &dyn SecretStore,
         replace: bool,
+        expected_profile: Option<&ServerProfile>,
     ) -> Result<DeviceEnrollmentRecord, ClientSyncError> {
         let _guard = self.credential_lifecycle_lock.lock().await;
+        if let Some(expected) = expected_profile {
+            let current = self
+                .server_profile(profile_id)
+                .await?
+                .ok_or(ClientSyncError::InvalidServerProfile)?;
+            if current.base_url() != expected.base_url()
+                || current.managed_host_trust() != expected.managed_host_trust()
+            {
+                return Err(ClientSyncError::WrongServerProfile);
+            }
+        }
         let profile = self
             .server_profile(profile_id)
             .await?
@@ -1094,12 +1335,82 @@ fn decode_profile(row: sqlx::sqlite::SqliteRow) -> Result<ServerProfile, ClientS
     let display_label = row.try_get::<String, _>("display_label")?;
     validate_label(&display_label)?;
     Ok(ServerProfile {
+        managed_host_trust: None,
         profile_id: row.try_get::<String, _>("profile_id")?.parse()?,
         base_url,
         display_label,
         created_at_ms: row.try_get("created_at_ms")?,
         last_connected_at_ms: row.try_get("last_connected_at_ms")?,
     })
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProfileHostTrust {
+    profile_id: String,
+    descriptor: synveil_core::host_trust::HostTrust,
+}
+fn read_profile_trust(path: &std::path::Path) -> Result<Option<Vec<u8>>, ClientSyncError> {
+    use std::io::Read;
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(ClientSyncError::InvalidState),
+    };
+    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > 32 * 1024 {
+        return Err(ClientSyncError::InvalidServerProfile);
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        if metadata.nlink() != 1 || metadata.mode() & 0o077 != 0 {
+            return Err(ClientSyncError::InvalidServerProfile);
+        }
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let file = options
+        .open(path)
+        .map_err(|_| ClientSyncError::InvalidState)?;
+    let mut bytes = Vec::new();
+    file.take(32 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ClientSyncError::InvalidState)?;
+    if bytes.len() > 32 * 1024 {
+        return Err(ClientSyncError::InvalidServerProfile);
+    }
+    Ok(Some(bytes))
+}
+fn write_profile_trust(path: &std::path::Path, bytes: &[u8]) -> Result<(), ClientSyncError> {
+    use std::io::Write;
+    let _ = read_profile_trust(path)?;
+    let parent = path.parent().ok_or(ClientSyncError::InvalidState)?;
+    if std::fs::symlink_metadata(parent)
+        .map_err(|_| ClientSyncError::InvalidState)?
+        .file_type()
+        .is_symlink()
+    {
+        return Err(ClientSyncError::InvalidState);
+    }
+    let temporary = parent.join(format!(".host-trust-{}", Uuid::now_v7()));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    }
+    let mut file = options
+        .open(&temporary)
+        .map_err(|_| ClientSyncError::InvalidState)?;
+    file.write_all(bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|_| ClientSyncError::InvalidState)?;
+    std::fs::rename(&temporary, path).map_err(|_| ClientSyncError::InvalidState)?;
+    std::fs::File::open(parent)
+        .and_then(|file| file.sync_all())
+        .map_err(|_| ClientSyncError::InvalidState)
 }
 
 fn decode_enrollment(

@@ -30,6 +30,7 @@ case "$ACTION" in
             systemctl disable --now synveil-scheduled-maintenance.timer
             log "stopping service if active (bounded completion, no kill of healthy cycle)"
             systemctl stop synveil-scheduled-maintenance.service
+            systemctl disable --now synveil-host-inspector.service
         else
             log "systemd manager not running; skipping disable/stop (offline removal)"
         fi

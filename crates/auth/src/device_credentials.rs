@@ -61,6 +61,12 @@ impl From<DeviceCredentialRepositoryError> for DeviceAuthError {
 pub enum DeviceEnrollmentTarget {
     Existing(DeviceId),
     New(LogicalName),
+    /// A durably proposed local Host device, admitted through the same locked
+    /// owner/device/grant transaction. HTTP New retains server-generated IDs.
+    HostNew {
+        device_id: DeviceId,
+        display_name: LogicalName,
+    },
 }
 
 /// Raw enrollment token is handed to the authenticated browser once. Only
@@ -129,6 +135,13 @@ impl<'pool> DeviceAuthenticationService<'pool> {
             .map(Timestamp::from_offset_datetime)
             .ok_or(DeviceAuthError::InvalidEnrollment)?;
         let (device_id, new_device) = match target {
+            DeviceEnrollmentTarget::HostNew {
+                device_id,
+                display_name,
+            } => {
+                let device = Device::new(device_id, owner_user_id, display_name, created_at);
+                (device_id, Some(device))
+            }
             DeviceEnrollmentTarget::New(display_name) => {
                 let device = Device::new(DeviceId::new(), owner_user_id, display_name, created_at);
                 (device.id(), Some(device))

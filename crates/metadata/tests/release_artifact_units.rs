@@ -225,6 +225,60 @@ fn artifact_unit_4_temporary_build_paths_do_not_leak_into_artifacts() {
 }
 
 #[test]
+fn artifact_unit_8_secret_scan_rejects_credentials_without_joining_binary_fragments() {
+    let root = repo_root();
+    let common = root.join("deploy/packages/common/reproducible.sh");
+    let fixture_dir = std::env::temp_dir().join(format!(
+        "synveil-artifact-secret-scan-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&fixture_dir);
+    fs::create_dir_all(&fixture_dir).expect("create secret-scan fixtures");
+
+    let fixtures: [(&str, &[u8], bool); 5] = [
+        (
+            "postgres-url",
+            b"DATABASE_URL=postgresql://operator:canary-password@db.example.invalid/synveil",
+            true,
+        ),
+        ("device-token", b"svd1_AbCd1234", true),
+        ("enrollment-token", b"sve1_AbCd1234", true),
+        (
+            "binary-format-fragments",
+            b"postgresql://\0{role}\0:\0{password}\0@\0{host}",
+            false,
+        ),
+        (
+            "format-template",
+            b"postgresql://{role}:{password}@{host}:5432/{database}",
+            false,
+        ),
+    ];
+
+    for (name, contents, should_reject) in fixtures {
+        let path = fixture_dir.join(name);
+        fs::write(&path, contents).expect("write secret-scan fixture");
+        let output = Command::new("bash")
+            .arg("-c")
+            .arg("source \"$1\"; synveil_assert_no_secret_markers \"$2\" fixture")
+            .arg("synveil-secret-scan-unit")
+            .arg(&common)
+            .arg(&path)
+            .current_dir(&root)
+            .output()
+            .expect("run artifact secret scanner");
+        assert_eq!(
+            output.status.success(),
+            !should_reject,
+            "unexpected secret scan result for {name}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fs::remove_dir_all(&fixture_dir).expect("remove secret-scan fixtures");
+}
+
+#[test]
 fn artifact_unit_7_nested_target_roots_use_stable_rust_and_cxx_prefixes() {
     let root = repo_root()
         .canonicalize()
@@ -252,7 +306,7 @@ repo_root="$2"
 export CARGO_TARGET_DIR="$3"
 synveil_prepare_reproducible_rust_build "$repo_root"
 read -r -a cxx_flags <<< "$CXXFLAGS"
-read -r -a rust_flags <<< "$RUSTFLAGS"
+IFS=$'\x1f' read -r -a rust_flags <<< "$CARGO_ENCODED_RUSTFLAGS"
 c++ "${cxx_flags[@]}" -c "$CARGO_TARGET_DIR/prefix.cpp" -o "$CARGO_TARGET_DIR/prefix.o"
 rustc "${rust_flags[@]}" --edition=2021 --crate-name p113_path_probe \
     "$CARGO_TARGET_DIR/prefix.rs" -o "$CARGO_TARGET_DIR/rust-prefix"
