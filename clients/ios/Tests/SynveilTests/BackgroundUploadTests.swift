@@ -670,6 +670,7 @@ final class BackgroundUploadTests: XCTestCase {
         await model.refreshBackgroundState()
         XCTAssertEqual(model.failure, .storageFailure)
         XCTAssertTrue(model.savedStatusUnavailable)
+        XCTAssertFalse(model.isAvailable)
         XCTAssertFalse(model.canResume(record))
         XCTAssertTrue(model.backgroundJobs[record.id]?.blocksForeground == true)
         reader.failure = nil
@@ -677,6 +678,23 @@ final class BackgroundUploadTests: XCTestCase {
         XCTAssertFalse(model.savedStatusUnavailable)
         XCTAssertNil(model.failure)
         XCTAssertFalse(model.canResume(record))
+        XCTAssertEqual(f.transport.submissions.count, 1)
+    }
+
+    func testFailedPauseRemainsVisibleAfterSuccessfulLocalStatusReload() async throws {
+        let fault = QueueFaultInjector()
+        let f = try await fixture(fault: fault)
+        let record = try await start(f)
+        let model = FileUploadViewModel(
+            coordinator: f.coordinator, controller: f.queue.controller,
+            library: f.queue.scope.libraryId, libraryStatus: .active)
+        await model.refreshBackgroundState()
+        fault.arm(.beforeCommit, failure: .diskFull)
+        await model.pauseBackground(record)
+        XCTAssertEqual(model.failure, .storageFailure)
+        XCTAssertFalse(model.savedStatusUnavailable)
+        XCTAssertFalse(model.canResume(record))
+        XCTAssertEqual(f.provider.statusCount, 0)
         XCTAssertEqual(f.transport.submissions.count, 1)
     }
 

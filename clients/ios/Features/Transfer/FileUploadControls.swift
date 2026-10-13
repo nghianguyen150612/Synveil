@@ -134,7 +134,7 @@ struct FileUploadControls: View {
                     } label: {
                         Label("Upload File", systemImage: "arrow.up.doc")
                     }
-                    .disabled(model.isRunning)
+                    .disabled(model.isRunning || model.isLoadingSaved || !model.isAvailable)
                     .accessibilityHint(
                         "Choose one file, confirm its destination name, and upload it into this folder."
                     )
@@ -149,7 +149,7 @@ struct FileUploadControls: View {
                     } label: {
                         Label("Replace File Content", systemImage: "arrow.triangle.2.circlepath")
                     }
-                    .disabled(model.isRunning)
+                    .disabled(model.isRunning || model.isLoadingSaved || !model.isAvailable)
                     .accessibilityHint(
                         "Creates a new immutable file version using revision \(node.revision.rawValue). Previous versions remain available."
                     )

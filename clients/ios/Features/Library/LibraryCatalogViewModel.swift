@@ -50,13 +50,15 @@ enum LibraryCatalogUIFailure: Equatable {
             case .staleSession: "Device session changed"
             case .authenticationRejected: "Device authorization rejected"
             case .deviceRevoked: "Device access revoked"
-            case .offline: "No network connection"
+            case .offline: ClientRecoveryClassification.temporarilyOffline.title
             case .dnsFailure: "Server address not found"
             case .timeout: "Server did not respond"
             case .tlsFailure: "Secure connection could not be verified"
             case .redirectRejected: "Unexpected server redirect"
             case .serverUnavailable: "Server temporarily unavailable"
-            case .httpFailure: "Library request failed"
+            case .httpFailure(let code):
+                code == 403
+                    ? ClientRecoveryClassification.permissionDenied.title : "Library request failed"
             case .unexpectedContentType, .protocolFailure, .repeatedCursor:
                 "Server response could not be verified"
             case .resourceLimit: "Library catalog is too large"

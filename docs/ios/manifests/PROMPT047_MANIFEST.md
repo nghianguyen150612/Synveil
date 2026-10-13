@@ -147,8 +147,8 @@ formatting and Swift syntax parsing run in the official Linux toolchain. These c
 typechecking or XCTest. Native evidence is pending GitHub Actions on the feature head; it will be
 recorded below after observed completion.
 
-Twenty-six new XCTest methods supplement all existing suites: eight recovery contract/classifier
-tests, fourteen saved inspection/security/SQLite tests, two upload status race/failure tests and two
+Twenty-seven new XCTest methods supplement all existing suites: eight recovery contract/classifier
+tests, fourteen saved inspection/security/SQLite tests, three upload status race/failure tests and two
 sync recovery tests. Existing background UI coverage also now asserts that Resume cannot compete
 with an unresolved chunk. No test or gate is disabled. Portable tests check target registration,
 local-only inspection authority, absence of generic retry/network schedulers, original-session
@@ -164,7 +164,19 @@ integrity/permission distinction, recovery limits, background ownership read fai
 publication, explicit bounded server retry and unknown ACK dominance. Native hosting fixtures
 exercise the new notices and inspection surface at accessibility Dynamic Type.
 
+Final review additionally covers upload-only scopes without sync bases (they cannot poison an
+otherwise eligible saved catalog), bounded scope queries, withholding new upload controls when
+ownership reads fail, and retaining a failed Pause explanation after successful local status reload.
+
 ## Hardware limits and validation procedure
+
+The first implementation head `f0be4ee816c39ac04870b3aea6bace7925ee9967` passed hosted static
+validation ([38415122659](https://github.com/nghianguyen150612/Synveil/actions/runs/38415122659))
+and Xcode app build ([38415122737](https://github.com/nghianguyen150612/Synveil/actions/runs/38415122737)).
+The Simulator gate ([38415121907](https://github.com/nghianguyen150612/Synveil/actions/runs/38415121907))
+stopped during test compilation because one new `queueScope` fixture supplied owner before device.
+The argument order is corrected; no test is removed or skipped. This intermediate head is not
+native qualification. Final source-head results will be recorded after observed completion.
 
 Physical-device evidence is **NOT_AVAILABLE**. P046's real-device scheduling, force-quit,
 first-unlock, OS header-storage and Data Protection limits remain unchanged. No production

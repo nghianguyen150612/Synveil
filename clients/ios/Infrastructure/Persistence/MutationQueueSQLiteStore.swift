@@ -527,7 +527,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         do {
             return try transaction {
                 let rows = try query(
-                    "SELECT scope_id,library_id FROM scopes WHERE endpoint=? AND owner_id=? AND device_id=? AND credential_id=? AND quarantined=0",
+                    "SELECT scope_id,library_id FROM scopes WHERE endpoint=? AND owner_id=? AND device_id=? AND credential_id=? AND quarantined=0 LIMIT 1025",
                     [
                         .text(session.serverEndpoint.urlString), .text(session.ownerUserId),
                         .text(session.deviceIdentifier), .text(session.credentialIdentifier),
@@ -535,10 +535,16 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
                 ) {
                     (sqlite3_column_int64($0, 0), try Self.text($0, 1))
                 }
+                guard rows.count <= 1024 else { throw MutationQueueFailure.capacity }
                 var retained: Set<String> = []
                 for row in rows {
                     if observed.contains(row.1) {
-                        retained.insert(row.1)
+                        if try scalar(
+                            "SELECT count(*) FROM sync_bases WHERE scope_id=?", [.integer(row.0)])
+                            == 1
+                        {
+                            retained.insert(row.1)
+                        }
                     } else {
                         try fault?(.beforeQuarantine)
                         try execute(
@@ -2419,12 +2425,13 @@ extension MutationQueueSQLiteStore {
     func savedLibraries(session: LibraryRequestScope, bridge: any RustBridgeProtocol) async throws
         -> [Library]
     {
+        guard !projectionQuarantineFailed else { throw MutationQueueFailure.unavailable }
         let bindings: [SQLValue] = [
             .text(session.serverEndpoint.urlString), .text(session.ownerUserId),
             .text(session.deviceIdentifier), .text(session.credentialIdentifier),
         ]
         let sql =
-            "SELECT library_id FROM scopes WHERE endpoint=? AND owner_id=? AND device_id=? AND credential_id=? AND quarantined=0 ORDER BY library_id LIMIT 1025"
+            "SELECT s.library_id FROM scopes s JOIN sync_bases b ON b.scope_id=s.scope_id JOIN cached_libraries l ON l.scope_id=s.scope_id AND l.epoch=b.epoch WHERE s.endpoint=? AND s.owner_id=? AND s.device_id=? AND s.credential_id=? AND s.quarantined=0 ORDER BY s.library_id LIMIT 1025"
         let ids = try query(sql, bindings) { try Self.text($0, 0) }
         guard ids.count <= 1024 else { throw MutationQueueFailure.capacity }
         var libraries: [Library] = []

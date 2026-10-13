@@ -174,7 +174,7 @@ final class SavedMetadataInspectionTests: XCTestCase {
     func testPreviouslyBoundScopeIsNotVisibleToAnotherOwnerOrCredential() async throws {
         let f = try await queueFixture(self)
         try await projectionCache(f).rememberLibrary(try await library(f), scope: f.scope)
-        let other = try await queueScope(owner: 190, device: 191)
+        let other = try await queueScope(device: 191, owner: 190)
         await f.credentials.replace(try queueSession(other, credential: 192))
         let controller = await pending(f)
         let service = SavedMetadataInspectionService(
@@ -279,6 +279,8 @@ final class SavedMetadataInspectionTests: XCTestCase {
             id: newScope.libraryId, revision: library.revision,
             name: "New Library without a sync base", rootNodeId: library.rootNodeId,
             status: .active, createdAt: library.createdAt, updatedAt: library.updatedAt)
+        // Upload-only scopes can be bound without any synchronization base or Node projection.
+        try await f.database.bindSession(scope: newScope, credentialId: queueUUID(92))
         try await projectionCache(f).rememberValidatedCatalog(
             [library, newLibrary], session: session)
         let base = try await f.database.syncBase(scope: newScope)

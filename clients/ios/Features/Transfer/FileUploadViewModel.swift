@@ -41,7 +41,9 @@ final class FileUploadViewModel {
             && controller.lifecycleRevision == sessionRevision
     }
 
-    var isAvailable: Bool { isCurrent && coordinator != nil && libraryStatus == .active }
+    var isAvailable: Bool {
+        isCurrent && coordinator != nil && libraryStatus == .active && !savedStatusUnavailable
+    }
     var canInspectSaved: Bool { isCurrent && coordinator != nil }
 
     func canResume(_ record: UploadRecord) -> Bool {
@@ -188,11 +190,14 @@ final class FileUploadViewModel {
 
     func pauseBackground(_ record: UploadRecord) async {
         guard isCurrent, let background = coordinator?.background else { return }
+        var pauseFailure: UploadFailure?
         do { try await background.pause(record.id) } catch {
             guard isCurrent else { return }
-            failure = UploadPolicy.classify(error)
+            pauseFailure = UploadPolicy.classify(error)
+            failure = pauseFailure
         }
         await refreshBackgroundState()
+        if isCurrent, !savedStatusUnavailable { failure = pauseFailure }
     }
 
     func suspendForeground() { coordinator?.cancel() }

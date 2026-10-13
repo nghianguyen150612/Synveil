@@ -38,7 +38,9 @@ class ClientRecoveryRegistrationTests(unittest.TestCase):
             self.assertNotIn(forbidden, source)
         store = (IOS / 'Infrastructure/Persistence/MutationQueueSQLiteStore.swift').read_text()
         read = store.split('func savedLibraries(')[1].split('func cachedProjectionState(')[0]
-        self.assertIn('credential_id=? AND quarantined=0', read)
+        self.assertIn('s.credential_id=? AND s.quarantined=0', read)
+        self.assertIn('JOIN sync_bases', read)
+        self.assertIn('JOIN cached_libraries', read)
         self.assertNotIn('ensureScope(', read)
         self.assertNotIn('UPDATE ', read)
         self.assertNotIn('INSERT ', read)
