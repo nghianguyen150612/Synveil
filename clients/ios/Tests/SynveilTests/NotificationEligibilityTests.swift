@@ -155,6 +155,26 @@ final class NotificationEligibilityTests: XCTestCase {
         XCTAssertNil(
             NotificationEventClassifier.inbound(
                 record, scope: String(repeating: "a", count: 64), recovery: true))
+        let library = Library(
+            id: f.scope.libraryId, revision: try LibraryRevision(validating: "1"), name: "Private",
+            rootNodeId: try await NodeId.validated(queueUUID(2), using: QueueValidator()),
+            status: .active, createdAt: Date(), updatedAt: Date())
+        let authority = NotificationAuthority(
+            provider: f.provider, database: f.database, bridge: QueueValidator(), downloads: nil,
+            catalog: NotificationCatalog(library), nodes: f.nodes)
+        let position = SyncJournalPosition(
+            epoch: record.page.start.epoch, sequence: record.page.through)
+        let observed = try await authority.observeInbound(
+            library: library.id, recovery: false,
+            confirmation: BackgroundSyncConfirmation(
+                library: library.id, recordedAt: record.updatedAt, position: position))
+        XCTAssertNotNil(observed)
+        let stale = try await authority.observeInbound(
+            library: library.id, recovery: false,
+            confirmation: BackgroundSyncConfirmation(
+                library: library.id, recordedAt: record.updatedAt.addingTimeInterval(-1),
+                position: position))
+        XCTAssertNil(stale)
     }
     func testStagedInboundPageIsNotASynchronizationSuccess() async throws {
         let f = try await inboundFixture(self)

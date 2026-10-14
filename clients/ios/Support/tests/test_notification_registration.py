@@ -57,6 +57,8 @@ class NotificationRegistrationTests(unittest.TestCase):
         dispatch = startup.split("self.notificationStartupReady = true")[1]
         self.assertIn("Task {", dispatch)
         self.assertLess(dispatch.index("Task {"), dispatch.index("await self.consumeNotificationIntent()"))
+        background = source.split("func runBackgroundMetadata")[1].split("func backgroundSettingsIdentity")[0]
+        self.assertIn("notificationRevision == sessionController.lifecycleRevision", background)
 
     def test_sqlite_remains_v9_and_notification_failure_is_isolated(self):
         database = (IOS / "Infrastructure/Persistence/MutationQueueSQLiteStore.swift").read_text()

@@ -123,13 +123,16 @@ public final class AppDependencyContainer {
             return BackgroundSyncOutcome(state: .expired)
         }
         guard let backgroundSyncCoordinator else { return BackgroundSyncOutcome(state: .failed) }
+        let notificationRevision = sessionController.lifecycleRevision
         let outcome = await backgroundSyncCoordinator.run(delivery: delivery)
-        if outcome.state == .completed, outcome.events > 0, let confirmation = outcome.confirmation,
+        if notificationRevision == sessionController.lifecycleRevision,
+            outcome.state == .completed, outcome.events > 0,
+            let confirmation = outcome.confirmation,
             let notifications, let authority = notifications.authority as? NotificationAuthority
         {
             notifications.enqueue {
                 let candidate = try await authority.observeInbound(
-                    library: confirmation.library, recovery: false)
+                    library: confirmation.library, recovery: false, confirmation: confirmation)
                 return candidate
             }
         }

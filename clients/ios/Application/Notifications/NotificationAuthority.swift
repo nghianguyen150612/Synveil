@@ -159,7 +159,9 @@ final class NotificationAuthority: NotificationAuthorityProtocol {
         return NotificationEventClassifier.upload(
             record, scope: NotificationFingerprint.scope(session))
     }
-    func observeInbound(library: LibraryId, recovery: Bool) async throws -> NotificationCandidate? {
+    func observeInbound(
+        library: LibraryId, recovery: Bool, confirmation: BackgroundSyncConfirmation? = nil
+    ) async throws -> NotificationCandidate? {
         let session = try await provider.begin()
         let scope = try await session.mutationScope(libraryId: library, bridge: bridge)
         let record: InboundSyncPageRecord?
@@ -171,6 +173,14 @@ final class NotificationAuthority: NotificationAuthorityProtocol {
                 scope: scope, credentialId: session.credentialIdentifier, bridge: bridge)
         }
         try await provider.validate(session)
+        if !recovery {
+            guard let confirmation, let record,
+                confirmation.library == library, confirmation.recordedAt == record.updatedAt,
+                confirmation.position
+                    == SyncJournalPosition(
+                        epoch: record.page.start.epoch, sequence: record.page.through)
+            else { return nil }
+        }
         return record.flatMap {
             NotificationEventClassifier.inbound(
                 $0, scope: NotificationFingerprint.scope(session), recovery: recovery)
