@@ -18,7 +18,11 @@ final class LocalNotificationScheduler: LocalNotificationScheduling {
         }
     }
     func requestAuthorization() async throws {
-        _ = try await center.requestAuthorization(options: [.alert])
+        do {
+            _ = try await center.requestAuthorization(options: [.alert])
+        } catch {
+            throw NotificationFailure.authorizationDenied
+        }
     }
     func pendingIdentifiers() async -> [String] {
         await center.pendingNotificationRequests().map(\.identifier)
