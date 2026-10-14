@@ -51,6 +51,13 @@ class NotificationRegistrationTests(unittest.TestCase):
             self.assertNotIn("registerForRemoteNotifications", source.read_text())
             self.assertNotIn("didRegisterForRemoteNotifications", source.read_text())
 
+    def test_notification_navigation_does_not_delay_shared_background_startup(self):
+        source = (IOS / "App/AppDependencyContainer.swift").read_text()
+        startup = source.split("func prepareApplicationSession() async {")[1].split("func runBackgroundMetadata")[0]
+        dispatch = startup.split("self.notificationStartupReady = true")[1]
+        self.assertIn("Task {", dispatch)
+        self.assertLess(dispatch.index("Task {"), dispatch.index("await self.consumeNotificationIntent()"))
+
     def test_sqlite_remains_v9_and_notification_failure_is_isolated(self):
         database = (IOS / "Infrastructure/Persistence/MutationQueueSQLiteStore.swift").read_text()
         self.assertIn("static let schemaVersion = 9", database)

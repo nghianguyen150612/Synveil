@@ -120,6 +120,20 @@ final class NotificationCoordinatorTests: XCTestCase {
         await f.coordinator.reconcile()
         XCTAssertEqual(f.center.payloads.count, 1)
     }
+    func testDistinctEligibilityArrivingDuringSchedulingIsDrained() async throws {
+        let f = try notificationFixture(self)
+        let second = f.candidate(.committedUpload)
+        let drained = expectation(
+            description: "Second durable eligibility reached the fake scheduler")
+        f.center.onSchedule = {
+            f.center.onSchedule = { drained.fulfill() }
+            await f.coordinator.observe(second)
+        }
+        await f.coordinator.observe(f.candidate())
+        // The first in-flight pass schedules an independent follow-up after releasing its fence.
+        await fulfillment(of: [drained], timeout: 5)
+        XCTAssertEqual(f.center.payloads.count, 2)
+    }
     func testRelaunchUnclaimedEligibilitySchedulesOnce() async throws {
         let f = try notificationFixture(self)
         _ = try await f.ledger.insert(f.event())

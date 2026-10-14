@@ -17,6 +17,7 @@ final class NotificationCoordinator {
     private(set) var failure: NotificationFailure?
     private(set) var foregroundObservations = 0
     private var scheduling = false
+    private var reconciliationRequested = false
 
     init(
         scheduler: any LocalNotificationScheduling, policy: any NotificationPolicyStorage,
@@ -136,9 +137,18 @@ final class NotificationCoordinator {
     /// Relaunch retries only unclaimed eligibility. A claimed request is never retried, even when
     /// iOS removed it or the process died before the scheduling receipt was stored.
     func reconcile() async {
-        guard !scheduling else { return }
+        guard !scheduling else {
+            reconciliationRequested = true
+            return
+        }
         scheduling = true
-        defer { scheduling = false }
+        defer {
+            scheduling = false
+            if reconciliationRequested {
+                reconciliationRequested = false
+                Task { await self.reconcile() }
+            }
+        }
         let saved = storage.read()
         let captured = revision()
         guard saved.enabled else { return }

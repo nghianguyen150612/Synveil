@@ -78,7 +78,10 @@ public final class AppDependencyContainer {
         await consumeNotificationIntent()
     }
     func consumeNotificationIntent() async {
-        guard let notifications, let notificationLedger else { return }
+        guard let notifications, let notificationLedger else {
+            if notificationStartupReady { notificationNavigation.invalidate() }
+            return
+        }
         let intentRevision = notificationNavigation.intentRevision
         await notificationNavigation.consume(
             ready: notificationStartupReady,
@@ -102,9 +105,12 @@ public final class AppDependencyContainer {
             await self.prepareEnrollmentSecurity()
             await self.sessionController.start()
             self.notificationStartupReady = true
-            await self.consumeNotificationIntent()
             // No permission request, network sync or upload operation is started by notifications.
-            Task { await self.notifications?.reconcile() }
+            // Notification navigation cannot delay the shared P046/P048 startup task.
+            Task {
+                await self.consumeNotificationIntent()
+                await self.notifications?.reconcile()
+            }
         }
         sessionBootstrapTask = task
         await task.value

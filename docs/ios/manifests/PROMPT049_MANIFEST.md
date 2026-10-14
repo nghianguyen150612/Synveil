@@ -131,15 +131,15 @@ Five native suites plus shared test support cover permission lifecycle, independ
 external permission changes, eligibility, privacy, claims/crash windows, concurrent calls, caps,
 relaunch, account/logout races, startup intents, tampered payloads, removed resources, actual
 file-backed transfer/inbound authorities, ledger corruption/faults and small-screen/Dynamic Type
-SwiftUI rendering. Six new Python guards verify target membership, delegate ownership, capability
+SwiftUI rendering. Seven new Python guards verify target membership, delegate ownership, capability
 exclusions, remote-push exclusion and SQLite v9 isolation. Existing P001–P048 tests remain enabled.
 
-New XCTest inventory: NotificationCoordinatorTests 39; NotificationEligibilityTests 17;
+New XCTest inventory: NotificationCoordinatorTests 40; NotificationEligibilityTests 17;
 NotificationNavigationTests 21; NotificationPersistenceTests 19; NotificationViewTests 4.
-Total new cases: **100**. Local Python Support suite: **104 passed, 0 failed**. Source validation,
+Total new cases: **101**. Local Python Support suite: **105 passed, 0 failed**. Source validation,
 official Swift 6.2 strict formatting/lint, Swift parser, docs validation and diff whitespace: PASS.
 Xcode/Apple SDKs are unavailable on this Linux host; local parsing is not a native build.
-A supplemental Swift 6.2.3 Linux harness passed **78 XCTest cases, 0 failures, 0 skips** for
+A supplemental Swift 6.2.3 Linux harness passed **79 XCTest cases, 0 failures, 0 skips** for
 presentation policy, ledger and navigation. It uses production presentation sources/Observation,
 OpenSSL SHA-256 in place of CryptoKit and interface fixtures for Apple/operation adapters. The
 SQLite cleanup integration case, eligibility and SwiftUI suites remain enabled in Xcode and are
