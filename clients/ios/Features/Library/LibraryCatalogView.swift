@@ -397,6 +397,17 @@ struct LibraryCatalogView: View {
                 .accessibilityIdentifier("synveil.library.row.\(library.id.rawValue)")
             }
         }
+        if let metadataMutationFeature {
+            Section("Saved conflict review") {
+                ForEach(libraries, id: \.id) { library in
+                    ConflictReviewEntryView(
+                        library: NodeBrowserLibraryContext(library).mutationContext,
+                        feature: metadataMutationFeature,
+                        sessionController: sessionController
+                    )
+                }
+            }
+        }
         Section("Synchronization") {
             ForEach(libraries, id: \.id) { library in
                 NavigationLink {
