@@ -636,3 +636,115 @@ final class MutationActivityViewModel {
                 || result.permanentRejections > 0 || result.rebaselineBlocked > 0)
     }
 }
+
+/// Bounded projection of the authoritative saved mutation activity. A full page is
+/// deliberately incomplete: rows beyond it may contain additional conflicts.
+struct ConflictReviewSnapshot: Equatable {
+    let conflicts: [MetadataMutationActivityItem]
+    let unknownOutcomes: Int
+    let rebaselineBlockers: Int
+    let inspectedRecords: Int
+    let complete: Bool
+
+    static func make(
+        from records: [MetadataMutationActivityItem],
+        limit: Int = MutationQueuePolicy.maximumReadBatch
+    ) -> Self {
+        precondition(limit > 0)
+        return Self(
+            conflicts: records.filter { $0.state == .conflict },
+            unknownOutcomes: records.filter { $0.state == .outcomeUnknown }.count,
+            rebaselineBlockers: records.filter { $0.state == .blockedRebaseline }.count,
+            inspectedRecords: records.count,
+            complete: records.count < limit
+        )
+    }
+
+    var conflictCountText: String {
+        if complete {
+            return "\(conflicts.count) saved conflicts"
+        }
+        if conflicts.isEmpty {
+            return "Conflict count incomplete; more saved operations may exist."
+        }
+        return "At least \(conflicts.count) saved conflicts; count incomplete."
+    }
+
+    var needsAttention: Bool {
+        !conflicts.isEmpty || unknownOutcomes > 0 || rebaselineBlockers > 0 || !complete
+    }
+}
+
+enum ConflictReviewLoadState: Equatable {
+    case idle
+    case loading
+    case loaded(ConflictReviewSnapshot)
+    case failed(MetadataMutationFailure)
+    case invalidated
+}
+
+/// Read-only and session-fenced. In particular, the feature's send, enqueue,
+/// reconciliation and rebaseline methods are never invoked from this model.
+@Observable
+@MainActor
+final class ConflictReviewViewModel {
+    private(set) var state: ConflictReviewLoadState = .idle
+
+    private let library: MetadataMutationLibraryContext
+    private let feature: any MetadataMutationFeatureProtocol
+    private let sessionController: SessionController
+    private let sessionRevision: UInt64
+    @ObservationIgnored private var generation: UInt64 = 0
+    @ObservationIgnored private var invalidated = false
+
+    init(
+        library: MetadataMutationLibraryContext,
+        feature: any MetadataMutationFeatureProtocol,
+        sessionController: SessionController
+    ) {
+        self.library = library
+        self.feature = feature
+        self.sessionController = sessionController
+        sessionRevision = sessionController.lifecycleRevision
+    }
+
+    func load() async {
+        guard isCurrentSession, state != .loading else {
+            if !isCurrentSession { invalidate() }
+            return
+        }
+        generation &+= 1
+        let requestGeneration = generation
+        state = .loading
+        let result = await feature.activity(
+            in: library, limit: MutationQueuePolicy.maximumReadBatch)
+        guard generation == requestGeneration, isCurrentSession else {
+            if !isCurrentSession { invalidate() }
+            return
+        }
+        switch result {
+        case .loaded(let records):
+            // The repository owns scope validation and verifies persisted evidence.
+            state = .loaded(ConflictReviewSnapshot.make(from: records))
+        case .failed(let failure):
+            state = .failed(failure)
+        }
+    }
+
+    func sessionDidChange() {
+        if !isCurrentSession { invalidate() }
+    }
+
+    func invalidate() {
+        guard !invalidated else { return }
+        invalidated = true
+        generation &+= 1
+        state = .invalidated
+    }
+
+    private var isCurrentSession: Bool {
+        !invalidated && sessionController.state == .authenticated
+            && sessionController.lifecycleRevision == sessionRevision
+    }
+}
+
