@@ -886,6 +886,84 @@ final class MetadataMutationFeatureTests: XCTestCase {
         return try queueHTTP(object)
     }
 
+    func testP050ConflictProjectionPreservesAllSevenStates() {
+        let records = MutationQueueState.allCases.enumerated().map { index, state in
+            MetadataMutationActivityItem(
+                id: queueUUID(600 + index), kind: .renameNode, targetLabel: "opaque",
+                state: state, enqueuedAt: Date(timeIntervalSince1970: 1_760_000_000),
+                lastAttemptAt: nil, conflictReason: nil,
+                recoveryAttemptCount: nil, mayCheckRestore: false)
+        }
+        let snapshot = ConflictReviewSnapshot.make(from: records)
+        XCTAssertTrue(snapshot.complete)
+        XCTAssertEqual(snapshot.conflicts.map(\.state), [.conflict])
+        XCTAssertEqual(snapshot.unknownOutcomes, 1)
+        XCTAssertEqual(snapshot.rebaselineBlockers, 1)
+        XCTAssertEqual(snapshot.inspectedRecords, 7)
+        XCTAssertEqual(snapshot.conflictCountText, "1 saved conflicts")
+    }
+
+    func testP050ConflictCountConservativelyTreatsFullPageAsIncomplete() {
+        let records = (0..<MutationQueuePolicy.maximumReadBatch).map { index in
+            MetadataMutationActivityItem(
+                id: queueUUID(700 + index), kind: .renameNode, targetLabel: "opaque",
+                state: .pending, enqueuedAt: Date(timeIntervalSince1970: 1_760_000_000),
+                lastAttemptAt: nil, conflictReason: nil,
+                recoveryAttemptCount: nil, mayCheckRestore: false)
+        }
+        let snapshot = ConflictReviewSnapshot.make(from: records)
+        XCTAssertFalse(snapshot.complete)
+        XCTAssertTrue(snapshot.needsAttention)
+        XCTAssertTrue(snapshot.conflicts.isEmpty)
+        XCTAssertTrue(snapshot.conflictCountText.contains("incomplete"))
+        let empty = ConflictReviewSnapshot.make(from: [])
+        XCTAssertTrue(empty.complete)
+        XCTAssertFalse(empty.needsAttention)
+        XCTAssertEqual(empty.conflictCountText, "0 saved conflicts")
+    }
+
+    func testP050ReviewReadsOnlyAndInvalidatesOnLogout() async throws {
+        let controller = try authenticatedMutationController()
+        let library = try await presentationLibrary(status: .active)
+        let feature = FakeMetadataMutationFeature()
+        feature.activityResult = .loaded([
+            MetadataMutationActivityItem(
+                id: queueUUID(780), kind: .renameNode, targetLabel: "opaque",
+                state: .conflict, enqueuedAt: Date(), lastAttemptAt: nil,
+                conflictReason: .revisionMismatch, recoveryAttemptCount: nil,
+                mayCheckRestore: false)
+        ])
+        let model = ConflictReviewViewModel(
+            library: library, feature: feature, sessionController: controller)
+        await model.load()
+        guard case .loaded(let summary) = model.state else {
+            return XCTFail("Expected locally saved conflict status")
+        }
+        XCTAssertEqual(summary.conflicts.count, 1)
+        XCTAssertEqual(feature.sendCount, 0)
+        XCTAssertEqual(feature.reconcileCount, 0)
+        XCTAssertEqual(feature.setupCount, 0)
+
+        controller.requireRecovery(.authentication)
+        model.sessionDidChange()
+        XCTAssertEqual(model.state, .invalidated)
+        await model.load()
+        XCTAssertEqual(model.state, .invalidated)
+        XCTAssertEqual(feature.sendCount, 0)
+        XCTAssertEqual(feature.reconcileCount, 0)
+    }
+
+    func testP050StorageFailureNeverPresentsZeroConflicts() async throws {
+        let controller = try authenticatedMutationController()
+        let library = try await presentationLibrary(status: .active)
+        let feature = FakeMetadataMutationFeature()
+        feature.activityResult = .failed(.queueUnavailable)
+        let model = ConflictReviewViewModel(
+            library: library, feature: feature, sessionController: controller)
+        await model.load()
+        XCTAssertEqual(model.state, .failed(.queueUnavailable))
+    }
+
     private func presentationLibrary(status: LibraryStatus) async throws
         -> MetadataMutationLibraryContext
     {
