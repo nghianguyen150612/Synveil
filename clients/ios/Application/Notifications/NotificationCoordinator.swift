@@ -18,6 +18,7 @@ final class NotificationCoordinator {
     private(set) var foregroundObservations = 0
     private var scheduling = false
     private var reconciliationRequested = false
+    private var policyAvailable = true
 
     init(
         scheduler: any LocalNotificationScheduling, policy: any NotificationPolicyStorage,
@@ -55,7 +56,11 @@ final class NotificationCoordinator {
             var next = storage.read()
             next.enabled = true
             next.scopeFingerprint = scope
-            guard storage.write(next) else { throw NotificationFailure.storageFailure }
+            guard storage.write(next) else {
+                policyAvailable = false
+                throw NotificationFailure.storageFailure
+            }
+            policyAvailable = true
             policy = next
             failure = authorization == .authorized ? nil : .authorizationDenied
         } catch { failure = safeFailure(error) }
@@ -64,9 +69,11 @@ final class NotificationCoordinator {
         var next = storage.read()
         if enabled { next.categories.insert(category) } else { next.categories.remove(category) }
         guard storage.write(next) else {
+            policyAvailable = false
             failure = .storageFailure
             return
         }
+        policyAvailable = true
         policy = next
         if !enabled {
             Task {
@@ -103,6 +110,10 @@ final class NotificationCoordinator {
         _ candidate: NotificationCandidate, expectedGeneration: UUID? = nil,
         expectedRevision: UInt64? = nil
     ) async {
+        guard policyAvailable else {
+            failure = .storageFailure
+            return
+        }
         let saved = storage.read()
         let captured = expectedRevision ?? revision()
         guard saved.enabled else {
@@ -151,6 +162,10 @@ final class NotificationCoordinator {
         }
         let saved = storage.read()
         let captured = revision()
+        guard policyAvailable else {
+            failure = .storageFailure
+            return
+        }
         guard saved.enabled else { return }
         do {
             let events = try await ledger.events()
@@ -214,7 +229,7 @@ final class NotificationCoordinator {
         next.generation = UUID()
         // Memory fences immediately even if preference storage fails.
         policy = next
-        _ = storage.write(next)
+        policyAvailable = storage.write(next)
         failure = .sessionInvalidated
         Task {
             let pending = await scheduler.pendingIdentifiers()
@@ -230,7 +245,7 @@ final class NotificationCoordinator {
         foregroundObservations = min(foregroundObservations + 1, NotificationLimits.maximumRecords)
     }
     private func current(_ saved: NotificationPolicy, _ captured: UInt64) -> Bool {
-        revision() == captured && policy.generation == saved.generation
+        policyAvailable && revision() == captured && policy.generation == saved.generation
             && storage.read() == saved && saved.enabled
     }
     private func safeFailure(_ error: Error) -> NotificationFailure {

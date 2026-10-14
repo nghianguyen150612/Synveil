@@ -54,6 +54,15 @@ final class NotificationCoordinatorTests: XCTestCase {
         XCTAssertEqual(f.coordinator.policy.categories, [.verifiedDownload])
         XCTAssertFalse(f.coordinator.policy.enabled)
     }
+    func testCategoryPreferenceWriteFailureStopsPresentation() async throws {
+        let f = try notificationFixture(self)
+        f.policy.fails = true
+        f.coordinator.setCategory(.verifiedDownload, enabled: false)
+        await f.coordinator.observe(f.candidate())
+        XCTAssertTrue(f.center.payloads.isEmpty)
+        XCTAssertTrue(f.authority.valid)
+        XCTAssertEqual(f.coordinator.failure, .storageFailure)
+    }
     func testGrantedSchedulesGenericPayload() async throws {
         let f = try notificationFixture(self)
         await f.coordinator.observe(f.candidate())
