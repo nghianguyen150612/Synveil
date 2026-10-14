@@ -146,9 +146,64 @@ OpenSSL SHA-256 in place of CryptoKit and interface fixtures for Apple/operation
 SQLite cleanup integration case, eligibility and SwiftUI suites remain enabled in Xcode and are
 excluded from this supplemental harness; these results are not Apple or physical-device evidence.
 
-Native counts and exact-head CI: PENDING. No mocked result is represented as physical delivery.
-The final report must provide actual XCTest passed/failed/skipped totals and all four exact-head
-iOS Static Validation, iOS Build, iOS Simulator Tests and iOS Rust Apple Build URLs.
+## Native CI evidence and frozen implementation
+
+Frozen implementation SHA: `21ef0ae7fdddc2945f78d1b653ffcc29d6f44b96`.
+All four following runs report this exact `head_sha` and completed/success:
+
+| Gate | Source validation run | Result |
+|---|---|---|
+| iOS Static Validation | [38558533310](https://github.com/nghianguyen150612/Synveil/actions/runs/38558533310) | PASS |
+| iOS Build | [38558533298](https://github.com/nghianguyen150612/Synveil/actions/runs/38558533298) | PASS |
+| iOS Simulator Tests | [38558533371](https://github.com/nghianguyen150612/Synveil/actions/runs/38558533371) | PASS |
+| iOS Rust Apple Build | [38558533303](https://github.com/nghianguyen150612/Synveil/actions/runs/38558533303) | PASS |
+
+These pull-request runs check GitHub's synthetic merge of the feature into the unchanged verified
+P048 baseline. Final feature-head workflow_dispatch runs must additionally verify the documentation
+finalization commit itself; their exact IDs/SHA/results are recorded in PR #132 and the final report,
+without recursively creating another documentation commit after those runs. The live final-head
+[Static](https://github.com/nghianguyen150612/Synveil/actions/workflows/ios-static-validation.yml?query=branch%3Aios%2Fp049-native-notifications-lifecycle),
+[Build](https://github.com/nghianguyen150612/Synveil/actions/workflows/ios-build.yml?query=branch%3Aios%2Fp049-native-notifications-lifecycle),
+[Simulator](https://github.com/nghianguyen150612/Synveil/actions/workflows/ios-simulator-tests.yml?query=branch%3Aios%2Fp049-native-notifications-lifecycle), and
+[Rust Apple](https://github.com/nghianguyen150612/Synveil/actions/workflows/ios-rust-apple-build.yml?query=branch%3Aios%2Fp049-native-notifications-lifecycle)
+gate indexes expose their run metadata; qualification requires `head_sha` equal to the current PR head.
+
+Xcode's xcresulttool summary reports **1,900 passed, 0 failed, 2 skipped, 1,902 total** on
+Xcode 26.6 / Apple Swift 6.3.3, arm64 iPhone 17 Pro Simulator, iOS 26.5. All **103 P049 cases passed**:
+41 coordinator, 18 eligibility, 21 navigation, 19 persistence and 4 SwiftUI cases.
+The previously failed committed-upload test passes, as does the new uncertain-COMPLETE regression.
+Result bundle: [artifact 11892121654](https://github.com/nghianguyen150612/Synveil/actions/runs/38558533371/artifacts/11892121654),
+`ios-simulator-test-results`, retained by the existing workflow for seven days. The workflow's
+Verify Test Result Bundle step inspected the actual bundle and emitted the native summary.
+
+The two skips are unchanged inherited tests: `KeychainCredentialStoreTests.testSimulatorKeychainRoundTripUsesUniqueTestService`
+(unsigned Simulator process lacks Keychain entitlement) and
+`MutationQueueSQLiteTests.testNativeDataProtectionAttributes` (Simulator filesystem lacks Data
+Protection attributes). No P049 test is skipped, disabled or quarantined. Source validation and
+strict lint pass; expected toolchain/Simulator diagnostics are neither hidden nor suppressed.
+The P049 eligibility suite has **zero SQLite unlink warnings** after cleanup ownership correction.
+The same full run still reports 80 such diagnostics in inherited fixtures; P048 had 73. Counts
+vary with teardown timing. These remain a disclosed inherited test-lifetime limitation, separate
+from the corrected upload fixture and not evidence of a production database/schema change.
+
+The failed checkpoint runs [38531563388](https://github.com/nghianguyen150612/Synveil/actions/runs/38531563388)
+and [38531558557](https://github.com/nghianguyen150612/Synveil/actions/runs/38531558557) are retained as
+failure history, not qualification. Intermediate `a1b3544` native jobs were canceled by the existing
+workflow concurrency policy after the cleanup correction advanced the feature; they are not evidence.
+
+## Unrelated workflow failures
+
+The feature diff changes only `clients/ios/**` and this manifest. At recovered checkpoint `dad048c`,
+[ordinary Rust CI](https://github.com/nghianguyen150612/Synveil/actions/runs/38531563406) failed in
+desktop UnsafeEndpoint tests, object-store Clippy double_must_use checks and the Linux systemd-tmpfiles
+`--dry-run` environment check. [AppImage](https://github.com/nghianguyen150612/Synveil/actions/runs/38531564253)
+failed its desktop artifact audit for a build-path marker.
+[PostgreSQL 17](https://github.com/nghianguyen150612/Synveil/actions/runs/38531563380) failed the inherited
+scheduler schema count assertion (36 observed versus 34 expected).
+[Linux native packages](https://github.com/nghianguyen150612/Synveil/actions/runs/38531563371) also failed;
+its packaging failure was not changed or treated as an iOS gate. These workflows are distinct from
+successful iOS Rust Apple compilation. Their code/workflows were left untouched, and their latest
+status is reported separately in PR #132/final delivery. No blanket repository-CI success is claimed.
 
 ## Quota recovery and focused native defect correction
 
@@ -181,8 +236,8 @@ exposed this lifetime issue; it is independent of the upload's deliberate PATCH 
 `FileDownloadCoordinator.invalidateSession` now returns its existing cleanup task as a discardable
 handle; its actions, fencing and ordering are unchanged. The P049 test awaits that task and drains
 queue quarantine through existing `capture` before directory teardown. No SQLite diagnostics are
-suppressed, and no schema or transfer/recovery behavior was rewritten. Final native logs must
-confirm the P049 teardown warning is absent; inherited warnings are disclosed separately.
+suppressed, and no schema or transfer/recovery behavior was rewritten. The passing native eligibility suite confirms the P049 teardown warning is absent; inherited
+fixture warnings remain disclosed separately.
 
 Focused changes: `FileUploadCoordinatorTests.swift` (shared scripted provider only),
 `NotificationEligibilityTests.swift`, and `FileDownloadCoordinator.swift` (cleanup ownership).
@@ -236,3 +291,52 @@ Final integrated `ios-app` SHA at this snapshot: `0f39b9ab141d46df0bf7df76f5d488
 Ordinary merge-commit integration is permitted only after all exact-head gates and explicit review
 acceptance. Missing approval/checks leave the PR open. Final evidence will be recorded without
 fabricated review, counts, GitHub identifiers or physical qualification.
+
+## Final file inventory and focused audit
+
+The feature changes **27 files** (26 iOS source/test/project/support files and this manifest):
+
+- `clients/ios/App/AppDependencyContainer.swift`
+- `clients/ios/App/BackgroundUploadAppDelegate.swift`
+- `clients/ios/App/RootView.swift`
+- `clients/ios/App/SynveilApp.swift`
+- `clients/ios/Application/Notifications/NotificationAuthority.swift`
+- `clients/ios/Application/Notifications/NotificationCoordinator.swift`
+- `clients/ios/Application/Notifications/NotificationEventClassifier.swift`
+- `clients/ios/Application/Notifications/NotificationNavigationCoordinator.swift`
+- `clients/ios/Application/Sync/InboundSyncCoordinator.swift`
+- `clients/ios/Application/Transfer/FileDownloadCoordinator.swift`
+- `clients/ios/Application/Transfer/FileUploadCoordinator.swift`
+- `clients/ios/Domain/Notifications/NotificationModels.swift`
+- `clients/ios/Features/Library/LibraryCatalogView.swift`
+- `clients/ios/Features/Notifications/NotificationSettingsView.swift`
+- `clients/ios/Infrastructure/Notifications/LocalNotificationScheduler.swift`
+- `clients/ios/Infrastructure/Persistence/NotificationDeliveryLedger.swift`
+- `clients/ios/Infrastructure/Persistence/NotificationPolicyStore.swift`
+- `clients/ios/Support/tests/test_notification_registration.py`
+- `clients/ios/Synveil.xcodeproj/project.pbxproj`
+- `clients/ios/Tests/SynveilTests/FileUploadCoordinatorTests.swift`
+- `clients/ios/Tests/SynveilTests/NotificationCoordinatorTests.swift`
+- `clients/ios/Tests/SynveilTests/NotificationEligibilityTests.swift`
+- `clients/ios/Tests/SynveilTests/NotificationNavigationTests.swift`
+- `clients/ios/Tests/SynveilTests/NotificationPersistenceTests.swift`
+- `clients/ios/Tests/SynveilTests/NotificationTestSupport.swift`
+- `clients/ios/Tests/SynveilTests/NotificationViewTests.swift`
+- `docs/ios/manifests/PROMPT049_MANIFEST.md`
+
+Focused audit: preferences remain globally/per-category OFF by default; Settings is the sole
+permission prompt; current Apple authorization and authenticated scope are checked before claims.
+Generic payloads carry only an opaque local handle and no logging/analytics path was added.
+Eligibility still requires readback of VERIFIED/COMMITTED/confirmed meaningful progress; taps
+revalidate current resource access and cannot execute a transfer, mutation or recovery. Logout
+fences scope/generation and navigation synchronously. Claims/caps/expiry favor fail-closed loss
+over repeated scheduling. P046 URLSession and P048 BGTask completions never await notification
+scheduling/navigation. SQLite v9, its migration/recovery tables and all regression suites remain
+intact. Only cleanup-task ownership was exposed; its existing work/order is unchanged.
+
+Review snapshot: PR OPEN, ready for review, reviewer `ducminh231011` still requested; zero submitted
+reviews and zero unresolved threads. GitHub reports MERGEABLE, `ios-app` unprotected and no branch
+rules returned. Explicit independent acceptance is nevertheless required by P049 and remains absent.
+No merge was attempted. The resulting integrated `ios-app` remains
+`0f39b9ab141d46df0bf7df76f5d4886fca044a4a`; P050 has not begun. Final remote review/check/integration
+state must be rechecked before any ordinary merge commit.
