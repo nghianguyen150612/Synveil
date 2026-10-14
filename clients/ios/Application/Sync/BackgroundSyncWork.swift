@@ -73,6 +73,12 @@ final class BackgroundSyncWork: BackgroundSyncWorkProtocol {
         do {
             try await validate(session)
             let scope = try await session.mutationScope(libraryId: library, bridge: bridge)
+            let state = try await database.cachedProjectionState(
+                scope: scope, credentialId: session.credentialIdentifier, bridge: bridge)
+            guard let saved = state.library?.library, saved.id == library,
+                saved.status != .quarantined
+            else { throw LibraryFailure.originMismatch }
+            try await validate(session)
             return await inbound.synchronize(scope: scope, configuration: .background) { _ in }
         } catch {
             return InboundSyncRunResult(

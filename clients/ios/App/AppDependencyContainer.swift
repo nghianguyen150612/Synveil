@@ -57,6 +57,7 @@ public final class AppDependencyContainer {
     private(set) var mutationQueueFailure: MutationQueueFailure?
     private(set) var backgroundSyncCoordinator: BackgroundSyncCoordinator?
     private var sessionBootstrapTask: Task<Void, Never>?
+    private var backgroundDatabase: MutationQueueSQLiteStore?
 
     /// The application delegate and metadata delivery share one startup pass, without a scene.
     func prepareApplicationSession() async {
@@ -83,7 +84,7 @@ public final class AppDependencyContainer {
     }
 
     func backgroundSettingsIdentity() async throws -> BackgroundSyncIdentity {
-        guard let credentialSink, let database = durableMutationQueue?.storeForBackgroundSettings,
+        guard let credentialSink, let database = backgroundDatabase,
             sessionController.state == .authenticated,
             let endpoint = sessionController.serverEndpoint
         else { throw LibraryFailure.unauthenticated }
@@ -101,15 +102,26 @@ public final class AppDependencyContainer {
     /// Explicit settings action: enrollment alone does not fabricate P047 verification evidence.
     func authorizeBackgroundOptIn() async throws -> BackgroundSyncIdentity {
         guard sessionController.state == .authenticated, let restorationService,
-            let endpoint = sessionController.serverEndpoint
+            let endpoint = sessionController.serverEndpoint, let credentialSink,
+            let database = backgroundDatabase
         else { throw LibraryFailure.unauthenticated }
         let revision = sessionController.lifecycleRevision
+        let stored = try await credentialSink.load(expectedServerEndpoint: endpoint)
+        guard revision == sessionController.lifecycleRevision,
+            sessionController.state == .authenticated
+        else { throw LibraryFailure.staleSession }
+        let session = LibraryRequestScope(session: stored, revision: revision)
+        let owner = UUID()
+        try await database.claimBackgroundOptInVerification(session: session, owner: owner)
         let result = await restorationService.restore(configuredServerEndpoint: endpoint)
+        await database.finishInboundRun(owner: owner)
         guard sessionController.state == .authenticated,
             sessionController.lifecycleRevision == revision
         else { throw LibraryFailure.staleSession }
         switch result {
-        case .remotelyVerifiedAuthorizedSession: return try await backgroundSettingsIdentity()
+        case .remotelyVerifiedAuthorizedSession(let verified):
+            guard verified == stored else { throw LibraryFailure.staleSession }
+            return try await backgroundSettingsIdentity()
         case .locallyValidStoredSession(_, .authenticationRejected):
             sessionController.handleLibraryAuthenticationFailure(
                 .authenticationRejected, revision: revision)
@@ -121,7 +133,7 @@ public final class AppDependencyContainer {
     }
 
     func backgroundSavedConfirmation() async throws -> BackgroundSyncConfirmation? {
-        guard let credentialSink, let database = durableMutationQueue?.storeForBackgroundSettings,
+        guard let credentialSink, let database = backgroundDatabase,
             let bridge = rustBridge, sessionController.state == .authenticated,
             let endpoint = sessionController.serverEndpoint
         else { throw LibraryFailure.unauthenticated }
@@ -151,7 +163,7 @@ public final class AppDependencyContainer {
     }
 
     func backgroundRecoveryRequired() async throws -> Bool {
-        guard let credentialSink, let database = durableMutationQueue?.storeForBackgroundSettings,
+        guard let credentialSink, let database = backgroundDatabase,
             sessionController.state == .authenticated,
             let endpoint = sessionController.serverEndpoint
         else { throw LibraryFailure.unauthenticated }
@@ -263,6 +275,7 @@ public final class AppDependencyContainer {
                 case .failed(let failure): throw failure
                 }
                 durableMutationQueue = queue
+                backgroundDatabase = database
                 let coordinator = MutationDrainCoordinator(
                     queue: queue, provider: mutationProvider, bridge: bridge)
                 mutationDrainCoordinator = coordinator
@@ -449,6 +462,7 @@ public final class AppDependencyContainer {
                 }
             } catch {
                 durableMutationQueue = nil
+                backgroundDatabase = nil
                 mutationDrainCoordinator = nil
                 syncCheckpointService = nil
                 syncFeedService = nil

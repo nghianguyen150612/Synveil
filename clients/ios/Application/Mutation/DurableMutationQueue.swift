@@ -30,8 +30,6 @@ final class DurableMutationQueue: DurableMutationQueueProtocol {
     private var sessions: [(ClientMutationScope, LibraryRequestScope)] = []
     private var quarantineTask: Task<Void, Never>?
     private var quarantineFailed = false
-    /// Reuses the established connection for read-only policy/status composition; no new store.
-    var storeForBackgroundSettings: MutationQueueSQLiteStore { store }
 
     init(
         store: any MutationQueueStorageProtocol,

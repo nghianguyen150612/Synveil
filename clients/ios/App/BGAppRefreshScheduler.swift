@@ -7,6 +7,7 @@ import UIKit
 /// Completion and expiration are fenced synchronously, even before the MainActor worker starts.
 /// The lock protects only this delivery's lifecycle; SQLite owns synchronization exclusion.
 final class BackgroundRefreshDelivery: @unchecked Sendable {
+    private static let logger = Logger(subsystem: "com.synveil.ios", category: "metadata-refresh")
     private let lock = NSLock()
     private var expired = false
     private var completed = false
@@ -21,10 +22,13 @@ final class BackgroundRefreshDelivery: @unchecked Sendable {
         }
     }
     func expire() {
-        lock.withLock {
+        let firstExpiration = lock.withLock {
+            let first = !expired
             expired = true
             worker?.cancel()
+            return first
         }
+        if firstExpiration { Self.logger.info("execution expiration or withdrawal requested") }
         finish(success: false)
     }
     func finish(success: Bool) {
@@ -57,7 +61,10 @@ final class NativeBackgroundRefreshScheduler: BackgroundRefreshScheduling {
                     task.setTaskCompleted(success: false)
                     return
                 }
-                let delivery = BackgroundRefreshDelivery { refresh.setTaskCompleted(success: $0) }
+                let delivery = BackgroundRefreshDelivery {
+                    refresh.expirationHandler = nil
+                    refresh.setTaskCompleted(success: $0)
+                }
                 refresh.expirationHandler = { delivery.expire() }
                 handler(delivery)
             }
@@ -245,6 +252,7 @@ final class BGAppRefreshScheduler {
             return
         }
         settings = next
+        state = next.enabled ? .invalidated : .disabled
         await schedule()
     }
     func invalidate(disable: Bool = false) {

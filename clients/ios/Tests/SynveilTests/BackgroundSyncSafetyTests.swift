@@ -15,6 +15,15 @@ private actor RefreshAuthorizationValidator: AuthenticatedSessionValidationProto
 
 @MainActor
 final class BackgroundSyncSafetyTests: XCTestCase {
+    func testBuiltApplicationHasTypedRefreshIdentifierAndFetchCapability() {
+        XCTAssertEqual(Bundle.main.bundleIdentifier, "com.synveil.ios")
+        XCTAssertEqual(
+            Bundle.main.object(forInfoDictionaryKey: "BGTaskSchedulerPermittedIdentifiers")
+                as? [String],
+            [BackgroundSyncLimits.identifier])
+        XCTAssertEqual(
+            Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String], ["fetch"])
+    }
     func testBackgroundConfigurationHasConservativeFiniteBounds() {
         XCTAssertTrue(InboundSyncRunConfiguration.background.isValid)
         XCTAssertEqual(InboundSyncRunConfiguration.background.maximumPages, 1)

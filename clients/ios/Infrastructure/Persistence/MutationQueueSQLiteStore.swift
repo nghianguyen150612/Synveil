@@ -1292,6 +1292,13 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         try connection.acquireInboundLock(path: url.path + ".inbound.lock", owner: owner)
     }
 
+    /// Explicit opt-in verification shares the existing global run lock even before a Library
+    /// has a checkpoint. This grants only exclusion, never projection or request authorization.
+    func claimBackgroundOptInVerification(session: LibraryRequestScope, owner: UUID) throws {
+        _ = try authorizationValues(SessionAuthorizationIdentity(session.restorationSession))
+        try connection.acquireInboundLock(path: url.path + ".inbound.lock", owner: owner)
+    }
+
     func finishInboundRun(owner: UUID) { connection.releaseInboundLock(owner: owner) }
 
     /// Bounded deterministic selection across epochs; an old unresolved epoch must block a run.
