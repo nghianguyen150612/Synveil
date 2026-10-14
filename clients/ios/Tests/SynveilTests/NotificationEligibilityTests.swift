@@ -137,7 +137,14 @@ final class NotificationEligibilityTests: XCTestCase {
         let record = try await downloadRecord(f)
         let observation = try await authority.observeDownload(record)
         let candidate = try XCTUnwrap(observation)
+        var downloadCleanup: Task<Void, Never>?
+        f.queue.controller.installMutationSessionInvalidator {
+            [weak coordinator = f.coordinator, weak queue = f.queue.queue] in
+            downloadCleanup = coordinator?.invalidateSession()
+            queue?.invalidateSession()
+        }
         await f.queue.controller.requestLogout()
+        await downloadCleanup?.value
         // capture awaits the queue's existing asynchronous quarantine before rejecting logout.
         // Drain that work before the temporary SQLite directory is removed by fixture teardown.
         do {
@@ -294,15 +301,19 @@ final class NotificationEligibilityTests: XCTestCase {
         let intent = try await UploadIntent.prepare(
             target: target, expected: expected,
             generator: FixedUploadIDGenerator(value: queueUUID(703)), bridge: QueueValidator())
-        let record = UploadRecord(
-            id: UploadOperationId(), stagingId: UploadOperationId(), stagingReleased: false,
-            intent: intent, scope: f.scope, credentialId: queueUUID(92),
-            originatingSessionId: UUID().uuidString.lowercased(),
-            serverSessionId: queueUUID(703), serverTargetNodeId: nil, authoritativeOffset: 0,
-            serverState: .open, state: .readyToComplete, uncertain: false, attemptCount: 1,
-            completion: nil, failure: nil)
-        XCTAssertNil(
-            NotificationEventClassifier.upload(record, scope: String(repeating: "a", count: 64)))
+        for state: UploadLocalState in [.readyToComplete, .committed] {
+            let record = UploadRecord(
+                id: UploadOperationId(), stagingId: UploadOperationId(), stagingReleased: false,
+                intent: intent, scope: f.scope, credentialId: queueUUID(92),
+                originatingSessionId: UUID().uuidString.lowercased(),
+                serverSessionId: queueUUID(703), serverTargetNodeId: nil, authoritativeOffset: 0,
+                serverState: state == .committed ? .committed : .open, state: state,
+                uncertain: false, attemptCount: 1, completion: nil, failure: nil)
+            XCTAssertNil(
+                NotificationEventClassifier.upload(
+                    record, scope: String(repeating: "a", count: 64)),
+                "A local state without durable COMPLETE evidence cannot qualify")
+        }
     }
     func testEarlyNativeResponsesAreBoundedAndReplayedOnceAfterInstallation() {
         let relay = NotificationApplicationDelivery()

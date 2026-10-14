@@ -116,14 +116,15 @@ final class FileDownloadCoordinator {
     }
     func cancel() { active?.cancel() }
 
-    func invalidateSession() {
+    @discardableResult
+    func invalidateSession() -> Task<Void, Never> {
         generation &+= 1
         sessionId = UUID().uuidString.lowercased()
         active?.cancel()
         // Keep the writer lock until the old task stops; authorization is already fenced by the
         // session controller. Quarantine before best-effort physical deletion.
         let task = active
-        Task {
+        return Task {
             _ = await task?.value
             active = nil
             latest = nil

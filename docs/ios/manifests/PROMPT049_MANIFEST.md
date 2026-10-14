@@ -135,9 +135,9 @@ file-backed transfer/inbound authorities, ledger corruption/faults and small-scr
 SwiftUI rendering. Seven new Python guards verify target membership, delegate ownership, capability
 exclusions, remote-push exclusion and SQLite v9 isolation. Existing P001–P048 tests remain enabled.
 
-New XCTest inventory: NotificationCoordinatorTests 41; NotificationEligibilityTests 17;
+New XCTest inventory: NotificationCoordinatorTests 41; NotificationEligibilityTests 18;
 NotificationNavigationTests 21; NotificationPersistenceTests 19; NotificationViewTests 4.
-Total new cases: **102**. Local Python Support suite: **105 passed, 0 failed**. Source validation,
+Total new cases: **103**. Local Python Support suite: **105 passed, 0 failed**. Source validation,
 official Swift 6.2 strict formatting/lint, Swift parser, docs validation and diff whitespace: PASS.
 Xcode/Apple SDKs are unavailable on this Linux host; local parsing is not a native build.
 A supplemental Swift 6.2.3 Linux harness passed **80 XCTest cases, 0 failures, 0 skips** for
@@ -149,6 +149,46 @@ excluded from this supplemental harness; these results are not Apple or physical
 Native counts and exact-head CI: PENDING. No mocked result is represented as physical delivery.
 The final report must provide actual XCTest passed/failed/skipped totals and all four exact-head
 iOS Static Validation, iOS Build, iOS Simulator Tests and iOS Rust Apple Build URLs.
+
+## Quota recovery and focused native defect correction
+
+The clean published branch and PR #132 were recovered at
+`dad048c3c37c5b82d9f6f2443897f8f993788afc`; integration remained the verified P048 baseline.
+No reset, force push, recreated implementation or duplicate PR was used.
+
+[Native failure 38531563388](https://github.com/nghianguyen150612/Synveil/actions/runs/38531563388)
+reported 1,898 passed, one failed and two inherited skips (1,901 total). The sole failure was
+`NotificationEligibilityTests.testUploadCompletionHookRequiresExplicitDurableCommit`.
+Its reused `UploadCoordinatorProvider` always injected a first-PATCH timeout, including when
+configured with zero accepted bytes. Reconciliation correctly confirmed zero offset advancement,
+so the real coordinator returned `.stopped(record, .timeout)` with uncertain durable evidence;
+COMPLETE was never called. This was an invalid success fixture, not premature production publication.
+
+The provider now accepts an optional first-PATCH fault: nil exercises ordinary validated PATCH,
+while all pre-existing integer fault configurations retain their exact behavior. The P049 success
+fixture uses nil and still requires `.completed`, persisted completion evidence, one COMPLETE call
+and one committed observation. A new ambiguous-COMPLETE case loses its response and authoritative
+status read, requiring uncertain state, no durable completion and no completed notification.
+READY_TO_COMPLETE and COMMITTED-without-completion are both rejected by the classifier.
+Duplicate scheduling, logout fencing and P046 explicit-finalization tests remain enabled.
+
+SQLite warning investigation used both failed P049 logs and the successful P048 baseline
+[run 38499912716](https://github.com/nghianguyen150612/Synveil/actions/runs/38499912716).
+That baseline already reports 73 `vnode unlinked while in use` diagnostics across inherited
+session/logout fixtures. The shared temporary-directory teardown can precede asynchronous
+quarantine/cache cleanup retaining SQLite connections. P049's real-logout authority test also
+exposed this lifetime issue; it is independent of the upload's deliberate PATCH timeout.
+`FileDownloadCoordinator.invalidateSession` now returns its existing cleanup task as a discardable
+handle; its actions, fencing and ordering are unchanged. The P049 test awaits that task and drains
+queue quarantine through existing `capture` before directory teardown. No SQLite diagnostics are
+suppressed, and no schema or transfer/recovery behavior was rewritten. Final native logs must
+confirm the P049 teardown warning is absent; inherited warnings are disclosed separately.
+
+Focused changes: `FileUploadCoordinatorTests.swift` (shared scripted provider only),
+`NotificationEligibilityTests.swift`, and `FileDownloadCoordinator.swift` (cleanup ownership).
+Native execution is unavailable locally on Linux; the required full Xcode workflow includes the
+focused upload case, all notification suites, P045/P046 regressions and persistence integrity tests.
+The supplemental 80-case presentation harness remains distinct from native Xcode evidence.
 
 ## Physical-device validation — NOT_AVAILABLE
 
