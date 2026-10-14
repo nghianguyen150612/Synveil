@@ -66,6 +66,20 @@ final class FileDownloadCoordinator {
     private var generation: UInt64 = 0
     private var sessionId = UUID().uuidString.lowercased()
     private var latest: DownloadRecord?
+    var notificationObservation: (@MainActor (DownloadRecord) -> Void)?
+
+    /// Read-only integrity check for presentation eligibility. It cannot repair or invalidate an
+    /// operation and never returns a private path or content capability.
+    func validateNotificationContent(_ record: DownloadRecord, session: LibraryRequestScope)
+        async throws
+    {
+        guard record.state == .verified, session.matches(record.identity.scope),
+            session.credentialIdentifier == record.identity.credentialId
+        else { throw DownloadFailure.staleSession }
+        try await repository.provider.validate(session)
+        try await staging.verify(record, published: true)
+        try await repository.provider.validate(session)
+    }
 
     init(
         repository: AuthenticatedFileDownloadRepository, database: MutationQueueSQLiteStore,
@@ -102,14 +116,15 @@ final class FileDownloadCoordinator {
     }
     func cancel() { active?.cancel() }
 
-    func invalidateSession() {
+    @discardableResult
+    func invalidateSession() -> Task<Void, Never> {
         generation &+= 1
         sessionId = UUID().uuidString.lowercased()
         active?.cancel()
         // Keep the writer lock until the old task stops; authorization is already fenced by the
         // session controller. Quarantine before best-effort physical deletion.
         let task = active
-        Task {
+        return Task {
             _ = await task?.value
             active = nil
             latest = nil
@@ -437,6 +452,7 @@ final class FileDownloadCoordinator {
             try await fence(current, captured)
             record = try await update(record, state: .verified)
             try await fence(current, captured)
+            notificationObservation?(record)
             progress(DownloadProgress(record))
             return .completed(
                 VerifiedDownloadedFile(

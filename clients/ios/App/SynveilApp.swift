@@ -9,6 +9,15 @@ struct SynveilApp: App {
         let configuration = AppConfiguration.load()
         let dependencies = AppDependencyContainer(configuration: configuration)
         _container = State(initialValue: dependencies)
+        NotificationApplicationDelivery.shared.install { [weak dependencies] id in
+            dependencies?.notificationResponse(id)
+        }
+        NotificationApplicationDelivery.shared.becameActive = { [weak dependencies] in
+            Task { await dependencies?.refreshNotifications() }
+        }
+        NotificationApplicationDelivery.shared.foreground = { [weak dependencies] in
+            dependencies?.notifications?.foregroundObserved()
+        }
         BGAppRefreshScheduler.shared.install(
             operation: { await dependencies.runBackgroundMetadata($0) },
             identity: { try await dependencies.backgroundSettingsIdentity() },
@@ -40,10 +49,15 @@ struct SynveilApp: App {
                 syncCheckpointService: container.syncCheckpointService,
                 downloadCoordinator: container.downloadCoordinator,
                 uploadCoordinator: container.uploadCoordinator,
-                fileExportCoordinator: container.fileExportCoordinator
+                fileExportCoordinator: container.fileExportCoordinator,
+                notifications: container.notifications,
+                notificationNavigation: container.notificationNavigation
             )
             .task {
                 await BackgroundUploadApplicationBootstrap.shared.waitForStartup()
+            }
+            .onChange(of: container.sessionController.state) { _, _ in
+                Task { await container.consumeNotificationIntent() }
             }
         }
     }

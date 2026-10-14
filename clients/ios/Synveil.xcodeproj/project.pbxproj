@@ -214,6 +214,21 @@
 		399F2ABC8AFAB50C30A04203 /* BackgroundSyncSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6C037BA9750328950167AB7 /* BackgroundSyncSettingsView.swift */; };
 		E513911B291BA5B75A19A224 /* BackgroundSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCD8D14E315C816297696D9D /* BackgroundSyncTests.swift */; };
 		C82A408E185025C846D0A7E4 /* BackgroundSyncSafetyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60BCE18634BF3EE4464F65D3 /* BackgroundSyncSafetyTests.swift */; };
+		97DFD8DA590166F1A1D27854 /* NotificationAuthority.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BA064361A552A8A8E35F119 /* NotificationAuthority.swift */; };
+		89127D31A5FC8A15E191FF1A /* NotificationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A711BF77725FBC9886D0C16 /* NotificationCoordinator.swift */; };
+		819E1E5B54323CDB2CB78A2B /* NotificationEventClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0BB30B991322B4AC1D795A5 /* NotificationEventClassifier.swift */; };
+		8D33183A1422DA8AB6F92916 /* NotificationNavigationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B6102408BF43F0912EE6B22 /* NotificationNavigationCoordinator.swift */; };
+		8800483D0DDB5C98A1875CEE /* NotificationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4469203EB5D5C8B5F3BDC76 /* NotificationModels.swift */; };
+		F2E07BEE91E2B996FB6B6838 /* NotificationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA1546827CAF8807D0F2C78C /* NotificationSettingsView.swift */; };
+		1B5BD3628469B277BC4724F7 /* NotificationDeliveryLedger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AE8511FABF9B0710730E88F /* NotificationDeliveryLedger.swift */; };
+		20338AFE1E8E69BCFE6FB01D /* NotificationPolicyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E2182A4A0FE2C0C0FF1D236 /* NotificationPolicyStore.swift */; };
+		F9D7274E58A5B65920B630E6 /* NotificationCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA148338BF8371B6D1B1B561 /* NotificationCoordinatorTests.swift */; };
+		62E87867D4B9EF01D179F7AB /* NotificationEligibilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14E92E245522CB34A8673D97 /* NotificationEligibilityTests.swift */; };
+		B7E668E842F199232619A86A /* NotificationNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFBBE07F34D6F54E77E9AE81 /* NotificationNavigationTests.swift */; };
+		AD45EB5BB3B0C570B404CA4E /* NotificationPersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CC578BD3F030978744DFBFA /* NotificationPersistenceTests.swift */; };
+		17263C898E90BF6CEFCA2B59 /* NotificationTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9614A75B0F1C8683336D2C88 /* NotificationTestSupport.swift */; };
+		953A24380218678BF0AEFD09 /* NotificationViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 428F4A5A54D6FE89956DB72C /* NotificationViewTests.swift */; };
+		C82802687338F9AAC0B19F35 /* LocalNotificationScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCA2C67CA1F0A896F77500C /* LocalNotificationScheduler.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -435,6 +450,21 @@
 		F6C037BA9750328950167AB7 /* BackgroundSyncSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Sync/BackgroundSyncSettingsView.swift; sourceTree = "<group>"; };
 		DCD8D14E315C816297696D9D /* BackgroundSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/BackgroundSyncTests.swift; sourceTree = "<group>"; };
 		60BCE18634BF3EE4464F65D3 /* BackgroundSyncSafetyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/BackgroundSyncSafetyTests.swift; sourceTree = "<group>"; };
+		1BA064361A552A8A8E35F119 /* NotificationAuthority.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Notifications/NotificationAuthority.swift; sourceTree = "<group>"; };
+		0A711BF77725FBC9886D0C16 /* NotificationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Notifications/NotificationCoordinator.swift; sourceTree = "<group>"; };
+		E0BB30B991322B4AC1D795A5 /* NotificationEventClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Notifications/NotificationEventClassifier.swift; sourceTree = "<group>"; };
+		2B6102408BF43F0912EE6B22 /* NotificationNavigationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Notifications/NotificationNavigationCoordinator.swift; sourceTree = "<group>"; };
+		A4469203EB5D5C8B5F3BDC76 /* NotificationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Notifications/NotificationModels.swift; sourceTree = "<group>"; };
+		FA1546827CAF8807D0F2C78C /* NotificationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Notifications/NotificationSettingsView.swift; sourceTree = "<group>"; };
+		8AE8511FABF9B0710730E88F /* NotificationDeliveryLedger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/NotificationDeliveryLedger.swift; sourceTree = "<group>"; };
+		5E2182A4A0FE2C0C0FF1D236 /* NotificationPolicyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/NotificationPolicyStore.swift; sourceTree = "<group>"; };
+		CA148338BF8371B6D1B1B561 /* NotificationCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NotificationCoordinatorTests.swift; sourceTree = "<group>"; };
+		14E92E245522CB34A8673D97 /* NotificationEligibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NotificationEligibilityTests.swift; sourceTree = "<group>"; };
+		FFBBE07F34D6F54E77E9AE81 /* NotificationNavigationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NotificationNavigationTests.swift; sourceTree = "<group>"; };
+		4CC578BD3F030978744DFBFA /* NotificationPersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NotificationPersistenceTests.swift; sourceTree = "<group>"; };
+		9614A75B0F1C8683336D2C88 /* NotificationTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NotificationTestSupport.swift; sourceTree = "<group>"; };
+		428F4A5A54D6FE89956DB72C /* NotificationViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NotificationViewTests.swift; sourceTree = "<group>"; };
+		ABCA2C67CA1F0A896F77500C /* LocalNotificationScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Notifications/LocalNotificationScheduler.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -461,6 +491,21 @@
 		A40000012C00000000000001 = {
 			isa = PBXGroup;
 			children = (
+				ABCA2C67CA1F0A896F77500C /* LocalNotificationScheduler.swift */,
+				428F4A5A54D6FE89956DB72C /* NotificationViewTests.swift */,
+				9614A75B0F1C8683336D2C88 /* NotificationTestSupport.swift */,
+				4CC578BD3F030978744DFBFA /* NotificationPersistenceTests.swift */,
+				FFBBE07F34D6F54E77E9AE81 /* NotificationNavigationTests.swift */,
+				14E92E245522CB34A8673D97 /* NotificationEligibilityTests.swift */,
+				CA148338BF8371B6D1B1B561 /* NotificationCoordinatorTests.swift */,
+				5E2182A4A0FE2C0C0FF1D236 /* NotificationPolicyStore.swift */,
+				8AE8511FABF9B0710730E88F /* NotificationDeliveryLedger.swift */,
+				FA1546827CAF8807D0F2C78C /* NotificationSettingsView.swift */,
+				A4469203EB5D5C8B5F3BDC76 /* NotificationModels.swift */,
+				2B6102408BF43F0912EE6B22 /* NotificationNavigationCoordinator.swift */,
+				E0BB30B991322B4AC1D795A5 /* NotificationEventClassifier.swift */,
+				0A711BF77725FBC9886D0C16 /* NotificationCoordinator.swift */,
+				1BA064361A552A8A8E35F119 /* NotificationAuthority.swift */,
 				60BCE18634BF3EE4464F65D3 /* BackgroundSyncSafetyTests.swift */,
 				DCD8D14E315C816297696D9D /* BackgroundSyncTests.swift */,
 				F6C037BA9750328950167AB7 /* BackgroundSyncSettingsView.swift */,
@@ -876,6 +921,15 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C82802687338F9AAC0B19F35 /* LocalNotificationScheduler.swift in Sources */,
+				20338AFE1E8E69BCFE6FB01D /* NotificationPolicyStore.swift in Sources */,
+				1B5BD3628469B277BC4724F7 /* NotificationDeliveryLedger.swift in Sources */,
+				F2E07BEE91E2B996FB6B6838 /* NotificationSettingsView.swift in Sources */,
+				8800483D0DDB5C98A1875CEE /* NotificationModels.swift in Sources */,
+				8D33183A1422DA8AB6F92916 /* NotificationNavigationCoordinator.swift in Sources */,
+				819E1E5B54323CDB2CB78A2B /* NotificationEventClassifier.swift in Sources */,
+				89127D31A5FC8A15E191FF1A /* NotificationCoordinator.swift in Sources */,
+				97DFD8DA590166F1A1D27854 /* NotificationAuthority.swift in Sources */,
 				399F2ABC8AFAB50C30A04203 /* BackgroundSyncSettingsView.swift in Sources */,
 				A1D68830F0EEEEF3CB0B65EB /* BackgroundSyncHTTPTransport.swift in Sources */,
 				279E1D71A30CA107CF37C8CE /* BGAppRefreshScheduler.swift in Sources */,
@@ -1016,6 +1070,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				953A24380218678BF0AEFD09 /* NotificationViewTests.swift in Sources */,
+				17263C898E90BF6CEFCA2B59 /* NotificationTestSupport.swift in Sources */,
+				AD45EB5BB3B0C570B404CA4E /* NotificationPersistenceTests.swift in Sources */,
+				B7E668E842F199232619A86A /* NotificationNavigationTests.swift in Sources */,
+				62E87867D4B9EF01D179F7AB /* NotificationEligibilityTests.swift in Sources */,
+				F9D7274E58A5B65920B630E6 /* NotificationCoordinatorTests.swift in Sources */,
 				C82A408E185025C846D0A7E4 /* BackgroundSyncSafetyTests.swift in Sources */,
 				E513911B291BA5B75A19A224 /* BackgroundSyncTests.swift in Sources */,
 				3092856C33A86A7D4CD4A19A /* SessionAuthorizationEvidenceTests.swift in Sources */,

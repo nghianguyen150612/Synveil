@@ -100,7 +100,7 @@ final class UploadCoordinatorProvider: AuthenticatedUploadRequestProviderProtoco
     private let parent: NodeId
     private let source: Data
     private let loseFirstCreate: Bool
-    private let partialAcceptance: Int
+    private let partialAcceptance: Int?
     private let loseCompletion: Bool
     private var intent: UploadIntent?
     private var serverOffset: UInt64 = 0
@@ -128,7 +128,7 @@ final class UploadCoordinatorProvider: AuthenticatedUploadRequestProviderProtoco
 
     init(
         base: AuthenticatedLibraryRequestProvider, library: LibraryId, parent: NodeId,
-        source: Data, loseFirstCreate: Bool, partiallyAcceptFirstPatch: Int,
+        source: Data, loseFirstCreate: Bool, partiallyAcceptFirstPatch: Int?,
         loseCompletion: Bool
     ) {
         self.base = base
@@ -230,7 +230,7 @@ final class UploadCoordinatorProvider: AuthenticatedUploadRequestProviderProtoco
             throw UploadFailure.integrityMismatch
         }
         patchRequests.append(CapturedPatch(offset: offset, bytes: bytes))
-        if !didPartiallyAccept {
+        if !didPartiallyAccept, let partialAcceptance {
             didPartiallyAccept = true
             serverOffset += UInt64(min(partialAcceptance, bytes.count))
             throw UploadFailure.timeout

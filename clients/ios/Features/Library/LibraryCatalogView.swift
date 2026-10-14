@@ -14,6 +14,8 @@ struct LibraryCatalogView: View {
     private let uploadCoordinator: FileUploadCoordinator?
     private let fileExportCoordinator: VerifiedFileExportCoordinator?
     private let syncCheckpointService: (any SyncCheckpointPreparationProtocol)?
+    private let notifications: NotificationCoordinator?
+    private let notificationNavigation: NotificationNavigationCoordinator?
 
     @State private var viewModel: LibraryCatalogViewModel
     @State private var isShowingLogoutConfirmation = false
@@ -32,6 +34,8 @@ struct LibraryCatalogView: View {
         downloadCoordinator: FileDownloadCoordinator? = nil,
         uploadCoordinator: FileUploadCoordinator? = nil,
         fileExportCoordinator: VerifiedFileExportCoordinator? = nil,
+        notifications: NotificationCoordinator? = nil,
+        notificationNavigation: NotificationNavigationCoordinator? = nil,
         sessionController: SessionController
     ) {
         self.sessionController = sessionController
@@ -46,6 +50,8 @@ struct LibraryCatalogView: View {
         self.downloadCoordinator = downloadCoordinator
         self.uploadCoordinator = uploadCoordinator
         self.fileExportCoordinator = fileExportCoordinator
+        self.notifications = notifications
+        self.notificationNavigation = notificationNavigation
         _viewModel = State(
             initialValue: LibraryCatalogViewModel(
                 repository: repository,
@@ -66,11 +72,23 @@ struct LibraryCatalogView: View {
                     .toolbar {
                         ToolbarItem(placement: .topBarLeading) {
                             NavigationLink {
-                                BackgroundSyncSettingsView(scheduler: .shared)
+                                Form {
+                                    NavigationLink("Background Sync") {
+                                        BackgroundSyncSettingsView(scheduler: .shared)
+                                    }
+                                    if let notifications {
+                                        NavigationLink("Local Notifications") {
+                                            NotificationSettingsView(coordinator: notifications)
+                                        }
+                                    } else {
+                                        Text("Local notifications unavailable")
+                                    }
+                                }
+                                .navigationTitle("Settings")
                             } label: {
                                 Image(systemName: "gearshape")
                             }
-                            .accessibilityLabel("Background Sync settings")
+                            .accessibilityLabel("Synveil settings")
                             .accessibilityIdentifier("synveil.background-sync.settings")
                         }
                     }
@@ -116,6 +134,15 @@ struct LibraryCatalogView: View {
                             route: route
                         )
                         .id(route)
+                    }
+                    .navigationDestination(
+                        isPresented: Binding(
+                            get: { notificationNavigation?.destination != nil },
+                            set: { if !$0 { notificationNavigation?.clearDestination() } }
+                        )
+                    ) {
+                        notificationDestination
+                            .id(notificationNavigation?.selection)
                     }
                     .toolbar {
                         if savedMetadataInspection != nil {
@@ -196,6 +223,37 @@ struct LibraryCatalogView: View {
         }
         .onChange(of: sessionController.state) { _, _ in
             viewModel.sessionDidChange()
+        }
+    }
+
+    @ViewBuilder
+    private var notificationDestination: some View {
+        switch notificationNavigation?.destination {
+        case .file(let route):
+            NodeFileDetailsView(
+                repository: nodeRepository, sessionController: sessionController,
+                offlineDetailsService: offlineNodeBrowserService,
+                downloadCoordinator: downloadCoordinator, uploadCoordinator: uploadCoordinator,
+                fileExportCoordinator: fileExportCoordinator, route: route)
+        case .browser(let route):
+            NodeBrowserView(
+                repository: nodeRepository, offlineBrowserService: offlineNodeBrowserService,
+                sessionController: sessionController, route: route,
+                metadataMutationFeature: metadataMutationFeature,
+                downloadCoordinator: downloadCoordinator, uploadCoordinator: uploadCoordinator,
+                fileExportCoordinator: fileExportCoordinator)
+        case .synchronization(let library):
+            SyncStatusView(
+                library: library, coordinator: inboundSyncCoordinator,
+                projection: nodeProjectionRepository, checkpoint: syncCheckpointService,
+                sessionController: sessionController, rebaselineCoordinator: rebaselineCoordinator)
+        case .unavailable:
+            ContentUnavailableView(
+                "Notification destination unavailable", systemImage: "lock.shield",
+                description: Text("Return to Synveil to check current access and status.")
+            )
+            .accessibilityIdentifier("synveil.notifications.unavailable")
+        case nil: EmptyView()
         }
     }
 

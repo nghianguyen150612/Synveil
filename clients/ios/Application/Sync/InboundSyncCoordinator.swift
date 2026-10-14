@@ -12,6 +12,7 @@ final class InboundSyncCoordinator: InboundSyncCoordinatorProtocol {
     private let database: MutationQueueSQLiteStore
     private let provider: any AuthenticatedSyncFeedRequestProviderProtocol
     private let bridge: any RustBridgeProtocol
+    var notificationRecoveryObservation: (@MainActor (LibraryId) -> Void)?
 
     init(
         feed: SyncFeedService, application: SyncFeedApplicationService, ack: SyncAckService,
@@ -150,6 +151,7 @@ final class InboundSyncCoordinator: InboundSyncCoordinatorProtocol {
             let result = await run(
                 scope: scope, session: session, configuration: configuration, publish: progress)
             await database.finishInboundRun(owner: owner)
+            notificationRecoveryObservation?(scope.libraryId)
             return result
         } catch { return Self.result(Self.classify(error)) }
     }

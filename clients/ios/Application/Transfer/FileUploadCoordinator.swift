@@ -34,6 +34,7 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
     private var active: Task<UploadActionResult, Never>?
     private var activeUploadId: UploadOperationId?
     private var generation: UInt64 = 0
+    var notificationObservation: (@MainActor (UploadRecord) -> Void)?
 
     init(
         repository: AuthenticatedUploadRepository, database: MutationQueueSQLiteStore,
@@ -771,6 +772,7 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
             stored.failure == expectedFailure,
             stored.attemptCount == previous.attemptCount + (beginAttempt ? 1 : 0)
         else { throw UploadFailure.storageFailure }
+        notificationObservation?(stored)
         return stored
     }
 
