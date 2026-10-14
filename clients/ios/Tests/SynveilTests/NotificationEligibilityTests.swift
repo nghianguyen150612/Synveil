@@ -138,6 +138,12 @@ final class NotificationEligibilityTests: XCTestCase {
         let observation = try await authority.observeDownload(record)
         let candidate = try XCTUnwrap(observation)
         await f.queue.controller.requestLogout()
+        // capture awaits the queue's existing asynchronous quarantine before rejecting logout.
+        // Drain that work before the temporary SQLite directory is removed by fixture teardown.
+        do {
+            _ = try await f.queue.queue.capture(scope: f.queue.scope)
+            XCTFail("Logged-out queue must reject authorization")
+        } catch {}
         do {
             _ = try await authority.verify(candidate)
             XCTFail("Logout must revoke presentation authority")
@@ -211,7 +217,7 @@ final class NotificationEligibilityTests: XCTestCase {
         let row = try await f.record()
         XCTAssertNil(row)
     }
-    private func upload(loseCreate: Bool = false) async throws -> (
+    private func upload(loseCreate: Bool = false, loseCompletion: Bool = false) async throws -> (
         FileUploadResult, [NotificationCandidate], UploadCoordinatorProvider
     ) {
         let f = try await queueFixture(self, initializeBase: false)
@@ -221,8 +227,9 @@ final class NotificationEligibilityTests: XCTestCase {
         try data.write(to: source)
         let provider = UploadCoordinatorProvider(
             base: f.provider, library: f.scope.libraryId, parent: parent,
-            source: data, loseFirstCreate: loseCreate, partiallyAcceptFirstPatch: 0,
-            loseCompletion: false)
+            source: data, loseFirstCreate: loseCreate, partiallyAcceptFirstPatch: nil,
+            loseCompletion: loseCompletion)
+        if loseCompletion { provider.statusFailure = .timeout }
         let staging = try DownloadStagingStore(
             root: f.url.deletingLastPathComponent().appendingPathComponent("downloads"),
             freeBytes: { _ in UInt64.max })
@@ -247,11 +254,26 @@ final class NotificationEligibilityTests: XCTestCase {
     func testUploadCompletionHookRequiresExplicitDurableCommit() async throws {
         let (result, observations, provider) = try await upload()
         guard case .completed(let record) = result else {
-            return XCTFail("Expected committed upload")
+            if case .stopped(let record, let failure) = result {
+                return XCTFail(
+                    "Expected committed upload; stopped with \(failure), state \(String(describing: record?.state))"
+                )
+            }
+            return XCTFail("Expected committed upload; background transfer was scheduled")
         }
         XCTAssertNotNil(record.completion)
         XCTAssertEqual(provider.completionCalls, 1)
         XCTAssertEqual(observations.filter { $0.category == .committedUpload }.count, 1)
+    }
+    func testUnknownCompletionNeverPresentsCompleted() async throws {
+        let (result, observations, provider) = try await upload(loseCompletion: true)
+        guard case .stopped(let record?, _) = result else {
+            return XCTFail("Expected uncertain COMPLETE outcome")
+        }
+        XCTAssertTrue(record.uncertain)
+        XCTAssertNil(record.completion)
+        XCTAssertFalse(observations.contains { $0.category == .committedUpload })
+        XCTAssertEqual(provider.completionCalls, 1)
     }
     func testUnknownUploadNeverPresentsCompleted() async throws {
         let (result, observations, provider) = try await upload(loseCreate: true)
