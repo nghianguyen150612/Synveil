@@ -165,6 +165,16 @@ final class NotificationCoordinator {
                     failure = .capacity
                     return
                 }
+                // Integrity checks can take time. Reload credential scope and iOS settings again
+                // immediately before the irrevocable claim rather than trusting an earlier read.
+                guard try await authority.currentScope() == event.candidate.scopeFingerprint else {
+                    throw NotificationFailure.accountMismatch
+                }
+                await refreshStatus()
+                guard current(saved, captured), authorization == .authorized else {
+                    failure = .authorizationDenied
+                    return
+                }
                 // Durable claim BEFORE the nontransactional system call. A lost write receipt
                 // fails closed. No operation evidence changes if any step below fails.
                 guard try await ledger.claim(event.id, now: clock()) else {
@@ -181,7 +191,7 @@ final class NotificationCoordinator {
                     }
                     _ = try await ledger.transition(event.id, from: .claimed, to: .scheduled)
                     failure = nil
-                } catch { failure = .schedulingError }
+                } catch { failure = (error as? NotificationFailure) ?? .schedulingError }
             }
         } catch { failure = safeFailure(error) }
     }
@@ -234,6 +244,26 @@ extension NotificationFailure {
             switch failure {
             case .unauthenticated, .deviceRevoked, .staleSession: return .sessionInvalidated
             case .scopeMismatch: return .accountMismatch
+            default: return .durableEventUnavailable
+            }
+        }
+        if let failure = error as? MutationQueueFailure {
+            switch failure {
+            case .scopeMismatch: return .accountMismatch
+            case .staleSession, .unauthenticated, .committedButSessionChanged:
+                return .sessionInvalidated
+            case .transport(let underlying): return classify(underlying)
+            case .notFound, .invalidCheckpoint, .reconciliationRequired:
+                return .durableEventUnavailable
+            default: return .storageFailure
+            }
+        }
+        if let failure = error as? SyncFeedFailure {
+            switch failure {
+            case .scopeMismatch: return .accountMismatch
+            case .staleSession: return .sessionInvalidated
+            case .storage(let underlying): return classify(underlying)
+            case .transport(let underlying): return classify(underlying)
             default: return .durableEventUnavailable
             }
         }

@@ -84,6 +84,17 @@ final class NotificationCoordinatorTests: XCTestCase {
         XCTAssertEqual(f.center.payloads.count, 1)
         XCTAssertEqual(f.coordinator.authorization, .denied)
     }
+    func testPermissionChangedDuringIntegrityVerificationIsRecheckedBeforeClaim() async throws {
+        let f = try notificationFixture(self)
+        f.authority.onVerify = {
+            if f.authority.verified == 2 { f.center.status = .denied }
+        }
+        await f.coordinator.observe(f.candidate())
+        XCTAssertTrue(f.center.payloads.isEmpty)
+        XCTAssertEqual(f.coordinator.failure, .authorizationDenied)
+        let events = try await f.ledger.events()
+        XCTAssertEqual(events.first?.state, .eligible)
+    }
     func testAuthorizationFailureDoesNotEnableDelivery() async throws {
         let f = try notificationFixture(self, enabled: false)
         f.center.status = .notDetermined
@@ -282,5 +293,10 @@ final class NotificationCoordinatorTests: XCTestCase {
         XCTAssertEqual(
             NotificationFailure.classify(DownloadFailure.sha256Mismatch), .durableEventUnavailable)
         XCTAssertEqual(NotificationFailure.classify(MutationQueueFailure.diskFull), .storageFailure)
+        XCTAssertEqual(
+            NotificationFailure.classify(MutationQueueFailure.scopeMismatch), .accountMismatch)
+        XCTAssertEqual(
+            NotificationFailure.classify(SyncFeedFailure.transport(.deviceRevoked)),
+            .sessionInvalidated)
     }
 }

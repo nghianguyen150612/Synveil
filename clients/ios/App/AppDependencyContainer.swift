@@ -515,10 +515,14 @@ public final class AppDependencyContainer {
                             })
                         self.notificationLedger = ledger
                         self.notifications = notifications
-                        downloads?.notificationObservation = { [weak notifications] record in
+                        downloads?.notificationObservation = {
+                            [weak notifications, weak authority] record in
+                            guard let authority else { return }
                             notifications?.enqueue { try await authority.observeDownload(record) }
                         }
-                        uploads?.notificationObservation = { [weak notifications] record in
+                        uploads?.notificationObservation = {
+                            [weak notifications, weak authority] record in
+                            guard let authority else { return }
                             notifications?.enqueue { try await authority.observeUpload(record) }
                         }
                         coordinatorNotificationRecovery(
