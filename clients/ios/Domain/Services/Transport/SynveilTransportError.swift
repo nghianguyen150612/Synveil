@@ -22,3 +22,26 @@ public enum SynveilTransportError: Error, Sendable, Equatable {
     case configurationError
     case cancelled
 }
+
+extension SynveilTransportError {
+    /// Only recognized connectivity failures authorize offline fallback. Unknown failures remain
+    /// unverifiable; their localized descriptions never determine recovery or cache access.
+    static func classify(_ error: Error) -> Self {
+        if let failure = error as? Self { return failure }
+        if error is CancellationError { return .cancelled }
+        guard let error = error as? URLError else { return .malformedResponse }
+        switch error.code {
+        case .notConnectedToInternet, .cannotConnectToHost, .networkConnectionLost,
+            .internationalRoamingOff, .dataNotAllowed:
+            return .offline
+        case .cannotFindHost, .dnsLookupFailed: return .dnsFailure
+        case .timedOut: return .timeout
+        case .serverCertificateUntrusted, .serverCertificateHasBadDate,
+            .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid,
+            .secureConnectionFailed, .clientCertificateRejected, .clientCertificateRequired:
+            return .tlsError
+        case .cancelled: return .cancelled
+        default: return .malformedResponse
+        }
+    }
+}

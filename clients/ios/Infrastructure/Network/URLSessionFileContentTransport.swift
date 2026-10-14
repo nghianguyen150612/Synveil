@@ -77,7 +77,7 @@ final class URLSessionFileContentTransport: FileContentTransportProtocol, Sendab
                     if code == "authentication_failed" { throw DownloadFailure.unauthenticated }
                     throw DownloadFailure.unexpectedStatus
                 }
-                if response.statusCode == 403 { throw DownloadFailure.scopeMismatch }
+                if response.statusCode == 403 { throw DownloadFailure.permissionDenied }
                 if response.statusCode == 404 { throw DownloadFailure.sourceUnavailable }
                 if response.statusCode >= 500 { throw DownloadFailure.serverUnavailable }
                 if response.statusCode == 416, code == "invalid_range", range != nil,

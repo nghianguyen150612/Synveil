@@ -98,12 +98,12 @@ protocol OfflineNodeBrowserServiceProtocol {
 final class OfflineNodeBrowserService: OfflineNodeBrowserServiceProtocol {
     private let liveRepository: any NodeRepositoryProtocol
     private let projection: (any NodeProjectionRepositoryProtocol)?
-    private let scopeProvider: (any InboundSyncCoordinatorProtocol)?
+    private let scopeProvider: (any NodeBrowserScopeProviderProtocol)?
 
     init(
         liveRepository: any NodeRepositoryProtocol,
         projection: (any NodeProjectionRepositoryProtocol)?,
-        scopeProvider: (any InboundSyncCoordinatorProtocol)?
+        scopeProvider: (any NodeBrowserScopeProviderProtocol)?
     ) {
         self.liveRepository = liveRepository
         self.projection = projection

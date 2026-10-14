@@ -5,6 +5,7 @@ struct LibraryCatalogView: View {
     private let sessionController: SessionController
     private let nodeRepository: (any NodeRepositoryProtocol)?
     private let offlineNodeBrowserService: (any OfflineNodeBrowserServiceProtocol)?
+    private let savedMetadataInspection: (any SavedMetadataInspectionProtocol)?
     private let metadataMutationFeature: (any MetadataMutationFeatureProtocol)?
     private let inboundSyncCoordinator: (any InboundSyncCoordinatorProtocol)?
     private let nodeProjectionRepository: (any NodeProjectionRepositoryProtocol)?
@@ -16,11 +17,13 @@ struct LibraryCatalogView: View {
 
     @State private var viewModel: LibraryCatalogViewModel
     @State private var isShowingLogoutConfirmation = false
+    @State private var isInspectingSavedMetadata = false
 
     init(
         repository: (any LibraryCatalogRepositoryProtocol)?,
         nodeRepository: (any NodeRepositoryProtocol)? = nil,
         offlineNodeBrowserService: (any OfflineNodeBrowserServiceProtocol)? = nil,
+        savedMetadataInspection: (any SavedMetadataInspectionProtocol)? = nil,
         metadataMutationFeature: (any MetadataMutationFeatureProtocol)? = nil,
         inboundSyncCoordinator: (any InboundSyncCoordinatorProtocol)? = nil,
         nodeProjectionRepository: (any NodeProjectionRepositoryProtocol)? = nil,
@@ -34,6 +37,7 @@ struct LibraryCatalogView: View {
         self.sessionController = sessionController
         self.nodeRepository = nodeRepository
         self.offlineNodeBrowserService = offlineNodeBrowserService
+        self.savedMetadataInspection = savedMetadataInspection
         self.metadataMutationFeature = metadataMutationFeature
         self.inboundSyncCoordinator = inboundSyncCoordinator
         self.nodeProjectionRepository = nodeProjectionRepository
@@ -103,6 +107,20 @@ struct LibraryCatalogView: View {
                         .id(route)
                     }
                     .toolbar {
+                        if savedMetadataInspection != nil {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button {
+                                    isInspectingSavedMetadata = true
+                                } label: {
+                                    Image(systemName: "externaldrive")
+                                }
+                                .accessibilityLabel("Inspect Saved Libraries")
+                                .accessibilityHint(
+                                    "Reads eligible saved metadata without contacting the server."
+                                )
+                                .accessibilityIdentifier("synveil.library.inspect-saved")
+                            }
+                        }
                         ToolbarItem(placement: .topBarTrailing) {
                             Button {
                                 Task { await viewModel.refresh() }
@@ -153,6 +171,12 @@ struct LibraryCatalogView: View {
                         )
                     }
                     .accessibilityIdentifier("synveil.root.authenticated")
+                    .sheet(isPresented: $isInspectingSavedMetadata) {
+                        if let savedMetadataInspection {
+                            SavedMetadataInspectionView(
+                                service: savedMetadataInspection, controller: sessionController)
+                        }
+                    }
                 }
             } else {
                 // Root routing owns recovery. Never leave catalog details visible during transition.

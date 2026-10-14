@@ -99,7 +99,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
     private let maximumOutstanding: Int
     private let maximumBytes: Int
     private let maximumRecords: Int
-    static let schemaVersion = 8
+    static let schemaVersion = 9
     private let processOwner = UUID().uuidString
     private var activeAckAttempts: Set<String> = []
     private static let scopePredicate = "endpoint=? AND owner_id=? AND device_id=? AND library_id=?"
@@ -223,7 +223,8 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         + RebaselineSQLiteSchema.statements
     private static let version6Schema = version5Schema + FileDownloadSQLiteSchema.statements
     private static let version7Schema = version6Schema + FileUploadSQLiteSchema.statements
-    private static let schema = version7Schema + BackgroundUploadSQLiteSchema.statements
+    private static let version8Schema = version7Schema + BackgroundUploadSQLiteSchema.statements
+    private static let schema = version8Schema + SessionAuthorizationSQLiteSchema.statements
 
     init(
         url: URL, busyTimeoutMilliseconds: Int32 = 250,
@@ -255,7 +256,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         // Initialization uses only local helpers; no actor reference escapes before schema validation.
         try Self.execute(handle, "PRAGMA foreign_keys=ON")
         let version = try Self.scalar(handle, "PRAGMA user_version")
-        guard [0, 1, 2, 3, 4, 5, 6, 7, Int64(Self.schemaVersion)].contains(version) else {
+        guard [0, 1, 2, 3, 4, 5, 6, 7, 8, Int64(Self.schemaVersion)].contains(version) else {
             throw MutationQueueFailure.unsupportedSchema
         }
         if version > 0 {
@@ -280,7 +281,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
             do {
                 for statement in Self.schema { try Self.execute(handle, statement) }
                 try fault?(.migration)
-                try Self.execute(handle, "PRAGMA user_version=8")
+                try Self.execute(handle, "PRAGMA user_version=9")
                 try Self.execute(handle, "COMMIT")
             } catch {
                 try? Self.execute(handle, "ROLLBACK")
@@ -412,6 +413,21 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
                 throw error
             }
         }
+        if (1...8).contains(version) {
+            try verifySchema(Self.version8Schema)
+            try Self.execute(handle, "BEGIN IMMEDIATE")
+            do {
+                for statement in SessionAuthorizationSQLiteSchema.statements {
+                    try Self.execute(handle, statement)
+                }
+                try fault?(.migration)
+                try Self.execute(handle, "PRAGMA user_version=9")
+                try Self.execute(handle, "COMMIT")
+            } catch {
+                try? Self.execute(handle, "ROLLBACK")
+                throw error
+            }
+        }
         let context = Unmanaged.passUnretained(connection).toOpaque()
         try Self.check(
             sqlite3_create_function_v2(
@@ -462,6 +478,115 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         }
         return root.appendingPathComponent("Synveil/MutationQueue", isDirectory: true)
             .appendingPathComponent("mutations.sqlite")
+    }
+
+    private func authorizationValues(_ identity: SessionAuthorizationIdentity) throws -> [SQLValue]
+    {
+        guard identity.endpoint.utf8.count <= 4096,
+            [identity.owner, identity.device, identity.credential].allSatisfy({
+                UUID(uuidString: $0)?.uuidString.lowercased() == $0
+            })
+        else { throw MutationQueueFailure.malformedRecord }
+        return [
+            .text(identity.endpoint), .text(identity.owner), .text(identity.device),
+            .text(identity.credential),
+        ]
+    }
+
+    private func authorizationRow(_ identity: SessionAuthorizationIdentity) throws -> (
+        String, String, Bool
+    )? {
+        try query(
+            "SELECT attempt_id,state,requires_verification FROM session_authorization_checks WHERE endpoint=? AND owner_id=? AND device_id=? AND credential_id=?",
+            authorizationValues(identity)
+        ) {
+            let id = try Self.text($0, 0), state = try Self.text($0, 1)
+            let required = sqlite3_column_int($0, 2)
+            guard UUID(uuidString: id)?.uuidString.lowercased() == id,
+                ["CHECKING", "AUTHORIZED", "TRANSIENT", "REJECTED", "VERIFY_REQUIRED"].contains(
+                    state),
+                required == 0 || required == 1
+            else { throw MutationQueueFailure.malformedRecord }
+            return (id, state, required == 1)
+        }.first
+    }
+
+    func beginSessionAuthorizationCheck(_ identity: SessionAuthorizationIdentity) throws
+        -> SessionAuthorizationCheckLease
+    {
+        try Task.checkCancellation()
+        return try transaction {
+            let previous = try authorizationRow(identity)
+            let required =
+                previous.map { $0.2 || ["CHECKING", "REJECTED", "VERIFY_REQUIRED"].contains($0.1) }
+                ?? false
+            if previous == nil {
+                guard try scalar("SELECT count(*) FROM session_authorization_checks") < 1024 else {
+                    throw MutationQueueFailure.capacity
+                }
+                try checkCapacity(additionalBytes: identity.endpoint.utf8.count + 4 * 36 + 128)
+            }
+            let lease = SessionAuthorizationCheckLease(
+                identity: identity,
+                id: UUID().uuidString.lowercased(), requiresVerification: required)
+            connection.projectionAuthority = 9
+            defer { connection.projectionAuthority = 0 }
+            try execute(
+                "INSERT INTO session_authorization_checks(endpoint,owner_id,device_id,credential_id,attempt_id,state,requires_verification) VALUES(?,?,?,?,?,'CHECKING',?) ON CONFLICT(endpoint,owner_id,device_id,credential_id) DO UPDATE SET attempt_id=excluded.attempt_id,state=excluded.state,requires_verification=excluded.requires_verification",
+                try authorizationValues(identity) + [.text(lease.id), .integer(required ? 1 : 0)])
+            return lease
+        }
+    }
+
+    func finishSessionAuthorizationCheck(
+        _ lease: SessionAuthorizationCheckLease, outcome: SessionAuthorizationCheckOutcome
+    ) throws {
+        try transaction {
+            guard let row = try authorizationRow(lease.identity), row.0 == lease.id,
+                row.1 == "CHECKING", row.2 == lease.requiresVerification
+            else { throw MutationQueueFailure.ownershipRequired }
+            let state: String, required: Bool
+            switch outcome {
+            case .authorized, .authorizedCompleteLibraryCatalog:
+                state = "AUTHORIZED"
+                required = false
+            case .transientFailure:
+                state = "TRANSIENT"
+                required = lease.requiresVerification
+            case .rejected:
+                state = "REJECTED"
+                required = true
+            case .verificationRequired:
+                state = "VERIFY_REQUIRED"
+                required = true
+            }
+            connection.projectionAuthority = 9
+            defer { connection.projectionAuthority = 0 }
+            try execute(
+                "UPDATE session_authorization_checks SET state=?,requires_verification=? WHERE endpoint=? AND owner_id=? AND device_id=? AND credential_id=? AND attempt_id=?",
+                [.text(state), .integer(required ? 1 : 0)]
+                    + (try authorizationValues(lease.identity)) + [.text(lease.id)])
+            if case .authorizedCompleteLibraryCatalog(let ids) = outcome {
+                guard ids.allSatisfy({ UUID(uuidString: $0)?.uuidString.lowercased() == $0 }) else {
+                    throw MutationQueueFailure.malformedRecord
+                }
+                let rows = try query(
+                    "SELECT scope_id,library_id FROM scopes WHERE endpoint=? AND owner_id=? AND device_id=? AND credential_id=? AND quarantined=0 LIMIT 1025",
+                    authorizationValues(lease.identity)
+                ) { (sqlite3_column_int64($0, 0), try Self.text($0, 1)) }
+                guard rows.count <= 1024 else { throw MutationQueueFailure.capacity }
+                for row in rows where !ids.contains(row.1) {
+                    try execute(
+                        "UPDATE scopes SET quarantined=1 WHERE scope_id=?", [.integer(row.0)])
+                }
+            }
+        }
+    }
+
+    func permitsPendingSavedInspection(_ identity: SessionAuthorizationIdentity) throws -> Bool {
+        guard !projectionQuarantineFailed else { throw MutationQueueFailure.unavailable }
+        guard let row = try authorizationRow(identity) else { return false }
+        return row.1 == "TRANSIENT" && !row.2
     }
 
     func bindSession(scope: ClientMutationScope, credentialId: String) throws {
@@ -515,6 +640,64 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
             }
         } catch {
             // A failed durable logout must not leave projection/ACK authority usable in this process.
+            projectionQuarantineFailed = true
+            throw error
+        }
+    }
+
+    func retainObservedLibraryAccess(_ observed: Set<String>, session: LibraryRequestScope) throws
+        -> Set<String>
+    {
+        guard !projectionQuarantineFailed else { throw MutationQueueFailure.unavailable }
+        do {
+            return try transaction {
+                let rows = try query(
+                    "SELECT scope_id,library_id FROM scopes WHERE endpoint=? AND owner_id=? AND device_id=? AND credential_id=? AND quarantined=0 LIMIT 1025",
+                    [
+                        .text(session.serverEndpoint.urlString), .text(session.ownerUserId),
+                        .text(session.deviceIdentifier), .text(session.credentialIdentifier),
+                    ]
+                ) {
+                    (sqlite3_column_int64($0, 0), try Self.text($0, 1))
+                }
+                guard rows.count <= 1024 else { throw MutationQueueFailure.capacity }
+                var retained: Set<String> = []
+                for row in rows {
+                    if observed.contains(row.1) {
+                        if try scalar(
+                            "SELECT count(*) FROM sync_bases WHERE scope_id=?", [.integer(row.0)])
+                            == 1
+                        {
+                            retained.insert(row.1)
+                        }
+                    } else {
+                        try fault?(.beforeQuarantine)
+                        try execute(
+                            "UPDATE scopes SET quarantined=1 WHERE scope_id=?", [.integer(row.0)])
+                    }
+                }
+                return retained
+            }
+        } catch {
+            projectionQuarantineFailed = true
+            throw error
+        }
+    }
+
+    func quarantineMetadataScope(scope: ClientMutationScope, credentialId: String) throws {
+        guard let id = try scopeId(scope) else { return }
+        do {
+            try transaction {
+                guard
+                    try scalar(
+                        "SELECT count(*) FROM scopes WHERE scope_id=? AND credential_id=?",
+                        [.integer(id), .text(credentialId)]) == 1
+                else { throw MutationQueueFailure.scopeMismatch }
+                try fault?(.beforeQuarantine)
+                try execute("UPDATE scopes SET quarantined=1 WHERE scope_id=?", [.integer(id)])
+            }
+        } catch {
+            // Failure to persist a known read denial cannot leave local projection authority open.
             projectionQuarantineFailed = true
             throw error
         }
@@ -1980,7 +2163,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
     }
     private func checkCapacity(additionalBytes: Int) throws {
         let bytes = try scalar(
-            "SELECT coalesce((SELECT sum(length(request)+length(payload)+coalesce(length(evidence),0)) FROM mutations),0)+coalesce((SELECT sum(length(response)) FROM sync_bases),0)+coalesce((SELECT sum(length(evidence)) FROM mutation_attempt_history),0)+coalesce((SELECT sum(length(response)+length(canonical_data)) FROM inbound_pages),0)+coalesce((SELECT sum(coalesce(length(metadata),0)+length(node_id)+length(revision)+length(sequence)+coalesce(length(parent_id),0)+128) FROM cached_nodes),0)+coalesce((SELECT sum(length(metadata)+64) FROM cached_libraries),0)+coalesce((SELECT sum(length(canonical_data)+128) FROM projection_commits),0)+coalesce((SELECT count(*)*256 FROM projection_events),0)+coalesce((SELECT sum(coalesce(length(checkpoint),0)+256) FROM sync_ack_attempts),0)+coalesce((SELECT count(*)*256 FROM node_projection_state),0)+coalesce((SELECT sum(length(response)+length(canonical)+512) FROM rebaseline_pages),0)+coalesce((SELECT sum(length(metadata)+256) FROM rebaseline_nodes),0)+coalesce((SELECT sum(length(bootstrap)+length(library)+coalesce(length(completion),0)+1024) FROM rebaseline_sessions),0)+coalesce((SELECT sum(coalesce(length(completion),0)+512) FROM rebaseline_completion_attempts),0)"
+            "SELECT coalesce((SELECT sum(length(request)+length(payload)+coalesce(length(evidence),0)) FROM mutations),0)+coalesce((SELECT sum(length(response)) FROM sync_bases),0)+coalesce((SELECT sum(length(evidence)) FROM mutation_attempt_history),0)+coalesce((SELECT sum(length(response)+length(canonical_data)) FROM inbound_pages),0)+coalesce((SELECT sum(coalesce(length(metadata),0)+length(node_id)+length(revision)+length(sequence)+coalesce(length(parent_id),0)+128) FROM cached_nodes),0)+coalesce((SELECT sum(length(metadata)+64) FROM cached_libraries),0)+coalesce((SELECT sum(length(canonical_data)+128) FROM projection_commits),0)+coalesce((SELECT count(*)*256 FROM projection_events),0)+coalesce((SELECT sum(coalesce(length(checkpoint),0)+256) FROM sync_ack_attempts),0)+coalesce((SELECT count(*)*256 FROM node_projection_state),0)+coalesce((SELECT sum(length(response)+length(canonical)+512) FROM rebaseline_pages),0)+coalesce((SELECT sum(length(metadata)+256) FROM rebaseline_nodes),0)+coalesce((SELECT sum(length(bootstrap)+length(library)+coalesce(length(completion),0)+1024) FROM rebaseline_sessions),0)+coalesce((SELECT sum(coalesce(length(completion),0)+512) FROM rebaseline_completion_attempts),0)+coalesce((SELECT sum(length(endpoint)+4*36+128) FROM session_authorization_checks),0)"
         )
         guard bytes + Int64(additionalBytes) <= Int64(maximumBytes) else {
             throw MutationQueueFailure.capacity
@@ -2362,6 +2545,41 @@ extension MutationQueueSQLiteStore {
             scope: scope, position: position, id: id, revision: revision, lifecycle: raw.lifecycle,
             provenance: raw.provenance, metadata: node)
     }
+    /// Existing authenticated scope bindings are the eligibility evidence. This read never
+    /// creates a scope and never clears quarantine. A saved catalog is always a partial catalog.
+    func savedLibraries(session: LibraryRequestScope, bridge: any RustBridgeProtocol) async throws
+        -> [Library]
+    {
+        guard !projectionQuarantineFailed else { throw MutationQueueFailure.unavailable }
+        let bindings: [SQLValue] = [
+            .text(session.serverEndpoint.urlString), .text(session.ownerUserId),
+            .text(session.deviceIdentifier), .text(session.credentialIdentifier),
+        ]
+        let sql =
+            "SELECT s.library_id FROM scopes s JOIN sync_bases b ON b.scope_id=s.scope_id JOIN cached_libraries l ON l.scope_id=s.scope_id AND l.epoch=b.epoch WHERE s.endpoint=? AND s.owner_id=? AND s.device_id=? AND s.credential_id=? AND s.quarantined=0 ORDER BY s.library_id LIMIT 1025"
+        let ids = try query(sql, bindings) { try Self.text($0, 0) }
+        guard ids.count <= 1024 else { throw MutationQueueFailure.capacity }
+        var libraries: [Library] = []
+        for raw in ids {
+            try Task.checkCancellation()
+            let id = try await LibraryId.validated(raw, using: bridge)
+            let scope = try await session.mutationScope(libraryId: id, bridge: bridge)
+            let state = try await cachedProjectionState(
+                scope: scope, credentialId: session.credentialIdentifier, bridge: bridge)
+            if let library = state.library?.library, library.status != .quarantined {
+                libraries.append(library)
+            }
+        }
+        guard try query(sql, bindings, map: { try Self.text($0, 0) }) == ids else {
+            throw SyncProjectionFailure.staleSession
+        }
+        return libraries.sorted {
+            let order = $0.name.compare($1.name, options: [.caseInsensitive, .numeric])
+            return order == .orderedSame
+                ? $0.id.rawValue < $1.id.rawValue : order == .orderedAscending
+        }
+    }
+
     func cachedProjectionState(
         scope: ClientMutationScope, credentialId: String, bridge: any RustBridgeProtocol
     ) async throws -> NodeProjectionState {
@@ -2560,19 +2778,36 @@ extension MutationQueueSQLiteStore {
         let metadata = LibraryProjectionMetadata(library)
         _ = try await metadata.validated(bridge: bridge)
         guard library.id == scope.libraryId else { throw SyncProjectionFailure.scopeMismatch }
-        let bytes = try JSONEncoder().encode(metadata)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let bytes = try encoder.encode(metadata)
         guard bytes.count <= NodeProjectionPolicy.maximumMetadataBytes else {
             throw SyncProjectionFailure.storageCapacity
+        }
+        try requireFeedScope(scope, credentialId: credentialId)
+        let capturedEpoch = try currentEpoch(scope)
+        let capturedBytes = try libraryBytes(scope, epoch: capturedEpoch)
+        var priorMetadata: LibraryProjectionMetadata?
+        if let capturedBytes {
+            let prior = try JSONDecoder().decode(
+                LibraryProjectionMetadata.self, from: capturedBytes)
+            let validated = try await prior.validated(bridge: bridge)
+            guard validated.id == scope.libraryId, validated.rootNodeId == library.rootNodeId
+            else { throw SyncProjectionFailure.scopeMismatch }
+            priorMetadata = prior
         }
         try Task.checkCancellation()
         try transaction {
             try requireFeedScope(scope, credentialId: credentialId)
             let epoch = try currentEpoch(scope)
             let old = try libraryBytes(scope, epoch: epoch)
-            if let old {
-                let prior = try JSONDecoder().decode(LibraryProjectionMetadata.self, from: old)
+            guard epoch == capturedEpoch, old == capturedBytes else {
+                throw SyncProjectionFailure.stalePage
+            }
+            if let prior = priorMetadata {
+                let priorBytes = try encoder.encode(prior)
                 guard !SyncDecimalValidation.less(library.revision.rawValue, prior.revision),
-                    library.revision.rawValue != prior.revision || old == bytes
+                    library.revision.rawValue != prior.revision || priorBytes == bytes
                 else { throw SyncProjectionFailure.revisionRegression }
             }
             try checkCapacity(additionalBytes: bytes.count - (old?.count ?? 0) + 64)

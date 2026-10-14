@@ -13,6 +13,7 @@ public enum SessionRestorationVerificationFailure: Equatable, Sendable {
     case unexpectedProtocolResponse
     case redirectRejected
     case cancelled
+    case localStorageFailure
 }
 
 /// Typed result of looking up and remotely checking the single stored device session.
@@ -25,6 +26,8 @@ public enum SessionRestorationResult: Equatable, Sendable {
         DeviceCredentialSession,
         verification: SessionRestorationVerificationFailure
     )
+    case unresolvedAuthorizationEvidence(
+        DeviceCredentialSession, verification: SessionRestorationVerificationFailure)
     case remotelyVerifiedAuthorizedSession(DeviceCredentialSession)
     case keychainUnavailable
     case keychainReadFailure
@@ -51,6 +54,7 @@ public protocol SessionRestorationServiceProtocol: Sendable {
 public final class SessionRestorationService: SessionRestorationServiceProtocol, Sendable {
     private let credentialStore: SecureCredentialSinkProtocol
     private let authorizationValidator: AuthenticatedSessionValidationProtocol
+    private let authorizationEvidence: (any SessionAuthorizationEvidenceProtocol)?
 
     public init(
         credentialStore: SecureCredentialSinkProtocol,
@@ -58,6 +62,17 @@ public final class SessionRestorationService: SessionRestorationServiceProtocol,
     ) {
         self.credentialStore = credentialStore
         self.authorizationValidator = authorizationValidator
+        self.authorizationEvidence = nil
+    }
+
+    init(
+        credentialStore: SecureCredentialSinkProtocol,
+        authorizationValidator: AuthenticatedSessionValidationProtocol,
+        authorizationEvidence: any SessionAuthorizationEvidenceProtocol
+    ) {
+        self.credentialStore = credentialStore
+        self.authorizationValidator = authorizationValidator
+        self.authorizationEvidence = authorizationEvidence
     }
 
     public func restore(
@@ -139,12 +154,47 @@ public final class SessionRestorationService: SessionRestorationServiceProtocol,
             return .locallyValidStoredSession(session, verification: .cancelled)
         }
 
+        let lease: SessionAuthorizationCheckLease?
+        do { lease = try await authorizationEvidence?.begin(session) } catch {
+            return .locallyValidStoredSession(
+                session,
+                verification: Task.isCancelled ? .cancelled : .localStorageFailure)
+        }
         let validation = await authorizationValidator.validateAuthorization(for: session)
         if Task.isCancelled {
             return .locallyValidStoredSession(session, verification: .cancelled)
         }
 
-        return await confirmSessionIdentityIsCurrent(session, validation: validation)
+        let result = await confirmSessionIdentityIsCurrent(session, validation: validation)
+        if let lease, let authorizationEvidence {
+            let outcome: SessionAuthorizationCheckOutcome
+            switch result {
+            case .remotelyVerifiedAuthorizedSession:
+                if case .authorizedCompleteLibraryCatalog(let ids) = validation {
+                    outcome = .authorizedCompleteLibraryCatalog(Set(ids))
+                } else {
+                    outcome = .authorized
+                }
+            case .locallyValidStoredSession(_, let failure):
+                switch failure {
+                case .serverUnavailable, .dnsFailure, .networkFailure, .timeout:
+                    outcome = .transientFailure
+                case .authenticationRejected, .deviceRevoked: outcome = .rejected
+                default: outcome = .verificationRequired
+                }
+            // Identity or storage loss leaves the original check unresolved.
+            default: return result
+            }
+            do { try await authorizationEvidence.finish(lease, outcome: outcome) } catch {
+                return .locallyValidStoredSession(session, verification: .localStorageFailure)
+            }
+            if lease.requiresVerification, case .locallyValidStoredSession(_, let failure) = result,
+                outcome == .transientFailure
+            {
+                return .unresolvedAuthorizationEvidence(session, verification: failure)
+            }
+        }
+        return result
     }
 
     private func confirmSessionIdentityIsCurrent(
@@ -186,7 +236,7 @@ public final class SessionRestorationService: SessionRestorationServiceProtocol,
         }
 
         switch validation {
-        case .authorized:
+        case .authorized, .authorizedCompleteLibraryCatalog:
             return .remotelyVerifiedAuthorizedSession(verifiedSession)
         case .authenticationRejected:
             return .locallyValidStoredSession(

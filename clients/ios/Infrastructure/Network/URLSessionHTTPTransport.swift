@@ -68,6 +68,7 @@ public final class URLSessionHTTPTransport: HTTPTransportProtocol, @unchecked Se
     /// - Parameter request: The outbound request details.
     /// - Throws: `SynveilTransportError` on transport, configuration, or size-limit failures.
     public func send(_ request: HTTPTransportRequest) async throws -> HTTPTransportResponse {
+        try Task.checkCancellation()
         try validateSchemeAndHost(request.url)
 
         var urlRequest = URLRequest(url: request.url)
@@ -92,6 +93,7 @@ public final class URLSessionHTTPTransport: HTTPTransportProtocol, @unchecked Se
 
         do {
             let (bytesAsync, response) = try await session.bytes(for: urlRequest)
+            defer { bytesAsync.task.cancel() }
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw SynveilTransportError.malformedResponse
@@ -101,6 +103,7 @@ public final class URLSessionHTTPTransport: HTTPTransportProtocol, @unchecked Se
             accumulated.reserveCapacity(min(self.maxResponseBodyBytes, 8192))
 
             for try await byte in bytesAsync {
+                try Task.checkCancellation()
                 accumulated.append(byte)
                 if accumulated.count > self.maxResponseBodyBytes {
                     throw SynveilTransportError.bodyLimitExceeded
@@ -119,14 +122,8 @@ public final class URLSessionHTTPTransport: HTTPTransportProtocol, @unchecked Se
                 headers: responseHeaders,
                 body: accumulated
             )
-        } catch let error as SynveilTransportError {
-            throw error
-        } catch let urlError as URLError {
-            throw mapURLError(urlError)
-        } catch is CancellationError {
-            throw SynveilTransportError.cancelled
         } catch {
-            throw SynveilTransportError.offline
+            throw SynveilTransportError.classify(error)
         }
     }
 
@@ -153,27 +150,4 @@ public final class URLSessionHTTPTransport: HTTPTransportProtocol, @unchecked Se
         throw SynveilTransportError.configurationError
     }
 
-    /// Maps Foundation `URLError` to typed `SynveilTransportError`.
-    private func mapURLError(_ urlError: URLError) -> SynveilTransportError {
-        switch urlError.code {
-        case .notConnectedToInternet, .cannotConnectToHost, .networkConnectionLost:
-            return .offline
-        case .cannotFindHost, .dnsLookupFailed:
-            return .dnsFailure
-        case .timedOut:
-            return .timeout
-        case .serverCertificateUntrusted,
-            .serverCertificateHasBadDate,
-            .serverCertificateHasUnknownRoot,
-            .serverCertificateNotYetValid,
-            .secureConnectionFailed,
-            .clientCertificateRejected,
-            .clientCertificateRequired:
-            return .tlsError
-        case .cancelled:
-            return .cancelled
-        default:
-            return .offline
-        }
-    }
 }

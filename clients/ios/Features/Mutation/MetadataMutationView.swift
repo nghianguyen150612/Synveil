@@ -250,6 +250,9 @@ private struct MutationActivityRow: View {
             Label(stateLabel, systemImage: stateSymbol)
                 .font(.headline)
                 .accessibilityIdentifier("synveil.mutation.state.\(item.id)")
+            if let recovery = ClientRecoveryPresentation.mutation(item.state) {
+                ClientRecoveryNotice(presentation: recovery)
+            }
             Text(kindLabel)
                 .font(.subheadline.weight(.semibold))
             Text(item.targetLabel)

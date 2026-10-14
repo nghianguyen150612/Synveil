@@ -61,7 +61,10 @@ class DurableMutationQueueRegistrationTests(unittest.TestCase):
             for symbol in ["Timer(", "BGTask", "submitMutation(", ".submit(", "URLSession"]:
                 self.assertNotIn(symbol, source)
         controller = (IOS / "Application/Session/SessionController.swift").read_text()
-        self.assertIn("if state == .authenticated { mutationSessionInvalidator?() }", controller)
+        transition = controller.split("private func transition(to newState: AppStartupState)")[1]
+        self.assertIn("if state == .authenticated", transition)
+        self.assertIn("mutationSessionInvalidator?()", transition)
+        self.assertLess(transition.index("mutationSessionInvalidator?()"), transition.index("state = newState"))
 
 
 if __name__ == "__main__":

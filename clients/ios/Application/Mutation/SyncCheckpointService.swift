@@ -1,7 +1,7 @@
 import Foundation
 
 @MainActor
-protocol AuthenticatedSyncCheckpointRequestProviderProtocol {
+protocol AuthenticatedSyncCheckpointRequestProviderProtocol: LocalLibrarySessionProviderProtocol {
     func begin() async throws -> LibraryRequestScope
     func validate(_ scope: LibraryRequestScope) async throws
     func requestCheckpoint(scope: ClientMutationScope, session: LibraryRequestScope) async throws

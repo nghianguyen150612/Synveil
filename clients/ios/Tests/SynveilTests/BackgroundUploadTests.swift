@@ -412,11 +412,12 @@ final class BackgroundUploadTests: XCTestCase {
         let f = try await fixture()
         let record = try await start(f)
         let mutation = try await queueEnqueued(f.queue)
+        try queueRawSQL(f.queue.url, "DROP TABLE session_authorization_checks")
         try queueRawSQL(f.queue.url, "DROP TABLE background_upload_orphans")
         try queueRawSQL(f.queue.url, "DROP TABLE background_upload_jobs")
         try queueRawSQL(f.queue.url, "PRAGMA user_version=7")
         let reopened = try MutationQueueSQLiteStore(url: f.queue.url)
-        XCTAssertEqual(try queueRawScalar(f.queue.url, "PRAGMA user_version"), "8")
+        XCTAssertEqual(try queueRawScalar(f.queue.url, "PRAGMA user_version"), "9")
         let rows = try await reopened.records(scope: f.queue.scope, limit: 10)
         XCTAssertEqual(rows.first?.request, mutation.mutation.requestBody)
         let saved = try await reopened.upload(
@@ -425,6 +426,25 @@ final class BackgroundUploadTests: XCTestCase {
         XCTAssertEqual(saved?.intent, record.intent)
         let asyncValue10 = try await reopened.backgroundInventory().isEmpty
         XCTAssertTrue(asyncValue10)
+    }
+
+    func testV8AuthorizationMigrationPreservesUnresolvedBackgroundIntent() async throws {
+        let f = try await fixture()
+        let record = try await start(f)
+        let original = try await f.queue.database.backgroundJob(record.id)
+        try queueRawSQL(f.queue.url, "DROP TABLE session_authorization_checks")
+        try queueRawSQL(f.queue.url, "PRAGMA user_version=8")
+        let reopened = try MutationQueueSQLiteStore(url: f.queue.url)
+        let job = try await reopened.backgroundJob(record.id)
+        XCTAssertEqual(job, original)
+        XCTAssertTrue(job?.blocksForeground == true)
+        let saved = try await reopened.upload(
+            scope: record.scope, credentialId: record.credentialId,
+            id: record.id, bridge: QueueValidator())
+        XCTAssertEqual(saved?.intent, record.intent)
+        XCTAssertEqual(saved?.authoritativeOffset, record.authoritativeOffset)
+        XCTAssertEqual(f.transport.submissions.count, 1)
+        XCTAssertEqual(f.provider.completionCalls, 0)
     }
 
     func testIntentBeforeCommitFailureCannotSubmitTask() async throws {
@@ -640,9 +660,82 @@ final class BackgroundUploadTests: XCTestCase {
         await model.refreshBackgroundState()
         XCTAssertEqual(model.backgroundJobs[record.id]?.state, .scheduled)
         XCTAssertEqual(model.displayedProgress(for: record).acknowledgedBytes, 0)
+        XCTAssertFalse(model.canResume(record))
+        let blocked = await model.resume(record)
+        guard case .stopped(_, .invalidTarget) = blocked else {
+            return XCTFail("Foreground Resume must wait for background ownership")
+        }
+        XCTAssertEqual(f.transport.submissions.count, 1)
+        XCTAssertEqual(f.provider.statusCount, 0)
+        XCTAssertEqual(
+            ClientRecoveryPresentation.upload(
+                record,
+                background: model.backgroundJobs[record.id])?.actions,
+            [.waitForBackgroundTask, .checkUploadStatus])
         model.invalidate()
         XCTAssertFalse(model.isCurrent)
         XCTAssertFalse(model.isAvailable)
+    }
+
+    func testFailedBackgroundStatusReadCannotEnableForegroundResume() async throws {
+        let f = try await fixture()
+        let record = try await start(f)
+        let reader = RecoveryUploadActivityReader(f.coordinator)
+        let model = FileUploadViewModel(
+            coordinator: f.coordinator, controller: f.queue.controller,
+            library: f.queue.scope.libraryId, libraryStatus: .active, activityReader: reader)
+        await model.refreshBackgroundState()
+        XCTAssertTrue(model.backgroundJobs[record.id]?.blocksForeground == true)
+        reader.failure = .storageFailure
+        await model.refreshBackgroundState()
+        XCTAssertEqual(model.failure, .storageFailure)
+        XCTAssertTrue(model.savedStatusUnavailable)
+        XCTAssertFalse(model.isAvailable)
+        XCTAssertFalse(model.canResume(record))
+        XCTAssertTrue(model.backgroundJobs[record.id]?.blocksForeground == true)
+        reader.failure = nil
+        await model.refreshBackgroundState()
+        XCTAssertFalse(model.savedStatusUnavailable)
+        XCTAssertNil(model.failure)
+        XCTAssertFalse(model.canResume(record))
+        XCTAssertEqual(f.transport.submissions.count, 1)
+    }
+
+    func testFailedPauseRemainsVisibleAfterSuccessfulLocalStatusReload() async throws {
+        let fault = QueueFaultInjector()
+        let f = try await fixture(fault: fault)
+        let record = try await start(f)
+        let model = FileUploadViewModel(
+            coordinator: f.coordinator, controller: f.queue.controller,
+            library: f.queue.scope.libraryId, libraryStatus: .active)
+        await model.refreshBackgroundState()
+        fault.arm(.beforeCommit, failure: .diskFull)
+        await model.pauseBackground(record)
+        XCTAssertEqual(model.failure, .storageFailure)
+        XCTAssertFalse(model.savedStatusUnavailable)
+        XCTAssertFalse(model.canResume(record))
+        XCTAssertEqual(f.provider.statusCount, 0)
+        XCTAssertEqual(f.transport.submissions.count, 1)
+    }
+
+    func testDelayedSavedUploadReadCannotPublishAfterLogout() async throws {
+        let f = try await fixture()
+        _ = try await start(f)
+        let reader = RecoveryUploadActivityReader(f.coordinator)
+        let gate = QueueGate()
+        reader.gate = gate
+        let model = FileUploadViewModel(
+            coordinator: f.coordinator, controller: f.queue.controller,
+            library: f.queue.scope.libraryId, libraryStatus: .active, activityReader: reader)
+        let loading = Task { await model.loadSaved() }
+        await gate.wait()
+        await f.queue.controller.requestLogout()
+        await gate.release()
+        await loading.value
+        XCTAssertTrue(model.records.isEmpty)
+        XCTAssertTrue(model.backgroundJobs.isEmpty)
+        XCTAssertNil(model.failure)
+        XCTAssertFalse(model.isCurrent)
     }
 
     func testAnotherAccountCannotAdoptDelayedEvidence() async throws {
@@ -956,5 +1049,25 @@ private final class FakeBackgroundTransport: BackgroundUploadTransportProtocol {
                 $0.identifier == identifier && (intentId == nil || $0.intentId == intentId)
             }
         }
+    }
+}
+
+@MainActor
+private final class RecoveryUploadActivityReader: FileUploadActivityReaderProtocol {
+    private let coordinator: FileUploadCoordinator
+    var failure: UploadFailure?
+    var gate: QueueGate?
+    init(_ coordinator: FileUploadCoordinator) { self.coordinator = coordinator }
+    func saved(library: LibraryId, limit: Int) async throws -> [UploadRecord] {
+        try await visibleSaved(library: library)
+    }
+    func visibleSaved(library: LibraryId) async throws -> [UploadRecord] {
+        let records = try await coordinator.visibleSaved(library: library)
+        if let gate { await gate.arrive() }
+        return records
+    }
+    func backgroundJob(_ id: UploadOperationId) async throws -> BackgroundUploadJob? {
+        if let failure { throw failure }
+        return try await coordinator.backgroundJob(id)
     }
 }

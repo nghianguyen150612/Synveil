@@ -63,7 +63,7 @@ class BackgroundUploadRegistrationTests(unittest.TestCase):
         self.assertIn('@UIApplicationDelegateAdaptor', app)
         self.assertIn('backgroundEnabled = false', ui)
         self.assertIn('synveil.upload.background.authorization', ui)
-        self.assertIn('static let schemaVersion = 8', store)
+        self.assertIn('static let schemaVersion = 9', store)
         self.assertIn('try verifySchema(Self.version7Schema)', store)
         self.assertIn('backgroundBlocks(previous.id)', store)
         self.assertIn('encoder.outputFormatting = [.sortedKeys]', store)

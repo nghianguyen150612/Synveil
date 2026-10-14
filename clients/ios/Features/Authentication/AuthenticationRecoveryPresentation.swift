@@ -212,6 +212,13 @@ enum AuthenticationRecoveryPresenter {
             message = "The server is currently unable to verify the saved session."
             nextStep =
                 "Wait a moment, then retry verification. Contact the owner if this continues."
+        case .localStorageFailure:
+            category = .verificationPending
+            title = "Private recovery storage unavailable"
+            message =
+                "Authorization-check evidence could not be durably recorded. Saved metadata remains unavailable."
+            nextStep =
+                "Recover private storage and reopen Synveil, then retry verification. Your saved credential is retained."
         case .authenticationRejected: return recovery(.authentication)
         case .deviceRevoked: return recovery(.deviceRevoked)
         case .tlsFailure: return recovery(.tls)

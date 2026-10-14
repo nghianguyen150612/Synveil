@@ -209,13 +209,15 @@ enum NodeBrowserUIFailure: Equatable {
             case .staleSession: "Device session changed"
             case .authenticationRejected: "Device authorization rejected"
             case .deviceRevoked: "Device access revoked"
-            case .offline: "No network connection"
+            case .offline: ClientRecoveryClassification.temporarilyOffline.title
             case .dnsFailure: "Server address not found"
             case .timeout: "Server did not respond"
             case .tlsFailure: "Secure connection could not be verified"
             case .redirectRejected: "Unexpected server redirect"
             case .serverUnavailable: "Server temporarily unavailable"
-            case .httpFailure: "Folder request failed"
+            case .httpFailure(let code):
+                code == 403
+                    ? ClientRecoveryClassification.permissionDenied.title : "Folder request failed"
             case .unexpectedContentType, .protocolFailure, .repeatedCursor:
                 "Folder response could not be verified"
             case .resourceLimit: "Folder contains too many items"

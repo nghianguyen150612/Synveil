@@ -3,6 +3,7 @@ import Foundation
 /// Outcome of checking a locally validated DeviceBearer against the server.
 public enum AuthenticatedSessionValidationResult: Equatable, Sendable {
     case authorized
+    case authorizedCompleteLibraryCatalog([String])
     case authenticationRejected
     case deviceRevoked
     case serverUnavailable
@@ -70,7 +71,8 @@ public final class AuthenticatedSessionValidationService:
         } catch is CancellationError {
             return .cancelled
         } catch {
-            return Task.isCancelled ? .cancelled : .networkFailure
+            return Task.isCancelled
+                ? .cancelled : mapTransportError(SynveilTransportError.classify(error))
         }
 
         if Task.isCancelled {
@@ -88,9 +90,29 @@ public final class AuthenticatedSessionValidationService:
 
         switch response.statusCode {
         case 200:
-            return isValidLibraryCollection(response.body)
-                ? .authorized
-                : .unexpectedProtocolResponse
+            guard isValidLibraryCollection(response.body) else {
+                return .unexpectedProtocolResponse
+            }
+            if let root = try? JSONSerialization.jsonObject(with: response.body) as? [String: Any],
+                let page = root["page"] as? [String: Any], page["has_more"] as? Bool == false,
+                page["next_cursor"] == nil, let data = root["data"] as? [[String: Any]],
+                data.allSatisfy({ resource in
+                    guard let id = resource["id"] as? String else { return false }
+                    return LibraryWireValidation.matches(
+                        id,
+                        pattern:
+                            "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+                })
+            {
+                let ids = data.compactMap { resource -> String? in
+                    guard let attributes = resource["attributes"] as? [String: Any],
+                        attributes["status"] as? String != "QUARANTINED"
+                    else { return nil }
+                    return resource["id"] as? String
+                }
+                return .authorizedCompleteLibraryCatalog(ids)
+            }
+            return .authorized
         case 401:
             guard let code = validErrorCode(response.body) else {
                 return .unexpectedProtocolResponse

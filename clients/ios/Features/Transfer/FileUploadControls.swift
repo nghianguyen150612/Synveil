@@ -134,7 +134,7 @@ struct FileUploadControls: View {
                     } label: {
                         Label("Upload File", systemImage: "arrow.up.doc")
                     }
-                    .disabled(model.isRunning)
+                    .disabled(model.isRunning || model.isLoadingSaved || !model.isAvailable)
                     .accessibilityHint(
                         "Choose one file, confirm its destination name, and upload it into this folder."
                     )
@@ -149,7 +149,7 @@ struct FileUploadControls: View {
                     } label: {
                         Label("Replace File Content", systemImage: "arrow.triangle.2.circlepath")
                     }
-                    .disabled(model.isRunning)
+                    .disabled(model.isRunning || model.isLoadingSaved || !model.isAvailable)
                     .accessibilityHint(
                         "Creates a new immutable file version using revision \(node.revision.rawValue). Previous versions remain available."
                     )
@@ -175,6 +175,15 @@ struct FileUploadControls: View {
                 Text(failure.message)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("synveil.upload.failure")
+            }
+            if model.savedStatusUnavailable {
+                Text(
+                    "Saved upload status could not be read. Resume is unavailable until local operation and background ownership evidence can be verified."
+                )
+                .fixedSize(horizontal: false, vertical: true)
+                Button("Reload Saved Upload Status") { Task { await model.loadSaved() } }
+                    .disabled(model.isLoadingSaved || model.isRunning)
+                    .accessibilityIdentifier("synveil.upload.reload-saved-status")
             }
         }
     }
@@ -221,14 +230,16 @@ struct FileUploadControls: View {
                 "\(progress.acknowledgedBytes) of \(progress.totalBytes) bytes confirmed by the server"
             )
             .font(.footnote)
-            if let failure = record.failure, record.id != model.liveProgress?.operationId {
-                Text(failure.message).fixedSize(horizontal: false, vertical: true)
+            if let recovery = ClientRecoveryPresentation.upload(
+                record, background: model.backgroundJobs[record.id])
+            {
+                ClientRecoveryNotice(presentation: recovery)
             }
             if let job = model.backgroundJobs[record.id], job.authorized, job.blocksForeground {
                 Button("Pause Background Transfer") { Task { await model.pauseBackground(record) } }
                     .accessibilityIdentifier(
                         "synveil.upload.background.pause.\(record.id.rawValue)")
-            } else if record.state.canResume,
+            } else if model.canResume(record),
                 record.authoritativeOffset < record.intent.expected.byteLength,
                 coordinator?.background != nil
             {
@@ -249,7 +260,7 @@ struct FileUploadControls: View {
                             if case .completed = result { onCommitted?() }
                         }
                     }
-                    .disabled(model.isRunning || !model.isAvailable)
+                    .disabled(!model.canResume(record))
                     .accessibilityIdentifier("synveil.upload.resume.\(record.id.rawValue)")
                 }
                 if record.serverSessionId != nil, record.state != .committed,
@@ -265,12 +276,18 @@ struct FileUploadControls: View {
                             }
                         }
                     }
-                    .disabled(model.isRunning || !model.canInspectSaved)
+                    .disabled(
+                        model.isRunning || model.isLoadingSaved || model.savedStatusUnavailable
+                            || !model.canInspectSaved
+                    )
                     .accessibilityIdentifier("synveil.upload.status.\(record.id.rawValue)")
                 }
                 if mayRequestAbort(record) {
                     Button("Abort Upload", role: .destructive) { pendingAbort = record }
-                        .disabled(model.isRunning || !model.canInspectSaved)
+                        .disabled(
+                            model.isRunning || model.isLoadingSaved || model.savedStatusUnavailable
+                                || !model.canInspectSaved
+                        )
                         .accessibilityIdentifier("synveil.upload.abort.\(record.id.rawValue)")
                 }
             }

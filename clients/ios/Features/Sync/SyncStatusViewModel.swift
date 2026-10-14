@@ -55,6 +55,10 @@ final class SyncStatusViewModel {
         isCurrent && !isBusy && state == .unknownAck && recovery?.canRecover == true
             && library.status != .quarantined
     }
+    var canRetryTransientFailure: Bool {
+        isCurrent && !isBusy && recovery == nil && scope != nil
+            && (stopReason == .offline || stopReason == .serverUnavailable)
+    }
 
     /// Local-only inspection. Reopening this screen never authorizes network work.
     func loadStatus() async {
@@ -127,7 +131,7 @@ final class SyncStatusViewModel {
 
     /// Explicit offline retry is a user action; no reachability callback schedules work.
     func retryWhenConnectionAvailable() async {
-        guard isCurrent, state == .offline, coordinator != nil, scope != nil else { return }
+        guard canRetryTransientFailure, coordinator != nil else { return }
         state = .ready
         await syncNow()
     }
@@ -175,9 +179,10 @@ final class SyncStatusViewModel {
         }
         progress = result.progress
         recovery = result.recovery
-        finish(result.reason)
+        finish(recovery == nil ? result.reason : .awaitingAckRecovery)
         guard isCurrent else { return }
-        if result.reason == .awaitingAckRecovery, recovery == nil,
+        if [.awaitingAckRecovery, .offline, .serverUnavailable, .cancelled, .storageFailure]
+            .contains(result.reason), recovery == nil,
             let coordinator, let scope
         {
             let saved = await coordinator.status(scope: scope)
@@ -186,7 +191,14 @@ final class SyncStatusViewModel {
                 return
             }
             recovery = saved.recovery
-            if let reason = saved.stopReason { finish(reason) }
+            pendingState = saved.pendingState
+            if recovery != nil {
+                finish(.awaitingAckRecovery)
+            } else if let reason = saved.stopReason,
+                reason != .upToDate && reason != .progressed
+            {
+                finish(reason)
+            }
         }
         // Read local completeness only. Final observed empty-feed / budget outcome remains intact.
         if let projection, let scope {

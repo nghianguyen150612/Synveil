@@ -114,7 +114,7 @@ final class URLSessionRawUploadTransport: RawUploadTransportProtocol, @unchecked
         } catch is CancellationError {
             throw UploadFailure.cancelled
         } catch {
-            throw UploadFailure.serverUnavailable
+            throw UploadFailure.invalidMetadata
         }
     }
 }

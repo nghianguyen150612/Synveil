@@ -47,7 +47,7 @@ class RebaselineSnapshotArchitectureTests(unittest.TestCase):
 
     def test_local_migration_and_handoff_guards_use_shared_database(self):
         source = (IOS / "Infrastructure/Persistence/MutationQueueSQLiteStore.swift").read_text()
-        self.assertIn("static let schemaVersion = 8", source)
+        self.assertIn("static let schemaVersion = 9", source)
         self.assertIn("try verifySchema(Self.version4Schema)", source)
         self.assertIn("try requireNoRebaseline(proof.evidence.scope)", source)
         self.assertIn("try requireNoRebaseline(mutation.base.scope)", source)

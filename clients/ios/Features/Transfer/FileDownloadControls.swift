@@ -42,7 +42,7 @@ struct FileDownloadControls: View {
                     Text("\(progress.durableBytes) of \(progress.totalBytes) bytes stored")
                 }
                 if let failure = model.failure {
-                    Text(failure.message).fixedSize(horizontal: false, vertical: true)
+                    ClientRecoveryNotice(presentation: .download(failure))
                 }
                 if model.canStart {
                     Button("Download File") { Task { await model.download() } }
