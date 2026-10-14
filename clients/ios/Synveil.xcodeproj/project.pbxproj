@@ -205,6 +205,15 @@
 		9FC19B71304E7DF3E9C74BEE /* SessionAuthorizationEvidence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946AD1158EBB2121EFFAF371 /* SessionAuthorizationEvidence.swift */; };
 		A393EB4A824619F6C99DBAB7 /* SessionAuthorizationSQLiteSchema.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A7E05B094D52716E1A53F2D /* SessionAuthorizationSQLiteSchema.swift */; };
 		3092856C33A86A7D4CD4A19A /* SessionAuthorizationEvidenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F26B1BBC83859745335440A /* SessionAuthorizationEvidenceTests.swift */; };
+		621F9FCE06DC3CB31244D879 /* BackgroundSyncModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 279B180822365E045C50222F /* BackgroundSyncModels.swift */; };
+		DC44AFBB4394AC293CC8FEC4 /* BackgroundSyncPolicyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8BECB1B2CD31A5E8B85868E /* BackgroundSyncPolicyStore.swift */; };
+		384A432C08F6D89E83423720 /* BackgroundSyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 335283A52D12E164B78B0242 /* BackgroundSyncCoordinator.swift */; };
+		640E14D5416D4A3F8FC695A7 /* BackgroundSyncWork.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBFA5A4BEFBF16E2476E9859 /* BackgroundSyncWork.swift */; };
+		279E1D71A30CA107CF37C8CE /* BGAppRefreshScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09CF4B332ED918E7544A9422 /* BGAppRefreshScheduler.swift */; };
+		A1D68830F0EEEEF3CB0B65EB /* BackgroundSyncHTTPTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 203769543FF1B3B3D3C78604 /* BackgroundSyncHTTPTransport.swift */; };
+		399F2ABC8AFAB50C30A04203 /* BackgroundSyncSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6C037BA9750328950167AB7 /* BackgroundSyncSettingsView.swift */; };
+		E513911B291BA5B75A19A224 /* BackgroundSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCD8D14E315C816297696D9D /* BackgroundSyncTests.swift */; };
+		C82A408E185025C846D0A7E4 /* BackgroundSyncSafetyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60BCE18634BF3EE4464F65D3 /* BackgroundSyncSafetyTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -417,6 +426,15 @@
 		946AD1158EBB2121EFFAF371 /* SessionAuthorizationEvidence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Session/SessionAuthorizationEvidence.swift; sourceTree = SOURCE_ROOT; };
 		4A7E05B094D52716E1A53F2D /* SessionAuthorizationSQLiteSchema.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/SessionAuthorizationSQLiteSchema.swift; sourceTree = SOURCE_ROOT; };
 		7F26B1BBC83859745335440A /* SessionAuthorizationEvidenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SessionAuthorizationEvidenceTests.swift; sourceTree = SOURCE_ROOT; };
+		279B180822365E045C50222F /* BackgroundSyncModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Sync/BackgroundSyncModels.swift; sourceTree = "<group>"; };
+		A8BECB1B2CD31A5E8B85868E /* BackgroundSyncPolicyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/BackgroundSyncPolicyStore.swift; sourceTree = "<group>"; };
+		335283A52D12E164B78B0242 /* BackgroundSyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Sync/BackgroundSyncCoordinator.swift; sourceTree = "<group>"; };
+		BBFA5A4BEFBF16E2476E9859 /* BackgroundSyncWork.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Sync/BackgroundSyncWork.swift; sourceTree = "<group>"; };
+		09CF4B332ED918E7544A9422 /* BGAppRefreshScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/BGAppRefreshScheduler.swift; sourceTree = "<group>"; };
+		203769543FF1B3B3D3C78604 /* BackgroundSyncHTTPTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Network/BackgroundSyncHTTPTransport.swift; sourceTree = "<group>"; };
+		F6C037BA9750328950167AB7 /* BackgroundSyncSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Sync/BackgroundSyncSettingsView.swift; sourceTree = "<group>"; };
+		DCD8D14E315C816297696D9D /* BackgroundSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/BackgroundSyncTests.swift; sourceTree = "<group>"; };
+		60BCE18634BF3EE4464F65D3 /* BackgroundSyncSafetyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/BackgroundSyncSafetyTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -443,6 +461,15 @@
 		A40000012C00000000000001 = {
 			isa = PBXGroup;
 			children = (
+				60BCE18634BF3EE4464F65D3 /* BackgroundSyncSafetyTests.swift */,
+				DCD8D14E315C816297696D9D /* BackgroundSyncTests.swift */,
+				F6C037BA9750328950167AB7 /* BackgroundSyncSettingsView.swift */,
+				203769543FF1B3B3D3C78604 /* BackgroundSyncHTTPTransport.swift */,
+				09CF4B332ED918E7544A9422 /* BGAppRefreshScheduler.swift */,
+				BBFA5A4BEFBF16E2476E9859 /* BackgroundSyncWork.swift */,
+				335283A52D12E164B78B0242 /* BackgroundSyncCoordinator.swift */,
+				A8BECB1B2CD31A5E8B85868E /* BackgroundSyncPolicyStore.swift */,
+				279B180822365E045C50222F /* BackgroundSyncModels.swift */,
 				7F26B1BBC83859745335440A /* SessionAuthorizationEvidenceTests.swift */,
 				4A7E05B094D52716E1A53F2D /* SessionAuthorizationSQLiteSchema.swift */,
 				946AD1158EBB2121EFFAF371 /* SessionAuthorizationEvidence.swift */,
@@ -846,6 +873,13 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				399F2ABC8AFAB50C30A04203 /* BackgroundSyncSettingsView.swift in Sources */,
+				A1D68830F0EEEEF3CB0B65EB /* BackgroundSyncHTTPTransport.swift in Sources */,
+				279E1D71A30CA107CF37C8CE /* BGAppRefreshScheduler.swift in Sources */,
+				640E14D5416D4A3F8FC695A7 /* BackgroundSyncWork.swift in Sources */,
+				384A432C08F6D89E83423720 /* BackgroundSyncCoordinator.swift in Sources */,
+				DC44AFBB4394AC293CC8FEC4 /* BackgroundSyncPolicyStore.swift in Sources */,
+				621F9FCE06DC3CB31244D879 /* BackgroundSyncModels.swift in Sources */,
 				A393EB4A824619F6C99DBAB7 /* SessionAuthorizationSQLiteSchema.swift in Sources */,
 				9FC19B71304E7DF3E9C74BEE /* SessionAuthorizationEvidence.swift in Sources */,
 				25DDAEF8DA40A5DCC5701E49 /* SavedMetadataInspectionView.swift in Sources */,
@@ -979,6 +1013,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C82A408E185025C846D0A7E4 /* BackgroundSyncSafetyTests.swift in Sources */,
+				E513911B291BA5B75A19A224 /* BackgroundSyncTests.swift in Sources */,
 				3092856C33A86A7D4CD4A19A /* SessionAuthorizationEvidenceTests.swift in Sources */,
 				3D1141A213B67791E01B0163 /* SavedMetadataInspectionTests.swift in Sources */,
 				191FD69399B150CB423A33DA /* ClientRecoveryTests.swift in Sources */,
@@ -1180,6 +1216,7 @@
 		A90000012C00000000000003 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				INFOPLIST_FILE = App/BackgroundSyncInfo.plist;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGNING_ALLOWED = NO;
@@ -1228,6 +1265,7 @@
 		A90000012C00000000000004 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				INFOPLIST_FILE = App/BackgroundSyncInfo.plist;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGNING_ALLOWED = NO;

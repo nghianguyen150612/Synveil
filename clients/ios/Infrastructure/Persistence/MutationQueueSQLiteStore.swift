@@ -589,6 +589,79 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         return row.1 == "TRANSIENT" && !row.2
     }
 
+    /// Background work needs current positive P047 evidence. A cached credential or TRANSIENT
+    /// saved-inspection grant cannot authorize a network operation.
+    func requireBackgroundAuthorization(_ session: LibraryRequestScope) throws {
+        guard !projectionQuarantineFailed else { throw MutationQueueFailure.unavailable }
+        guard
+            let row = try authorizationRow(
+                SessionAuthorizationIdentity(session.restorationSession)),
+            row.1 == "AUTHORIZED", !row.2
+        else { throw LibraryFailure.unauthenticated }
+    }
+
+    /// An ordinary transient verification failure may be checked again; unresolved CHECKING,
+    /// rejection and protocol evidence require the existing explicit recovery boundary.
+    func requireBackgroundVerificationEligibility(_ session: LibraryRequestScope) throws {
+        guard !projectionQuarantineFailed else { throw MutationQueueFailure.unavailable }
+        guard
+            let row = try authorizationRow(
+                SessionAuthorizationIdentity(session.restorationSession)),
+            ["AUTHORIZED", "TRANSIENT"].contains(row.1), !row.2
+        else { throw LibraryFailure.unauthenticated }
+    }
+
+    /// Two bounded seek reads implement round-robin selection without scanning projection bodies.
+    /// Only established, unquarantined, credential-bound scopes with saved Library evidence qualify.
+    func backgroundLibraryIdentifiers(session: LibraryRequestScope, after: String?) throws
+        -> [String]
+    {
+        try requireBackgroundVerificationEligibility(session)
+        let bindings: [SQLValue] = [
+            .text(session.serverEndpoint.urlString), .text(session.ownerUserId),
+            .text(session.deviceIdentifier), .text(session.credentialIdentifier),
+        ]
+        let base =
+            "SELECT s.library_id FROM scopes s JOIN sync_bases b ON b.scope_id=s.scope_id JOIN cached_libraries l ON l.scope_id=s.scope_id AND l.epoch=b.epoch WHERE s.endpoint=? AND s.owner_id=? AND s.device_id=? AND s.credential_id=? AND s.quarantined=0"
+        let cursor = after ?? ""
+        var ids = try query(
+            base + " AND s.library_id>? ORDER BY s.library_id LIMIT ?",
+            bindings + [.text(cursor), .integer(Int64(BackgroundSyncLimits.maximumLibraries))]
+        ) { try Self.text($0, 0) }
+        if ids.count < BackgroundSyncLimits.maximumLibraries, after != nil {
+            ids += try query(
+                base + " AND s.library_id<=? ORDER BY s.library_id LIMIT ?",
+                bindings + [
+                    .text(cursor),
+                    .integer(Int64(BackgroundSyncLimits.maximumLibraries - ids.count)),
+                ]
+            ) { try Self.text($0, 0) }
+        }
+        return ids
+    }
+
+    func lastBackgroundConfirmedLibrary(session: LibraryRequestScope) throws -> String? {
+        try requireBackgroundAuthorization(session)
+        return try query(
+            "SELECT s.library_id FROM scopes s JOIN inbound_pages p ON p.scope_id=s.scope_id WHERE s.endpoint=? AND s.owner_id=? AND s.device_id=? AND s.credential_id=? AND s.quarantined=0 AND p.state='ACK_CONFIRMED' ORDER BY p.updated_at DESC,s.library_id LIMIT 1",
+            [
+                .text(session.serverEndpoint.urlString), .text(session.ownerUserId),
+                .text(session.deviceIdentifier), .text(session.credentialIdentifier),
+            ]
+        ) { try Self.text($0, 0) }.first
+    }
+
+    func backgroundRecoveryRequired(session: LibraryRequestScope) throws -> Bool {
+        try requireBackgroundAuthorization(session)
+        return try scalar(
+            "SELECT EXISTS(SELECT 1 FROM scopes s WHERE s.endpoint=? AND s.owner_id=? AND s.device_id=? AND s.credential_id=? AND (s.quarantined=1 OR EXISTS(SELECT 1 FROM inbound_pages p WHERE p.scope_id=s.scope_id AND p.state<>'ACK_CONFIRMED') OR EXISTS(SELECT 1 FROM sync_bases b WHERE b.scope_id=s.scope_id AND b.status<>'VERIFIED'))) LIMIT 1",
+            [
+                .text(session.serverEndpoint.urlString), .text(session.ownerUserId),
+                .text(session.deviceIdentifier), .text(session.credentialIdentifier),
+            ]
+        ) != 0
+    }
+
     func bindSession(scope: ClientMutationScope, credentialId: String) throws {
         if let id = try scopeId(scope) {
             let binding = try query(

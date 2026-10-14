@@ -63,6 +63,17 @@ struct LibraryCatalogView: View {
                     }
                     .listStyle(.insetGrouped)
                     .navigationTitle("Libraries")
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            NavigationLink {
+                                BackgroundSyncSettingsView(scheduler: .shared)
+                            } label: {
+                                Image(systemName: "gearshape")
+                            }
+                            .accessibilityLabel("Background Sync settings")
+                            .accessibilityIdentifier("synveil.background-sync.settings")
+                        }
+                    }
                     .navigationBarTitleDisplayMode(.large)
                     .navigationDestination(for: LibraryId.self) { id in
                         if let library = viewModel.library(with: id) {

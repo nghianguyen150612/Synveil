@@ -42,7 +42,10 @@ public final class URLSessionHTTPTransport: HTTPTransportProtocol, @unchecked Se
         requestTimeout: TimeInterval = 10.0,
         resourceTimeout: TimeInterval = 15.0,
         maxResponseBodyBytes: Int = maxProbeResponseBodyBytes,
-        allowLoopbackTestHttp: Bool = false
+        allowLoopbackTestHttp: Bool = false,
+        allowsCellularAccess: Bool = true,
+        allowsExpensiveNetworkAccess: Bool = true,
+        allowsConstrainedNetworkAccess: Bool = true
     ) {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = requestTimeout
@@ -51,6 +54,10 @@ public final class URLSessionHTTPTransport: HTTPTransportProtocol, @unchecked Se
         configuration.httpShouldSetCookies = false
         configuration.urlCache = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        configuration.allowsCellularAccess = allowsCellularAccess
+        configuration.allowsExpensiveNetworkAccess = allowsExpensiveNetworkAccess
+        configuration.allowsConstrainedNetworkAccess = allowsConstrainedNetworkAccess
+        configuration.waitsForConnectivity = false
 
         let delegate = RedirectRejectingDelegate()
         self.session = URLSession(

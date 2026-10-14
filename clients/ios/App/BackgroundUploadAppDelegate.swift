@@ -6,8 +6,17 @@ final class BackgroundUploadAppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        BGAppRefreshScheduler.shared.register()
         BackgroundUploadApplicationBootstrap.shared.start()
         return true
+    }
+
+    func applicationDidEnterBackground(_ application: UIApplication) {
+        Task { await BGAppRefreshScheduler.shared.schedule() }
+    }
+
+    func applicationDidBecomeActive(_ application: UIApplication) {
+        Task { await BGAppRefreshScheduler.shared.refreshStatus() }
     }
 
     func application(

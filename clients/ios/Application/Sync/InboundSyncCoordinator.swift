@@ -1,6 +1,6 @@
 import Foundation
 
-/// Explicit foreground orchestration. No work starts from init, status reads or session recovery.
+/// Authorized inbound orchestration. No work starts from init, status reads or session recovery.
 /// The database owns global run exclusion and P039 owns all application/ACK transitions.
 @MainActor
 final class InboundSyncCoordinator: InboundSyncCoordinatorProtocol {
@@ -174,6 +174,11 @@ final class InboundSyncCoordinator: InboundSyncCoordinatorProtocol {
                 recovery = inspection.status.recovery
                 if let reason = inspection.status.stopReason {
                     return Self.result(reason, current, recovery)
+                }
+                if !configuration.allowsResumingStagedPages, inspection.page != nil {
+                    // A delivered refresh authorizes only a newly fetched page and its initial ACK.
+                    // Interrupted staging/application is left for the explicit foreground path.
+                    return Self.result(.recoveryConfirmationRequired, current, recovery)
                 }
                 guard current.eventsApplied < configuration.maximumEvents else {
                     return Self.result(.moreWork, current)
