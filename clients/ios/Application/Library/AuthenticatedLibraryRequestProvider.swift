@@ -22,6 +22,8 @@ struct LibraryRequestScope: Sendable, CustomStringConvertible, CustomDebugString
 
     var credentialIdentifier: String { session.record.credentialId }
     var lifecycleRevision: UInt64 { revision }
+    /// Transient input to the existing secure restoration service; never exposed to UI/settings.
+    var restorationSession: DeviceCredentialSession { session }
 
     func sameSession(as other: LibraryRequestScope) -> Bool {
         revision == other.revision && session == other.session
@@ -120,18 +122,21 @@ final class AuthenticatedLibraryRequestProvider: AuthenticatedLibraryRequestProv
     private let transport: any HTTPTransportProtocol
     private let contentTransport: any FileContentTransportProtocol
     private let uploadTransport: any RawUploadTransportProtocol
+    private let executionValidation: (@MainActor (LibraryRequestScope) async throws -> Void)?
 
     init(
         controller: SessionController, store: any SecureCredentialSinkProtocol,
         transport: any HTTPTransportProtocol,
         contentTransport: any FileContentTransportProtocol = URLSessionFileContentTransport(),
-        uploadTransport: any RawUploadTransportProtocol = URLSessionRawUploadTransport()
+        uploadTransport: any RawUploadTransportProtocol = URLSessionRawUploadTransport(),
+        executionValidation: (@MainActor (LibraryRequestScope) async throws -> Void)? = nil
     ) {
         self.controller = controller
         self.store = store
         self.transport = transport
         self.contentTransport = contentTransport
         self.uploadTransport = uploadTransport
+        self.executionValidation = executionValidation
     }
 
     func begin() async throws -> LibraryRequestScope {
@@ -144,6 +149,8 @@ final class AuthenticatedLibraryRequestProvider: AuthenticatedLibraryRequestProv
         let session = try await load(endpoint)
         let scope = LibraryRequestScope(session: session, revision: revision)
         try checkCurrent(scope)
+        try await executionValidation?(scope)
+        try checkCurrent(scope)
         return scope
     }
 
@@ -152,6 +159,8 @@ final class AuthenticatedLibraryRequestProvider: AuthenticatedLibraryRequestProv
         let current = try await load(scope.session.serverEndpoint)
         try checkCurrent(scope)
         guard current == scope.session else { throw LibraryFailure.staleSession }
+        try await executionValidation?(scope)
+        try checkCurrent(scope)
     }
 
     func requestPage(cursor: String?, scope: LibraryRequestScope) async throws

@@ -205,3 +205,16 @@ is informational because owner-session/revocation operations remain deferred.
 Scrollable system typography, header/status/action labels, and stable accessibility
 identifiers support VoiceOver and Dynamic Type. Deterministic XCTest coverage plus
 presentation-boundary static checks protect existing P024–P027 action gates.
+
+
+## P048 implementation record
+
+Native opportunistic background metadata refresh is implemented on the P048 feature branch and
+pending review/integration. It is disabled by default, binds explicit opt-in to the current
+authenticated endpoint/account/device/credential, and uses BGAppRefreshTask with a bounded workload.
+Only new inbound pages and their normal initial ACK can run; unknown ACK recovery, outbound
+mutations, rebaseline and file-content transfers remain separate authorized actions. iOS controls
+delivery and no periodic interval is guaranteed. SQLite v9 and P046 upload ownership are retained.
+
+See [P048 manifest](manifests/PROMPT048_MANIFEST.md) for budgets, native evidence, restrictions,
+physical-device NOT_AVAILABLE status and the open review gate. P049 has not been started.

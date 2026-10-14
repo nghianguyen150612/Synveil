@@ -4,7 +4,10 @@ struct InboundSyncRunConfiguration: Equatable, Sendable {
     let pageSize: Int
     let maximumPages: Int
     let maximumEvents: Int
+    var allowsResumingStagedPages = true
     static let foreground = Self(pageSize: 200, maximumPages: 8, maximumEvents: 4096)
+    static let background = Self(
+        pageSize: 8, maximumPages: 1, maximumEvents: 8, allowsResumingStagedPages: false)
     static let hardMaximumPages = 64
     static let hardMaximumEvents = 4096
     var isValid: Bool {

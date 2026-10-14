@@ -9,11 +9,17 @@ struct SynveilApp: App {
         let configuration = AppConfiguration.load()
         let dependencies = AppDependencyContainer(configuration: configuration)
         _container = State(initialValue: dependencies)
+        BGAppRefreshScheduler.shared.install(
+            operation: { await dependencies.runBackgroundMetadata($0) },
+            identity: { try await dependencies.backgroundSettingsIdentity() },
+            savedConfirmation: { try await dependencies.backgroundSavedConfirmation() },
+            optInIdentity: { try await dependencies.authorizeBackgroundOptIn() },
+            recoveryInspection: { try await dependencies.backgroundRecoveryRequired() })
         BackgroundUploadApplicationBootstrap.shared.install {
-            await dependencies.prepareEnrollmentSecurity()
-            await dependencies.sessionController.start()
+            await dependencies.prepareApplicationSession()
             await dependencies.restoreBackgroundTransfers()
             BackgroundUploadEventDelivery.shared.processPendingEvents()
+            await BGAppRefreshScheduler.shared.schedule()
         }
     }
 
