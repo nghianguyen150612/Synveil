@@ -69,6 +69,23 @@ final class NotificationPersistenceTests: XCTestCase {
         XCTAssertEqual(coordinator.failure, .storageFailure)
     }
     func testCorruptMetadataFailsClosed() async throws { try await corrupt(Data("not-json".utf8)) }
+    func testUnexpectedMetadataKeysFailClosed() async throws {
+        try await corrupt(Data("{\"version\":1,\"events\":[],\"private\":\"metadata\"}".utf8))
+    }
+    func testDuplicateDedupIdentityInCorruptSnapshotFailsClosed() async throws {
+        let f = try notificationFixture(self)
+        let first = f.event()
+        let second = f.event(first.candidate)
+        struct Snapshot: Encodable {
+            let version = 1
+            let events: [NotificationEvent]
+        }
+        try JSONEncoder().encode(Snapshot(events: [first, second])).write(to: f.url)
+        do {
+            _ = try await f.ledger.events()
+            XCTFail("Duplicate identities must be rejected")
+        } catch {}
+    }
     func testFutureFormatFailsClosed() async throws {
         try await corrupt(Data("{\"version\":2,\"events\":[]}".utf8))
     }

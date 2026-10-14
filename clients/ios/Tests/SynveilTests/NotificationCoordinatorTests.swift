@@ -274,4 +274,13 @@ final class NotificationCoordinatorTests: XCTestCase {
             }
         }
     }
+    func testAuthenticationAndIntegrityFailuresRemainDistinctFromLedgerFailure() {
+        XCTAssertEqual(
+            NotificationFailure.classify(LibraryFailure.deviceRevoked), .sessionInvalidated)
+        XCTAssertEqual(
+            NotificationFailure.classify(LibraryFailure.originMismatch), .accountMismatch)
+        XCTAssertEqual(
+            NotificationFailure.classify(DownloadFailure.sha256Mismatch), .durableEventUnavailable)
+        XCTAssertEqual(NotificationFailure.classify(MutationQueueFailure.diskFull), .storageFailure)
+    }
 }

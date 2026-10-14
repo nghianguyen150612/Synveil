@@ -5,7 +5,7 @@
 - Verified starting integration SHA: `0f39b9ab141d46df0bf7df76f5d4886fca044a4a`.
 - `origin/ios-app` was fetched explicitly; P048 merge ancestry passed. The checkout was clean.
 - Feature branch: `ios/p049-native-notifications-lifecycle`; target: `ios-app`.
-- Source SHA: pending commit; final feature head is recorded by the feature PR and final report.
+- Initial source SHA: `d45fc29d02cb4041f4262581731a2ee9ba97309a`; final source head is recorded by [PR #132](https://github.com/nghianguyen150612/Synveil/pull/132) and the final report.
 - P043–P048 manifests, product contract, architecture, roadmap and platform mapping were reviewed.
 - No desktop/server/Android/API changes. No remote push, APNs, extension, PhotoKit or new scheduler.
 - P050 is not authorized and has not been started.
@@ -134,9 +134,9 @@ file-backed transfer/inbound authorities, ledger corruption/faults and small-scr
 SwiftUI rendering. Six new Python guards verify target membership, delegate ownership, capability
 exclusions, remote-push exclusion and SQLite v9 isolation. Existing P001–P048 tests remain enabled.
 
-New XCTest inventory: NotificationCoordinatorTests 37; NotificationEligibilityTests 17;
-NotificationNavigationTests 20; NotificationPersistenceTests 17; NotificationViewTests 4.
-Total new cases: **95**. Local Python Support suite: **104 passed, 0 failed**. Source validation,
+New XCTest inventory: NotificationCoordinatorTests 38; NotificationEligibilityTests 17;
+NotificationNavigationTests 21; NotificationPersistenceTests 19; NotificationViewTests 4.
+Total new cases: **99**. Local Python Support suite: **104 passed, 0 failed**. Source validation,
 official Swift 6.2 strict formatting/lint, Swift parser, docs validation and diff whitespace: PASS.
 Xcode/Apple SDKs are unavailable on this Linux host; local parsing is not a native build.
 
@@ -185,7 +185,7 @@ and late-request removal minimize this unavoidable nontransactional window. Deli
 presentation cannot be guaranteed retractable. Conservative record/claim caps can suppress further
 notifications; core operations remain available.
 
-PR: NOT_OPENED. Independent review acceptance: PENDING. Merge SHA: NOT_MERGED.
+PR: [#132](https://github.com/nghianguyen150612/Synveil/pull/132), OPEN. Independent review requested from `ducminh231011`; acceptance is PENDING. Merge SHA: NOT_MERGED.
 Final integrated `ios-app` SHA at this snapshot: `0f39b9ab141d46df0bf7df76f5d4886fca044a4a`.
 Ordinary merge-commit integration is permitted only after all exact-head gates and explicit review
 acceptance. Missing approval/checks leave the PR open. Final evidence will be recorded without

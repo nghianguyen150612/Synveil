@@ -96,6 +96,14 @@ struct NotificationEvent: Codable, Equatable, Sendable {
             && expiresAt.timeIntervalSince1970.isFinite && expiresAt > recordedAt
             && expiresAt.timeIntervalSince(recordedAt) <= NotificationLimits.routingLifetime
     }
+    var deduplicationKey: String {
+        [
+            generation.uuidString, candidate.category.rawValue, candidate.evidence.rawValue,
+            candidate.operation, candidate.library, candidate.scopeFingerprint,
+            candidate.proofFingerprint,
+        ]
+        .joined(separator: ":")
+    }
     var requestIdentifier: String { NotificationLimits.prefix + id.uuidString.lowercased() }
 }
 

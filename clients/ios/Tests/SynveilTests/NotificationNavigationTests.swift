@@ -54,7 +54,7 @@ final class NotificationNavigationTests: XCTestCase {
         f.navigation.receive(event.id)
         await f.consume()
         XCTAssertEqual(f.authority.resolveCount, 0)
-        XCTAssertEqual(f.navigation.failure, .invalidIntent)
+        XCTAssertEqual(f.navigation.failure, .accountMismatch)
     }
     func testRevokedCredentialCannotResolve() async throws {
         let f = try notificationFixture(self)
@@ -206,5 +206,18 @@ final class NotificationNavigationTests: XCTestCase {
         await f.consume()
         XCTAssertEqual(f.navigation.selection, events[1].id)
         XCTAssertEqual(f.authority.resolveCount, 2)
+    }
+    func testNewResponseDuringResolutionDoesNotPublishSupersededRoute() async throws {
+        let f = try notificationFixture(self)
+        await f.coordinator.observe(f.candidate())
+        await f.coordinator.observe(f.candidate())
+        let events = try await f.ledger.events()
+        f.authority.onResolve = { f.navigation.receive(events[1].id) }
+        f.navigation.receive(events[0].id)
+        await f.consume()
+        XCTAssertNil(f.navigation.destination)
+        f.authority.onResolve = nil
+        await f.consume()
+        XCTAssertEqual(f.navigation.selection, events[1].id)
     }
 }

@@ -20,10 +20,20 @@ actor NotificationDeliveryLedger: NotificationLedgerStorage {
         guard url.isFileURL else { throw NotificationFailure.storageFailure }
         self.url = url
         self.fault = fault
-        let existed = FileManager.default.fileExists(atPath: url.path)
-        try MutationQueueFilePolicy.prepare(url)
-        if !existed {
+        let lockURL = URL(fileURLWithPath: url.path + ".lock")
+        try MutationQueueFilePolicy.prepare(lockURL)
+        let descriptor = open(lockURL.path, O_RDWR | O_NOFOLLOW)
+        guard descriptor >= 0 else { throw NotificationFailure.storageFailure }
+        defer { close(descriptor) }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            throw NotificationFailure.storageFailure
+        }
+        defer { _ = flock(descriptor, LOCK_UN) }
+        if !FileManager.default.fileExists(atPath: url.path) {
+            try MutationQueueFilePolicy.prepare(url)
             try Data("{\"version\":1,\"events\":[]}".utf8).write(to: url)
+        } else {
+            try MutationQueueFilePolicy.protect(url)
         }
     }
     static func productionURL() throws -> URL {
@@ -137,12 +147,39 @@ actor NotificationDeliveryLedger: NotificationLedgerStorage {
                 offset += count
             }
         }
-        let snapshot = try JSONDecoder().decode(Snapshot.self, from: bytes)
-        guard snapshot.version == 1, snapshot.events.count <= NotificationLimits.maximumRecords,
-            snapshot.events.allSatisfy(\.isValid),
-            Set(snapshot.events.map(\.id)).count == snapshot.events.count
-        else { throw NotificationFailure.storageFailure }
-        return snapshot
+        do {
+            let root = try JSONSerialization.jsonObject(with: bytes)
+            try LibraryWireValidation.keys(root, required: ["version", "events"])
+            guard let object = root as? [String: Any],
+                let events = object["events"] as? [[String: Any]]
+            else {
+                throw NotificationFailure.storageFailure
+            }
+            for event in events {
+                try LibraryWireValidation.keys(
+                    event,
+                    required: [
+                        "id", "candidate", "generation", "lifecycleRevision", "recordedAt",
+                        "expiresAt", "state",
+                    ])
+                guard let candidate = event["candidate"] else {
+                    throw NotificationFailure.storageFailure
+                }
+                try LibraryWireValidation.keys(
+                    candidate,
+                    required: [
+                        "category", "evidence", "operation", "library", "scopeFingerprint",
+                        "proofFingerprint",
+                    ])
+            }
+            let snapshot = try JSONDecoder().decode(Snapshot.self, from: bytes)
+            guard snapshot.version == 1, snapshot.events.count <= NotificationLimits.maximumRecords,
+                snapshot.events.allSatisfy(\.isValid),
+                Set(snapshot.events.map(\.id)).count == snapshot.events.count,
+                Set(snapshot.events.map(\.deduplicationKey)).count == snapshot.events.count
+            else { throw NotificationFailure.storageFailure }
+            return snapshot
+        } catch { throw NotificationFailure.storageFailure }
     }
     private func write(_ snapshot: Snapshot) throws {
         let bytes = try JSONEncoder().encode(snapshot)
@@ -150,7 +187,7 @@ actor NotificationDeliveryLedger: NotificationLedgerStorage {
             throw NotificationFailure.capacity
         }
         try fault?(.beforeWrite)
-        let temporary = url.deletingLastPathComponent().appendingPathComponent("delivery.write")
+        let temporary = url.appendingPathExtension("write")
         // An interrupted unrenamed file is presentation garbage, never operation evidence.
         _ = unlink(temporary.path)
         try MutationQueueFilePolicy.prepare(temporary)

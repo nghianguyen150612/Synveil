@@ -214,6 +214,29 @@ final class NotificationCoordinator {
             && storage.read() == saved && saved.enabled
     }
     private func safeFailure(_ error: Error) -> NotificationFailure {
-        (error as? NotificationFailure) ?? .storageFailure
+        NotificationFailure.classify(error)
+    }
+}
+
+extension NotificationFailure {
+    static func classify(_ error: Error) -> NotificationFailure {
+        if let failure = error as? NotificationFailure { return failure }
+        if let failure = error as? LibraryFailure {
+            switch failure {
+            case .unauthenticated, .authenticationRejected, .deviceRevoked, .staleSession,
+                .invalidCredential, .credentialUnavailable:
+                return .sessionInvalidated
+            case .originMismatch: return .accountMismatch
+            default: return .durableEventUnavailable
+            }
+        }
+        if let failure = error as? DownloadFailure {
+            switch failure {
+            case .unauthenticated, .deviceRevoked, .staleSession: return .sessionInvalidated
+            case .scopeMismatch: return .accountMismatch
+            default: return .durableEventUnavailable
+            }
+        }
+        return .storageFailure
     }
 }

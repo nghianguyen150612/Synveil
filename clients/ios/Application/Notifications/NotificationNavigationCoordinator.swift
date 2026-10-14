@@ -69,9 +69,11 @@ final class NotificationNavigationCoordinator {
             guard
                 [.claimed, .scheduled].contains(event.state), clock() < event.expiresAt,
                 event.generation == policy.generation, policy.enabled,
-                event.candidate.scopeFingerprint == policy.scopeFingerprint,
-                try await authority.currentScope() == event.candidate.scopeFingerprint
+                event.candidate.scopeFingerprint == policy.scopeFingerprint
             else { throw NotificationFailure.invalidIntent }
+            guard try await authority.currentScope() == event.candidate.scopeFingerprint else {
+                throw NotificationFailure.accountMismatch
+            }
             let resolved = try await authority.destination(event.candidate)
             guard fence == intent.fence, pending?.id == intent.id else { return }
             guard try await ledger.transition(event.id, from: event.state, to: .handled),
@@ -84,7 +86,7 @@ final class NotificationNavigationCoordinator {
         } catch {
             guard fence == intent.fence, pending?.id == intent.id else { return }
             pending = nil
-            failure = (error as? NotificationFailure) ?? .durableEventUnavailable
+            failure = NotificationFailure.classify(error)
             destination = .unavailable
             selection = intent.id
         }

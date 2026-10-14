@@ -498,8 +498,10 @@ public final class AppDependencyContainer {
                 // disables this presentation feature without rolling back any core dependency.
                 if let libraryCatalog, let nodeRepository {
                     do {
-                        let ledger = try NotificationDeliveryLedger(
-                            url: NotificationDeliveryLedger.productionURL())
+                        let ledger = try await Task.detached {
+                            try NotificationDeliveryLedger(
+                                url: NotificationDeliveryLedger.productionURL())
+                        }.value
                         let authority = NotificationAuthority(
                             provider: browserProvider, database: database, bridge: bridge,
                             downloads: downloads, catalog: libraryCatalog, nodes: nodeRepository)
