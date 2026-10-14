@@ -136,8 +136,7 @@ registration/submission outcomes and bounded counters, with no secrets or privat
   durable confirmation, actual SQLite feed/application/ACK interruption, foreground cross-connection
   ownership, unknown ACK, rebaseline, 503/offline, revocation and P046 operation separation.
 - Existing P001–P047 tests remain registered and enabled.
-- Native execution results and exact-head CI: PENDING at initial publication; no local Linux result
-  is represented as Xcode/Simulator execution. Final CI/review evidence will be recorded after runs. Initial native Build failed on a protocol/concrete-store type mismatch and was corrected. The next Build passed; Simulator compilation then found a test assertion using an incorrect token member, now corrected to existing evidence.token. These failures are not counted as test passes. Source `2ae1fe9bd7fe7ccaad5c555d982ec6bb217135e8` then executed 1,797 tests: 1,794 passed, two existing skips, one failure. [Simulator run 38493222157](https://github.com/nghianguyen150612/Synveil/actions/runs/38493222157) identifies only the 503 fixture using an undocumented error code; it is corrected to dependency_unavailable without weakening the protocol. Two additional cancellation/write-failure regressions bring P048 to 53 native methods.
+- Frozen implementation source: `77a2f4550ab3d85b0d1251760e79258f8db989b6`. All four required native workflows passed on this source; no Linux check is represented as Apple execution. Initial native Build failed on a protocol/concrete-store type mismatch and was corrected. The next Build passed; Simulator compilation then found a test assertion using an incorrect token member, now corrected to existing evidence.token. These failures are not counted as test passes. Source `2ae1fe9bd7fe7ccaad5c555d982ec6bb217135e8` then executed 1,797 tests: 1,794 passed, two existing skips, one failure. [Simulator run 38493222157](https://github.com/nghianguyen150612/Synveil/actions/runs/38493222157) identifies only the 503 fixture using an undocumented error code; it is corrected to dependency_unavailable without weakening the protocol. Two additional cancellation/write-failure regressions bring P048 to 53 native methods.
 - Implementation security review checks allowed transport methods, opt-in/session binding,
   verification evidence, retained schema v9, global lock ownership, preserved ACK uncertainty and
   separate upload callbacks. This implementation review is not independent PR acceptance.
@@ -170,10 +169,10 @@ Real-device procedure (record device/OS, source SHA and bounded privacy-safe dia
 ## GitHub acceptance and blockers
 
 - PR: [#131](https://github.com/nghianguyen150612/Synveil/pull/131), OPEN; ordinary merge commit is required after all four final-head native gates and
-  independent required review acceptance.
-- Initial source SHA: `2729928c41c6187f6e5db84b0a7e229e24cd5894`; corrected composition SHA: `051a2b6d2afa466e817eae6eb49d1fbfeff1d336`. Final native URLs/statistics and source evidence: pending.
+  independent required review acceptance. Review requested from write-access collaborator `ducminh231011`; no approval or acceptance is fabricated.
+- Initial source SHA: `2729928c41c6187f6e5db84b0a7e229e24cd5894`; corrected composition SHA: `051a2b6d2afa466e817eae6eb49d1fbfeff1d336`. Final implementation source is `77a2f4550ab3d85b0d1251760e79258f8db989b6`; native evidence follows below.
 - Merge/integration SHA: NOT_MERGED. Verified integration remains the starting P047 SHA until accepted.
-- Blockers: native validation and independent review not yet obtained; physical-device evidence is
+- Blocker: independent review acceptance is not yet obtained; physical-device evidence is
   NOT_AVAILABLE and disclosed rather than fabricated. P049 has not been started.
 
 ## Changed files
@@ -201,3 +200,61 @@ Modified files:
 - `clients/ios/Infrastructure/Network/URLSessionHTTPTransport.swift`.
 - `clients/ios/Infrastructure/Persistence/MutationQueueSQLiteStore.swift` (bounded reads/ownership only).
 - `clients/ios/Synveil.xcodeproj/project.pbxproj`.
+
+## Verified native evidence and final-head publication
+
+All rows below are actual **push** runs with head SHA
+`77a2f4550ab3d85b0d1251760e79258f8db989b6`, not historical or unrelated runs.
+
+| Required workflow | Result | Run |
+|---|---|---|
+| iOS Static Validation | PASS | [38495285107](https://github.com/nghianguyen150612/Synveil/actions/runs/38495285107) |
+| iOS Build | PASS | [38495285041](https://github.com/nghianguyen150612/Synveil/actions/runs/38495285041) |
+| iOS Simulator Tests | PASS | [38495284948](https://github.com/nghianguyen150612/Synveil/actions/runs/38495284948) |
+| iOS Rust Apple Build | PASS | [38495285053](https://github.com/nghianguyen150612/Synveil/actions/runs/38495285053) |
+
+The native xcresult summary reports **1,799 total: 1,797 passed, 0 failed, 2 skipped**.
+`BackgroundSyncSafetyTests` executed 26 and `BackgroundSyncTests` executed 27, all passed.
+Existing skips are `KeychainCredentialStoreTests/testSimulatorKeychainRoundTripUsesUniqueTestService`
+and `MutationQueueSQLiteTests/testNativeDataProtectionAttributes`. No P048 test is skipped.
+The run used Xcode 26.6, Swift 6.3.3 and an iOS 26.5 Simulator. Existing project Swift 5 compatibility
+language settings and strict concurrency validation remain unchanged; this is not a claim that
+all existing application sources are migrated to Swift 6 language mode. Existing warnings in
+transfer/export, staging and Rust bridge code remain visible and unsuppressed.
+
+This evidence update changes documentation only. The current feature Git SHA is available from
+[PR #131](https://github.com/nghianguyen150612/Synveil/pull/131). Four additional workflow-dispatch
+runs on that final documentation-updated head are required and tracked in the
+[PR checks](https://github.com/nghianguyen150612/Synveil/pull/131/checks) and final delivery report.
+The production source tree must remain identical to the frozen implementation above.
+No old run is substituted for this final-head verification.
+
+P048-owned authorization/feed/Node/ACK requests use the restricted metadata transport. The separately
+owned existing application-startup authorization probe and P046 transfers retain their original
+transport policies. This preference does not constrain every application network request. Startup
+elapsed time still counts against the delivered metadata task's budget. Real-device network, lock,
+expiration and delivery behavior remains NOT_AVAILABLE and must follow the procedure above.
+
+## Unrelated CI failures and review disposition
+
+The following actual PR runs at the frozen implementation SHA fail in sources untouched by P048:
+
+- [Rust CI 38495289574](https://github.com/nghianguyen150612/Synveil/actions/runs/38495289574):
+  object-store clippy double_must_use, Linux systemd-tmpfiles unsupported --dry-run, and macOS desktop
+  control/launch UnsafeEndpoint failures.
+- [PostgreSQL 17 38495289643](https://github.com/nghianguyen150612/Synveil/actions/runs/38495289643):
+  scheduler schema test expects 34 and observes 36.
+- [Linux AppImage 38495289662](https://github.com/nghianguyen150612/Synveil/actions/runs/38495289662):
+  desktop artifact inspection detects a private/temporary build-path marker.
+- [Linux DEB/RPM 38495289671](https://github.com/nghianguyen150612/Synveil/actions/runs/38495289671):
+  still running at evidence publication; no result is fabricated.
+
+No server, desktop, Android, Rust crate, workflow or script source differs from the verified baseline.
+These failures have not been disabled or repaired outside P048. PR #131 is open, ready for review,
+and unmerged. There are no submitted reviews at evidence capture; a request is not approval.
+Ordinary merge-commit integration is authorized only after recorded review acceptance and all four
+final-head native gates. Merge SHA: NOT_MERGED. Verified current integration SHA remains
+`a4ec3d177c7e9ee27e5d2a0fec74310ad403984d`. P049 is not started.
+
+Implementation disposition: **IMPLEMENTED_PENDING_REVIEW_OR_MERGE**, subject to the final-head
+reverification described above. No physical-device or production qualification is claimed.
