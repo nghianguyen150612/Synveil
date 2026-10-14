@@ -27,6 +27,8 @@ struct RootView: View {
     var downloadCoordinator: FileDownloadCoordinator? = nil
     var uploadCoordinator: FileUploadCoordinator? = nil
     var fileExportCoordinator: VerifiedFileExportCoordinator? = nil
+    var notifications: NotificationCoordinator? = nil
+    var notificationNavigation: NotificationNavigationCoordinator? = nil
 
     var body: some View {
         switch sessionController.state {
@@ -64,6 +66,8 @@ struct RootView: View {
                 downloadCoordinator: downloadCoordinator,
                 uploadCoordinator: uploadCoordinator,
                 fileExportCoordinator: fileExportCoordinator,
+                notifications: notifications,
+                notificationNavigation: notificationNavigation,
                 sessionController: sessionController
             )
             // A later authenticated lifecycle receives a fresh transient catalog and navigation stack.

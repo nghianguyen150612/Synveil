@@ -58,6 +58,39 @@ public final class AppDependencyContainer {
     private(set) var backgroundSyncCoordinator: BackgroundSyncCoordinator?
     private var sessionBootstrapTask: Task<Void, Never>?
     private var backgroundDatabase: MutationQueueSQLiteStore?
+    private(set) var notifications: NotificationCoordinator?
+    let notificationNavigation = NotificationNavigationCoordinator()
+    private var notificationLedger: (any NotificationLedgerStorage)?
+    private var notificationStartupReady = false
+
+    func notificationResponse(_ id: UUID) {
+        notificationNavigation.receive(id)
+        Task {
+            await prepareApplicationSession()
+            notificationStartupReady = true
+            await consumeNotificationIntent()
+        }
+    }
+    func refreshNotifications() async {
+        guard let notifications else { return }
+        await notifications.refreshStatus()
+        await notifications.reconcile()
+        await consumeNotificationIntent()
+    }
+    func consumeNotificationIntent() async {
+        guard let notifications, let notificationLedger else { return }
+        let intentRevision = notificationNavigation.intentRevision
+        await notificationNavigation.consume(
+            ready: notificationStartupReady,
+            authenticated: sessionController.state == .authenticated,
+            mayAwaitAuthentication: sessionController.state == .initializing
+                || sessionController.state == .restorationVerificationPending,
+            policy: notifications.policy, ledger: notificationLedger,
+            authority: notifications.authority)
+        if notificationNavigation.intentRevision != intentRevision {
+            Task { await self.consumeNotificationIntent() }
+        }
+    }
 
     /// The application delegate and metadata delivery share one startup pass, without a scene.
     func prepareApplicationSession() async {
@@ -68,6 +101,10 @@ public final class AppDependencyContainer {
         let task = Task { @MainActor in
             await self.prepareEnrollmentSecurity()
             await self.sessionController.start()
+            self.notificationStartupReady = true
+            await self.consumeNotificationIntent()
+            // No permission request, network sync or upload operation is started by notifications.
+            Task { await self.notifications?.reconcile() }
         }
         sessionBootstrapTask = task
         await task.value
@@ -80,7 +117,17 @@ public final class AppDependencyContainer {
             return BackgroundSyncOutcome(state: .expired)
         }
         guard let backgroundSyncCoordinator else { return BackgroundSyncOutcome(state: .failed) }
-        return await backgroundSyncCoordinator.run(delivery: delivery)
+        let outcome = await backgroundSyncCoordinator.run(delivery: delivery)
+        if outcome.state == .completed, outcome.events > 0, let confirmation = outcome.confirmation,
+            let notifications, let authority = notifications.authority as? NotificationAuthority
+        {
+            notifications.enqueue {
+                let candidate = try await authority.observeInbound(
+                    library: confirmation.library, recovery: false)
+                return candidate
+            }
+        }
+        return outcome
     }
 
     func backgroundSettingsIdentity() async throws -> BackgroundSyncIdentity {
@@ -447,14 +494,46 @@ public final class AppDependencyContainer {
                 let downloads = downloadCoordinator
                 let uploads = uploadCoordinator
                 let exports = fileExportCoordinator
+                // Notification storage is separate from the operation database. A failed ledger
+                // disables this presentation feature without rolling back any core dependency.
+                if let libraryCatalog, let nodeRepository {
+                    do {
+                        let ledger = try NotificationDeliveryLedger(
+                            url: NotificationDeliveryLedger.productionURL())
+                        let authority = NotificationAuthority(
+                            provider: browserProvider, database: database, bridge: bridge,
+                            downloads: downloads, catalog: libraryCatalog, nodes: nodeRepository)
+                        let notifications = NotificationCoordinator(
+                            scheduler: LocalNotificationScheduler(),
+                            policy: NotificationPolicyStore(),
+                            ledger: ledger, authority: authority,
+                            navigation: notificationNavigation,
+                            revision: { [weak sessionController] in
+                                sessionController?.lifecycleRevision ?? 0
+                            })
+                        self.notificationLedger = ledger
+                        self.notifications = notifications
+                        downloads?.notificationObservation = { [weak notifications] record in
+                            notifications?.enqueue { try await authority.observeDownload(record) }
+                        }
+                        uploads?.notificationObservation = { [weak notifications] record in
+                            notifications?.enqueue { try await authority.observeUpload(record) }
+                        }
+                        coordinatorNotificationRecovery(
+                            inbound: inboundSyncCoordinator, notifications: notifications,
+                            authority: authority)
+                    } catch { notifications = nil }
+                }
+                let notifications = notifications
                 sessionController.installMutationSessionInvalidator {
                     [
                         weak queue, weak composedMetadataMutationService, weak composedRebaseline,
-                        weak downloads, weak uploads, weak exports
+                        weak downloads, weak uploads, weak exports, weak notifications
                     ] in
                     downloads?.invalidateSession()
                     uploads?.invalidateSession()
                     exports?.invalidateSession()
+                    notifications?.invalidateSession()
                     queue?.invalidateSession()
                     composedRebaseline?.invalidateSession()
                     composedMetadataMutationService?.invalidateSession()
@@ -496,6 +575,18 @@ public final class AppDependencyContainer {
             restorationService = nil
             logoutService = nil
             sessionController.markRestorationDependenciesUnavailable()
+        }
+    }
+
+    private func coordinatorNotificationRecovery(
+        inbound: (any InboundSyncCoordinatorProtocol)?, notifications: NotificationCoordinator,
+        authority: NotificationAuthority
+    ) {
+        (inbound as? InboundSyncCoordinator)?.notificationRecoveryObservation = {
+            [weak notifications] library in
+            notifications?.enqueue {
+                try await authority.observeInbound(library: library, recovery: true)
+            }
         }
     }
 }
