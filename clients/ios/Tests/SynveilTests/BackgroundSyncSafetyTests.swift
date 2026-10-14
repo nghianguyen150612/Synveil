@@ -140,6 +140,30 @@ final class BackgroundSyncSafetyTests: XCTestCase {
         let record = try await f.record()
         XCTAssertNil(record)
     }
+    func testCanceledCredentialCaptureCannotQuarantineOrStealForegroundOwnership() async throws {
+        let f = try await inboundFixture(self)
+        let gate = QueueGate()
+        await f.base.credentials.suspendNextLoad(gate)
+        let task = Task { await f.run(.background) }
+        await gate.wait()
+        let foregroundOwner = UUID()
+        try await f.database.claimInboundRun(
+            scope: f.scope, credentialId: queueUUID(92), owner: foregroundOwner)
+        task.cancel()
+        await gate.release()
+        let result = await task.value
+        XCTAssertEqual(result.reason, .cancelled)
+        XCTAssertEqual(f.base.controller.state, .authenticated)
+        XCTAssertEqual(try queueRawScalar(f.base.url, "SELECT quarantined FROM scopes"), "0")
+        do {
+            try await f.database.claimInboundRun(
+                scope: f.scope, credentialId: queueUUID(92), owner: UUID())
+            XCTFail("Foreground ownership was stolen")
+        } catch { XCTAssertEqual(error as? MutationQueueFailure, .concurrentExecution) }
+        await f.database.finishInboundRun(owner: foregroundOwner)
+        let requests = await f.wire.requests()
+        XCTAssertTrue(requests.isEmpty)
+    }
     func testExpirationAfterStagingPreservesOriginalReceivedPage() async throws {
         let f = try await inboundFixture(self)
         try await f.configure()
@@ -216,7 +240,7 @@ final class BackgroundSyncSafetyTests: XCTestCase {
         for server in [true, false] {
             let f = try await inboundFixture(self)
             if server {
-                await f.wire.configure([try inboundError("service_unavailable", status: 503)])
+                await f.wire.configure([try inboundError("dependency_unavailable", status: 503)])
             }
             let result = await f.run(.background)
             XCTAssertTrue([.offline, .serverUnavailable].contains(result.reason))

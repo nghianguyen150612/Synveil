@@ -12,9 +12,10 @@ protocol BackgroundSyncPolicyStorage {
 final class BackgroundSyncPolicyStore: BackgroundSyncPolicyStorage {
     static let key = "synveil.background-metadata.policy.v1"
     private let defaults: UserDefaults
+    private var failedClosed = false
     init(defaults: UserDefaults = .standard) { self.defaults = defaults }
     func read() -> BackgroundSyncPolicy {
-        guard let bytes = defaults.data(forKey: Self.key), bytes.count <= 4096,
+        guard !failedClosed, let bytes = defaults.data(forKey: Self.key), bytes.count <= 4096,
             let policy = try? JSONDecoder().decode(BackgroundSyncPolicy.self, from: bytes),
             policy.isValid
         else { return .disabled }
@@ -23,8 +24,12 @@ final class BackgroundSyncPolicyStore: BackgroundSyncPolicyStorage {
     @discardableResult
     func write(_ policy: BackgroundSyncPolicy) -> Bool {
         guard policy.isValid, let bytes = try? JSONEncoder().encode(policy), bytes.count <= 4096
-        else { return false }
+        else {
+            failedClosed = true
+            return false
+        }
         defaults.set(bytes, forKey: Self.key)
-        return defaults.data(forKey: Self.key) == bytes
+        failedClosed = defaults.data(forKey: Self.key) != bytes
+        return !failedClosed
     }
 }

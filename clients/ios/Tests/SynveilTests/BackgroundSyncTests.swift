@@ -243,6 +243,26 @@ final class BackgroundSyncTests: XCTestCase {
         await relaunched.schedule()
         XCTAssertEqual(native.submissions.count, 1)
     }
+    func testDisableRemainsEffectiveWhenPreferencePersistenceFails() async throws {
+        let policy = try await refreshPolicy()
+        let scheduler = makeScheduler(policy: policy)
+        var executions = 0
+        scheduler.install(
+            operation: { _ in
+                executions += 1
+                return BackgroundSyncOutcome(state: .completed)
+            },
+            identity: { try await refreshIdentity() }, savedConfirmation: { nil })
+        scheduler.register()
+        policy.writable = false
+        await scheduler.setEnabled(false)
+        let completion = RefreshCompletions()
+        scheduler.deliver(completion.delivery())
+        XCTAssertEqual(completion.snapshot(), [false])
+        XCTAssertEqual(executions, 0)
+        XCTAssertFalse(scheduler.settings.enabled)
+        XCTAssertEqual(scheduler.state, .failed)
+    }
     func testSubmissionFailureHasPersistentCooldownAcrossLaunches() async throws {
         let policy = try await refreshPolicy()
         let native = RefreshNative()
@@ -404,6 +424,7 @@ final class BackgroundSyncTests: XCTestCase {
         await scheduler.waitForCurrentDelivery()
         XCTAssertEqual(completion.snapshot(), [false])
         XCTAssertNil(scheduler.lastConfirmation)
+        XCTAssertFalse(policy.value.enabled)
     }
     func testZeroProgressDeferralDoesNotClaimSuccessfulTask() {
         XCTAssertFalse(BackgroundSyncOutcome(state: .partial).taskSucceeded)

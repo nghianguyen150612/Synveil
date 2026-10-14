@@ -46,7 +46,7 @@ Official Apple references reviewed:
   local grant UUID. It contains no bearer, signed ACK, private path or server checkpoint.
 - Missing, malformed, oversized, unsupported or invalid settings are disabled. Writes are read back.
 - Logout/authorization invalidation cancels requests and withdraws the persisted opt-in. An account
-  switch cannot use another account's grant. In-flight work is fenced by both grant and lifecycle.
+  switch cannot use another account's grant. In-flight work is fenced by both grant and lifecycle. A positively identified different account disables the previous opt-in even on cold launch. Failed preference writes keep execution closed in-process and do not report a successful settings save.
 - Wi-Fi preferred / unmetered only is the default network setting; Wi-Fi and cellular is optional.
 - Low Power Mode and unavailable/disabled Background App Refresh defer execution and submission.
 - One pending request per identifier is checked before submission. A six-hour lower boundary and
@@ -71,7 +71,7 @@ Authorization verification first claims the existing global inbound run lock. Fe
 the same lock through the existing inbound coordinator. Background delivery cannot steal ownership
 from foreground Sync Now, explicit ACK recovery or rebaseline. SQLite scope/CAS protections and
 session validation remain authoritative over durable writes. Multiple native deliveries also have a
-delivery fence; expiring a task never force-releases an active durable owner.
+delivery fence; expiring a task never force-releases an active durable owner. Cancellation during cached Keychain capture no longer quarantines a healthy foreground owner; a targeted regression holds that owner through canceled background capture.
 
 Only read-only verification, feed retrieval, Node metadata materialization, projection commit and the
 initial ACK of a newly fetched/applied page are allowed. Existing unresolved pages, including
@@ -130,14 +130,14 @@ registration/submission outcomes and bounded counters, with no secrets or privat
 
 - Portable validation: source validator PASS; 98 Python tests PASS (eight new registration/configuration
   tests); strict official swift-format lint PASS; documentation validation PASS; diff check PASS.
-- New targeted native tests: 51 XCTest methods in BackgroundSyncTests and BackgroundSyncSafetyTests.
+- New targeted native tests: 53 XCTest methods in BackgroundSyncTests and BackgroundSyncSafetyTests.
   They cover registration/default opt-out, corrupt storage, scheduling/cooldown/relaunch, disable
   races, account/session fences, constraints, delivery expiration and duplication, budgets, fairness,
   durable confirmation, actual SQLite feed/application/ACK interruption, foreground cross-connection
   ownership, unknown ACK, rebaseline, 503/offline, revocation and P046 operation separation.
 - Existing P001–P047 tests remain registered and enabled.
 - Native execution results and exact-head CI: PENDING at initial publication; no local Linux result
-  is represented as Xcode/Simulator execution. Final CI/review evidence will be recorded after runs. Initial native Build failed on a protocol/concrete-store type mismatch and was corrected. The next Build passed; Simulator compilation then found a test assertion using an incorrect token member, now corrected to existing evidence.token. These failures are not counted as test passes.
+  is represented as Xcode/Simulator execution. Final CI/review evidence will be recorded after runs. Initial native Build failed on a protocol/concrete-store type mismatch and was corrected. The next Build passed; Simulator compilation then found a test assertion using an incorrect token member, now corrected to existing evidence.token. These failures are not counted as test passes. Source `2ae1fe9bd7fe7ccaad5c555d982ec6bb217135e8` then executed 1,797 tests: 1,794 passed, two existing skips, one failure. [Simulator run 38493222157](https://github.com/nghianguyen150612/Synveil/actions/runs/38493222157) identifies only the 503 fixture using an undocumented error code; it is corrected to dependency_unavailable without weakening the protocol. Two additional cancellation/write-failure regressions bring P048 to 53 native methods.
 - Implementation security review checks allowed transport methods, opt-in/session binding,
   verification evidence, retained schema v9, global lock ownership, preserved ACK uncertainty and
   separate upload callbacks. This implementation review is not independent PR acceptance.
@@ -175,3 +175,29 @@ Real-device procedure (record device/OS, source SHA and bounded privacy-safe dia
 - Merge/integration SHA: NOT_MERGED. Verified integration remains the starting P047 SHA until accepted.
 - Blockers: native validation and independent review not yet obtained; physical-device evidence is
   NOT_AVAILABLE and disclosed rather than fabricated. P049 has not been started.
+
+## Changed files
+
+New files:
+
+- `clients/ios/App/BGAppRefreshScheduler.swift` and `BackgroundSyncInfo.plist`.
+- `clients/ios/Application/Sync/BackgroundSyncCoordinator.swift` and `BackgroundSyncWork.swift`.
+- `clients/ios/Domain/Sync/BackgroundSyncModels.swift`.
+- `clients/ios/Features/Sync/BackgroundSyncSettingsView.swift`.
+- `clients/ios/Infrastructure/Network/BackgroundSyncHTTPTransport.swift`.
+- `clients/ios/Infrastructure/Persistence/BackgroundSyncPolicyStore.swift`.
+- `clients/ios/Support/tests/test_background_sync_registration.py`.
+- `clients/ios/Tests/SynveilTests/BackgroundSyncTests.swift` and `BackgroundSyncSafetyTests.swift`.
+- This manifest.
+
+Modified files:
+
+- `clients/ios/App/AppDependencyContainer.swift`, `BackgroundUploadAppDelegate.swift`, `SynveilApp.swift`.
+- `clients/ios/Application/Library/AuthenticatedLibraryRequestProvider.swift`.
+- `clients/ios/Application/Mutation/DurableMutationQueue.swift` (cancellation does not withdraw authorization).
+- `clients/ios/Application/Sync/InboundSyncCoordinator.swift`.
+- `clients/ios/Domain/Sync/InboundSyncModels.swift`.
+- `clients/ios/Features/Library/LibraryCatalogView.swift`.
+- `clients/ios/Infrastructure/Network/URLSessionHTTPTransport.swift`.
+- `clients/ios/Infrastructure/Persistence/MutationQueueSQLiteStore.swift` (bounded reads/ownership only).
+- `clients/ios/Synveil.xcodeproj/project.pbxproj`.

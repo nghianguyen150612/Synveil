@@ -118,6 +118,7 @@ final class BGAppRefreshScheduler {
     private var registered = false
     private var scheduling = false
     private var schedulingRevision: UInt64 = 0
+    private var withdrawnForProcess = false
     private var active: BackgroundRefreshDelivery?
     private var activeWorker: Task<Void, Never>?
     private var operation: (@MainActor (BackgroundRefreshDelivery) async -> BackgroundSyncOutcome)?
@@ -178,6 +179,12 @@ final class BGAppRefreshScheduler {
         guard !scheduling else { return }
         scheduling = true
         defer { scheduling = false }
+        if withdrawnForProcess {
+            native.cancel()
+            settings.enabled = false
+            if state != .failed { state = .disabled }
+            return
+        }
         let revision = schedulingRevision
         let saved = policy.read()
         settings = saved
@@ -192,9 +199,14 @@ final class BGAppRefreshScheduler {
             Self.logger.info("scheduling deferred by system policy")
             return
         }
-        guard let identity, let current = try? await identity(), current == saved.identity else {
+        guard let identity, let current = try? await identity() else {
             native.cancel()
             if active == nil { state = .authenticationRequired }
+            return
+        }
+        guard revision == schedulingRevision else { return }
+        if current != saved.identity {
+            invalidate(disable: true)
             return
         }
         let pending = await native.hasPendingRequest()
@@ -248,6 +260,7 @@ final class BGAppRefreshScheduler {
             state = .failed
             return
         }
+        withdrawnForProcess = false
         settings = next
         state = .eligible
         await schedule()
@@ -274,17 +287,29 @@ final class BGAppRefreshScheduler {
         native.cancel()
         lastConfirmation = nil
         manualRecoveryRequired = false
-        if disable { _ = policy.write(.disabled) }
+        let saved: Bool
+        if disable {
+            withdrawnForProcess = true
+            saved = policy.write(.disabled)
+        } else {
+            saved = true
+        }
         settings = policy.read()
-        state = disable ? .disabled : .invalidated
+        if disable { settings.enabled = false }
+        state = !saved ? .failed : disable ? .disabled : .invalidated
     }
     func refreshStatus() async {
         settings = policy.read()
-        guard let identity, let current = try? await identity(),
-            !settings.enabled || current == settings.identity
-        else {
+        if withdrawnForProcess { settings.enabled = false }
+        let capturedRevision = schedulingRevision
+        guard let identity, let current = try? await identity() else {
             lastConfirmation = nil
             state = .authenticationRequired
+            return
+        }
+        guard capturedRevision == schedulingRevision else { return }
+        if settings.enabled, current != settings.identity {
+            invalidate(disable: true)
             return
         }
         let revision = schedulingRevision
@@ -301,11 +326,13 @@ final class BGAppRefreshScheduler {
     }
     func deliver(_ delivery: BackgroundRefreshDelivery) {
         if active === delivery { return }
-        guard active == nil, !delivery.isExpired, policy.read().enabled,
+        guard active == nil, !delivery.isExpired, !withdrawnForProcess, policy.read().enabled,
             available(), !lowPower(), let operation
         else {
             delivery.finish(success: false)
-            if active == nil { state = policy.read().enabled ? .deferred : .disabled }
+            if active == nil, state != .failed {
+                state = !withdrawnForProcess && policy.read().enabled ? .deferred : .disabled
+            }
             return
         }
         active = delivery

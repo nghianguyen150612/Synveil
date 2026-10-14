@@ -4,14 +4,15 @@ import Foundation
 /// InboundSyncCoordinator. The same SQLite connection and queue enforce foreground exclusion.
 @MainActor
 final class BackgroundSyncWork: BackgroundSyncWorkProtocol {
-    private let provider: AuthenticatedLibraryRequestProvider
+    private let provider: any AuthenticatedSyncFeedRequestProviderProtocol
     private let database: MutationQueueSQLiteStore
     private let bridge: any RustBridgeProtocol
     private let restoration: any SessionRestorationServiceProtocol
     private let inbound: any InboundSyncCoordinatorProtocol
     private let sessionProvider: any LocalLibrarySessionProviderProtocol
     init(
-        provider: AuthenticatedLibraryRequestProvider, database: MutationQueueSQLiteStore,
+        provider: any AuthenticatedSyncFeedRequestProviderProtocol,
+        database: MutationQueueSQLiteStore,
         bridge: any RustBridgeProtocol, restoration: any SessionRestorationServiceProtocol,
         inbound: any InboundSyncCoordinatorProtocol,
         sessionProvider: (any LocalLibrarySessionProviderProtocol)? = nil

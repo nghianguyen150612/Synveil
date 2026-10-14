@@ -63,6 +63,13 @@ final class DurableMutationQueue: DurableMutationQueueProtocol {
         let previous = sessions.first(where: { $0.0 == scope })?.1
         if let previous {
             do { try await provider.validate(previous) } catch {
+                // Expiration during a local Keychain read withdraws this attempt, not the account.
+                // It must not quarantine a foreground owner or independent background upload.
+                if error is CancellationError || Task.isCancelled
+                    || error as? LibraryFailure == .cancelled
+                {
+                    throw CancellationError()
+                }
                 invalidateSession()
                 await quarantineTask?.value
                 throw MutationQueueFailure.staleSession
