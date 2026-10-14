@@ -195,7 +195,7 @@ final class BackgroundSyncSafetyTests: XCTestCase {
             scope: f.scope, position: feedPosition(), credentialId: queueUUID(92),
             bridge: QueueValidator())
         XCTAssertEqual(record?.state, .ackInFlight)
-        XCTAssertEqual(record?.page.ackToken, "v1.original-page-0")
+        XCTAssertEqual(record?.page.evidence?.token, "v1.original-page-0")
         XCTAssertEqual(
             try queueRawScalar(f.base.url, "SELECT confirmed_sequence FROM node_projection_state"),
             "0")
@@ -235,11 +235,32 @@ final class BackgroundSyncSafetyTests: XCTestCase {
         XCTAssertEqual(f.base.controller.state, .recoveryRequired(.deviceRevoked))
         let requests = await f.wire.requests()
         XCTAssertTrue(requests.isEmpty)
-        try await f.base.credentials.delete()
+        let missing = try await inboundFixture(self)
+        try await missing.base.credentials.delete()
         do {
-            _ = try await work.capture()
+            _ = try await makeWork(missing).capture()
             XCTFail("Missing Keychain")
         } catch {}
+    }
+    func testProductionOrchestrationPublishesOnlyActualSQLiteConfirmation() async throws {
+        let f = try await inboundFixture(self)
+        try await authorize(f)
+        try await f.projection.rememberLibrary(try await inboundLibrary(f), scope: f.scope)
+        try await f.configure()
+        let policy = try await refreshPolicy()
+        let outcome = await BackgroundSyncCoordinator(
+            policy: policy, work: makeWork(f),
+            gate: BackgroundSyncRequestGate(conditionsAllow: { true })
+        )
+        .run(delivery: RefreshCompletions().delivery())
+        XCTAssertEqual(outcome.state, .partial)
+        XCTAssertEqual(outcome.pages, 1)
+        XCTAssertEqual(outcome.events, 1)
+        let saved = try await f.database.latestConfirmedInbound(
+            scope: f.scope, credentialId: queueUUID(92), bridge: QueueValidator())
+        XCTAssertEqual(outcome.confirmation?.recordedAt, saved?.updatedAt)
+        XCTAssertEqual(outcome.confirmation?.position.sequence.rawValue, "1")
+        XCTAssertTrue(outcome.taskSucceeded)
     }
     func testDurableAuthorizationUncertaintyAndQuarantineRemainClosed() async throws {
         let f = try await inboundFixture(self)
@@ -293,6 +314,47 @@ final class BackgroundSyncSafetyTests: XCTestCase {
         XCTAssertEqual(
             try queueRawScalar(f.base.url, "SELECT state FROM session_authorization_checks"),
             "AUTHORIZED")
+    }
+    func testTransientEvidencePermitsOnlyVerificationAndUncertainEvidenceDoesNot() async throws {
+        let f = try await inboundFixture(self)
+        try await authorize(f)
+        let session = try await f.provider.begin()
+        let identity = SessionAuthorizationIdentity(session.restorationSession)
+        let lease = try await f.database.beginSessionAuthorizationCheck(identity)
+        try await f.database.finishSessionAuthorizationCheck(lease, outcome: .transientFailure)
+        try await f.database.requireBackgroundVerificationEligibility(session)
+        do {
+            try await f.database.requireBackgroundAuthorization(session)
+            XCTFail("No current grant")
+        } catch {}
+        _ = try await f.database.beginSessionAuthorizationCheck(identity)
+        do {
+            try await f.database.requireBackgroundVerificationEligibility(session)
+            XCTFail("Uncertain")
+        } catch {}
+    }
+    func testThreeLibrariesUseBoundedFairSeekSelectionAcrossOpportunities() async throws {
+        let f = try await inboundFixture(self)
+        try await authorize(f)
+        let original = try await inboundLibrary(f)
+        for number in 80...82 {
+            let scope = try await queueScope(library: number)
+            let session = try await f.queue.capture(scope: scope)
+            _ = try await f.database.persistCheckpoint(queueCheckpoint(scope: scope))
+            let library = Library(
+                id: scope.libraryId, revision: original.revision, name: original.name,
+                rootNodeId: original.rootNodeId, status: .active,
+                createdAt: original.createdAt, updatedAt: original.updatedAt)
+            try await f.database.rememberLibrary(
+                library, scope: scope, credentialId: session.credentialIdentifier,
+                bridge: QueueValidator())
+        }
+        let session = try await f.provider.begin()
+        let first = try await f.database.backgroundLibraryIdentifiers(session: session, after: nil)
+        let second = try await f.database.backgroundLibraryIdentifiers(
+            session: session, after: first.last)
+        XCTAssertEqual(first, [queueUUID(80), queueUUID(81)])
+        XCTAssertEqual(second, [queueUUID(82), queueUUID(80)])
     }
     func testLogoutDuringBackgroundAckCannotPublishUnderReplacementScope() async throws {
         let f = try await inboundFixture(self)

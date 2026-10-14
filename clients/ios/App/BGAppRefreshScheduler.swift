@@ -13,21 +13,34 @@ final class BackgroundRefreshDelivery: @unchecked Sendable {
     private var completed = false
     private var worker: Task<Void, Never>?
     private let completion: (Bool) -> Void
-    init(completion: @escaping (Bool) -> Void) { self.completion = completion }
+    private let uptime: @Sendable () -> TimeInterval
+    private let beganAt: TimeInterval
+    init(
+        uptime: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        completion: @escaping (Bool) -> Void
+    ) {
+        self.uptime = uptime
+        beganAt = uptime()
+        self.completion = completion
+    }
     var isExpired: Bool { lock.withLock { expired } }
+    var remainingTime: TimeInterval {
+        max(0, BackgroundSyncLimits.runtime - max(0, uptime() - beganAt))
+    }
     func install(_ task: Task<Void, Never>) {
-        lock.withLock {
+        let shouldCancel = lock.withLock {
             worker = task
-            if expired { task.cancel() }
+            return expired
         }
+        if shouldCancel { task.cancel() }
     }
     func expire() {
-        let firstExpiration = lock.withLock {
+        let (task, firstExpiration) = lock.withLock {
             let first = !expired
             expired = true
-            worker?.cancel()
-            return first
+            return (worker, first)
         }
+        task?.cancel()
         if firstExpiration { Self.logger.info("execution expiration or withdrawal requested") }
         finish(success: false)
     }
@@ -100,7 +113,7 @@ final class BGAppRefreshScheduler {
     private let clock: @MainActor () -> Date
     private let available: @MainActor () -> Bool
     private let lowPower: @MainActor () -> Bool
-    private let deadlineWait: @Sendable () async throws -> Void
+    private let deadlineWait: @Sendable (TimeInterval) async throws -> Void
     private var registrationAttempted = false
     private var registered = false
     private var scheduling = false
@@ -128,8 +141,8 @@ final class BGAppRefreshScheduler {
         lowPower: @escaping @MainActor () -> Bool = {
             ProcessInfo.processInfo.isLowPowerModeEnabled
         },
-        deadlineWait: @escaping @Sendable () async throws -> Void = {
-            try await Task.sleep(for: .seconds(BackgroundSyncLimits.runtime))
+        deadlineWait: @escaping @Sendable (TimeInterval) async throws -> Void = { remaining in
+            try await Task.sleep(for: .seconds(remaining))
         }
     ) {
         self.policy = policy
@@ -298,6 +311,7 @@ final class BGAppRefreshScheduler {
         active = delivery
         state = .running
         let revision = schedulingRevision
+        let deliveredPolicy = policy.read()
         Self.logger.info("execution started")
         let worker = Task { @MainActor [weak self] in
             guard let self else {
@@ -306,26 +320,44 @@ final class BGAppRefreshScheduler {
             }
             let watchdog = Task { [deadlineWait] in
                 do {
-                    try await deadlineWait()
+                    try await deadlineWait(delivery.remainingTime)
                     delivery.expire()
                 } catch {}
             }
+            defer { watchdog.cancel() }
             let result = await operation(delivery)
-            watchdog.cancel()
+            guard revision == self.schedulingRevision else {
+                self.active = nil
+                delivery.finish(success: false)
+                return
+            }
+            // A Keychain replacement can occur without a controller transition. Revalidate the
+            // final publishing identity independently of the worker's last callback.
+            let currentIdentity = delivery.isExpired ? nil : try? await self.identity?()
             self.active = nil
             guard revision == self.schedulingRevision else {
                 delivery.finish(success: false)
                 return
             }
-            let finalState: BackgroundSyncState = delivery.isExpired ? .expired : result.state
+            let currentPolicy = self.policy.read()
+            let identityCurrent =
+                currentIdentity == deliveredPolicy.identity && currentPolicy.enabled
+                && currentPolicy.grant == deliveredPolicy.grant
+                && currentPolicy.identity == deliveredPolicy.identity
+            let finalState: BackgroundSyncState =
+                delivery.isExpired
+                ? .expired
+                : identityCurrent ? result.state : .invalidated
             self.state = finalState
-            if !delivery.isExpired {
+            if ![.expired, .authenticationRequired, .invalidated].contains(finalState) {
                 self.lastConfirmation = result.confirmation ?? self.lastConfirmation
+            } else {
+                self.lastConfirmation = nil
             }
             Self.logger.info(
                 "execution outcome=\(finalState.rawValue, privacy: .public) pages=\(result.pages) events=\(result.events)"
             )
-            delivery.finish(success: result.taskSucceeded && !delivery.isExpired)
+            delivery.finish(success: result.taskSucceeded && !delivery.isExpired && identityCurrent)
             // Submission is independent of the reported execution outcome and has the same cooldown.
             let executionState = self.state
             await self.schedule()

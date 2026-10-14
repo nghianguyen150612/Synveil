@@ -27,8 +27,11 @@ final class BackgroundSyncRequestGate {
         self.uptime = uptime
         self.conditionsAllow = conditionsAllow
     }
-    func open(permit: @escaping @MainActor () -> Bool) {
-        deadline = uptime() + BackgroundSyncLimits.runtime
+    func open(
+        remainingTime: TimeInterval = BackgroundSyncLimits.runtime,
+        permit: @escaping @MainActor () -> Bool
+    ) {
+        deadline = uptime() + max(0, min(BackgroundSyncLimits.runtime, remainingTime))
         self.permit = permit
     }
     func close() { permit = nil }
@@ -62,7 +65,7 @@ final class BackgroundSyncCoordinator {
     func run(delivery: BackgroundRefreshDelivery) async -> BackgroundSyncOutcome {
         let saved = policy.read()
         guard saved.enabled else { return BackgroundSyncOutcome(state: .disabled) }
-        gate.open { [policy] in
+        gate.open(remainingTime: delivery.remainingTime) { [policy] in
             let current = policy.read()
             return !delivery.isExpired && current.enabled && current.grant == saved.grant
                 && current.identity == saved.identity && current.network == saved.network

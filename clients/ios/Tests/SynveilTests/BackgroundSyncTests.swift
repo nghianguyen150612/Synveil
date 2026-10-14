@@ -50,11 +50,39 @@ final class RefreshNative: BackgroundRefreshScheduling {
 final class RefreshCompletions: @unchecked Sendable {
     private let lock = NSLock()
     private var values: [Bool] = []
-    func append(_ value: Bool) { lock.withLock { values.append(value) } }
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    func append(_ value: Bool) {
+        let pending = lock.withLock {
+            values.append(value)
+            let pending = waiters
+            waiters.removeAll()
+            return pending
+        }
+        for waiter in pending { waiter.resume() }
+    }
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            let ready = lock.withLock {
+                if values.isEmpty {
+                    waiters.append(continuation)
+                    return false
+                }
+                return true
+            }
+            if ready { continuation.resume() }
+        }
+    }
     func snapshot() -> [Bool] { lock.withLock { values } }
     func delivery() -> BackgroundRefreshDelivery {
         BackgroundRefreshDelivery { self.append($0) }
     }
+}
+
+final class RefreshMonotonicClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: TimeInterval = 0
+    func read() -> TimeInterval { lock.withLock { value } }
+    func advance(_ seconds: TimeInterval) { lock.withLock { value += seconds } }
 }
 
 @MainActor
@@ -335,7 +363,7 @@ final class BackgroundSyncTests: XCTestCase {
         let gate = QueueGate()
         let scheduler = BGAppRefreshScheduler(
             policy: policy, native: RefreshNative(), available: { true }, lowPower: { false },
-            deadlineWait: { await trigger.arrive() })
+            deadlineWait: { _ in await trigger.arrive() })
         scheduler.install(
             operation: { _ in
                 await gate.arrive()
@@ -348,15 +376,55 @@ final class BackgroundSyncTests: XCTestCase {
         await gate.wait()
         await trigger.wait()
         await trigger.release()
-        await Task.yield()
+        await completion.wait()
         XCTAssertEqual(completion.snapshot(), [false])
         await gate.release()
         await scheduler.waitForCurrentDelivery()
+    }
+    func testCredentialReplacementWithoutLifecycleChangeCannotPublishSuccess() async throws {
+        let policy = try await refreshPolicy()
+        let scheduler = makeScheduler(policy: policy)
+        let gate = QueueGate()
+        var identity = try await refreshIdentity()
+        let other = try await queueScope(owner: 93)
+        let replacement = BackgroundSyncIdentity(
+            LibraryRequestScope(session: try queueSession(other), revision: 0))
+        scheduler.install(
+            operation: { _ in
+                await gate.arrive()
+                return BackgroundSyncOutcome(state: .completed)
+            },
+            identity: { identity }, savedConfirmation: { nil })
+        scheduler.register()
+        let completion = RefreshCompletions()
+        scheduler.deliver(completion.delivery())
+        await gate.wait()
+        identity = replacement
+        await gate.release()
+        await scheduler.waitForCurrentDelivery()
+        XCTAssertEqual(completion.snapshot(), [false])
+        XCTAssertNil(scheduler.lastConfirmation)
     }
     func testZeroProgressDeferralDoesNotClaimSuccessfulTask() {
         XCTAssertFalse(BackgroundSyncOutcome(state: .partial).taskSucceeded)
         XCTAssertFalse(BackgroundSyncOutcome(state: .offline, pages: 1).taskSucceeded)
         XCTAssertTrue(BackgroundSyncOutcome(state: .partial, pages: 1).taskSucceeded)
+    }
+    func testColdStartupConsumesTheDeliveredBudgetBeforeDispatch() async throws {
+        let policy = try await refreshPolicy()
+        let work = try await RefreshWork()
+        let clock = RefreshMonotonicClock()
+        let completion = RefreshCompletions()
+        let delivery = BackgroundRefreshDelivery(uptime: { clock.read() }) { completion.append($0) }
+        clock.advance(20)
+        let result = await BackgroundSyncCoordinator(
+            policy: policy, work: work,
+            gate: BackgroundSyncRequestGate(conditionsAllow: { true })
+        )
+        .run(delivery: delivery)
+        XCTAssertEqual(result.state, .deferred)
+        XCTAssertEqual(work.verifications, 0)
+        XCTAssertTrue(work.calls.isEmpty)
     }
     func testUncertainAndProtocolFailuresAreClassifiedWithoutRecoveryCalls() async throws {
         for (reason, expected) in [
@@ -413,6 +481,40 @@ final class BackgroundSyncTests: XCTestCase {
         .run(delivery: RefreshCompletions().delivery())
         XCTAssertEqual(result.state, .failed)
         XCTAssertFalse(result.taskSucceeded)
+    }
+    func testExcessiveOrDuplicateLibrarySelectionMakesNoVerificationOrFeed() async throws {
+        for duplicate in [false, true] {
+            let policy = try await refreshPolicy()
+            let work = try await RefreshWork()
+            if duplicate {
+                work.selected.append(work.selected[0])
+            } else {
+                work.selected += [
+                    try await LibraryId.validated(queueUUID(71), using: QueueValidator()),
+                    try await LibraryId.validated(queueUUID(72), using: QueueValidator()),
+                ]
+            }
+            let result = await BackgroundSyncCoordinator(
+                policy: policy, work: work,
+                gate: BackgroundSyncRequestGate(conditionsAllow: { true })
+            )
+            .run(delivery: RefreshCompletions().delivery())
+            XCTAssertEqual(result.state, .failed)
+            XCTAssertEqual(work.verifications, 0)
+            XCTAssertTrue(work.calls.isEmpty)
+        }
+    }
+    func testInaccessiblePreferenceWriteCannotDispatchVerification() async throws {
+        let policy = try await refreshPolicy()
+        policy.writable = false
+        let work = try await RefreshWork()
+        let result = await BackgroundSyncCoordinator(
+            policy: policy, work: work, gate: BackgroundSyncRequestGate(conditionsAllow: { true })
+        )
+        .run(delivery: RefreshCompletions().delivery())
+        XCTAssertEqual(result.state, .failed)
+        XCTAssertEqual(work.verifications, 0)
+        XCTAssertTrue(work.calls.isEmpty)
     }
     func testNetworkPolicyChangeIsCheckedBeforeEveryRequest() async throws {
         let policy = try await refreshPolicy()

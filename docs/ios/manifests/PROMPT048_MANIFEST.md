@@ -21,7 +21,7 @@ instance of the existing engine with the same SQLite connection and durable queu
 transport; no parallel protocol implementation is introduced.
 
 The app bundle is `com.synveil.ios`. The independent task identifier is
-`com.synveil.ios.sync.refresh.v1`. Both app configurations merge typed input plist arrays:
+`com.synveil.ios.sync.refresh.v1`. The app target declares the Background Modes capability. Both app configurations merge typed input plist arrays:
 `BGTaskSchedulerPermittedIdentifiers` contains exactly that identifier; `UIBackgroundModes` contains
 only `fetch`. No processing, audio, location or unrelated entitlement is added.
 
@@ -88,7 +88,7 @@ invalidation/quarantine behavior. Background metadata denial quarantines the ori
 
 - At most two libraries, sequentially.
 - Per library: one feed page, page size eight, at most eight events. Total: two pages / sixteen events.
-- Delivered task deadline: 24 seconds; earlier system expiration wins.
+- Delivered task deadline: 24 seconds from delivery, including cold session startup; earlier system expiration wins.
 - Each metadata request uses the existing streaming HTTP reader with a three-second request timeout,
   four-second resource timeout and 64 KiB response limit. No new request begins with less than the
   normal four-second resource bound plus a one-second cleanup reserve.
@@ -130,14 +130,14 @@ registration/submission outcomes and bounded counters, with no secrets or privat
 
 - Portable validation: source validator PASS; 98 Python tests PASS (eight new registration/configuration
   tests); strict official swift-format lint PASS; documentation validation PASS; diff check PASS.
-- New targeted native tests: 43 XCTest methods in BackgroundSyncTests and BackgroundSyncSafetyTests.
+- New targeted native tests: 51 XCTest methods in BackgroundSyncTests and BackgroundSyncSafetyTests.
   They cover registration/default opt-out, corrupt storage, scheduling/cooldown/relaunch, disable
   races, account/session fences, constraints, delivery expiration and duplication, budgets, fairness,
   durable confirmation, actual SQLite feed/application/ACK interruption, foreground cross-connection
   ownership, unknown ACK, rebaseline, 503/offline, revocation and P046 operation separation.
 - Existing P001–P047 tests remain registered and enabled.
 - Native execution results and exact-head CI: PENDING at initial publication; no local Linux result
-  is represented as Xcode/Simulator execution. Final CI/review evidence will be recorded after runs.
+  is represented as Xcode/Simulator execution. Final CI/review evidence will be recorded after runs. Initial native Build failed on a protocol/concrete-store type mismatch and was corrected. The next Build passed; Simulator compilation then found a test assertion using an incorrect token member, now corrected to existing evidence.token. These failures are not counted as test passes.
 - Implementation security review checks allowed transport methods, opt-in/session binding,
   verification evidence, retained schema v9, global lock ownership, preserved ACK uncertainty and
   separate upload callbacks. This implementation review is not independent PR acceptance.
@@ -169,9 +169,9 @@ Real-device procedure (record device/OS, source SHA and bounded privacy-safe dia
 
 ## GitHub acceptance and blockers
 
-- PR: PENDING creation; ordinary merge commit is required after all four final-head native gates and
+- PR: [#131](https://github.com/nghianguyen150612/Synveil/pull/131), OPEN; ordinary merge commit is required after all four final-head native gates and
   independent required review acceptance.
-- Feature source SHA, final native URLs/statistics, PR state and integration evidence: pending.
+- Initial source SHA: `2729928c41c6187f6e5db84b0a7e229e24cd5894`; corrected composition SHA: `051a2b6d2afa466e817eae6eb49d1fbfeff1d336`. Final native URLs/statistics and source evidence: pending.
 - Merge/integration SHA: NOT_MERGED. Verified integration remains the starting P047 SHA until accepted.
 - Blockers: native validation and independent review not yet obtained; physical-device evidence is
   NOT_AVAILABLE and disclosed rather than fabricated. P049 has not been started.
