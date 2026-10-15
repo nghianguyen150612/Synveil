@@ -421,10 +421,18 @@ func queueSeedConflictRecord(
         url,
         """
         UPDATE mutations
-        SET state='CONFLICT', attempt_id='\(attemptId)', attempt_owner='\(attemptOwner)',
-            attempt_started=1.0, dispatch_recorded=1,
-            evidence=(SELECT evidence FROM mutations WHERE mutation_id='\(sourceMutationId)')
+        SET state='SUBMITTING', attempt_id='\(attemptId)', attempt_owner='\(attemptOwner)',
+            attempt_started=1.0, dispatch_recorded=1
         WHERE mutation_id='\(targetMutationId)' AND state='PENDING'
+        """
+    )
+    try queueRawSQL(
+        url,
+        """
+        UPDATE mutations
+        SET state='CONFLICT',
+            evidence=(SELECT evidence FROM mutations WHERE mutation_id='\(sourceMutationId)')
+        WHERE mutation_id='\(targetMutationId)' AND state='SUBMITTING'
         """
     )
 }
