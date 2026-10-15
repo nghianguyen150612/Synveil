@@ -646,16 +646,13 @@ final class MetadataMutationFeatureTests: XCTestCase {
         XCTAssertTrue(firstSnapshot.isComplete)
     }
 
-    func testConflictReviewSurvivesQueueReopenAndKeepsEnqueueOrdering() async throws {
+    func testConflictReviewSurvivesQueueReopen() async throws {
         let fixture = try await queueFixture(self)
         let first = try await queuePrepared(id: 807, scope: fixture.scope)
-        let second = try await queuePrepared(id: 808, node: 2, scope: fixture.scope)
-        for mutation in [first, second] {
-            let queued = try await queueEnqueued(fixture, mutation: mutation)
-            let lease = try await fixture.queue.acquireAttempt(
-                scope: fixture.scope, mutationId: queued.mutation.id)
-            try await fixture.queue.finish(lease, result: queueConflict(mutation))
-        }
+        let queued = try await queueEnqueued(fixture, mutation: first)
+        let lease = try await fixture.queue.acquireAttempt(
+            scope: fixture.scope, mutationId: queued.mutation.id)
+        try await fixture.queue.finish(lease, result: queueConflict(first, details: false))
         let reopenedStore = try MutationQueueSQLiteStore(url: fixture.url)
         let reopenedQueue = DurableMutationQueue(
             store: reopenedStore, provider: fixture.provider, bridge: QueueValidator())
@@ -667,8 +664,8 @@ final class MetadataMutationFeatureTests: XCTestCase {
 
         guard case .loaded(let snapshot) = await feature.conflictReview(in: library, limit: 100)
         else { return XCTFail("Committed conflict evidence must survive queue reopen") }
-        XCTAssertEqual(snapshot.items.map(\.id), [first.id.rawValue, second.id.rawValue])
-        XCTAssertEqual(snapshot.knownConflictCount, 2)
+        XCTAssertEqual(snapshot.items.map(\.id), [first.id.rawValue])
+        XCTAssertEqual(snapshot.knownConflictCount, 1)
         XCTAssertTrue(snapshot.isComplete)
     }
 
@@ -676,12 +673,16 @@ final class MetadataMutationFeatureTests: XCTestCase {
         let fixture = try await queueFixture(self)
         let first = try await queuePrepared(id: 809, scope: fixture.scope)
         let second = try await queuePrepared(id: 810, node: 2, scope: fixture.scope)
-        for mutation in [first, second] {
-            let queued = try await queueEnqueued(fixture, mutation: mutation)
-            let lease = try await fixture.queue.acquireAttempt(
-                scope: fixture.scope, mutationId: queued.mutation.id)
-            try await fixture.queue.finish(lease, result: queueConflict(mutation))
-        }
+        let firstRow = try await queueEnqueued(fixture, mutation: first)
+        _ = try await queueEnqueued(fixture, mutation: second)
+        let lease = try await fixture.queue.acquireAttempt(
+            scope: fixture.scope, mutationId: firstRow.mutation.id)
+        try await fixture.queue.finish(lease, result: queueConflict(first, details: false))
+        // The real FIFO queue blocks later submissions behind an unresolved conflict. Seed a
+        // second strictly decodable persisted CONFLICT row to exercise bounded multi-row reads.
+        try queueSeedConflictRecord(
+            fixture.url, sourceMutationId: first.id.rawValue,
+            targetMutationId: second.id.rawValue)
         let feature = makeFeature(
             fixture, repository: MutationNodeRepository(nodes: []),
             generator: CountingMutationIDGenerator(first: 910))
@@ -693,6 +694,12 @@ final class MetadataMutationFeatureTests: XCTestCase {
         XCTAssertEqual(snapshot.items.map(\.id), [first.id.rawValue])
         XCTAssertEqual(snapshot.knownConflictCount, 1)
         XCTAssertFalse(snapshot.isComplete)
+
+        guard case .loaded(let fullBoundedPage) = await feature.conflictReview(
+            in: library, limit: 2)
+        else { return XCTFail("Expected both persisted conflict fixtures") }
+        XCTAssertEqual(fullBoundedPage.items.map(\.id), [first.id.rawValue, second.id.rawValue])
+        XCTAssertFalse(fullBoundedPage.isComplete)
     }
 
     func testConflictReviewReturnsExactEmptyForPendingOnlyAndDoesNotCreateScope() async throws {
@@ -752,71 +759,58 @@ final class MetadataMutationFeatureTests: XCTestCase {
     }
 
     func testConflictReviewClassifiesEveryDurableMutationStateSeparately() async throws {
-        let fixture = try await queueFixture(self)
-        let pending = try await queueEnqueued(
-            fixture, mutation: queuePrepared(id: 820, scope: fixture.scope))
-        let conflict = try await queueEnqueued(
-            fixture, mutation: queuePrepared(id: 821, node: 2, scope: fixture.scope))
-        let unknown = try await queueEnqueued(
-            fixture, mutation: queuePrepared(id: 822, node: 3, scope: fixture.scope))
-        let applied = try await queueEnqueued(
-            fixture, mutation: queuePrepared(id: 823, node: 4, scope: fixture.scope))
-        let blocked = try await queueEnqueued(
-            fixture, mutation: queuePrepared(id: 824, node: 5, scope: fixture.scope))
-        let rejected = try await queueEnqueued(
-            fixture, mutation: queuePrepared(id: 825, node: 6, scope: fixture.scope))
-        let submitting = try await queueEnqueued(
-            fixture, mutation: queuePrepared(id: 826, node: 7, scope: fixture.scope))
+        let states: [MutationQueueState] = [
+            .pending, .submitting, .applied, .conflict, .outcomeUnknown, .blockedRebaseline,
+            .failedPermanent,
+        ]
+        for (offset, expectedState) in states.enumerated() {
+            let fixture = try await queueFixture(self)
+            let mutation = try await queuePrepared(id: 820 + offset, scope: fixture.scope)
+            let queued = try await queueEnqueued(fixture, mutation: mutation)
+            if expectedState != .pending {
+                let lease = try await fixture.queue.acquireAttempt(
+                    scope: fixture.scope, mutationId: queued.mutation.id)
+                switch expectedState {
+                case .pending:
+                    break
+                case .submitting:
+                    break
+                case .applied:
+                    try await fixture.queue.finish(lease, result: queueApplied(mutation))
+                case .conflict:
+                    try await fixture.queue.finish(
+                        lease, result: queueConflict(mutation, details: false))
+                case .outcomeUnknown:
+                    try await fixture.queue.finish(lease, result: .outcomeUnknown(.timeout))
+                case .blockedRebaseline:
+                    try await fixture.queue.finish(
+                        lease, result: .rebaselineRequired(requestId: "queue-review-test"))
+                case .failedPermanent:
+                    try await fixture.queue.finish(
+                        lease, result: .failed(.permanentRejection(.notFound)))
+                }
+            }
 
-        let conflictLease = try await fixture.queue.acquireAttempt(
-            scope: fixture.scope, mutationId: conflict.mutation.id)
-        try await fixture.queue.finish(
-            conflictLease, result: queueConflict(conflict.mutation))
-        let unknownLease = try await fixture.queue.acquireAttempt(
-            scope: fixture.scope, mutationId: unknown.mutation.id)
-        try await fixture.queue.finish(unknownLease, result: .outcomeUnknown(.timeout))
-        let appliedLease = try await fixture.queue.acquireAttempt(
-            scope: fixture.scope, mutationId: applied.mutation.id)
-        try await fixture.queue.finish(appliedLease, result: queueApplied(applied.mutation))
-        let rejectedLease = try await fixture.queue.acquireAttempt(
-            scope: fixture.scope, mutationId: rejected.mutation.id)
-        try await fixture.queue.finish(
-            rejectedLease, result: .failed(.permanentRejection(.notFound)))
-        _ = try await fixture.queue.acquireAttempt(
-            scope: fixture.scope, mutationId: submitting.mutation.id)
-        let blockedLease = try await fixture.queue.acquireAttempt(
-            scope: fixture.scope, mutationId: blocked.mutation.id)
-        try await fixture.queue.finish(
-            blockedLease, result: .rebaselineRequired(requestId: "queue-review-test"))
+            guard case .record(let record) = await fixture.queue.get(
+                scope: fixture.scope, mutationId: mutation.id)
+            else { return XCTFail("Expected durable state \(expectedState)") }
+            XCTAssertEqual(record.state, expectedState)
 
-        let feature = makeFeature(
-            fixture, repository: MutationNodeRepository(nodes: []),
-            generator: CountingMutationIDGenerator(first: 920))
-        let library = mutationLibrary(
-            fixture, root: try await NodeId.validated(queueUUID(81), using: QueueValidator()))
-        guard case .loaded(let summary) = await feature.conflictReview(in: library, limit: 100),
-            case .record(let pendingState) = await fixture.queue.get(
-                scope: fixture.scope, mutationId: pending.mutation.id),
-            case .record(let unknownState) = await fixture.queue.get(
-                scope: fixture.scope, mutationId: unknown.mutation.id),
-            case .record(let appliedState) = await fixture.queue.get(
-                scope: fixture.scope, mutationId: applied.mutation.id),
-            case .record(let blockedState) = await fixture.queue.get(
-                scope: fixture.scope, mutationId: blocked.mutation.id),
-            case .record(let rejectedState) = await fixture.queue.get(
-                scope: fixture.scope, mutationId: rejected.mutation.id),
-            case .record(let submittingState) = await fixture.queue.get(
-                scope: fixture.scope, mutationId: submitting.mutation.id)
-        else { return XCTFail("Expected durable state fixtures and a conflict summary") }
-
-        XCTAssertEqual(summary.items.map(\.id), [conflict.mutation.id.rawValue])
-        XCTAssertTrue(summary.isComplete)
-        XCTAssertEqual(pendingState.state, .pending)
-        XCTAssertEqual(submittingState.state, .submitting)
-        XCTAssertEqual(appliedState.state, .applied)
-        XCTAssertEqual(unknownState.state, .outcomeUnknown)
-        XCTAssertEqual(blockedState.state, .blockedRebaseline)
-        XCTAssertEqual(rejectedState.state, .failedPermanent)
+            let feature = makeFeature(
+                fixture, repository: MutationNodeRepository(nodes: []),
+                generator: CountingMutationIDGenerator(first: 920 + offset))
+            let library = mutationLibrary(
+                fixture, root: try await NodeId.validated(queueUUID(81), using: QueueValidator()))
+            guard case .loaded(let summary) = await feature.conflictReview(
+                in: library, limit: 100)
+            else { return XCTFail("Expected a verified conflict summary for \(expectedState)") }
+            if expectedState == .conflict {
+                XCTAssertEqual(summary.items.map(\.id), [mutation.id.rawValue])
+            } else {
+                XCTAssertTrue(summary.items.isEmpty)
+            }
+            XCTAssertTrue(summary.isComplete)
+        }
     }
 
     func testConflictReviewStorageFailureIsUnavailableRatherThanZero() async throws {

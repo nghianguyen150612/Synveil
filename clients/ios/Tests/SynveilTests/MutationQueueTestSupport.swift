@@ -409,6 +409,26 @@ func queueEnqueued(_ fixture: QueueFixture, mutation: PreparedClientMutation? = 
     return row
 }
 
+/// Seeds a second valid persisted conflict for bounded-reader tests. The normal FIFO policy stops
+/// after the first unresolved conflict, so the fixture copies a details-free typed conflict
+/// response into a later already-persisted row without invoking any production mutation path.
+func queueSeedConflictRecord(
+    _ url: URL, sourceMutationId: String, targetMutationId: String
+) throws {
+    let attemptId = queueUUID(20_001)
+    let attemptOwner = queueUUID(20_002)
+    try queueRawSQL(
+        url,
+        """
+        UPDATE mutations
+        SET state='CONFLICT', attempt_id='\(attemptId)', attempt_owner='\(attemptOwner)',
+            attempt_started=1.0, dispatch_recorded=1,
+            evidence=(SELECT evidence FROM mutations WHERE mutation_id='\(sourceMutationId)')
+        WHERE mutation_id='\(targetMutationId)' AND state='PENDING'
+        """
+    )
+}
+
 @MainActor
 func queueRecord(_ fixture: QueueFixture, id: Int = 10) async throws -> MutationQueueRecord {
     let id = try await ClientMutationId.validated(queueUUID(id), using: QueueValidator())
