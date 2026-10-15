@@ -200,15 +200,18 @@ mod tests {
         ];
         for (status, method, location) in fixtures {
             let app = Router::new()
-                .route("/", any(move || async move {
-                    let mut response = status.into_response();
-                    response.headers_mut().insert(
-                        axum::http::header::LOCATION,
-                        HeaderValue::from_bytes(location.as_bytes())
-                            .expect("fixture Location is valid"),
-                    );
-                    response
-                }))
+                .route(
+                    "/",
+                    any(move || async move {
+                        let mut response = status.into_response();
+                        response.headers_mut().insert(
+                            axum::http::header::LOCATION,
+                            HeaderValue::from_bytes(location.as_bytes())
+                                .expect("fixture Location is valid"),
+                        );
+                        response
+                    }),
+                )
                 .layer(from_fn(reject_transfer_redirect));
             let body = if method == Method::PATCH {
                 Body::from("SYNTHETIC-UPLOAD-SENTINEL")
@@ -225,10 +228,16 @@ mod tests {
                 .oneshot(request)
                 .await
                 .expect("controlled transfer response should complete");
-            assert_eq!(response.status(), StatusCode::BAD_GATEWAY, "{status} {location}");
-            assert!(!response
-                .headers()
-                .contains_key(axum::http::header::LOCATION));
+            assert_eq!(
+                response.status(),
+                StatusCode::BAD_GATEWAY,
+                "{status} {location}"
+            );
+            assert!(
+                !response
+                    .headers()
+                    .contains_key(axum::http::header::LOCATION)
+            );
             let bytes = axum::body::to_bytes(response.into_body(), 16 * 1024)
                 .await
                 .expect("bounded error body");
@@ -238,8 +247,7 @@ mod tests {
             let value: serde_json::Value =
                 serde_json::from_str(&body).expect("structured API error");
             assert_eq!(
-                value["error"]["code"],
-                "transfer_redirect_prohibited",
+                value["error"]["code"], "transfer_redirect_prohibited",
                 "{status}"
             );
         }
