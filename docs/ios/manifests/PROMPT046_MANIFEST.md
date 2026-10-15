@@ -101,7 +101,12 @@ and body offset agreement, session ID, operation, expected digest/length, frozen
 A valid 204 inconsistent with GET cannot advance progress. Malformed or lost responses can recover
 only through authenticated GET. Non-open, conflicting, expired and invalid states cannot schedule.
 
-HTTPS origin construction stays inside the existing credential provider. All redirects are rejected.
+HTTPS origin construction stays inside the existing credential provider. The foreground upload
+transport rejects redirects. The original P046 background transport also implemented
+`willPerformHTTPRedirection`, but Apple's documented background URLSession behavior does not invoke
+that decision callback; it therefore does not reject redirects for OS-managed PATCH tasks. P051A
+corrects this claim and disables new background submissions and resumption in the production iOS
+composition pending a deployment-bound security proof.
 Cookies, shared caches and CSRF authority are disabled; no request secrets are serialized in SQLite,
 task descriptions, filenames or logs. Evidence persists only bounded allowlisted response headers,
 status, body-emptiness and a safe failure category. Account/device/endpoint/library and credential
@@ -114,6 +119,23 @@ session storage. Application Keychain storage does not imply submitted authoriza
 in Keychain. The app controls its own serialization and delegates, not the OS's internal request
 storage or how long that material is retained. Cancel/logout cannot guarantee revocation of bytes
 already sent or a request already reaching the server. Real-device inspection remains required.
+
+### P051A retrospective security correction
+
+The original P046 redirect-delegate description above was not a valid background-session control.
+Apple does not call it for background URLSession transfers. A cross-origin redirect can expose the
+DeviceBearer if the OS forwards that header, and a 307/308 can forward the PATCH body even if the
+header is removed. These are separate risks. P051A adds an API-process 3xx response guard and
+negative tests, but the API cannot control an external reverse proxy. Production P046 scheduling
+and Resume are therefore disabled. Restoration attempts to persist withdrawal of continuation
+permission before best-effort cancellation. If SQLite rejects that write, the current process still
+keeps the capability closed and cancels the OS task; the unchanged unresolved record is retried on
+later restoration. Unknown or duplicate task IDs are retained as bounded orphan observations when
+SQLite is available. Existing intent, chunk, task identity, response evidence and authoritative
+offset are preserved; no PATCH replay or completion occurs. A later foreground Resume must reconcile
+the original session with the existing authoritative status GET. See
+`docs/en/AUTHENTICATED_TRANSFER_SECURITY.md` for the threat assessment, deployment checklist and
+remaining limitations.
 
 ## Persistence and filesystem policy
 

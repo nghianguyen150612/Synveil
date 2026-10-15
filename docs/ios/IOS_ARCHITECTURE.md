@@ -121,8 +121,8 @@ v9 ownership, staging quota, integrity validation, verified publication, P049 el
 existing export boundary. The foreground transport rejects every redirect and validates the
 response origin before it writes bytes.
 
-Credential-bearing background file downloads remain disabled until the authenticated content
-endpoint has a server-enforced redirect-free contract that preserves the same origin guarantee.
+Credential-bearing background file downloads remain disabled until authenticated transfer routes
+have a trusted, deployment-bound redirect-free contract for the lifetime of each task.
 Apple documents that background URLSession tasks always follow redirects without calling
 `urlSession(_:task:willPerformHTTPRedirection:newRequest:completionHandler:)`. The app therefore
 cannot reject an unexpected redirect or prove the redirected request's destination before iOS
@@ -131,11 +131,16 @@ header to a redirected origin. The UI keeps foreground Download available and pr
 specific reason for the disabled background action. No background download task, durable P051 job,
 or new SQLite schema is created while this capability gate is closed.
 
-This gate does not change P046 upload ownership, P048 metadata refresh, P049 notification policy,
-or P050 BrowserSession boundaries. P046's background upload transport also implements a redirect
-delegate rejection callback; Apple's documented background-session behavior means that callback
-cannot be relied upon for background tasks. P051 does not alter P046, but that limitation must be
-included in any independent review of authenticated background uploads.
+P051A audited P046 and found its background upload redirect-decision callback is not invoked by
+Apple's background URLSession. A `307`/`308` can forward the PATCH body independently of whether
+Authorization is stripped. New P046 background submissions and Resume are disabled; restoration
+attempts to persist withdrawal of continuation authorization before best-effort cancellation. If
+SQLite rejects the write, the in-process capability remains closed and cancellation is still
+attempted; the unresolved record is retained for a later recovery attempt. A foreground Resume must
+reconcile the existing server status before retrying. P045 foreground uploads remain available.
+P048 metadata refresh, P049 notification policy, and P050 BrowserSession boundaries are unchanged.
+See [authenticated transfer redirect security](../en/AUTHENTICATED_TRANSFER_SECURITY.md) for the
+API contract and deployment limitations.
 
 ```text
 [ Presentation ] ---> [ Application ] ---> [ Domain ] <--- [ Infrastructure ]

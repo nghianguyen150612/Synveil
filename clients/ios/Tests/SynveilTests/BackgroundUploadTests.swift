@@ -8,6 +8,14 @@ import XCTest
 
 @MainActor
 final class BackgroundUploadTests: XCTestCase {
+    func testProductionBackgroundUploadCapabilityIsClosedForRedirectRisk() {
+        XCTAssertFalse(BackgroundUploadCapability.current.isAvailable)
+        XCTAssertEqual(
+            BackgroundUploadCapability.current,
+            .unavailable(.deploymentRedirectPolicyUnverified))
+        XCTAssertTrue(BackgroundUploadCapability.current.userMessage.contains("PATCH body"))
+    }
+
     func testTerminalStatesCannotScheduleOrResume() {
         for state in [BackgroundUploadState.quarantined, .failedTerminal, .aborted] {
             for next in BackgroundUploadState.allCases where next != state && next != .quarantined {
@@ -94,6 +102,152 @@ final class BackgroundUploadTests: XCTestCase {
         XCTAssertEqual(f.provider.completionCalls, 1)
     }
 
+    func testProductionCapabilityBlocksBackgroundUploadBeforeServerCreate() async throws {
+        let f = try await fixture(capability: .current)
+        let result = await f.coordinator.start(
+            selectedURL: f.source,
+            target: f.target,
+            library: f.queue.scope.libraryId,
+            libraryStatus: .active,
+            backgroundEnabled: true,
+            progress: { _ in })
+
+        guard case .stopped(_, let failure) = result else {
+            return XCTFail("Unsupported background upload must stop before network work")
+        }
+        XCTAssertEqual(failure, .backgroundTransferUnavailable)
+        XCTAssertTrue(f.provider.createBodies.isEmpty)
+        XCTAssertTrue(f.transport.submissions.isEmpty)
+        XCTAssertTrue(f.transport.tasks.isEmpty)
+    }
+
+    func testProductionCapabilityBlocksBackgroundResumeBeforeStatusRead() async throws {
+        let f = try await fixture()
+        let record = try await createPaused(f)
+        let priorStatusCount = f.provider.statusCount
+        let productionBackground = BackgroundUploadCoordinator(
+            repository: f.repository,
+            database: f.queue.database,
+            staging: f.staging,
+            transport: f.transport,
+            capability: .current)
+        let productionCoordinator = FileUploadCoordinator(
+            repository: f.repository,
+            database: f.queue.database,
+            staging: f.staging,
+            identityGenerator: FixedUploadIDGenerator(value: queueUUID(802)),
+            background: productionBackground)
+
+        let result = await productionCoordinator.resume(
+            id: record.id,
+            library: f.queue.scope.libraryId,
+            libraryStatus: .active,
+            backgroundEnabled: true,
+            progress: { _ in })
+
+        guard case .stopped(_, let failure) = result else {
+            return XCTFail("Unsupported background Resume must stop before authenticated work")
+        }
+        XCTAssertEqual(failure, .backgroundTransferUnavailable)
+        XCTAssertEqual(f.provider.statusCount, priorStatusCount)
+        XCTAssertEqual(f.provider.createBodies.count, 1)
+        XCTAssertTrue(f.transport.submissions.isEmpty)
+        XCTAssertTrue(f.transport.tasks.isEmpty)
+    }
+
+    func testProductionRestoreWithdrawsLegacyAuthorizationAndCancelsWithoutRetry() async throws {
+        let f = try await fixture()
+        let record = try await start(f)
+        let priorValue = try await f.queue.database.backgroundJob(record.id)
+        let before = try XCTUnwrap(priorValue)
+        let task = try XCTUnwrap(f.transport.tasks.first)
+        f.transport.resumed.removeAll()
+
+        let cold = BackgroundUploadCoordinator(
+            repository: f.repository,
+            database: try MutationQueueSQLiteStore(url: f.queue.url),
+            staging: f.staging,
+            transport: f.transport,
+            capability: .current)
+        await cold.restore()
+
+        let currentValue = try await f.queue.database.backgroundJob(record.id)
+        let after = try XCTUnwrap(currentValue)
+        let currentRecord = try await read(f, record.id)
+        XCTAssertEqual(f.transport.cancelled, [task.identifier])
+        XCTAssertTrue(f.transport.resumed.isEmpty)
+        XCTAssertFalse(after.authorized)
+        XCTAssertEqual(after.state, .paused)
+        XCTAssertEqual(after.chunk, before.chunk)
+        XCTAssertEqual(after.taskIdentifier, before.taskIdentifier)
+        XCTAssertEqual(after.evidence, before.evidence)
+        XCTAssertFalse(after.resolved)
+        XCTAssertEqual(currentRecord.authoritativeOffset, 0)
+        XCTAssertEqual(f.provider.statusCount, 0)
+        XCTAssertEqual(f.provider.createBodies.count, 1)
+        XCTAssertEqual(f.transport.submissions.count, 1)
+    }
+
+    func testFailedRestoreWithdrawalStillCancelsAndRetainsUnresolvedJob() async throws {
+        let injector = QueueFaultInjector()
+        let f = try await fixture(fault: injector)
+        let record = try await start(f)
+        let beforeValue = try await f.queue.database.backgroundJob(record.id)
+        let before = try XCTUnwrap(beforeValue)
+        let task = try XCTUnwrap(f.transport.tasks.first)
+        f.transport.resumed.removeAll()
+        injector.arm(.beforeCommit)
+
+        let cold = BackgroundUploadCoordinator(
+            repository: f.repository,
+            database: try MutationQueueSQLiteStore(
+                url: f.queue.url, fault: { try injector.hit($0) }),
+            staging: f.staging,
+            transport: f.transport,
+            capability: .current)
+        await cold.restore()
+
+        let afterValue = try await f.queue.database.backgroundJob(record.id)
+        let after = try XCTUnwrap(afterValue)
+        let currentRecord = try await read(f, record.id)
+        XCTAssertEqual(f.transport.cancelled, [task.identifier])
+        XCTAssertTrue(f.transport.resumed.isEmpty)
+        XCTAssertEqual(after, before)
+        XCTAssertTrue(after.blocksForeground)
+        XCTAssertTrue(after.authorized)
+        XCTAssertEqual(currentRecord.authoritativeOffset, 0)
+        XCTAssertEqual(f.provider.statusCount, 0)
+        XCTAssertEqual(f.transport.submissions.count, 1)
+    }
+
+    func testLateLegacyCallbackIsPersistedWithoutBackgroundStatusReadOrRetry() async throws {
+        let f = try await fixture()
+        let record = try await start(f)
+        let task = try XCTUnwrap(f.transport.tasks.first)
+        let cold = BackgroundUploadCoordinator(
+            repository: f.repository,
+            database: try MutationQueueSQLiteStore(url: f.queue.url),
+            staging: f.staging,
+            transport: f.transport,
+            capability: .current)
+        await cold.restore()
+
+        let savedEvidence = await cold.receive(
+            task, evidence: evidence(offset: String(f.bytes.count)))
+        XCTAssertTrue(savedEvidence)
+        await cold.waitForRecoveryAction()
+
+        let savedJobValue = try await f.queue.database.backgroundJob(record.id)
+        let savedJob = try XCTUnwrap(savedJobValue)
+        let savedRecord = try await read(f, record.id)
+        XCTAssertNotNil(savedJob.evidence)
+        XCTAssertFalse(savedJob.authorized)
+        XCTAssertEqual(savedJob.state, .paused)
+        XCTAssertEqual(savedRecord.authoritativeOffset, 0)
+        XCTAssertEqual(f.provider.statusCount, 0)
+        XCTAssertEqual(f.transport.submissions.count, 1)
+    }
+
     func testUnresolvedIntentBlocksForegroundMutationAcrossReopen() async throws {
         let f = try await fixture()
         let record = try await start(f)
@@ -156,7 +310,7 @@ final class BackgroundUploadTests: XCTestCase {
         let recovered = BackgroundUploadCoordinator(
             repository: f.repository,
             database: try MutationQueueSQLiteStore(url: f.queue.url), staging: f.staging,
-            transport: f.transport)
+            transport: f.transport, capability: .testingMechanicsOnly)
         await recovered.restore()
         let saved = try await read(f, record.id)
         XCTAssertEqual(saved.authoritativeOffset, UInt64(f.bytes.count))
@@ -260,9 +414,17 @@ final class BackgroundUploadTests: XCTestCase {
         f.transport.tasks = [
             BackgroundSystemTask(identifier: 44, intentId: UploadOperationId().rawValue)
         ]
-        await f.background.restore()
+        let cold = BackgroundUploadCoordinator(
+            repository: f.repository,
+            database: try MutationQueueSQLiteStore(url: f.queue.url),
+            staging: f.staging,
+            transport: f.transport,
+            capability: .current)
+        await cold.restore()
         XCTAssertEqual(f.transport.cancelled, [44])
         XCTAssertTrue(f.provider.createBodies.isEmpty)
+        XCTAssertEqual(
+            try queueRawScalar(f.queue.url, "SELECT count(*) FROM background_upload_orphans"), "1")
     }
 
     func testDuplicateSystemMappingQuarantinesWithoutPATCH() async throws {
@@ -866,7 +1028,7 @@ final class BackgroundUploadTests: XCTestCase {
         let task = try XCTUnwrap(f.transport.tasks.first)
         let cold = BackgroundUploadCoordinator(
             repository: f.repository, database: f.queue.database,
-            staging: f.staging, transport: f.transport)
+            staging: f.staging, transport: f.transport, capability: .testingMechanicsOnly)
         f.provider.acceptBackground(to: UInt64(f.bytes.count))
         f.transport.tasks = []
         let persisted = await cold.receive(task, evidence: evidence(offset: String(f.bytes.count)))
@@ -948,7 +1110,10 @@ final class BackgroundUploadTests: XCTestCase {
         return try await read(f, record.id)
     }
 
-    private func fixture(fault: QueueFaultInjector? = nil) async throws -> BackgroundFixture {
+    private func fixture(
+        fault: QueueFaultInjector? = nil,
+        capability: BackgroundUploadCapability = .testingMechanicsOnly
+    ) async throws -> BackgroundFixture {
         let queue = try await queueFixture(self, fault: fault)
         let parent = try await NodeId.validated(queueUUID(2), using: QueueValidator())
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -970,7 +1135,7 @@ final class BackgroundUploadTests: XCTestCase {
         let transport = FakeBackgroundTransport()
         let background = BackgroundUploadCoordinator(
             repository: repository, database: queue.database,
-            staging: staging, transport: transport)
+            staging: staging, transport: transport, capability: capability)
         let coordinator = FileUploadCoordinator(
             repository: repository, database: queue.database,
             staging: staging, identityGenerator: FixedUploadIDGenerator(value: queueUUID(801)),

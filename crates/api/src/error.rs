@@ -59,6 +59,7 @@ pub enum ApiError {
     InvalidRequest,
     InvalidMutation,
     InvalidUploadOffset,
+    TransferRedirectProhibited,
     PayloadTooLarge,
     UnsupportedMediaType,
     Unauthorized,
@@ -154,6 +155,7 @@ impl ApiError {
             Self::InvalidUploadOffset => StatusCode::BAD_REQUEST,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            Self::TransferRedirectProhibited => StatusCode::BAD_GATEWAY,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::InvalidEnrollment | Self::DeviceRevoked => StatusCode::UNAUTHORIZED,
             Self::Forbidden => StatusCode::FORBIDDEN,
@@ -229,6 +231,7 @@ impl ApiError {
             Self::InvalidRequest => "invalid_request",
             Self::InvalidMutation => "invalid_mutation",
             Self::InvalidUploadOffset => "invalid_offset",
+            Self::TransferRedirectProhibited => "transfer_redirect_prohibited",
             Self::PayloadTooLarge => "payload_too_large",
             Self::UnsupportedMediaType => "unsupported_media_type",
             Self::Unauthorized => "authentication_failed",
@@ -291,6 +294,7 @@ impl ApiError {
             | Self::InvalidRequest
             | Self::InvalidMutation
             | Self::InvalidUploadOffset
+            | Self::TransferRedirectProhibited
             | Self::PayloadTooLarge
             | Self::UnsupportedMediaType
             | Self::Unauthorized
@@ -382,6 +386,9 @@ impl ApiError {
             Self::InvalidMutation => "The client mutation is invalid.",
             Self::InvalidUploadOffset => {
                 "Upload-Offset must be one canonical unsigned decimal value."
+            }
+            Self::TransferRedirectProhibited => {
+                "The authenticated transfer endpoint rejected an HTTP redirect response."
             }
             Self::PayloadTooLarge => "The request body exceeds the permitted limit.",
             Self::UnsupportedMediaType => {

@@ -1,5 +1,32 @@
 import Foundation
 
+/// The native background URLSession cannot enforce the transfer redirect policy. Production stays
+/// unavailable until a reviewed deployment-bound contract can be trusted by the application.
+enum BackgroundUploadCapability: Equatable, Sendable {
+    case unavailable(Reason)
+    case testingMechanicsOnly
+
+    enum Reason: Equatable, Sendable {
+        case deploymentRedirectPolicyUnverified
+    }
+
+    static let current: Self = .unavailable(.deploymentRedirectPolicyUnverified)
+
+    var isAvailable: Bool {
+        if case .testingMechanicsOnly = self { return true }
+        return false
+    }
+
+    var userMessage: String {
+        switch self {
+        case .unavailable(.deploymentRedirectPolicyUnverified):
+            "Background uploads are unavailable because iOS can forward a PATCH body after a redirect that Synveil cannot reject. Use the foreground upload action."
+        case .testingMechanicsOnly:
+            "Background upload mechanics are enabled only in a deterministic test harness."
+        }
+    }
+}
+
 /// Logical scheduling states, separate from P045's server/upload publication state.
 enum BackgroundUploadState: String, Codable, Sendable, CaseIterable {
     case foregroundOnly, preparing, queued, scheduled, transferring, awaitingEvidence

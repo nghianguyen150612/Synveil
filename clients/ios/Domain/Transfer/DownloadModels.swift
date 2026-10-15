@@ -8,17 +8,17 @@ enum BackgroundDownloadCapability: Equatable, Sendable {
     case unavailable(Reason)
 
     enum Reason: Equatable, Sendable {
-        case backgroundRedirectsCannotBeRejected
+        case deploymentRedirectPolicyUnverified
     }
 
-    static let current: Self = .unavailable(.backgroundRedirectsCannotBeRejected)
+    static let current: Self = .unavailable(.deploymentRedirectPolicyUnverified)
 
     var isAvailable: Bool { false }
 
     var userMessage: String {
         switch self {
-        case .unavailable(.backgroundRedirectsCannotBeRejected):
-            "Background downloads are unavailable because iOS follows redirects before Synveil can verify the destination. Use Download File to keep the existing redirect protections."
+        case .unavailable(.deploymentRedirectPolicyUnverified):
+            "Background downloads are unavailable because the server deployment cannot prove that authenticated transfer requests will never be redirected. Use Download File to keep the existing redirect protections."
         }
     }
 }

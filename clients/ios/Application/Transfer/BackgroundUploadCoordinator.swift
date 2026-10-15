@@ -11,6 +11,7 @@ final class BackgroundUploadCoordinator {
     private let database: MutationQueueSQLiteStore
     private let staging: UploadStagingStore
     private let transport: any BackgroundUploadTransportProtocol
+    let capability: BackgroundUploadCapability
     private var invalidated = false
     private var authorizationRevision: UInt64 = 0
     private var pausedUploads: Set<UploadOperationId> = []
@@ -22,12 +23,14 @@ final class BackgroundUploadCoordinator {
 
     init(
         repository: AuthenticatedUploadRepository, database: MutationQueueSQLiteStore,
-        staging: UploadStagingStore, transport: any BackgroundUploadTransportProtocol
+        staging: UploadStagingStore, transport: any BackgroundUploadTransportProtocol,
+        capability: BackgroundUploadCapability = .current
     ) {
         self.repository = repository
         self.database = database
         self.staging = staging
         self.transport = transport
+        self.capability = capability
     }
 
     /// Called with P045's shared transfer lease held, only after an explicit user choice.
@@ -35,6 +38,7 @@ final class BackgroundUploadCoordinator {
         _ record: UploadRecord, session: LibraryRequestScope,
         explicitAuthorization: Bool
     ) async throws {
+        guard capability.isAvailable else { throw UploadFailure.backgroundTransferUnavailable }
         if explicitAuthorization {
             await pendingInvalidation?.value
             invalidated = false
@@ -165,8 +169,10 @@ final class BackgroundUploadCoordinator {
         }
     }
 
-    /// Cold launch performs inventory only. Follow-up is limited to persisted, authorized jobs;
-    /// it never creates a session, completes a file, or resumes a paused job.
+    /// Cold launch performs inventory only. When background transfers are unavailable it withdraws
+    /// persisted continuation authority and cancels tasks without a network status read. Otherwise
+    /// follow-up is limited to persisted jobs; it never creates a session, completes a file, or
+    /// resumes a paused job.
     func restore() async {
         guard !recovering else { return }
         recovering = true
@@ -183,6 +189,10 @@ final class BackgroundUploadCoordinator {
             }
         }
         let tasks = await transport.inventory()
+        guard capability.isAvailable else {
+            await withdrawBackgroundAuthorizationAndCancel(tasks: tasks)
+            return
+        }
         guard let jobs = try? await database.backgroundInventory() else {
             for task in tasks { await transport.cancel(task.identifier, intentId: task.intentId) }
             return
@@ -321,6 +331,7 @@ final class BackgroundUploadCoordinator {
                 recoveryRequested = true
                 return true
             }
+            guard capability.isAvailable else { return true }
             // Evidence is durable even if credentials/lease/status are unavailable. Lifecycle
             // acknowledgement need not wait for a network operation or subsequent chunk.
             recoveryAction = Task { @MainActor in
@@ -348,6 +359,41 @@ final class BackgroundUploadCoordinator {
             }
             return true
         } catch { return false }
+    }
+
+    /// Stops legacy jobs conservatively. Durable authorization is withdrawn before cancellation;
+    /// cancellation does not prove that no PATCH bytes reached the server. Existing intent, chunk,
+    /// task identity, response evidence and server offset are retained for explicit reconciliation.
+    private func withdrawBackgroundAuthorizationAndCancel(tasks: [BackgroundSystemTask]) async {
+        if let jobs = try? await database.backgroundInventory() {
+            for task in tasks {
+                let hasExactOwner = jobs.contains {
+                    !$0.resolved && $0.taskIdentifier == task.identifier
+                        && $0.chunk?.id == task.intentId
+                }
+                if !hasExactOwner {
+                    // Unknown, duplicate, and stale system tasks are never adopted. Retain a
+                    // bounded task-ID observation before cancellation when storage is available.
+                    try? await database.recordBackgroundOrphan(task.identifier)
+                }
+            }
+            for previous in jobs where previous.blocksForeground && previous.authorized {
+                var withdrawn = previous
+                withdrawn.authorized = false
+                if previous.state.permits(.paused) {
+                    try? withdrawn.transition(.paused)
+                }
+                do {
+                    try await database.saveBackgroundJob(withdrawn, replacing: previous)
+                    stateRevision &+= 1
+                } catch {
+                    // Keep the in-process submission gate closed and retry cancellation on relaunch.
+                }
+            }
+        }
+        for task in tasks {
+            await transport.cancel(task.identifier, intentId: task.intentId)
+        }
     }
 
     /// Explicit Check/Resume cancels first, waits for OS task disappearance, then performs one GET.

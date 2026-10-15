@@ -221,6 +221,11 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
         var durableRecord = false
         do {
             guard libraryStatus == .active else { throw UploadFailure.invalidTarget }
+            if backgroundEnabled {
+                guard background?.capability.isAvailable == true else {
+                    throw UploadFailure.backgroundTransferUnavailable
+                }
+            }
             let current = try await repository.provider.begin()
             session = current
             let scope = try await repository.preflight(target, session: current)
@@ -293,6 +298,11 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
         var session: LibraryRequestScope?
         do {
             guard libraryStatus == .active else { throw UploadFailure.invalidTarget }
+            if backgroundEnabled {
+                guard background?.capability.isAvailable == true else {
+                    throw UploadFailure.backgroundTransferUnavailable
+                }
+            }
             let current = try await repository.provider.begin()
             session = current
             let scope = try await current.mutationScope(

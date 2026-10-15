@@ -27,12 +27,14 @@ class BackgroundUploadRegistrationTests(unittest.TestCase):
             self.assertIn(build.group(1), phases[target])
             self.assertNotIn(build.group(1), phases[1 - target])
 
-    def test_background_transport_is_file_backed_and_rejects_redirects(self):
+    def test_background_transport_is_file_backed_and_closed_for_unverified_redirect_policy(self):
         source = (IOS / 'Infrastructure/Network/URLSessionBackgroundUploadTransport.swift').read_text()
         self.assertIn('URLSessionConfiguration.background(withIdentifier:', source)
         self.assertIn('uploadTask(with: native, fromFile: file)', source)
         self.assertNotIn('from: Data', source)
-        self.assertIn('completionHandler(nil)', source)
+        self.assertNotIn('willPerformHTTPRedirection', source)
+        self.assertIn('BackgroundUploadCapability.current.isAvailable', source)
+        self.assertIn('throw UploadFailure.backgroundTransferUnavailable', source)
         self.assertIn('session.allTasks', source)
         self.assertIn('task.taskDescription = intent.id', source)
 
@@ -67,6 +69,23 @@ class BackgroundUploadRegistrationTests(unittest.TestCase):
         self.assertIn('try verifySchema(Self.version7Schema)', store)
         self.assertIn('backgroundBlocks(previous.id)', store)
         self.assertIn('encoder.outputFormatting = [.sortedKeys]', store)
+
+    def test_authenticated_transfer_routes_have_distinct_redirect_contracts(self):
+        router = (IOS.parents[1] / 'crates/api/src/router.rs').read_text()
+        middleware = (IOS.parents[1] / 'crates/api/src/middleware.rs').read_text()
+        downloads = router.split('let protected_downloads = Router::new()', 1)[1].split(
+            'let protected_versions = Router::new()', 1)[0]
+        uploads = router.split('let protected_uploads = Router::new()', 1)[1].split(
+            'let protected_device_enrollment = Router::new()', 1)[0]
+        self.assertIn('middleware::reject_content_redirect', downloads)
+        self.assertIn('middleware::reject_transfer_redirect', uploads)
+        self.assertIn('reject_redirect_response(response, false)', middleware)
+        self.assertIn('reject_redirect_response(response, true)', middleware)
+        for status in [
+            'MOVED_PERMANENTLY', 'FOUND', 'SEE_OTHER',
+            'TEMPORARY_REDIRECT', 'PERMANENT_REDIRECT', 'NOT_MODIFIED',
+        ]:
+            self.assertIn(f'StatusCode::{status}', middleware)
 
 
 if __name__ == '__main__':

@@ -15,10 +15,10 @@ final class FileDownloadViewTests: XCTestCase {
         XCTAssertFalse(BackgroundDownloadCapability.current.isAvailable)
         XCTAssertEqual(
             BackgroundDownloadCapability.current,
-            .unavailable(.backgroundRedirectsCannotBeRejected))
+            .unavailable(.deploymentRedirectPolicyUnverified))
         XCTAssertTrue(model.canStart)
         XCTAssertTrue(
-            BackgroundDownloadCapability.current.userMessage.contains("follows redirects"))
+            BackgroundDownloadCapability.current.userMessage.contains("cannot prove"))
         let requests = await f.content.requests()
         XCTAssertTrue(requests.isEmpty)
     }
