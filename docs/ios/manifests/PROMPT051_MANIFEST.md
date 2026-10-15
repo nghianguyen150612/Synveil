@@ -6,8 +6,9 @@
 - Fetched `origin/ios-app`; fetched tip was exactly the stated SHA and P050 merge #133 is its
   ancestor. Starting checkout was clean.
 - Feature branch: `ios/p051-background-download-architecture`.
-- Current source SHA: changes are uncommitted at this checkpoint; the final feature SHA will be
-  recorded in the completion report and PR head because a commit cannot contain its own SHA.
+- Implementation source checkpoint: `ab65d6422b64f8e9af65002db9d2e0312105f321`.
+- The final feature SHA is the exact PR head and is recorded in the completion report; a commit
+  cannot contain its own SHA.
 - Final feature SHA: pending commit.
 - PR: pending.
 - Integration merge SHA and verified final `ios-app` SHA: not available; no merge is claimed.
@@ -85,7 +86,7 @@ authorization evidence, P049 notification state and P050 conflict evidence untou
 - Portable support tests: **105 passed, 0 failed**.
 - `python3 clients/ios/Support/validate_ios_sources.py`: **PASS**.
 - `bash scripts/validate-docs.sh`: **PASS**.
-- `git diff --check`: **PASS** before the final manifest metadata edit; rerun before commit.
+- `git diff --check`: **PASS** after the implementation and manifest edits.
 - Strict Swift formatter: **NOT RUN**; neither `swift-format` nor `swift format` is installed on
   this Linux runner.
 - Swift parsing/native build/XCTest: **NOT RUN**; Swift/Xcode/iOS SDK are absent on this runner.
@@ -117,7 +118,7 @@ those systems and is not rewritten by P051.
   header behavior are not inferred from Simulator or source-only checks.
 - Remaining blocker: server/API contract does not establish redirect-free authenticated content
   delivery. P051 background downloading must remain unavailable until that security proof exists.
-- Review/merge state: pending; no review acceptance or merge is claimed.
+- Review/merge state: pending PR creation; no review acceptance or merge is claimed.
 - Next safe step: complete local validation, commit and open one PR targeting `ios-app`; keep it
   unmerged unless security review accepts the explicit blocked disposition and required checks pass.
 
