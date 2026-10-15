@@ -1,4 +1,6 @@
 import Foundation
+import SwiftUI
+import UIKit
 import XCTest
 
 @testable import Synveil
@@ -1091,6 +1093,60 @@ final class MetadataMutationFeatureTests: XCTestCase {
         XCTAssertEqual(viewModel.state, .invalidated)
         XCTAssertEqual(feature.sendCount, 0)
         XCTAssertEqual(feature.conflictReviewCalls, 1)
+    }
+
+    func testConflictReviewRefreshUsesOnlyReadFacade() async throws {
+        let controller = try authenticatedMutationController()
+        let library = try await presentationLibrary(status: .active)
+        let feature = FakeMetadataMutationFeature()
+        let snapshot = MetadataMutationConflictReviewSnapshot(
+            items: [
+                MetadataMutationConflictReviewItem(
+                    id: queueUUID(558), kind: .renameNode, state: .conflict,
+                    enqueuedAt: Date(timeIntervalSince1970: 10),
+                    lastAttemptAt: Date(timeIntervalSince1970: 11),
+                    conflictReason: .nameOccupied)
+            ], isComplete: true, provenance: .savedOnThisDevice,
+            observedAt: Date(timeIntervalSince1970: 12))
+        feature.conflictReviewResult = .loaded(snapshot)
+        let viewModel = MetadataMutationConflictReviewViewModel(
+            library: library, feature: feature, sessionController: controller)
+
+        await viewModel.load()
+        XCTAssertEqual(viewModel.state, .loaded(snapshot))
+        await viewModel.refresh()
+
+        XCTAssertEqual(viewModel.state, .loaded(snapshot))
+        XCTAssertEqual(feature.conflictReviewCalls, 2)
+        XCTAssertEqual(feature.sendCount, 0)
+    }
+
+    func testConflictReviewSurvivesCompactWidthAndAccessibilityDynamicType() async throws {
+        let controller = try authenticatedMutationController()
+        let library = try await presentationLibrary(status: .active)
+        let feature = FakeMetadataMutationFeature()
+        let item = MetadataMutationConflictReviewItem(
+            id: queueUUID(559), kind: .moveNode, state: .conflict,
+            enqueuedAt: Date(timeIntervalSince1970: 10),
+            lastAttemptAt: Date(timeIntervalSince1970: 11),
+            conflictReason: .parentChanged)
+        let status = MutationConflictReviewStatusView(
+            library: library, feature: feature, sessionController: controller,
+            identifier: "synveil.test.conflict-review"
+        ) {}
+        let host = UIHostingController(
+            rootView: List {
+                status
+                MutationConflictReviewItemRow(item: item)
+            }
+            .environment(\.dynamicTypeSize, .accessibility5))
+        host.loadViewIfNeeded()
+        host.view.frame = CGRect(x: 0, y: 0, width: 320, height: 568)
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+
+        XCTAssertNotNil(host.view)
+        XCTAssertEqual(host.view.bounds.width, 320)
     }
 
     func testNativeMutationViewsCanBeConstructedWithInjectedFacade() async throws {

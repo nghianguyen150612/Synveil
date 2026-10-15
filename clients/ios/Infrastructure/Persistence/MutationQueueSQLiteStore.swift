@@ -950,8 +950,9 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         return (outstanding + terminal).sorted { $0.order < $1.order }
     }
 
-    /// Reads only durable conflicts for one Library scope. The existing scope/order index keeps
-    /// this bounded query inside that scope; callers fail closed when a page is full.
+    /// Reads only durable conflicts for one Library scope. The scope/order index narrows the
+    /// query, and the store-wide record cap bounds even a scope walk with no matching conflicts.
+    /// Callers fail closed when the requested page is full.
     func conflictRecords(scope: ClientMutationScope, credentialId: String, limit: Int) throws
         -> [StoredMutationRecord]
     {

@@ -11,9 +11,9 @@
 - P050 pull request: [#133](https://github.com/nghianguyen150612/Synveil/pull/133), targeting
   `ios-app`. This is the already-existing P050 draft PR; no second PR was created.
 - Pre-correction source head: `2f8897b9b931d697c2890775cbb50c2235c999e9`. Its native
-  Build run found a missing explicit return in the new reason mapper. The fix and this
-  manifest are in the current evidence-bearing change; the resulting feature SHA is
-  recorded by the PR head and final task report.
+  Build run found a missing explicit return in the new reason mapper. That fix was
+  committed as `0aab0a35fe519caf57ee3e0f060651cba00265d1`. The final feature
+  head with the additional UI regressions is recorded from the PR head and final task report.
 - The manifest-bearing final branch head and integrated `ios-app` SHA are reported from the
   hosted PR/merge state. They are not embedded as self-referential commit IDs in this file.
 - P051 was not started.
@@ -49,6 +49,11 @@ maximum read batch of 100. Rehydration strictly validates persisted conflict
 evidence and a post-read session fence runs before publication. Storage,
 credential, quarantine, malformed-row, or response-evidence failures produce an
 unavailable result, never a fabricated zero.
+
+The queue's existing global mutation-row cap is 4,096; the new query returns at
+most 100 decoded rows and performs no separate history enumeration or SwiftUI
+polling. This keeps even the state-filtered scope walk bounded by existing store
+policy without adding a schema index or migration.
 
 The UI projection contains the original operation UUID, safe operation kind,
 durable state, queued/attempt times, and typed server reason. It does not contain
@@ -120,14 +125,16 @@ policy remains authoritative.
 
 ## Tests and fault-injection inventory
 
-Fifteen new XCTest methods were added relative to P049 across
+Seventeen new XCTest methods were added relative to P049 across
 `MetadataMutationFeatureTests`, `SavedMetadataInspectionTests`, and
 `ClientMutationTests`. They cover durable-only projection/no write or network,
 bounded ordering and lower-bound counts, concurrent reads, queue reopen,
 pending-only exact empty result, state classification, unknown outcome
 separation, storage failure, corrupted evidence, logout during read, offline
 P047 scope/no-network behavior, credential replacement before/during the read,
-and unknown conflict reason failure. Existing P001–P049 suites remain enabled.
+unknown conflict reason failure, refresh through the read-only facade, and a
+SwiftUI host smoke at 320-point width with accessibility Dynamic Type. Existing
+P001–P049 suites remain enabled.
 
 | Fault scenario | Durable state | Expected UI | Permitted operation | Forbidden side effect | Evidence / limit |
 |---|---|---|---|---|---|
@@ -171,11 +178,11 @@ report against the manifest-bearing feature head):
 - [iOS Simulator Tests](https://github.com/nghianguyen150612/Synveil/actions/workflows/ios-simulator-tests.yml)
 - [iOS Rust Apple Build](https://github.com/nghianguyen150612/Synveil/actions/workflows/ios-rust-apple-build.yml)
 
-The pre-correction source head had successful iOS Static Validation and iOS Rust Apple Build,
-an iOS Build failure from the fixed missing return, and a Simulator Tests run that was still
-pending when inspected. Those runs do not qualify the final feature head. Exact final-head run
-results, URLs, and XCTest passed/failed/skipped counts must be added to the final review record
-before acceptance. P049 results are not substituted for P050.
+The corrected source head `0aab0a35fe519caf57ee3e0f060651cba00265d1` passed iOS Static
+Validation, iOS Build, and iOS Rust Apple Build; its Simulator Tests run was still queued. Those
+runs precede the two final UI/read-only refresh regressions and do not qualify the final feature
+head. Exact final-head run results, URLs, and XCTest passed/failed/skipped counts must be added
+to the final review record before acceptance. P049 results are not substituted for P050.
 
 Unrelated Rust/desktop/package/PostgreSQL workflow results are recorded
 separately from the four iOS gates. No unrelated failure is counted as a P050
