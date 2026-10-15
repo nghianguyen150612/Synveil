@@ -109,6 +109,7 @@ struct MutationActivityView: View {
                 Text(library.name)
             }
 
+            conflictReviewContents
             activityContents
         }
         .listStyle(.insetGrouped)
@@ -185,6 +186,81 @@ struct MutationActivityView: View {
     }
 
     @ViewBuilder
+    private var conflictReviewContents: some View {
+        switch viewModel.conflictReviewState {
+        case .idle, .loading:
+            Section("Conflict review") {
+                ProgressView("Checking saved conflict records…")
+                    .accessibilityLabel("Checking saved conflicts")
+                    .accessibilityIdentifier("synveil.mutation.conflict-review.loading")
+            }
+        case .loaded(let snapshot):
+            if snapshot.items.isEmpty {
+                Section("Conflict review") {
+                    Label("No saved conflicts need review", systemImage: "checkmark.circle")
+                        .accessibilityIdentifier("synveil.mutation.conflict-review.empty")
+                    Text("Saved conflict status checked on this device.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Section {
+                    Text(conflictCountLabel(for: snapshot))
+                        .font(.headline)
+                        .accessibilityIdentifier("synveil.mutation.conflict-review.summary")
+                    Label(
+                        "Saved on this device · checked \(snapshot.observedAt.formatted(date: .abbreviated, time: .shortened))",
+                        systemImage: "externaldrive"
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("synveil.mutation.conflict-review.provenance")
+                    Text(MutationConflictPresentation.reviewGuidance)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("synveil.mutation.conflict-review.guidance")
+                    ForEach(snapshot.items) { item in
+                        MutationConflictReviewItemRow(item: item)
+                    }
+                    if !snapshot.isComplete {
+                        Text(
+                            "Showing the first \(snapshot.knownConflictCount) saved conflicts. At least this many need review; more may exist."
+                        )
+                        .font(.footnote)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("synveil.mutation.conflict-review.incomplete")
+                    }
+                } header: {
+                    Text("Conflicts need review")
+                }
+            }
+        case .failed(let failure):
+            Section("Conflict review unavailable") {
+                Text(
+                    "Saved conflict status could not be verified. No conflict count is available. "
+                        + MetadataMutationViewModel.message(for: failure)
+                )
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("synveil.mutation.conflict-review.error")
+                Button("Refresh Saved Conflict Status") {
+                    Task { await viewModel.load() }
+                }
+                .accessibilityHint("Reads the local durable queue. It does not send changes.")
+                .accessibilityIdentifier("synveil.mutation.conflict-review.retry")
+            }
+        case .invalidated:
+            EmptyView()
+        }
+    }
+
+    private func conflictCountLabel(for snapshot: MetadataMutationConflictReviewSnapshot) -> String
+    {
+        let count = snapshot.knownConflictCount
+        let number = snapshot.isComplete ? "\(count)" : "At least \(count)"
+        return "\(number) \(count == 1 ? "conflict needs" : "conflicts need") review"
+    }
+
+    @ViewBuilder
     private var activityContents: some View {
         switch viewModel.state {
         case .idle, .loading:
@@ -194,14 +270,18 @@ struct MutationActivityView: View {
                     .accessibilityIdentifier("synveil.mutation.activity.loading")
             }
         case .loaded(let items):
-            if items.isEmpty {
+            let otherItems = items.filter { $0.state != .conflict }
+            if otherItems.isEmpty {
                 Section {
-                    Label("No saved changes", systemImage: "tray")
-                        .accessibilityIdentifier("synveil.mutation.activity.empty")
+                    Label(
+                        items.isEmpty ? "No saved changes" : "No other saved changes",
+                        systemImage: "tray"
+                    )
+                    .accessibilityIdentifier("synveil.mutation.activity.empty")
                 }
             } else {
                 Section("Operations") {
-                    ForEach(items) { item in
+                    ForEach(otherItems) { item in
                         MutationActivityRow(
                             item: item,
                             libraryIsWritable: library.status == .active,
@@ -231,6 +311,152 @@ struct MutationActivityView: View {
             }
         case .invalidated:
             EmptyView()
+        }
+    }
+}
+
+/// Compact saved-conflict entry point shared by the Library catalog and Node Browser.
+/// It contains no mutation, retry, or resolution action.
+struct MutationConflictReviewStatusView: View {
+    @State private var viewModel: MetadataMutationConflictReviewViewModel
+
+    private let library: MetadataMutationLibraryContext
+    private let feature: (any MetadataMutationFeatureProtocol)?
+    private let sessionController: SessionController
+    private let identifier: String
+    private let onOpenReview: () -> Void
+
+    init(
+        library: MetadataMutationLibraryContext,
+        feature: (any MetadataMutationFeatureProtocol)?,
+        sessionController: SessionController,
+        identifier: String,
+        onOpenReview: @escaping () -> Void
+    ) {
+        self.library = library
+        self.feature = feature
+        self.sessionController = sessionController
+        self.identifier = identifier
+        self.onOpenReview = onOpenReview
+        _viewModel = State(
+            initialValue: MetadataMutationConflictReviewViewModel(
+                library: library, feature: feature, sessionController: sessionController))
+    }
+
+    var body: some View {
+        statusContents
+            .task { await viewModel.load() }
+            .onChange(of: sessionController.state) { _, _ in viewModel.sessionDidChange() }
+            .onChange(of: sessionController.lifecycleRevision) { _, _ in
+                viewModel.sessionDidChange()
+            }
+    }
+
+    @ViewBuilder
+    private var statusContents: some View {
+        switch viewModel.state {
+        case .idle, .loading:
+            ProgressView("Checking saved conflicts…")
+                .font(.footnote)
+                .accessibilityLabel("Checking saved conflict status")
+                .accessibilityIdentifier("\(identifier).loading")
+        case .loaded(let snapshot):
+            if snapshot.items.isEmpty {
+                EmptyView()
+            } else {
+                Button(action: onOpenReview) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Label("Conflicts need review", systemImage: "exclamationmark.bubble")
+                            .font(.subheadline.weight(.semibold))
+                        Text(countLabel(for: snapshot))
+                            .font(.footnote)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(
+                            "Saved on this device. Review in the Synveil web interface; browser sign-in is separate."
+                        )
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens saved conflict details. No change is sent or resolved.")
+                .accessibilityIdentifier(identifier)
+            }
+        case .failed(let failure):
+            Button(action: onOpenReview) {
+                Label(
+                    "Conflict status unavailable",
+                    systemImage: "externaldrive.badge.exclamationmark"
+                )
+                .font(.footnote.weight(.medium))
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(
+                "Conflict status unavailable. "
+                    + MetadataMutationViewModel.message(for: failure)
+            )
+            .accessibilityHint("Opens Pending Changes to inspect or refresh local status.")
+            .accessibilityIdentifier("\(identifier).unavailable")
+        case .invalidated:
+            EmptyView()
+        }
+    }
+
+    private func countLabel(for snapshot: MetadataMutationConflictReviewSnapshot) -> String {
+        let count = snapshot.knownConflictCount
+        let number = snapshot.isComplete ? "\(count)" : "At least \(count)"
+        return "\(number) saved \(count == 1 ? "conflict needs" : "conflicts need") review."
+    }
+}
+
+struct MutationConflictReviewItemRow: View {
+    let item: MetadataMutationConflictReviewItem
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(
+                MutationQueueStatePresentation.label(for: item.state),
+                systemImage: MutationQueueStatePresentation.symbol(for: item.state)
+            )
+            .font(.headline)
+            .accessibilityIdentifier("synveil.mutation.conflict-review.state.\(item.id)")
+            Text(operationLabel)
+                .font(.subheadline.weight(.semibold))
+            Text("Original operation ID: \(item.id)")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Queued \(item.enqueuedAt.formatted(date: .abbreviated, time: .shortened))")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            if let attempted = item.lastAttemptAt {
+                Text("Last attempt \(attempted.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            Text("Server reason: \(item.conflictReason?.rawValue ?? "Not provided")")
+                .font(.subheadline.weight(.medium))
+                .accessibilityIdentifier("synveil.mutation.conflict-review.reason.\(item.id)")
+            Text(MutationConflictPresentation.explanation(for: item.conflictReason))
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("synveil.mutation.conflict.\(item.id)")
+        }
+        .padding(.vertical, 6)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("synveil.mutation.conflict-review.item.\(item.id)")
+    }
+
+    private var operationLabel: String {
+        switch item.kind {
+        case .createDirectory: "Create Folder"
+        case .renameNode: "Rename"
+        case .moveNode: "Move"
+        case .trashNode: "Move to Trash"
+        case .restoreNode: "Restore"
         }
     }
 }
@@ -704,210 +930,3 @@ struct MutationNoticeView: View {
         .accessibilityIdentifier(identifier)
     }
 }
-
-/// A deliberately read-only alternative to Pending Changes. It never exposes
-/// Send, Retry Unknown, Restore, or any other mutation-bearing action.
-struct ConflictReviewView: View {
-    private let library: MetadataMutationLibraryContext
-    private let sessionController: SessionController
-    @State private var viewModel: ConflictReviewViewModel
-
-    init(
-        library: MetadataMutationLibraryContext,
-        feature: any MetadataMutationFeatureProtocol,
-        sessionController: SessionController
-    ) {
-        self.library = library
-        self.sessionController = sessionController
-        _viewModel = State(
-            initialValue: ConflictReviewViewModel(
-                library: library, feature: feature, sessionController: sessionController))
-    }
-
-    var body: some View {
-        List {
-            Section("Saved conflict status") {
-                switch viewModel.state {
-                case .idle, .loading:
-                    ProgressView("Inspecting saved changes…")
-                        .accessibilityIdentifier("synveil.conflict.loading")
-                case .loaded(let snapshot):
-                    Label(
-                        snapshot.conflictCountText,
-                        systemImage: snapshot.conflicts.isEmpty ? "doc.text.magnifyingglass"
-                            : "exclamationmark.bubble"
-                    )
-                    .accessibilityIdentifier("synveil.conflict.summary")
-                    if !snapshot.complete {
-                        Text(
-                            "Only the first \(snapshot.inspectedRecords) bounded saved operations were inspected. Additional conflicts may exist."
-                        )
-                        .font(.footnote)
-                        .accessibilityIdentifier("synveil.conflict.incomplete")
-                    }
-                    if snapshot.unknownOutcomes > 0 {
-                        Label(
-                            "\(snapshot.unknownOutcomes) operations have unknown server outcomes. These are not confirmed conflicts; use the original Pending Changes recovery workflow.",
-                            systemImage: "questionmark.circle"
-                        )
-                        .accessibilityIdentifier("synveil.conflict.unknown")
-                    }
-                    if snapshot.rebaselineBlockers > 0 {
-                        Label(
-                            "\(snapshot.rebaselineBlockers) operations require synchronization recovery. Rebaseline is not a conflict-resolution shortcut.",
-                            systemImage: "arrow.triangle.2.circlepath"
-                        )
-                        .accessibilityIdentifier("synveil.conflict.rebaseline")
-                    }
-                    if snapshot.conflicts.isEmpty && snapshot.complete {
-                        Text("No unresolved conflicts were found in the verified saved queue.")
-                            .accessibilityIdentifier("synveil.conflict.empty")
-                    }
-                case .failed(let failure):
-                    Label(
-                        "Saved conflict evidence is unavailable: \(MetadataMutationViewModel.message(for: failure))",
-                        systemImage: "lock.shield"
-                    )
-                    .accessibilityIdentifier("synveil.conflict.unavailable")
-                case .invalidated:
-                    Text("The authenticated session changed. Reopen this Library to inspect its saved changes.")
-                        .accessibilityIdentifier("synveil.conflict.invalidated")
-                }
-            }
-
-            if case .loaded(let snapshot) = viewModel.state,
-                !snapshot.conflicts.isEmpty
-            {
-                Section("Conflicts requiring review") {
-                    ForEach(snapshot.conflicts) { item in
-                        VStack(alignment: .leading, spacing: 8) {
-                            Label(operationName(for: item.kind), systemImage: "exclamationmark.bubble")
-                                .font(.headline)
-                            Text(MutationConflictPresentation.message(for: item.conflictReason))
-                                .fixedSize(horizontal: false, vertical: true)
-                            Text("Original operation: \(item.id)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .textSelection(.enabled)
-                            Text("Queued \(item.enqueuedAt.formatted(date: .abbreviated, time: .shortened))")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.vertical, 6)
-                        .accessibilityElement(children: .contain)
-                        .accessibilityIdentifier("synveil.conflict.item.\(item.id)")
-                    }
-                }
-                Section("Owner / web review") {
-                    Text(
-                        "The server remains authoritative. The original operation and its evidence are retained; opening this screen does not resolve, retry, overwrite or discard them."
-                    )
-                    Text(
-                        "Review the current Library in the Synveil web interface using a separate browser sign-in. No verified direct conflict-resolution link is available in this iOS client."
-                    )
-                    .accessibilityIdentifier("synveil.conflict.browser-guidance")
-                }
-            }
-        }
-        .listStyle(.insetGrouped)
-        .navigationTitle("Conflict Review")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    Task { await viewModel.load() }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .disabled(viewModel.state == .loading || viewModel.state == .invalidated)
-                .accessibilityLabel("Refresh saved conflict status")
-                .accessibilityHint("Reads local durable status only; no change is sent.")
-                .accessibilityIdentifier("synveil.conflict.refresh")
-            }
-        }
-        .task { await viewModel.load() }
-        .onChange(of: sessionController.state) { _, _ in viewModel.sessionDidChange() }
-        .onChange(of: sessionController.lifecycleRevision) { _, _ in
-            viewModel.sessionDidChange()
-        }
-        .accessibilityIdentifier("synveil.conflict.review")
-    }
-
-    private func operationName(for kind: ClientMutationKind) -> String {
-        switch kind {
-        case .createDirectory: "Create Folder"
-        case .renameNode: "Rename"
-        case .moveNode: "Move"
-        case .trashNode: "Move to Trash"
-        case .restoreNode: "Restore"
-        }
-    }
-}
-
-/// Lazy, bounded per-Library status; never equates an unread or truncated page
-/// with zero conflicts. The only action opens the read-only inspection surface.
-struct ConflictReviewEntryView: View {
-    private let library: MetadataMutationLibraryContext
-    private let feature: any MetadataMutationFeatureProtocol
-    private let sessionController: SessionController
-    @State private var viewModel: ConflictReviewViewModel
-
-    init(
-        library: MetadataMutationLibraryContext,
-        feature: any MetadataMutationFeatureProtocol,
-        sessionController: SessionController
-    ) {
-        self.library = library
-        self.feature = feature
-        self.sessionController = sessionController
-        _viewModel = State(
-            initialValue: ConflictReviewViewModel(
-                library: library, feature: feature, sessionController: sessionController))
-    }
-
-    var body: some View {
-        Group {
-            switch viewModel.state {
-            case .idle, .loading:
-                ProgressView("Checking saved conflicts — \(library.name)")
-                    .accessibilityIdentifier("synveil.conflict.entry.loading")
-            case .loaded(let snapshot):
-                if snapshot.needsAttention {
-                    NavigationLink {
-                        ConflictReviewView(
-                            library: library, feature: feature,
-                            sessionController: sessionController)
-                    } label: {
-                        Label(
-                            "\(library.name): \(snapshot.conflictCountText)",
-                            systemImage: "exclamationmark.bubble"
-                        )
-                        .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .accessibilityHint("Opens read-only saved conflict inspection.")
-                    .accessibilityIdentifier("synveil.conflict.entry.\(library.id.rawValue)")
-                } else {
-                    Label(
-                        "\(library.name): no saved conflicts in verified queue",
-                        systemImage: "checkmark.circle"
-                    )
-                    .accessibilityIdentifier("synveil.conflict.entry.clear.\(library.id.rawValue)")
-                }
-            case .failed:
-                Label(
-                    "\(library.name): saved conflict status unavailable",
-                    systemImage: "lock.shield"
-                )
-                .accessibilityIdentifier("synveil.conflict.entry.unavailable.\(library.id.rawValue)")
-            case .invalidated:
-                EmptyView()
-            }
-        }
-        .task { await viewModel.load() }
-        .onChange(of: sessionController.state) { _, _ in viewModel.sessionDidChange() }
-        .onChange(of: sessionController.lifecycleRevision) { _, _ in
-            viewModel.sessionDidChange()
-        }
-    }
-}
-

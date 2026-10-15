@@ -461,6 +461,11 @@ actor QueueDelayedStorage: MutationQueueStorageProtocol {
     func activityRecords(scope: ClientMutationScope, limit: Int) async throws
         -> [StoredMutationRecord]
     { try await base.activityRecords(scope: scope, limit: limit) }
+    func conflictRecords(
+        scope: ClientMutationScope, credentialId: String, limit: Int
+    ) async throws
+        -> [StoredMutationRecord]
+    { try await base.conflictRecords(scope: scope, credentialId: credentialId, limit: limit) }
     func record(scope: ClientMutationScope, id: String) async throws -> StoredMutationRecord? {
         if failNextRecordReadAfterEnqueue {
             failNextRecordReadAfterEnqueue = false

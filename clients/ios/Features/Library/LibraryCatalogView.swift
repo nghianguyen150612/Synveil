@@ -20,6 +20,7 @@ struct LibraryCatalogView: View {
     @State private var viewModel: LibraryCatalogViewModel
     @State private var isShowingLogoutConfirmation = false
     @State private var isInspectingSavedMetadata = false
+    @State private var presentedConflictLibrary: MetadataMutationLibraryContext?
 
     init(
         repository: (any LibraryCatalogRepositoryProtocol)?,
@@ -134,6 +135,27 @@ struct LibraryCatalogView: View {
                             route: route
                         )
                         .id(route)
+                    }
+                    .navigationDestination(
+                        isPresented: Binding(
+                            get: { presentedConflictLibrary != nil },
+                            set: { if !$0 { presentedConflictLibrary = nil } })
+                    ) {
+                        if let library = presentedConflictLibrary,
+                            let metadataMutationFeature
+                        {
+                            MutationActivityView(
+                                library: library, feature: metadataMutationFeature,
+                                sessionController: sessionController
+                            )
+                            .id(library.id)
+                        } else {
+                            ContentUnavailableView(
+                                "Conflict review unavailable",
+                                systemImage: "externaldrive.badge.exclamationmark",
+                                description: Text(
+                                    "The durable mutation queue is not ready for this Library."))
+                        }
                     }
                     .navigationDestination(
                         isPresented: Binding(
@@ -386,26 +408,28 @@ struct LibraryCatalogView: View {
     private func libraryRows(_ libraries: [Library]) -> some View {
         Section("Libraries") {
             ForEach(libraries, id: \.id) { library in
-                NavigationLink(value: library.id) {
-                    LibraryCatalogRow(library: library)
-                }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(LibraryCatalogRow.accessibilityDescription(for: library))
-                .accessibilityHint(
-                    "Opens this Library's root folder contents."
-                )
-                .accessibilityIdentifier("synveil.library.row.\(library.id.rawValue)")
-            }
-        }
-        if let metadataMutationFeature {
-            Section("Saved conflict review") {
-                ForEach(libraries, id: \.id) { library in
-                    ConflictReviewEntryView(
+                VStack(alignment: .leading, spacing: 6) {
+                    NavigationLink(value: library.id) {
+                        LibraryCatalogRow(library: library)
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(LibraryCatalogRow.accessibilityDescription(for: library))
+                    .accessibilityHint("Opens this Library's root folder contents.")
+                    .accessibilityIdentifier("synveil.library.row.\(library.id.rawValue)")
+
+                    MutationConflictReviewStatusView(
                         library: NodeBrowserLibraryContext(library).mutationContext,
                         feature: metadataMutationFeature,
-                        sessionController: sessionController
-                    )
+                        sessionController: sessionController,
+                        identifier: "synveil.library.conflict-review.\(library.id.rawValue)"
+                    ) {
+                        presentedConflictLibrary =
+                            NodeBrowserLibraryContext(library).mutationContext
+                    }
                 }
+                .id(
+                    "\(library.id.rawValue).\(library.status.rawValue).\(sessionController.lifecycleRevision)"
+                )
             }
         }
         Section("Synchronization") {

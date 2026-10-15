@@ -671,6 +671,10 @@ final class ClientMutationTests: XCTestCase {
         }
     }
 
+    func testUnknownConflictReasonFailsClosed() async throws {
+        await assertInvalid(mutationConflict(reason: "UNRECOGNIZED_CONFLICT_REASON"))
+    }
+
     func testNameOccupiedConflictMayIdentifyExistingSibling() async throws {
         let root =
             try JSONSerialization.jsonObject(with: mutationConflict(reason: "NAME_OCCUPIED").body)

@@ -56,6 +56,18 @@ final class DurableMutationQueue: DurableMutationQueueProtocol {
     }
 
     func capture(scope: ClientMutationScope) async throws -> LibraryRequestScope {
+        try await capture(scope: scope, persistBinding: true)
+    }
+
+    /// Session and Credential identity validation for a saved-data inspection read. This path
+    /// intentionally does not create a scope or bind a credential in SQLite.
+    private func captureReadOnly(scope: ClientMutationScope) async throws -> LibraryRequestScope {
+        try await capture(scope: scope, persistBinding: false)
+    }
+
+    private func capture(scope: ClientMutationScope, persistBinding: Bool) async throws
+        -> LibraryRequestScope
+    {
         try Task.checkCancellation()
         await quarantineTask?.value
         guard !quarantineFailed else { throw MutationQueueFailure.unavailable }
@@ -83,8 +95,10 @@ final class DurableMutationQueue: DurableMutationQueueProtocol {
         }
         guard session.matches(scope) else { throw MutationQueueFailure.scopeMismatch }
         try await provider.validate(session)
-        try await store.bindSession(scope: scope, credentialId: session.credentialIdentifier)
-        try await provider.validate(session)
+        if persistBinding {
+            try await store.bindSession(scope: scope, credentialId: session.credentialIdentifier)
+            try await provider.validate(session)
+        }
         if !sessions.contains(where: { $0.0 == scope }) { sessions.append((scope, session)) }
         return session
     }
@@ -233,6 +247,59 @@ final class DurableMutationQueue: DurableMutationQueueProtocol {
             var records: [MutationQueueRecord] = []
             for row in rows { records.append(try await codec.rehydrate(row)) }
             try await fence(session)
+            return .records(records)
+        } catch { return .failed(Self.classify(error)) }
+    }
+
+    /// Bounded, state-filtered read for conflict summaries. SQLite and rehydration both verify
+    /// that each returned row is an authoritative CONFLICT in this authenticated Library scope.
+    func conflicts(scope: ClientMutationScope, limit: Int) async -> MutationQueueReadResult {
+        do {
+            let session = try await captureReadOnly(scope: scope)
+            let rows = try await store.conflictRecords(
+                scope: scope, credentialId: session.credentialIdentifier, limit: limit)
+            guard rows.allSatisfy({ $0.state == .conflict }) else {
+                throw MutationQueueFailure.malformedRecord
+            }
+            var records: [MutationQueueRecord] = []
+            for row in rows { records.append(try await codec.rehydrate(row)) }
+            guard records.allSatisfy({ $0.state == .conflict }) else {
+                throw MutationQueueFailure.malformedRecord
+            }
+            try await fence(session)
+            return .records(records)
+        } catch { return .failed(Self.classify(error)) }
+    }
+
+    /// P047-authorized saved inspection path. The supplied local provider revalidates the exact
+    /// Keychain identity and any pending-restoration authorization both before and after SQLite.
+    /// This method does not bind a scope, clear quarantine, or acquire network execution authority.
+    func savedConflicts(
+        scope: ClientMutationScope, limit: Int,
+        sessionProvider: any LocalLibrarySessionProviderProtocol
+    ) async -> MutationQueueReadResult {
+        do {
+            try Task.checkCancellation()
+            await quarantineTask?.value
+            guard !quarantineFailed else { throw MutationQueueFailure.unavailable }
+            guard (1...MutationQueuePolicy.maximumReadBatch).contains(limit) else {
+                throw MutationQueueFailure.invalidLimit
+            }
+            try await codec.validateScope(scope)
+            let session = try await sessionProvider.begin()
+            guard session.matches(scope) else { throw MutationQueueFailure.scopeMismatch }
+            try await sessionProvider.validate(session)
+            let rows = try await store.conflictRecords(
+                scope: scope, credentialId: session.credentialIdentifier, limit: limit)
+            guard rows.allSatisfy({ $0.state == .conflict }) else {
+                throw MutationQueueFailure.malformedRecord
+            }
+            var records: [MutationQueueRecord] = []
+            for row in rows { records.append(try await codec.rehydrate(row)) }
+            guard records.allSatisfy({ $0.state == .conflict }) else {
+                throw MutationQueueFailure.malformedRecord
+            }
+            try await sessionProvider.validate(session)
             return .records(records)
         } catch { return .failed(Self.classify(error)) }
     }

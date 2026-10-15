@@ -16,6 +16,7 @@ enum MutationQueueFaultPoint: Equatable, Sendable {
         beforeSnapshotConfirmationCommit, beforeSnapshotActivationCommit
     case migration, beforeInsert, afterInsert, beforeCommit, afterCommit, beforeRollback
     case afterSubmitting, afterDispatchOwnership, beforeResultPersistence, duringConflictPersistence
+    case beforeConflictRead
 }
 
 /// One owned connection, accessed exclusively by MutationQueueSQLiteStore's actor.
@@ -947,6 +948,35 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
             [.integer(id), .integer(Int64(remaining))]
         ) { try read($0, scope: scope) }
         return (outstanding + terminal).sorted { $0.order < $1.order }
+    }
+
+    /// Reads only durable conflicts for one Library scope. The existing scope/order index keeps
+    /// this bounded query inside that scope; callers fail closed when a page is full.
+    func conflictRecords(scope: ClientMutationScope, credentialId: String, limit: Int) throws
+        -> [StoredMutationRecord]
+    {
+        try fault?(.beforeConflictRead)
+        guard (1...MutationQueuePolicy.maximumReadBatch).contains(limit) else {
+            throw MutationQueueFailure.invalidLimit
+        }
+        guard let id = try scopeId(scope) else { return [] }
+        let binding = try query(
+            "SELECT credential_id,quarantined FROM scopes WHERE scope_id=?", [.integer(id)]
+        ) { statement in
+            (
+                sqlite3_column_type(statement, 0) == SQLITE_NULL
+                    ? nil : try Self.text(statement, 0),
+                sqlite3_column_int(statement, 1)
+            )
+        }.first
+        guard let binding else { return [] }
+        guard binding.0 == credentialId, binding.1 == 0 else {
+            throw MutationQueueFailure.scopeMismatch
+        }
+        return try query(
+            "SELECT \(Self.columns) FROM mutations WHERE scope_id=? AND state='CONFLICT' ORDER BY enqueue_order LIMIT ?",
+            [.integer(id), .integer(Int64(limit))]
+        ) { try read($0, scope: scope) }
     }
 
     func record(scope: ClientMutationScope, id: String) throws -> StoredMutationRecord? {

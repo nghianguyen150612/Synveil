@@ -400,7 +400,7 @@ public final class AppDependencyContainer {
                         scopeProvider: inboundSyncCoordinator)
                     savedMetadataInspection = SavedMetadataInspectionService(
                         controller: sessionController, credentials: store, database: database,
-                        bridge: bridge, liveRepository: nodeRepository)
+                        queue: queue, bridge: bridge, liveRepository: nodeRepository)
                 }
                 let backgroundPolicy = BGAppRefreshScheduler.shared.policy
                 let backgroundGate = BackgroundSyncRequestGate {

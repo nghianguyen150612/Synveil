@@ -81,6 +81,7 @@ final class SavedMetadataSessionProvider: LocalLibrarySessionProviderProtocol,
 protocol SavedMetadataInspectionProtocol {
     func libraries() async throws -> [Library]
     func browse(library: Library, parent: NodeParentScope) async -> OfflineNodeBrowserResult
+    func conflictReview(library: Library, limit: Int) async -> MetadataMutationConflictReviewResult
 }
 
 /// Reuses P039 projection validation and P041 saved-only selection. It cannot bind a new scope,
@@ -89,12 +90,14 @@ protocol SavedMetadataInspectionProtocol {
 final class SavedMetadataInspectionService: SavedMetadataInspectionProtocol {
     private let provider: SavedMetadataSessionProvider
     private let database: MutationQueueSQLiteStore
+    private let queue: DurableMutationQueue
     private let bridge: any RustBridgeProtocol
     private let browser: OfflineNodeBrowserService
 
     init(
         controller: SessionController, credentials: any SecureCredentialSinkProtocol,
-        database: MutationQueueSQLiteStore, bridge: any RustBridgeProtocol,
+        database: MutationQueueSQLiteStore, queue: DurableMutationQueue,
+        bridge: any RustBridgeProtocol,
         liveRepository: any NodeRepositoryProtocol
     ) {
         let provider = SavedMetadataSessionProvider(
@@ -102,6 +105,7 @@ final class SavedMetadataInspectionService: SavedMetadataInspectionProtocol {
             bridge: bridge, authorizationStore: database)
         self.provider = provider
         self.database = database
+        self.queue = queue
         self.bridge = bridge
         browser = OfflineNodeBrowserService(
             liveRepository: liveRepository,
@@ -129,5 +133,32 @@ final class SavedMetadataInspectionService: SavedMetadataInspectionProtocol {
             try await provider.validate(session)
             return result
         } catch { return .savedUnavailable(.unavailable) }
+    }
+
+    func conflictReview(library: Library, limit: Int) async
+        -> MetadataMutationConflictReviewResult
+    {
+        guard (1...MutationQueuePolicy.maximumReadBatch).contains(limit),
+            library.status != .quarantined
+        else { return .failed(.invalidMetadata) }
+        do {
+            let session = try await provider.begin()
+            let eligible = try await database.savedLibraries(session: session, bridge: bridge)
+            guard eligible.contains(library) else { return .failed(.sessionUnavailable) }
+            let scope = try await session.mutationScope(libraryId: library.id, bridge: bridge)
+            let records: [MutationQueueRecord]
+            switch await queue.savedConflicts(
+                scope: scope, limit: limit, sessionProvider: provider)
+            {
+            case .failed(let failure): return .failed(metadataMutationFailure(for: failure))
+            case .records(let values): records = values
+            }
+            let snapshot = try await MetadataMutationService.projectConflictRecords(
+                records, limit: limit, bridge: bridge)
+            try await provider.validate(session)
+            return .loaded(snapshot)
+        } catch {
+            return .failed(metadataMutationFailure(for: DurableMutationQueue.classify(error)))
+        }
     }
 }
