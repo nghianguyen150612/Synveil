@@ -1,5 +1,28 @@
 import Foundation
 
+/// Background downloads stay unavailable until the authenticated content endpoint has a
+/// redirect contract that the operating system can enforce for the lifetime of the task.
+/// URLSession background tasks follow redirects without notifying the app delegate, so a
+/// per-request redirect rejection callback cannot provide this proof.
+enum BackgroundDownloadCapability: Equatable, Sendable {
+    case unavailable(Reason)
+
+    enum Reason: Equatable, Sendable {
+        case backgroundRedirectsCannotBeRejected
+    }
+
+    static let current: Self = .unavailable(.backgroundRedirectsCannotBeRejected)
+
+    var isAvailable: Bool { false }
+
+    var userMessage: String {
+        switch self {
+        case .unavailable(.backgroundRedirectsCannotBeRejected):
+            "Background downloads are unavailable because iOS follows redirects before Synveil can verify the destination. Use Download File to keep the existing redirect protections."
+        }
+    }
+}
+
 struct DownloadOperationId: Hashable, Sendable {
     let rawValue: String
     init() { rawValue = UUID().uuidString.lowercased() }

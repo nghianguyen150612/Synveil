@@ -114,6 +114,29 @@ The Synveil iOS architecture is designed around six primary goals:
 
 ## 6. Dependency Rules
 
+### 6.1 P051 background file-download security gate
+
+P051 reuses the P043 `FileDownloadCoordinator`, immutable `FileVersion` metadata, shared SQLite
+v9 ownership, staging quota, integrity validation, verified publication, P049 eligibility and
+existing export boundary. The foreground transport rejects every redirect and validates the
+response origin before it writes bytes.
+
+Credential-bearing background file downloads remain disabled until the authenticated content
+endpoint has a server-enforced redirect-free contract that preserves the same origin guarantee.
+Apple documents that background URLSession tasks always follow redirects without calling
+`urlSession(_:task:willPerformHTTPRedirection:newRequest:completionHandler:)`. The app therefore
+cannot reject an unexpected redirect or prove the redirected request's destination before iOS
+sends it. Hash and response validation after completion cannot undo disclosure of an Authorization
+header to a redirected origin. The UI keeps foreground Download available and presents this
+specific reason for the disabled background action. No background download task, durable P051 job,
+or new SQLite schema is created while this capability gate is closed.
+
+This gate does not change P046 upload ownership, P048 metadata refresh, P049 notification policy,
+or P050 BrowserSession boundaries. P046's background upload transport also implements a redirect
+delegate rejection callback; Apple's documented background-session behavior means that callback
+cannot be relied upon for background tasks. P051 does not alter P046, but that limitation must be
+included in any independent review of authenticated background uploads.
+
 ```text
 [ Presentation ] ---> [ Application ] ---> [ Domain ] <--- [ Infrastructure ]
                                               ▲

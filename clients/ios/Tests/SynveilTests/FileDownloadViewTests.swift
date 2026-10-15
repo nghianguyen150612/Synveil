@@ -6,6 +6,23 @@ import XCTest
 
 @MainActor
 final class FileDownloadViewTests: XCTestCase {
+    func testBackgroundDownloadFailsClosedAndForegroundDownloadRemainsAvailable() async throws {
+        let f = try await downloadFixture(self)
+        let model = FileDownloadViewModel(
+            coordinator: f.coordinator, controller: f.queue.controller,
+            library: f.queue.scope.libraryId, node: f.node.id, version: f.version)
+
+        XCTAssertFalse(BackgroundDownloadCapability.current.isAvailable)
+        XCTAssertEqual(
+            BackgroundDownloadCapability.current,
+            .unavailable(.backgroundRedirectsCannotBeRejected))
+        XCTAssertTrue(model.canStart)
+        XCTAssertTrue(
+            BackgroundDownloadCapability.current.userMessage.contains("follows redirects"))
+        let requests = await f.content.requests()
+        XCTAssertTrue(requests.isEmpty)
+    }
+
     func testDownloadControlsRenderAtStandardSize() async throws {
         try await render(size: .large)
     }
