@@ -185,6 +185,13 @@ redirect protections. Do not enable an OS-managed background task until a
 separately reviewed mechanism can establish and maintain the necessary
 deployment security properties for the lifetime of the task.
 
+The current production capability values contain only a typed unavailable
+reason. There is no trusted deployment evidence, endpoint-policy version,
+operation scope, authorization scope, or policy generation to persist because
+no deployment is authorized. The test-only upload mechanics capability is
+injected only into fake-transport XCTest fixtures and is not a production
+configuration path.
+
 The selected remediation is defense in depth at the API process plus an
 operator validation contract, while both native background capabilities stay
 closed. The repository has no controlled proxy configuration or live
@@ -201,11 +208,25 @@ Rejected approaches:
 - Continuing to submit the general DeviceBearer credential in an OS-managed
   request while assuming iOS strips it on cross-origin redirects.
 - Introducing a scoped short-lived transfer ticket now: it would need a new
-  authorized server protocol, exact operation/method/audience/expiry scope,
-  replay and revocation rules, and logout/account-switch behavior. A ticket
-  alone does not protect a `307`/`308` upload body from forwarding, so it would
-  not resolve the P046 content-disclosure risk without a separate body-safe
-  request design and independent review.
+  authorized server protocol. At minimum, a later review must settle each
+  property below; none has been implemented or accepted as a deployment proof:
+
+  | Property | Required binding or behavior |
+  |---|---|
+  | Download scope | Exact account, Device, Library, immutable FileVersion, expected length/digest, and GET content route |
+  | Upload scope | Exact account, Device, Library, upload-session/operation, PATCH method, allowed chunk range, and expected payload evidence |
+  | Audience | Exact HTTPS origin and route; reject use at any other server or port |
+  | Expiration | Short enough to limit exposure but long enough for iOS-controlled scheduling and relaunch delays; expired tasks fail closed |
+  | Replay and concurrency | Explicit single-use/idempotent semantics that do not let parallel or retried tasks advance a different offset or version |
+  | Revocation and logout | Server-side withdrawal on Device credential revocation, account logout, and account/session replacement; late callbacks remain fenced |
+  | Resume | A relaunch must revalidate the same immutable operation; no new version, upload session, or offset may be inferred |
+  | Delivery and storage | Header only, never URL/query/filename; redact from logs and avoid local persistence beyond the OS task's required lifetime |
+  | Issuance | Server checks the current authenticated owner, Device, Library, permission, and exact operation before issuing it |
+
+  Even if those controls reduced the impact of a leaked general DeviceBearer,
+  a transfer ticket alone would not protect a `307`/`308` PATCH body from
+  forwarding. It therefore does not resolve the P046 content-disclosure risk
+  without a separate body-safe request design and independent review.
 
 No transfer credential endpoint or capability assertion was added. This keeps
 the existing foreground contracts intact and leaves the next safe step as

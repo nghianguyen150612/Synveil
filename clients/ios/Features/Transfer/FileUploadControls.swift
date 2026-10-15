@@ -246,7 +246,8 @@ struct FileUploadControls: View {
                 Button("Background Transfer Unavailable") {}
                     .disabled(true)
                     .accessibilityHint(BackgroundUploadCapability.current.userMessage)
-                    .accessibilityIdentifier("synveil.upload.background.enable.\(record.id.rawValue)")
+                    .accessibilityIdentifier(
+                        "synveil.upload.background.enable.\(record.id.rawValue)")
                 Text(BackgroundUploadCapability.current.userMessage)
                     .font(.footnote)
                     .fixedSize(horizontal: false, vertical: true)

@@ -169,10 +169,10 @@ final class BackgroundUploadCoordinator {
         }
     }
 
-    /// Cold launch performs inventory only. When background transfers are unavailable it withdraws
-    /// persisted continuation authority and cancels tasks without a network status read. Otherwise
-    /// follow-up is limited to persisted jobs; it never creates a session, completes a file, or
-    /// resumes a paused job.
+    /// Cold launch performs inventory only. When background transfers are unavailable it attempts
+    /// to withdraw persisted continuation authority, then cancels tasks without a network status
+    /// read. Otherwise follow-up is limited to persisted jobs; it never creates a session, completes
+    /// a file, or resumes a paused job.
     func restore() async {
         guard !recovering else { return }
         recovering = true
@@ -361,9 +361,11 @@ final class BackgroundUploadCoordinator {
         } catch { return false }
     }
 
-    /// Stops legacy jobs conservatively. Durable authorization is withdrawn before cancellation;
-    /// cancellation does not prove that no PATCH bytes reached the server. Existing intent, chunk,
-    /// task identity, response evidence and server offset are retained for explicit reconciliation.
+    /// Stops legacy jobs conservatively. Durable authorization withdrawal is attempted before
+    /// cancellation; if its write fails, the in-process capability stays closed and cancellation is
+    /// still attempted. Cancellation does not prove that no PATCH bytes reached the server. Existing
+    /// intent, chunk, task identity, response evidence and server offset are retained for explicit
+    /// reconciliation.
     private func withdrawBackgroundAuthorizationAndCancel(tasks: [BackgroundSystemTask]) async {
         if let jobs = try? await database.backgroundInventory() {
             for task in tasks {
