@@ -7,7 +7,8 @@
   ancestor. Starting checkout was clean.
 - Feature branch: `ios/p051-background-download-architecture`.
 - Implementation source checkpoint: `ab65d6422b64f8e9af65002db9d2e0312105f321`.
-- Current PR head at checkpoint: `6671871ae07dc0010129aec76fc41ae08e245b4a`.
+- Current PR head before this evidence-only manifest update:
+  `2e75fb6a584031fe1cac57897b83b6803d450e21`.
 - The final feature SHA is reported in the completion report; a commit cannot contain its own SHA.
 - Final feature SHA: recorded in the completion report and exact PR head; no merge is claimed.
 - PR: [#134](https://github.com/nghianguyen150612/Synveil/pull/134), open against `ios-app`, not
@@ -82,8 +83,11 @@ authorization evidence, P049 notification state and P050 conflict evidence untou
   authenticated fixture still permits the foreground action without submitting a request.
 - Existing small-screen and largest Dynamic Type rendering coverage remains enabled.
 - No OS scheduling simulator test is claimed because no OS download task is created.
-- Native XCTest inventory and result: pending exact-head Apple CI; this Linux environment does not
-  provide Xcode or an iOS Simulator.
+- Native XCTest inventory: one new fail-closed capability/foreground-independence test in
+  `FileDownloadViewTests`; existing test suites remain enabled.
+- Exact PR head `2e75fb6a584031fe1cac57897b83b6803d450e21` iOS Simulator result: **1,918 passed,
+  2 skipped, 0 failed, 1,920 total** on iPhone 17 Pro / iOS 26.5 Simulator. The new capability test
+  passed. This is Simulator evidence, not physical-device qualification.
 - Portable support tests: **105 passed, 0 failed**.
 - `python3 clients/ios/Support/validate_ios_sources.py`: **PASS**.
 - `bash scripts/validate-docs.sh`: **PASS**.
@@ -112,12 +116,18 @@ those systems and is not rewritten by P051.
 ## Validation, evidence and next safe step
 
 - Starting ancestry: verified as above.
-- Native workflow runs for the checkpoint head are queued; they are not final-head evidence:
-  [iOS Static Validation](https://github.com/nghianguyen150612/Synveil/actions/runs/38670920269),
-  [iOS Build](https://github.com/nghianguyen150612/Synveil/actions/runs/38670920322),
-  [iOS Simulator Tests](https://github.com/nghianguyen150612/Synveil/actions/runs/38670920302),
-  [iOS Rust Apple Build](https://github.com/nghianguyen150612/Synveil/actions/runs/38670920406).
-  No result is claimed yet.
+- Four exact-source-head (`2e75fb6a584031fe1cac57897b83b6803d450e21`) required iOS gates passed:
+  [iOS Static Validation](https://github.com/nghianguyen150612/Synveil/actions/runs/38670995779),
+  [iOS Build](https://github.com/nghianguyen150612/Synveil/actions/runs/38670996071),
+  [iOS Simulator Tests](https://github.com/nghianguyen150612/Synveil/actions/runs/38670995976),
+  [iOS Rust Apple Build](https://github.com/nghianguyen150612/Synveil/actions/runs/38670995905).
+- The manifest-only evidence update changes the branch SHA; rerun the four gates on that resulting
+  final PR head before treating them as exact-final-head validation.
+- Unrelated workflow failures on the PR run: [Linux AppImage](https://github.com/nghianguyen150612/Synveil/actions/runs/38670996054)
+  rejected an embedded `/home/` path in `synveil-desktop`; [Rust CI](https://github.com/nghianguyen150612/Synveil/actions/runs/38670995954)
+  failed workspace/desktop, Clippy and dependency-policy jobs; [PostgreSQL 17 scheduled
+  maintenance](https://github.com/nghianguyen150612/Synveil/actions/runs/38670995846) failed its
+  Prompt 64–65 scheduler-tick suite. These workflows do not validate P051 iOS code.
 - Physical device evidence: `NOT_AVAILABLE` in this environment. No signed device build, iPhone,
   device model, iOS version or runtime transfer evidence is available.
 - User force-quit, task scheduling delay, protected-data behavior and actual iOS redirect request
@@ -131,7 +141,7 @@ those systems and is not rewritten by P051.
 ## Final integration record
 
 - Feature branch: `ios/p051-background-download-architecture`.
-- Final feature SHA: recorded in the completion report and exact PR head.
+- Final feature SHA: recorded in the completion report and exact PR head after this evidence update.
 - PR #134 is open; review is pending.
 - Merge SHA: none.
 - Verified final `ios-app` SHA: not available.
