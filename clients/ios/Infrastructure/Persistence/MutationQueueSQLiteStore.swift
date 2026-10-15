@@ -955,7 +955,6 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
     func conflictRecords(scope: ClientMutationScope, credentialId: String, limit: Int) throws
         -> [StoredMutationRecord]
     {
-        try fault?(.beforeConflictRead)
         guard (1...MutationQueuePolicy.maximumReadBatch).contains(limit) else {
             throw MutationQueueFailure.invalidLimit
         }
@@ -973,6 +972,7 @@ actor MutationQueueSQLiteStore: MutationQueueStorageProtocol, InboundSyncStorage
         guard binding.0 == credentialId, binding.1 == 0 else {
             throw MutationQueueFailure.scopeMismatch
         }
+        try fault?(.beforeConflictRead)
         return try query(
             "SELECT \(Self.columns) FROM mutations WHERE scope_id=? AND state='CONFLICT' ORDER BY enqueue_order LIMIT ?",
             [.integer(id), .integer(Int64(limit))]

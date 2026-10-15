@@ -152,6 +152,38 @@ final class SavedMetadataInspectionTests: XCTestCase {
         else { return XCTFail("A replaced credential must not read the former account") }
     }
 
+    func testCredentialReplacementDuringConflictStorageReadDiscardsTheResult() async throws {
+        let fault = QueueFaultInjector()
+        let f = try await queueFixture(self, fault: fault)
+        let savedLibrary = try await library(f)
+        let mutation = try await queuePrepared(id: 914, scope: f.scope)
+        let queued = try await queueEnqueued(f, mutation: mutation)
+        let lease = try await f.queue.acquireAttempt(
+            scope: f.scope, mutationId: queued.mutation.id)
+        try await f.queue.finish(lease, result: queueConflict(mutation))
+        try await projectionCache(f).rememberLibrary(savedLibrary, scope: f.scope)
+        let controller = await pending(f)
+        let service = SavedMetadataInspectionService(
+            controller: controller, credentials: f.credentials, database: f.database,
+            queue: f.queue, bridge: QueueValidator(), liveRepository: InspectionLiveReader())
+        let gate = QueueStorageReadGate()
+        fault.arm(.beforeConflictRead, action: { gate.suspend() })
+        let read = Task {
+            await service.conflictReview(library: savedLibrary, limit: 100)
+        }
+
+        await gate.waitUntilEntered()
+        await f.credentials.replace(try queueSession(f.scope, credential: 915))
+        gate.release()
+
+        guard case .failed = await read.value else {
+            return XCTFail("The stale credential must not publish a completed conflict read")
+        }
+        let stillConflict = try await f.database.record(
+            scope: f.scope, id: mutation.id.rawValue)
+        XCTAssertEqual(stillConflict?.state, .conflict)
+    }
+
     func testOnlyTransientVerificationFailuresEnableSavedInspection() async throws {
         let f = try await queueFixture(self)
         for result in [

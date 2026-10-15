@@ -1,3 +1,4 @@
+import Dispatch
 import Foundation
 import SQLite3
 import XCTest
@@ -231,6 +232,25 @@ actor QueueGate {
     func release() {
         suspended?.resume()
         suspended = nil
+    }
+}
+
+/// Deterministically suspends a SQLite fault-injection callback without a timed sleep.
+final class QueueStorageReadGate: @unchecked Sendable {
+    private let entered = DispatchSemaphore(value: 0)
+    private let continuation = DispatchSemaphore(value: 0)
+
+    func suspend() {
+        entered.signal()
+        continuation.wait()
+    }
+
+    func waitUntilEntered() async {
+        await Task.detached { _ = self.entered.wait() }.value
+    }
+
+    func release() {
+        continuation.signal()
     }
 }
 
