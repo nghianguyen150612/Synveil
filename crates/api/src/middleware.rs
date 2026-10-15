@@ -232,7 +232,7 @@ mod tests {
             let bytes = axum::body::to_bytes(response.into_body(), 16 * 1024)
                 .await
                 .expect("bounded error body");
-            let body = String::from_utf8(bytes).expect("API error is UTF-8");
+            let body = String::from_utf8(bytes.to_vec()).expect("API error is UTF-8");
             assert!(!body.contains("SYNTHETIC-UPLOAD-SENTINEL"));
             assert!(!body.contains(location));
             let value: serde_json::Value =
