@@ -47,7 +47,7 @@ enum MutationConflictPresentation {
         guard let reason else {
             return "The server did not provide a supported reason for this conflict."
         }
-        switch reason {
+        return switch reason {
         case .revisionMismatch:
             "The remote item changed after the local operation was prepared."
         case .nodeStateChanged:
