@@ -196,7 +196,11 @@ mod tests {
                 Method::PATCH,
                 "https://storage.invalid/object/opaque",
             ),
-            (StatusCode::NOT_MODIFIED, Method::PATCH, "https://api.example/upload"),
+            (
+                StatusCode::NOT_MODIFIED,
+                Method::PATCH,
+                "https://api.example/upload",
+            ),
         ];
         for (status, method, location) in fixtures {
             let app = Router::new()
