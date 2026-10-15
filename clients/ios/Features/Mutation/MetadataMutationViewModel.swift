@@ -35,33 +35,32 @@ enum MutationQueueStatePresentation {
 }
 
 enum MutationConflictPresentation {
+    static let reviewGuidance =
+        "Review this conflict through the existing Synveil web interface. Browser sign-in is separate from this iOS device session. iOS keeps the original operation and does not choose a winner, retry it, or resolve it."
+
     static func message(for reason: ClientMutationConflictReason?) -> String {
+        let code = reason.map { "\($0.rawValue): " } ?? ""
+        return "\(code)\(explanation(for: reason)) \(reviewGuidance)"
+    }
+
+    static func explanation(for reason: ClientMutationConflictReason?) -> String {
         guard let reason else {
-            return
-                "The server kept its current metadata. Review the Library before preparing a new change."
+            return "The server did not provide a supported reason for this conflict."
         }
-        let explanation: String
-        switch reason {
+        return switch reason {
         case .revisionMismatch:
-            explanation =
-                "The item revision changed. Refresh its folder before preparing a new change."
+            "The remote item changed after the local operation was prepared."
         case .nodeStateChanged:
-            explanation =
-                "The item state changed on the server. Refresh the Library before preparing another change."
+            "The item state no longer matches the state required by the local operation."
         case .parentChanged:
-            explanation =
-                "The item’s parent changed on the server. Refresh its folder before preparing a new change."
+            "The original parent relationship no longer matches the current server state."
         case .nameOccupied:
-            explanation =
-                "That name is already in use. Choose a new name only after reviewing the current folder."
+            "Another resource already uses the requested name."
         case .destinationChanged:
-            explanation =
-                "The destination changed on the server. Refresh the destination before preparing another move."
+            "The destination no longer matches the state required by the local operation."
         case .resourcePurged:
-            explanation =
-                "The server reports that this resource was purged. No automatic resolution is available."
+            "The server reports that the resource was purged or is unavailable."
         }
-        return "\(reason.rawValue): \(explanation)"
     }
 }
 
@@ -285,8 +284,7 @@ final class MetadataMutationViewModel {
         case .conflict:
             MetadataMutationNotice(
                 title: "Conflict — review needed",
-                message:
-                    "The server kept its current metadata. Review the conflict before preparing another change.",
+                message: MutationConflictPresentation.reviewGuidance,
                 symbol: "exclamationmark.bubble", isError: true)
         case .outcomeUnknown:
             MetadataMutationNotice(
@@ -378,6 +376,7 @@ enum MutationActivityViewState: Equatable {
 @MainActor
 final class MutationActivityViewModel {
     private(set) var state: MutationActivityViewState = .idle
+    private(set) var conflictReviewState: MetadataMutationConflictReviewViewState = .idle
     private(set) var availability: MetadataMutationAvailability = .unavailable(.queueUnavailable)
     private(set) var isSending = false
     private(set) var isPreparingChanges = false
@@ -417,8 +416,16 @@ final class MutationActivityViewModel {
         generation &+= 1
         let currentGeneration = generation
         state = .loading
+        conflictReviewState = .loading
         availability = await feature.availability(in: library)
         guard isCurrent(currentGeneration) else { return }
+        let conflictResult = await feature.conflictReview(
+            in: library, limit: MutationQueuePolicy.maximumReadBatch)
+        guard isCurrent(currentGeneration) else { return }
+        switch conflictResult {
+        case .loaded(let snapshot): conflictReviewState = .loaded(snapshot)
+        case .failed(let failure): conflictReviewState = .failed(failure)
+        }
         switch await feature.activity(in: library, limit: MutationQueuePolicy.maximumReadBatch) {
         case .loaded(let values):
             guard isCurrent(currentGeneration) else { return }
@@ -569,6 +576,7 @@ final class MutationActivityViewModel {
         invalidated = true
         generation &+= 1
         state = .invalidated
+        conflictReviewState = .invalidated
         notice = nil
         restoreReadyIDs.removeAll()
         isSending = false
@@ -634,5 +642,91 @@ final class MutationActivityViewModel {
             symbol: result.applied > 0 ? "checkmark.circle" : "tray.full",
             isError: result.stop != nil || result.conflicts > 0 || result.unknown > 0
                 || result.permanentRejections > 0 || result.rebaselineBlocked > 0)
+    }
+}
+
+enum MetadataMutationConflictReviewViewState: Equatable {
+    case idle
+    case loading
+    case loaded(MetadataMutationConflictReviewSnapshot)
+    case failed(MetadataMutationFailure)
+    case invalidated
+}
+
+/// Holds only a bounded safe projection. Session changes discard the protected snapshot before
+/// any late SQLite completion can publish into a newer authenticated scope.
+@Observable
+@MainActor
+final class MetadataMutationConflictReviewViewModel {
+    private(set) var state: MetadataMutationConflictReviewViewState = .idle
+
+    private let library: MetadataMutationLibraryContext
+    private let feature: (any MetadataMutationFeatureProtocol)?
+    private let sessionController: SessionController
+    private let sessionRevision: UInt64
+    @ObservationIgnored private var generation: UInt64 = 0
+    @ObservationIgnored private var invalidated = false
+
+    init(
+        library: MetadataMutationLibraryContext,
+        feature: (any MetadataMutationFeatureProtocol)?,
+        sessionController: SessionController
+    ) {
+        self.library = library
+        self.feature = feature
+        self.sessionController = sessionController
+        sessionRevision = sessionController.lifecycleRevision
+    }
+
+    func load() async {
+        guard validateSession(), state != .loading else { return }
+        generation &+= 1
+        let currentGeneration = generation
+        state = .loading
+        guard let feature else {
+            guard isCurrent(currentGeneration) else { return }
+            state = .failed(.queueUnavailable)
+            return
+        }
+        let result = await feature.conflictReview(
+            in: library, limit: MutationQueuePolicy.maximumReadBatch)
+        guard isCurrent(currentGeneration) else { return }
+        switch result {
+        case .loaded(let snapshot): state = .loaded(snapshot)
+        case .failed(let failure): state = .failed(failure)
+        }
+    }
+
+    func refresh() async {
+        await load()
+    }
+
+    func sessionDidChange() {
+        guard !isCurrentSession else { return }
+        invalidate()
+    }
+
+    func invalidate() {
+        guard !invalidated else { return }
+        invalidated = true
+        generation &+= 1
+        state = .invalidated
+    }
+
+    private var isCurrentSession: Bool {
+        !invalidated && sessionController.state == .authenticated
+            && sessionController.lifecycleRevision == sessionRevision
+    }
+
+    private func validateSession() -> Bool {
+        guard isCurrentSession else {
+            invalidate()
+            return false
+        }
+        return true
+    }
+
+    private func isCurrent(_ currentGeneration: UInt64) -> Bool {
+        currentGeneration == generation && validateSession()
     }
 }

@@ -64,7 +64,7 @@ final class SavedMetadataInspectionTests: XCTestCase {
         let live = InspectionLiveReader()
         let service = SavedMetadataInspectionService(
             controller: controller, credentials: f.credentials,
-            database: reopened, bridge: QueueValidator(), liveRepository: live)
+            database: reopened, queue: f.queue, bridge: QueueValidator(), liveRepository: live)
         let before = await f.transport.requests()
         XCTAssertEqual(controller.state, .restorationVerificationPending)
         let saved = try await service.libraries()
@@ -88,6 +88,100 @@ final class SavedMetadataInspectionTests: XCTestCase {
             ).begin()
             XCTFail("Pending session cannot authorize network work")
         } catch { XCTAssertEqual(error as? LibraryFailure, .unauthenticated) }
+    }
+
+    func testOfflineConflictReviewUsesP047ScopeWithoutNetworkOrWrites() async throws {
+        let f = try await queueFixture(self)
+        let savedLibrary = try await library(f)
+        let mutation = try await queuePrepared(id: 911, scope: f.scope)
+        let queued = try await queueEnqueued(f, mutation: mutation)
+        let lease = try await f.queue.acquireAttempt(
+            scope: f.scope, mutationId: queued.mutation.id)
+        try await f.queue.finish(lease, result: queueConflict(mutation))
+        try await projectionCache(f).rememberLibrary(savedLibrary, scope: f.scope)
+        let beforeRequests = await f.transport.requests()
+        guard
+            case .record(let before) = await f.queue.get(
+                scope: f.scope, mutationId: mutation.id)
+        else { return XCTFail("Expected durable conflict evidence") }
+
+        let controller = await pending(f)
+        let service = SavedMetadataInspectionService(
+            controller: controller, credentials: f.credentials, database: f.database,
+            queue: f.queue, bridge: QueueValidator(), liveRepository: InspectionLiveReader())
+        XCTAssertEqual(controller.state, .restorationVerificationPending)
+
+        guard
+            case .loaded(let snapshot) = await service.conflictReview(
+                library: savedLibrary, limit: 100)
+        else { return XCTFail("Expected P047-authorized saved conflict inspection") }
+
+        XCTAssertEqual(snapshot.knownConflictCount, 1)
+        XCTAssertTrue(snapshot.isComplete)
+        XCTAssertEqual(snapshot.provenance, .savedOnThisDevice)
+        XCTAssertEqual(snapshot.items.first?.id, mutation.id.rawValue)
+        XCTAssertEqual(snapshot.items.first?.state, .conflict)
+        XCTAssertEqual(snapshot.items.first?.conflictReason, .revisionMismatch)
+        let afterRequests = await f.transport.requests()
+        XCTAssertEqual(afterRequests, beforeRequests)
+        guard
+            case .record(let after) = await f.queue.get(
+                scope: f.scope, mutationId: mutation.id)
+        else { return XCTFail("Saved review removed durable conflict evidence") }
+        XCTAssertEqual(after, before)
+    }
+
+    func testOfflineConflictReviewDoesNotExposeFormerAccountAfterCredentialReplacement()
+        async throws
+    {
+        let f = try await queueFixture(self)
+        let savedLibrary = try await library(f)
+        let mutation = try await queuePrepared(id: 912, scope: f.scope)
+        let queued = try await queueEnqueued(f, mutation: mutation)
+        let lease = try await f.queue.acquireAttempt(
+            scope: f.scope, mutationId: queued.mutation.id)
+        try await f.queue.finish(lease, result: queueConflict(mutation))
+        try await projectionCache(f).rememberLibrary(savedLibrary, scope: f.scope)
+        let controller = await pending(f)
+        let service = SavedMetadataInspectionService(
+            controller: controller, credentials: f.credentials, database: f.database,
+            queue: f.queue, bridge: QueueValidator(), liveRepository: InspectionLiveReader())
+        await f.credentials.replace(try queueSession(f.scope, credential: 913))
+
+        guard case .failed = await service.conflictReview(library: savedLibrary, limit: 100)
+        else { return XCTFail("A replaced credential must not read the former account") }
+    }
+
+    func testCredentialReplacementDuringConflictStorageReadDiscardsTheResult() async throws {
+        let fault = QueueFaultInjector()
+        let f = try await queueFixture(self, fault: fault)
+        let savedLibrary = try await library(f)
+        let mutation = try await queuePrepared(id: 914, scope: f.scope)
+        let queued = try await queueEnqueued(f, mutation: mutation)
+        let lease = try await f.queue.acquireAttempt(
+            scope: f.scope, mutationId: queued.mutation.id)
+        try await f.queue.finish(lease, result: queueConflict(mutation))
+        try await projectionCache(f).rememberLibrary(savedLibrary, scope: f.scope)
+        let controller = await pending(f)
+        let service = SavedMetadataInspectionService(
+            controller: controller, credentials: f.credentials, database: f.database,
+            queue: f.queue, bridge: QueueValidator(), liveRepository: InspectionLiveReader())
+        let gate = QueueStorageReadGate()
+        fault.arm(.beforeConflictRead, action: { gate.suspend() })
+        let read = Task {
+            await service.conflictReview(library: savedLibrary, limit: 100)
+        }
+
+        await gate.waitUntilEntered()
+        await f.credentials.replace(try queueSession(f.scope, credential: 915))
+        gate.release()
+
+        guard case .failed = await read.value else {
+            return XCTFail("The stale credential must not publish a completed conflict read")
+        }
+        let stillConflict = try await f.database.record(
+            scope: f.scope, id: mutation.id.rawValue)
+        XCTAssertEqual(stillConflict?.state, .conflict)
     }
 
     func testOnlyTransientVerificationFailuresEnableSavedInspection() async throws {
@@ -183,7 +277,8 @@ final class SavedMetadataInspectionTests: XCTestCase {
         let controller = await pending(f)
         let service = SavedMetadataInspectionService(
             controller: controller, credentials: f.credentials,
-            database: f.database, bridge: QueueValidator(), liveRepository: InspectionLiveReader())
+            database: f.database, queue: f.queue, bridge: QueueValidator(),
+            liveRepository: InspectionLiveReader())
         let saved = try await service.libraries()
         XCTAssertTrue(saved.isEmpty)
     }
@@ -217,7 +312,8 @@ final class SavedMetadataInspectionTests: XCTestCase {
         let offline = await pending(f)
         let service = SavedMetadataInspectionService(
             controller: offline, credentials: f.credentials,
-            database: reopened, bridge: QueueValidator(), liveRepository: InspectionLiveReader())
+            database: reopened, queue: f.queue, bridge: QueueValidator(),
+            liveRepository: InspectionLiveReader())
         XCTAssertTrue(offline.savedAuthorizationEvidenceUnresolved)
         do {
             _ = try await service.libraries()
@@ -245,7 +341,8 @@ final class SavedMetadataInspectionTests: XCTestCase {
         let controller = await pending(f)
         let service = SavedMetadataInspectionService(
             controller: controller, credentials: f.credentials,
-            database: reopened, bridge: QueueValidator(), liveRepository: InspectionLiveReader())
+            database: reopened, queue: f.queue, bridge: QueueValidator(),
+            liveRepository: InspectionLiveReader())
         let saved = try await service.libraries()
         XCTAssertTrue(saved.isEmpty)
     }
@@ -275,7 +372,8 @@ final class SavedMetadataInspectionTests: XCTestCase {
         let controller = await pending(f)
         let service = SavedMetadataInspectionService(
             controller: controller, credentials: f.credentials,
-            database: f.database, bridge: QueueValidator(), liveRepository: InspectionLiveReader())
+            database: f.database, queue: f.queue, bridge: QueueValidator(),
+            liveRepository: InspectionLiveReader())
         let saved = try await service.libraries()
         XCTAssertEqual(saved, [library])
         let state = try await f.database.cachedProjectionState(
@@ -318,7 +416,7 @@ final class SavedMetadataInspectionTests: XCTestCase {
         let live = InspectionLiveReader()
         let service = SavedMetadataInspectionService(
             controller: f.controller, credentials: f.credentials,
-            database: f.database, bridge: QueueValidator(), liveRepository: live)
+            database: f.database, queue: f.queue, bridge: QueueValidator(), liveRepository: live)
         let before = await f.transport.requests()
         let model = SavedMetadataInspectionViewModel(service: service, controller: f.controller)
         await model.load()
@@ -357,7 +455,8 @@ final class SavedMetadataInspectionTests: XCTestCase {
         let controller = await pending(f)
         let service = SavedMetadataInspectionService(
             controller: controller, credentials: f.credentials,
-            database: f.database, bridge: QueueValidator(), liveRepository: InspectionLiveReader())
+            database: f.database, queue: f.queue, bridge: QueueValidator(),
+            liveRepository: InspectionLiveReader())
         let model = SavedMetadataInspectionViewModel(service: service, controller: controller)
         await model.load()
         XCTAssertTrue(model.libraries.isEmpty)

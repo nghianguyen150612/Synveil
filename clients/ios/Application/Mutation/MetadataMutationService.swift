@@ -81,6 +81,35 @@ enum MetadataMutationActivityResult: Equatable, Sendable {
     case failed(MetadataMutationFailure)
 }
 
+struct MetadataMutationConflictReviewItem: Equatable, Sendable, Identifiable {
+    let id: String
+    let kind: ClientMutationKind
+    let state: MutationQueueState
+    let enqueuedAt: Date
+    let lastAttemptAt: Date?
+    let conflictReason: ClientMutationConflictReason?
+}
+
+enum MetadataMutationConflictProvenance: Equatable, Sendable {
+    case savedOnThisDevice
+}
+
+struct MetadataMutationConflictReviewSnapshot: Equatable, Sendable {
+    let items: [MetadataMutationConflictReviewItem]
+    /// False whenever the bounded query filled its page. It deliberately does not infer that no
+    /// additional rows exist when the page is full, even if the exact total happens to match.
+    let isComplete: Bool
+    let provenance: MetadataMutationConflictProvenance
+    let observedAt: Date
+
+    var knownConflictCount: Int { items.count }
+}
+
+enum MetadataMutationConflictReviewResult: Equatable, Sendable {
+    case loaded(MetadataMutationConflictReviewSnapshot)
+    case failed(MetadataMutationFailure)
+}
+
 struct MetadataMutationDrainPresentation: Equatable, Sendable {
     let attempted: Int
     let applied: Int
@@ -118,6 +147,8 @@ protocol MetadataMutationFeatureProtocol {
     ) async -> MetadataMutationEnqueueResult
     func activity(in library: MetadataMutationLibraryContext, limit: Int) async
         -> MetadataMutationActivityResult
+    func conflictReview(in library: MetadataMutationLibraryContext, limit: Int) async
+        -> MetadataMutationConflictReviewResult
     func sendPendingChanges(in library: MetadataMutationLibraryContext) async
         -> MetadataMutationDrainPresentation
     func checkRestore(
@@ -370,6 +401,68 @@ final class MetadataMutationService: MetadataMutationFeatureProtocol {
             }
             return .loaded(items)
         } catch { return .failed(map(DurableMutationQueue.classify(error))) }
+    }
+
+    func conflictReview(in library: MetadataMutationLibraryContext, limit: Int) async
+        -> MetadataMutationConflictReviewResult
+    {
+        guard
+            library.status == .active || library.status == .readOnly
+                || library.status == .quarantined
+        else { return .failed(.invalidMetadata) }
+        guard (1...MutationQueuePolicy.maximumReadBatch).contains(limit) else {
+            return .failed(.queueUnavailable)
+        }
+        do {
+            let scope = try await makeScope(in: library)
+            let records: [MutationQueueRecord]
+            switch await queue.conflicts(scope: scope, limit: limit) {
+            case .failed(let failure): return .failed(map(failure))
+            case .records(let values): records = values
+            }
+
+            return .loaded(
+                try await Self.projectConflictRecords(
+                    records, limit: limit, bridge: bridge))
+        } catch { return .failed(map(DurableMutationQueue.classify(error))) }
+    }
+
+    /// Shared strict projection for authenticated queue review and P047-authorized saved review.
+    /// No mutation payload, request bytes, response body, or signed evidence escapes this method.
+    static func projectConflictRecords(
+        _ records: [MutationQueueRecord], limit: Int, bridge: any RustBridgeProtocol
+    ) async throws -> MetadataMutationConflictReviewSnapshot {
+        guard (1...MutationQueuePolicy.maximumReadBatch).contains(limit) else {
+            throw MutationQueueFailure.invalidLimit
+        }
+        guard records.count <= limit else { throw MutationQueueFailure.malformedRecord }
+        var items: [MetadataMutationConflictReviewItem] = []
+        let decoder = ClientMutationResponseDecoder(bridge: bridge)
+        for record in records {
+            guard record.state == .conflict,
+                let evidence = record.evidence,
+                evidence.category == .conflict,
+                let body = evidence.responseBody,
+                let status = evidence.responseStatus
+            else { throw MutationQueueFailure.malformedRecord }
+            let result = try await decoder.decode(
+                HTTPTransportResponse(
+                    statusCode: status, headers: ["Content-Type": "application/json"],
+                    body: body),
+                for: record.mutation)
+            guard case .conflict(let conflict, _) = result else {
+                throw MutationQueueFailure.malformedRecord
+            }
+            items.append(
+                MetadataMutationConflictReviewItem(
+                    id: record.mutation.id.rawValue, kind: record.mutation.kind,
+                    state: record.state, enqueuedAt: record.createdAt,
+                    lastAttemptAt: record.attempt?.startedAt,
+                    conflictReason: conflict?.reason))
+        }
+        return MetadataMutationConflictReviewSnapshot(
+            items: items, isComplete: items.count < limit,
+            provenance: .savedOnThisDevice, observedAt: Date())
     }
 
     func sendPendingChanges(in library: MetadataMutationLibraryContext) async
@@ -728,30 +821,7 @@ final class MetadataMutationService: MetadataMutationFeatureProtocol {
     }
 
     private func map(_ failure: MutationQueueFailure) -> MetadataMutationFailure {
-        switch failure {
-        case .syncBaseUnavailable: .syncBaseRequired
-        case .invalidCheckpoint, .reconciliationRequired: .recoveryRequired
-        case .unauthenticated, .staleSession, .committedButSessionChanged: .sessionUnavailable
-        case .commitAcknowledgementLost: .commitAcknowledgementUncertain
-        case .recoveryLimit: .retryLimitReached
-        case .invalidOperation, .malformedRecord, .scopeMismatch: .invalidMetadata
-        case .unavailable, .databaseOpen, .busy, .diskFull, .corrupt, .io,
-            .unsupportedSchema, .capacity, .dependencyConflict:
-            .queueUnavailable
-        case .transport(let cause):
-            switch cause {
-            case .offline, .dnsFailure, .timeout: .offline
-            case .authenticationRejected, .deviceRevoked, .unauthenticated,
-                .credentialUnavailable, .invalidCredential, .originMismatch:
-                .authorizationRequired
-            case .serverUnavailable: .serverUnavailable
-            default: .transportUnavailable
-            }
-        case .cancelled: .sessionUnavailable
-        case .notFound, .duplicateIdentity, .invalidTransition, .ownershipRequired:
-            .operationUnavailable
-        case .invalidLimit, .concurrentExecution: .duplicateSubmission
-        }
+        metadataMutationFailure(for: failure)
     }
 
     private func map(_ failure: ClientMutationFailure) -> MetadataMutationFailure {
@@ -762,5 +832,32 @@ final class MetadataMutationService: MetadataMutationFeatureProtocol {
         case .cancelled: .sessionUnavailable
         default: .transportUnavailable
         }
+    }
+}
+
+func metadataMutationFailure(for failure: MutationQueueFailure) -> MetadataMutationFailure {
+    switch failure {
+    case .syncBaseUnavailable: .syncBaseRequired
+    case .invalidCheckpoint, .reconciliationRequired: .recoveryRequired
+    case .unauthenticated, .staleSession, .committedButSessionChanged: .sessionUnavailable
+    case .commitAcknowledgementLost: .commitAcknowledgementUncertain
+    case .recoveryLimit: .retryLimitReached
+    case .invalidOperation, .malformedRecord, .scopeMismatch: .invalidMetadata
+    case .unavailable, .databaseOpen, .busy, .diskFull, .corrupt, .io,
+        .unsupportedSchema, .capacity, .dependencyConflict:
+        .queueUnavailable
+    case .transport(let cause):
+        switch cause {
+        case .offline, .dnsFailure, .timeout: .offline
+        case .authenticationRejected, .deviceRevoked, .unauthenticated,
+            .credentialUnavailable, .invalidCredential, .originMismatch:
+            .authorizationRequired
+        case .serverUnavailable: .serverUnavailable
+        default: .transportUnavailable
+        }
+    case .cancelled: .sessionUnavailable
+    case .notFound, .duplicateIdentity, .invalidTransition, .ownershipRequired:
+        .operationUnavailable
+    case .invalidLimit, .concurrentExecution: .duplicateSubmission
     }
 }

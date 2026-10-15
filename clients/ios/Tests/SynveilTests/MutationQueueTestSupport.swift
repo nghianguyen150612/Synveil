@@ -1,3 +1,4 @@
+import Dispatch
 import Foundation
 import SQLite3
 import XCTest
@@ -234,6 +235,25 @@ actor QueueGate {
     }
 }
 
+/// Deterministically suspends a SQLite fault-injection callback without a timed sleep.
+final class QueueStorageReadGate: @unchecked Sendable {
+    private let entered = DispatchSemaphore(value: 0)
+    private let continuation = DispatchSemaphore(value: 0)
+
+    func suspend() {
+        entered.signal()
+        continuation.wait()
+    }
+
+    func waitUntilEntered() async {
+        await Task.detached { _ = self.entered.wait() }.value
+    }
+
+    func release() {
+        continuation.signal()
+    }
+}
+
 actor QueueCredentialStore: SecureCredentialSinkProtocol {
     private var session: DeviceCredentialSession
     private var gate: QueueGate?
@@ -389,6 +409,34 @@ func queueEnqueued(_ fixture: QueueFixture, mutation: PreparedClientMutation? = 
     return row
 }
 
+/// Seeds a second valid persisted conflict for bounded-reader tests. The normal FIFO policy stops
+/// after the first unresolved conflict, so the fixture copies a details-free typed conflict
+/// response into a later already-persisted row without invoking any production mutation path.
+func queueSeedConflictRecord(
+    _ url: URL, sourceMutationId: String, targetMutationId: String
+) throws {
+    let attemptId = queueUUID(20_001)
+    let attemptOwner = queueUUID(20_002)
+    try queueRawSQL(
+        url,
+        """
+        UPDATE mutations
+        SET state='SUBMITTING', attempt_id='\(attemptId)', attempt_owner='\(attemptOwner)',
+            attempt_started=1.0, dispatch_recorded=1
+        WHERE mutation_id='\(targetMutationId)' AND state='PENDING'
+        """
+    )
+    try queueRawSQL(
+        url,
+        """
+        UPDATE mutations
+        SET state='CONFLICT',
+            evidence=(SELECT evidence FROM mutations WHERE mutation_id='\(sourceMutationId)')
+        WHERE mutation_id='\(targetMutationId)' AND state='SUBMITTING'
+        """
+    )
+}
+
 @MainActor
 func queueRecord(_ fixture: QueueFixture, id: Int = 10) async throws -> MutationQueueRecord {
     let id = try await ClientMutationId.validated(queueUUID(id), using: QueueValidator())
@@ -461,6 +509,11 @@ actor QueueDelayedStorage: MutationQueueStorageProtocol {
     func activityRecords(scope: ClientMutationScope, limit: Int) async throws
         -> [StoredMutationRecord]
     { try await base.activityRecords(scope: scope, limit: limit) }
+    func conflictRecords(
+        scope: ClientMutationScope, credentialId: String, limit: Int
+    ) async throws
+        -> [StoredMutationRecord]
+    { try await base.conflictRecords(scope: scope, credentialId: credentialId, limit: limit) }
     func record(scope: ClientMutationScope, id: String) async throws -> StoredMutationRecord? {
         if failNextRecordReadAfterEnqueue {
             failNextRecordReadAfterEnqueue = false

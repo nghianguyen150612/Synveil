@@ -134,6 +134,10 @@ protocol MutationQueueStorageProtocol: Sendable {
     func records(scope: ClientMutationScope, limit: Int) async throws -> [StoredMutationRecord]
     func activityRecords(scope: ClientMutationScope, limit: Int) async throws
         -> [StoredMutationRecord]
+    func conflictRecords(
+        scope: ClientMutationScope, credentialId: String, limit: Int
+    ) async throws
+        -> [StoredMutationRecord]
     func record(scope: ClientMutationScope, id: String) async throws -> StoredMutationRecord?
     func recoverInterruptedOperations() async throws -> Int
     func beginAttempt(scope: ClientMutationScope, id: String, owner: String, attemptId: String)
@@ -156,6 +160,7 @@ protocol DurableMutationQueueProtocol {
     func enqueue(_ mutation: PreparedClientMutation) async -> MutationEnqueueResult
     func pending(scope: ClientMutationScope, limit: Int) async -> MutationQueueReadResult
     func activity(scope: ClientMutationScope, limit: Int) async -> MutationQueueReadResult
+    func conflicts(scope: ClientMutationScope, limit: Int) async -> MutationQueueReadResult
     func get(scope: ClientMutationScope, mutationId: ClientMutationId) async
         -> MutationQueueLookupResult
     func recoverInterruptedOperations() async -> MutationRecoveryResult

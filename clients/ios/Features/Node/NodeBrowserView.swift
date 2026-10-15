@@ -51,6 +51,14 @@ struct NodeBrowserView: View {
     var body: some View {
         List {
             mutationControls
+            MutationConflictReviewStatusView(
+                library: route.library.mutationContext,
+                feature: metadataMutationFeature,
+                sessionController: sessionController,
+                identifier: "synveil.node.conflict-review.\(route.library.id.rawValue)"
+            ) {
+                presentedSheet = .activity
+            }
             if viewModel.canPrepareMutationsFromVisibleResults,
                 viewModel.contentSource == .live
             {

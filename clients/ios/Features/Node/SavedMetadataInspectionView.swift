@@ -6,6 +6,7 @@ import SwiftUI
 final class SavedMetadataInspectionViewModel {
     private(set) var libraries: [Library] = []
     private(set) var directory: NodeCachedDirectoryPresentation?
+    private(set) var conflictReview: MetadataMutationConflictReviewViewState = .idle
     private(set) var isLoading = false
     private(set) var unavailable = false
     private let service: any SavedMetadataInspectionProtocol
@@ -39,6 +40,17 @@ final class SavedMetadataInspectionViewModel {
                 directory = nil
                 unavailable = true
             }
+            conflictReview = .loading
+            let conflicts = await service.conflictReview(
+                library: library, limit: MutationQueuePolicy.maximumReadBatch)
+            guard isCurrent else {
+                clear()
+                return
+            }
+            switch conflicts {
+            case .loaded(let snapshot): conflictReview = .loaded(snapshot)
+            case .failed(let failure): conflictReview = .failed(failure)
+            }
         } else {
             do {
                 let saved = try await service.libraries()
@@ -57,6 +69,7 @@ final class SavedMetadataInspectionViewModel {
     func clear() {
         libraries = []
         directory = nil
+        conflictReview = .invalidated
     }
 }
 
@@ -156,6 +169,7 @@ private struct SavedMetadataDirectoryView: View {
     var body: some View {
         List {
             if model.isCurrent {
+                conflictReviewContents
                 if model.isLoading {
                     ProgressView("Reading saved folder…")
                 } else if let saved = model.directory {
@@ -190,9 +204,82 @@ private struct SavedMetadataDirectoryView: View {
         }
         .navigationTitle(title)
         .task { await model.load(library: library, parent: parent) }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    Task { await model.load(library: library, parent: parent) }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .disabled(model.isLoading)
+                .accessibilityLabel("Refresh Saved Conflict Status")
+                .accessibilityHint("Reads saved Library status locally without sending changes.")
+                .accessibilityIdentifier("synveil.saved-inspection.conflict-review.refresh")
+            }
+        }
         .onChange(of: controller.lifecycleRevision) { _, _ in model.clear() }
         .onChange(of: controller.permitsSavedMetadataInspection) { _, valid in
             if !valid { model.clear() }
         }
+    }
+
+    @ViewBuilder
+    private var conflictReviewContents: some View {
+        switch model.conflictReview {
+        case .idle, .loading:
+            Section("Saved conflict review") {
+                ProgressView("Checking saved conflict records…")
+                    .accessibilityIdentifier("synveil.saved-inspection.conflict-review.loading")
+            }
+        case .loaded(let snapshot):
+            if snapshot.items.isEmpty {
+                Section("Saved conflict review") {
+                    Label("No saved conflicts need review", systemImage: "checkmark.circle")
+                        .accessibilityIdentifier("synveil.saved-inspection.conflict-review.empty")
+                    Text("Saved on this device; current server status is not verified.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                Section("Conflicts need review") {
+                    Text(savedConflictCountLabel(snapshot))
+                        .font(.headline)
+                        .accessibilityIdentifier("synveil.saved-inspection.conflict-review.summary")
+                    Text(MutationConflictPresentation.reviewGuidance)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier(
+                            "synveil.saved-inspection.conflict-review.guidance")
+                    ForEach(snapshot.items) { item in
+                        MutationConflictReviewItemRow(item: item)
+                    }
+                    if !snapshot.isComplete {
+                        Text("At least this many saved conflicts need review; more may exist.")
+                            .font(.footnote)
+                            .accessibilityIdentifier(
+                                "synveil.saved-inspection.conflict-review.incomplete")
+                    }
+                }
+            }
+        case .failed(let failure):
+            Section("Saved conflict status unavailable") {
+                Text(
+                    "The local conflict evidence could not be verified. No count is available. "
+                        + MetadataMutationViewModel.message(for: failure)
+                )
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("synveil.saved-inspection.conflict-review.error")
+            }
+        case .invalidated:
+            EmptyView()
+        }
+    }
+
+    private func savedConflictCountLabel(
+        _ snapshot: MetadataMutationConflictReviewSnapshot
+    ) -> String {
+        let count = snapshot.knownConflictCount
+        let number = snapshot.isComplete ? "\(count)" : "At least \(count)"
+        return "\(number) saved \(count == 1 ? "conflict needs" : "conflicts need") review"
     }
 }
