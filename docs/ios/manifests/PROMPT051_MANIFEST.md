@@ -14,8 +14,10 @@ CI links as P051A or final-head validation.
 - PROMPT051A starting feature SHA: `65f2d207b169515d4201d89cff5190c4dc417089`.
 - P050 integration baseline remains `e1acabe4bfc5db977cabb77db2c30b864a666810`
   and is an ancestor. P052 remains unauthorized and has not started.
-- Implementation and validation records below are pending final exact-head
-  checks; do not treat the old P051-only CI URLs as validation of PROMPT051A.
+- The PROMPT051A implementation was validated at
+  `196d5b89f812d650939a634cc8c9c47a22f97025`; exact-head results and remaining
+  blockers are recorded in the final handoff below. Do not treat the old
+  P051-only CI URLs as validation of PROMPT051A.
 
 ### Apple platform limitation, reviewed 2026-10-15
 
@@ -138,9 +140,11 @@ Foreground P043 remains available. SQLite remains v9.
 - New Rust middleware tests cover 301, 302, 303, 307, 308 rewriting and the
   content-only allowed 304 response; upload routes reject 304. The tests also
   assert a structured 502 without `Location`, redirected destination text, or
-  synthetic upload sentinel in the response. Existing `device_auth` and
-  upload/content API suites remain enabled. They were not executable locally
-  because `cargo`/`rustc` are absent; results remain pending CI.
+  synthetic upload sentinel in the response. On the final implementation SHA,
+  `synveil-api` passed **112 tests, 0 failed**, including both redirect
+  middleware tests. The wider Rust CI job later failed in an unrelated Linux
+  metadata lifecycle test because the runner's `systemd-tmpfiles` rejects
+  `--dry-run`.
 - Six new P046 XCTest cases assert the production upload capability remains
   unavailable; new background opt-in stops before server CREATE; background
   Resume stops before status/authenticated work; legacy task restoration
@@ -152,20 +156,23 @@ Foreground P043 remains available. SQLite remains v9.
 - Existing P046 fake-transport state-machine tests remain in place with an
   explicitly test-only mechanics capability. Those tests validate durable
   coordinator mechanics, not iOS redirect safety or deployment support.
-- Portable checks on the current working tree: iOS source validator passed;
-  **106 support tests passed**; docs validation passed; `git diff --check`
-  passed; OpenAPI YAML parsed successfully. Rust formatting/API tests could not
-  run because `cargo` is not installed. Swift/Xcode/XCTest could not run locally
-  because those tools are absent. Exact final-head native CI and Rust API
-  results must be recorded after the final source commit.
+- Portable checks on the final implementation tree: iOS source validator
+  passed; **106 support tests passed**; docs validation passed;
+  `git diff --check` passed; OpenAPI YAML parsed successfully. Rust formatting
+  passed in CI after two focused formatting corrections. Local Rust and Swift/
+  Xcode tools are unavailable in this Linux environment; native validation is
+  supplied by exact-head CI below.
+- Final implementation SHA Simulator XCTest result: **1,924 passed, 2 skipped,
+  0 failed, 1,926 total**, iPhone 17 Pro / iOS 26.5 Simulator. This is not a
+  physical-device qualification.
 - No external proxy test, production endpoint test, signed iPhone build or
   physical-device evidence has been run. Physical device: `NOT_AVAILABLE`.
 - Security review acceptance is outstanding. The gate stays OFF pending a
   deployment-bound approach reviewed independently. Keep PR #134 open and
   unmerged.
 
-Exact feature HEAD, working-tree state, portable/API/native test results,
-workflow URLs and next safe step are updated at final handoff below.
+The exact feature source SHA, working-tree state, portable/API/native test
+results, workflow URLs and next safe step are recorded at final handoff below.
 
 ## Original P051-only checkpoint (historical)
 
@@ -322,8 +329,27 @@ P043, P047, P048, P049 and P050 recovery evidence is not rewritten.
 ## Final integration record
 
 - Feature branch: `ios/p051-background-download-architecture`.
-- Final feature SHA: recorded in the completion report and exact PR head after this evidence update.
-- PR #134 is open; review is pending.
+- Final implementation/source SHA validated: `196d5b89f812d650939a634cc8c9c47a22f97025`.
+- The final manifest handoff is a documentation-only follow-up to the validated
+  source SHA. The current PR head and that follow-up commit are shown by PR #134.
+- PR #134 is open; no review submissions or security acceptance are recorded.
 - Merge SHA: none.
-- Verified final `ios-app` SHA: not available.
+- `origin/ios-app` remains at verified baseline
+  `e1acabe4bfc5db977cabb77db2c30b864a666810`; no merge is claimed.
 - P051 status: `BLOCKED_REQUIRES_FIXES`.
+
+### Final implementation validation on `196d5b89f812d650939a634cc8c9c47a22f97025`
+
+Required iOS GitHub Actions gates all passed on this exact implementation SHA:
+
+- [iOS Static Validation](https://github.com/nghianguyen150612/Synveil/actions/runs/38729897321) — passed.
+- [iOS Build](https://github.com/nghianguyen150612/Synveil/actions/runs/38729897312) — passed.
+- [iOS Simulator Tests](https://github.com/nghianguyen150612/Synveil/actions/runs/38729897351) — passed; **1,924 passed, 2 skipped, 0 failed, 1,926 total** on iPhone 17 Pro / iOS 26.5 Simulator.
+- [iOS Rust Apple Build](https://github.com/nghianguyen150612/Synveil/actions/runs/38729897338) — passed.
+- [Rust CI](https://github.com/nghianguyen150612/Synveil/actions/runs/38729897444) — overall failed on unrelated workspace checks. The `synveil-api` test target passed **112 tests, 0 failed**; `cargo fmt --all -- --check` passed. Clippy stopped in unchanged `crates/object-store/src/types.rs` on `clippy::double_must_use`. Other failures: Linux metadata lifecycle test (`systemd-tmpfiles --dry-run` unsupported), Windows workspace build using Unix-only AppImage APIs, and the dependency advisory `RUSTSEC-2026-0349` for locked rustls `0.23.45` (advisory recommends `>=0.23.46`). These files/dependencies are outside the P051A transfer changes.
+- [Linux AppImage](https://github.com/nghianguyen150612/Synveil/actions/runs/38729897332) — failed because the existing package audit found a `/home/` path marker in `synveil-desktop`.
+- [PostgreSQL 17 scheduled-maintenance](https://github.com/nghianguyen150612/Synveil/actions/runs/38729897318) — failed in the unrelated `postgres_scheduler_tick_schema_is_current_on_postgresql_17` assertion after 24 tests passed.
+
+Portable checks on the same source tree passed: `validate_ios_sources.py`, **106** iOS support tests, `validate-docs.sh`, OpenAPI YAML parsing, and `git diff --check`. Rust formatting passed in the exact-head Rust CI job. API test count and Simulator totals are from workflow output/result bundle, not inferred from source.
+
+Physical device: `NOT_AVAILABLE`. No signed iPhone build or real deployment/proxy test was run. No independent reviewer is recorded; keep PR #134 open and unmerged. Background transfer capabilities remain OFF. The next safe step is to obtain independent security review and deployment-bound evidence or a reviewed transfer-authorization design that addresses both credential and PATCH-body forwarding before enabling either P046 or P051.
