@@ -695,8 +695,9 @@ final class MetadataMutationFeatureTests: XCTestCase {
         XCTAssertEqual(snapshot.knownConflictCount, 1)
         XCTAssertFalse(snapshot.isComplete)
 
-        guard case .loaded(let fullBoundedPage) = await feature.conflictReview(
-            in: library, limit: 2)
+        guard
+            case .loaded(let fullBoundedPage) = await feature.conflictReview(
+                in: library, limit: 2)
         else { return XCTFail("Expected both persisted conflict fixtures") }
         XCTAssertEqual(fullBoundedPage.items.map(\.id), [first.id.rawValue, second.id.rawValue])
         XCTAssertFalse(fullBoundedPage.isComplete)
@@ -791,8 +792,9 @@ final class MetadataMutationFeatureTests: XCTestCase {
                 }
             }
 
-            guard case .record(let record) = await fixture.queue.get(
-                scope: fixture.scope, mutationId: mutation.id)
+            guard
+                case .record(let record) = await fixture.queue.get(
+                    scope: fixture.scope, mutationId: mutation.id)
             else { return XCTFail("Expected durable state \(expectedState)") }
             XCTAssertEqual(record.state, expectedState)
 
@@ -801,8 +803,9 @@ final class MetadataMutationFeatureTests: XCTestCase {
                 generator: CountingMutationIDGenerator(first: 920 + offset))
             let library = mutationLibrary(
                 fixture, root: try await NodeId.validated(queueUUID(81), using: QueueValidator()))
-            guard case .loaded(let summary) = await feature.conflictReview(
-                in: library, limit: 100)
+            guard
+                case .loaded(let summary) = await feature.conflictReview(
+                    in: library, limit: 100)
             else { return XCTFail("Expected a verified conflict summary for \(expectedState)") }
             if expectedState == .conflict {
                 XCTAssertEqual(summary.items.map(\.id), [mutation.id.rawValue])
