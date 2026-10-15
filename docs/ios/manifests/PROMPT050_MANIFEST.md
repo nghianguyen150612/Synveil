@@ -8,14 +8,17 @@
 - The P049 merge SHA is an ancestor of the feature branch; the fetched integration
   tip matched that baseline.
 - Feature branch: `ios/p050-conflict-review-safety`.
+- Final implementation source SHA used by the four required iOS gates:
+  `2e12e03fde95b76dc1af43090bb1058a7bb2ab8b`.
 - P050 pull request: [#133](https://github.com/nghianguyen150612/Synveil/pull/133), targeting
   `ios-app`. This is the already-existing P050 draft PR; no second PR was created.
 - Pre-correction source head: `2f8897b9b931d697c2890775cbb50c2235c999e9`. Its native
   Build run found a missing explicit return in the new reason mapper. That fix was
-  committed as `0aab0a35fe519caf57ee3e0f060651cba00265d1`. The final feature
-  head with the additional UI regressions is recorded from the PR head and final task report.
-- The manifest-bearing final branch head and integrated `ios-app` SHA are reported from the
-  hosted PR/merge state. They are not embedded as self-referential commit IDs in this file.
+  committed as `0aab0a35fe519caf57ee3e0f060651cba00265d1`. The final implementation
+  source SHA above includes that fix and both later UI/read-only-refresh regression tests.
+- This manifest records evidence for the implementation source SHA above. The evidence-only
+  commit SHA and any later integrated `ios-app` SHA are reported from GitHub and the final task
+  report; this file does not claim a merge.
 - P051 was not started.
 
 ## Existing conflict capability audit
@@ -138,13 +141,13 @@ P001–P049 suites remain enabled.
 
 | Fault scenario | Durable state | Expected UI | Permitted operation | Forbidden side effect | Evidence / limit |
 |---|---|---|---|---|---|
-| Conflict commits before process exit, then queue is reopened | Same original ID remains `CONFLICT` with original intent/evidence | Saved conflict and typed reason appear in stable order | Bounded local read | Drop/recreate identity, retry, resolve, or report success | `testConflictReviewSurvivesQueueReopenAndKeepsEnqueueOrdering` validates reopen; no OS process-kill harness. |
+| A conflict is committed, then the queue is reopened | Same original ID remains `CONFLICT` with original intent/evidence | Saved conflict appears after reopen | Bounded local read | Drop/recreate identity, retry, resolve, or report success | `testConflictReviewSurvivesQueueReopen` validates queue reopen; no OS process-kill harness. |
 | Conflict evidence commit fails | Transaction leaves `SUBMITTING` with no partial evidence; interrupted recovery becomes `OUTCOME_UNKNOWN` | Do not show conflict; show unknown/unavailable through existing recovery state | Existing same-ID unknown-outcome recovery only | Fabricate `CONFLICT`, regenerate ID, or mark applied | Existing `DurableMutationQueueTests.testFailureDuringConflictPersistenceRollsBackResult`. |
 | Logout during conflict read | Original durable row is retained and quarantined by logout | Protected details are cleared; stale completion is discarded | Logout and later reauthorization | Publish former-session detail or delete evidence | `testLogoutDuringConflictReadDiscardsLateProtectedResult`. |
 | Credential replacement during SQLite read | Original row remains `CONFLICT`; replacement does not inherit its credential scope | Read fails closed; no former-account result | Revalidate current credential | Publish the stale read or clear quarantine | `testCredentialReplacementDuringConflictStorageReadDiscardsTheResult`, deterministic gate/no sleep. |
 | Conflict outcome and ordinary transport uncertainty are observed | 409 stays `CONFLICT`; timeout/offline stays `OUTCOME_UNKNOWN` | Separate conflict review from unknown-outcome recovery | Read conflict; use existing explicit unknown recovery where eligible | Treat offline as conflict or blindly retry 409 | P050 state tests plus existing mutation-drain no-blind-retry and recovery tests; no combined unrelated-operation sequence harness. |
 | Same original operation receives a repeated conflict | Original ID/evidence remains terminal `CONFLICT` | Same conflict remains reviewable | Read existing evidence | Duplicate conflict record, replacement ID, retry, or winner selection | Existing `MutationDrainCoordinatorTests.testReplayedConflictRemainsConflict`. |
-| Conflict page is truncated | Returned rows remain `CONFLICT`; later rows are unobserved | “At least N”; never claim exact count/all-clear | Bounded next local read on explicit refresh | Infer resolution from absence in a truncated result | P050 `testTruncatedConflictReviewReportsAtLeastCountInStableOrder`. |
+| Conflict page is truncated | Returned rows remain `CONFLICT`; later rows are unobserved | “At least N”; never claim exact count/all-clear | Bounded next local read on explicit refresh | Infer resolution from absence in a truncated result | P050 `testTruncatedConflictReviewReportsAtLeastCountInStableOrder`; its test-only SQLite fixture seeds a second strictly decodable conflict because production FIFO blocks later submission after an unresolved conflict. |
 | SQLite failure or corrupted conflict evidence | Durable evidence is retained; read is not trusted | Unavailable, no count | Show failure and offer local refresh | Convert failure to zero, repair, delete, or network retry | P050 storage-failure and corrupt-evidence tests. |
 | Browser review route is unavailable/unverified | Local `CONFLICT` evidence remains unchanged | Guidance-only text; no link is shown | User may open the existing web interface separately | Invent URL, append token, or authenticate browser with DeviceBearer | No route or URL construction exists; verified by API contract review and static source audit, not a dynamic browser test. |
 | Resource disappears after conflict was recorded | Conflict row remains independent of Node projection | Conflict remains visible without a Node badge | Read durable conflict summary | Fetch/overlay stale Node or erase conflict because a resource is absent | Projection architecture has no resource association/fetch; no dedicated remove-after-record test. |
@@ -167,26 +170,49 @@ manifest:
 - `git diff --check`: passed.
 - Swift 6.2.3 `swift format lint --recursive --strict clients/ios`: passed.
 - Swift 6.2.3 `swiftc -parse` over all iOS Swift sources: passed.
-- New XCTest methods: 15. Native XCTest counts are recorded only from the P050
+- New XCTest methods: 17. Native XCTest counts are recorded only from the P050
   simulator workflow; portable Python/Swift parsing is not XCTest evidence.
 
-Four required native workflow pages (run links are recorded in the final task
-report against the manifest-bearing feature head):
+Four required native workflow runs for implementation source SHA
+`2e12e03fde95b76dc1af43090bb1058a7bb2ab8b`:
 
-- [iOS Static Validation](https://github.com/nghianguyen150612/Synveil/actions/workflows/ios-static-validation.yml)
-- [iOS Build](https://github.com/nghianguyen150612/Synveil/actions/workflows/ios-build.yml)
-- [iOS Simulator Tests](https://github.com/nghianguyen150612/Synveil/actions/workflows/ios-simulator-tests.yml)
-- [iOS Rust Apple Build](https://github.com/nghianguyen150612/Synveil/actions/workflows/ios-rust-apple-build.yml)
+- [iOS Static Validation — run 38664121765](https://github.com/nghianguyen150612/Synveil/actions/runs/38664121765): passed.
+- [iOS Build — run 38664121783](https://github.com/nghianguyen150612/Synveil/actions/runs/38664121783): passed.
+- [iOS Simulator Tests — run 38664121825](https://github.com/nghianguyen150612/Synveil/actions/runs/38664121825): passed, 1,917 passed / 0 failed / 2 skipped (1,919 total).
+- [iOS Rust Apple Build — run 38664121789](https://github.com/nghianguyen150612/Synveil/actions/runs/38664121789): passed.
 
-The corrected source head `0aab0a35fe519caf57ee3e0f060651cba00265d1` passed iOS Static
-Validation, iOS Build, and iOS Rust Apple Build; its Simulator Tests run was still queued. Those
-runs precede the two final UI/read-only refresh regressions and do not qualify the final feature
-head. Exact final-head run results, URLs, and XCTest passed/failed/skipped counts must be added
-to the final review record before acceptance. P049 results are not substituted for P050.
+All four required gates are green on the same implementation source SHA. Intermediate failures were
+corrected and are not substituted for this result:
 
-Unrelated Rust/desktop/package/PostgreSQL workflow results are recorded
-separately from the four iOS gates. No unrelated failure is counted as a P050
-pass or hidden as a blanket CI result.
+- The simulator run on `bce3ff0458cbdc0fe75dc02cf285a631efd77e51` executed 1,919 tests: 1,914
+  passed, 3 failed, 2 skipped. The three new tests tried later FIFO operations after an earlier
+  unresolved conflict and hit the existing `dependencyConflict` gate. Commit
+  `c51667bdb578658570d7af44f740b6126aff3e40` isolated durable-state cases and made the pagination
+  fixture use a test-only persisted second row.
+- The static run on `c51667bdb578658570d7af44f740b6126aff3e40`
+  ([run 38662157382](https://github.com/nghianguyen150612/Synveil/actions/runs/38662157382)) failed strict
+  formatting on three multiline guards; `c846be0a0fe067d50d793138f0f927dafe51d00b` fixed those.
+- The simulator run on `c846be0a0fe067d50d793138f0f927dafe51d00b` executed 1,919 tests: 1,916
+  passed, 1 failed, 2 skipped. The test-only fixture attempted a `PENDING` → `CONFLICT` jump,
+  rejected by SQLite's state-transition trigger. Commit `2e12e03fde95b76dc1af43090bb1058a7bb2ab8b`
+  now seeds it through `PENDING` → `SUBMITTING` → `CONFLICT`; production FIFO policy is unchanged.
+- An earlier simulator run on `0aab0a35fe519caf57ee3e0f060651cba00265d1` was canceled when the
+  branch advanced and is not qualifying evidence. That source passed Static Validation, Build, and
+  Rust Apple Build before the final two regression tests were added.
+
+## Unrelated CI results
+
+The following workflows ran on implementation source SHA
+`2e12e03fde95b76dc1af43090bb1058a7bb2ab8b`; they are outside P050's iOS source scope and were not
+counted as native iOS passes:
+
+- [Linux AppImage — run 38664121759](https://github.com/nghianguyen150612/Synveil/actions/runs/38664121759): failed its desktop artifact check because it found a private build path marker (`/home/`) in `synveil-desktop`.
+- [Rust CI — run 38664121837](https://github.com/nghianguyen150612/Synveil/actions/runs/38664121837): failed in cross-platform workspace tests, Linux/Windows desktop UI jobs, dependency policy, and format/clippy jobs. P050 changed no Rust, server, or desktop source.
+- [Linux native packages — run 38664121786](https://github.com/nghianguyen150612/Synveil/actions/runs/38664121786): in progress when this evidence was recorded.
+- [PostgreSQL 17 scheduled-maintenance — run 38664121800](https://github.com/nghianguyen150612/Synveil/actions/runs/38664121800): in progress when this evidence was recorded. An earlier run on a prior P050 source failed a schema-count assertion (36 migrations found, 34 expected); the current run has not completed.
+
+No unrelated failure is reported as a P050 pass or hidden behind an overall CI label. No desktop/server
+files were changed to address out-of-scope results.
 
 ## Physical-device procedure and evidence
 
@@ -200,9 +226,8 @@ claimed. Simulator validation alone is not device qualification.
 
 ## Review and integration
 
-- PR #133 remains the single P050 PR targeting `ios-app`.
-- PR draft/review state and independent approval are reported from GitHub after
-  native gates finish. Do not merge before all four exact-head iOS gates pass and
-  the required review is accepted.
+- PR #133 is the single P050 PR targeting `ios-app`; it is open and ready for review. The
+  independent review request to `ducminh231011` succeeded; the review list is currently empty,
+  so acceptance remains pending. The PR is not merged.
 - Merge commit and integrated `ios-app` SHA: **NOT_AVAILABLE** until ordinary
   reviewed merge occurs. This manifest does not claim merge or P051 readiness.
