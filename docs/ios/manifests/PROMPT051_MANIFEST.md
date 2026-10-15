@@ -7,10 +7,11 @@
   ancestor. Starting checkout was clean.
 - Feature branch: `ios/p051-background-download-architecture`.
 - Implementation source checkpoint: `ab65d6422b64f8e9af65002db9d2e0312105f321`.
-- The final feature SHA is the exact PR head and is recorded in the completion report; a commit
-  cannot contain its own SHA.
-- Final feature SHA: pending commit.
-- PR: pending.
+- Current PR head at checkpoint: `6671871ae07dc0010129aec76fc41ae08e245b4a`.
+- The final feature SHA is reported in the completion report; a commit cannot contain its own SHA.
+- Final feature SHA: recorded in the completion report and exact PR head; no merge is claimed.
+- PR: [#134](https://github.com/nghianguyen150612/Synveil/pull/134), open against `ios-app`, not
+  merged.
 - Integration merge SHA and verified final `ios-app` SHA: not available; no merge is claimed.
 - P052 has not started.
 
@@ -111,22 +112,27 @@ those systems and is not rewritten by P051.
 ## Validation, evidence and next safe step
 
 - Starting ancestry: verified as above.
-- Four native exact-head CI workflows and their URLs: pending PR; no CI result is claimed.
+- Native workflow runs for the checkpoint head are queued; they are not final-head evidence:
+  [iOS Static Validation](https://github.com/nghianguyen150612/Synveil/actions/runs/38670920269),
+  [iOS Build](https://github.com/nghianguyen150612/Synveil/actions/runs/38670920322),
+  [iOS Simulator Tests](https://github.com/nghianguyen150612/Synveil/actions/runs/38670920302),
+  [iOS Rust Apple Build](https://github.com/nghianguyen150612/Synveil/actions/runs/38670920406).
+  No result is claimed yet.
 - Physical device evidence: `NOT_AVAILABLE` in this environment. No signed device build, iPhone,
   device model, iOS version or runtime transfer evidence is available.
 - User force-quit, task scheduling delay, protected-data behavior and actual iOS redirect request
   header behavior are not inferred from Simulator or source-only checks.
 - Remaining blocker: server/API contract does not establish redirect-free authenticated content
   delivery. P051 background downloading must remain unavailable until that security proof exists.
-- Review/merge state: pending PR creation; no review acceptance or merge is claimed.
-- Next safe step: complete local validation, commit and open one PR targeting `ios-app`; keep it
-  unmerged unless security review accepts the explicit blocked disposition and required checks pass.
+- Review/merge state: PR #134 is open, no review is recorded, and no merge is claimed.
+- Next safe step: inspect the four exact-head iOS workflows and obtain security review. Keep the PR
+  open and unmerged while the redirect blocker remains unresolved.
 
 ## Final integration record
 
 - Feature branch: `ios/p051-background-download-architecture`.
-- Final feature SHA: pending.
-- PR and review status: pending.
+- Final feature SHA: recorded in the completion report and exact PR head.
+- PR #134 is open; review is pending.
 - Merge SHA: none.
 - Verified final `ios-app` SHA: not available.
 - P051 status: `BLOCKED_REQUIRES_FIXES`.
