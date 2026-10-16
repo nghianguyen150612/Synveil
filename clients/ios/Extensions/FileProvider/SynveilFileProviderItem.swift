@@ -57,12 +57,14 @@ final class SynveilFileProviderItem: NSObject, NSFileProviderItem {
             let active = try? metadataStore.readManifest(domainID: domain.rawValue),
             active.authorization.authorizationGeneration == authorizedGeneration
         else { return false }
-        guard let result = try? contentStore.verifyAndAccessContent(
-            domain: domain,
-            fileVersionID: version.fileVersionID,
-            expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint,
-            expectedAuthorizationGeneration: authorizedGeneration
-        ) else { return false }
+        guard
+            let result = try? contentStore.verifyAndAccessContent(
+                domain: domain,
+                fileVersionID: version.fileVersionID,
+                expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint,
+                expectedAuthorizationGeneration: authorizedGeneration
+            )
+        else { return false }
         let libraryScope = FileProviderDomainIdentity.fingerprint([
             "synveil-library-v1", result.manifest.libraryID,
         ])
