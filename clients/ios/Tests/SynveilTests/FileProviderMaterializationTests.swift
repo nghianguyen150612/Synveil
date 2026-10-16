@@ -225,7 +225,8 @@ final class FileProviderMaterializationTests: XCTestCase {
                 fileVersionID: versionIdentity.fileVersionID,
                 expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint,
                 expectedAuthorizationGeneration: 1
-            )) { error in
+            )
+        ) { error in
             XCTAssertTrue(error is FileProviderContentStoreError)
         }
     }
