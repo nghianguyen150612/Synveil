@@ -129,6 +129,19 @@ struct FileProviderSharedContainer {
         }
     }
 
+    func generationDirectory(domainID: String) throws -> URL {
+        guard domainID.hasPrefix("synveil-fp-v1-"), domainID.utf8.count == 78,
+            domainID.dropFirst(14).allSatisfy({ $0.isHexDigit && !$0.isUppercase })
+        else { throw FileProviderSharedContainerError.unsafePath }
+        return try directoryURL(
+            root: authorizedRoot(), components: Self.versionedRoot + ["generations", domainID])
+    }
+
+    func checkGenerationQuota(addingBytes: Int) throws {
+        let root = try directoryURL(root: authorizedRoot(), components: Self.versionedRoot)
+        try enforceStorageQuota(providerRoot: root, addingBytes: addingBytes)
+    }
+
     private func authorizedRoot() throws -> URL {
         guard let url = resolveContainerURL(Self.appGroupIdentifier) else {
             throw FileProviderSharedContainerError.missingEntitlement

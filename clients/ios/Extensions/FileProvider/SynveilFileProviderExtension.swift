@@ -5,12 +5,20 @@ typealias FileProviderItemMutationCompletion = (
     NSFileProviderItem?, NSFileProviderItemFields, Bool, (any Error)?
 ) -> Void
 
-/// P053 framework entry point. It owns no app session, Keychain store, SQLite database, SwiftUI
+/// Read-only metadata framework entry point. It owns no app session, Keychain store, SQLite database, SwiftUI
 /// state, URLSession, transfer coordinator, or File Provider domain-registration behavior.
 final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     private let lifecycle = FileProviderProcessLifecycle()
+    private let domainID: String
+    private let store = FileProviderGenerationStore(
+        container: FileProviderSharedContainer(), capability: .production)
+
+    private var reader: FileProviderMetadataReader {
+        FileProviderMetadataReader(store: store, domainID: domainID)
+    }
 
     required init(domain: NSFileProviderDomain) {
+        domainID = domain.identifier.rawValue
         super.init()
         lifecycle.launch()
     }
@@ -23,7 +31,13 @@ final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExte
         for containerItemIdentifier: NSFileProviderItemIdentifier,
         request: NSFileProviderRequest
     ) throws -> any NSFileProviderEnumerator {
-        throw FileProviderErrorMapper.unavailable()
+        guard lifecycle.canContinueRequest() else { throw FileProviderErrorMapper.unavailable() }
+        let container = FileProviderNativeIdentifiers.scope(containerItemIdentifier)
+        do {
+            try reader.withView { try $0.validateContainer(container) }
+            return SynveilFileProviderEnumerator(
+                reader: reader, container: container, process: lifecycle)
+        } catch { throw FileProviderErrorMapper.map(error) }
     }
 
     func item(
@@ -31,7 +45,19 @@ final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExte
         request: NSFileProviderRequest,
         completionHandler: @escaping (NSFileProviderItem?, (any Error)?) -> Void
     ) -> Progress {
-        completionHandler(nil, FileProviderErrorMapper.unavailable())
+        do {
+            guard lifecycle.canContinueRequest() else {
+                throw FileProviderSynchronizationError.cancelled
+            }
+            try reader.withView { view in
+                let item = identifier == .rootContainer ? nil : try view.lookup(identifier.rawValue)
+                guard lifecycle.canContinueRequest() else {
+                    throw FileProviderSynchronizationError.cancelled
+                }
+                completionHandler(
+                    SynveilFileProviderItem(projected: item, domain: view.manifest.domain), nil)
+            }
+        } catch { completionHandler(nil, FileProviderErrorMapper.map(error)) }
         return Self.completedProgress()
     }
 
