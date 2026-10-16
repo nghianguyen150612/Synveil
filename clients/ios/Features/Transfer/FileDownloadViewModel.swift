@@ -44,7 +44,7 @@ final class FileDownloadViewModel {
     var savedStatusUnavailableMessage: String? {
         guard isCurrent else { return nil }
         if coordinator == nil || failure?.state == .storageUnavailable {
-            return "Saved transfer information is unavailable. Reopen Synveil after storage recovers."
+            return "Saved transfers are unavailable. Reopen Synveil after storage recovers."
         }
         return nil
     }
