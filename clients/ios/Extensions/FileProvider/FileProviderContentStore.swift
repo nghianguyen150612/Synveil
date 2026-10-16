@@ -111,12 +111,26 @@ struct FileProviderContentStore: Sendable {
             expectedOwnerScopeFingerprint: expectedOwnerScopeFingerprint
         )
 
+        let manifestData = try validatedManifest.encoded(
+            expectedDomain: expectedDomain,
+            expectedOwnerScopeFingerprint: expectedOwnerScopeFingerprint
+        )
+
+        // Storage quota check BEFORE reading/verifying source file
+        let maxStorageBytes = UInt64(FileProviderSharedContainer.maximumProviderStorageBytes)
+        guard validatedManifest.expectedByteLength <= maxStorageBytes else {
+            throw FileProviderContentStoreError.storageQuotaExceeded
+        }
+        let requiredBytes = Int(validatedManifest.expectedByteLength) + manifestData.count
+        try container.checkGenerationQuota(addingBytes: requiredBytes)
+
         // Verify source file integrity before staging
         try Self.verifyFileIntegrity(
             at: sourceURL,
             expectedLength: validatedManifest.expectedByteLength,
             expectedSHA256: validatedManifest.expectedSHA256,
-            checkCancellation: checkCancellation)
+            checkCancellation: checkCancellation
+        )
 
         let targetObject = try objectURL(
             domain: expectedDomain,
@@ -126,15 +140,6 @@ struct FileProviderContentStore: Sendable {
             domain: expectedDomain,
             fileVersionID: validatedManifest.fileVersionID
         )
-
-        let manifestData = try validatedManifest.encoded(
-            expectedDomain: expectedDomain,
-            expectedOwnerScopeFingerprint: expectedOwnerScopeFingerprint
-        )
-
-        // Storage quota check
-        let requiredBytes = Int(validatedManifest.expectedByteLength) + manifestData.count
-        try container.checkGenerationQuota(addingBytes: requiredBytes)
 
         // Ensure directories exist
         let stagingDir = try createDirectoryIfNeeded(

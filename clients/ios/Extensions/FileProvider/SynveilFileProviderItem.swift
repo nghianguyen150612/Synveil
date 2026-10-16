@@ -5,10 +5,16 @@ import UniformTypeIdentifiers
 final class SynveilFileProviderItem: NSObject, NSFileProviderItem {
     let projected: FileProviderProjectedItem?
     private let domain: FileProviderDomainIdentity
+    private let container: FileProviderSharedContainer
 
-    init(projected: FileProviderProjectedItem?, domain: FileProviderDomainIdentity) {
+    init(
+        projected: FileProviderProjectedItem?,
+        domain: FileProviderDomainIdentity,
+        container: FileProviderSharedContainer = FileProviderSharedContainer()
+    ) {
         self.projected = projected
         self.domain = domain
+        self.container = container
     }
 
     var itemIdentifier: NSFileProviderItemIdentifier {
@@ -38,12 +44,17 @@ final class SynveilFileProviderItem: NSObject, NSFileProviderItem {
         guard let projected = projected, projected.kind == .file,
             let version = projected.fileVersionIdentity
         else { return false }
-        let store = FileProviderContentStore()
-        let manifest = try? store.readManifest(
+        let generationStore = FileProviderGenerationStore(container: container)
+        guard let manifest = try? generationStore.readManifest(domainID: domain.rawValue),
+            manifest.authorization.state == .authorized
+        else { return false }
+        let contentStore = FileProviderContentStore(container: container)
+        return (try? contentStore.verifyAndAccessContent(
             domain: domain,
             fileVersionID: version.fileVersionID,
-            expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint)
-        return manifest != nil
+            expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint,
+            expectedAuthorizationGeneration: manifest.authorization.authorizationGeneration
+        )) != nil
     }
     var isMostRecentVersionDownloaded: Bool {
         isDownloaded
