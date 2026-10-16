@@ -32,7 +32,8 @@ struct FileDownloadControls: View {
                 Text(model.label(isSceneActive: scenePhase == .active))
                     .accessibilityAddTraits(
                         model.isLiveOperation(isSceneActive: scenePhase == .active)
-                            ? .updatesFrequently : [])
+                            ? .updatesFrequently : []
+                    )
                     .accessibilityIdentifier("synveil.download.recovery.status")
                 if let progress = model.progress {
                     if progress.totalBytes > 0 {

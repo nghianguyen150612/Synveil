@@ -81,7 +81,9 @@ final class FileUploadViewModel {
         if isRunning, liveProgress?.operationId == record.id {
             return liveProgress?.state.label ?? record.state.label
         }
-        if record.uncertain || [.outcomeUnknown, .completing, .abortPending].contains(record.state) {
+        if record.uncertain
+            || [.outcomeUnknown, .completing, .abortPending].contains(record.state)
+        {
             return "Upload status uncertain"
         }
         if record.state == .uploading {

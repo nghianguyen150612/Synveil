@@ -417,10 +417,12 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
                     progress(UploadProgress(record))
                 } catch {
                     let patchFailure = UploadPolicy.classify(error)
-                    if Task.isCancelled || [
-                        .unauthenticated, .deviceRevoked, .staleSession, .scopeMismatch,
-                        .cancelled,
-                    ].contains(patchFailure) {
+                    if Task.isCancelled
+                        || [
+                            .unauthenticated, .deviceRevoked, .staleSession, .scopeMismatch,
+                            .cancelled,
+                        ].contains(patchFailure)
+                    {
                         throw Task.isCancelled ? UploadFailure.cancelled : patchFailure
                     }
                     guard !reconciledPatchFailure else { throw patchFailure }
@@ -462,10 +464,12 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
                 record = try await commit(completion, record: record, progress: progress)
             } catch {
                 let completionFailure = UploadPolicy.classify(error)
-                if Task.isCancelled || [
-                    .unauthenticated, .deviceRevoked, .staleSession, .scopeMismatch,
-                    .revisionConflict, .conflict, .sessionExpired, .cancelled,
-                ].contains(completionFailure) {
+                if Task.isCancelled
+                    || [
+                        .unauthenticated, .deviceRevoked, .staleSession, .scopeMismatch,
+                        .revisionConflict, .conflict, .sessionExpired, .cancelled,
+                    ].contains(completionFailure)
+                {
                     throw Task.isCancelled ? UploadFailure.cancelled : completionFailure
                 }
                 let status = try await repository.status(record, session: session)
@@ -665,8 +669,10 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
             } catch {
                 let failure = UploadPolicy.classify(error)
                 if Task.isCancelled
-                    || [.unauthenticated, .deviceRevoked, .staleSession, .scopeMismatch,
-                        .cancelled].contains(failure)
+                    || [
+                        .unauthenticated, .deviceRevoked, .staleSession, .scopeMismatch,
+                        .cancelled,
+                    ].contains(failure)
                 {
                     throw Task.isCancelled ? UploadFailure.cancelled : failure
                 }

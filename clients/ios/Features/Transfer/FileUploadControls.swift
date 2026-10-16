@@ -211,12 +211,17 @@ struct FileUploadControls: View {
             }
             Text(
                 model.statusLabel(
-                    for: record, background: model.backgroundJobs[record.id],
-                    isSceneActive: scenePhase == .active))
-                .accessibilityAddTraits(
-                    model.isLiveOperation(isSceneActive: scenePhase == .active)
-                        ? .updatesFrequently : [])
-                .accessibilityIdentifier("synveil.upload.state.\(record.id.rawValue)")
+                    for: record,
+                    background: model.backgroundJobs[record.id],
+                    isSceneActive: scenePhase == .active
+                )
+            )
+            .accessibilityAddTraits(
+                model.isLiveOperation(isSceneActive: scenePhase == .active)
+                    ? .updatesFrequently : []
+            )
+            .accessibilityIdentifier(
+                "synveil.upload.state.\(record.id.rawValue)")
             if progress.totalBytes > 0 {
                 ProgressView(
                     value: Double(progress.acknowledgedBytes),
@@ -306,10 +311,11 @@ struct FileUploadControls: View {
                 model.isRunning && !model.isLiveOperation(isSceneActive: scenePhase == .active)
                     ? "Checking saved transfer status…" : progress.state.label
             )
-                .font(.headline)
-                .accessibilityAddTraits(
-                    model.isLiveOperation(isSceneActive: scenePhase == .active)
-                        ? .updatesFrequently : [])
+            .font(.headline)
+            .accessibilityAddTraits(
+                model.isLiveOperation(isSceneActive: scenePhase == .active)
+                    ? .updatesFrequently : []
+            )
             if progress.totalBytes > 0 {
                 ProgressView(
                     value: Double(progress.acknowledgedBytes), total: Double(progress.totalBytes)
