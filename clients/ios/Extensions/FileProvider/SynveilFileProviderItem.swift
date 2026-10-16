@@ -42,8 +42,7 @@ final class SynveilFileProviderItem: NSObject, NSFileProviderItem {
         let manifest = try? store.readManifest(
             domain: domain,
             fileVersionID: version.fileVersionID,
-            expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint
-        )
+            expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint)
         return manifest != nil
     }
     var isMostRecentVersionDownloaded: Bool {
@@ -53,12 +52,10 @@ final class SynveilFileProviderItem: NSObject, NSFileProviderItem {
         // Empty components mean unknown. Never substitute local dates or fabricated revisions.
         let version = try? FileProviderItemVersionContract(
             fileVersionIdentity: projected?.fileVersionIdentity,
-            metadataRevision: projected?.metadataRevision
-        )
+            metadataRevision: projected?.metadataRevision)
         return NSFileProviderItemVersion(
             contentVersion: version?.contentVersion ?? Data(),
-            metadataVersion: version?.metadataVersion ?? Data()
-        )
+            metadataVersion: version?.metadataVersion ?? Data())
     }
 }
 
