@@ -7,7 +7,10 @@
   `origin/ios-app` was fetched and matched this SHA; it is an ancestor of the
   P052 feature branch.
 - Feature branch: `ios/p052-app-lifecycle-transfer-recovery`.
-- Feature commit(s): pending final source review and commit.
+- P052 implementation commit: `b16b678d0a5c1db7e7703d01feaf04b1a1d810d0`
+  (`ios: add lifecycle-safe transfer recovery (P052)`).
+- Manifest checkpoint commit: will be visible in the final feature branch history;
+  the exact branch HEAD is recorded in the final report.
 - Current PR, review, merge, and final integration SHAs: not yet available.
 - Current checkpoint is **not** a P052 completion claim. Required native iOS
   build, simulator, and Rust Apple workflows have not yet run on P052 source.
