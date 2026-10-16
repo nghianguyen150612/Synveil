@@ -137,7 +137,7 @@ Every Android capability is classified below into exactly one of six parity buck
 | **Shared Core** | Sync protocol state machine & feed validation logic | `SHARED_WITH_ADAPTER` | Rust `synveil-client-sync` or Swift adaptation |
 | **Android Specific**| Android WorkManager scheduling & AndroidX DataStore | `ANDROID_ONLY_NOT_APPLICABLE` | Replaced by `BGAppRefreshTask` & Keychain/UserDefaults |
 | **Android Specific**| Android SAF (`content://` URIs, DocumentFile) | `ANDROID_ONLY_NOT_APPLICABLE` | Replaced by iOS App Sandbox & `UIDocumentPicker` |
-| **iOS Extension**| File Provider Extension (Files app integration) | `IOS_DEFERRED_AFTER_V0_1` | Apple `NSFileProviderExtension` (Post-v0.1) |
+| **iOS Extension**| File Provider Extension (Files app integration) | `IOS_DEFERRED_AFTER_V0_1` | Apple `NSFileProviderReplicatedExtension` (Post-v0.1) |
 | **iOS Extension**| PhotoKit Background Auto-Upload | `IOS_DEFERRED_AFTER_V0_1` | Apple `PhotoKit` / `PHPhotoLibrary` (Post-v0.1) |
 | **Product Decision**| Multi-profile Keychain Access Group Sharing | `REQUIRES_PRODUCT_DECISION` | Apple Keychain Access Group configuration |
 
@@ -190,8 +190,16 @@ The native iOS v0.1 client requires the following native Apple frameworks and sy
 * **BackgroundTasks (`BGAppRefreshTask`)**: Periodic background metadata synchronization matching WorkManager periodic sync (bounded by iOS system battery and usage scheduling).
 
 ### 4.6 Explicitly Excluded / Deferred Apple Frameworks for v0.1
-* **File Provider (`NSFileProviderExtension`)**: *DEFERRED AFTER V0.1*. Files app virtual directory integration is out of scope for baseline parity.
+* **File Provider (`NSFileProviderReplicatedExtension`)**: *DEFERRED AFTER V0.1*. Files app virtual directory integration is out of scope for baseline parity.
 * **PhotoKit (`PHPhotoLibrary`)**: *DEFERRED AFTER V0.1*. Camera roll auto-upload is out of scope for v0.1 baseline parity.
+
+### 4.7 Owner-authorized post-baseline File Provider workstream
+
+P053–P055 are an owner-authorized extension workstream after the v0.1 baseline. P053 establishes an
+isolated extension target and security contracts; it does not make Apple Files integration a v0.1
+parity requirement, change v0.1 release eligibility, or establish production Files support. The
+deferred classification above remains in force until later milestones implement and validate the
+user-visible capability.
 
 ---
 

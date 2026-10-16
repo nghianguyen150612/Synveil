@@ -229,6 +229,26 @@
 		17263C898E90BF6CEFCA2B59 /* NotificationTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9614A75B0F1C8683336D2C88 /* NotificationTestSupport.swift */; };
 		953A24380218678BF0AEFD09 /* NotificationViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 428F4A5A54D6FE89956DB72C /* NotificationViewTests.swift */; };
 		C82802687338F9AAC0B19F35 /* LocalNotificationScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCA2C67CA1F0A896F77500C /* LocalNotificationScheduler.swift */; };
+		E05300000000000000000201 /* FileProviderDomainIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000101 /* FileProviderDomainIdentity.swift */; };
+		E05300000000000000000202 /* FileProviderItemIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000102 /* FileProviderItemIdentity.swift */; };
+		E05300000000000000000203 /* FileProviderCapability.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000103 /* FileProviderCapability.swift */; };
+		E05300000000000000000204 /* FileProviderAuthorizationBoundary.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000104 /* FileProviderAuthorizationBoundary.swift */; };
+		E05300000000000000000205 /* FileProviderSharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000105 /* FileProviderSharedContainer.swift */; };
+		E05300000000000000000206 /* FileProviderMetadataContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000106 /* FileProviderMetadataContract.swift */; };
+		E05300000000000000000207 /* FileProviderLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000109 /* FileProviderLifecycle.swift */; };
+		E05300000000000000000211 /* FileProviderDomainIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000101 /* FileProviderDomainIdentity.swift */; };
+		E05300000000000000000212 /* FileProviderItemIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000102 /* FileProviderItemIdentity.swift */; };
+		E05300000000000000000213 /* FileProviderCapability.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000103 /* FileProviderCapability.swift */; };
+		E05300000000000000000214 /* FileProviderAuthorizationBoundary.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000104 /* FileProviderAuthorizationBoundary.swift */; };
+		E05300000000000000000215 /* FileProviderSharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000105 /* FileProviderSharedContainer.swift */; };
+		E05300000000000000000216 /* FileProviderMetadataContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000106 /* FileProviderMetadataContract.swift */; };
+		E05300000000000000000217 /* FileProviderErrorMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000107 /* FileProviderErrorMapper.swift */; };
+		E05300000000000000000218 /* FileProviderEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000108 /* FileProviderEnumerator.swift */; };
+		E05300000000000000000219 /* FileProviderLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000109 /* FileProviderLifecycle.swift */; };
+		E0530000000000000000021A /* SynveilFileProviderExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0530000000000000000010A /* SynveilFileProviderExtension.swift */; };
+		E0530000000000000000021B /* FileProvider.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F05300000000000000000110 /* FileProvider.framework */; };
+		E0530000000000000000021C /* SynveilFileProviderExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = F0530000000000000000010F /* SynveilFileProviderExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		E0530000000000000000021D /* FileProviderFoundationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000111 /* FileProviderFoundationTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -239,7 +259,29 @@
 			remoteGlobalIDString = A50000012C00000000000001;
 			remoteInfo = Synveil;
 		};
+		D05300000000000000000309 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A60000012C00000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D05300000000000000000301;
+			remoteInfo = SynveilFileProviderExtension;
+		};
+
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		D05300000000000000000302 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				E0530000000000000000021C /* SynveilFileProviderExtension.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		A20000012C00000000000001 /* SynveilApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/SynveilApp.swift; sourceTree = "<group>"; };
@@ -465,6 +507,23 @@
 		9614A75B0F1C8683336D2C88 /* NotificationTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NotificationTestSupport.swift; sourceTree = "<group>"; };
 		428F4A5A54D6FE89956DB72C /* NotificationViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NotificationViewTests.swift; sourceTree = "<group>"; };
 		ABCA2C67CA1F0A896F77500C /* LocalNotificationScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Notifications/LocalNotificationScheduler.swift; sourceTree = "<group>"; };
+		F05300000000000000000101 /* FileProviderDomainIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderDomainIdentity.swift; sourceTree = "<group>"; };
+		F05300000000000000000102 /* FileProviderItemIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderItemIdentity.swift; sourceTree = "<group>"; };
+		F05300000000000000000103 /* FileProviderCapability.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderCapability.swift; sourceTree = "<group>"; };
+		F05300000000000000000104 /* FileProviderAuthorizationBoundary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderAuthorizationBoundary.swift; sourceTree = "<group>"; };
+		F05300000000000000000105 /* FileProviderSharedContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderSharedContainer.swift; sourceTree = "<group>"; };
+		F05300000000000000000106 /* FileProviderMetadataContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderMetadataContract.swift; sourceTree = "<group>"; };
+		F05300000000000000000107 /* FileProviderErrorMapper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderErrorMapper.swift; sourceTree = "<group>"; };
+		F05300000000000000000108 /* FileProviderEnumerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderEnumerator.swift; sourceTree = "<group>"; };
+		F05300000000000000000109 /* FileProviderLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderLifecycle.swift; sourceTree = "<group>"; };
+		F0530000000000000000010A /* SynveilFileProviderExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SynveilFileProviderExtension.swift; sourceTree = "<group>"; };
+		F0530000000000000000010B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		F0530000000000000000010C /* FileProvider.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FileProvider.entitlements; sourceTree = "<group>"; };
+		F0530000000000000000010D /* FileProvider README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		F0530000000000000000010F /* SynveilFileProviderExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SynveilFileProviderExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		F05300000000000000000110 /* FileProvider.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = FileProvider.framework; path = System/Library/Frameworks/FileProvider.framework; sourceTree = SDKROOT; };
+		F05300000000000000000111 /* FileProviderFoundationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/FileProviderFoundationTests.swift; sourceTree = "<group>"; };
+		F05300000000000000000112 /* Synveil.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App/Synveil.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -485,6 +544,8 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D05300000000000000000304 /* FileProvider Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (E0530000000000000000021B /* FileProvider.framework in Frameworks */,); runOnlyForDeploymentPostprocessing = 0; };
+
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -575,6 +636,9 @@
 				A40000012C00000000000012 /* Application */,
 				A40000012C00000000000013 /* Infrastructure */,
 				A40000012C00000000000003 /* Resources */,
+				F0530000000000000000010E /* FileProvider */,
+				F05300000000000000000112 /* Synveil.entitlements */,
+				F05300000000000000000110 /* FileProvider.framework */,
 				B40000012C00000000000001 /* Tests */,
 				A40000012C00000000000004 /* Products */,
 			);
@@ -757,6 +821,7 @@
 			children = (
 				A20000012C00000000000004 /* Synveil.app */,
 				B20000012C00000000000002 /* SynveilTests.xctest */,
+				F0530000000000000000010F /* SynveilFileProviderExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -773,6 +838,7 @@
 		B40000012C00000000000002 /* SynveilTests */ = {
 			isa = PBXGroup;
 			children = (
+				F05300000000000000000111 /* FileProviderFoundationTests.swift */,
 				B14500000000000000000001 /* FileUploadTests.swift */,
 				B14500000000000000000002 /* FileUploadStorageTests.swift */,
 				B14500000000000000000003 /* FileUploadViewTests.swift */,
@@ -827,6 +893,27 @@
 			name = SynveilTests;
 			sourceTree = "<group>";
 		};
+		F0530000000000000000010E /* FileProvider */ = {
+			isa = PBXGroup;
+			children = (
+				F0530000000000000000010A /* SynveilFileProviderExtension.swift */,
+				F05300000000000000000101 /* FileProviderDomainIdentity.swift */,
+				F05300000000000000000102 /* FileProviderItemIdentity.swift */,
+				F05300000000000000000103 /* FileProviderCapability.swift */,
+				F05300000000000000000104 /* FileProviderAuthorizationBoundary.swift */,
+				F05300000000000000000105 /* FileProviderSharedContainer.swift */,
+				F05300000000000000000106 /* FileProviderMetadataContract.swift */,
+				F05300000000000000000107 /* FileProviderErrorMapper.swift */,
+				F05300000000000000000108 /* FileProviderEnumerator.swift */,
+				F05300000000000000000109 /* FileProviderLifecycle.swift */,
+				F0530000000000000000010B /* Info.plist */,
+				F0530000000000000000010C /* FileProvider.entitlements */,
+				F0530000000000000000010D /* README.md */,
+			);
+			path = Extensions/FileProvider;
+			sourceTree = "<group>";
+		};
+
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -837,10 +924,12 @@
 				A80000012C00000000000001 /* Sources */,
 				A30000012C00000000000001 /* Frameworks */,
 				A70000012C00000000000001 /* Resources */,
+				D05300000000000000000302 /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				D0530000000000000000030A /* PBXTargetDependency */,
 			);
 			name = Synveil;
 			productName = Synveil;
@@ -864,6 +953,24 @@
 			productReference = B20000012C00000000000002 /* SynveilTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		D05300000000000000000301 /* SynveilFileProviderExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D05300000000000000000306 /* Build configuration list for PBXNativeTarget "SynveilFileProviderExtension" */;
+			buildPhases = (
+				D05300000000000000000303 /* FileProvider Sources */,
+				D05300000000000000000304 /* FileProvider Frameworks */,
+				D05300000000000000000305 /* FileProvider Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SynveilFileProviderExtension;
+			productName = SynveilFileProviderExtension;
+			productReference = F0530000000000000000010F /* SynveilFileProviderExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -879,6 +986,9 @@
 						SystemCapabilities = {
 							com.apple.BackgroundModes = { enabled = 1; };
 						};
+					};
+					D05300000000000000000301 = {
+						CreatedOnToolsVersion = 15.4;
 					};
 					B50000012C00000000000001 = {
 						CreatedOnToolsVersion = 15.4;
@@ -900,6 +1010,7 @@
 			projectRoot = "";
 			targets = (
 				A50000012C00000000000001 /* Synveil */,
+				D05300000000000000000301 /* SynveilFileProviderExtension */,
 				B50000012C00000000000001 /* SynveilTests */,
 			);
 		};
@@ -914,6 +1025,8 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D05300000000000000000305 /* FileProvider Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -921,6 +1034,13 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E05300000000000000000201 /* FileProviderDomainIdentity.swift in Sources */,
+				E05300000000000000000202 /* FileProviderItemIdentity.swift in Sources */,
+				E05300000000000000000203 /* FileProviderCapability.swift in Sources */,
+				E05300000000000000000204 /* FileProviderAuthorizationBoundary.swift in Sources */,
+				E05300000000000000000205 /* FileProviderSharedContainer.swift in Sources */,
+				E05300000000000000000206 /* FileProviderMetadataContract.swift in Sources */,
+				E05300000000000000000207 /* FileProviderLifecycle.swift in Sources */,
 				C82802687338F9AAC0B19F35 /* LocalNotificationScheduler.swift in Sources */,
 				20338AFE1E8E69BCFE6FB01D /* NotificationPolicyStore.swift in Sources */,
 				1B5BD3628469B277BC4724F7 /* NotificationDeliveryLedger.swift in Sources */,
@@ -1070,6 +1190,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E0530000000000000000021D /* FileProviderFoundationTests.swift in Sources */,
 				953A24380218678BF0AEFD09 /* NotificationViewTests.swift in Sources */,
 				17263C898E90BF6CEFCA2B59 /* NotificationTestSupport.swift in Sources */,
 				AD45EB5BB3B0C570B404CA4E /* NotificationPersistenceTests.swift in Sources */,
@@ -1149,6 +1270,24 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D05300000000000000000303 /* FileProvider Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E05300000000000000000211 /* FileProviderDomainIdentity.swift in Sources */,
+				E05300000000000000000212 /* FileProviderItemIdentity.swift in Sources */,
+				E05300000000000000000213 /* FileProviderCapability.swift in Sources */,
+				E05300000000000000000214 /* FileProviderAuthorizationBoundary.swift in Sources */,
+				E05300000000000000000215 /* FileProviderSharedContainer.swift in Sources */,
+				E05300000000000000000216 /* FileProviderMetadataContract.swift in Sources */,
+				E05300000000000000000217 /* FileProviderErrorMapper.swift in Sources */,
+				E05300000000000000000218 /* FileProviderEnumerator.swift in Sources */,
+				E05300000000000000000219 /* FileProviderLifecycle.swift in Sources */,
+				E0530000000000000000021A /* SynveilFileProviderExtension.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -1157,6 +1296,8 @@
 			target = A50000012C00000000000001 /* Synveil */;
 			targetProxy = B60000012C00000000000001 /* PBXContainerItemProxy */;
 		};
+		D0530000000000000000030A /* Synveil File Provider target dependency */ = {isa = PBXTargetDependency; target = D05300000000000000000301 /* SynveilFileProviderExtension */; targetProxy = D05300000000000000000309 /* PBXContainerItemProxy */; };
+
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
@@ -1279,12 +1420,11 @@
 		A90000012C00000000000003 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = App/Synveil.entitlements;
+				CODE_SIGN_STYLE = Automatic;
 				INFOPLIST_FILE = App/BackgroundSyncInfo.plist;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGNING_ALLOWED = NO;
-				CODE_SIGNING_REQUIRED = NO;
-				CODE_SIGN_IDENTITY = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
@@ -1328,12 +1468,11 @@
 		A90000012C00000000000004 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = App/Synveil.entitlements;
+				CODE_SIGN_STYLE = Automatic;
 				INFOPLIST_FILE = App/BackgroundSyncInfo.plist;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGNING_ALLOWED = NO;
-				CODE_SIGNING_REQUIRED = NO;
-				CODE_SIGN_IDENTITY = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
@@ -1464,6 +1603,47 @@
 			};
 			name = Release;
 		};
+		D05300000000000000000307 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Extensions/FileProvider/FileProvider.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Extensions/FileProvider/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks",);
+				PRODUCT_BUNDLE_IDENTIFIER = com.synveil.ios.fileprovider;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		D05300000000000000000308 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Extensions/FileProvider/FileProvider.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Extensions/FileProvider/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks",);
+				PRODUCT_BUNDLE_IDENTIFIER = com.synveil.ios.fileprovider;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -1494,6 +1674,8 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		D05300000000000000000306 /* Build configuration list for PBXNativeTarget "SynveilFileProviderExtension" */ = {isa = XCConfigurationList; buildConfigurations = (D05300000000000000000307 /* Debug */, D05300000000000000000308 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+
 /* End XCConfigurationList section */
 	};
 	rootObject = A60000012C00000000000001 /* Project object */;

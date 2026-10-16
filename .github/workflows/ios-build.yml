@@ -77,3 +77,26 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             -derivedDataPath "$RUNNER_TEMP/SynveilDerivedData" \
             build
+
+      - name: Verify embedded File Provider extension product
+        run: |
+          APP_PATH="$RUNNER_TEMP/SynveilDerivedData/Build/Products/Debug-iphonesimulator/Synveil.app"
+          APPEX_PATH="$APP_PATH/PlugIns/SynveilFileProviderExtension.appex"
+          test -d "$APPEX_PATH"
+          python3 - "$APPEX_PATH/Info.plist" <<'PY'
+          import plistlib
+          import sys
+
+          with open(sys.argv[1], "rb") as stream:
+              info = plistlib.load(stream)
+          extension = info["NSExtension"]
+          assert info["CFBundleIdentifier"] == "com.synveil.ios.fileprovider"
+          assert extension["NSExtensionPointIdentifier"] == "com.apple.fileprovider-nonui"
+          assert extension["NSExtensionPrincipalClass"] == (
+              "SynveilFileProviderExtension.SynveilFileProviderExtension"
+          )
+          assert extension["NSExtensionAttributes"][
+              "NSExtensionFileProviderDocumentGroup"
+          ] == "group.com.synveil.ios"
+          print("Embedded File Provider extension metadata verified")
+          PY

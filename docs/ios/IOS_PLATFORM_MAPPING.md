@@ -18,7 +18,7 @@ Every capability in Synveil v0.1 is classified into **exactly one** of the follo
 2. **`SHARED_WITH_ADAPTER`**: Rust shared core logic (`crates/client-sync`) re-used through a thin Swift-C-FFI / UniFFI adapter layer or platform bridge to handle storage/network abstraction.
 3. **`IOS_NATIVE_EQUIVALENT`**: Feature implemented natively in Swift using idiomatic Apple frameworks (SwiftUI, URLSession, Security/Keychain, SQLite/GRDB, Network framework) to replicate Android product behavior.
 4. **`ANDROID_ONLY_NOT_APPLICABLE`**: Architectural mechanism specific to the Android platform (e.g. WorkManager, Storage Access Framework `content://` URIs, Foreground Services, AndroidX DataStore, Room-specific abstractions) that does not exist on iOS and must be replaced by native iOS platform mechanisms.
-5. **`IOS_DEFERRED_AFTER_V0_1`**: Capability or Apple system extension explicitly out of scope for iOS v0.1 baseline parity (e.g., File Provider Extension `NSFileProviderExtension`, PhotoKit Auto-Upload `PHPhotoLibrary`).
+5. **`IOS_DEFERRED_AFTER_V0_1`**: Capability or Apple system extension explicitly out of scope for iOS v0.1 baseline parity (e.g., File Provider Extension `NSFileProviderReplicatedExtension`, PhotoKit Auto-Upload `PHPhotoLibrary`).
 6. **`REQUIRES_PRODUCT_DECISION`**: Feature mapping where source code inspection reveals technical trade-offs or platform differences requiring product-owner decision before final execution.
 
 ---
@@ -69,7 +69,7 @@ Every capability in Synveil v0.1 is classified into **exactly one** of the follo
 | **CAP-30** | BrowserSession-Only Conflict Resolution Boundary | `SyncEngine.kt` | `IOS_NATIVE_EQUIVALENT` | Swift HTTP client enforcement | Swift-native transport | `LINUX_VERIFIABLE`, `SIMULATOR_VERIFIABLE` | Prevents DeviceBearer conflict resolution requests. Manual conflict resolution remains strictly a browser workflow. |
 | **CAP-31** | Content Export & Sharing | `TransferOperations.kt` | `IOS_NATIVE_EQUIVALENT` | SwiftUI `ShareLink` / `UIActivityViewController` / Quick Look | Swift-native UI | `SIMULATOR_VERIFIABLE`, `PHYSICAL_DEVICE_ONLY` | Temporary file export and in-app file preview. Replaces Android `ACTION_SEND` intents. |
 | **CAP-32** | User Sync Settings & Network Constraints | `SyncSettings.kt`, `SyncSettingsScreen.kt` | `IOS_NATIVE_EQUIVALENT` | SwiftUI Settings Form + `UserDefaults` / `BGTaskScheduler` | Swift-native settings store | `SIMULATOR_VERIFIABLE` | User controls for background sync enable/disable and network constraint selection (Wi-Fi vs Cellular via `NWPathMonitor`). |
-| **CAP-33** | File Provider Extension (`NSFileProviderExtension`) | N/A | `IOS_DEFERRED_AFTER_V0_1` | Apple `NSFileProviderExtension` | Deferred | `PHYSICAL_DEVICE_ONLY` | Files app virtual directory integration deferred to P053–P055. |
+| **CAP-33** | File Provider Extension (`NSFileProviderReplicatedExtension`) | N/A | `IOS_DEFERRED_AFTER_V0_1` | Apple replicated File Provider API | P053 foundation only | `MACOS_CI_VERIFIABLE`, `PHYSICAL_DEVICE_ONLY` | Files integration remains deferred after v0.1; P053 does not register a production domain. |
 | **CAP-34** | PhotoKit Background Auto-Upload (`PHPhotoLibrary`) | N/A | `IOS_DEFERRED_AFTER_V0_1` | Apple `PhotoKit` framework | Deferred | `PHYSICAL_DEVICE_ONLY` | Camera roll photo sync deferred to P056–P058. |
 
 ---
@@ -133,7 +133,7 @@ The Android mechanisms described above are replaced by native Apple platform equ
 * **Background Scheduling**: `BGTaskScheduler` and `BGAppRefreshTask`.
 
 ### 7.4 Explicitly Deferred Scope (`IOS_DEFERRED_AFTER_V0_1`)
-* **File Provider Extension (`NSFileProviderExtension`)**: Deferred to P053–P055.
+* **File Provider Extension (`NSFileProviderReplicatedExtension`)**: Deferred to P053–P055 after the v0.1 baseline; P053 supplies foundation only.
 * **PhotoKit Auto-Upload (`PHPhotoLibrary`)**: Deferred to P056–P058.
 
 ---
@@ -143,13 +143,14 @@ The Android mechanisms described above are replaced by native Apple platform equ
 The following items are classified as `REQUIRES_PRODUCT_DECISION` and require product-owner alignment:
 
 ### Item DECISION-01: Keychain Access Group Sharing across App Extensions & Multi-Profile Switcher
-* **Exact Question**: Should Synveil iOS configure an explicit Keychain Access Group (`$(AppIdentifierPrefix)com.synveil.ios.shared`) in v0.1 to allow future App Extensions (e.g. File Provider, Share Extension) to access stored `svd1_` credentials, or strictly restrict Keychain items to the primary app bundle (`kSecAttrAccessGroup` default)?
+* **P053 resolution**: Preserve the host app's default Keychain isolation. P053 adds no Keychain Access Group entitlement, reads no DeviceBearer credential from the extension, and migrates no existing credential. A future reviewed app-mediated authorization protocol remains a product/security decision.
+* **Original question**: Should Synveil iOS configure an explicit Keychain Access Group (`$(AppIdentifierPrefix)com.synveil.ios.shared`) in v0.1 to allow future App Extensions (e.g. File Provider, Share Extension) to access stored `svd1_` credentials, or strictly restrict Keychain items to the primary app bundle (`kSecAttrAccessGroup` default)?
 * **Why Source Code Cannot Answer It**: Android uses single-process app sandboxing where DataStore is accessible to WorkManager within the same APK. iOS App Extensions run in separate process sandboxes with separate default keychains.
 * **Options**:
   1. *Option A (App-Only Default)*: Omit Keychain Access Groups in v0.1. Primary app owns all credentials. Fast execution, simpler provisioning.
   2. *Option B (Shared Access Group Foundation)*: Entitle Keychain Access Group in v0.1 foundation. Prepares for extensions without breaking existing Keychain items in later prompts.
-* **Consequences**: Option A requires migration when File Provider (P053) is built. Option B requires standardizing Developer Team IDs in build configurations early.
-* **Recommended Default**: **Option A for v0.1 baseline foundation**, transitioning to Option B when P053 (File Provider) commences.
+* **Consequences**: P053 keeps existing credentials app-only and defines only a non-secret authorization evidence interface. Any later shared credential or authorization design requires a separate review and a proven migration/rollback plan.
+* **P053 decision**: **Option A retained**. No automatic transition to shared Keychain access occurs in the File Provider workstream.
 
 ---
 
@@ -164,7 +165,7 @@ To maintain strict scope discipline, the following items are explicitly categori
 * Android Room database ORM annotations.
 
 ### 9.2 Functionality Intentionally Deferred (`IOS_DEFERRED_AFTER_V0_1`)
-* **File Provider Extension (`NSFileProviderExtension`)**: Integration into Apple Files app (Roadmap P053–P055).
+* **File Provider Extension (`NSFileProviderReplicatedExtension`)**: Integration into Apple Files app (post-baseline workstream P053–P055).
 * **PhotoKit Camera Roll Sync (`PHPhotoLibrary`)**: Automatic background photo backup (Roadmap P056–P058).
 * **Push Notification Triggers (`APNs`)**: Remote background wakeups via Apple Push Notification service.
 

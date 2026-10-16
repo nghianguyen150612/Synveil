@@ -565,10 +565,15 @@ State Transitions:
 
 ## 23. File Provider Extension Boundary
 
-* **Deferred Scope**: Reserved for P053–P055.
-* **Architecture Boundary**: File Provider Extension (`NSFileProviderExtension`) runs as a separate Apple OS extension process.
-* **Shared Infrastructure**: When implemented in P053, File Provider will share Domain Models, SQLite Cache Store, and Keychain Credentials via a shared App Group container (`group.com.synveil.ios`).
-* **Isolation**: The core SwiftUI file browser in v0.1 MUST NOT depend on File Provider.
+* **Product status**: Files integration remains `IOS_DEFERRED_AFTER_V0_1`. P053–P055 are an owner-authorized post-baseline workstream and do not change v0.1 release eligibility or parity claims.
+* **Apple API**: Use the iOS 16+ `NSFileProviderReplicatedExtension` protocol and `NSFileProviderEnumerating`; the project targets iOS 17+. Do not use legacy `NSFileProviderExtension` callbacks.
+* **Process boundary**: The extension launches independently. It must not initialize SwiftUI, `AppDependencyContainer`, P052 lifecycle recovery, Keychain, SQLite, URLSession, or background transfers on process launch.
+* **App Group**: `group.com.synveil.ios` is declared by both targets' entitlement files and the extension metadata. Resolve the real container only through the entitlement-gated FileManager API. Use a bounded, versioned, read-only metadata snapshot boundary; never fall back to the app sandbox. Device activation depends on team registration and compatible provisioning.
+* **Database and credentials**: SQLite stays v9 and app-private. The extension is not a second database writer. DeviceBearer remains in the host app's default Keychain group; no shared Keychain entitlement or credential migration is introduced. A future non-secret app-mediated authorization protocol must fence logout, revocation, account switch, credential replacement, protected data, and relaunch.
+* **Domain policy**: One opaque domain represents a server/account/device credential generation and contains Library roots. Domain identity excludes bearer material and visible endpoint/account details. production domain registration remains disabled; metadata publication also stays disabled, and app startup must never call `NSFileProviderManager.add`.
+* **P053 behavior**: Enumeration/item lookup fail as unauthenticated while no authorized Library snapshot exists. Fetch returns no file URL. Create, modify, and delete fail with `cannotSynchronize`. No operation fabricates empty content, success, or a server mutation.
+* **Future gates**: P054 requires authorized remote enumeration and metadata change propagation. P055 requires reviewed immutable FileVersion materialization and separately authorized mutation/upload designs. Neither milestone starts automatically from P053.
+* **App isolation**: The core SwiftUI file browser does not depend on the File Provider target.
 
 ---
 
@@ -674,8 +679,8 @@ All developers and LLM agents working on the Synveil iOS client MUST obey these 
 ## 28. Unresolved Decisions
 
 1. **Keychain Access Group Entitlement (`DECISION-01`)**:
-   * *Status*: Unresolved product decision from Prompt002.
-   * *Architecture Mitigation*: v0.1 foundation uses default app bundle Keychain isolation (`kSecAttrAccessGroup` omitted). The `KeychainVault` protocol interface is designed to accept an optional access group identifier parameter without breaking callers when File Provider (P053) introduces shared App Groups later.
+   * *P053 resolution*: Keep the app-only default Keychain group (`kSecAttrAccessGroup` omitted). No credential migration or extension Keychain entitlement is authorized by this workstream.
+   * *Remaining decision*: Any future cross-process credential access requires a reviewed authorization protocol and product decision; App Group access does not grant Keychain access.
 
 ---
 
@@ -689,5 +694,5 @@ All developers and LLM agents working on the Synveil iOS client MUST obey these 
 * **P029–P037 (File Browser)**: Must implement SwiftUI Views and ViewModels driven by local SQLite cached projections.
 * **P038–P047 (Transfers/Cache/Offline)**: Must implement the decoupled `TransferEngine` with 4 MiB resumable uploads and 512 MiB staging pressure limits.
 * **P048–P052 (Native iOS Experience)**: Must integrate `BGAppRefreshTask`, Quick Look, and Share Sheet.
-* **P053–P055 (File Provider)**: Must build `NSFileProviderExtension` as a separate extension subsystem utilizing shared App Group storage.
+* **P053–P055 (File Provider)**: The owner-authorized post-baseline workstream uses `NSFileProviderReplicatedExtension` in an isolated target and a narrow App Group metadata projection. P053 foundations keep registration, network, content, mutations, Keychain sharing, and SQLite sharing disabled.
 * **P056–P058 (PhotoKit)**: Must build camera roll sync on top of the shared `TransferEngine`.
