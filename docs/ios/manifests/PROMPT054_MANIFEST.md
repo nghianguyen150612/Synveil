@@ -1,5 +1,30 @@
 # P054 — File Provider enumeration and durable metadata synchronization
 
+## Owner-directed P054 closeout — 2026-10-16
+
+**Scope:** `COMPLETE_WITH_APPROVED_DEFERRALS` for isolated, read-only, test-validated File Provider metadata infrastructure. This does **not** mean the provider is registered or usable in Apple Files on a signed device.
+
+The owner explicitly directed integration and advancement to P055. PR #137 had been closed unmerged, with its original branch deleted; its original verified final implementation SHA `afe42b58fba412e68707bc7760588e50ecb86c8b` was restored to branch `ios/p054-file-provider-enumeration`. PR #138 is an alternative Jules draft, NOT the integration source: its latest implementation HEAD `dd77fd7c410f9ec539f2f9a8d8c62fb0f5e754b0` failed iOS Build and Simulator Tests; do not merge that PR as P054.
+
+**Final executable-source CI on `afe42b58fba412e68707bc7760588e50ecb86c8b`:**
+
+- iOS Static Validation — **PASS**, run [38869602004](https://github.com/nghianguyen150612/Synveil/actions/runs/38869602004).
+- iOS Build — **PASS**, run [38869601904](https://github.com/nghianguyen150612/Synveil/actions/runs/38869601904).
+- iOS Simulator Tests — **PASS**, run [38869602012](https://github.com/nghianguyen150612/Synveil/actions/runs/38869602012).
+- iOS Rust Apple Build — **PASS**, run [38869601960](https://github.com/nghianguyen150612/Synveil/actions/runs/38869601960).
+- Portable test evidence recorded in the original checkpoint: **117 tests PASS**; exact native XCTest totals not asserted here without the result bundle.
+- This closeout amendment is documentation-only and does not change tested executable sources. Later CI may be triggered for its new documentation HEAD; do not claim those follow-up runs passed until verified.
+
+**Safety:** The production File Provider capability remains OFF. No automatically registered domain, no live metadata publication, no production canonical capture source, no extension Keychain/SQLite/network access, no Files content materialization or mutation, no P046/P051 background-transfer reactivation. Immutable unit snapshots, one atomic commit manifest, retained generations, cancellation, authorization withdrawal and deterministic enumeration are implemented as testable infrastructure. The documented tests establish native build and simulator behavior, NOT real Files app qualification.
+
+**Deferred (not passed):** Signed App Group entitlement and iPhone Files integration, on-device protected-data/OS process behavior, production canonical capture and logout/revocation integration, independent security approval for activating production access, real domain registration, P055 content materialization and remote writes. In particular, P055 must not remove the gates by interpreting this infrastructure integration as production authorization.
+
+**Review:** A reviewer was requested but no GitHub approval had been submitted at closeout. The owner-directed integration is a documented exception to waiting for review of this *disabled production foundation*, not an independent review or a waiver for future activation. Preserve open security and device qualification gates.
+
+**Next:** P055 may start on the actual merged `ios-app` SHA only after merge verification. The P055 scope is safe, immutable FileVersion materialization, separately gated for missing extension credential/deployment validation. Earlier pending/checkpoint text below is historical.
+
+---
+
 ## Checkpoint and integration state
 
 - Starting `origin/ios-app`: `888578ba6676979882e174d1ab4d58eb2602d3cd`, exactly the verified
