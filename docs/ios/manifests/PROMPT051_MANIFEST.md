@@ -1,5 +1,35 @@
 # P051 — Background Transfer Architecture and Security Gate
 
+## P051 closeout — owner-directed scope revision (2026-10-16)
+
+**Release classification: P051_SAFE_CONTAINMENT_COMPLETE_WITH_DEFERRED_SCOPE.**
+The product owner directed P051 to close with unsupported work explicitly deferred and to advance the roadmap to P052. This is a *scope revision*, not a claim that native background upload/download is operational, redirect-safe, reviewed, or production-qualified. Earlier `BLOCKED_REQUIRES_FIXES` entries below describe the original full-feature acceptance criteria and remain historical evidence. The safety gate remains mandatory for any future activation.
+
+| Component / acceptance item | Closeout disposition | Evidence and constraint |
+|---|---|---|
+| P051A API-process redirect guard on authenticated transfers | IMPLEMENTED | Handler-generated 3xx replaced with API error; API tests 112/112 on the documented implementation source; external proxies are outside this guarantee |
+| P046 background upload safety containment | IMPLEMENTED — CAPABILITY OFF | No new production background PATCH/Resume; existing intent, chunks, task identity and authoritative offset retained; foreground P045 upload remains available |
+| P051 background download capability gate | IMPLEMENTED — CAPABILITY OFF | Disabled native action with explanation; existing P043 foreground download and verified preview/export unchanged |
+| P051B architecture decision and deployment checklist | DOCUMENTED | Redirect-free controlled deployment is only a candidate; hybrid/scoped-grant design requires separate review |
+| Live authenticated transfer path / reverse-proxy validation | DEFERRED — NOT_AVAILABLE | No controlled public origin or verified live deployment; do not infer edge redirect behavior from Axum unit tests |
+| Independent security review and acceptance of a positive transport design | DEFERRED — NOT_APPROVED | No reviewer approval is represented by product-owner scope deferral; required before enabling background transfers |
+| Physical iPhone, lock, force-quit, OS daemon and transfer validation | DEFERRED — NOT_AVAILABLE | Simulator tests do not establish device or OS background behavior |
+| Native background download OS task, temporary-file handoff, durable binding, resume and SHA-256 publication | DEFERRED — NOT_IMPLEMENTED | No P051 background task is submitted; SQLite remains v9; no new feature advertised |
+| Reenable P046 native background upload on real deployments | DEFERRED — NOT_AUTHORIZED | Redirect/body-forwarding safety and review remain unresolved |
+| Scoped grants / end-to-end encrypted background transfer alternative | DEFERRED — REQUIRES DESIGN & REVIEW | No new credential protocol or grant route exists |
+| Rust CI, Linux packaging, Postgres unrelated baseline failures | OPEN SEPARATE WORK | Not counted as passing or production readiness; review security advisories separately |
+| Independent PR code review | NOT_PERFORMED at this closeout checkpoint | Owner explicitly prioritized integrating fail-closed containment and recording incomplete work; do not fabricate third-party approval |
+
+**Validated source:** `5b518983099078c5104153bec12d27f16c67b5bc` — exact-head iOS Static Validation, Build, Simulator and Rust Apple Build all passed; 1,924 XCTest passed, 0 failed, 2 skipped. The present closeout documentation commit introduces no executable changes and does not retroactively create new source validation evidence.
+
+**Merge policy for this narrowed scope:** Integration of the existing fail-closed containment is permissible as a security hardening baseline. No activation of background upload/download is authorized. GitHub merge status and the actual merge commit, if any, must be verified externally rather than predicted in this file.
+
+**P052 dependency:** P052 (App Lifecycle & Transfer Recovery) may proceed on the integrated security-hardening baseline and must test **existing foreground transfer and saved/disabled background states only**. P052 may not silently reenable native background transfer, implement the deferred P051 download engine, or treat `DEFERRED` as `PASS`.
+
+**Deferred reentry:** Complete the separately gated background-transfer implementation on a subsequent authorized milestone with verified deployment security, independent review, protected payload/credential semantics, native task ownership, on-device evidence, and full regressions before marking these capabilities available.
+
+---
+
 ## PROMPT051B — Secure Background Transfer Recovery
 
 ### Recovery checkpoint — 2026-10-16
