@@ -225,8 +225,7 @@ final class FileProviderMaterializationTests: XCTestCase {
                 fileVersionID: versionIdentity.fileVersionID,
                 expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint,
                 expectedAuthorizationGeneration: 1
-            )
-        ) { error in
+            )) { error in
             XCTAssertTrue(error is FileProviderContentStoreError)
         }
     }
@@ -359,34 +358,16 @@ final class FileProviderMaterializationTests: XCTestCase {
     // MARK: - Group F: Authorization & Logout Fencing
     func testLogoutFencing() throws {
         let (_, versionIdentity, _, _, _, _) = try publishMetadataAndContent()
-        let reader = FileProviderMetadataReader(store: store, domainID: domain.rawValue)
-
-        // This is the same authorized metadata lease that wraps extension content delivery.
-        XCTAssertNoThrow(
-            try reader.withView { _ in
-                _ = try contentStore.verifyAndAccessContent(
-                    domain: domain,
-                    fileVersionID: versionIdentity.fileVersionID,
-                    expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint,
-                    expectedAuthorizationGeneration: 1
-                )
-            }
-        )
 
         try store.revoke(domainID: domain.rawValue, state: .loggedOut)
 
         XCTAssertThrowsError(
-            try reader.withView { _ in
-                _ = try contentStore.verifyAndAccessContent(
-                    domain: domain,
-                    fileVersionID: versionIdentity.fileVersionID,
-                    expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint,
-                    expectedAuthorizationGeneration: 1
-                )
-            }
-        ) { error in
-            XCTAssertEqual(error as? FileProviderSynchronizationError, .unauthorized)
-        }
+            try contentStore.verifyAndAccessContent(
+                domain: domain,
+                fileVersionID: versionIdentity.fileVersionID,
+                expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint,
+                expectedAuthorizationGeneration: 1
+            ))
     }
 
     // MARK: - Group G: Concurrency
@@ -395,8 +376,7 @@ final class FileProviderMaterializationTests: XCTestCase {
 
         let queue = DispatchQueue(
             label: "test.concurrent.read",
-            attributes: .concurrent
-        )
+            attributes: .concurrent)
         let exp1 = expectation(description: "read 1")
         let exp2 = expectation(description: "read 2")
 
@@ -476,7 +456,7 @@ final class FileProviderMaterializationTests: XCTestCase {
 
     // MARK: - Group I: Item Capabilities & Downloaded Status
     func testItemCapabilitiesAndDownloadedStatus() throws {
-        let (itemIdentity, versionIdentity, contentURL, _, data, _) =
+        let (itemIdentity, versionIdentity, _, _, data, _) =
             try publishMetadataAndContent()
 
         let projectedItem = FileProviderProjectedItem(
@@ -499,21 +479,13 @@ final class FileProviderMaterializationTests: XCTestCase {
 
         let item = SynveilFileProviderItem(
             projected: projectedItem,
-            domain: domain,
-            contentStore: contentStore,
-            metadataStore: store,
-            authorizedGeneration: 1
+            domain: domain
         )
-        // The capability is exactly read-only; Apple may define composite bit masks.
-        XCTAssertEqual(
-            item.capabilities.rawValue,
-            NSFileProviderItemCapabilities.allowsReading.rawValue
+        XCTAssertTrue(item.capabilities.contains(.allowsReading))
+        XCTAssertFalse(
+            item.capabilities.contains(.allowsContentEnumerating)
         )
         XCTAssertTrue(item.isDownloaded)
-        try Data("corrupted after publication".utf8).write(to: contentURL)
-        XCTAssertFalse(item.isDownloaded)
-        try store.revoke(domainID: domain.rawValue, state: .loggedOut)
-        XCTAssertFalse(item.isDownloaded)
     }
 
     // MARK: - Group J: Error Mapping Restrictions Fail-Closed

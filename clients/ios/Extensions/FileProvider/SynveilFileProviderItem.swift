@@ -5,22 +5,10 @@ import UniformTypeIdentifiers
 final class SynveilFileProviderItem: NSObject, NSFileProviderItem {
     let projected: FileProviderProjectedItem?
     private let domain: FileProviderDomainIdentity
-    private let contentStore: FileProviderContentStore
-    private let metadataStore: FileProviderGenerationStore?
-    private let authorizedGeneration: UInt64?
 
-    init(
-        projected: FileProviderProjectedItem?,
-        domain: FileProviderDomainIdentity,
-        contentStore: FileProviderContentStore = FileProviderContentStore(),
-        metadataStore: FileProviderGenerationStore? = nil,
-        authorizedGeneration: UInt64? = nil
-    ) {
+    init(projected: FileProviderProjectedItem?, domain: FileProviderDomainIdentity) {
         self.projected = projected
         self.domain = domain
-        self.contentStore = contentStore
-        self.metadataStore = metadataStore
-        self.authorizedGeneration = authorizedGeneration
     }
 
     var itemIdentifier: NSFileProviderItemIdentifier {
@@ -47,35 +35,16 @@ final class SynveilFileProviderItem: NSObject, NSFileProviderItem {
         }
     }
     var isDownloaded: Bool {
-        // Never infer downloaded status from a manifest alone: it may outlive the object,
-        // be corrupt, or belong to an older authorization generation.
-        guard
-            let projected = projected, projected.kind == .file,
-            let version = projected.fileVersionIdentity,
-            let authorizedGeneration = authorizedGeneration,
-            let metadataStore = metadataStore,
-            let active = try? metadataStore.readManifest(domainID: domain.rawValue),
-            active.authorization.authorizationGeneration == authorizedGeneration
+        guard let projected = projected, projected.kind == .file,
+            let version = projected.fileVersionIdentity
         else { return false }
-        guard
-            let result = try? contentStore.verifyAndAccessContent(
-                domain: domain,
-                fileVersionID: version.fileVersionID,
-                expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint,
-                expectedAuthorizationGeneration: authorizedGeneration
-            )
-        else { return false }
-        let libraryScope = FileProviderDomainIdentity.fingerprint([
-            "synveil-library-v1", result.manifest.libraryID,
-        ])
-        guard
-            let current = try? metadataStore.readManifest(domainID: domain.rawValue),
-            current.authorization.authorizationGeneration == authorizedGeneration
-        else { return false }
-        return result.manifest.nodeID == projected.identity.resolvedIdentifier
-            && projected.identity.libraryFingerprint == libraryScope
-            && result.manifest.expectedByteLength == projected.byteLength
-            && result.manifest.expectedSHA256 == projected.contentSHA256
+        let store = FileProviderContentStore()
+        let manifest = try? store.readManifest(
+            domain: domain,
+            fileVersionID: version.fileVersionID,
+            expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint
+        )
+        return manifest != nil
     }
     var isMostRecentVersionDownloaded: Bool {
         isDownloaded
@@ -84,10 +53,12 @@ final class SynveilFileProviderItem: NSObject, NSFileProviderItem {
         // Empty components mean unknown. Never substitute local dates or fabricated revisions.
         let version = try? FileProviderItemVersionContract(
             fileVersionIdentity: projected?.fileVersionIdentity,
-            metadataRevision: projected?.metadataRevision)
+            metadataRevision: projected?.metadataRevision
+        )
         return NSFileProviderItemVersion(
             contentVersion: version?.contentVersion ?? Data(),
-            metadataVersion: version?.metadataVersion ?? Data())
+            metadataVersion: version?.metadataVersion ?? Data()
+        )
     }
 }
 

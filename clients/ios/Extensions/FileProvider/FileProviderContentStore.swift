@@ -111,33 +111,12 @@ struct FileProviderContentStore: Sendable {
             expectedOwnerScopeFingerprint: expectedOwnerScopeFingerprint
         )
 
-        // Reject an impossible declared allocation before streaming or converting UInt64 to Int.
-        // Keep the quota check below as a second, live check against existing shared storage.
-        guard
-            validatedManifest.expectedByteLength
-                <= UInt64(FileProviderSharedContainer.maximumProviderStorageBytes)
-        else {
-            throw FileProviderContentStoreError.storageQuotaExceeded
-        }
-
-        let manifestData = try validatedManifest.encoded(
-            expectedDomain: expectedDomain,
-            expectedOwnerScopeFingerprint: expectedOwnerScopeFingerprint
-        )
-        let requiredBytes = Int(validatedManifest.expectedByteLength) + manifestData.count
-        do {
-            try container.checkGenerationQuota(addingBytes: requiredBytes)
-        } catch FileProviderSharedContainerError.storageQuotaExceeded {
-            throw FileProviderContentStoreError.storageQuotaExceeded
-        }
-
-        // Verify source file integrity; a quota-pass never substitutes for exact byte validation.
+        // Verify source file integrity before staging
         try Self.verifyFileIntegrity(
             at: sourceURL,
             expectedLength: validatedManifest.expectedByteLength,
             expectedSHA256: validatedManifest.expectedSHA256,
-            checkCancellation: checkCancellation
-        )
+            checkCancellation: checkCancellation)
 
         let targetObject = try objectURL(
             domain: expectedDomain,
@@ -147,6 +126,15 @@ struct FileProviderContentStore: Sendable {
             domain: expectedDomain,
             fileVersionID: validatedManifest.fileVersionID
         )
+
+        let manifestData = try validatedManifest.encoded(
+            expectedDomain: expectedDomain,
+            expectedOwnerScopeFingerprint: expectedOwnerScopeFingerprint
+        )
+
+        // Storage quota check
+        let requiredBytes = Int(validatedManifest.expectedByteLength) + manifestData.count
+        try container.checkGenerationQuota(addingBytes: requiredBytes)
 
         // Ensure directories exist
         let stagingDir = try createDirectoryIfNeeded(

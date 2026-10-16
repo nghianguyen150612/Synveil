@@ -41,13 +41,7 @@ final class SynveilFileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                     ordering: page.rawValue == (NSFileProviderPage.initialPageSortedByDate as Data)
                         ? "date" : "name")
                 let items = batch.items.map {
-                    SynveilFileProviderItem(
-                        projected: $0,
-                        domain: view.manifest.domain,
-                        contentStore: FileProviderContentStore(container: reader.store.container),
-                        metadataStore: reader.store,
-                        authorizedGeneration: view.manifest.authorization.authorizationGeneration
-                    )
+                    SynveilFileProviderItem(projected: $0, domain: view.manifest.domain)
                 }
                 try checkCancellation()
                 try view.validateDelivery()
@@ -67,13 +61,7 @@ final class SynveilFileProviderEnumerator: NSObject, NSFileProviderEnumerator {
             try reader.withView { view in
                 let batch = try view.changes(container: container, anchor: anchor.rawValue)
                 let items = batch.updated.map {
-                    SynveilFileProviderItem(
-                        projected: $0,
-                        domain: view.manifest.domain,
-                        contentStore: FileProviderContentStore(container: reader.store.container),
-                        metadataStore: reader.store,
-                        authorizedGeneration: view.manifest.authorization.authorizationGeneration
-                    )
+                    SynveilFileProviderItem(projected: $0, domain: view.manifest.domain)
                 }
                 try checkCancellation()
                 try view.validateDelivery()

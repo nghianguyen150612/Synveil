@@ -60,13 +60,7 @@ final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExte
                 }
                 try view.validateDelivery()
                 completionHandler(
-                    SynveilFileProviderItem(
-                        projected: item,
-                        domain: view.manifest.domain,
-                        contentStore: FileProviderContentStore(container: store.container),
-                        metadataStore: store,
-                        authorizedGeneration: view.manifest.authorization.authorizationGeneration
-                    ), nil)
+                    SynveilFileProviderItem(projected: item, domain: view.manifest.domain), nil)
             }
         } catch { completionHandler(nil, FileProviderErrorMapper.map(error)) }
         return Self.completedProgress()
@@ -171,10 +165,7 @@ final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExte
 
                     let returnedItem = SynveilFileProviderItem(
                         projected: item,
-                        domain: view.manifest.domain,
-                        contentStore: contentStore,
-                        metadataStore: store,
-                        authorizedGeneration: authGen
+                        domain: view.manifest.domain
                     )
                     completionHandler(destURL, returnedItem, nil)
                 }
