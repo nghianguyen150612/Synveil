@@ -243,14 +243,15 @@ struct FileUploadControls: View {
                 record.authoritativeOffset < record.intent.expected.byteLength,
                 coordinator?.background != nil
             {
-                Button("Enable Background Transfer for This Upload") {
-                    Task { _ = await model.resume(record, backgroundEnabled: true) }
-                }
-                .disabled(model.isRunning || !model.isAvailable)
-                .accessibilityHint(
-                    "Authorizes only this saved upload. The system may delay execution. Completion remains explicit."
-                )
-                .accessibilityIdentifier("synveil.upload.background.enable.\(record.id.rawValue)")
+                Button("Background Transfer Unavailable") {}
+                    .disabled(true)
+                    .accessibilityHint(BackgroundUploadCapability.current.userMessage)
+                    .accessibilityIdentifier(
+                        "synveil.upload.background.enable.\(record.id.rawValue)")
+                Text(BackgroundUploadCapability.current.userMessage)
+                    .font(.footnote)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("synveil.upload.background.unavailable")
             }
             HStack {
                 if record.state.canResume {
@@ -417,12 +418,12 @@ private struct UploadConfirmationView: View {
             }
             Section("Transfer Execution") {
                 Toggle("Allow Background Transfer for This File", isOn: $backgroundEnabled)
+                    .disabled(!BackgroundUploadCapability.current.isAvailable)
+                    .accessibilityHint(BackgroundUploadCapability.current.userMessage)
                     .accessibilityIdentifier("synveil.upload.background.authorization")
-                Text(
-                    "The system may delay transfers. Authorization applies only to this file and destination. Resume and Complete is required after the bytes are accepted. Pausing withdraws background authorization."
-                )
-                .font(.footnote)
-                .fixedSize(horizontal: false, vertical: true)
+                Text(BackgroundUploadCapability.current.userMessage)
+                    .font(.footnote)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Section {
                 Button(actionTitle) {

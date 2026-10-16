@@ -274,7 +274,7 @@ enum UploadFailure: String, Error, Sendable, CaseIterable {
     case insufficientStorage, stagingQuotaExceeded, stagingMissing, filesystemFailure,
         storageFailure
     case cancelled, duplicateOperation, payloadTooLarge, completionUnknown, conflict
-    case permissionDenied
+    case permissionDenied, backgroundTransferUnavailable
 
     var localState: UploadLocalState {
         switch self {
@@ -308,6 +308,8 @@ enum UploadFailure: String, Error, Sendable, CaseIterable {
             "The authenticated device session changed. This upload cannot use the old authorization."
         case .sourceChanged, .integrityMismatch:
             "The staged source failed integrity verification and will not be uploaded."
+        case .backgroundTransferUnavailable:
+            BackgroundUploadCapability.current.userMessage
         default:
             "The upload could not be safely completed. Check server status or contact the server owner."
         }

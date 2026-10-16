@@ -1,5 +1,28 @@
 import Foundation
 
+/// Background downloads stay unavailable until the authenticated content endpoint has a
+/// redirect contract that the operating system can enforce for the lifetime of the task.
+/// URLSession background tasks follow redirects without notifying the app delegate, so a
+/// per-request redirect rejection callback cannot provide this proof.
+enum BackgroundDownloadCapability: Equatable, Sendable {
+    case unavailable(Reason)
+
+    enum Reason: Equatable, Sendable {
+        case deploymentRedirectPolicyUnverified
+    }
+
+    static let current: Self = .unavailable(.deploymentRedirectPolicyUnverified)
+
+    var isAvailable: Bool { false }
+
+    var userMessage: String {
+        switch self {
+        case .unavailable(.deploymentRedirectPolicyUnverified):
+            "Background downloads are unavailable because the server deployment cannot prove that authenticated transfer requests will never be redirected. Use Download File to keep the existing redirect protections."
+        }
+    }
+}
+
 struct DownloadOperationId: Hashable, Sendable {
     let rawValue: String
     init() { rawValue = UUID().uuidString.lowercased() }

@@ -57,6 +57,13 @@ struct FileDownloadControls: View {
                         )
                         .accessibilityIdentifier("synveil.download.resume")
                 }
+                Button("Download in Background") {}
+                    .disabled(true)
+                    .accessibilityHint(BackgroundDownloadCapability.current.userMessage)
+                    .accessibilityIdentifier("synveil.download.background.unavailable")
+                Text(BackgroundDownloadCapability.current.userMessage)
+                    .font(.footnote).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("synveil.download.background.reason")
                 if model.isRunning {
                     Button("Cancel", role: .cancel) { model.cancel() }
                         .accessibilityIdentifier("synveil.download.cancel")

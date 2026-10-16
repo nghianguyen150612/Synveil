@@ -114,6 +114,34 @@ The Synveil iOS architecture is designed around six primary goals:
 
 ## 6. Dependency Rules
 
+### 6.1 P051 background file-download security gate
+
+P051 reuses the P043 `FileDownloadCoordinator`, immutable `FileVersion` metadata, shared SQLite
+v9 ownership, staging quota, integrity validation, verified publication, P049 eligibility and
+existing export boundary. The foreground transport rejects every redirect and validates the
+response origin before it writes bytes.
+
+Credential-bearing background file downloads remain disabled until authenticated transfer routes
+have a trusted, deployment-bound redirect-free contract for the lifetime of each task.
+Apple documents that background URLSession tasks always follow redirects without calling
+`urlSession(_:task:willPerformHTTPRedirection:newRequest:completionHandler:)`. The app therefore
+cannot reject an unexpected redirect or prove the redirected request's destination before iOS
+sends it. Hash and response validation after completion cannot undo disclosure of an Authorization
+header to a redirected origin. The UI keeps foreground Download available and presents this
+specific reason for the disabled background action. No background download task, durable P051 job,
+or new SQLite schema is created while this capability gate is closed.
+
+P051A audited P046 and found its background upload redirect-decision callback is not invoked by
+Apple's background URLSession. A `307`/`308` can forward the PATCH body independently of whether
+Authorization is stripped. New P046 background submissions and Resume are disabled; restoration
+attempts to persist withdrawal of continuation authorization before best-effort cancellation. If
+SQLite rejects the write, the in-process capability remains closed and cancellation is still
+attempted; the unresolved record is retained for a later recovery attempt. A foreground Resume must
+reconcile the existing server status before retrying. P045 foreground uploads remain available.
+P048 metadata refresh, P049 notification policy, and P050 BrowserSession boundaries are unchanged.
+See [authenticated transfer redirect security](../en/AUTHENTICATED_TRANSFER_SECURITY.md) for the
+API contract and deployment limitations.
+
 ```text
 [ Presentation ] ---> [ Application ] ---> [ Domain ] <--- [ Infrastructure ]
                                               ▲

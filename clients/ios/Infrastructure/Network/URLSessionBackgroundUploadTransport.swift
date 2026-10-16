@@ -42,15 +42,6 @@ final class URLSessionBackgroundUploadTransport: NSObject, URLSessionDataDelegat
         session = URLSession(configuration: config, delegate: self, delegateQueue: queue)
     }
 
-    func urlSession(
-        _ session: URLSession, task: URLSessionTask,
-        willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
-        completionHandler: @escaping (URLRequest?) -> Void
-    ) {
-        // Reject all redirects, including cross-origin and HTTPS-to-HTTP redirects.
-        completionHandler(nil)
-    }
-
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         if !data.isEmpty { nonemptyBodies.insert(dataTask.taskIdentifier) }
         // PATCH evidence never needs a body; never buffer unbounded server data.
@@ -118,6 +109,11 @@ extension URLSessionBackgroundUploadTransport: BackgroundUploadTransportProtocol
     func submit(_ request: HTTPTransportRequest, file: URL, intent: BackgroundChunkIntent) throws
         -> Int
     {
+        // Apple does not call the redirect decision delegate for background tasks. Keep this
+        // transport closed until a reviewed deployment-bound policy can authorize the request.
+        guard BackgroundUploadCapability.current.isAvailable else {
+            throw UploadFailure.backgroundTransferUnavailable
+        }
         guard request.method == .patch, request.body == nil, request.url.scheme == "https",
             request.url.user == nil, request.url.password == nil, request.url.query == nil,
             request.url.fragment == nil, file.isFileURL,
@@ -154,7 +150,8 @@ extension URLSessionBackgroundUploadTransport: BackgroundUploadTransportProtocol
         let task = await session.allTasks.first(where: {
             $0.taskIdentifier == identifier && $0.taskDescription == intentId
         })
-        guard authorized() else {
+        // Existing jobs may predate the capability gate. Never resume them automatically.
+        guard BackgroundUploadCapability.current.isAvailable, authorized() else {
             task?.cancel()
             return
         }
