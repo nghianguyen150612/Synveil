@@ -357,27 +357,32 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
         do {
             try await fence(session, captured)
             try await staging.verify(record)
+            try Task.checkCancellation()
             if createIfNeeded {
                 let dispatched = try await update(
                     record, state: .sessionCreating, uncertain: true,
                     failure: nil, beginAttempt: true)
                 record = dispatched
                 progress(UploadProgress(record))
+                try Task.checkCancellation()
                 do {
                     let evidence = try await repository.create(
                         record.intent, session: session, expectedOffset: 0)
                     record = try await accept(
                         evidence, for: record, session: session, generation: captured,
                         progress: progress)
+                    try Task.checkCancellation()
                 } catch {
                     throw UploadPolicy.classify(error)
                 }
             } else {
                 guard record.serverSessionId != nil else { throw UploadFailure.invalidMetadata }
+                try Task.checkCancellation()
                 let evidence = try await repository.status(record, session: session)
                 record = try await accept(
                     evidence, for: record, session: session, generation: captured,
                     progress: progress)
+                try Task.checkCancellation()
             }
             if record.state == .committed { return .completed(record) }
             guard record.serverState == .open, record.serverSessionId != nil else {
@@ -393,6 +398,7 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
             }
             var reconciledPatchFailure = false
             while record.authoritativeOffset < record.intent.expected.byteLength {
+                try Task.checkCancellation()
                 try await fence(session, captured)
                 let count = Int(
                     min(
@@ -401,10 +407,12 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
                 guard count > 0 else { throw UploadFailure.invalidMetadata }
                 let bytes = try await staging.chunk(
                     record, offset: record.authoritativeOffset, count: count)
+                try Task.checkCancellation()
                 let prior = record.authoritativeOffset
                 record = try await update(
                     record, state: .uploading, uncertain: true,
                     failure: nil, beginAttempt: true)
+                try Task.checkCancellation()
                 do {
                     let nextOffset = try await repository.patch(
                         record, offset: prior, bytes: bytes, session: session)
@@ -415,6 +423,9 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
                         record, state: nextState, uncertain: false,
                         authoritativeOffset: nextOffset, serverState: .open, failure: nil)
                     progress(UploadProgress(record))
+                    // The returned offset is authoritative even if the scene was suspended while
+                    // PATCH was in flight. Persist it, then stop before another chunk or COMPLETE.
+                    try Task.checkCancellation()
                 } catch {
                     let patchFailure = UploadPolicy.classify(error)
                     if Task.isCancelled
@@ -448,16 +459,19 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
             }
             try await fence(session, captured)
             try await staging.verify(record)
+            try Task.checkCancellation()
             if record.state != .readyToComplete {
                 record = try await update(
                     record, state: .readyToComplete, uncertain: false,
                     serverState: .open, failure: nil)
                 progress(UploadProgress(record))
             }
+            try Task.checkCancellation()
             let targetNode = try targetNodeId(record)
             record = try await update(
                 record, state: .completing, uncertain: true,
                 failure: nil, beginAttempt: true)
+            try Task.checkCancellation()
             do {
                 let completion = try await repository.complete(
                     record, targetNodeId: targetNode, session: session)

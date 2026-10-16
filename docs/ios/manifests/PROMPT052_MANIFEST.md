@@ -9,11 +9,15 @@
 - Feature branch: `ios/p052-app-lifecycle-transfer-recovery`.
 - P052 implementation commit: `b16b678d0a5c1db7e7703d01feaf04b1a1d810d0`
   (`ios: add lifecycle-safe transfer recovery (P052)`).
+- Formatting correction: `ae205a27e052b667f7f7b0eb0b94ace56f4b82d2`
+  (`fix(ios): format lifecycle recovery changes`).
 - Manifest checkpoint commit: will be visible in the final feature branch history;
   the exact branch HEAD is recorded in the final report.
-- Current PR, review, merge, and final integration SHAs: not yet available.
+- PR #135: https://github.com/nghianguyen150612/Synveil/pull/135, open against
+  `ios-app`; reviewer `ducminh231011` requested, no review submitted yet.
+- No merge or final integration SHA is claimed.
 - Current checkpoint is **not** a P052 completion claim. Required native iOS
-  build, simulator, and Rust Apple workflows have not yet run on P052 source.
+  build, simulator, and Rust Apple workflows must pass on the final feature head.
 
 ## Architecture audit
 
@@ -103,8 +107,10 @@ does not create another request.
 Lifecycle suspension cancels only the P045 foreground task and advances the
 presentation fence. Cancellation during PATCH preserves the original operation,
 session, source, and SQLite-confirmed server offset; a possible accepted chunk
-remains `OUTCOME_UNKNOWN`. Lifecycle cancellation does not trigger a replacement
-PATCH or automatic status GET. Cancellation during COMPLETE or an explicit abort
+remains `OUTCOME_UNKNOWN`. If the PATCH response returns an authoritative offset
+after cancellation, P052 persists that offset and stops before the next PATCH or
+COMPLETE. Lifecycle cancellation does not trigger a replacement PATCH or
+automatic status GET. Cancellation during COMPLETE or an explicit abort
 also retains the uncertain outcome without an automatic follow-up status GET.
 Only the existing explicit Resume, Check Server Status, and Abort controls can
 start recovery. A stale session or lifecycle result cannot invoke a completion
@@ -128,13 +134,14 @@ added. SQLite remains v9; **no migration** was needed.
 
 ## Deterministic XCTest coverage
 
-P052 adds these focused methods (native execution is pending):
+P052 adds these focused methods:
 
 - `SynveilBootstrapTests.testDelegateAndSceneLifecycleEventsShareOneCallbackFence`
 - `FileDownloadViewTests.testUnavailableDownloadStorageIsNotPresentedAsEmptyHistory`
 - `FileDownloadViewTests.testRestoredDownloadingRecordShowsInterruptedAndDoesNotReplay`
 - `FileDownloadViewTests.testLifecycleSuspensionCancelsForegroundDownloadAndReloadsDurableState`
 - `FileUploadCoordinatorTests.testLifecycleInterruptionPreservesUnknownPatchOutcomeWithoutReplay`
+- `FileUploadCoordinatorTests.testLifecycleInterruptionAfterAcceptedPatchPreservesOffsetAndStopsBeforeNextChunk`
 - `FileUploadCoordinatorTests.testLifecycleInterruptionDuringCompleteDoesNotReconcileAutomatically`
 
 `BackgroundUploadTests.testApplicationBootstrapRunsWithoutSceneAndOnlyOnce` was
@@ -161,7 +168,7 @@ simulator result is inferred from P051.
 | Process ends after partial bytes | `testPartialSurvivesRealDatabaseAndFilesystemReopen`; P052 restored-row no-replay test | Preserve the partial and require explicit Resume. |
 | Process ends during verification | `testDurableProgressAndVerifyingSeparateFromCompletion`; recovery projection preserves `VERIFYING` | Do not expose bytes as verified; require verification/recovery action. |
 | VERIFIED committed before UI publication | `testVerifiedFileSurvivesReopen`, `testVerifiedDuplicateReusesValidatedFile` | Durable VERIFIED evidence is re-read; no duplicate content request. |
-| PATCH response lost or lifecycle interrupted after server acceptance | P052 `testLifecycleInterruptionPreservesUnknownPatchOutcomeWithoutReplay`; P045 lost/partial response coverage | Keep prior authoritative offset and OUTCOME_UNKNOWN; no PATCH/GET replay. |
+| PATCH response lost or lifecycle interrupted around server acceptance | P052 `testLifecycleInterruptionPreservesUnknownPatchOutcomeWithoutReplay` and `testLifecycleInterruptionAfterAcceptedPatchPreservesOffsetAndStopsBeforeNextChunk`; P045 lost/partial response coverage | Keep prior offset when the outcome is unknown; persist a returned authoritative offset; never replay a PATCH automatically. |
 | COMPLETE response lost or interrupted | P052 `testLifecycleInterruptionDuringCompleteDoesNotReconcileAutomatically`; existing lost-completion test | Preserve uncertainty; no automatic COMPLETE/status reconciliation. |
 | SQLite commit/readback interruption | `MutationQueueSQLiteTests.testCommitAcknowledgementLossReadsBackCommittedIdentity`; transfer commit fault tests | Exact readback or typed unavailable failure; never guessed state. |
 | Duplicate cold start / no foreground scene | Strengthened bootstrap single-flight test; `testDuplicateStartupCallsDoNotCreateDuplicateLoadsOrProbes` | One shared startup operation; no transfer submission. |
@@ -186,7 +193,7 @@ simulator tests passed, failed, or skipped.
 
 ## Portable validation and native CI
 
-At this checkpoint:
+At source checkpoint `ae205a27e052b667f7f7b0eb0b94ace56f4b82d2`:
 
 - `python3 clients/ios/Support/validate_ios_sources.py` — PASS.
 - `python3 -m unittest discover -s clients/ios/Support/tests` — PASS,
@@ -198,9 +205,15 @@ At this checkpoint:
 - Strict Swift format, Xcode build, and simulator tests are unavailable in this
   Linux workspace (`swift`, `swift-format`, and `xcodebuild` are not installed).
   GitHub Actions is required; this is not a substitute pass.
-- Required exact-head workflow URLs and outcomes: pending P052 push/PR.
-  Required workflows: iOS Static Validation, iOS Build, iOS Simulator Tests,
-  iOS Rust Apple Build.
+- Workflow URLs on this source checkpoint (a later transfer cancellation edge
+  fix is being validated; these are not final-head evidence):
+  - iOS Static Validation: https://github.com/nghianguyen150612/Synveil/actions/runs/38838726236
+  - iOS Build: https://github.com/nghianguyen150612/Synveil/actions/runs/38838726232
+  - iOS Simulator Tests: https://github.com/nghianguyen150612/Synveil/actions/runs/38838726229
+  - iOS Rust Apple Build: https://github.com/nghianguyen150612/Synveil/actions/runs/38838726248
+- Required final-head workflows: iOS Static Validation, iOS Build, iOS Simulator
+  Tests, iOS Rust Apple Build. Exact-head URLs and results will be recorded when
+  those runs complete.
 - Full XCTest totals: pending exact-head iOS Simulator Tests.
 - Unrelated Rust/server/desktop workflow outcomes: pending and will be reported
   separately if triggered; they do not replace an iOS gate.
@@ -219,10 +232,11 @@ background upload/download.
 
 ## PR, review, and integration state
 
-- PR number/URL: not yet created.
-- PR state and review state: pending; no review is claimed.
+- PR number/URL: #135, https://github.com/nghianguyen150612/Synveil/pull/135.
+- PR state and review state: open; reviewer `ducminh231011` requested; no review
+  submitted and no approval is claimed.
 - Merge SHA and final `ios-app` SHA: not available; no merge is claimed.
-- Next safe action: finish source review and portable checks, commit and push the
-  feature branch, open exactly one PR against `ios-app`, request code review,
-  and record the four required exact-head workflow results.
+- Next safe action: finish source review and portable checks, push the lifecycle
+  cancellation edge-case fix, and record all four required final-head workflow
+  results before merge review.
 - P053: not started and not authorized.
