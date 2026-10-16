@@ -4,6 +4,17 @@ import XCTest
 @testable import Synveil
 
 final class FileProviderFoundationTests: XCTestCase {
+    private enum Fixture {
+        static let libraryID = "018f1f5e-7b80-7000-8000-000000000010"
+        static let alternateLibraryID = "018f1f5e-7b80-7000-8000-000000000011"
+        static let folderNodeID = "018f1f5e-7b80-7000-8000-000000000020"
+        static let fileNodeID = "018f1f5e-7b80-7000-8000-000000000021"
+        static let stableNodeID = "018f1f5e-7b80-7000-8000-000000000022"
+        static let fileVersionID = "018f1f5e-7b80-7000-8000-000000000030"
+        static let replacementVersionID = "018f1f5e-7b80-7000-8000-000000000031"
+        static let orphanNodeID = "018f1f5e-7b80-7000-8000-000000000040"
+    }
+
     private let domain = try! FileProviderDomainIdentity(
         endpointOrigin: "https://files.example.test:443/",
         accountIdentity: "018f1f5e-7b80-7000-8000-000000000001",
@@ -32,15 +43,19 @@ final class FileProviderFoundationTests: XCTestCase {
         completeness: FileProviderProjectionCompleteness = .complete,
         schemaVersion: Int = FileProviderMetadataSnapshot.currentSchemaVersion
     ) throws -> FileProviderMetadataSnapshot {
-        let libraryID = "018f1f5e-7b80-7000-8000-000000000010"
+        let libraryID = Fixture.libraryID
         let root = try FileProviderItemIdentity.libraryRoot(domain: domain, libraryID: libraryID)
         let domainRoot = FileProviderItemIdentity.domainRoot(domain: domain)
         let folderID = try FileProviderItemIdentity.node(
-            domain: domain, libraryID: libraryID, nodeID: "018f1f5e-7b80-7000-8000-000000000020")
+            domain: domain, libraryID: libraryID, nodeID: Fixture.folderNodeID)
         let fileID = try FileProviderItemIdentity.node(
-            domain: domain, libraryID: libraryID, nodeID: "018f1f5e-7b80-7000-8000-000000000021")
+            domain: domain, libraryID: libraryID, nodeID: Fixture.fileNodeID)
         let version = try FileProviderVersionIdentity(
-            domain: domain, libraryID: libraryID, nodeID: "018f1f5e-7b80-7000-8000-000000000021", fileVersionID: "018f1f5e-7b80-7000-8000-000000000030")
+            domain: domain,
+            libraryID: libraryID,
+            nodeID: Fixture.fileNodeID,
+            fileVersionID: Fixture.fileVersionID
+        )
         let timestamp = Date(timeIntervalSince1970: 1_760_000_000)
         return FileProviderMetadataSnapshot(
             schemaVersion: schemaVersion,
@@ -150,24 +165,42 @@ final class FileProviderFoundationTests: XCTestCase {
 
     func testItemIdentitySurvivesRenameAndMoveAndSeparatesLibraryAndDomain() throws {
         let first = try FileProviderItemIdentity.node(
-            domain: domain, libraryID: "018f1f5e-7b80-7000-8000-000000000010", nodeID: "018f1f5e-7b80-7000-8000-000000000022")
+            domain: domain,
+            libraryID: Fixture.libraryID,
+            nodeID: Fixture.stableNodeID
+        )
         let afterRenameAndMove = try FileProviderItemIdentity.node(
-            domain: domain, libraryID: "018f1f5e-7b80-7000-8000-000000000010", nodeID: "018f1f5e-7b80-7000-8000-000000000022")
+            domain: domain,
+            libraryID: Fixture.libraryID,
+            nodeID: Fixture.stableNodeID
+        )
         let otherLibrary = try FileProviderItemIdentity.node(
-            domain: domain, libraryID: "018f1f5e-7b80-7000-8000-000000000011", nodeID: "018f1f5e-7b80-7000-8000-000000000022")
+            domain: domain,
+            libraryID: Fixture.alternateLibraryID,
+            nodeID: Fixture.stableNodeID
+        )
         let otherDomain = try FileProviderItemIdentity.node(
-            domain: alternateDomain, libraryID: "018f1f5e-7b80-7000-8000-000000000010", nodeID: "018f1f5e-7b80-7000-8000-000000000022")
+            domain: alternateDomain,
+            libraryID: Fixture.libraryID,
+            nodeID: Fixture.stableNodeID
+        )
 
         XCTAssertEqual(first, afterRenameAndMove)
         XCTAssertNotEqual(first.rawValue, otherLibrary.rawValue)
         XCTAssertNotEqual(first.rawValue, otherDomain.rawValue)
         XCTAssertEqual(
             try FileProviderItemIdentity(
-                rawValue: first.rawValue, expectedDomain: domain, expectedLibraryID: "018f1f5e-7b80-7000-8000-000000000010"),
+                rawValue: first.rawValue,
+                expectedDomain: domain,
+                expectedLibraryID: Fixture.libraryID
+            ),
             first)
         XCTAssertThrowsError(
             try FileProviderItemIdentity(
-                rawValue: first.rawValue, expectedDomain: domain, expectedLibraryID: "018f1f5e-7b80-7000-8000-000000000011"))
+                rawValue: first.rawValue,
+                expectedDomain: domain,
+                expectedLibraryID: Fixture.alternateLibraryID
+            ))
         XCTAssertThrowsError(
             try FileProviderItemIdentity(rawValue: first.rawValue, expectedDomain: alternateDomain))
         XCTAssertThrowsError(
@@ -176,15 +209,26 @@ final class FileProviderFoundationTests: XCTestCase {
 
     func testFileVersionIdentityIsImmutableAndDistinctFromNodeIdentity() throws {
         let first = try FileProviderVersionIdentity(
-            domain: domain, libraryID: "018f1f5e-7b80-7000-8000-000000000010", nodeID: "018f1f5e-7b80-7000-8000-000000000021", fileVersionID: "018f1f5e-7b80-7000-8000-000000000030")
+            domain: domain,
+            libraryID: Fixture.libraryID,
+            nodeID: Fixture.fileNodeID,
+            fileVersionID: Fixture.fileVersionID
+        )
         let replacement = try FileProviderVersionIdentity(
-            domain: domain, libraryID: "018f1f5e-7b80-7000-8000-000000000010", nodeID: "018f1f5e-7b80-7000-8000-000000000021", fileVersionID: "018f1f5e-7b80-7000-8000-000000000031")
+            domain: domain,
+            libraryID: Fixture.libraryID,
+            nodeID: Fixture.fileNodeID,
+            fileVersionID: Fixture.replacementVersionID
+        )
         let node = try FileProviderItemIdentity.node(
-            domain: domain, libraryID: "018f1f5e-7b80-7000-8000-000000000010", nodeID: "018f1f5e-7b80-7000-8000-000000000021")
+            domain: domain,
+            libraryID: Fixture.libraryID,
+            nodeID: Fixture.fileNodeID
+        )
 
         XCTAssertNotEqual(first.rawValue, replacement.rawValue)
         XCTAssertFalse(first.rawValue.contains(node.rawValue))
-        XCTAssertEqual(first.fileVersionID, "018f1f5e-7b80-7000-8000-000000000030")
+        XCTAssertEqual(first.fileVersionID, Fixture.fileVersionID)
 
         let firstComponents = try FileProviderItemVersionContract(
             fileVersionIdentity: first, metadataRevision: "11")
@@ -374,10 +418,12 @@ final class FileProviderFoundationTests: XCTestCase {
         let decoded = try FileProviderMetadataSnapshot.decode(
             data, expectedDomain: domain,
             expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint)
-        XCTAssertEqual(decoded.items.map(\.identity.rawValue), decoded.items.map(\.identity.rawValue).sorted())
+        let identities = decoded.items.map(\.identity.rawValue)
+        XCTAssertEqual(identities, identities.sorted())
         XCTAssertNil(decoded.items.first(where: { $0.kind == .libraryRoot })?.creationDate)
-        XCTAssertEqual(decoded.items.first(where: { $0.kind == .file })?.byteLength, 14)
-        XCTAssertEqual(decoded.items.first(where: { $0.kind == .file })?.fileVersionIdentity?.fileVersionID, "018f1f5e-7b80-7000-8000-000000000030")
+        let file = decoded.items.first(where: { $0.kind == .file })
+        XCTAssertEqual(file?.byteLength, 14)
+        XCTAssertEqual(file?.fileVersionIdentity?.fileVersionID, Fixture.fileVersionID)
         XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("svd1_"))
     }
 
@@ -385,39 +431,46 @@ final class FileProviderFoundationTests: XCTestCase {
         let future = try validSnapshot(schemaVersion: 2)
         XCTAssertThrowsError(
             try future.encoded(
-                expectedDomain: domain, expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint)) {
-                XCTAssertEqual($0 as? FileProviderMetadataContractError, .unsupportedSchema)
-            }
+                expectedDomain: domain,
+                expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint
+            )
+        ) { XCTAssertEqual($0 as? FileProviderMetadataContractError, .unsupportedSchema) }
         XCTAssertThrowsError(
             try FileProviderMetadataSnapshot.decode(
                 Data("not-json".utf8), expectedDomain: domain,
-                expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint)) {
-                XCTAssertEqual($0 as? FileProviderMetadataContractError, .corruptSnapshot)
-            }
+                expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint
+            )
+        ) { XCTAssertEqual($0 as? FileProviderMetadataContractError, .corruptSnapshot) }
         XCTAssertThrowsError(
             try validSnapshot().validated(
-                expectedDomain: domain, expectedOwnerScopeFingerprint: "wrong-scope")) {
-                XCTAssertEqual($0 as? FileProviderMetadataContractError, .ownerScopeMismatch)
-            }
+                expectedDomain: domain,
+                expectedOwnerScopeFingerprint: "wrong-scope"
+            )
+        ) { XCTAssertEqual($0 as? FileProviderMetadataContractError, .ownerScopeMismatch) }
         let conflict = try validSnapshot(source: .conflictReview)
         XCTAssertThrowsError(
             try conflict.validated(
-                expectedDomain: domain, expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint)) {
-                XCTAssertEqual($0 as? FileProviderMetadataContractError, .nonCanonicalSource)
-            }
+                expectedDomain: domain,
+                expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint
+            )
+        ) { XCTAssertEqual($0 as? FileProviderMetadataContractError, .nonCanonicalSource) }
     }
 
     func testPartialProjectionAndInvalidParentageAreRejected() throws {
         let partial = try validSnapshot(completeness: .partial)
         XCTAssertThrowsError(
             try partial.validated(
-                expectedDomain: domain, expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint)) {
-                XCTAssertEqual($0 as? FileProviderMetadataContractError, .incompleteOrUnbounded)
-            }
+                expectedDomain: domain,
+                expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint
+            )
+        ) { XCTAssertEqual($0 as? FileProviderMetadataContractError, .incompleteOrUnbounded) }
 
         let snapshot = try validSnapshot()
         let orphan = try FileProviderItemIdentity.node(
-            domain: domain, libraryID: snapshot.libraryID, nodeID: "018f1f5e-7b80-7000-8000-000000000040")
+            domain: domain,
+            libraryID: snapshot.libraryID,
+            nodeID: Fixture.orphanNodeID
+        )
         let brokenItems = snapshot.items.map { item in
             guard item.kind == .file else { return item }
             return FileProviderProjectedItem(
@@ -445,9 +498,10 @@ final class FileProviderFoundationTests: XCTestCase {
         )
         XCTAssertThrowsError(
             try brokenSnapshot.validated(
-                expectedDomain: domain, expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint)) {
-                XCTAssertEqual($0 as? FileProviderMetadataContractError, .invalidParent)
-            }
+                expectedDomain: domain,
+                expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint
+            )
+        ) { XCTAssertEqual($0 as? FileProviderMetadataContractError, .invalidParent) }
     }
 
     func testAppGroupResolutionAndUnsafeOrSymlinkPathsFailClosed() throws {
@@ -470,10 +524,11 @@ final class FileProviderFoundationTests: XCTestCase {
         let disabledWriter = FileProviderMetadataSnapshotStore(container: container)
         XCTAssertThrowsError(
             try disabledWriter.publish(
-                validSnapshot(), expectedDomain: domain,
-                expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint)) {
-                XCTAssertEqual($0 as? FileProviderSharedContainerError, .publicationFailed)
-            }
+                validSnapshot(),
+                expectedDomain: domain,
+                expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint
+            )
+        ) { XCTAssertEqual($0 as? FileProviderSharedContainerError, .publicationFailed) }
 
         let missingEntitlement = FileProviderSharedContainer(resolveContainerURL: { _ in nil })
         XCTAssertThrowsError(try missingEntitlement.url(for: [])) {
@@ -508,14 +563,14 @@ final class FileProviderFoundationTests: XCTestCase {
         XCTAssertEqual(
             try writer.read(
                 domain: domain,
-                libraryID: "018f1f5e-7b80-7000-8000-000000000010",
+                libraryID: Fixture.libraryID,
                 expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint),
             first.validated(
                 expectedDomain: domain,
                 expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint))
         let destination = try FileProviderSharedContainer(
             resolveContainerURL: { _ in directory }
-        ).snapshotURL(domain: domain, libraryID: "018f1f5e-7b80-7000-8000-000000000010")
+        ).snapshotURL(domain: domain, libraryID: Fixture.libraryID)
         let priorBytes = try Data(contentsOf: destination)
 
         let failingStore = FileProviderMetadataSnapshotStore(
@@ -527,12 +582,13 @@ final class FileProviderFoundationTests: XCTestCase {
             try failingStore.publish(
                 first, expectedDomain: domain,
                 expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint,
-                capability: publicationCapability)) {
-                XCTAssertEqual($0 as? FileProviderSharedContainerError, .publicationFailed)
-            }
+                capability: publicationCapability
+            )
+        ) { XCTAssertEqual($0 as? FileProviderSharedContainerError, .publicationFailed) }
         XCTAssertEqual(try Data(contentsOf: destination), priorBytes)
-        let stagedFiles = try FileManager.default.contentsOfDirectory(atPath: destination.deletingLastPathComponent().path)
-            .filter { $0.hasPrefix(".snapshot-") }
+        let stagedFiles = try FileManager.default.contentsOfDirectory(
+            atPath: destination.deletingLastPathComponent().path
+        ).filter { $0.hasPrefix(".snapshot-") }
         XCTAssertTrue(stagedFiles.isEmpty)
     }
 
@@ -550,7 +606,9 @@ final class FileProviderFoundationTests: XCTestCase {
 
     private func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("SynveilFileProviderTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent(
+                "SynveilFileProviderTests-\(UUID().uuidString)", isDirectory: true
+            )
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }

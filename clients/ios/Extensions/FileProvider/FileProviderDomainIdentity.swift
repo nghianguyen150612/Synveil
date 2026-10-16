@@ -24,8 +24,12 @@ struct FileProviderDomainIdentity: Hashable, Sendable {
         try Self.validateOpaqueIdentity(deviceIdentity)
         try Self.validateOpaqueIdentity(credentialGeneration)
 
-        let ownerScope = Self.fingerprint(["synveil-owner-v1", endpoint, accountIdentity, deviceIdentity])
-        let credentialScope = Self.fingerprint(["synveil-credential-generation-v1", credentialGeneration])
+        let ownerScope = Self.fingerprint([
+            "synveil-owner-v1", endpoint, accountIdentity, deviceIdentity,
+        ])
+        let credentialScope = Self.fingerprint([
+            "synveil-credential-generation-v1", credentialGeneration,
+        ])
         let domainScope = Self.fingerprint([
             "synveil-file-provider-domain-v1", endpoint, accountIdentity, deviceIdentity,
             credentialGeneration,

@@ -47,7 +47,9 @@ final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExte
         contents url: URL?,
         options: NSFileProviderCreateItemOptions = [],
         request: NSFileProviderRequest,
-        completionHandler: @escaping (NSFileProviderItem?, NSFileProviderItemFields, Bool, (any Error)?) -> Void
+        completionHandler: @escaping (
+            NSFileProviderItem?, NSFileProviderItemFields, Bool, (any Error)?
+        ) -> Void
     ) -> Progress {
         completionHandler(nil, [], false, FileProviderErrorMapper.unsupported())
         return Self.completedProgress()
@@ -60,7 +62,9 @@ final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExte
         contents newContents: URL?,
         options: NSFileProviderModifyItemOptions = [],
         request: NSFileProviderRequest,
-        completionHandler: @escaping (NSFileProviderItem?, NSFileProviderItemFields, Bool, (any Error)?) -> Void
+        completionHandler: @escaping (
+            NSFileProviderItem?, NSFileProviderItemFields, Bool, (any Error)?
+        ) -> Void
     ) -> Progress {
         completionHandler(nil, [], false, FileProviderErrorMapper.unsupported())
         return Self.completedProgress()

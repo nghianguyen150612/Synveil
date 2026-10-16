@@ -89,7 +89,8 @@ struct FileProviderMetadataSnapshot: Codable, Equatable, Sendable {
                 let expected = try FileProviderItemIdentity.libraryRoot(
                     domain: expectedDomain, libraryID: libraryID)
                 guard item.identity == expected,
-                    item.parentIdentity == FileProviderItemIdentity.domainRoot(domain: expectedDomain),
+                    item.parentIdentity
+                        == FileProviderItemIdentity.domainRoot(domain: expectedDomain),
                     !item.isTombstone,
                     item.fileVersionIdentity == nil,
                     item.byteLength == nil,
@@ -173,7 +174,11 @@ struct FileProviderMetadataSnapshot: Codable, Equatable, Sendable {
     private static func validateNoCycles(
         _ items: [FileProviderProjectedItem], root: FileProviderItemIdentity
     ) throws {
-        let parents = Dictionary(uniqueKeysWithValues: items.map { ($0.identity.rawValue, $0.parentIdentity?.rawValue) })
+        let parents = Dictionary(
+            uniqueKeysWithValues: items.map { item in
+                (item.identity.rawValue, item.parentIdentity?.rawValue)
+            }
+        )
         for item in items where item.kind == .folder || item.kind == .file {
             var current = item.identity.rawValue
             var visited: Set<String> = []
@@ -212,9 +217,14 @@ struct FileProviderProjectedItem: Codable, Equatable, Sendable {
         else { throw FileProviderMetadataContractError.invalidDisplayName }
 
         if let metadataRevision {
+            let containsControlCharacters = metadataRevision.unicodeScalars.contains {
+                CharacterSet.controlCharacters.contains($0)
+            }
             guard !metadataRevision.isEmpty, metadataRevision.utf8.count <= 256,
-                !metadataRevision.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
-            else { throw FileProviderMetadataContractError.invalidRevision }
+                !containsControlCharacters
+            else {
+                throw FileProviderMetadataContractError.invalidRevision
+            }
         }
 
         switch kind {
@@ -229,20 +239,26 @@ struct FileProviderProjectedItem: Codable, Equatable, Sendable {
                 throw FileProviderMetadataContractError.invalidContentMetadata
             }
             if let digest = contentSHA256 {
-                guard digest.range(of: "^sha256:[0-9a-f]{64}$", options: .regularExpression) != nil else {
+                guard digest.range(
+                    of: "^sha256:[0-9a-f]{64}$", options: .regularExpression
+                ) != nil else {
                     throw FileProviderMetadataContractError.invalidContentMetadata
                 }
             }
             if let fileVersionIdentity {
                 let nodeID = identity.resolvedIdentifier
-                guard identity.kind == .node, let nodeID,
-                    fileVersionIdentity == (try FileProviderVersionIdentity(
-                        domain: expectedDomain,
-                        libraryID: libraryID,
-                        nodeID: nodeID,
-                        fileVersionID: fileVersionIdentity.fileVersionID
-                    ))
-                else { throw FileProviderMetadataContractError.invalidContentMetadata }
+                guard identity.kind == .node, let nodeID else {
+                    throw FileProviderMetadataContractError.invalidContentMetadata
+                }
+                let expectedVersion = try FileProviderVersionIdentity(
+                    domain: expectedDomain,
+                    libraryID: libraryID,
+                    nodeID: nodeID,
+                    fileVersionID: fileVersionIdentity.fileVersionID
+                )
+                guard fileVersionIdentity == expectedVersion else {
+                    throw FileProviderMetadataContractError.invalidContentMetadata
+                }
             }
         }
         if isTombstone, kind == .libraryRoot {

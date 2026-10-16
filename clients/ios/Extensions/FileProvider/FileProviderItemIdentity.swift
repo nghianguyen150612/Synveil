@@ -57,7 +57,9 @@ struct FileProviderItemIdentity: Codable, Hashable, Sendable {
         expectedDomain: FileProviderDomainIdentity,
         expectedLibraryID: String? = nil
     ) throws {
-        let parts = rawValue.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
+        let parts = rawValue
+            .split(separator: ".", omittingEmptySubsequences: false)
+            .map(String.init)
         guard parts.count == 5, parts[0] == "sfpi1",
             let kind = Kind(rawValue: parts[1]), parts[2] == expectedDomain.fingerprint
         else { throw FileProviderIdentityError.scopeMismatch }
@@ -78,8 +80,12 @@ struct FileProviderItemIdentity: Codable, Hashable, Sendable {
         else { throw FileProviderIdentityError.invalidItemIdentity }
         try Self.validateIdentifier(identifier)
         if kind == .libraryRoot {
-            guard FileProviderDomainIdentity.fingerprint(["synveil-library-v1", identifier]) == parts[3]
-            else { throw FileProviderIdentityError.invalidItemIdentity }
+            let expectedLibraryFingerprint = FileProviderDomainIdentity.fingerprint([
+                "synveil-library-v1", identifier,
+            ])
+            guard expectedLibraryFingerprint == parts[3] else {
+                throw FileProviderIdentityError.invalidItemIdentity
+            }
         }
         if let expectedLibraryID {
             let expectedFingerprint = FileProviderDomainIdentity.fingerprint(
@@ -121,12 +127,15 @@ struct FileProviderItemIdentity: Codable, Hashable, Sendable {
         guard value.utf8.allSatisfy({
             (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0)
                 || $0 == 45 || $0 == 95
-        }) else { return nil }
+        }) else {
+            return nil
+        }
         var base64 = value.replacingOccurrences(of: "-", with: "+")
             .replacingOccurrences(of: "_", with: "/")
         let padding = (4 - base64.count % 4) % 4
         base64 += String(repeating: "=", count: padding)
-        guard let data = Data(base64Encoded: base64), let decoded = String(data: data, encoding: .utf8),
+        guard let data = Data(base64Encoded: base64),
+            let decoded = String(data: data, encoding: .utf8),
             encode(decoded) == value
         else { return nil }
         return decoded
@@ -150,9 +159,10 @@ struct FileProviderVersionIdentity: Codable, Hashable, Sendable {
         nodeID: String,
         fileVersionID: String
     ) throws {
-        guard [libraryID, nodeID, fileVersionID].allSatisfy(
-            FileProviderDomainIdentity.isValidSynveilIdentifier)
-        else { throw FileProviderIdentityError.invalidItemIdentity }
+        let identities = [libraryID, nodeID, fileVersionID]
+        guard identities.allSatisfy(FileProviderDomainIdentity.isValidSynveilIdentifier) else {
+            throw FileProviderIdentityError.invalidItemIdentity
+        }
         let libraryScope = FileProviderDomainIdentity.fingerprint(["synveil-library-v1", libraryID])
         self.fileVersionID = fileVersionID
         rawValue = [
@@ -177,9 +187,14 @@ struct FileProviderItemVersionContract: Equatable, Sendable {
 
     init(fileVersionIdentity: FileProviderVersionIdentity?, metadataRevision: String?) throws {
         if let metadataRevision {
+            let containsControlCharacters = metadataRevision.unicodeScalars.contains {
+                CharacterSet.controlCharacters.contains($0)
+            }
             guard !metadataRevision.isEmpty, metadataRevision.utf8.count <= 256,
-                !metadataRevision.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
-            else { throw FileProviderIdentityError.invalidItemIdentity }
+                !containsControlCharacters
+            else {
+                throw FileProviderIdentityError.invalidItemIdentity
+            }
             let revisionEvidence = Data(("synveil-metadata-revision-v1:" + metadataRevision).utf8)
             metadataVersion = Data(SHA256.hash(data: revisionEvidence))
         } else {

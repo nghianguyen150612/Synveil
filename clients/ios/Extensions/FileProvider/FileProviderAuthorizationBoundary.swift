@@ -63,13 +63,17 @@ enum FileProviderAuthorizationBoundary {
     ) -> FileProviderAuthorizationDecision {
         guard let evidence else { return .denied(.missingEvidence) }
         guard evidence.schemaVersion == 1 else { return .denied(.unsupportedSchema) }
-        guard evidence.domainIdentity == expectedDomain.rawValue else { return .denied(.wrongDomain) }
+        guard evidence.domainIdentity == expectedDomain.rawValue else {
+            return .denied(.wrongDomain)
+        }
         guard evidence.ownerScopeFingerprint == expectedDomain.ownerScopeFingerprint else {
             return .denied(.wrongOwnerScope)
         }
         guard evidence.credentialGenerationFingerprint
             == expectedDomain.credentialGenerationFingerprint
-        else { return .denied(.wrongCredentialGeneration) }
+        else {
+            return .denied(.wrongCredentialGeneration)
+        }
         guard evidence.authorizationGeneration > 0 else {
             return .denied(.invalidAuthorizationGeneration)
         }

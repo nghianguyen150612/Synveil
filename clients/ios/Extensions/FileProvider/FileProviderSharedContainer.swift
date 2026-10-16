@@ -95,8 +95,11 @@ struct FileProviderSharedContainer {
                 .protectionKey: FileProtectionType.completeUntilFirstUserAuthentication,
                 .posixPermissions: 0o600,
             ]
-            guard fileManager.createFile(atPath: staging.path, contents: nil, attributes: attributes)
-            else { throw FileProviderSharedContainerError.publicationFailed }
+            guard fileManager.createFile(
+                atPath: staging.path, contents: nil, attributes: attributes
+            ) else {
+                throw FileProviderSharedContainerError.publicationFailed
+            }
             let handle = try FileHandle(forWritingTo: staging)
             do {
                 try handle.write(contentsOf: data)
@@ -181,13 +184,19 @@ struct FileProviderSharedContainer {
         guard fileManager.fileExists(atPath: providerRoot.path) else { return }
         let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]
         guard let enumerator = fileManager.enumerator(
-            at: providerRoot, includingPropertiesForKeys: keys, options: [], errorHandler: { _, _ in false })
+            at: providerRoot,
+            includingPropertiesForKeys: keys,
+            options: [],
+            errorHandler: { _, _ in false }
+        )
         else { throw FileProviderSharedContainerError.containerUnavailable }
         var total = 0
         var count = 0
         for case let fileURL as URL in enumerator {
             count += 1
-            guard count <= 8_192 else { throw FileProviderSharedContainerError.storageQuotaExceeded }
+            guard count <= 8_192 else {
+                throw FileProviderSharedContainerError.storageQuotaExceeded
+            }
             let values = try fileURL.resourceValues(forKeys: Set(keys))
             guard values.isSymbolicLink != true else {
                 throw FileProviderSharedContainerError.symbolicLink
