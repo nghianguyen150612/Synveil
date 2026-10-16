@@ -6,5 +6,7 @@
     <array><string>com.synveil.ios.sync.refresh.v1</string></array>
     <key>UIBackgroundModes</key>
     <array><string>fetch</string></array>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>Synveil uses your photo library to discover local photos and videos for optional automatic camera roll backup.</string>
 </dict>
 </plist>
