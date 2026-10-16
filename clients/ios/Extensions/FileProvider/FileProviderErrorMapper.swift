@@ -14,6 +14,20 @@ enum FileProviderErrorMapper {
     }
 
     static func map(_ error: Error) -> NSError {
+        if let contentError = error as? FileProviderContentStoreError {
+            switch contentError {
+            case .manifestNotFound, .contentObjectNotFound:
+                return NSError(domain: NSFileProviderErrorDomain, code: NSFileProviderError.noSuchItem.rawValue)
+            case .lengthMismatch, .sha256Mismatch, .corruptManifest, .publicationFailed:
+                return NSError(domain: NSFileProviderErrorDomain, code: NSFileProviderError.cannotSynchronize.rawValue)
+            case .missingEntitlement, .containerUnavailable, .fileSystemError, .symbolicLink, .unsafePath:
+                return NSError(domain: NSFileProviderErrorDomain, code: NSFileProviderError.serverUnreachable.rawValue)
+            case .storageQuotaExceeded:
+                return NSError(domain: NSFileProviderErrorDomain, code: NSFileProviderError.insufficientQuota.rawValue)
+            case .cancelled:
+                return NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError)
+            }
+        }
         guard let failure = error as? FileProviderSynchronizationError else {
             if error is CancellationError {
                 return NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError)

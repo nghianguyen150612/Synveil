@@ -97,7 +97,7 @@ class FileProviderFoundationTests(unittest.TestCase):
         self.assertIn("authenticatedNetworkEnabled: false", capability)
         self.assertIn("mutationEnabled: false", capability)
         self.assertIn("throw FileProviderErrorMapper.unavailable()", extension)
-        self.assertIn("completionHandler(nil, nil, FileProviderErrorMapper.unavailable())", extension)
+        self.assertIn("FileProviderErrorMapper.map(error)", extension)
         self.assertIn("FileProviderErrorMapper.unsupported()", extension)
         self.assertIn("code = .notAuthenticated", mapper)
         self.assertIn("code = .cannotSynchronize", mapper)

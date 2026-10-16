@@ -26,10 +26,24 @@ final class SynveilFileProviderItem: NSObject, NSFileProviderItem {
     var creationDate: Date? { projected?.creationDate }
     var contentModificationDate: Date? { projected?.contentModificationDate }
     var capabilities: NSFileProviderItemCapabilities {
-        projected?.kind == .file ? [] : [.allowsContentEnumerating]
+        guard let projected = projected else { return [.allowsContentEnumerating] }
+        switch projected.kind {
+        case .file:
+            return projected.fileVersionIdentity != nil ? [.allowsReading] : []
+        case .folder, .libraryRoot:
+            return [.allowsContentEnumerating]
+        }
     }
-    var isDownloaded: Bool { false }
-    var isMostRecentVersionDownloaded: Bool { false }
+    var isDownloaded: Bool {
+        guard let projected = projected, projected.kind == .file,
+            let version = projected.fileVersionIdentity
+        else { return false }
+        let store = FileProviderContentStore()
+        return (try? store.readManifest(domain: domain, fileVersionID: version.fileVersionID, expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint)) != nil
+    }
+    var isMostRecentVersionDownloaded: Bool {
+        isDownloaded
+    }
     var itemVersion: NSFileProviderItemVersion {
         // Empty components mean unknown. Never substitute local dates or fabricated revisions.
         let version = try? FileProviderItemVersionContract(

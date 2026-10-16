@@ -71,8 +71,102 @@ final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExte
         request: NSFileProviderRequest,
         completionHandler: @escaping (URL?, NSFileProviderItem?, (any Error)?) -> Void
     ) -> Progress {
-        completionHandler(nil, nil, FileProviderErrorMapper.unavailable())
-        return Self.completedProgress()
+        let progress = Progress(totalUnitCount: 100)
+
+        Task {
+            var temporaryCopyURL: URL? = nil
+            do {
+                guard lifecycle.canContinueRequest(), !progress.isCancelled else {
+                    throw FileProviderSynchronizationError.cancelled
+                }
+
+                try reader.withView { view in
+                    guard lifecycle.canContinueRequest(), !progress.isCancelled else {
+                        throw FileProviderSynchronizationError.cancelled
+                    }
+
+                    guard let item = try? view.lookup(itemIdentifier.rawValue),
+                        item.kind == .file,
+                        !item.isTombstone,
+                        let fileVersionIdentity = item.fileVersionIdentity
+                    else {
+                        throw FileProviderSynchronizationError.noSuchItem
+                    }
+
+                    let versionContract = try FileProviderItemVersionContract(
+                        fileVersionIdentity: item.fileVersionIdentity,
+                        metadataRevision: item.metadataRevision
+                    )
+
+                    if let requestedVersion = requestedVersion {
+                        let requestedContent = requestedVersion.contentVersion
+                        let expectedContent = versionContract.contentVersion ?? Data()
+                        if !requestedContent.isEmpty && requestedContent != expectedContent {
+                            throw FileProviderSynchronizationError.noSuchItem
+                        }
+                    }
+
+                    progress.completedUnitCount = 20
+
+                    let contentStore = FileProviderContentStore(container: store.container)
+                    let (_, contentURL) = try contentStore.verifyAndAccessContent(
+                        domain: view.manifest.domain,
+                        fileVersionID: fileVersionIdentity.fileVersionID,
+                        expectedOwnerScopeFingerprint: view.manifest.domain.ownerScopeFingerprint,
+                        expectedAuthorizationGeneration: view.manifest.authorization.authorizationGeneration,
+                        checkCancellation: {
+                            if !lifecycle.canContinueRequest() || progress.isCancelled {
+                                throw FileProviderSynchronizationError.cancelled
+                            }
+                        }
+                    )
+
+                    progress.completedUnitCount = 60
+
+                    let tempDir: URL
+                    if let domainObj = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(rawValue: domainID), displayName: "Synveil"),
+                       let manager = NSFileProviderManager(for: domainObj),
+                       let url = try? manager.temporaryDirectoryURL() {
+                        tempDir = url
+                    } else {
+                        tempDir = FileManager.default.temporaryDirectory
+                    }
+
+                    let destURL = tempDir.appendingPathComponent("\(UUID().uuidString).tmp")
+                    temporaryCopyURL = destURL
+
+                    if FileManager.default.fileExists(atPath: destURL.path) {
+                        try? FileManager.default.removeItem(at: destURL)
+                    }
+
+                    try FileManager.default.copyItem(at: contentURL, to: destURL)
+                    try FileManager.default.setAttributes(
+                        [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication, .posixPermissions: 0o600],
+                        ofItemAtPath: destURL.path
+                    )
+
+                    guard lifecycle.canContinueRequest(), !progress.isCancelled else {
+                        throw FileProviderSynchronizationError.cancelled
+                    }
+
+                    progress.completedUnitCount = 100
+
+                    let returnedItem = SynveilFileProviderItem(projected: item, domain: view.manifest.domain)
+                    completionHandler(destURL, returnedItem, nil)
+                }
+            } catch {
+                if let temporaryCopyURL = temporaryCopyURL {
+                    try? FileManager.default.removeItem(at: temporaryCopyURL)
+                }
+                completionHandler(nil, nil, FileProviderErrorMapper.map(error))
+            }
+        }
+
+        progress.cancellationHandler = { [weak lifecycle] in
+            lifecycle?.cancel()
+        }
+
+        return progress
     }
 
     func createItem(
