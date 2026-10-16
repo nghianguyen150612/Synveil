@@ -20,13 +20,17 @@
 - Bounded lifecycle test-gate correction:
   `842384148b462955d54984c4b77c9ac07fafe9e2`
   (`test(ios): bound lifecycle recovery gates`).
-- This manifest evidence update is being committed after that validated source
-  checkpoint; the final feature HEAD will be recorded in the PR and final report.
+- Validation-record commit: `a1bb252d52aedd24cf69179668449e3e91d22767`
+  (`docs(ios): record P052 validation evidence`).
+- The final follow-up commit updates this closeout only; no iOS source or tests
+  changed after the validated source checkpoint `842384148b462955d54984c4b77c9ac07fafe9e2`.
 - PR #135: https://github.com/nghianguyen150612/Synveil/pull/135, open against
   `ios-app`; reviewer `ducminh231011` requested, no review submitted yet.
 - No merge or final integration SHA is claimed.
-- Current checkpoint is **not** a P052 completion claim. Required native iOS
-  build, simulator, and Rust Apple workflows must pass on the final feature head.
+- The validated source checkpoint passed all four required iOS workflows and
+  the portable checks recorded below. The final documentation-only head is
+  revalidated separately; its exact-head run links are tracked in PR #135 and
+  the final report.
 
 ## Architecture audit
 
@@ -255,8 +259,8 @@ procedure.
 | Queued mutation conflict exists | `testConflictReviewSurvivesQueueReopen`, `testUnknownOutcomeIsNeverReclassifiedAsConflict` | Preserve the conflict; lifecycle recovery performs no mutation. |
 
 These are deterministic native test expectations, not physical-device or OS
-scheduling results. The final manifest update will record which exact-head
-simulator tests passed, failed, or skipped.
+scheduling results. The executed exact-head simulator totals are recorded in
+the validation section below.
 
 ## Portable validation and native CI
 
@@ -291,9 +295,9 @@ recovery assertions, bounded gate behavior, and device procedure documentation:
   blocked test unfinished. That attempt has no full-suite totals and is not
   counted as a gate pass. The bounded gate correction was included in
   `842384148b462955d54984c4b77c9ac07fafe9e2`, whose full simulator run passed.
-- The final manifest-only feature commit will be validated by another four-gate
-  run; final exact-head run URLs will be included in the final report. No iOS
-  source changes are planned after the validated source checkpoint.
+- A later manifest-only follow-up changes no iOS source or tests. Its four
+  exact-head run URLs are tracked in PR #135 and the final report. No iOS source
+  changes were made after the validated source checkpoint.
 - Unrelated workflows on this source checkpoint: Rust CI (`38841723715`), Linux
   AppImage (`38841723722`), and PostgreSQL scheduled maintenance (`38841724312`)
   failed in Rust/dependency, desktop/web, and server areas outside the P052
@@ -333,6 +337,6 @@ background upload/download.
   submitted and no approval is claimed.
 - Merge SHA: not available; no merge is claimed. `ios-app` remains at the
   verified starting SHA `02bc2b8f8ac8d8e2968da9f22abb5387ee3d5df3` pending review.
-- Next safe action: commit this validation record, rerun all four iOS workflows
-  on the resulting exact head, then complete review and follow merge protections.
+- Next safe action: await the requested code review. Merge only after required
+  review and repository protections pass; no merge is claimed here.
 - P053: not started and not authorized.
