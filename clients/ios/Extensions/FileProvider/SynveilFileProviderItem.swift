@@ -46,7 +46,8 @@ final class SynveilFileProviderItem: NSObject, NSFileProviderItem {
     var isDownloaded: Bool {
         // Never infer downloaded status from a manifest alone: it may outlive the object,
         // be corrupt, or belong to an older authorization generation.
-        guard let projected = projected, projected.kind == .file,
+        guard
+            let projected = projected, projected.kind == .file,
             let version = projected.fileVersionIdentity,
             let authorizedGeneration = authorizedGeneration
         else { return false }
