@@ -78,14 +78,39 @@ No assertion is made that iOS strips Authorization on a cross-origin redirect.
 
 - Source and architecture audit found no approved server/client grant protocol
   or deployment evidence that can open either background capability.
-- The safe P051A checks and exact-head CI are inherited evidence only for their
-  recorded source SHAs; they are not P051B validation. P051B must record fresh
-  portable and exact-head iOS results after the documentation checkpoint is
-  committed.
-- Existing API redirect tests are the relevant API-level synthetic coverage;
-  no new server behavior was introduced in this checkpoint. Live edge attack
-  tests remain unavailable and must use throwaway authorization plus synthetic
-  bytes if later performed.
+- P051B source/documentation checkpoint SHA:
+  `43b72120b8d72ae533203f734bbd96230a7c056b`. The two changed files are this
+  manifest and `docs/en/AUTHENTICATED_TRANSFER_SECURITY.md`; no Swift, Rust,
+  API, or OpenAPI behavior changed.
+- Portable validation on that exact tree passed:
+  `validate_ios_sources.py`, **106** iOS support tests, `validate-docs.sh`, and
+  `git diff --check`.
+- Exact-head iOS workflows on `43b7212` all passed:
+  [iOS Static Validation](https://github.com/nghianguyen150612/Synveil/actions/runs/38827582347),
+  [iOS Build](https://github.com/nghianguyen150612/Synveil/actions/runs/38827582314),
+  [iOS Simulator Tests](https://github.com/nghianguyen150612/Synveil/actions/runs/38827582316),
+  and [iOS Rust Apple Build](https://github.com/nghianguyen150612/Synveil/actions/runs/38827582360).
+  Simulator result: **1,926 total, 1,924 passed, 2 skipped, 0 failed** on
+  iPhone 17 Pro / iOS 26.5 Simulator. No new XCTest case was added in P051B;
+  the full existing suite remained enabled.
+- The exact-head Rust CI workflow ran the `synveil-api` unit target:
+  **112 passed, 0 failed**, including the handler redirect middleware tests.
+  The broad Rust CI workflow still failed in unrelated checks: the existing
+  metadata lifecycle test uses `systemd-tmpfiles --dry-run`, unsupported by the
+  runner; unchanged Clippy `double_must_use` findings, Windows-only build
+  incompatibility in Unix AppImage code, and the existing RustSec advisory for
+  locked rustls remain recorded from the P051A baseline. The Linux AppImage
+  workflow again rejected an embedded `/home/` marker; PostgreSQL scheduled
+  maintenance again failed the unrelated scheduler schema assertion. These
+  workflows do not change the result of the four required iOS gates.
+- Local `cargo`, Swift, `swift-format`, and `xcodebuild` are not installed in
+  this workspace. Rust/API and native results above are from GitHub Actions.
+- No API behavior changed in P051B. Live edge attack tests remain unavailable
+  and must use throwaway authorization plus synthetic bytes if later performed.
+- Real deployment/proxy validation and physical iPhone validation remain
+  `NOT_AVAILABLE`. PR #134 is still open and unmerged. Independent review was
+  requested from `ducminh231011`, a reviewer requested on the preceding iOS
+  milestone; no review response or security acceptance is recorded yet.
 - Current status: `BLOCKED_REQUIRES_FIXES`. Keep PR #134 open and unmerged.
   The next safe step is independent security review of an operator-controlled
   deployment profile or a separately reviewed, body-confidential transfer
