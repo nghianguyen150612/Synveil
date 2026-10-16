@@ -34,6 +34,7 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
     private var active: Task<UploadActionResult, Never>?
     private var activeUploadId: UploadOperationId?
     private var generation: UInt64 = 0
+    private(set) var lifecycleGeneration: UInt64 = 0
     var notificationObservation: (@MainActor (UploadRecord) -> Void)?
 
     init(
@@ -169,6 +170,19 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
     }
 
     func cancel() { active?.cancel() }
+
+    /// Scene/app suspension cancels foreground work without withdrawing or adopting any legacy
+    /// background job. The generation fences old presentation callbacks after reactivation.
+    func suspendForeground(lifecycleGeneration: UInt64) {
+        updateLifecycle(lifecycleGeneration: lifecycleGeneration, isActive: false)
+    }
+
+    /// Reactivation advances the callback fence without resuming an interrupted transfer.
+    func updateLifecycle(lifecycleGeneration: UInt64, isActive: Bool) {
+        guard lifecycleGeneration >= self.lifecycleGeneration else { return }
+        self.lifecycleGeneration = lifecycleGeneration
+        if !isActive { active?.cancel() }
+    }
 
     /// User Pause withdraws the exact job's durable background policy. Scene suspension uses
     /// cancel() instead, so an already approved system transfer can continue.
@@ -403,11 +417,11 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
                     progress(UploadProgress(record))
                 } catch {
                     let patchFailure = UploadPolicy.classify(error)
-                    if [
+                    if Task.isCancelled || [
                         .unauthenticated, .deviceRevoked, .staleSession, .scopeMismatch,
                         .cancelled,
                     ].contains(patchFailure) {
-                        throw patchFailure
+                        throw Task.isCancelled ? UploadFailure.cancelled : patchFailure
                     }
                     guard !reconciledPatchFailure else { throw patchFailure }
                     reconciledPatchFailure = true
@@ -448,11 +462,11 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
                 record = try await commit(completion, record: record, progress: progress)
             } catch {
                 let completionFailure = UploadPolicy.classify(error)
-                if [
+                if Task.isCancelled || [
                     .unauthenticated, .deviceRevoked, .staleSession, .scopeMismatch,
-                    .revisionConflict, .conflict, .sessionExpired,
+                    .revisionConflict, .conflict, .sessionExpired, .cancelled,
                 ].contains(completionFailure) {
-                    throw completionFailure
+                    throw Task.isCancelled ? UploadFailure.cancelled : completionFailure
                 }
                 let status = try await repository.status(record, session: session)
                 record = try await accept(
@@ -650,10 +664,11 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
                     evidence, record: record, session: session, generation: captured)
             } catch {
                 let failure = UploadPolicy.classify(error)
-                if [.unauthenticated, .deviceRevoked, .staleSession, .scopeMismatch].contains(
-                    failure)
+                if Task.isCancelled
+                    || [.unauthenticated, .deviceRevoked, .staleSession, .scopeMismatch,
+                        .cancelled].contains(failure)
                 {
-                    throw failure
+                    throw Task.isCancelled ? UploadFailure.cancelled : failure
                 }
                 let evidence = try await repository.status(record, session: session)
                 return try await reconcileAbort(

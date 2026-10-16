@@ -4,6 +4,7 @@ import SwiftUI
 struct SynveilApp: App {
     @UIApplicationDelegateAdaptor(BackgroundUploadAppDelegate.self) private var appDelegate
     @State private var container: AppDependencyContainer
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         let configuration = AppConfiguration.load()
@@ -11,6 +12,9 @@ struct SynveilApp: App {
         _container = State(initialValue: dependencies)
         NotificationApplicationDelivery.shared.install { [weak dependencies] id in
             dependencies?.notificationResponse(id)
+        }
+        AppLifecycleEventDelivery.shared.install { [weak dependencies] phase in
+            dependencies?.receiveLifecycle(phase)
         }
         NotificationApplicationDelivery.shared.becameActive = { [weak dependencies] in
             Task { await dependencies?.refreshNotifications() }
@@ -58,6 +62,14 @@ struct SynveilApp: App {
             }
             .onChange(of: container.sessionController.state) { _, _ in
                 Task { await container.consumeNotificationIntent() }
+            }
+            .onChange(of: scenePhase, initial: true) { _, phase in
+                switch phase {
+                case .active: AppLifecycleEventDelivery.shared.receive(.active)
+                case .inactive: AppLifecycleEventDelivery.shared.receive(.inactive)
+                case .background: AppLifecycleEventDelivery.shared.receive(.background)
+                @unknown default: AppLifecycleEventDelivery.shared.receive(.inactive)
+                }
             }
         }
     }

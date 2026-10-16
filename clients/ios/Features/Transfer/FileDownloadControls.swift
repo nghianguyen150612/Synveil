@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct FileDownloadControls: View {
+    @Environment(\.scenePhase) private var scenePhase
     private let controller: SessionController
     private let library: LibraryId
     private let node: NodeId
@@ -28,7 +29,11 @@ struct FileDownloadControls: View {
     var body: some View {
         if model.isCurrent {
             Section("Private Download") {
-                Text(model.label).accessibilityAddTraits(.updatesFrequently)
+                Text(model.label(isSceneActive: scenePhase == .active))
+                    .accessibilityAddTraits(
+                        model.isLiveOperation(isSceneActive: scenePhase == .active)
+                            ? .updatesFrequently : [])
+                    .accessibilityIdentifier("synveil.download.recovery.status")
                 if let progress = model.progress {
                     if progress.totalBytes > 0 {
                         ProgressView(
@@ -41,8 +46,18 @@ struct FileDownloadControls: View {
                     }
                     Text("\(progress.durableBytes) of \(progress.totalBytes) bytes stored")
                 }
+                if let message = model.savedStatusUnavailableMessage {
+                    Text(message)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("synveil.download.saved-status.unavailable")
+                }
                 if let failure = model.failure {
                     ClientRecoveryNotice(presentation: .download(failure))
+                } else if let progress = model.progress,
+                    let recovery = ClientRecoveryPresentation.download(
+                        progress, isActive: model.isRunning)
+                {
+                    ClientRecoveryNotice(presentation: recovery)
                 }
                 if model.canStart {
                     Button("Download File") { Task { await model.download() } }
@@ -81,6 +96,9 @@ struct FileDownloadControls: View {
                 .font(.footnote).fixedSize(horizontal: false, vertical: true)
             }
             .task { await model.loadSaved() }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { Task { await model.loadSaved() } }
+            }
             .onChange(of: controller.lifecycleRevision) { _, _ in model.invalidate() }
             .onDisappear { model.invalidate() }
         }

@@ -16,10 +16,16 @@ final class BackgroundUploadAppDelegate: NSObject, UIApplicationDelegate,
     }
 
     func applicationDidEnterBackground(_ application: UIApplication) {
+        AppLifecycleEventDelivery.shared.receive(.background)
         Task { await BGAppRefreshScheduler.shared.schedule() }
     }
 
+    func applicationWillResignActive(_ application: UIApplication) {
+        AppLifecycleEventDelivery.shared.receive(.inactive)
+    }
+
     func applicationDidBecomeActive(_ application: UIApplication) {
+        AppLifecycleEventDelivery.shared.receive(.active)
         Task { await BGAppRefreshScheduler.shared.refreshStatus() }
         NotificationApplicationDelivery.shared.becameActive?()
     }
@@ -59,6 +65,48 @@ final class BackgroundUploadAppDelegate: NSObject, UIApplicationDelegate,
         }
         BackgroundUploadEventDelivery.shared.installCompletion(completionHandler)
         BackgroundUploadApplicationBootstrap.shared.start()
+    }
+}
+
+enum AppLifecyclePhase: Equatable, Sendable {
+    case active, inactive, background
+}
+
+/// Relays equivalent UIKit and SwiftUI app-level lifecycle events to one owner.
+@MainActor
+final class AppLifecycleEventDelivery {
+    static let shared = AppLifecycleEventDelivery()
+    private var handler: (@MainActor (AppLifecyclePhase) -> Void)?
+    private var currentPhase: AppLifecyclePhase?
+
+    func install(_ handler: @escaping @MainActor (AppLifecyclePhase) -> Void) {
+        guard self.handler == nil else { return }
+        self.handler = handler
+        if let currentPhase { handler(currentPhase) }
+    }
+
+    func receive(_ phase: AppLifecyclePhase) {
+        currentPhase = phase
+        handler?(phase)
+    }
+}
+
+/// Coalesces duplicate lifecycle notifications and advances one callback fence for every phase
+/// transition. Transfer owners cancel only when the app is not active. It owns no transfer state
+/// or persistence.
+@MainActor
+final class AppLifecycleRecoveryCoordinator {
+    private(set) var phase: AppLifecyclePhase?
+    private(set) var generation: UInt64 = 0
+
+    func receive(
+        _ phase: AppLifecyclePhase,
+        lifecycleChanged: @MainActor (UInt64, Bool) -> Void
+    ) {
+        guard self.phase != phase else { return }
+        self.phase = phase
+        generation &+= 1
+        lifecycleChanged(generation, phase == .active)
     }
 }
 

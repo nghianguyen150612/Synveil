@@ -95,6 +95,9 @@ struct FileUploadControls: View {
             )
         }
         .task { await model.loadSaved() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await model.loadSaved() } }
+        }
         .onChange(of: coordinator?.background?.stateRevision ?? 0) { _, _ in
             Task { await model.refreshBackgroundState() }
         }
@@ -108,13 +111,6 @@ struct FileUploadControls: View {
                 model.invalidate()
                 pendingSelection = nil
                 pendingAbort = nil
-            }
-        }
-        .onChange(of: scenePhase) { _, phase in
-            if phase != .active {
-                model.suspendForeground()
-            } else {
-                Task { await model.loadSaved() }
             }
         }
     }
@@ -157,7 +153,7 @@ struct FileUploadControls: View {
                 }
             }
 
-            if let message = model.activityMessage {
+            if let message = model.displayedActivityMessage(isSceneActive: scenePhase == .active) {
                 ProgressView(message)
                     .accessibilityLabel(message)
                     .accessibilityIdentifier("synveil.upload.source-progress")
@@ -208,13 +204,18 @@ struct FileUploadControls: View {
             Text(uploadTitle(record))
                 .font(.headline)
                 .fixedSize(horizontal: false, vertical: true)
-                .accessibilityAddTraits(.updatesFrequently)
             if ![.committed, .aborted, .expired].contains(record.state) {
                 Text(model.backgroundJobs[record.id]?.state.label ?? "Foreground only")
                     .accessibilityIdentifier(
                         "synveil.upload.background.state.\(record.id.rawValue)")
             }
-            Text(progress.state.label)
+            Text(
+                model.statusLabel(
+                    for: record, background: model.backgroundJobs[record.id],
+                    isSceneActive: scenePhase == .active))
+                .accessibilityAddTraits(
+                    model.isLiveOperation(isSceneActive: scenePhase == .active)
+                        ? .updatesFrequently : [])
                 .accessibilityIdentifier("synveil.upload.state.\(record.id.rawValue)")
             if progress.totalBytes > 0 {
                 ProgressView(
@@ -301,9 +302,14 @@ struct FileUploadControls: View {
     @ViewBuilder
     private func liveProgress(_ progress: UploadProgress) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(progress.state.label)
+            Text(
+                model.isRunning && !model.isLiveOperation(isSceneActive: scenePhase == .active)
+                    ? "Checking saved transfer status…" : progress.state.label
+            )
                 .font(.headline)
-                .accessibilityAddTraits(.updatesFrequently)
+                .accessibilityAddTraits(
+                    model.isLiveOperation(isSceneActive: scenePhase == .active)
+                        ? .updatesFrequently : [])
             if progress.totalBytes > 0 {
                 ProgressView(
                     value: Double(progress.acknowledgedBytes), total: Double(progress.totalBytes)

@@ -6,6 +6,106 @@ import XCTest
 
 @MainActor
 final class FileUploadCoordinatorTests: XCTestCase {
+    func testLifecycleInterruptionPreservesUnknownPatchOutcomeWithoutReplay() async throws {
+        let fixture = try await queueFixture(self, initializeBase: false)
+        let parent = try await NodeId.validated(queueUUID(2), using: QueueValidator())
+        let sourceURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "SynveilUploadLifecycle-" + UUID().uuidString + ".bin")
+        let source = Data((0..<128).map { UInt8(truncatingIfNeeded: $0 &* 17) })
+        try source.write(to: sourceURL)
+        addTeardownBlock { try? FileManager.default.removeItem(at: sourceURL) }
+
+        let gate = QueueGate()
+        let scripted = UploadCoordinatorProvider(
+            base: fixture.provider, library: fixture.scope.libraryId,
+            parent: parent, source: source, loseFirstCreate: false,
+            partiallyAcceptFirstPatch: nil, loseCompletion: false,
+            patchResponseGate: gate)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "SynveilUploadLifecycleStage-" + UUID().uuidString, isDirectory: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        let staging = try DownloadStagingStore(
+            root: directory, freeBytes: { _ in 2_000_000_000 })
+        let coordinator = FileUploadCoordinator(
+            repository: AuthenticatedUploadRepository(
+                provider: scripted, bridge: QueueValidator()),
+            database: fixture.database, staging: UploadStagingStore(shared: staging),
+            identityGenerator: FixedUploadIDGenerator(value: queueUUID(703)))
+
+        let operation = Task {
+            await coordinator.start(
+                selectedURL: sourceURL,
+                target: .createFile(
+                    library: fixture.scope.libraryId, parent: parent, name: "lifecycle.bin"),
+                library: fixture.scope.libraryId, libraryStatus: .active,
+                progress: { _ in })
+        }
+        await gate.wait()
+        coordinator.updateLifecycle(lifecycleGeneration: 1, isActive: false)
+        await gate.release()
+
+        guard case .stopped(let uncertain?, .cancelled) = await operation.value else {
+            return XCTFail("An interrupted PATCH must preserve an unknown outcome")
+        }
+        XCTAssertEqual(uncertain.state, .outcomeUnknown)
+        XCTAssertTrue(uncertain.uncertain)
+        XCTAssertEqual(uncertain.authoritativeOffset, 0)
+        XCTAssertEqual(scripted.finalOffset, UInt64(source.count))
+        XCTAssertEqual(scripted.patchRequests.count, 1)
+        XCTAssertEqual(scripted.statusCount, 0)
+        XCTAssertEqual(scripted.completionCalls, 0)
+
+        coordinator.updateLifecycle(lifecycleGeneration: 2, isActive: true)
+        XCTAssertEqual(scripted.patchRequests.count, 1)
+        XCTAssertEqual(scripted.statusCount, 0)
+    }
+
+    func testLifecycleInterruptionDuringCompleteDoesNotReconcileAutomatically() async throws {
+        let fixture = try await queueFixture(self, initializeBase: false)
+        let parent = try await NodeId.validated(queueUUID(2), using: QueueValidator())
+        let sourceURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "SynveilUploadLifecycleComplete-" + UUID().uuidString + ".bin")
+        try Data().write(to: sourceURL)
+        addTeardownBlock { try? FileManager.default.removeItem(at: sourceURL) }
+
+        let gate = QueueGate()
+        let scripted = UploadCoordinatorProvider(
+            base: fixture.provider, library: fixture.scope.libraryId,
+            parent: parent, source: Data(), loseFirstCreate: false,
+            partiallyAcceptFirstPatch: nil, loseCompletion: false,
+            completionResponseGate: gate)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "SynveilUploadLifecycleCompleteStage-" + UUID().uuidString, isDirectory: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        let staging = try DownloadStagingStore(
+            root: directory, freeBytes: { _ in 2_000_000_000 })
+        let coordinator = FileUploadCoordinator(
+            repository: AuthenticatedUploadRepository(
+                provider: scripted, bridge: QueueValidator()),
+            database: fixture.database, staging: UploadStagingStore(shared: staging),
+            identityGenerator: FixedUploadIDGenerator(value: queueUUID(703)))
+
+        let operation = Task {
+            await coordinator.start(
+                selectedURL: sourceURL,
+                target: .createFile(
+                    library: fixture.scope.libraryId, parent: parent, name: "empty.bin"),
+                library: fixture.scope.libraryId, libraryStatus: .active,
+                progress: { _ in })
+        }
+        await gate.wait()
+        coordinator.updateLifecycle(lifecycleGeneration: 1, isActive: false)
+        await gate.release()
+
+        guard case .stopped(let uncertain?, .cancelled) = await operation.value else {
+            return XCTFail("An interrupted COMPLETE must preserve its unknown outcome")
+        }
+        XCTAssertEqual(uncertain.state, .outcomeUnknown)
+        XCTAssertTrue(uncertain.uncertain)
+        XCTAssertEqual(scripted.completionCalls, 1)
+        XCTAssertEqual(scripted.statusCount, 0)
+    }
+
     func testLostCreatePartialPatchAndLostCompletionRecoverOnOriginalIntent() async throws {
         let fixture = try await queueFixture(self, initializeBase: false)
         let parent = try await NodeId.validated(queueUUID(2), using: QueueValidator())
@@ -102,6 +202,8 @@ final class UploadCoordinatorProvider: AuthenticatedUploadRequestProviderProtoco
     private let loseFirstCreate: Bool
     private let partialAcceptance: Int?
     private let loseCompletion: Bool
+    private let patchResponseGate: QueueGate?
+    private let completionResponseGate: QueueGate?
     private var intent: UploadIntent?
     private var serverOffset: UInt64 = 0
     private var serverState: UploadServerState = .open
@@ -129,7 +231,8 @@ final class UploadCoordinatorProvider: AuthenticatedUploadRequestProviderProtoco
     init(
         base: AuthenticatedLibraryRequestProvider, library: LibraryId, parent: NodeId,
         source: Data, loseFirstCreate: Bool, partiallyAcceptFirstPatch: Int?,
-        loseCompletion: Bool
+        loseCompletion: Bool, patchResponseGate: QueueGate? = nil,
+        completionResponseGate: QueueGate? = nil
     ) {
         self.base = base
         self.library = library
@@ -138,6 +241,8 @@ final class UploadCoordinatorProvider: AuthenticatedUploadRequestProviderProtoco
         self.loseFirstCreate = loseFirstCreate
         partialAcceptance = partiallyAcceptFirstPatch
         self.loseCompletion = loseCompletion
+        self.patchResponseGate = patchResponseGate
+        self.completionResponseGate = completionResponseGate
     }
 
     func begin() async throws -> LibraryRequestScope { try await base.begin() }
@@ -236,6 +341,10 @@ final class UploadCoordinatorProvider: AuthenticatedUploadRequestProviderProtoco
             throw UploadFailure.timeout
         }
         serverOffset += UInt64(bytes.count)
+        if let patchResponseGate {
+            await patchResponseGate.arrive()
+            try Task.checkCancellation()
+        }
         return HTTPTransportResponse(
             statusCode: 204,
             headers: [
@@ -259,6 +368,10 @@ final class UploadCoordinatorProvider: AuthenticatedUploadRequestProviderProtoco
             committedAt: Date(timeIntervalSince1970: 1_791_720_000),
             requestId: "upload-complete-01")
         serverState = .committed
+        if let completionResponseGate {
+            await completionResponseGate.arrive()
+            try Task.checkCancellation()
+        }
         if loseCompletion, !didLoseCompletion {
             didLoseCompletion = true
             throw UploadFailure.timeout

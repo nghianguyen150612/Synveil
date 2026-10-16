@@ -57,6 +57,7 @@ public final class AppDependencyContainer {
     private(set) var mutationQueueFailure: MutationQueueFailure?
     private(set) var backgroundSyncCoordinator: BackgroundSyncCoordinator?
     private var sessionBootstrapTask: Task<Void, Never>?
+    private let lifecycleRecovery = AppLifecycleRecoveryCoordinator()
     private var backgroundDatabase: MutationQueueSQLiteStore?
     private(set) var notifications: NotificationCoordinator?
     let notificationNavigation = NotificationNavigationCoordinator()
@@ -71,6 +72,24 @@ public final class AppDependencyContainer {
             await consumeNotificationIntent()
         }
     }
+
+    func receiveLifecycle(_ phase: AppLifecyclePhase) {
+        lifecycleRecovery.receive(phase) { [weak self] generation, isActive in
+            self?.downloadCoordinator?.updateLifecycle(
+                lifecycleGeneration: generation, isActive: isActive)
+            self?.uploadCoordinator?.updateLifecycle(
+                lifecycleGeneration: generation, isActive: isActive)
+        }
+    }
+
+    private func synchronizeTransferLifecycle() {
+        let isActive = lifecycleRecovery.phase == .active
+        downloadCoordinator?.updateLifecycle(
+            lifecycleGeneration: lifecycleRecovery.generation, isActive: isActive)
+        uploadCoordinator?.updateLifecycle(
+            lifecycleGeneration: lifecycleRecovery.generation, isActive: isActive)
+    }
+
     func refreshNotifications() async {
         guard let notifications else { return }
         await notifications.refreshStatus()
@@ -103,6 +122,7 @@ public final class AppDependencyContainer {
         }
         let task = Task { @MainActor in
             await self.prepareEnrollmentSecurity()
+            self.synchronizeTransferLifecycle()
             await self.sessionController.start()
             self.notificationStartupReady = true
             // No permission request, network sync or upload operation is started by notifications.

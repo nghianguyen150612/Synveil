@@ -23,6 +23,18 @@ final class FileDownloadViewTests: XCTestCase {
         XCTAssertTrue(requests.isEmpty)
     }
 
+    func testUnavailableDownloadStorageIsNotPresentedAsEmptyHistory() async throws {
+        let f = try await downloadFixture(self)
+        let model = FileDownloadViewModel(
+            coordinator: nil, controller: f.queue.controller,
+            library: f.queue.scope.libraryId, node: f.node.id, version: f.version)
+
+        await model.loadSaved()
+
+        XCTAssertFalse(model.canStart)
+        XCTAssertTrue(model.savedStatusUnavailableMessage?.contains("unavailable") == true)
+    }
+
     func testDownloadControlsRenderAtStandardSize() async throws {
         try await render(size: .large)
     }
@@ -61,5 +73,58 @@ final class FileDownloadViewTests: XCTestCase {
         let record = try await downloadRecord(f)
         XCTAssertEqual(record.state, .verified)
         XCTAssertEqual(record.state.label, "Downloaded and Verified")
+    }
+
+    func testRestoredDownloadingRecordShowsInterruptedAndDoesNotReplay() async throws {
+        let body = Data(repeating: 97, count: DownloadPolicy.bufferSize * 2 + 3)
+        let f = try await downloadFixture(self, body: body)
+        await f.content.configure(failAfterChunks: 1)
+        guard case .stopped(_, .timeout) = await downloadRun(f) else {
+            return XCTFail("The deterministic fixture must stop after one committed chunk")
+        }
+        let partial = try await downloadRecord(f)
+        try await f.queue.database.updateDownload(partial, state: .downloading)
+        let requestsBeforeRestore = await f.content.requests().count
+
+        let model = FileDownloadViewModel(
+            coordinator: f.coordinator, controller: f.queue.controller,
+            library: f.queue.scope.libraryId, node: f.node.id, version: f.version)
+        await model.loadSaved()
+
+        XCTAssertEqual(model.progress?.state, .downloading)
+        XCTAssertEqual(model.label, "Download interrupted — Resume available")
+        XCTAssertTrue(model.canResume)
+        let recovery = try XCTUnwrap(
+            ClientRecoveryPresentation.download(model.progress!, isActive: false))
+        XCTAssertEqual(recovery.classification, .transferInterrupted)
+        XCTAssertTrue(recovery.message.contains("not available offline"))
+        XCTAssertTrue(recovery.actions.contains(.resumeDownload))
+        let requestsAfterRestore = await f.content.requests()
+        XCTAssertEqual(requestsAfterRestore.count, requestsBeforeRestore)
+    }
+
+    func testLifecycleSuspensionCancelsForegroundDownloadAndReloadsDurableState() async throws {
+        let body = Data(repeating: 97, count: DownloadPolicy.bufferSize * 2 + 3)
+        let f = try await downloadFixture(self, body: body)
+        let gate = QueueGate()
+        await f.content.configure(gate: gate)
+        let model = FileDownloadViewModel(
+            coordinator: f.coordinator, controller: f.queue.controller,
+            library: f.queue.scope.libraryId, node: f.node.id, version: f.version)
+        let operation = Task { await model.download() }
+        await gate.wait()
+
+        f.coordinator.suspendForeground(lifecycleGeneration: 1)
+        f.coordinator.updateLifecycle(lifecycleGeneration: 2, isActive: true)
+        await gate.release()
+        await operation.value
+
+        let saved = try await downloadRecord(f)
+        XCTAssertEqual(saved.state, .cancelled)
+        XCTAssertEqual(model.progress?.state, .cancelled)
+        XCTAssertEqual(model.label, "Download interrupted — Resume available")
+        XCTAssertFalse(model.isRunning)
+        let requests = await f.content.requests()
+        XCTAssertEqual(requests.count, 1)
     }
 }

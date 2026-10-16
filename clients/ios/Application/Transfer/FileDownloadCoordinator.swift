@@ -64,6 +64,7 @@ final class FileDownloadCoordinator {
     private let staging: DownloadStagingStore
     private var active: Task<FileDownloadResult, Never>?
     private var generation: UInt64 = 0
+    private(set) var lifecycleGeneration: UInt64 = 0
     private var sessionId = UUID().uuidString.lowercased()
     private var latest: DownloadRecord?
     var notificationObservation: (@MainActor (DownloadRecord) -> Void)?
@@ -115,6 +116,20 @@ final class FileDownloadCoordinator {
         return result
     }
     func cancel() { active?.cancel() }
+
+    /// App lifecycle suspension cancels only this foreground operation. It never creates a new
+    /// request or changes durable transfer evidence.
+    func suspendForeground(lifecycleGeneration: UInt64) {
+        updateLifecycle(lifecycleGeneration: lifecycleGeneration, isActive: false)
+    }
+
+    /// Every phase transition advances the in-memory callback fence. Reactivation does not cancel
+    /// anything; leaving the active phase cancels only the foreground task.
+    func updateLifecycle(lifecycleGeneration: UInt64, isActive: Bool) {
+        guard lifecycleGeneration >= self.lifecycleGeneration else { return }
+        self.lifecycleGeneration = lifecycleGeneration
+        if !isActive { active?.cancel() }
+    }
 
     @discardableResult
     func invalidateSession() -> Task<Void, Never> {

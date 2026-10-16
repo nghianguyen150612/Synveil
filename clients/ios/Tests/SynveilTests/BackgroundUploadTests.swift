@@ -960,9 +960,18 @@ final class BackgroundUploadTests: XCTestCase {
     func testApplicationBootstrapRunsWithoutSceneAndOnlyOnce() async {
         let bootstrap = BackgroundUploadApplicationBootstrap()
         var calls = 0
+        let gate = QueueGate()
         bootstrap.start()  // UIKit launch can precede app composition.
-        bootstrap.install { calls += 1 }
-        await bootstrap.waitForStartup()
+        bootstrap.install {
+            calls += 1
+            await gate.arrive()
+        }
+        let first = Task { await bootstrap.waitForStartup() }
+        let second = Task { await bootstrap.waitForStartup() }
+        await gate.wait()
+        await gate.release()
+        await first.value
+        await second.value
         bootstrap.start()
         await bootstrap.waitForStartup()
         XCTAssertEqual(calls, 1)

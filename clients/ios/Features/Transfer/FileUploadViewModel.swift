@@ -22,6 +22,7 @@ final class FileUploadViewModel {
     private let sessionRevision: UInt64
     @ObservationIgnored private var invalidated = false
     @ObservationIgnored private var statusGeneration: UInt64 = 0
+    @ObservationIgnored private var activeOperationLifecycleGeneration: UInt64?
 
     init(
         coordinator: FileUploadCoordinator?, controller: SessionController,
@@ -67,16 +68,68 @@ final class FileUploadViewModel {
         return UploadProgress(record)
     }
 
+    func statusLabel(
+        for record: UploadRecord, background: BackgroundUploadJob? = nil,
+        isSceneActive: Bool = true
+    ) -> String {
+        if isRunning, !isLiveOperation(isSceneActive: isSceneActive) {
+            return "Checking saved transfer status…"
+        }
+        if background?.blocksForeground == true {
+            return "Background transfer recovery required"
+        }
+        if isRunning, liveProgress?.operationId == record.id {
+            return liveProgress?.state.label ?? record.state.label
+        }
+        if record.uncertain || [.outcomeUnknown, .completing, .abortPending].contains(record.state) {
+            return "Upload status uncertain"
+        }
+        if record.state == .uploading {
+            return "Upload interrupted — Resume available"
+        }
+        return record.state.label
+    }
+
+    func isLiveOperation(isSceneActive: Bool) -> Bool {
+        guard isSceneActive, isRunning,
+            let coordinator,
+            activeOperationLifecycleGeneration == coordinator.lifecycleGeneration
+        else { return false }
+        return true
+    }
+
+    func displayedActivityMessage(isSceneActive: Bool) -> String? {
+        guard activityMessage != nil else { return nil }
+        if isRunning && !isLiveOperation(isSceneActive: isSceneActive) {
+            return "Checking saved transfer status…"
+        }
+        return activityMessage
+    }
+
     func loadSaved() async {
         await readSaved(visibleOnly: false)
     }
 
-    private func readSaved(visibleOnly: Bool) async {
+    private func readSaved(visibleOnly: Bool, retryAfterLifecycleChange: Bool = true) async {
         guard isCurrent, !isLoadingSaved, !isRunning, let activityReader else { return }
         statusGeneration &+= 1
         let generation = statusGeneration
+        let capturedLifecycleGeneration = coordinator?.lifecycleGeneration
         isLoadingSaved = true
         defer { if generation == statusGeneration { isLoadingSaved = false } }
+
+        func retryIfLifecycleChanged() async -> Bool {
+            guard coordinator?.lifecycleGeneration != capturedLifecycleGeneration else {
+                return false
+            }
+            isLoadingSaved = false
+            if retryAfterLifecycleChange, isCurrent {
+                await readSaved(
+                    visibleOnly: visibleOnly, retryAfterLifecycleChange: false)
+            }
+            return true
+        }
+
         do {
             let saved: [UploadRecord]
             if visibleOnly {
@@ -85,12 +138,14 @@ final class FileUploadViewModel {
                 saved = try await activityReader.saved(library: library, limit: 20)
             }
             guard isCurrent, !isRunning, generation == statusGeneration else { return }
+            if await retryIfLifecycleChanged() { return }
             var jobs: [UploadOperationId: BackgroundUploadJob] = [:]
             for record in saved {
                 if let job = try await activityReader.backgroundJob(record.id) {
                     jobs[record.id] = job
                 }
                 guard isCurrent, !isRunning, generation == statusGeneration else { return }
+                if await retryIfLifecycleChanged() { return }
             }
             records = saved
             backgroundJobs = jobs
@@ -99,6 +154,7 @@ final class FileUploadViewModel {
             failure = nil
         } catch {
             guard isCurrent, generation == statusGeneration else { return }
+            if await retryIfLifecycleChanged() { return }
             savedStatusUnavailable = true
             failure = UploadPolicy.classify(error)
         }
@@ -141,11 +197,18 @@ final class FileUploadViewModel {
         isRunning = true
         activityMessage = "Checking Server Status…"
         failure = nil
+        let capturedLifecycleGeneration = coordinator.lifecycleGeneration
+        activeOperationLifecycleGeneration = capturedLifecycleGeneration
         let result = await coordinator.checkServerStatus(
             id: record.id, library: library)
         isRunning = false
         activityMessage = nil
+        activeOperationLifecycleGeneration = nil
         guard isCurrent else { return .failure(.staleSession) }
+        guard coordinator.lifecycleGeneration == capturedLifecycleGeneration else {
+            await refreshRecords()
+            return .failure(.cancelled)
+        }
         switch result {
         case .success(let updated):
             await refreshRecords()
@@ -165,11 +228,18 @@ final class FileUploadViewModel {
         isRunning = true
         activityMessage = "Requesting server abort…"
         failure = nil
+        let capturedLifecycleGeneration = coordinator.lifecycleGeneration
+        activeOperationLifecycleGeneration = capturedLifecycleGeneration
         let result = await coordinator.abort(
             id: record.id, library: library)
         isRunning = false
         activityMessage = nil
+        activeOperationLifecycleGeneration = nil
         guard isCurrent else { return .failure(.staleSession) }
+        guard coordinator.lifecycleGeneration == capturedLifecycleGeneration else {
+            await refreshRecords()
+            return .failure(.cancelled)
+        }
         switch result {
         case .success(let updated):
             await refreshRecords()
@@ -200,8 +270,6 @@ final class FileUploadViewModel {
         if isCurrent, !savedStatusUnavailable { failure = pauseFailure }
     }
 
-    func suspendForeground() { coordinator?.cancel() }
-
     func reportImportFailure() { if isCurrent { failure = .sourceUnavailable } }
 
     func invalidate() {
@@ -209,6 +277,7 @@ final class FileUploadViewModel {
         invalidated = true
         statusGeneration &+= 1
         isLoadingSaved = false
+        activeOperationLifecycleGeneration = nil
         coordinator?.cancel()
         records = []
         backgroundJobs = [:]
@@ -223,13 +292,17 @@ final class FileUploadViewModel {
             @MainActor (@escaping @MainActor (UploadProgress) -> Void) async
             -> FileUploadResult
     ) async -> FileUploadResult {
+        let capturedLifecycleGeneration = coordinator?.lifecycleGeneration
         isRunning = true
+        activeOperationLifecycleGeneration = capturedLifecycleGeneration
         isPreparingSource = true
         activityMessage = activity
         liveProgress = nil
         failure = nil
         let result = await operation { [weak self] progress in
-            guard let self, self.isCurrent else { return }
+            guard let self, self.isCurrent,
+                self.coordinator?.lifecycleGeneration == capturedLifecycleGeneration
+            else { return }
             self.isPreparingSource = false
             self.activityMessage = nil
             self.liveProgress = progress
@@ -237,10 +310,16 @@ final class FileUploadViewModel {
         isRunning = false
         isPreparingSource = false
         activityMessage = nil
+        activeOperationLifecycleGeneration = nil
         guard isCurrent else {
             records = []
             liveProgress = nil
-            return result
+            return .stopped(nil, .staleSession)
+        }
+        guard coordinator?.lifecycleGeneration == capturedLifecycleGeneration else {
+            liveProgress = nil
+            await refreshRecords()
+            return .stopped(nil, .cancelled)
         }
         switch result {
         case .completed(let record), .scheduled(let record):
