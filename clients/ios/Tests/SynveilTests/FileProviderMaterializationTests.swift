@@ -501,6 +501,7 @@ final class FileProviderMaterializationTests: XCTestCase {
             projected: projectedItem,
             domain: domain,
             contentStore: contentStore,
+            metadataStore: store,
             authorizedGeneration: 1
         )
         // The capability is exactly read-only; Apple may define composite bit masks.
@@ -510,6 +511,8 @@ final class FileProviderMaterializationTests: XCTestCase {
         )
         XCTAssertTrue(item.isDownloaded)
         try Data("corrupted after publication".utf8).write(to: contentURL)
+        XCTAssertFalse(item.isDownloaded)
+        try store.revoke(domainID: domain.rawValue, state: .loggedOut)
         XCTAssertFalse(item.isDownloaded)
     }
 
