@@ -5,6 +5,7 @@ enum ClientRecoveryClassification: String, Equatable, Sendable {
     case permissionDenied, protocolInvalid, cachedDataIncomplete, cachedDataStale
     case reconciliationRequired, conflictRequiresReview, rebaselineRequired
     case localStorageFailure, integrityFailure, cancelled, sessionInvalidated
+    case transferInterrupted, verificationRequired
 
     var title: String {
         switch self {
@@ -23,6 +24,8 @@ enum ClientRecoveryClassification: String, Equatable, Sendable {
         case .integrityFailure: "Integrity verification failed"
         case .cancelled: "Operation cancelled"
         case .sessionInvalidated: "Session changed"
+        case .transferInterrupted: "Download interrupted"
+        case .verificationRequired: "Verification required"
         }
     }
 
@@ -32,7 +35,8 @@ enum ClientRecoveryClassification: String, Equatable, Sendable {
         case .cachedDataIncomplete, .cachedDataStale: "externaldrive"
         case .authenticationRequired, .deviceRevoked, .permissionDenied, .sessionInvalidated:
             "lock.shield"
-        case .cancelled: "pause.circle"
+        case .cancelled, .transferInterrupted: "pause.circle"
+        case .verificationRequired: "checkmark.shield"
         default: "exclamationmark.triangle"
         }
     }
@@ -207,6 +211,35 @@ struct ClientRecoveryPresentation: Equatable, Sendable {
         return Self(
             classification: kind, evidence: .durableOperation, message: failure.message,
             actions: failure.state.canResume ? [.resumeDownload] : [])
+    }
+
+    /// Presentation for durable foreground download states recovered after interruption. A
+    /// partial checkpoint is never described as an offline file or as verified content.
+    static func download(_ progress: DownloadProgress, isActive: Bool) -> Self? {
+        guard !isActive else { return nil }
+        let classification: ClientRecoveryClassification
+        let message: String
+        switch progress.state {
+        case .prepared, .downloading, .partial, .cancelled, .failedRecoverable:
+            classification = .transferInterrupted
+            if progress.durableBytes == 0 {
+                message =
+                    "No download bytes were committed. Choose Resume to revalidate this pinned version."
+            } else {
+                message =
+                    "Saved progress covers \(progress.durableBytes) of \(progress.totalBytes) bytes. The partial file is not available offline; Resume revalidates this pinned version."
+            }
+        case .verifying:
+            classification = .verificationRequired
+            message =
+                "Verification did not finish. This file is unavailable until integrity checks complete."
+        default:
+            return nil
+        }
+        return Self(
+            classification: classification, evidence: .durableOperation,
+            message: message,
+            actions: progress.state.canResume ? [.resumeDownload] : [.inspectLocalStatus])
     }
 
     static func rebaseline(_ progress: RebaselineProgress?, failure: RebaselineFailure?) -> Self? {

@@ -34,6 +34,7 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
     private var active: Task<UploadActionResult, Never>?
     private var activeUploadId: UploadOperationId?
     private var generation: UInt64 = 0
+    private(set) var lifecycleGeneration: UInt64 = 0
     var notificationObservation: (@MainActor (UploadRecord) -> Void)?
 
     init(
@@ -169,6 +170,19 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
     }
 
     func cancel() { active?.cancel() }
+
+    /// Scene/app suspension cancels foreground work without withdrawing or adopting any legacy
+    /// background job. The generation fences old presentation callbacks after reactivation.
+    func suspendForeground(lifecycleGeneration: UInt64) {
+        updateLifecycle(lifecycleGeneration: lifecycleGeneration, isActive: false)
+    }
+
+    /// Reactivation advances the callback fence without resuming an interrupted transfer.
+    func updateLifecycle(lifecycleGeneration: UInt64, isActive: Bool) {
+        guard lifecycleGeneration >= self.lifecycleGeneration else { return }
+        self.lifecycleGeneration = lifecycleGeneration
+        if !isActive { active?.cancel() }
+    }
 
     /// User Pause withdraws the exact job's durable background policy. Scene suspension uses
     /// cancel() instead, so an already approved system transfer can continue.
@@ -343,27 +357,32 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
         do {
             try await fence(session, captured)
             try await staging.verify(record)
+            try Task.checkCancellation()
             if createIfNeeded {
                 let dispatched = try await update(
                     record, state: .sessionCreating, uncertain: true,
                     failure: nil, beginAttempt: true)
                 record = dispatched
                 progress(UploadProgress(record))
+                try Task.checkCancellation()
                 do {
                     let evidence = try await repository.create(
                         record.intent, session: session, expectedOffset: 0)
                     record = try await accept(
                         evidence, for: record, session: session, generation: captured,
                         progress: progress)
+                    try Task.checkCancellation()
                 } catch {
                     throw UploadPolicy.classify(error)
                 }
             } else {
                 guard record.serverSessionId != nil else { throw UploadFailure.invalidMetadata }
+                try Task.checkCancellation()
                 let evidence = try await repository.status(record, session: session)
                 record = try await accept(
                     evidence, for: record, session: session, generation: captured,
                     progress: progress)
+                try Task.checkCancellation()
             }
             if record.state == .committed { return .completed(record) }
             guard record.serverState == .open, record.serverSessionId != nil else {
@@ -379,6 +398,7 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
             }
             var reconciledPatchFailure = false
             while record.authoritativeOffset < record.intent.expected.byteLength {
+                try Task.checkCancellation()
                 try await fence(session, captured)
                 let count = Int(
                     min(
@@ -387,10 +407,12 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
                 guard count > 0 else { throw UploadFailure.invalidMetadata }
                 let bytes = try await staging.chunk(
                     record, offset: record.authoritativeOffset, count: count)
+                try Task.checkCancellation()
                 let prior = record.authoritativeOffset
                 record = try await update(
                     record, state: .uploading, uncertain: true,
                     failure: nil, beginAttempt: true)
+                try Task.checkCancellation()
                 do {
                     let nextOffset = try await repository.patch(
                         record, offset: prior, bytes: bytes, session: session)
@@ -401,13 +423,18 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
                         record, state: nextState, uncertain: false,
                         authoritativeOffset: nextOffset, serverState: .open, failure: nil)
                     progress(UploadProgress(record))
+                    // The returned offset is authoritative even if the scene was suspended while
+                    // PATCH was in flight. Persist it, then stop before another chunk or COMPLETE.
+                    try Task.checkCancellation()
                 } catch {
                     let patchFailure = UploadPolicy.classify(error)
-                    if [
-                        .unauthenticated, .deviceRevoked, .staleSession, .scopeMismatch,
-                        .cancelled,
-                    ].contains(patchFailure) {
-                        throw patchFailure
+                    if Task.isCancelled
+                        || [
+                            .unauthenticated, .deviceRevoked, .staleSession, .scopeMismatch,
+                            .cancelled,
+                        ].contains(patchFailure)
+                    {
+                        throw Task.isCancelled ? UploadFailure.cancelled : patchFailure
                     }
                     guard !reconciledPatchFailure else { throw patchFailure }
                     reconciledPatchFailure = true
@@ -432,27 +459,32 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
             }
             try await fence(session, captured)
             try await staging.verify(record)
+            try Task.checkCancellation()
             if record.state != .readyToComplete {
                 record = try await update(
                     record, state: .readyToComplete, uncertain: false,
                     serverState: .open, failure: nil)
                 progress(UploadProgress(record))
             }
+            try Task.checkCancellation()
             let targetNode = try targetNodeId(record)
             record = try await update(
                 record, state: .completing, uncertain: true,
                 failure: nil, beginAttempt: true)
+            try Task.checkCancellation()
             do {
                 let completion = try await repository.complete(
                     record, targetNodeId: targetNode, session: session)
                 record = try await commit(completion, record: record, progress: progress)
             } catch {
                 let completionFailure = UploadPolicy.classify(error)
-                if [
-                    .unauthenticated, .deviceRevoked, .staleSession, .scopeMismatch,
-                    .revisionConflict, .conflict, .sessionExpired,
-                ].contains(completionFailure) {
-                    throw completionFailure
+                if Task.isCancelled
+                    || [
+                        .unauthenticated, .deviceRevoked, .staleSession, .scopeMismatch,
+                        .revisionConflict, .conflict, .sessionExpired, .cancelled,
+                    ].contains(completionFailure)
+                {
+                    throw Task.isCancelled ? UploadFailure.cancelled : completionFailure
                 }
                 let status = try await repository.status(record, session: session)
                 record = try await accept(
@@ -650,10 +682,13 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
                     evidence, record: record, session: session, generation: captured)
             } catch {
                 let failure = UploadPolicy.classify(error)
-                if [.unauthenticated, .deviceRevoked, .staleSession, .scopeMismatch].contains(
-                    failure)
+                if Task.isCancelled
+                    || [
+                        .unauthenticated, .deviceRevoked, .staleSession, .scopeMismatch,
+                        .cancelled,
+                    ].contains(failure)
                 {
-                    throw failure
+                    throw Task.isCancelled ? UploadFailure.cancelled : failure
                 }
                 let evidence = try await repository.status(record, session: session)
                 return try await reconcileAbort(
