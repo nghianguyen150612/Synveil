@@ -113,7 +113,7 @@ public actor PhotoLibraryObservationCoordinator: PhotoLibraryObservationCoordina
     }
 
     public func currentScanResult() async -> PhotoDiscoveryScanResult {
-        return lastScanResult
+        lastScanResult
     }
 
     private func enqueueCoalescedChangeScan() async {
