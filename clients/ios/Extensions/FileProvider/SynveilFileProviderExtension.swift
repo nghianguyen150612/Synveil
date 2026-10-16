@@ -57,6 +57,7 @@ final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExte
                 guard lifecycle.canContinueRequest() else {
                     throw FileProviderSynchronizationError.cancelled
                 }
+                try view.validateDelivery()
                 completionHandler(
                     SynveilFileProviderItem(projected: item, domain: view.manifest.domain), nil)
             }

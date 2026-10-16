@@ -772,6 +772,23 @@ final class FileProviderEnumerationTests: XCTestCase {
                 domainID: domain.rawValue, manifest: store.readManifest(domainID: domain.rawValue)))
     }
 
+    func testProtectedDataLossDuringCallbackPreventsSuccessfulCompletion() throws {
+        try publish(1, [snapshot(1)])
+        var available = true
+        store.protectedDataAvailable = { available }
+        let process = FileProviderProcessLifecycle()
+        process.launch()
+        let enumerator = SynveilFileProviderEnumerator(
+            reader: reader, container: folder.rawValue, process: process)
+        let observer = EnumerationRecorder()
+        observer.onDelivery = { available = false }
+        enumerator.enumerateItems(
+            for: observer,
+            startingAt: NSFileProviderPage(NSFileProviderPage.initialPageSortedByName as Data))
+        XCTAssertEqual(observer.completions, 1)
+        XCTAssertNotNil(observer.error)
+    }
+
     @MainActor
     func testSignalingCoalescesAndAcknowledgesOnlyCompletedDelivery() async throws {
         try publish(1, [snapshot(1)])

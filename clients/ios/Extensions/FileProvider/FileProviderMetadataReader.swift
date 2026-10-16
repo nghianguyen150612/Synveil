@@ -35,6 +35,17 @@ struct FileProviderMetadataView {
     let manifest: FileProviderGenerationManifest
     var latest: FileProviderGenerationRecord { manifest.records.last! }
 
+    func validateDelivery() throws {
+        // Reopen the protected commit immediately before callbacks, including between batches.
+        // A lock transition must fail through Data Protection even after metadata entered memory.
+        let current = try store.readManifest(domainID: manifest.domain.rawValue)
+        guard current.authorization == manifest.authorization,
+            current.records.last?.generation == latest.generation
+        else {
+            throw FileProviderSynchronizationError.unauthorized
+        }
+    }
+
     func lookup(_ identifier: String) throws -> FileProviderProjectedItem {
         let all = try liveItems(latest)
         guard let item = all.first(where: { $0.identity.rawValue == identifier }) else {

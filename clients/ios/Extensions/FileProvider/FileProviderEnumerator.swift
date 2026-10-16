@@ -44,8 +44,10 @@ final class SynveilFileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                     SynveilFileProviderItem(projected: $0, domain: view.manifest.domain)
                 }
                 try checkCancellation()
+                try view.validateDelivery()
                 observer.didEnumerate(items)
                 try checkCancellation()
+                try view.validateDelivery()
                 observer.finishEnumerating(upTo: batch.next.map { NSFileProviderPage($0) })
             }
         } catch { observer.finishEnumeratingWithError(FileProviderErrorMapper.map(error)) }
@@ -62,11 +64,14 @@ final class SynveilFileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                     SynveilFileProviderItem(projected: $0, domain: view.manifest.domain)
                 }
                 try checkCancellation()
+                try view.validateDelivery()
                 observer.didUpdate(items)
                 try checkCancellation()
+                try view.validateDelivery()
                 observer.didDeleteItems(
                     withIdentifiers: batch.deleted.map { NSFileProviderItemIdentifier($0) })
                 try checkCancellation()
+                try view.validateDelivery()
                 observer.finishEnumeratingChanges(
                     upTo: NSFileProviderSyncAnchor(batch.anchor), moreComing: batch.moreComing)
             }
@@ -79,6 +84,7 @@ final class SynveilFileProviderEnumerator: NSObject, NSFileProviderEnumerator {
             try reader.withView { view in
                 let anchor = try view.currentAnchor(container: container)
                 try checkCancellation()
+                try view.validateDelivery()
                 completionHandler(NSFileProviderSyncAnchor(anchor))
             }
         } catch { completionHandler(nil) }
