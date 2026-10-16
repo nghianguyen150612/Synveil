@@ -5,8 +5,9 @@ typealias FileProviderItemMutationCompletion = (
     NSFileProviderItem?, NSFileProviderItemFields, Bool, (any Error)?
 ) -> Void
 
-/// Read-only metadata framework entry point. It owns no app session, Keychain store, SQLite database, SwiftUI
-/// state, URLSession, transfer coordinator, or File Provider domain-registration behavior.
+/// Read-only metadata framework entry point. It owns no app session, Keychain store, SQLite
+/// database, SwiftUI state, URLSession, transfer coordinator, or File Provider domain-registration
+/// behavior.
 final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     private let lifecycle = FileProviderProcessLifecycle()
     private let domainID: String
@@ -109,11 +110,13 @@ final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExte
                     progress.completedUnitCount = 20
 
                     let contentStore = FileProviderContentStore(container: store.container)
+                    let authGen = view.manifest.authorization.authorizationGeneration
+                    let ownerFingerprint = view.manifest.domain.ownerScopeFingerprint
                     let (_, contentURL) = try contentStore.verifyAndAccessContent(
                         domain: view.manifest.domain,
                         fileVersionID: fileVersionIdentity.fileVersionID,
-                        expectedOwnerScopeFingerprint: view.manifest.domain.ownerScopeFingerprint,
-                        expectedAuthorizationGeneration: view.manifest.authorization.authorizationGeneration,
+                        expectedOwnerScopeFingerprint: ownerFingerprint,
+                        expectedAuthorizationGeneration: authGen,
                         checkCancellation: {
                             if !lifecycle.canContinueRequest() || progress.isCancelled {
                                 throw FileProviderSynchronizationError.cancelled
@@ -124,9 +127,14 @@ final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExte
                     progress.completedUnitCount = 60
 
                     let tempDir: URL
-                    if let domainObj = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(rawValue: domainID), displayName: "Synveil"),
-                       let manager = NSFileProviderManager(for: domainObj),
-                       let url = try? manager.temporaryDirectoryURL() {
+                    let domainIdentifier = NSFileProviderDomainIdentifier(rawValue: domainID)
+                    let domainObj = NSFileProviderDomain(
+                        identifier: domainIdentifier,
+                        displayName: "Synveil"
+                    )
+                    if let manager = NSFileProviderManager(for: domainObj),
+                        let url = try? manager.temporaryDirectoryURL()
+                    {
                         tempDir = url
                     } else {
                         tempDir = FileManager.default.temporaryDirectory
@@ -140,8 +148,12 @@ final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExte
                     }
 
                     try FileManager.default.copyItem(at: contentURL, to: destURL)
+                    let attributes: [FileAttributeKey: Any] = [
+                        .protectionKey: FileProtectionType.completeUntilFirstUserAuthentication,
+                        .posixPermissions: 0o600,
+                    ]
                     try FileManager.default.setAttributes(
-                        [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication, .posixPermissions: 0o600],
+                        attributes,
                         ofItemAtPath: destURL.path
                     )
 
@@ -151,7 +163,10 @@ final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExte
 
                     progress.completedUnitCount = 100
 
-                    let returnedItem = SynveilFileProviderItem(projected: item, domain: view.manifest.domain)
+                    let returnedItem = SynveilFileProviderItem(
+                        projected: item,
+                        domain: view.manifest.domain
+                    )
                     completionHandler(destURL, returnedItem, nil)
                 }
             } catch {
@@ -162,8 +177,8 @@ final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExte
             }
         }
 
-        progress.cancellationHandler = { [weak lifecycle] in
-            lifecycle?.cancel()
+        progress.cancellationHandler = {
+            // Cancellation will be checked via progress.isCancelled
         }
 
         return progress

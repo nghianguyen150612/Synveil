@@ -25,11 +25,13 @@ final class FileProviderVerifiedContentPublicationCoordinator {
             throw FileProviderSynchronizationError.unauthorized
         }
 
-        guard let record = try await source.inspectVerifiedContent(
-            libraryID: libraryID,
-            nodeID: nodeID,
-            fileVersionID: fileVersionID
-        ) else {
+        guard
+            let record = try await source.inspectVerifiedContent(
+                libraryID: libraryID,
+                nodeID: nodeID,
+                fileVersionID: fileVersionID
+            )
+        else {
             throw FileProviderSynchronizationError.noSuchItem
         }
 
@@ -44,7 +46,8 @@ final class FileProviderVerifiedContentPublicationCoordinator {
             throw FileProviderSynchronizationError.unauthorized
         }
 
-        guard activeManifest.authorization.authorizationGeneration == record.evidence.authorizationGeneration else {
+        let expectedAuthGen = activeManifest.authorization.authorizationGeneration
+        guard expectedAuthGen == record.evidence.authorizationGeneration else {
             throw FileProviderSynchronizationError.unauthorized
         }
 
@@ -59,7 +62,7 @@ final class FileProviderVerifiedContentPublicationCoordinator {
             schemaVersion: 1,
             domainIdentity: record.domain,
             ownerScopeFingerprint: record.domain.ownerScopeFingerprint,
-            authorizationGeneration: activeManifest.authorization.authorizationGeneration,
+            authorizationGeneration: expectedAuthGen,
             libraryID: record.libraryID,
             nodeID: record.nodeID,
             fileVersionID: record.fileVersionID,
@@ -75,7 +78,7 @@ final class FileProviderVerifiedContentPublicationCoordinator {
         try store.withLease(domainID: domainID, writing: false) {
             let rechecked = try store.readManifest(domainID: domainID)
             guard rechecked.authorization.state == .authorized,
-                rechecked.authorization.authorizationGeneration == activeManifest.authorization.authorizationGeneration,
+                rechecked.authorization.authorizationGeneration == expectedAuthGen,
                 let currentLatest = rechecked.records.last,
                 currentLatest.generation == latestRecord.generation
             else {

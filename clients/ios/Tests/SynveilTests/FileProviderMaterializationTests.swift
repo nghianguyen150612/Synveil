@@ -9,7 +9,8 @@ final class FileProviderMaterializationTests: XCTestCase {
         endpointOrigin: "https://files.example.test",
         accountIdentity: "018f1f5e-7b80-7000-8000-000000000001",
         deviceIdentity: "018f1f5e-7b80-7000-8000-000000000002",
-        credentialGeneration: "018f1f5e-7b80-7000-8000-000000000003")
+        credentialGeneration: "018f1f5e-7b80-7000-8000-000000000003"
+    )
     private let library = "018f1f5e-7b80-7000-8000-000000000010"
     private var directory: URL!
     private var container: FileProviderSharedContainer!
@@ -17,15 +18,25 @@ final class FileProviderMaterializationTests: XCTestCase {
     private var contentStore: FileProviderContentStore!
 
     override func setUpWithError() throws {
-        directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        container = FileProviderSharedContainer(resolveContainerURL: { [directory] _ in directory })
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString
+        )
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        container = FileProviderSharedContainer(resolveContainerURL: {
+            [directory] _ in directory
+        })
         store = FileProviderGenerationStore(
             container: container,
             capability: FileProviderCapability(
                 domainRegistrationEnabled: false,
-                metadataPublicationEnabled: true, authenticatedNetworkEnabled: false,
-                mutationEnabled: false))
+                metadataPublicationEnabled: true,
+                authenticatedNetworkEnabled: false,
+                mutationEnabled: false
+            )
+        )
         contentStore = FileProviderContentStore(container: container)
     }
 
@@ -37,12 +48,13 @@ final class FileProviderMaterializationTests: XCTestCase {
         String(format: "018f1f5e-7b80-7000-8000-%012x", suffix)
     }
 
-    private func createTestFile(content: String) throws -> (url: URL, length: UInt64, sha256: String) {
+    private func createTestFile(
+        content: String
+    ) throws -> (url: URL, length: UInt64, sha256: String) {
         let fileURL = directory.appendingPathComponent("source-\(UUID().uuidString).dat")
         let data = Data(content.utf8)
         try data.write(to: fileURL)
         let sha256 = FileProviderDomainIdentity.fingerprint(["synveil-fp-test-file", content])
-        // Standard SHA256 calculation for expected SHA256 string
         let digest = FileProviderDomainIdentity.fingerprint([content])
         let sha256String = "sha256:" + digest
         return (fileURL, UInt64(data.count), sha256String)
@@ -52,21 +64,36 @@ final class FileProviderMaterializationTests: XCTestCase {
         nodeSuffix: Int = 100,
         fileVersionSuffix: Int = 900,
         contentString: String = "Hello Synveil FileProvider Materialization"
-    ) throws -> (itemIdentity: FileProviderItemIdentity, versionIdentity: FileProviderVersionIdentity, contentURL: URL) {
+    ) throws -> (
+        itemIdentity: FileProviderItemIdentity,
+        versionIdentity: FileProviderVersionIdentity,
+        contentURL: URL
+    ) {
         let node = nodeID(nodeSuffix)
         let fileVersion = nodeID(fileVersionSuffix)
 
         let root = try FileProviderItemIdentity.libraryRoot(domain: domain, libraryID: library)
-        let folder = try FileProviderItemIdentity.node(domain: domain, libraryID: library, nodeID: nodeID(20))
-        let itemIdentity = try FileProviderItemIdentity.node(domain: domain, libraryID: library, nodeID: node)
-        let versionIdentity = try FileProviderVersionIdentity(domain: domain, libraryID: library, nodeID: node, fileVersionID: fileVersion)
+        let folder = try FileProviderItemIdentity.node(
+            domain: domain,
+            libraryID: library,
+            nodeID: nodeID(20)
+        )
+        let itemIdentity = try FileProviderItemIdentity.node(
+            domain: domain,
+            libraryID: library,
+            nodeID: node
+        )
+        let versionIdentity = try FileProviderVersionIdentity(
+            domain: domain,
+            libraryID: library,
+            nodeID: node,
+            fileVersionID: fileVersion
+        )
 
         let data = Data(contentString.utf8)
         let sourceURL = directory.appendingPathComponent("source-\(UUID().uuidString).bin")
         try data.write(to: sourceURL)
 
-        // Compute exact SHA-256 for the content
-        let digestData = Data(contentString.utf8)
         let digestHex = FileProviderDomainIdentity.fingerprint([contentString])
         let sha256String = "sha256:" + digestHex
 
@@ -85,23 +112,53 @@ final class FileProviderMaterializationTests: XCTestCase {
             source: .serverConfirmed
         )
 
+        let rootItem = FileProviderProjectedItem(
+            identity: root,
+            parentIdentity: .domainRoot(domain: domain),
+            kind: .libraryRoot,
+            displayName: "Root",
+            byteLength: nil,
+            creationDate: nil,
+            contentModificationDate: nil,
+            fileVersionIdentity: nil,
+            contentSHA256: nil,
+            metadataRevision: "1",
+            isTombstone: false,
+            source: .serverConfirmed
+        )
+
+        let folderItem = FileProviderProjectedItem(
+            identity: folder,
+            parentIdentity: root,
+            kind: .folder,
+            displayName: "Folder",
+            byteLength: nil,
+            creationDate: nil,
+            contentModificationDate: nil,
+            fileVersionIdentity: nil,
+            contentSHA256: nil,
+            metadataRevision: "1",
+            isTombstone: false,
+            source: .serverConfirmed
+        )
+
         let snapshot = FileProviderMetadataSnapshot(
             domainIdentity: domain,
             ownerScopeFingerprint: domain.ownerScopeFingerprint,
             libraryID: library,
             projectionGeneration: 1,
             completeness: .complete,
-            items: [
-                FileProviderProjectedItem(identity: root, parentIdentity: .domainRoot(domain: domain), kind: .libraryRoot, displayName: "Root", byteLength: nil, creationDate: nil, contentModificationDate: nil, fileVersionIdentity: nil, contentSHA256: nil, metadataRevision: "1", isTombstone: false, source: .serverConfirmed),
-                FileProviderProjectedItem(identity: folder, parentIdentity: root, kind: .folder, displayName: "Folder", byteLength: nil, creationDate: nil, contentModificationDate: nil, fileVersionIdentity: nil, contentSHA256: nil, metadataRevision: "1", isTombstone: false, source: .serverConfirmed),
-                projectedItem
-            ]
+            items: [rootItem, folderItem, projectedItem]
         )
 
         try store.withLease(domainID: domain.rawValue, writing: true) {
             try store.commit(
                 domain: domain,
-                evidence: FileProviderAuthorizationEvidence(domain: domain, state: .authorized, authorizationGeneration: 1),
+                evidence: FileProviderAuthorizationEvidence(
+                    domain: domain,
+                    state: .authorized,
+                    authorizationGeneration: 1
+                ),
                 generation: 1,
                 snapshots: [snapshot],
                 catalog: [library]
@@ -156,7 +213,6 @@ final class FileProviderMaterializationTests: XCTestCase {
     func testContentIntegrityAndMismatch() throws {
         let (_, versionIdentity, contentURL) = try publishMetadataAndContent()
 
-        // Mutate published object content to trigger integrity failure
         let corruptData = Data("Corrupted bytes".utf8)
         try corruptData.write(to: contentURL)
 
@@ -174,7 +230,11 @@ final class FileProviderMaterializationTests: XCTestCase {
     func testRequestedVersionSemantics() throws {
         let (itemIdentity, versionIdentity, _) = try publishMetadataAndContent()
 
-        let ext = SynveilFileProviderExtension(domain: NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(domain.rawValue), displayName: "Synveil"))
+        let domainObj = NSFileProviderDomain(
+            identifier: NSFileProviderDomainIdentifier(rawValue: domain.rawValue),
+            displayName: "Synveil"
+        )
+        let ext = SynveilFileProviderExtension(domain: domainObj)
         let itemIdentifier = NSFileProviderItemIdentifier(itemIdentity.rawValue)
 
         let versionContract = try FileProviderItemVersionContract(
@@ -193,7 +253,11 @@ final class FileProviderMaterializationTests: XCTestCase {
         )
 
         let expectationMatching = expectation(description: "matching version")
-        _ = ext.fetchContents(for: itemIdentifier, version: matchingVersion, request: NSFileProviderRequest()) { url, item, error in
+        _ = ext.fetchContents(
+            for: itemIdentifier,
+            version: matchingVersion,
+            request: NSFileProviderRequest()
+        ) { url, item, error in
             XCTAssertNil(error)
             XCTAssertNotNil(url)
             XCTAssertNotNil(item)
@@ -201,7 +265,11 @@ final class FileProviderMaterializationTests: XCTestCase {
         }
 
         let expectationMismatch = expectation(description: "mismatch version")
-        _ = ext.fetchContents(for: itemIdentifier, version: mismatchVersion, request: NSFileProviderRequest()) { url, item, error in
+        _ = ext.fetchContents(
+            for: itemIdentifier,
+            version: mismatchVersion,
+            request: NSFileProviderRequest()
+        ) { url, item, error in
             XCTAssertNotNil(error)
             XCTAssertNil(url)
             expectationMismatch.fulfill()
@@ -214,11 +282,19 @@ final class FileProviderMaterializationTests: XCTestCase {
     func testTemporaryDirectoryHandoff() throws {
         let (itemIdentity, _, _) = try publishMetadataAndContent()
 
-        let ext = SynveilFileProviderExtension(domain: NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(domain.rawValue), displayName: "Synveil"))
+        let domainObj = NSFileProviderDomain(
+            identifier: NSFileProviderDomainIdentifier(rawValue: domain.rawValue),
+            displayName: "Synveil"
+        )
+        let ext = SynveilFileProviderExtension(domain: domainObj)
         let itemIdentifier = NSFileProviderItemIdentifier(itemIdentity.rawValue)
 
         let exp = expectation(description: "fetchContents copy")
-        _ = ext.fetchContents(for: itemIdentifier, version: nil, request: NSFileProviderRequest()) { url, item, error in
+        _ = ext.fetchContents(
+            for: itemIdentifier,
+            version: nil,
+            request: NSFileProviderRequest()
+        ) { url, item, error in
             XCTAssertNil(error)
             XCTAssertNotNil(url)
             if let url = url {
@@ -235,11 +311,19 @@ final class FileProviderMaterializationTests: XCTestCase {
     func testCancellationHandling() throws {
         let (itemIdentity, _, _) = try publishMetadataAndContent()
 
-        let ext = SynveilFileProviderExtension(domain: NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(domain.rawValue), displayName: "Synveil"))
+        let domainObj = NSFileProviderDomain(
+            identifier: NSFileProviderDomainIdentifier(rawValue: domain.rawValue),
+            displayName: "Synveil"
+        )
+        let ext = SynveilFileProviderExtension(domain: domainObj)
         let itemIdentifier = NSFileProviderItemIdentifier(itemIdentity.rawValue)
 
         let exp = expectation(description: "cancellation")
-        let progress = ext.fetchContents(for: itemIdentifier, version: nil, request: NSFileProviderRequest()) { url, item, error in
+        let progress = ext.fetchContents(
+            for: itemIdentifier,
+            version: nil,
+            request: NSFileProviderRequest()
+        ) { url, item, error in
             XCTAssertNotNil(error)
             XCTAssertNil(url)
             exp.fulfill()
@@ -254,14 +338,21 @@ final class FileProviderMaterializationTests: XCTestCase {
     func testLogoutFencing() throws {
         let (itemIdentity, _, _) = try publishMetadataAndContent()
 
-        // Revoke domain authorization
         try store.revoke(domainID: domain.rawValue, state: .loggedOut)
 
-        let ext = SynveilFileProviderExtension(domain: NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(domain.rawValue), displayName: "Synveil"))
+        let domainObj = NSFileProviderDomain(
+            identifier: NSFileProviderDomainIdentifier(rawValue: domain.rawValue),
+            displayName: "Synveil"
+        )
+        let ext = SynveilFileProviderExtension(domain: domainObj)
         let itemIdentifier = NSFileProviderItemIdentifier(itemIdentity.rawValue)
 
         let exp = expectation(description: "fenced by logout")
-        _ = ext.fetchContents(for: itemIdentifier, version: nil, request: NSFileProviderRequest()) { url, item, error in
+        _ = ext.fetchContents(
+            for: itemIdentifier,
+            version: nil,
+            request: NSFileProviderRequest()
+        ) { url, item, error in
             XCTAssertNotNil(error)
             XCTAssertNil(url)
             exp.fulfill()
@@ -274,19 +365,31 @@ final class FileProviderMaterializationTests: XCTestCase {
     func testConcurrentMaterializations() throws {
         let (itemIdentity, _, _) = try publishMetadataAndContent()
 
-        let ext = SynveilFileProviderExtension(domain: NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(domain.rawValue), displayName: "Synveil"))
+        let domainObj = NSFileProviderDomain(
+            identifier: NSFileProviderDomainIdentifier(rawValue: domain.rawValue),
+            displayName: "Synveil"
+        )
+        let ext = SynveilFileProviderExtension(domain: domainObj)
         let itemIdentifier = NSFileProviderItemIdentifier(itemIdentity.rawValue)
 
         let exp1 = expectation(description: "concurrent 1")
         let exp2 = expectation(description: "concurrent 2")
 
-        _ = ext.fetchContents(for: itemIdentifier, version: nil, request: NSFileProviderRequest()) { url, item, error in
+        _ = ext.fetchContents(
+            for: itemIdentifier,
+            version: nil,
+            request: NSFileProviderRequest()
+        ) { url, item, error in
             XCTAssertNil(error)
             XCTAssertNotNil(url)
             exp1.fulfill()
         }
 
-        _ = ext.fetchContents(for: itemIdentifier, version: nil, request: NSFileProviderRequest()) { url, item, error in
+        _ = ext.fetchContents(
+            for: itemIdentifier,
+            version: nil,
+            request: NSFileProviderRequest()
+        ) { url, item, error in
             XCTAssertNil(error)
             XCTAssertNotNil(url)
             exp2.fulfill()
@@ -309,7 +412,9 @@ final class FileProviderMaterializationTests: XCTestCase {
             libraryID: library,
             nodeID: node,
             fileVersionID: fileVersion,
-            expectedByteLength: UInt64(FileProviderSharedContainer.maximumProviderStorageBytes + 1),
+            expectedByteLength: UInt64(
+                FileProviderSharedContainer.maximumProviderStorageBytes + 1
+            ),
             expectedSHA256: sha256String,
             contentID: UUID().uuidString.lowercased(),
             storageKey: "\(domain.fingerprint)-\(fileVersion).bin",
@@ -336,20 +441,30 @@ final class FileProviderMaterializationTests: XCTestCase {
     func testFetchContentsSuccessAndError() throws {
         let (itemIdentity, _, _) = try publishMetadataAndContent()
 
-        let ext = SynveilFileProviderExtension(domain: NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(domain.rawValue), displayName: "Synveil"))
+        let domainObj = NSFileProviderDomain(
+            identifier: NSFileProviderDomainIdentifier(rawValue: domain.rawValue),
+            displayName: "Synveil"
+        )
+        let ext = SynveilFileProviderExtension(domain: domainObj)
 
-        // Valid item
         let expSuccess = expectation(description: "success fetch")
-        _ = ext.fetchContents(for: NSFileProviderItemIdentifier(itemIdentity.rawValue), version: nil, request: NSFileProviderRequest()) { url, item, error in
+        _ = ext.fetchContents(
+            for: NSFileProviderItemIdentifier(itemIdentity.rawValue),
+            version: nil,
+            request: NSFileProviderRequest()
+        ) { url, item, error in
             XCTAssertNil(error)
             XCTAssertNotNil(url)
             XCTAssertNotNil(item)
             expSuccess.fulfill()
         }
 
-        // Unknown item
         let expError = expectation(description: "error fetch unknown item")
-        _ = ext.fetchContents(for: NSFileProviderItemIdentifier("nonexistent-id"), version: nil, request: NSFileProviderRequest()) { url, item, error in
+        _ = ext.fetchContents(
+            for: NSFileProviderItemIdentifier("nonexistent-id"),
+            version: nil,
+            request: NSFileProviderRequest()
+        ) { url, item, error in
             XCTAssertNotNil(error)
             XCTAssertNil(url)
             expError.fulfill()
@@ -360,24 +475,43 @@ final class FileProviderMaterializationTests: XCTestCase {
 
     // MARK: - Group J: Mutation Restrictions Fail-Closed
     func testMutationRestrictionsFailClosed() throws {
-        let ext = SynveilFileProviderExtension(domain: NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(domain.rawValue), displayName: "Synveil"))
+        let domainObj = NSFileProviderDomain(
+            identifier: NSFileProviderDomainIdentifier(rawValue: domain.rawValue),
+            displayName: "Synveil"
+        )
+        let ext = SynveilFileProviderExtension(domain: domainObj)
 
         let expCreate = expectation(description: "createItem fail-closed")
-        _ = ext.createItem(basedOn: SynveilFileProviderItem(projected: nil, domain: domain), fields: [], contents: nil, request: NSFileProviderRequest()) { item, fields, bool, error in
+        _ = ext.createItem(
+            basedOn: SynveilFileProviderItem(projected: nil, domain: domain),
+            fields: [],
+            contents: nil,
+            request: NSFileProviderRequest()
+        ) { item, fields, bool, error in
             XCTAssertNotNil(error)
             XCTAssertNil(item)
             expCreate.fulfill()
         }
 
         let expModify = expectation(description: "modifyItem fail-closed")
-        _ = ext.modifyItem(SynveilFileProviderItem(projected: nil, domain: domain), baseVersion: NSFileProviderItemVersion(), changedFields: [], contents: nil, request: NSFileProviderRequest()) { item, fields, bool, error in
+        _ = ext.modifyItem(
+            SynveilFileProviderItem(projected: nil, domain: domain),
+            baseVersion: NSFileProviderItemVersion(),
+            changedFields: [],
+            contents: nil,
+            request: NSFileProviderRequest()
+        ) { item, fields, bool, error in
             XCTAssertNotNil(error)
             XCTAssertNil(item)
             expModify.fulfill()
         }
 
         let expDelete = expectation(description: "deleteItem fail-closed")
-        _ = ext.deleteItem(identifier: .rootContainer, baseVersion: NSFileProviderItemVersion(), request: NSFileProviderRequest()) { error in
+        _ = ext.deleteItem(
+            identifier: .rootContainer,
+            baseVersion: NSFileProviderItemVersion(),
+            request: NSFileProviderRequest()
+        ) { error in
             XCTAssertNotNil(error)
             expDelete.fulfill()
         }

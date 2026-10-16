@@ -17,13 +17,18 @@ enum FileProviderErrorMapper {
         if let contentError = error as? FileProviderContentStoreError {
             switch contentError {
             case .manifestNotFound, .contentObjectNotFound:
-                return NSError(domain: NSFileProviderErrorDomain, code: NSFileProviderError.noSuchItem.rawValue)
+                let code = NSFileProviderError.noSuchItem.rawValue
+                return NSError(domain: NSFileProviderErrorDomain, code: code)
             case .lengthMismatch, .sha256Mismatch, .corruptManifest, .publicationFailed:
-                return NSError(domain: NSFileProviderErrorDomain, code: NSFileProviderError.cannotSynchronize.rawValue)
-            case .missingEntitlement, .containerUnavailable, .fileSystemError, .symbolicLink, .unsafePath:
-                return NSError(domain: NSFileProviderErrorDomain, code: NSFileProviderError.serverUnreachable.rawValue)
+                let code = NSFileProviderError.cannotSynchronize.rawValue
+                return NSError(domain: NSFileProviderErrorDomain, code: code)
+            case .missingEntitlement, .containerUnavailable, .fileSystemError,
+                .symbolicLink, .unsafePath:
+                let code = NSFileProviderError.serverUnreachable.rawValue
+                return NSError(domain: NSFileProviderErrorDomain, code: code)
             case .storageQuotaExceeded:
-                return NSError(domain: NSFileProviderErrorDomain, code: NSFileProviderError.insufficientQuota.rawValue)
+                let code = NSFileProviderError.insufficientQuota.rawValue
+                return NSError(domain: NSFileProviderErrorDomain, code: code)
             case .cancelled:
                 return NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError)
             }

@@ -39,7 +39,12 @@ final class SynveilFileProviderItem: NSObject, NSFileProviderItem {
             let version = projected.fileVersionIdentity
         else { return false }
         let store = FileProviderContentStore()
-        return (try? store.readManifest(domain: domain, fileVersionID: version.fileVersionID, expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint)) != nil
+        let manifest = try? store.readManifest(
+            domain: domain,
+            fileVersionID: version.fileVersionID,
+            expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint
+        )
+        return manifest != nil
     }
     var isMostRecentVersionDownloaded: Bool {
         isDownloaded

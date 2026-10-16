@@ -83,7 +83,8 @@ struct FileProviderContentStore: Sendable {
         guard FileProviderSharedContainer.isSafePathComponent(fileVersionID) else {
             throw FileProviderContentStoreError.unsafePath
         }
-        return try container.url(for: ["content", domain.rawValue, "manifests", "\(fileVersionID).json"])
+        let relative = ["content", domain.rawValue, "manifests", "\(fileVersionID).json"]
+        return try container.url(for: relative)
     }
 
     func objectURL(domain: FileProviderDomainIdentity, storageKey: String) throws -> URL {
@@ -118,8 +119,14 @@ struct FileProviderContentStore: Sendable {
             checkCancellation: checkCancellation
         )
 
-        let targetObject = try objectURL(domain: expectedDomain, storageKey: validatedManifest.storageKey)
-        let targetManifest = try manifestURL(domain: expectedDomain, fileVersionID: validatedManifest.fileVersionID)
+        let targetObject = try objectURL(
+            domain: expectedDomain,
+            storageKey: validatedManifest.storageKey
+        )
+        let targetManifest = try manifestURL(
+            domain: expectedDomain,
+            fileVersionID: validatedManifest.fileVersionID
+        )
 
         let manifestData = try validatedManifest.encoded(
             expectedDomain: expectedDomain,
@@ -131,9 +138,15 @@ struct FileProviderContentStore: Sendable {
         try container.checkGenerationQuota(addingBytes: requiredBytes)
 
         // Ensure directories exist
-        let stagingDir = try createDirectoryIfNeeded(relativeComponents: ["content", expectedDomain.rawValue, "staging"])
-        _ = try createDirectoryIfNeeded(relativeComponents: ["content", expectedDomain.rawValue, "objects"])
-        _ = try createDirectoryIfNeeded(relativeComponents: ["content", expectedDomain.rawValue, "manifests"])
+        let stagingDir = try createDirectoryIfNeeded(
+            relativeComponents: ["content", expectedDomain.rawValue, "staging"]
+        )
+        _ = try createDirectoryIfNeeded(
+            relativeComponents: ["content", expectedDomain.rawValue, "objects"]
+        )
+        _ = try createDirectoryIfNeeded(
+            relativeComponents: ["content", expectedDomain.rawValue, "manifests"]
+        )
 
         let tempObjectID = UUID().uuidString.lowercased()
         let tempObjectURL = stagingDir.appendingPathComponent(".obj-\(tempObjectID).tmp")
@@ -189,13 +202,23 @@ struct FileProviderContentStore: Sendable {
         // Atomic placement
         do {
             if fileManager.fileExists(atPath: targetObject.path) {
-                _ = try fileManager.replaceItemAt(targetObject, withItemAt: tempObjectURL, backupItemName: nil, options: [])
+                _ = try fileManager.replaceItemAt(
+                    targetObject,
+                    withItemAt: tempObjectURL,
+                    backupItemName: nil,
+                    options: []
+                )
             } else {
                 try fileManager.moveItem(at: tempObjectURL, to: targetObject)
             }
 
             if fileManager.fileExists(atPath: targetManifest.path) {
-                _ = try fileManager.replaceItemAt(targetManifest, withItemAt: tempManifestURL, backupItemName: nil, options: [])
+                _ = try fileManager.replaceItemAt(
+                    targetManifest,
+                    withItemAt: tempManifestURL,
+                    backupItemName: nil,
+                    options: []
+                )
             } else {
                 try fileManager.moveItem(at: tempManifestURL, to: targetManifest)
             }
