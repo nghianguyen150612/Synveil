@@ -314,7 +314,11 @@ private struct QuickLookNativePreview: UIViewControllerRepresentable {
         ) -> QLPreviewItem {
             url as NSURL
         }
-        func previewControllerDidDismiss(_ controller: QLPreviewController) { onFinished() }
+        func previewControllerDidDismiss(_ controller: QLPreviewController) {
+            Task { @MainActor in
+                onFinished()
+            }
+        }
     }
 }
 
@@ -355,10 +359,14 @@ private struct FilesExportNativePresenter: UIViewControllerRepresentable {
             _ controller: UIDocumentPickerViewController,
             didPickDocumentsAt urls: [URL]
         ) {
-            onFinished(urls.isEmpty ? .saveCancelled : .saveReportedCompleted)
+            Task { @MainActor in
+                onFinished(urls.isEmpty ? .saveCancelled : .saveReportedCompleted)
+            }
         }
         func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-            onFinished(.saveCancelled)
+            Task { @MainActor in
+                onFinished(.saveCancelled)
+            }
         }
     }
 }
