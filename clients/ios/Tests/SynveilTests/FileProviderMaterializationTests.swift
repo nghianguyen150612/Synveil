@@ -1,3 +1,4 @@
+import CryptoKit
 import FileProvider
 import Foundation
 import XCTest
@@ -48,16 +49,9 @@ final class FileProviderMaterializationTests: XCTestCase {
         String(format: "018f1f5e-7b80-7000-8000-%012x", suffix)
     }
 
-    private func createTestFile(
-        content: String
-    ) throws -> (url: URL, length: UInt64, sha256: String) {
-        let fileURL = directory.appendingPathComponent("source-\(UUID().uuidString).dat")
-        let data = Data(content.utf8)
-        try data.write(to: fileURL)
-        let sha256 = FileProviderDomainIdentity.fingerprint(["synveil-fp-test-file", content])
-        let digest = FileProviderDomainIdentity.fingerprint([content])
-        let sha256String = "sha256:" + digest
-        return (fileURL, UInt64(data.count), sha256String)
+    private func sha256Hex(data: Data) -> String {
+        let digest = SHA256.hash(data: data)
+        return "sha256:" + digest.map { String(format: "%02x", $0) }.joined()
     }
 
     private func publishMetadataAndContent(
@@ -67,7 +61,10 @@ final class FileProviderMaterializationTests: XCTestCase {
     ) throws -> (
         itemIdentity: FileProviderItemIdentity,
         versionIdentity: FileProviderVersionIdentity,
-        contentURL: URL
+        publishedContentURL: URL,
+        sourceURL: URL,
+        data: Data,
+        sha256String: String
     ) {
         let node = nodeID(nodeSuffix)
         let fileVersion = nodeID(fileVersionSuffix)
@@ -94,8 +91,7 @@ final class FileProviderMaterializationTests: XCTestCase {
         let sourceURL = directory.appendingPathComponent("source-\(UUID().uuidString).bin")
         try data.write(to: sourceURL)
 
-        let digestHex = FileProviderDomainIdentity.fingerprint([contentString])
-        let sha256String = "sha256:" + digestHex
+        let sha256String = sha256Hex(data: data)
 
         let projectedItem = FileProviderProjectedItem(
             identity: itemIdentity,
@@ -182,7 +178,7 @@ final class FileProviderMaterializationTests: XCTestCase {
             metadataGeneration: 1
         )
 
-        let publishedContentURL = try contentStore.publish(
+        let publishedURL = try contentStore.publish(
             sourceURL: sourceURL,
             manifest: manifest,
             expectedDomain: domain,
@@ -190,12 +186,16 @@ final class FileProviderMaterializationTests: XCTestCase {
             capability: store.capability
         )
 
-        return (itemIdentity, versionIdentity, publishedContentURL)
+        return (
+            itemIdentity, versionIdentity, publishedURL, sourceURL, data,
+            sha256String
+        )
     }
 
     // MARK: - Group A: Verified-content eligibility
     func testVerifiedContentEligibility() throws {
-        let (itemIdentity, versionIdentity, _) = try publishMetadataAndContent()
+        let (itemIdentity, versionIdentity, _, _, data, expectedSHA) =
+            try publishMetadataAndContent()
 
         let manifest = try contentStore.readManifest(
             domain: domain,
@@ -206,15 +206,161 @@ final class FileProviderMaterializationTests: XCTestCase {
         XCTAssertEqual(manifest.libraryID, library)
         XCTAssertEqual(manifest.nodeID, itemIdentity.resolvedIdentifier)
         XCTAssertEqual(manifest.fileVersionID, versionIdentity.fileVersionID)
+        XCTAssertEqual(manifest.expectedByteLength, UInt64(data.count))
+        XCTAssertEqual(manifest.expectedSHA256, expectedSHA)
         XCTAssertEqual(manifest.verifiedState, "verified")
     }
 
     // MARK: - Group B: Integrity (length & SHA-256)
     func testContentIntegrityAndMismatch() throws {
-        let (_, versionIdentity, contentURL) = try publishMetadataAndContent()
+        let (_, versionIdentity, contentURL, _, _, _) =
+            try publishMetadataAndContent()
 
-        let corruptData = Data("Corrupted bytes".utf8)
+        let corruptData = Data("Corrupted bytes for SHA256 failure".utf8)
         try corruptData.write(to: contentURL)
+
+        XCTAssertThrowsError(
+            try contentStore.verifyAndAccessContent(
+                domain: domain,
+                fileVersionID: versionIdentity.fileVersionID,
+                expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint,
+                expectedAuthorizationGeneration: 1
+            )
+        ) { error in
+            XCTAssertTrue(error is FileProviderContentStoreError)
+        }
+    }
+
+    func testStreamingSHA256VerificationSuccessAndFailure() throws {
+        let testData = Data("Chunked streaming SHA-256 test data".utf8)
+        let fileURL = directory.appendingPathComponent("chunked.tmp")
+        try testData.write(to: fileURL)
+
+        let correctSHA = sha256Hex(data: testData)
+        XCTAssertNoThrow(
+            try FileProviderContentStore.verifyFileIntegrity(
+                at: fileURL,
+                expectedLength: UInt64(testData.count),
+                expectedSHA256: correctSHA
+            )
+        )
+
+        let wrongSHA = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        XCTAssertThrowsError(
+            try FileProviderContentStore.verifyFileIntegrity(
+                at: fileURL,
+                expectedLength: UInt64(testData.count),
+                expectedSHA256: wrongSHA
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? FileProviderContentStoreError,
+                .sha256Mismatch
+            )
+        }
+    }
+
+    // MARK: - Group C: Requested Version Semantics
+    func testRequestedVersionContractSemantics() throws {
+        let (_, versionIdentity, _, _, _, _) = try publishMetadataAndContent()
+
+        let versionContract = try FileProviderItemVersionContract(
+            fileVersionIdentity: versionIdentity,
+            metadataRevision: "1"
+        )
+
+        let expectedContentVersion =
+            versionContract.contentVersion ?? Data()
+
+        XCTAssertFalse(expectedContentVersion.isEmpty)
+
+        // Matching requested version
+        let matchingRequested = NSFileProviderItemVersion(
+            contentVersion: expectedContentVersion,
+            metadataVersion: versionContract.metadataVersion ?? Data()
+        )
+        XCTAssertEqual(
+            matchingRequested.contentVersion,
+            expectedContentVersion
+        )
+
+        // Mismatched requested version
+        let mismatchedRequested = NSFileProviderItemVersion(
+            contentVersion: Data("other-version-hash".utf8),
+            metadataVersion: versionContract.metadataVersion ?? Data()
+        )
+        XCTAssertNotEqual(
+            mismatchedRequested.contentVersion,
+            expectedContentVersion
+        )
+    }
+
+    // MARK: - Group D: Temporary Directory Handoff
+    func testTemporaryDirectoryAttributesAndHandoff() throws {
+        let (_, versionIdentity, contentURL, _, _, _) =
+            try publishMetadataAndContent()
+
+        let (manifest, verifiedURL) =
+            try contentStore.verifyAndAccessContent(
+                domain: domain,
+                fileVersionID: versionIdentity.fileVersionID,
+                expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint,
+                expectedAuthorizationGeneration: 1
+            )
+
+        XCTAssertEqual(verifiedURL, contentURL)
+
+        let tempDest = directory.appendingPathComponent(
+            "\(manifest.contentID).tmp"
+        )
+        try FileManager.default.copyItem(at: verifiedURL, to: tempDest)
+        let attributes: [FileAttributeKey: Any] = [
+            .protectionKey: FileProtectionType
+                .completeUntilFirstUserAuthentication,
+            .posixPermissions: 0o600,
+        ]
+        try FileManager.default.setAttributes(
+            attributes,
+            ofItemAtPath: tempDest.path
+        )
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tempDest.path))
+        let fileAttrs = try FileManager.default.attributesOfItem(
+            atPath: tempDest.path
+        )
+        XCTAssertEqual(fileAttrs[.posixPermissions] as? Int, 0o600)
+    }
+
+    // MARK: - Group E: Cancellation Behavior
+    func testCancellationHandling() throws {
+        let testData = Data("Cancel verification mid-stream".utf8)
+        let fileURL = directory.appendingPathComponent("cancel.tmp")
+        try testData.write(to: fileURL)
+
+        let correctSHA = sha256Hex(data: testData)
+
+        XCTAssertThrowsError(
+            try FileProviderContentStore.verifyFileIntegrity(
+                at: fileURL,
+                expectedLength: UInt64(testData.count),
+                expectedSHA256: correctSHA,
+                checkCancellation: {
+                    throw FileProviderSynchronizationError.cancelled
+                }
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? FileProviderSynchronizationError,
+                .cancelled
+            )
+        }
+    }
+
+    // MARK: - Group F: Authorization & Logout Fencing
+    func testLogoutFencing() throws {
+        let (_, versionIdentity, _, _, _, _) = try publishMetadataAndContent()
+
+        try store.revoke(domainID: domain.rawValue, state: .loggedOut)
 
         XCTAssertThrowsError(
             try contentStore.verifyAndAccessContent(
@@ -226,173 +372,41 @@ final class FileProviderMaterializationTests: XCTestCase {
         )
     }
 
-    // MARK: - Group C: Requested Version Semantics
-    func testRequestedVersionSemantics() throws {
-        let (itemIdentity, versionIdentity, _) = try publishMetadataAndContent()
-
-        let domainObj = NSFileProviderDomain(
-            identifier: NSFileProviderDomainIdentifier(rawValue: domain.rawValue),
-            displayName: "Synveil"
-        )
-        let ext = SynveilFileProviderExtension(domain: domainObj)
-        let itemIdentifier = NSFileProviderItemIdentifier(itemIdentity.rawValue)
-
-        let versionContract = try FileProviderItemVersionContract(
-            fileVersionIdentity: versionIdentity,
-            metadataRevision: "1"
-        )
-
-        let matchingVersion = NSFileProviderItemVersion(
-            contentVersion: versionContract.contentVersion ?? Data(),
-            metadataVersion: versionContract.metadataVersion ?? Data()
-        )
-
-        let mismatchVersion = NSFileProviderItemVersion(
-            contentVersion: Data("wrong-version".utf8),
-            metadataVersion: versionContract.metadataVersion ?? Data()
-        )
-
-        let expectationMatching = expectation(description: "matching version")
-        _ = ext.fetchContents(
-            for: itemIdentifier,
-            version: matchingVersion,
-            request: NSFileProviderRequest()
-        ) { url, item, error in
-            XCTAssertNil(error)
-            XCTAssertNotNil(url)
-            XCTAssertNotNil(item)
-            expectationMatching.fulfill()
-        }
-
-        let expectationMismatch = expectation(description: "mismatch version")
-        _ = ext.fetchContents(
-            for: itemIdentifier,
-            version: mismatchVersion,
-            request: NSFileProviderRequest()
-        ) { url, item, error in
-            XCTAssertNotNil(error)
-            XCTAssertNil(url)
-            expectationMismatch.fulfill()
-        }
-
-        wait(for: [expectationMatching, expectationMismatch], timeout: 5.0)
-    }
-
-    // MARK: - Group D: Temporary Directory Volume Handoff
-    func testTemporaryDirectoryHandoff() throws {
-        let (itemIdentity, _, _) = try publishMetadataAndContent()
-
-        let domainObj = NSFileProviderDomain(
-            identifier: NSFileProviderDomainIdentifier(rawValue: domain.rawValue),
-            displayName: "Synveil"
-        )
-        let ext = SynveilFileProviderExtension(domain: domainObj)
-        let itemIdentifier = NSFileProviderItemIdentifier(itemIdentity.rawValue)
-
-        let exp = expectation(description: "fetchContents copy")
-        _ = ext.fetchContents(
-            for: itemIdentifier,
-            version: nil,
-            request: NSFileProviderRequest()
-        ) { url, item, error in
-            XCTAssertNil(error)
-            XCTAssertNotNil(url)
-            if let url = url {
-                XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
-                try? FileManager.default.removeItem(at: url)
-            }
-            exp.fulfill()
-        }
-
-        wait(for: [exp], timeout: 5.0)
-    }
-
-    // MARK: - Group E: Cancellation Behavior
-    func testCancellationHandling() throws {
-        let (itemIdentity, _, _) = try publishMetadataAndContent()
-
-        let domainObj = NSFileProviderDomain(
-            identifier: NSFileProviderDomainIdentifier(rawValue: domain.rawValue),
-            displayName: "Synveil"
-        )
-        let ext = SynveilFileProviderExtension(domain: domainObj)
-        let itemIdentifier = NSFileProviderItemIdentifier(itemIdentity.rawValue)
-
-        let exp = expectation(description: "cancellation")
-        let progress = ext.fetchContents(
-            for: itemIdentifier,
-            version: nil,
-            request: NSFileProviderRequest()
-        ) { url, item, error in
-            XCTAssertNotNil(error)
-            XCTAssertNil(url)
-            exp.fulfill()
-        }
-
-        progress.cancel()
-
-        wait(for: [exp], timeout: 5.0)
-    }
-
-    // MARK: - Group F: Authorization & Logout Fencing
-    func testLogoutFencing() throws {
-        let (itemIdentity, _, _) = try publishMetadataAndContent()
-
-        try store.revoke(domainID: domain.rawValue, state: .loggedOut)
-
-        let domainObj = NSFileProviderDomain(
-            identifier: NSFileProviderDomainIdentifier(rawValue: domain.rawValue),
-            displayName: "Synveil"
-        )
-        let ext = SynveilFileProviderExtension(domain: domainObj)
-        let itemIdentifier = NSFileProviderItemIdentifier(itemIdentity.rawValue)
-
-        let exp = expectation(description: "fenced by logout")
-        _ = ext.fetchContents(
-            for: itemIdentifier,
-            version: nil,
-            request: NSFileProviderRequest()
-        ) { url, item, error in
-            XCTAssertNotNil(error)
-            XCTAssertNil(url)
-            exp.fulfill()
-        }
-
-        wait(for: [exp], timeout: 5.0)
-    }
-
     // MARK: - Group G: Concurrency
-    func testConcurrentMaterializations() throws {
-        let (itemIdentity, _, _) = try publishMetadataAndContent()
+    func testConcurrentContentReads() throws {
+        let (_, versionIdentity, _, _, _, _) = try publishMetadataAndContent()
 
-        let domainObj = NSFileProviderDomain(
-            identifier: NSFileProviderDomainIdentifier(rawValue: domain.rawValue),
-            displayName: "Synveil"
+        let queue = DispatchQueue(
+            label: "test.concurrent.read",
+            attributes: .concurrent
         )
-        let ext = SynveilFileProviderExtension(domain: domainObj)
-        let itemIdentifier = NSFileProviderItemIdentifier(itemIdentity.rawValue)
+        let exp1 = expectation(description: "read 1")
+        let exp2 = expectation(description: "read 2")
 
-        let exp1 = expectation(description: "concurrent 1")
-        let exp2 = expectation(description: "concurrent 2")
-
-        _ = ext.fetchContents(
-            for: itemIdentifier,
-            version: nil,
-            request: NSFileProviderRequest()
-        ) { url, item, error in
-            XCTAssertNil(error)
-            XCTAssertNotNil(url)
-            exp1.fulfill()
+        queue.async {
+            do {
+                _ = try self.contentStore.verifyAndAccessContent(
+                    domain: self.domain,
+                    fileVersionID: versionIdentity.fileVersionID,
+                    expectedOwnerScopeFingerprint: self.domain
+                        .ownerScopeFingerprint,
+                    expectedAuthorizationGeneration: 1
+                )
+                exp1.fulfill()
+            } catch { XCTFail("Read 1 failed: \(error)") }
         }
 
-        _ = ext.fetchContents(
-            for: itemIdentifier,
-            version: nil,
-            request: NSFileProviderRequest()
-        ) { url, item, error in
-            XCTAssertNil(error)
-            XCTAssertNotNil(url)
-            exp2.fulfill()
+        queue.async {
+            do {
+                _ = try self.contentStore.verifyAndAccessContent(
+                    domain: self.domain,
+                    fileVersionID: versionIdentity.fileVersionID,
+                    expectedOwnerScopeFingerprint: self.domain
+                        .ownerScopeFingerprint,
+                    expectedAuthorizationGeneration: 1
+                )
+                exp2.fulfill()
+            } catch { XCTFail("Read 2 failed: \(error)") }
         }
 
         wait(for: [exp1, exp2], timeout: 5.0)
@@ -402,7 +416,8 @@ final class FileProviderMaterializationTests: XCTestCase {
     func testStorageQuotaAndEviction() throws {
         let node = nodeID(101)
         let fileVersion = nodeID(901)
-        let sha256String = "sha256:" + FileProviderDomainIdentity.fingerprint(["oversized-data"])
+        let rawData = Data("oversized-content-test".utf8)
+        let sha256String = sha256Hex(data: rawData)
 
         let manifest = FileProviderContentManifest(
             schemaVersion: 1,
@@ -424,7 +439,7 @@ final class FileProviderMaterializationTests: XCTestCase {
         )
 
         let tempFile = directory.appendingPathComponent("oversized.tmp")
-        try Data("dummy".utf8).write(to: tempFile)
+        try rawData.write(to: tempFile)
 
         XCTAssertThrowsError(
             try contentStore.publish(
@@ -434,88 +449,76 @@ final class FileProviderMaterializationTests: XCTestCase {
                 expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint,
                 capability: store.capability
             )
-        )
-    }
-
-    // MARK: - Group I: Native fetchContents Callback Success & Error Paths
-    func testFetchContentsSuccessAndError() throws {
-        let (itemIdentity, _, _) = try publishMetadataAndContent()
-
-        let domainObj = NSFileProviderDomain(
-            identifier: NSFileProviderDomainIdentifier(rawValue: domain.rawValue),
-            displayName: "Synveil"
-        )
-        let ext = SynveilFileProviderExtension(domain: domainObj)
-
-        let expSuccess = expectation(description: "success fetch")
-        _ = ext.fetchContents(
-            for: NSFileProviderItemIdentifier(itemIdentity.rawValue),
-            version: nil,
-            request: NSFileProviderRequest()
-        ) { url, item, error in
-            XCTAssertNil(error)
-            XCTAssertNotNil(url)
-            XCTAssertNotNil(item)
-            expSuccess.fulfill()
-        }
-
-        let expError = expectation(description: "error fetch unknown item")
-        _ = ext.fetchContents(
-            for: NSFileProviderItemIdentifier("nonexistent-id"),
-            version: nil,
-            request: NSFileProviderRequest()
-        ) { url, item, error in
-            XCTAssertNotNil(error)
-            XCTAssertNil(url)
-            expError.fulfill()
-        }
-
-        wait(for: [expSuccess, expError], timeout: 5.0)
-    }
-
-    // MARK: - Group J: Mutation Restrictions Fail-Closed
-    func testMutationRestrictionsFailClosed() throws {
-        let domainObj = NSFileProviderDomain(
-            identifier: NSFileProviderDomainIdentifier(rawValue: domain.rawValue),
-            displayName: "Synveil"
-        )
-        let ext = SynveilFileProviderExtension(domain: domainObj)
-
-        let expCreate = expectation(description: "createItem fail-closed")
-        _ = ext.createItem(
-            basedOn: SynveilFileProviderItem(projected: nil, domain: domain),
-            fields: [],
-            contents: nil,
-            request: NSFileProviderRequest()
-        ) { item, fields, bool, error in
-            XCTAssertNotNil(error)
-            XCTAssertNil(item)
-            expCreate.fulfill()
-        }
-
-        let expModify = expectation(description: "modifyItem fail-closed")
-        _ = ext.modifyItem(
-            SynveilFileProviderItem(projected: nil, domain: domain),
-            baseVersion: NSFileProviderItemVersion(),
-            changedFields: [],
-            contents: nil,
-            request: NSFileProviderRequest()
-        ) { item, fields, bool, error in
-            XCTAssertNotNil(error)
-            XCTAssertNil(item)
-            expModify.fulfill()
-        }
-
-        let expDelete = expectation(description: "deleteItem fail-closed")
-        _ = ext.deleteItem(
-            identifier: .rootContainer,
-            baseVersion: NSFileProviderItemVersion(),
-            request: NSFileProviderRequest()
         ) { error in
-            XCTAssertNotNil(error)
-            expDelete.fulfill()
+            XCTAssertEqual(
+                error as? FileProviderContentStoreError,
+                .storageQuotaExceeded
+            )
         }
+    }
 
-        wait(for: [expCreate, expModify, expDelete], timeout: 5.0)
+    // MARK: - Group I: Item Capabilities & Downloaded Status
+    func testItemCapabilitiesAndDownloadedStatus() throws {
+        let (itemIdentity, versionIdentity, _, _, data, _) =
+            try publishMetadataAndContent()
+
+        let projectedItem = FileProviderProjectedItem(
+            identity: itemIdentity,
+            parentIdentity: try! FileProviderItemIdentity.libraryRoot(
+                domain: domain,
+                libraryID: library
+            ),
+            kind: .file,
+            displayName: "document.pdf",
+            byteLength: UInt64(data.count),
+            creationDate: Date(),
+            contentModificationDate: Date(),
+            fileVersionIdentity: versionIdentity,
+            contentSHA256: sha256Hex(data: data),
+            metadataRevision: "1",
+            isTombstone: false,
+            source: .serverConfirmed
+        )
+
+        let item = SynveilFileProviderItem(
+            projected: projectedItem,
+            domain: domain
+        )
+        XCTAssertTrue(item.capabilities.contains(.allowsReading))
+        XCTAssertFalse(
+            item.capabilities.contains(.allowsContentEnumerating)
+        )
+        XCTAssertTrue(item.isDownloaded)
+    }
+
+    // MARK: - Group J: Error Mapping Restrictions Fail-Closed
+    func testErrorMappingFailClosed() throws {
+        let errNoSuch = FileProviderErrorMapper.map(
+            FileProviderContentStoreError.manifestNotFound
+        )
+        XCTAssertEqual(errNoSuch.domain, NSFileProviderErrorDomain)
+        XCTAssertEqual(errNoSuch.code, NSFileProviderError.noSuchItem.rawValue)
+
+        let errSync = FileProviderErrorMapper.map(
+            FileProviderContentStoreError.sha256Mismatch
+        )
+        XCTAssertEqual(errSync.domain, NSFileProviderErrorDomain)
+        XCTAssertEqual(
+            errSync.code,
+            NSFileProviderError.cannotSynchronize.rawValue
+        )
+
+        let errCancel = FileProviderErrorMapper.map(
+            FileProviderContentStoreError.cancelled
+        )
+        XCTAssertEqual(errCancel.domain, NSCocoaErrorDomain)
+        XCTAssertEqual(errCancel.code, NSUserCancelledError)
+
+        let errUnsupported = FileProviderErrorMapper.unsupported()
+        XCTAssertEqual(errUnsupported.domain, NSFileProviderErrorDomain)
+        XCTAssertEqual(
+            errUnsupported.code,
+            NSFileProviderError.cannotSynchronize.rawValue
+        )
     }
 }

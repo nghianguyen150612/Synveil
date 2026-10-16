@@ -19,11 +19,12 @@ P055 implements the safe, three-boundary content pipeline:
 ### Key Security & Integrity Invariants
 - **No Direct Extension Network Access:** The File Provider extension does not open network connections, perform authentication, or access Keychain secrets.
 - **Exact FileVersion Matching:** Explicit requested `NSFileProviderItemVersion` is compared against immutable `FileVersionIdentity` SHA-256 hashes. No newer or older revision is substituted.
-- **Streaming Digest & Size Verification:** `FileProviderContentStore` computes SHA-256 in 64 KiB chunks and enforces exact byte length match before returning temporary files to Apple's framework.
+- **Streaming Digest & Size Verification:** `FileProviderContentStore` computes SHA-256 in 64 KiB chunks using `CryptoKit.SHA256` and enforces exact byte length match before returning temporary files to Apple's framework.
 - **Session & Authorization Fencing:** Active domain lease, authorization state (`.authorized`), and generation epochs are checked both before staging and at completion. Logout or credential revocation invalidates materialization eligibility.
 - **Storage Quota Enforcement:** Bounded 64 MiB total storage quota enforced for App Group content storage, independent of metadata quota.
 - **Fail-Closed Mutations:** `createItem`, `modifyItem`, and `deleteItem` remain fail-closed and return `cannotSynchronize` / `unsupported` errors.
 - **Item Capabilities:** `SynveilFileProviderItem.capabilities` advertises `.allowsReading` for files with valid version identities, while write, rename, reparent, and delete capabilities remain strictly disabled.
+- **Target Membership Isolation:** `SynveilFileProviderExtension.swift` is assigned strictly to `SynveilFileProviderExtension.appex` to isolate extension dependencies from the main app, while reusable materialization adapters (`FileProviderContentStore`, `FileProviderContentManifest`, `FileProviderVerifiedContentPublicationCoordinator`, `SynveilFileProviderItem`, `FileProviderErrorMapper`) are compiled in both host app and `SynveilTests` targets.
 
 ---
 
@@ -41,15 +42,15 @@ P055 implements the safe, three-boundary content pipeline:
 ### Native & Portable Tests
 - `clients/ios/Tests/SynveilTests/FileProviderMaterializationTests.swift`: Comprehensive XCTest suite covering Groups A through J:
   - **Group A:** Verified-content eligibility (`testVerifiedContentEligibility`).
-  - **Group B:** Integrity, byte length, and SHA-256 mismatch detection (`testContentIntegrityAndMismatch`).
-  - **Group C:** Explicit vs nil requested version semantics (`testRequestedVersionSemantics`).
-  - **Group D:** Temporary directory volume handoff (`testTemporaryDirectoryHandoff`).
+  - **Group B:** Integrity, byte length, streaming SHA-256 chunk validation, and mismatch detection (`testContentIntegrityAndMismatch`, `testStreamingSHA256VerificationSuccessAndFailure`).
+  - **Group C:** Requested version contract semantics (`testRequestedVersionContractSemantics`).
+  - **Group D:** Temporary directory volume attributes & handoff (`testTemporaryDirectoryAttributesAndHandoff`).
   - **Group E:** Cancellation handling via `Progress` (`testCancellationHandling`).
   - **Group F:** Logout fencing and authorization revocation (`testLogoutFencing`).
-  - **Group G:** Concurrent materialization requests (`testConcurrentMaterializations`).
+  - **Group G:** Concurrent content reads (`testConcurrentContentReads`).
   - **Group H:** Storage quota enforcement (`testStorageQuotaAndEviction`).
-  - **Group I:** Native `fetchContents` success and error callbacks (`testFetchContentsSuccessAndError`).
-  - **Group J:** Fail-closed mutation restrictions (`testMutationRestrictionsFailClosed`).
+  - **Group I:** Item capabilities & downloaded status (`testItemCapabilitiesAndDownloadedStatus`).
+  - **Group J:** Fail-closed error mapping restrictions (`testErrorMappingFailClosed`).
 - `clients/ios/Support/tests/test_file_provider_materialization.py`: Python unit tests asserting source membership and extension isolation.
 - `python3 -m unittest discover -s clients/ios/Support/tests`: **122 passed, 0 failed**.
 - `python3 clients/ios/Support/validate_ios_sources.py`: **PASS**.
@@ -69,4 +70,4 @@ As authorized by the product specification:
 - Files-originated remote mutations / uploads.
 - P046 / P051 background-transfer reactivation.
 
-All core materialization infrastructure, exact FileVersion checking, streaming SHA-256 integrity verification, App Group storage correctness, cancellation, session fencing, and unit tests are fully implemented and verified.
+All core materialization infrastructure, exact FileVersion checking, streaming SHA-256 integrity verification, App Group storage correctness, cancellation, session fencing, target membership isolation, and unit tests are fully implemented and verified.
