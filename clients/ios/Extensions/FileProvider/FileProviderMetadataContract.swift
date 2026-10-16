@@ -239,10 +239,7 @@ struct FileProviderProjectedItem: Codable, Equatable, Sendable {
                 throw FileProviderMetadataContractError.invalidContentMetadata
             }
             if let digest = contentSHA256 {
-                let hasValidDigest = digest.range(
-                    of: "^sha256:[0-9a-f]{64}$", options: .regularExpression
-                ) != nil
-                guard hasValidDigest else {
+                guard Self.isValidSHA256(digest) else {
                     throw FileProviderMetadataContractError.invalidContentMetadata
                 }
             }
@@ -264,6 +261,13 @@ struct FileProviderProjectedItem: Codable, Equatable, Sendable {
         }
         if isTombstone, kind == .libraryRoot {
             throw FileProviderMetadataContractError.invalidLibraryRoot
+        }
+    }
+
+    private static func isValidSHA256(_ value: String) -> Bool {
+        guard value.hasPrefix("sha256:"), value.utf8.count == 71 else { return false }
+        return value.utf8.dropFirst(7).allSatisfy {
+            (48...57).contains($0) || (97...102).contains($0)
         }
     }
 }
