@@ -8,6 +8,8 @@ P056 implements native PhotoKit authorization, bounded asset discovery, change o
 
 **Primary Invariant:** PhotoKit discovery is an observation of the user's currently authorized local media, not proof that content has been uploaded, backed up, or deleted remotely. Automatic photo uploads, original byte streaming, and background transfer scheduling remain strictly disabled.
 
+**Status:** `IMPLEMENTED_PENDING_REVIEW_OR_MERGE`
+
 ---
 
 ## 2. Integration Baseline & Prerequisite Status
@@ -30,17 +32,20 @@ P056 implements native PhotoKit authorization, bounded asset discovery, change o
 - Asset kinds (`PhotoAssetKind`): `stillPhoto`, `video`, `livePhoto`, `screenshot`, `unknown`.
 - Resource roles (`PhotoResourceRole`): `primaryImage`, `primaryVideo`, `motionVideo`, `auxiliary`.
 - Media metadata captured: Local identifier, creation date, modification date, pixel dimensions, favorite status, hidden status, discovery generation, permission scope, and source availability.
+- Discovery batching: `discoverAssets` returns `PhotoDiscoveryBatchResult` containing `isComplete` and `totalInScope`. `PhotoLibraryObservationCoordinator` classifies scans as `.completed` only when fully enumerated, and `.partial` when bounded/incomplete.
 - Privacy boundary: GPS, EXIF, faces, OCR, captions, and full-resolution image bytes are **never** extracted during discovery.
 
 ### 3.3 Durable Observation Persistence
 - Versioned, isolated SQLite store (`PhotoObservationSQLiteStore` and `PhotoObservationSQLiteSchema`, version 1) under app sandbox.
 - Separate from `SyncCursor`, `BackupSnapshot`, and File Provider metadata.
+- `markSourceUnavailable` enforces owner scoping (`WHERE local_identifier=? AND profile_id=? AND owner_id=?`) preventing cross-owner updates.
+- String parameters bound via `sqlite3_bind_text` use `sqliteTransient` (`unsafeBitCast(-1, to: sqlite3_destructor_type.self)`) with `withCString` for safe memory copying.
 - Tracks `complete` vs. `partial` vs. `interrupted` scan results. Interrupted or limited scans never imply local asset deletion or remote cleanup.
 
-### 3.4 Change Observation & Session Fencing
-- Native `PHPhotoLibraryChangeObserver` wrapped in `PhotoLibraryChangeObserverAdapter`.
-- Thread-safe callback coalescing and generation increments.
-- Integrated with `SessionController`: Upon logout or account switch, `PhotoLibraryObservationCoordinator.stopObservation()` unregisters observers and fences stale callbacks.
+### 3.4 Change Observation, Actor Isolation & Session Fencing
+- `PhotoLibraryObservationCoordinator` is implemented as a Swift `actor` providing thread-safe state isolation and Swift 6 concurrency compliance.
+- Session epoch fencing (`sessionEpoch: UInt64`): `stopObservation()` increments `sessionEpoch`. Pre- and post-async validation checks fence delayed discovery calls upon logout or account switch.
+- Single-flight task coalescing: Overlapping change callbacks from `PhotoLibraryChangeObserverAdapter` coalesce onto `activeScanTask` to prevent out-of-order writes or generation races.
 
 ### 3.5 User-Facing Configuration
 - SwiftUI `PhotoBackupSettingsView` and `@Observable` `PhotoBackupSettingsViewModel` in `Features/Photos/`.
@@ -50,7 +55,7 @@ P056 implements native PhotoKit authorization, bounded asset discovery, change o
 
 ### 3.6 Future TransferEngine Handoff Contract
 - Non-executing `PhotoTransferCandidateDescriptor` type linking device identity, profile ID, local identifier, asset kind, resource role, proposed filename, and observation generation.
-- Candidate descriptors prepare P057–P058 without invoking transfers or creating remote sessions.
+- Resource descriptors default `isLocallyAvailable: false` without KVC calls until P057 extraction.
 
 ---
 
@@ -72,9 +77,9 @@ Hardware physical device qualification of real PhotoKit permissions and camera r
 
 ## 6. Verification Evidence
 
-1. `python3 clients/ios/Support/validate_ios_sources.py` -> Passed.
+1. `python3 clients/ios/Support/validate_ios_sources.py` -> Passed cleanly.
 2. `python3 -m unittest discover -s clients/ios/Support/tests` -> Passed 120/120 tests.
-3. `bash scripts/validate-docs.sh` -> Passed.
+3. `bash scripts/validate-docs.sh` -> Passed cleanly.
 4. `git diff --check` -> Passed cleanly.
 
 ---
