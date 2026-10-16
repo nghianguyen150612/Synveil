@@ -10,7 +10,7 @@ class FileProviderEnumerationContracts(unittest.TestCase):
         host = object_body("A80000012C00000000000001", "Sources")
         extension = object_body(SOURCES_ID, "FileProvider Sources")
         for name in ["FileProviderGenerationContract.swift", "FileProviderGenerationStore.swift",
-                     "FileProviderMetadataReader.swift", "FileProviderMetadataSignaling.swift",
+                     "FileProviderMetadataReader.swift", "FileProviderMetadataSignaling.swift", "FileProviderContainerSnapshot.swift",
                      "SynveilFileProviderItem.swift", "FileProviderEnumerator.swift"]:
             self.assertIn(f"{name} in Sources", host)
             self.assertIn(f"{name} in Sources", extension)

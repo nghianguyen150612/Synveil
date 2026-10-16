@@ -667,6 +667,111 @@ final class FileProviderEnumerationTests: XCTestCase {
         XCTAssertThrowsError(try publishPartitions(1, units: oversized))
     }
 
+    func testV2PreservesP053Depth128Boundary() throws {
+        let rootItem = try snapshot(1).items[0]
+        var ancestors = [rootItem]
+        for depth in 1...128 {
+            let identity = try FileProviderItemIdentity.node(
+                domain: domain, libraryID: library, nodeID: id(2000 + depth))
+            ancestors.append(
+                item(identity, parent: ancestors.last!.identity, kind: .folder, name: "d-\(depth)"))
+        }
+        let child = item(
+            try FileProviderItemIdentity.node(domain: domain, libraryID: library, nodeID: id(5000)),
+            parent: ancestors.last!.identity, kind: .file, name: "too-deep")
+        let invalid = FileProviderContainerSnapshot(
+            schemaVersion: 2, domainIdentity: domain.rawValue,
+            ownerScopeFingerprint: domain.ownerScopeFingerprint, libraryID: library,
+            projectionGeneration: 1,
+            completeness: .complete, ancestors: ancestors, children: [child])
+        XCTAssertThrowsError(try invalid.validated(domain: domain, generation: 1))
+        let emptyLeaf = FileProviderContainerSnapshot(
+            schemaVersion: 2, domainIdentity: domain.rawValue,
+            ownerScopeFingerprint: domain.ownerScopeFingerprint, libraryID: library,
+            projectionGeneration: 1,
+            completeness: .complete, ancestors: ancestors, children: [])
+        XCTAssertNoThrow(try emptyLeaf.validated(domain: domain, generation: 1))
+        let shallower = FileProviderContainerSnapshot(
+            schemaVersion: 2, domainIdentity: domain.rawValue,
+            ownerScopeFingerprint: domain.ownerScopeFingerprint, libraryID: library,
+            projectionGeneration: 1,
+            completeness: .complete, ancestors: Array(ancestors.dropLast()),
+            children: [ancestors.last!])
+        XCTAssertNoThrow(try shallower.validated(domain: domain, generation: 1))
+    }
+
+    func testNativeAuthoritativeSizeDatesAndContentReplacement() throws {
+        let identity = try FileProviderItemIdentity.node(
+            domain: domain, libraryID: library, nodeID: id(100))
+        let created = Date(timeIntervalSince1970: 100)
+        let modified = Date(timeIntervalSince1970: 200)
+        let firstVersion = try FileProviderVersionIdentity(
+            domain: domain, libraryID: library, nodeID: id(100), fileVersionID: id(900))
+        let nextVersion = try FileProviderVersionIdentity(
+            domain: domain, libraryID: library, nodeID: id(100), fileVersionID: id(901))
+        let projected = FileProviderProjectedItem(
+            identity: identity, parentIdentity: folder, kind: .file,
+            displayName: "data.bin", byteLength: 123, creationDate: created,
+            contentModificationDate: modified,
+            fileVersionIdentity: firstVersion,
+            contentSHA256: "sha256:" + String(repeating: "a", count: 64),
+            metadataRevision: "42", isTombstone: false, source: .serverConfirmed)
+        let native = SynveilFileProviderItem(projected: projected, domain: domain)
+        XCTAssertEqual(native.documentSize, 123)
+        XCTAssertEqual(native.creationDate, created)
+        XCTAssertEqual(native.contentModificationDate, modified)
+        let replacement = SynveilFileProviderItem(
+            projected: item(
+                identity, parent: folder, kind: .file,
+                name: "data.bin", revision: "43", version: nextVersion), domain: domain)
+        XCTAssertEqual(native.itemIdentifier, replacement.itemIdentifier)
+        XCTAssertNotEqual(native.itemVersion.contentVersion, replacement.itemVersion.contentVersion)
+        XCTAssertNotEqual(
+            native.itemVersion.metadataVersion, replacement.itemVersion.metadataVersion)
+    }
+
+    @MainActor
+    func testHostRejectsPartialMutationConflictAndUnconfirmedCutsBeforeSignaling() async throws {
+        for invalid in 0..<4 {
+            let source = PublicationFixture(
+                publication: FileProviderConfirmedPublication(
+                    domain: domain,
+                    evidence: FileProviderAuthorizationEvidence(
+                        domain: domain, state: .authorized, authorizationGeneration: 1),
+                    generation: 1, completeCatalog: [library], catalogIsComplete: invalid != 0,
+                    snapshots: [try snapshot(1)],
+                    serverConfirmedCut: "7:9", locallyAppliedCut: invalid == 1 ? "7:10" : "7:9",
+                    containsUnresolvedMutations: invalid == 2, containsConflictReview: invalid == 3)
+            )
+            let manager = SignalRecorder()
+            let coordinator = FileProviderMetadataPublicationCoordinator(
+                store: store, source: source,
+                signals: FileProviderMetadataSignalingCoordinator(store: store, manager: manager))
+            do {
+                try await coordinator.publishConfirmedRefresh()
+                XCTFail("incomplete capture")
+            } catch {}
+            XCTAssertTrue(manager.containers.isEmpty)
+            XCTAssertThrowsError(try anchor())
+        }
+    }
+
+    @MainActor
+    func testSignalReceiptCannotAcknowledgeConcurrentNewPublication() async throws {
+        try publish(1, [snapshot(1)])
+        let manager = SignalRecorder()
+        manager.onSignal = { [self] in try publish(2, [snapshot(2, name: "changed")]) }
+        let signals = FileProviderMetadataSignalingCoordinator(store: store, manager: manager)
+        try await signals.deliverPending(domainID: domain.rawValue)
+        XCTAssertFalse(
+            try store.signalsAcknowledged(
+                domainID: domain.rawValue, manifest: store.readManifest(domainID: domain.rawValue)))
+        try await signals.deliverPending(domainID: domain.rawValue)
+        XCTAssertTrue(
+            try store.signalsAcknowledged(
+                domainID: domain.rawValue, manifest: store.readManifest(domainID: domain.rawValue)))
+    }
+
     @MainActor
     func testSignalingCoalescesAndAcknowledgesOnlyCompletedDelivery() async throws {
         try publish(1, [snapshot(1)])
@@ -766,8 +871,12 @@ private final class SignalRecorder: FileProviderMetadataSignaling {
     var containers: [String] = []
     var registered = true
     var fail = false
+    var onSignal: (() throws -> Void)?
     func signal(domainID: String, container: String) async throws -> Bool {
         containers.append(container)
+        let action = onSignal
+        onSignal = nil
+        try action?()
         if fail { throw FileProviderSynchronizationError.unavailable }
         return registered
     }

@@ -21,6 +21,7 @@ struct FileProviderContainerSnapshot: Codable, Equatable, Sendable {
             ownerScopeFingerprint == domain.ownerScopeFingerprint,
             projectionGeneration == generation, generation > 0,
             completeness == .complete, !ancestors.isEmpty, ancestors.count <= 129,
+            children.isEmpty || ancestors.count <= 128,
             ancestors.count + children.count <= FileProviderMetadataSnapshot.maximumItemCount
         else { throw FileProviderSynchronizationError.incomplete }
         let root = try FileProviderItemIdentity.libraryRoot(domain: domain, libraryID: libraryID)
