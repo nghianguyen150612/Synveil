@@ -233,6 +233,35 @@ the existing foreground contracts intact and leaves the next safe step as
 obtaining a reviewed, deployment-bound design before reopening either native
 background capability.
 
+## P051B architecture decision
+
+The three candidate architectures were compared against the iOS background
+URLSession behavior above and the current self-hosted deployment model.
+
+| Architecture | What it can guarantee | What it cannot guarantee | P051B disposition |
+|---|---|---|---|
+| Deployment-bound redirect-free transport | With an operator-controlled fixed HTTPS origin and edge configuration, transfer routes can be sent directly to the API, with no canonical-host, login, storage, scheme, or port redirects. The API middleware remains a second guard. | A successful probe is a point-in-time observation. It cannot certify arbitrary proxies or detect an external proxy/DNS/TLS change unless that configuration is inside a trusted, reviewed control and change-management boundary. | Smallest viable option for a specific controlled deployment. No deployment currently meets or demonstrates that boundary, so production capability remains closed. |
+| Narrow transfer authorization | A server-issued, opaque grant bound to one Device, Library, immutable FileVersion or upload session, method, origin, and bounded lifetime could limit the impact of exposing DeviceBearer. | iOS may forward the grant. Audience checks at Synveil do not prevent disclosure or relay of the grant to Synveil. A redirected `307`/`308` PATCH can disclose plaintext bytes even when Authorization is absent. | Insufficient on its own. No grant route or client protocol is approved or implemented. |
+| Hybrid deployment plus scoped authorization | A controlled origin plus operation-scoped grants adds defense in depth. Treating every redirected destination as untrusted would additionally require reviewed end-to-end payload confidentiality and integrity for both download and upload, plus exact operation binding and replay controls. | This introduces key lifecycle, server/client protocol, recovery, revocation, and migration work. It does not follow from a server Boolean, mock, or API-only test. | Future candidate only; independent security review is required before implementation. |
+
+P051B therefore retains the existing fail-closed capability decisions. The
+repository does not identify a production public origin or include a controlled
+proxy/CDN configuration. No live edge probe, signed-device build, or physical
+iPhone transfer observation is available. No positive background-transfer
+deployment is certified. User-managed deployments that cannot demonstrate an
+independently reviewed edge control boundary remain unsupported for native
+background transfer; their foreground transfers retain the existing
+redirect-rejecting transport.
+
+The current deployment checklist records the HTTPS origin, proxy/CDN version
+and configuration hash, API build, probe time, status codes, and `Location`
+presence. This is useful audit evidence for a tested configuration, but it is
+not a reusable trust grant: a status endpoint or successful probe cannot prove
+that an external edge will behave identically for a later iOS task. No generic
+`trustServer` flag or automatic capability enablement is added. Evidence
+freshness and edge-configuration invalidation require a trusted operator
+control boundary and independent review before code can consume them.
+
 ## iPhone validation procedure and current evidence
 
 Physical-device evidence for this remediation is `NOT_AVAILABLE`: no signed

@@ -1,5 +1,97 @@
 # P051 — Background Transfer Architecture and Security Gate
 
+## PROMPT051B — Secure Background Transfer Recovery
+
+### Recovery checkpoint — 2026-10-16
+
+- Starting P051B feature SHA and existing PR #134 head:
+  `d47f719834708dac8d9897b0ec5cc7cce4998f8a`.
+- Existing branch: `ios/p051-background-download-architecture`; PR #134 remains
+  open against `ios-app`. The local branch was clean and matched the fetched
+  branch head after explicitly refreshing its remote-tracking ref.
+- Integration SHA is still
+  `e1acabe4bfc5db977cabb77db2c30b864a666810`; P050 is an ancestor. No newer
+  `ios-app` commit was present. No PR review or security acceptance is recorded.
+- P051A containment remains intact. The API process rejects authenticated
+  handler redirects; production P046 background upload and P051 background
+  download remain disabled; P045 foreground upload and P043 foreground
+  download remain available. No URLSession download identifier, transfer-grant
+  route, new task, P051 state table, or schema migration is active.
+- Current P051B decision: **no positive background-transfer architecture is
+  approved for the available deployment model**. Preserve the fail-closed
+  gates. The repository has no controlled edge configuration, no identified
+  production public origin, and no live deployment or physical-device evidence.
+
+### Architecture comparison and decision
+
+| Option | Security properties | Limitations | Decision |
+|---|---|---|---|
+| A. Deployment-bound redirect-free transport | A dedicated stable HTTPS origin, direct API routing, API redirect middleware, and a controlled edge configured never to redirect or offload transfer routes can keep the request within the configured Synveil trust boundary. Existing API routes preserve immutable version, range, and upload-offset contracts. | This depends on ongoing control of the TLS edge, DNS, proxy, and CDN configuration. A probe only observes one deployment state. It does not support arbitrary unreviewed reverse proxies or prove future behavior. | Smallest viable option for an operator-controlled, specifically reviewed deployment. It is not enabled here because no such deployment or durable evidence is available. |
+| B. Narrow transfer authorization | An opaque grant bound to Device, exact operation, method, version/session, audience, and expiry could reduce the impact of exposing the general DeviceBearer. | iOS may forward the grant on a redirect. Audience validation at Synveil does not prevent disclosure or an attacker relaying it to Synveil. A `307`/`308` can forward plaintext PATCH bytes independently of Authorization. A grant alone is not a safe redirect solution. | Rejected as a standalone fix. No grant endpoint or client protocol is implemented. |
+| C. Hybrid deployment and scoped authorization | A controlled dedicated origin plus narrow grants can add defense in depth and bound authorization to one transfer. To protect upload bytes from a redirect destination, the protocol would also need reviewed end-to-end payload confidentiality, integrity, exact operation binding, and replay handling; download content would need corresponding client-bound protection if a redirected destination must be treated as untrusted. | This adds server, client, key lifecycle, replay, revocation, and migration work. It still requires independent review and cannot be inferred safe from API tests or an unauthenticated server capability flag. | Future candidate only. Not approved or implemented. |
+
+**Selected safe behavior:** retain the current deny-by-default capability gate;
+do not submit a credential-bearing background request. For a future supported
+deployment, Architecture A is the smallest route, but only when its edge and
+change-control boundary are explicitly controlled and independently reviewed.
+Architecture B cannot make redirect following safe by itself. Architecture C
+is not introduced as an unreviewed credential or cryptographic protocol.
+
+The P051A API audit remains valid for the API-process boundary: authenticated
+content/upload routes reject the tested handler redirects and do not expose an
+object-storage URL. The middleware tests cover synthetic `301`, `302`, `303`,
+`307`, and `308` responses and route-specific `304` behavior. They do not test
+an external reverse proxy, CDN, DNS/TLS edge, or iOS daemon redirect behavior.
+No bearer credential or private file was sent to an adversarial destination.
+No assertion is made that iOS strips Authorization on a cross-origin redirect.
+
+### Deployment, authorization, and recovery status
+
+- Deployment evidence freshness cannot be made authoritative using a server
+  Boolean or a successful no-follow probe alone. The current probe checklist
+  records origin, edge/configuration hash, API build, request methods, statuses,
+  and `Location` presence, but no operator deployment was available to run it.
+  There is no trusted mechanism in this repository to observe changes to an
+  external proxy/DNS/TLS configuration; deployments not under an independently
+  reviewed control boundary remain unsupported for background transfer.
+- No transfer grant protocol was selected. Raw DeviceBearer or grant values
+  are not added to SQLite, task descriptions, URLs, logs, or analytics. Grant
+  expiration, revocation, audience, and replay semantics remain design inputs,
+  not implemented claims.
+- P046 remains unavailable. Historical task authorization withdrawal and
+  best-effort cancellation behavior from P051A are retained; unresolved intent,
+  task, chunk, and authoritative offset evidence is not erased or retried.
+  Foreground recovery remains subject to the existing server-authoritative
+  offset flow and must not overlap a live old task.
+- P051 remains unavailable. No suspended task, durable P051 binding, staging
+  artifact, verified record, or notification candidate is created. P043
+  immutable foreground downloads and P044 verified preview/export remain the
+  only download path. SQLite remains v9; P047–P050 state is unchanged.
+- P048 remains metadata-only and independent. P049 notification eligibility
+  remains tied to existing durable VERIFIED evidence. P050 BrowserSession
+  conflict-review boundaries are unchanged.
+- External deployment tests, native transfer scheduling, signed build, and
+  physical iPhone behavior are `NOT_AVAILABLE`. No live or device evidence is
+  fabricated. No independent security reviewer has accepted the design.
+
+### P051B validation and next checkpoint
+
+- Source and architecture audit found no approved server/client grant protocol
+  or deployment evidence that can open either background capability.
+- The safe P051A checks and exact-head CI are inherited evidence only for their
+  recorded source SHAs; they are not P051B validation. P051B must record fresh
+  portable and exact-head iOS results after the documentation checkpoint is
+  committed.
+- Existing API redirect tests are the relevant API-level synthetic coverage;
+  no new server behavior was introduced in this checkpoint. Live edge attack
+  tests remain unavailable and must use throwaway authorization plus synthetic
+  bytes if later performed.
+- Current status: `BLOCKED_REQUIRES_FIXES`. Keep PR #134 open and unmerged.
+  The next safe step is independent security review of an operator-controlled
+  deployment profile or a separately reviewed, body-confidential transfer
+  protocol, followed by validation against an actual supported deployment.
+  Do not start P052.
+
 ## PROMPT051A continuation checkpoint
 
 This section is the current P051A status and supersedes conflicting P051-only
