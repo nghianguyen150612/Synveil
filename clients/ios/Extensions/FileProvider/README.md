@@ -1,98 +1,90 @@
-# Synveil File Provider foundation (P053)
+# Synveil replicated File Provider
 
-This target is an isolated, fail-closed foundation for a later Files integration. It uses Apple's
-replicated File Provider model (`NSFileProviderReplicatedExtension` and
-`NSFileProviderEnumerator`), available since iOS 16 and compatible with this project's iOS 17
-deployment target. Apple documentation:
+P054 implements authorized read-only metadata lookup, domain/Library/folder and working-set
+enumeration, deterministic pagination, durable change replay, and native item adaptation. The
+principal remains `NSFileProviderReplicatedExtension`, independently launched from the host app.
+Apple Files support remains `IOS_DEFERRED_AFTER_V0_1` in the product contract.
 
-- [File Provider](https://developer.apple.com/documentation/fileprovider)
-- [Replicated file provider extension](https://developer.apple.com/documentation/fileprovider/replicated-file-provider-extension)
-- [`NSFileProviderReplicatedExtension`](https://developer.apple.com/documentation/fileprovider/nsfileproviderreplicatedextension)
-- [`NSFileProviderEnumerating`](https://developer.apple.com/documentation/fileprovider/nsfileproviderenumerating)
-- [`NSFileProviderItemVersion`](https://developer.apple.com/documentation/fileprovider/nsfileprovideritemversion)
-- [`NSFileProviderManager`](https://developer.apple.com/documentation/fileprovider/nsfileprovidermanager)
-- [`NSFileProviderDomain`](https://developer.apple.com/documentation/fileprovider/nsfileproviderdomain)
+Production publication and domain registration remain disabled in `FileProviderCapability.production`.
+The extension never opens app SQLite v9, Keychain, a network session, or P052 recovery. Content
+fetch, create, modify and delete callbacks remain fail-closed. P046/P051 transfers remain disabled.
 
-The replicated model is the current Apple API for a provider whose hierarchy is mirrored by the
-system. It offers explicit item lookup, enumeration, content fetch, mutation, version, and lifecycle
-callbacks. P053 implements only the framework entry point and bounded error behavior. The old
-`NSFileProviderExtension` API is not used.
+## Publication and completeness
 
-## Isolation and disabled capabilities
+`FileProviderMetadataPublicationCoordinator` is a host-only explicit refresh/sync boundary. It
+captures an authenticated, server-confirmed complete catalog and canonical hierarchy cut, rejects
+pending/local/conflict evidence, revalidates the exact session at commit, then signals committed
+changes. It is not installed in startup or view rendering. Existing offline repositories cannot
+satisfy its stronger transaction-bound capture contract: partial caches, unacknowledged projections
+and snapshot-only records must not be upgraded to authority. Installing a live source requires the
+canonical capture and session-withdrawal integration to be independently qualified first.
 
-- The extension has its own principal class and does not load `SynveilApp`, SwiftUI, the app
-  dependency container, Rust FFI, the existing SQLite database, a Keychain store, or URLSession.
-- Initialization only records a process-local lifecycle state. It does not inspect the App Group,
-  restore a session, register a domain, submit a transfer, or contact a server.
-- Production domain registration, metadata publication, authenticated network access, and remote
-  mutation are all disabled in `FileProviderCapability.production`.
-- Enumeration and item lookup return `notAuthenticated`; no unavailable Library is presented as an
-  empty Library. Content fetch returns no URL. Create, modify, and delete fail with Apple's
-  `cannotSynchronize` error.
-- No File Provider domain is registered by app startup. P053 does not advertise an empty provider.
+The v2 commit envelope supports both unchanged complete v1 Library snapshots and complete v2
+container partitions. A partition contains a root-to-container ancestor chain and the complete
+direct-child listing. Every live folder/root must have exactly one listing, including empty ones.
+Repeated ancestors must match exactly; every non-root ancestor must be present in its parent's
+children. Duplicate, missing, cyclic, tombstoned-parent and cross-Library graphs fail validation.
+No v1 partial snapshot is treated as complete. A Library can exceed 10,000 total items by using
+multiple container partitions. A single container that exceeds its unit limit is rejected, never
+truncated; the previous valid generation remains available.
 
-## App Group boundary
+Bounds: 10,000 records and 8 MiB per unit; 128 Libraries, 2,048 units, 50,000 encoded records
+(including repeated ancestors), and 12 MiB of unit bytes per domain generation; three retained
+generations; 64 MiB total provider storage; 8,192 traversal entries. A refresh that cannot fit
+these bounds preserves the prior commit. No SQLite migration is required.
 
-Both targets' entitlement files declare `group.com.synveil.ios`; the extension's
-`NSExtensionFileProviderDocumentGroup` agrees with that identifier. It shares the reverse-DNS stem
-of the app bundle identifier `com.synveil.ios`, but actual entitlement availability still depends
-on the Apple Developer Team's App Group registration and provisioning profile. Unsigned Simulator
-builds verify target wiring only; they do not establish that the entitlement is active.
+## Durable storage and consumption
 
-`FileProviderSharedContainer` resolves the group only through
-`FileManager.containerURL(forSecurityApplicationGroupIdentifier:)`. A missing entitlement or
-container is an error. It never falls back to the app sandbox or relocates SQLite. Files are scoped
-under `Synveil/FileProvider/v1`, protected until first unlock, excluded from backup, bounded to
-8 MiB per snapshot and 64 MiB total provider storage, and rejected if a component is unsafe or a
-symlink is encountered. Snapshot publication writes and synchronizes a private same-directory
-staging file before replacing the current file atomically. P053 does not wire publication into app
-startup or the extension.
+Storage remains below the P053 protected App Group subtree
+`Synveil/FileProvider/v1/generations/<opaque-domain>/`. The directory version is the established
+security boundary; file formats have explicit independent versions. Immutable `unit-<UUID>.json`
+files are synchronized before one `commit.json` envelope makes the complete catalog and graph
+visible. Manifest references contain Library, optional container, filename and digest bindings.
+Retained complete generations form the bounded comparison journal, rather than an unbounded event
+log. This provides net metadata changes between accepted durable points after process relaunch.
 
-The current v0.1 database stays app-private at SQLite v9. If a future milestone needs shared
-metadata, the host app must publish a validated immutable snapshot through this boundary. The
-extension remains a read-only snapshot consumer; it must not open the app database as a second
-writer. Any later database migration requires an independent design and compatibility review.
+A nonblocking cross-process shared lease covers graph validation through observer delivery. The
+writer and revocation use its exclusive counterpart. `rollback.json` is durable before an
+`unsettled` marker; readers reject that marker. Only after the new manifest and directory are synced
+is the marker removed. Interrupted or uncertain replacement restores the prior durable manifest
+before another publication. Failed recovery denies reads. Orphan units are reclaimed under the
+writer lease; referenced files remain until the new manifest commits. Protected files use complete
+Data Protection; unit reads enforce type/size and `O_NOFOLLOW`. Missing App Group never falls back
+to the app sandbox. Checksums detect corruption; the App Group entitlement and host session remain
+the authority boundary, not the checksum.
 
-## Identity and projection
+## Enumeration and changes
 
-One domain represents one server/account/device credential generation and contains multiple
-Library roots. The opaque domain identifier hashes the canonical endpoint, account identity, device
-identity, and non-secret credential-generation identity. Credential replacement therefore changes
-the domain identity; it cannot silently reassign the old domain. Domain display names must not
-contain endpoints or account identifiers.
+Pages and anchors are fixed 162-byte opaque binary values, within Apple's 500-byte limits:
+version/purpose, three SHA-256 scope bindings (domain/owner/container), authorization epoch,
+base/target durable generations, offset, and SHA-256 corruption checksum. Initial native pages
+preserve name or modification-date order, with stable identity tie breaking. Subsequent pages
+retain that ordering and generation. Each page/change batch contains at most 100 records.
+Cross-container, owner, domain, epoch, corrupt, future and expired cursors fail closed. Disappeared
+generations expire; they never silently restart at a new offset.
 
-Item IDs are versioned and bind the opaque domain fingerprint, Library fingerprint, item kind, and
-losslessly encoded validated Synveil ID. Node rename and move preserve identity. FileVersion is
-separate from Node identity and is carried as immutable content-version evidence. A metadata
-revision is used only when the server supplies it. For a later `NSFileProviderItemVersion` adapter,
-the content and metadata components are 32-byte SHA-256 digests of the immutable FileVersion
-identity and server metadata revision, respectively; an absent revision remains absent. Names and
-local paths are never identifiers.
+Anchors advance only in the observer completion after the associated batch. Change pagination
+pins its base and target and resumes after cold launch; a newer publication sets `moreComing`.
+Comparisons exclude tombstones. Rename/move retain Node identity; a move reports the target item
+with its new parent to both affected parent enumerators, without declaring a still-live Node
+removed. Only globally absent/tombstoned items receive deletion callbacks. Removed Libraries are
+not available through old page tokens. Invalidations are checked between observer callbacks and
+before successful completion. No unavailable generation produces a successful empty response.
 
-The `FileProviderMetadataSnapshot` schema is version 1 and records domain and owner-scope
-fingerprints, Library identity, projection generation/completeness, stable item and parent IDs,
-kind, display name, optional authoritative size/timestamps, immutable FileVersion and digest,
-metadata revision, tombstone state, and source provenance. Validation rejects partial projections,
-future schema versions, wrong ownership or Library, corrupt and colliding IDs, invalid parentage,
-oversized payloads, and unresolved local mutations or conflicts. Canonical P050 conflict evidence
-stays in the app and is never projected as a server-confirmed rename.
+`SynveilFileProviderItem` exposes folders and generic data files, available authoritative size/dates,
+separate immutable FileVersion and metadata-revision components, and conservative capabilities.
+Unknown components remain empty/unknown; no local timestamp is invented. Files advertise no read
+or mutation capability while materialization remains unavailable; folders permit enumeration.
 
-## Authorization and lifecycle boundary
+## Signaling and qualification
 
-The app's DeviceBearer credential remains in its existing default Keychain access group. P053 adds no
-Keychain access-group entitlement and performs no credential migration. The extension cannot read
-that credential. `FileProviderAuthorizationEvidence` is a versioned, non-secret interface for a
-future app-mediated authorization protocol; P053 publishes no marker. A future implementation must
-fence account/device/credential-generation replacement, logout, revocation, protected-data loss,
-and extension relaunch before allowing metadata reads.
+Signals coalesce affected parents, Library/domain roots and the working set after commit. A durable
+receipt is written only after every framework completion succeeds and the same generation/epoch
+remains current. Failed, interrupted and unregistered-domain delivery stays pending. The native
+manager adapter only discovers existing domains and calls `signalEnumerator(for:)`; it never
+registers one. Signaling never replaces durable change enumeration.
 
-The extension lifecycle is independent of SwiftUI and P052 app recovery. Invalidation stops future
-work, and a relaunched process starts without session or authorization state. P046 background
-uploads and P051 background downloads remain disabled. No P052 transfer recovery is called.
-
-P054 must implement authorized remote enumeration, item lookup and metadata change signaling over a
-validated projection, while keeping domain registration disabled until those paths are qualified.
-P055 requires a separately reviewed immutable FileVersion materialization design, exact byte-length
-and SHA-256 verification, session/account/credential fencing, owned staging, and verified-only
-publication. Files-originated mutations require a further authorized design with server revision
-preconditions, durable intents, conflict preservation, idempotency, and unknown-outcome handling.
+See [P054 manifest](../../../../docs/ios/manifests/PROMPT054_MANIFEST.md) for exact-head CI, test
+inventory, independent review and physical-device procedures. Device/signing status is
+`DEFERRED_PHYSICAL_DEVICE_NOT_AVAILABLE`; Simulator XCTest does not prove Files app recognition.
+P055 is not authorized or implemented.

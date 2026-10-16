@@ -129,6 +129,19 @@ struct FileProviderSharedContainer {
         }
     }
 
+    func generationDirectory(domainID: String) throws -> URL {
+        guard domainID.hasPrefix("synveil-fp-v1-"), domainID.utf8.count == 78,
+            domainID.dropFirst(14).allSatisfy({ $0.isHexDigit && !$0.isUppercase })
+        else { throw FileProviderSharedContainerError.unsafePath }
+        return try directoryURL(
+            root: authorizedRoot(), components: Self.versionedRoot + ["generations", domainID])
+    }
+
+    func checkGenerationQuota(addingBytes: Int) throws {
+        let root = try directoryURL(root: authorizedRoot(), components: Self.versionedRoot)
+        try enforceStorageQuota(providerRoot: root, addingBytes: addingBytes)
+    }
+
     private func authorizedRoot() throws -> URL {
         guard let url = resolveContainerURL(Self.appGroupIdentifier) else {
             throw FileProviderSharedContainerError.missingEntitlement
@@ -160,6 +173,11 @@ struct FileProviderSharedContainer {
                     throw FileProviderSharedContainerError.notDirectory
                 }
             } else {
+                let parentFD = open(current.deletingLastPathComponent().path, O_RDONLY | O_NOFOLLOW)
+                guard parentFD >= 0 else {
+                    throw FileProviderSharedContainerError.containerUnavailable
+                }
+                defer { close(parentFD) }
                 try fileManager.createDirectory(
                     at: current,
                     withIntermediateDirectories: false,
@@ -168,6 +186,9 @@ struct FileProviderSharedContainer {
                         .posixPermissions: 0o700,
                     ]
                 )
+                guard fsync(parentFD) == 0 else {
+                    throw FileProviderSharedContainerError.publicationFailed
+                }
             }
             try fileManager.setAttributes(
                 [
@@ -186,11 +207,15 @@ struct FileProviderSharedContainer {
     private func enforceStorageQuota(providerRoot: URL, addingBytes: Int) throws {
         guard fileManager.fileExists(atPath: providerRoot.path) else { return }
         let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]
+        var traversalFailed = false
         let directoryEnumerator = fileManager.enumerator(
             at: providerRoot,
             includingPropertiesForKeys: keys,
             options: [],
-            errorHandler: { _, _ in false }
+            errorHandler: { _, _ in
+                traversalFailed = true
+                return false
+            }
         )
         guard let enumerator = directoryEnumerator else {
             throw FileProviderSharedContainerError.containerUnavailable
@@ -207,12 +232,14 @@ struct FileProviderSharedContainer {
                 throw FileProviderSharedContainerError.symbolicLink
             }
             if values.isRegularFile == true {
-                total += values.fileSize ?? 0
-                guard total <= Self.maximumProviderStorageBytes else {
+                let size = values.fileSize ?? 0
+                guard size >= 0, size <= Self.maximumProviderStorageBytes - total else {
                     throw FileProviderSharedContainerError.storageQuotaExceeded
                 }
+                total += size
             }
         }
+        guard !traversalFailed else { throw FileProviderSharedContainerError.containerUnavailable }
         guard addingBytes <= Self.maximumProviderStorageBytes - total else {
             throw FileProviderSharedContainerError.storageQuotaExceeded
         }
