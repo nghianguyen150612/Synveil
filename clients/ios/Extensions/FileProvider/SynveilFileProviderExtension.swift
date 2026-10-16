@@ -64,6 +64,7 @@ final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExte
                         projected: item,
                         domain: view.manifest.domain,
                         contentStore: FileProviderContentStore(container: store.container),
+                        metadataStore: store,
                         authorizedGeneration: view.manifest.authorization.authorizationGeneration
                     ), nil)
             }
@@ -172,6 +173,7 @@ final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExte
                         projected: item,
                         domain: view.manifest.domain,
                         contentStore: contentStore,
+                        metadataStore: store,
                         authorizedGeneration: authGen
                     )
                     completionHandler(destURL, returnedItem, nil)
