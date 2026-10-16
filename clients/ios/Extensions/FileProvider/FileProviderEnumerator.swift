@@ -45,6 +45,7 @@ final class SynveilFileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                         projected: $0,
                         domain: view.manifest.domain,
                         contentStore: FileProviderContentStore(container: reader.store.container),
+                        metadataStore: reader.store,
                         authorizedGeneration: view.manifest.authorization.authorizationGeneration
                     )
                 }
@@ -70,6 +71,7 @@ final class SynveilFileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                         projected: $0,
                         domain: view.manifest.domain,
                         contentStore: FileProviderContentStore(container: reader.store.container),
+                        metadataStore: reader.store,
                         authorizedGeneration: view.manifest.authorization.authorizationGeneration
                     )
                 }
