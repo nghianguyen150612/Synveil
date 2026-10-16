@@ -13,11 +13,12 @@ final class LibraryCatalogViewModelTests: XCTestCase {
 
     func testAuthenticatedEntryStartsLoadingAndLoadsLibraries() async throws {
         let library = try await makeLibrary(1, name: "Archive")
-        let fixture = try makeFixture(results: [.loaded([library])])
+        let fixture = try makeFixture(suspendedRequests: [1])
 
         let load = Task { await fixture.viewModel.loadIfNeeded() }
         await fixture.repository.waitForRequestCount(1)
         XCTAssertEqual(fixture.viewModel.state, .loading)
+        fixture.repository.complete(request: 1, with: .loaded([library]))
         await load.value
 
         XCTAssertEqual(fixture.viewModel.state, .loaded([library]))
