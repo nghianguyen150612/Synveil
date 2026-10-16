@@ -56,8 +56,11 @@ final class SynveilFileProviderItem: NSObject, NSFileProviderItem {
             expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint,
             expectedAuthorizationGeneration: authorizedGeneration
         ) else { return false }
-        return result.manifest.nodeID == version.nodeID
-            && result.manifest.libraryID == version.libraryID
+        let libraryScope = FileProviderDomainIdentity.fingerprint([
+            "synveil-library-v1", result.manifest.libraryID,
+        ])
+        return result.manifest.nodeID == projected.identity.resolvedIdentifier
+            && projected.identity.libraryFingerprint == libraryScope
             && result.manifest.expectedByteLength == projected.byteLength
             && result.manifest.expectedSHA256 == projected.contentSHA256
     }
