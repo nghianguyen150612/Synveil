@@ -17,8 +17,11 @@
 - Recovery status label correction:
   `5e1bb8a6abe237b5a83e5adaa89f838dc06473cb`
   (`fix(ios): keep upload recovery label within native limit`).
-- Final manifest/test assertion commit and exact feature HEAD will be recorded
-  after the final native validation cycle.
+- Bounded lifecycle test-gate correction:
+  `842384148b462955d54984c4b77c9ac07fafe9e2`
+  (`test(ios): bound lifecycle recovery gates`).
+- This manifest evidence update is being committed after that validated source
+  checkpoint; the final feature HEAD will be recorded in the PR and final report.
 - PR #135: https://github.com/nghianguyen150612/Synveil/pull/135, open against
   `ios-app`; reviewer `ducminh231011` requested, no review submitted yet.
 - No merge or final integration SHA is claimed.
@@ -187,8 +190,7 @@ session fencing in `SessionRestorationTests`, SQLite corruption/future-schema/
 open-failure handling in `MutationQueueSQLiteTests`, independent refresh and
 expiration handling in `BackgroundSyncTests`, notification startup/session
 fencing in `NotificationNavigationTests`, and durable conflict preservation in
-`MetadataMutationFeatureTests`. Exact method-to-case coverage and exact simulator
-pass/fail/skip totals will be updated from the final P052 simulator run; no
+`MetadataMutationFeatureTests`. Exact simulator totals are recorded below; no
 simulator result is inferred from P051.
 
 ## Physical-device procedure (deferred)
@@ -269,20 +271,34 @@ recovery assertions, bounded gate behavior, and device procedure documentation:
 - Strict Swift format, Xcode build, and simulator tests are unavailable in this
   Linux workspace (`swift`, `swift-format`, and `xcodebuild` are not installed).
   GitHub Actions is required; this is not a substitute pass.
-- Current pushed source checkpoint before the bounded test-gate correction:
-  `5e1bb8a6abe237b5a83e5adaa89f838dc06473cb`. Its iOS Static Validation (run
-  `38839104119`), iOS Build (`38839104106`), and iOS Rust Apple Build
-  (`38839104076`) passed. Simulator Tests run `38839104055` was cancelled while
-  `testLifecycleInterruptionDuringCompleteDoesNotReconcileAutomatically` was
-  blocked at its test gate. The captured log shows 564 completed tests passed,
-  0 failed, and that one test unfinished; the attempt has no full-suite totals
-  and is not a passing gate. Its artifact is
-  https://github.com/nghianguyen150612/Synveil/actions/runs/38839104055.
-- The four required workflows will be rerun on the final feature HEAD after the
-  bounded test-gate correction and manifest updates are committed. Final-head
-  URLs and XCTest pass/fail/skip totals will be recorded here.
-- Unrelated Rust/server/desktop workflow outcomes will be reported separately;
-  they do not replace or count as an iOS gate.
+- Validated source checkpoint: `842384148b462955d54984c4b77c9ac07fafe9e2`.
+  GitHub Actions on PR #135 reported all four required gates successful:
+  - iOS Static Validation: run `38841723718`,
+    https://github.com/nghianguyen150612/Synveil/actions/runs/38841723718
+  - iOS Build: run `38841723914`,
+    https://github.com/nghianguyen150612/Synveil/actions/runs/38841723914
+  - iOS Simulator Tests: run `38841723808`,
+    https://github.com/nghianguyen150612/Synveil/actions/runs/38841723808
+  - iOS Rust Apple Build: run `38841723772`,
+    https://github.com/nghianguyen150612/Synveil/actions/runs/38841723772
+- Simulator: iPhone 17 Pro, iOS 26.5. XCTest result: **1,933 total; 1,931
+  passed, 0 failed, 2 skipped**. `xcresulttool` reported `Passed`; the artifact
+  and run log are retained at the Simulator Tests URL above.
+- The first simulator attempt on source checkpoint
+  `5e1bb8a6abe237b5a83e5adaa89f838dc06473cb` (run `38839104055`) was cancelled
+  while the COMPLETE lifecycle test waited on an unbounded test gate. Its
+  captured partial log showed 564 completed tests passed, 0 failed, and the
+  blocked test unfinished. That attempt has no full-suite totals and is not
+  counted as a gate pass. The bounded gate correction was included in
+  `842384148b462955d54984c4b77c9ac07fafe9e2`, whose full simulator run passed.
+- The final manifest-only feature commit will be validated by another four-gate
+  run; final exact-head run URLs will be included in the final report. No iOS
+  source changes are planned after the validated source checkpoint.
+- Unrelated workflows on this source checkpoint: Rust CI (`38841723715`), Linux
+  AppImage (`38841723722`), and PostgreSQL scheduled maintenance (`38841724312`)
+  failed in Rust/dependency, desktop/web, and server areas outside the P052
+  changes. Linux DEB/RPM packaging (`38841723949`) was still running at the time
+  of this manifest update. These results do not replace or count as an iOS gate.
 
 ## Explicit permitted deferrals
 
@@ -315,7 +331,8 @@ background upload/download.
 - PR number/URL: #135, https://github.com/nghianguyen150612/Synveil/pull/135.
 - PR state and review state: open; reviewer `ducminh231011` requested; no review
   submitted and no approval is claimed.
-- Merge SHA and final `ios-app` SHA: not available; no merge is claimed.
-- Next safe action: commit the bounded COMPLETE test gate and final manifest
-  updates, rerun all four iOS workflows on that exact head, and complete review.
+- Merge SHA: not available; no merge is claimed. `ios-app` remains at the
+  verified starting SHA `02bc2b8f8ac8d8e2968da9f22abb5387ee3d5df3` pending review.
+- Next safe action: commit this validation record, rerun all four iOS workflows
+  on the resulting exact head, then complete review and follow merge protections.
 - P053: not started and not authorized.
