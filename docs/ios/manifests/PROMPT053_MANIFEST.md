@@ -5,7 +5,7 @@
 - Verified integration baseline: `ios-app` at `b51b4ddd10aac4097c285e6bba4ec165496466c1`.
   `origin/ios-app` was fetched and P052 was verified as an ancestor before implementation.
 - Feature branch: `ios/p053-file-provider-foundation`.
-- Validated P053 implementation source SHA: `f7e6a097395890686ee57201982a7e11406ceed4`.
+- Validated P053 implementation source SHA: `bc8761ab8553dd32cc8ca07a5173b3c65d1b3faa`.
 - Pull request: [#136](https://github.com/nghianguyen150612/Synveil/pull/136), open against
   `ios-app`.
 - Review: requested from `ducminh231011`; no review has been submitted yet.
@@ -201,7 +201,7 @@ Simulator results do not claim Files app integration.
 
 ## Portable validation and exact-head CI
 
-Portable validation on implementation source SHA `f7e6a097395890686ee57201982a7e11406ceed4`:
+Portable validation on implementation source SHA `bc8761ab8553dd32cc8ca07a5173b3c65d1b3faa`:
 
 - `python3 clients/ios/Support/validate_ios_sources.py`: passed.
 - `python3 -m unittest discover -s clients/ios/Support/tests`: 112 passed.
@@ -210,14 +210,15 @@ Portable validation on implementation source SHA `f7e6a097395890686ee57201982a7e
 - Strict Swift formatting and native syntax/build checks were run on macOS CI. The local Linux
   workspace has no Xcode, Swift compiler, or `swift-format`.
 
-All four required native workflows passed on the exact P053 implementation source SHA above:
+All four required native workflows passed on the exact P053 implementation source SHA above. The
+pull-request runs below are all attached to `bc8761ab8553dd32cc8ca07a5173b3c65d1b3faa`:
 
 | Gate | Result | Exact-head run |
 | --- | --- | --- |
-| iOS Static Validation | PASS | [Run 38852007651](https://github.com/nghianguyen150612/Synveil/actions/runs/38852007651) |
-| iOS Build, including embedded `.appex` metadata inspection | PASS | [Run 38852007629](https://github.com/nghianguyen150612/Synveil/actions/runs/38852007629) |
-| iOS Simulator Tests | PASS — 1,947 passed, 0 failed, 2 skipped | [Run 38852007608](https://github.com/nghianguyen150612/Synveil/actions/runs/38852007608) |
-| iOS Rust Apple Build | PASS | [Run 38852007591](https://github.com/nghianguyen150612/Synveil/actions/runs/38852007591) |
+| iOS Static Validation | PASS | [Run 38854750751](https://github.com/nghianguyen150612/Synveil/actions/runs/38854750751) |
+| iOS Build, including embedded `.appex` metadata inspection | PASS | [Run 38854750740](https://github.com/nghianguyen150612/Synveil/actions/runs/38854750740) |
+| iOS Simulator Tests | PASS — 1,947 passed, 0 failed, 2 skipped | [Run 38854751065](https://github.com/nghianguyen150612/Synveil/actions/runs/38854751065) |
+| iOS Rust Apple Build | PASS | [Run 38854750752](https://github.com/nghianguyen150612/Synveil/actions/runs/38854750752) |
 
 The Simulator workflow built the host app, its File Provider extension dependency, and the
 `SynveilTests` scheme on iPhone 17 Pro / iOS 26.5 Simulator. The build workflow separately checked
@@ -229,25 +230,34 @@ recognition, or production synchronization.
 The first Simulator attempt on `a3ca692fb15ea4e638c09d169f61d75f2dea07ca` stopped during test
 source compilation because two malformed authorization fixtures used a non-existent initializer
 and one throwing assertion omitted `try`. The fixtures were changed to decode deliberately corrupted
-encoded evidence, the assertion was corrected, and the full suite passed on `f7e6a09`.
+encoded evidence and the assertion was corrected; the full suite then passed on `f7e6a09`.
 
-Unrelated repository workflows on the same source SHA also reported failures; they are not iOS
-File Provider gates and were not changed as part of P053:
+A later Simulator run on `157912cf780686e26b252d53f3e4fd83114d550d` exposed a race in the existing
+catalog loading test: the immediate mock response could publish `.loaded` before the test observed
+`.loading`. The fixture now suspends the request until after the loading assertion, then completes
+it explicitly. On `bc8761a`, the full suite passed with 1,947 passed, 0 failed, and 2 skipped. No
+existing test was removed, skipped, or weakened.
 
-- [Rust CI run 38852014642](https://github.com/nghianguyen150612/Synveil/actions/runs/38852014642):
+Unrelated repository workflows on the same implementation source SHA also reported failures; they
+are not iOS File Provider gates and were not changed as part of P053:
+
+- [Rust CI run 38854750763](https://github.com/nghianguyen150612/Synveil/actions/runs/38854750763):
   three `synveil-client` IPC/control tests failed on macOS (80 passed), Linux Qt clippy reported two
   `synveil-object-store` `must_use` errors, and Windows builds hit Unix-only APIs in
   `synveil-install-engine`.
-- [Linux AppImage run 38852014635](https://github.com/nghianguyen150612/Synveil/actions/runs/38852014635):
+- [Linux AppImage run 38854750879](https://github.com/nghianguyen150612/Synveil/actions/runs/38854750879):
   artifact validation found `/home/` in the packaged desktop binary.
-- [PostgreSQL 17 run 38852014703](https://github.com/nghianguyen150612/Synveil/actions/runs/38852014703):
+- [PostgreSQL 17 run 38854750991](https://github.com/nghianguyen150612/Synveil/actions/runs/38854750991):
+  was still in progress when this manifest revision was prepared.
+- [PostgreSQL 17 push run 38854746603](https://github.com/nghianguyen150612/Synveil/actions/runs/38854746603):
   `postgres_scheduler_tick_schema_is_current_on_postgresql_17` expected 34 and observed 36.
-- Linux native DEB/RPM packaging was still running when this manifest was updated; it is unrelated
-  to the native iOS gates.
+- [Linux native DEB/RPM run 38854750746](https://github.com/nghianguyen150612/Synveil/actions/runs/38854750746)
+  was still in progress when this manifest revision was prepared; it is unrelated to native iOS
+  gates.
 
-The PR-triggered copies of the four iOS workflows use the same implementation SHA; the push-run
-URLs above are the completed exact-head evidence used for this manifest. No P052 result is reused
-as P053 validation.
+The PR-triggered iOS runs are the exact-head evidence for this manifest. No P052 result is reused as
+P053 validation. After this manifest revision, the source validator passed, all 112 portable support
+tests passed, documentation validation passed, and `git diff --check` passed.
 
 ## Physical-device qualification
 
@@ -310,7 +320,9 @@ prevent completion of the isolated, buildable foundation.
 - Pull request URL/state: [#136](https://github.com/nghianguyen150612/Synveil/pull/136), open.
 - Required reviewer: `ducminh231011`, requested; review result pending.
 - Merge SHA and verified post-merge `ios-app` SHA: none; PR is not merged.
-- Validated P053 implementation source SHA and four exact-head CI URLs: recorded above.
+- Validated P053 implementation source SHA: `bc8761ab8553dd32cc8ca07a5173b3c65d1b3faa`; the
+  four exact-head native CI URLs are recorded above. A documentation-only closeout commit may
+  advance the branch HEAD without changing the validated P053 implementation source.
 - Manifest path: `docs/ios/manifests/PROMPT053_MANIFEST.md`.
 - Next step after P053: satisfy review and exact-head validation gates. Do not start P054 without
   separate authorization.
