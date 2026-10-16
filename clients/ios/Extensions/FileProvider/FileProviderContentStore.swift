@@ -113,8 +113,9 @@ struct FileProviderContentStore: Sendable {
 
         // Reject an impossible declared allocation before streaming or converting UInt64 to Int.
         // Keep the quota check below as a second, live check against existing shared storage.
-        guard validatedManifest.expectedByteLength
-            <= UInt64(FileProviderSharedContainer.maximumProviderStorageBytes)
+        guard
+            validatedManifest.expectedByteLength
+                <= UInt64(FileProviderSharedContainer.maximumProviderStorageBytes)
         else {
             throw FileProviderContentStoreError.storageQuotaExceeded
         }
