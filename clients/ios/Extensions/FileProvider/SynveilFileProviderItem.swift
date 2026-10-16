@@ -6,17 +6,20 @@ final class SynveilFileProviderItem: NSObject, NSFileProviderItem {
     let projected: FileProviderProjectedItem?
     private let domain: FileProviderDomainIdentity
     private let contentStore: FileProviderContentStore
+    private let metadataStore: FileProviderGenerationStore?
     private let authorizedGeneration: UInt64?
 
     init(
         projected: FileProviderProjectedItem?,
         domain: FileProviderDomainIdentity,
         contentStore: FileProviderContentStore = FileProviderContentStore(),
+        metadataStore: FileProviderGenerationStore? = nil,
         authorizedGeneration: UInt64? = nil
     ) {
         self.projected = projected
         self.domain = domain
         self.contentStore = contentStore
+        self.metadataStore = metadataStore
         self.authorizedGeneration = authorizedGeneration
     }
 
@@ -49,7 +52,10 @@ final class SynveilFileProviderItem: NSObject, NSFileProviderItem {
         guard
             let projected = projected, projected.kind == .file,
             let version = projected.fileVersionIdentity,
-            let authorizedGeneration = authorizedGeneration
+            let authorizedGeneration = authorizedGeneration,
+            let metadataStore = metadataStore,
+            let active = try? metadataStore.readManifest(domainID: domain.rawValue),
+            active.authorization.authorizationGeneration == authorizedGeneration
         else { return false }
         guard let result = try? contentStore.verifyAndAccessContent(
             domain: domain,
@@ -60,6 +66,10 @@ final class SynveilFileProviderItem: NSObject, NSFileProviderItem {
         let libraryScope = FileProviderDomainIdentity.fingerprint([
             "synveil-library-v1", result.manifest.libraryID,
         ])
+        guard
+            let current = try? metadataStore.readManifest(domainID: domain.rawValue),
+            current.authorization.authorizationGeneration == authorizedGeneration
+        else { return false }
         return result.manifest.nodeID == projected.identity.resolvedIdentifier
             && projected.identity.libraryFingerprint == libraryScope
             && result.manifest.expectedByteLength == projected.byteLength
