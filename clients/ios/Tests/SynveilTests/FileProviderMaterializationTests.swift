@@ -362,25 +362,29 @@ final class FileProviderMaterializationTests: XCTestCase {
         let reader = FileProviderMetadataReader(store: store, domainID: domain.rawValue)
 
         // This is the same authorized metadata lease that wraps extension content delivery.
-        XCTAssertNoThrow(try reader.withView { _ in
-            _ = try contentStore.verifyAndAccessContent(
-                domain: domain,
-                fileVersionID: versionIdentity.fileVersionID,
-                expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint,
-                expectedAuthorizationGeneration: 1
-            )
-        })
+        XCTAssertNoThrow(
+            try reader.withView { _ in
+                _ = try contentStore.verifyAndAccessContent(
+                    domain: domain,
+                    fileVersionID: versionIdentity.fileVersionID,
+                    expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint,
+                    expectedAuthorizationGeneration: 1
+                )
+            }
+        )
 
         try store.revoke(domainID: domain.rawValue, state: .loggedOut)
 
-        XCTAssertThrowsError(try reader.withView { _ in
-            _ = try contentStore.verifyAndAccessContent(
-                domain: domain,
-                fileVersionID: versionIdentity.fileVersionID,
-                expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint,
-                expectedAuthorizationGeneration: 1
-            )
-        }) { error in
+        XCTAssertThrowsError(
+            try reader.withView { _ in
+                _ = try contentStore.verifyAndAccessContent(
+                    domain: domain,
+                    fileVersionID: versionIdentity.fileVersionID,
+                    expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint,
+                    expectedAuthorizationGeneration: 1
+                )
+            }
+        ) { error in
             XCTAssertEqual(error as? FileProviderSynchronizationError, .unauthorized)
         }
     }
