@@ -156,7 +156,7 @@ struct FileProviderMetadataView {
     private func liveItems(_ record: FileProviderGenerationRecord) throws
         -> [FileProviderProjectedItem]
     {
-        try store.snapshots(record, manifest: manifest).flatMap(\.items).filter { !$0.isTombstone }
+        try store.items(record, manifest: manifest).filter { !$0.isTombstone }
             .sorted { $0.identity.rawValue < $1.identity.rawValue }
     }
 

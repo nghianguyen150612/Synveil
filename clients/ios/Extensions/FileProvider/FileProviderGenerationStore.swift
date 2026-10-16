@@ -5,6 +5,9 @@ import Foundation
 /// short nonblocking shared lease through delivery; revocation takes the exclusive lease. No
 /// callback can deliver old evidence after a successful revocation, even if it loaded it earlier.
 struct FileProviderGenerationStore {
+    static let maximumUnits = 2048
+    static let maximumGenerationBytes = 12 * 1024 * 1024
+    static let maximumGenerationRecords = 50_000
     let container: FileProviderSharedContainer
     let capability: FileProviderCapability
     var protectedDataAvailable: () -> Bool = { true }
@@ -50,7 +53,9 @@ struct FileProviderGenerationStore {
         else { throw FileProviderSynchronizationError.unauthorized }
         guard !manifest.records.isEmpty,
             manifest.records.count <= FileProviderGenerationManifest.retainedGenerations,
-            manifest.records.allSatisfy({ $0.generation > 0 && $0.libraries.count <= 128 }),
+            manifest.records.allSatisfy({
+                $0.generation > 0 && $0.libraries.count <= Self.maximumUnits
+            }),
             zip(manifest.records, manifest.records.dropFirst()).allSatisfy({
                 $0.generation < $1.generation
             })
@@ -58,36 +63,63 @@ struct FileProviderGenerationStore {
         return manifest
     }
 
-    func snapshots(
+    func items(
         _ record: FileProviderGenerationRecord, manifest: FileProviderGenerationManifest
-    ) throws -> [FileProviderMetadataSnapshot] {
+    ) throws -> [FileProviderProjectedItem] {
         var libraries: Set<String> = []
-        return try record.libraries.map { unit in
-            guard libraries.insert(unit.libraryID).inserted,
-                unit.filename.hasSuffix(".json"),
+        var containers: [FileProviderContainerSnapshot] = []
+        var legacy: [FileProviderProjectedItem] = []
+        var bytes = 0
+        var records = 0
+        for unit in record.libraries {
+            guard unit.filename.hasPrefix("unit-"), unit.filename.hasSuffix(".json"),
                 FileProviderSharedContainer.isSafePathComponent(unit.filename)
             else { throw FileProviderSynchronizationError.corrupt }
             let url = try container.url(for: [
                 "generations", manifest.domain.rawValue, unit.filename,
             ])
             let data = try readFile(url, limit: FileProviderSharedContainer.maximumSnapshotBytes)
-            guard FileProviderGenerationCodec.digest(data) == unit.digest else {
-                throw FileProviderSynchronizationError.corrupt
-            }
-            let snapshot = try FileProviderMetadataSnapshot.decode(
-                data, expectedDomain: manifest.domain,
-                expectedOwnerScopeFingerprint: manifest.domain.ownerScopeFingerprint)
-            guard snapshot.libraryID == unit.libraryID,
-                snapshot.projectionGeneration == record.generation
+            bytes += data.count
+            guard bytes <= Self.maximumGenerationBytes,
+                FileProviderGenerationCodec.digest(data) == unit.digest
             else { throw FileProviderSynchronizationError.corrupt }
-            return snapshot
+            if let containerID = unit.containerIdentity {
+                let value = try FileProviderContainerSnapshot.decode(
+                    data, domain: manifest.domain, generation: record.generation)
+                guard value.libraryID == unit.libraryID, value.containerIdentity == containerID
+                else {
+                    throw FileProviderSynchronizationError.corrupt
+                }
+                records += value.ancestors.count + value.children.count
+                containers.append(value)
+            } else {
+                let snapshot = try FileProviderMetadataSnapshot.decode(
+                    data, expectedDomain: manifest.domain,
+                    expectedOwnerScopeFingerprint: manifest.domain.ownerScopeFingerprint)
+                guard libraries.insert(unit.libraryID).inserted,
+                    snapshot.libraryID == unit.libraryID,
+                    snapshot.projectionGeneration == record.generation
+                else { throw FileProviderSynchronizationError.corrupt }
+                records += snapshot.items.count
+                legacy += snapshot.items
+            }
+            guard records <= Self.maximumGenerationRecords else {
+                throw FileProviderSynchronizationError.incomplete
+            }
         }
+        guard libraries.isDisjoint(with: Set(containers.map(\.libraryID))),
+            libraries.union(containers.map(\.libraryID)).count <= 128
+        else { throw FileProviderSynchronizationError.corrupt }
+        return try legacy
+            + FileProviderContainerSnapshot.assemble(
+                containers, domain: manifest.domain, generation: record.generation)
     }
 
     /// Called only under the writer lease, after the host source has revalidated its session.
     func commit(
         domain: FileProviderDomainIdentity, evidence: FileProviderAuthorizationEvidence,
-        generation: UInt64, snapshots: [FileProviderMetadataSnapshot], catalog: Set<String>
+        generation: UInt64, snapshots: [FileProviderMetadataSnapshot], catalog: Set<String>,
+        containerSnapshots: [FileProviderContainerSnapshot] = []
     ) throws {
         guard
             case .permittedForMetadataRead = FileProviderAuthorizationBoundary.evaluate(
@@ -95,8 +127,15 @@ struct FileProviderGenerationStore {
                 protectedDataAvailable: protectedDataAvailable(), capability: capability)
         else { throw FileProviderSynchronizationError.unauthorized }
         guard generation > 0, catalog.count <= 128,
-            Set(snapshots.map(\.libraryID)) == catalog, snapshots.count == catalog.count,
-            snapshots.allSatisfy({ $0.projectionGeneration == generation })
+            Set(snapshots.map(\.libraryID)).union(containerSnapshots.map(\.libraryID)) == catalog,
+            Set(snapshots.map(\.libraryID)).count == snapshots.count,
+            Set(snapshots.map(\.libraryID)).isDisjoint(
+                with: Set(containerSnapshots.map(\.libraryID))),
+            snapshots.count + containerSnapshots.count <= Self.maximumUnits,
+            snapshots.allSatisfy({ $0.projectionGeneration == generation }),
+            snapshots.reduce(0, { $0 + $1.items.count })
+                + containerSnapshots.reduce(0, { $0 + $1.ancestors.count + $1.children.count })
+                <= Self.maximumGenerationRecords
         else { throw FileProviderSynchronizationError.incomplete }
         let directory = try container.generationDirectory(domainID: domain.rawValue)
         let commitURL = directory.appendingPathComponent("commit.json")
@@ -123,21 +162,39 @@ struct FileProviderGenerationStore {
             }
         }
         // Validate every unit before any disk mutation. Encoding also enforces the 8 MiB bound.
-        let encoded = try snapshots.sorted { $0.libraryID < $1.libraryID }.map { snapshot in
-            try snapshot.encoded(
+        let partitioned = try FileProviderContainerSnapshot.assemble(
+            containerSnapshots, domain: domain, generation: generation)
+        let newItems = snapshots.flatMap(\.items) + partitioned
+        var encoded: [(String, String?, Data)] = []
+        var byteCount = 0
+        for snapshot in snapshots.sorted(by: { $0.libraryID < $1.libraryID }) {
+            let data = try snapshot.encoded(
                 expectedDomain: domain, expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint)
+            byteCount += data.count
+            guard byteCount <= Self.maximumGenerationBytes else {
+                throw FileProviderMetadataContractError.snapshotTooLarge
+            }
+            encoded.append((snapshot.libraryID, nil, data))
         }
-        // Reclaim only orphan files; the current commit and every retained reader generation stay.
+        for unit in containerSnapshots.sorted(by: { $0.containerIdentity < $1.containerIdentity }) {
+            let data = try unit.encoded(domain: domain, generation: generation)
+            byteCount += data.count
+            guard byteCount <= Self.maximumGenerationBytes else {
+                throw FileProviderMetadataContractError.snapshotTooLarge
+            }
+            encoded.append((unit.libraryID, unit.containerIdentity, data))
+        }
         try compact(directory: directory, retaining: existingRecords)
         var units: [FileProviderLibraryUnit] = []
-        for (snapshot, data) in zip(snapshots.sorted { $0.libraryID < $1.libraryID }, encoded) {
+        for (libraryID, containerID, data) in encoded {
             let filename = "unit-\(UUID().uuidString).json"
             try container.checkGenerationQuota(addingBytes: data.count)
             try write(data, to: directory.appendingPathComponent(filename))
             units.append(
                 FileProviderLibraryUnit(
-                    libraryID: snapshot.libraryID, filename: filename,
-                    digest: FileProviderGenerationCodec.digest(data)))
+                    libraryID: libraryID, filename: filename,
+                    digest: FileProviderGenerationCodec.digest(data), containerIdentity: containerID
+                ))
             try fault("unitDurable")
         }
         // Coarse container notifications are bounded and deduplicated. Old parents are included
@@ -148,14 +205,12 @@ struct FileProviderGenerationStore {
         var signals = Set(acknowledged ? [] : previous?.records.flatMap(\.pendingSignals) ?? [])
         signals.insert(FileProviderMetadataReader.root)
         signals.insert(FileProviderMetadataReader.workingSet)
-        let oldSnapshots =
-            try previous?.records.last.map { try self.snapshots($0, manifest: previous!) } ?? []
-        let oldItems = Dictionary(
-            uniqueKeysWithValues: oldSnapshots.flatMap(\.items).map { ($0.identity.rawValue, $0) })
-        let newItems = Dictionary(
-            uniqueKeysWithValues: snapshots.flatMap(\.items).map { ($0.identity.rawValue, $0) })
-        for id in Set(oldItems.keys).union(newItems.keys) where oldItems[id] != newItems[id] {
-            for item in [oldItems[id], newItems[id]].compactMap({ $0 }) {
+        let oldItems =
+            try previous?.records.last.map { try self.items($0, manifest: previous!) } ?? []
+        let oldByID = Dictionary(uniqueKeysWithValues: oldItems.map { ($0.identity.rawValue, $0) })
+        let newByID = Dictionary(uniqueKeysWithValues: newItems.map { ($0.identity.rawValue, $0) })
+        for id in Set(oldByID.keys).union(newByID.keys) where oldByID[id] != newByID[id] {
+            for item in [oldByID[id], newByID[id]].compactMap({ $0 }) {
                 if let parent = item.parentIdentity { signals.insert(parent.rawValue) }
                 if item.kind == .libraryRoot { signals.insert(item.identity.rawValue) }
             }
@@ -300,11 +355,26 @@ struct FileProviderGenerationStore {
 
     private func compact(directory: URL, retaining records: [FileProviderGenerationRecord]) throws {
         let keep = Set(records.flatMap(\.libraries).map(\.filename))
-        let files = try FileManager.default.contentsOfDirectory(
-            at: directory, includingPropertiesForKeys: nil)
-        guard files.count <= 8192 else {
-            throw FileProviderSharedContainerError.storageQuotaExceeded
+        var failed = false
+        guard
+            let enumerator = FileManager.default.enumerator(
+                at: directory, includingPropertiesForKeys: nil,
+                options: [.skipsSubdirectoryDescendants],
+                errorHandler: { _, _ in
+                    failed = true
+                    return false
+                })
+        else {
+            throw FileProviderSynchronizationError.unavailable
         }
+        var files: [URL] = []
+        for case let file as URL in enumerator {
+            guard files.count < 8192 else {
+                throw FileProviderSharedContainerError.storageQuotaExceeded
+            }
+            files.append(file)
+        }
+        guard !failed else { throw FileProviderSynchronizationError.unavailable }
         for file in files
         where file.lastPathComponent.hasPrefix("unit-")
             || file.lastPathComponent.hasPrefix(".stage-")

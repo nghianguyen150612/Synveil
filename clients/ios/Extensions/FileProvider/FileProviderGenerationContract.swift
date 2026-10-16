@@ -2,8 +2,8 @@ import CryptoKit
 import Foundation
 
 /// v2 is a domain commit envelope, not a reinterpretation of partial v1 snapshots.
-/// Each Library unit remains a complete, independently validated v1 hierarchy. The catalog is
-/// complete for this authorization scope. Oversize units are rejected; no truncation is allowed.
+/// Units are complete v1 Library hierarchies or v2 container partitions. The catalog and the
+/// assembled domain graph are complete for this authorization scope; no truncation is allowed.
 struct FileProviderGenerationManifest: Codable {
     static let format = 2
     static let retainedGenerations = 3
@@ -23,6 +23,7 @@ struct FileProviderLibraryUnit: Codable {
     let libraryID: String
     let filename: String
     let digest: String
+    var containerIdentity: String? = nil
 }
 
 enum FileProviderSynchronizationError: Error, Equatable {

@@ -559,6 +559,114 @@ final class FileProviderEnumerationTests: XCTestCase {
         XCTAssertEqual(try FileProviderCursor.decode(anchor()).generation, 1)
     }
 
+    private func partitions(_ generation: UInt64, count: Int = 3) throws
+        -> [FileProviderContainerSnapshot]
+    {
+        let first = try snapshot(generation, count: count)
+        let rootItem = first.items[0]
+        let folderItem = first.items[1]
+        return [
+            FileProviderContainerSnapshot(
+                schemaVersion: 2, domainIdentity: domain.rawValue,
+                ownerScopeFingerprint: domain.ownerScopeFingerprint, libraryID: library,
+                projectionGeneration: generation, completeness: .complete, ancestors: [rootItem],
+                children: [folderItem]),
+            FileProviderContainerSnapshot(
+                schemaVersion: 2, domainIdentity: domain.rawValue,
+                ownerScopeFingerprint: domain.ownerScopeFingerprint, libraryID: library,
+                projectionGeneration: generation, completeness: .complete,
+                ancestors: [rootItem, folderItem], children: Array(first.items.dropFirst(2))),
+        ]
+    }
+
+    private func publishPartitions(_ generation: UInt64, units: [FileProviderContainerSnapshot])
+        throws
+    {
+        try store.withLease(domainID: domain.rawValue, writing: true) {
+            try store.commit(
+                domain: domain,
+                evidence: FileProviderAuthorizationEvidence(
+                    domain: domain, state: .authorized, authorizationGeneration: 1),
+                generation: generation, snapshots: [], catalog: [library], containerSnapshots: units
+            )
+        }
+    }
+
+    func testV2PartitionsAndV1CompatibilityHaveIdenticalEnumeration() throws {
+        try publish(1, [snapshot(1)])
+        let old = try anchor()
+        try publishPartitions(2, units: partitions(2))
+        let replay = try changes(old)
+        XCTAssertTrue(replay.updated.isEmpty)
+        XCTAssertTrue(replay.deleted.isEmpty)
+        XCTAssertEqual(
+            try reader.withView { try $0.page(container: folder.rawValue, token: nil).items.count },
+            3)
+    }
+
+    func testV2RejectsMissingFolderListingAndMismatchedAncestorEvidence() throws {
+        let units = try partitions(1)
+        XCTAssertThrowsError(try publishPartitions(1, units: [units[0]]))
+        let wrongAncestor = item(
+            root, parent: .domainRoot(domain: domain), kind: .libraryRoot, name: "Other")
+        let mismatch = FileProviderContainerSnapshot(
+            schemaVersion: 2, domainIdentity: domain.rawValue,
+            ownerScopeFingerprint: domain.ownerScopeFingerprint, libraryID: library,
+            projectionGeneration: 1,
+            completeness: .complete, ancestors: [wrongAncestor, units[1].ancestors[1]],
+            children: units[1].children)
+        XCTAssertThrowsError(try publishPartitions(1, units: [units[0], mismatch]))
+        XCTAssertThrowsError(try publishPartitions(1, units: [units[0], units[1], units[1]]))
+    }
+
+    func testLargeLibrarySpansBoundedUnitsBeyondV1SnapshotLimit() throws {
+        let baseline = try snapshot(1, count: 5000)
+        let rootItem = baseline.items[0]
+        let firstFolder = baseline.items[1]
+        let secondFolderID = try FileProviderItemIdentity.node(
+            domain: domain, libraryID: library, nodeID: id(30))
+        let secondFolder = item(secondFolderID, parent: root, kind: .folder, name: "Second")
+        let firstChildren = Array(baseline.items.dropFirst(2))
+        let secondChildren = try (0..<5000).map { index in
+            item(
+                try FileProviderItemIdentity.node(
+                    domain: domain, libraryID: library, nodeID: id(6000 + index)),
+                parent: secondFolderID, kind: .file, name: "second-\(index)")
+        }
+        let units = [
+            ([rootItem], [firstFolder, secondFolder]), ([rootItem, firstFolder], firstChildren),
+            ([rootItem, secondFolder], secondChildren),
+        ].map { ancestors, children in
+            FileProviderContainerSnapshot(
+                schemaVersion: 2, domainIdentity: domain.rawValue,
+                ownerScopeFingerprint: domain.ownerScopeFingerprint, libraryID: library,
+                projectionGeneration: 1, completeness: .complete, ancestors: ancestors,
+                children: children)
+        }
+        XCTAssertTrue(units.allSatisfy { $0.ancestors.count + $0.children.count <= 10_000 })
+        try publishPartitions(1, units: units)
+        try reader.withView { view in
+            XCTAssertEqual(try store.items(view.latest, manifest: view.manifest).count, 10_003)
+            XCTAssertEqual(try view.page(container: folder.rawValue, token: nil).items.count, 100)
+            XCTAssertEqual(
+                try view.page(container: secondFolderID.rawValue, token: nil).items.count, 100)
+        }
+    }
+
+    func testV2PartialFutureAndOversizedUnitsFailClosed() throws {
+        let units = try partitions(1)
+        for version in [2, 999] {
+            let partial = FileProviderContainerSnapshot(
+                schemaVersion: version, domainIdentity: domain.rawValue,
+                ownerScopeFingerprint: domain.ownerScopeFingerprint, libraryID: library,
+                projectionGeneration: 1, completeness: .partial, ancestors: units[0].ancestors,
+                children: units[0].children)
+            XCTAssertThrowsError(try publishPartitions(1, units: [partial, units[1]]))
+        }
+        let oversized = try partitions(1, count: 10_000)
+        XCTAssertThrowsError(try publishPartitions(1, units: oversized))
+    }
+
     @MainActor
     func testSignalingCoalescesAndAcknowledgesOnlyCompletedDelivery() async throws {
         try publish(1, [snapshot(1)])

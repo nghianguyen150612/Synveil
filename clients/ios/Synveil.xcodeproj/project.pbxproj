@@ -263,6 +263,8 @@
 		E05400000000000000000204 /* FileProviderMetadataSignaling.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000004 /* FileProviderMetadataSignaling.swift */; };
 		E05400000000000000000205 /* SynveilFileProviderItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000005 /* SynveilFileProviderItem.swift */; };
 		E05400000000000000000301 /* FileProviderEnumerationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000007 /* FileProviderEnumerationTests.swift */; };
+		E05400000000000000000109 /* FileProviderContainerSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000008 /* FileProviderContainerSnapshot.swift */; };
+		E05400000000000000000209 /* FileProviderContainerSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000008 /* FileProviderContainerSnapshot.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -545,6 +547,7 @@
 		F05400000000000000000005 /* SynveilFileProviderItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SynveilFileProviderItem.swift; sourceTree = "<group>"; };
 		F05400000000000000000006 /* FileProviderMetadataPublicationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/FileProvider/FileProviderMetadataPublicationCoordinator.swift; sourceTree = "<group>"; };
 		F05400000000000000000007 /* FileProviderEnumerationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/FileProviderEnumerationTests.swift; sourceTree = "<group>"; };
+		F05400000000000000000008 /* FileProviderContainerSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderContainerSnapshot.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -920,6 +923,7 @@
 			isa = PBXGroup;
 			children = (
 				F0530000000000000000010A /* SynveilFileProviderExtension.swift */,
+				F05400000000000000000008 /* FileProviderContainerSnapshot.swift */,
 				F05400000000000000000005 /* SynveilFileProviderItem.swift */,
 				F05400000000000000000004 /* FileProviderMetadataSignaling.swift */,
 				F05400000000000000000003 /* FileProviderMetadataReader.swift */,
@@ -1069,6 +1073,7 @@
 				E05300000000000000000205 /* FileProviderSharedContainer.swift in Sources */,
 				E05300000000000000000206 /* FileProviderMetadataContract.swift in Sources */,
 				E05300000000000000000207 /* FileProviderLifecycle.swift in Sources */,
+				E05400000000000000000109 /* FileProviderContainerSnapshot.swift in Sources */,
 				E05400000000000000000108 /* FileProviderMetadataPublicationCoordinator.swift in Sources */,
 				E05400000000000000000107 /* FileProviderEnumerator.swift in Sources */,
 				E05400000000000000000106 /* FileProviderErrorMapper.swift in Sources */,
@@ -1320,6 +1325,7 @@
 				E05300000000000000000217 /* FileProviderErrorMapper.swift in Sources */,
 				E05300000000000000000218 /* FileProviderEnumerator.swift in Sources */,
 				E05300000000000000000219 /* FileProviderLifecycle.swift in Sources */,
+				E05400000000000000000209 /* FileProviderContainerSnapshot.swift in Sources */,
 				E05400000000000000000205 /* SynveilFileProviderItem.swift in Sources */,
 				E05400000000000000000204 /* FileProviderMetadataSignaling.swift in Sources */,
 				E05400000000000000000203 /* FileProviderMetadataReader.swift in Sources */,

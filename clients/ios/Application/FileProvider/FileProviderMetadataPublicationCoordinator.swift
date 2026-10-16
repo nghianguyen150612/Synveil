@@ -10,6 +10,7 @@ struct FileProviderConfirmedPublication {
     let completeCatalog: Set<String>
     let catalogIsComplete: Bool
     let snapshots: [FileProviderMetadataSnapshot]
+    var containerSnapshots: [FileProviderContainerSnapshot] = []
     let serverConfirmedCut: String
     let locallyAppliedCut: String
     let containsUnresolvedMutations: Bool
@@ -59,7 +60,8 @@ final class FileProviderMetadataPublicationCoordinator {
             try store.commit(
                 domain: publication.domain, evidence: publication.evidence,
                 generation: publication.generation, snapshots: publication.snapshots,
-                catalog: publication.completeCatalog)
+                catalog: publication.completeCatalog,
+                containerSnapshots: publication.containerSnapshots)
         }
         // Signal only a fully committed generation, and never treat a signal as journal evidence.
         try await signals?.deliverPending(domainID: publication.domain.rawValue)

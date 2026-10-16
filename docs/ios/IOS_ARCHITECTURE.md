@@ -696,3 +696,28 @@ All developers and LLM agents working on the Synveil iOS client MUST obey these 
 * **P048–P052 (Native iOS Experience)**: Must integrate `BGAppRefreshTask`, Quick Look, and Share Sheet.
 * **P053–P055 (File Provider)**: The owner-authorized post-baseline workstream uses `NSFileProviderReplicatedExtension` in an isolated target and a narrow App Group metadata projection. P053 foundations keep registration, network, content, mutations, Keychain sharing, and SQLite sharing disabled.
 * **P056–P058 (PhotoKit)**: Must build camera roll sync on top of the shared `TransferEngine`.
+
+## P054 read-only File Provider metadata synchronization
+
+P054 extends the P053 replicated extension with authorized native item adaptation, item lookup,
+root/Library/folder/working-set enumeration, bounded pages, durable anchors and generation comparison.
+A host-only publication coordinator accepts a complete server-confirmed catalog and transaction-bound
+canonical metadata capture; it does not publish ordinary offline SQLite reads. Existing partial,
+unacknowledged or snapshot-only records cannot satisfy this contract. Production publication remains
+disabled until the capture source and session withdrawal integration are qualified, and production
+domain registration remains disabled pending signed device acceptance.
+
+The explicit v2 commit envelope accepts P053 v1 complete Library snapshots and v2 complete container
+partitions. A Library may span bounded units; the complete assembled graph is validated before commit.
+Immutable units plus one manifest prevent cross-generation catalog/tree mixing. Three retained
+complete generations provide a bounded durable comparison journal. A synchronized rollback/uncertainty
+marker fences interrupted manifest replacement, and a nonblocking cross-process lease covers metadata
+delivery and authorization withdrawal. Logout, revocation and account switching deny further reads;
+a replacement authorization epoch expires old pages/anchors. SQLite stays app-private at schema v9.
+
+The extension has no DeviceBearer, Keychain, SQLite, host lifecycle/recovery or network access. Content
+materialization, Files mutations, automatic registration and P046/P051 background transfers remain
+unavailable. Files remains `IOS_DEFERRED_AFTER_V0_1`. See the
+[P054 manifest](manifests/PROMPT054_MANIFEST.md) and
+[extension contract](../../clients/ios/Extensions/FileProvider/README.md) for bounds, formats, tests,
+qualification procedures and P055 prerequisites.
