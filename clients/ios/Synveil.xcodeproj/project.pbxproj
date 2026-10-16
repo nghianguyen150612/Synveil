@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		E05500000000000000000302 /* SynveilFileProviderExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0530000000000000000010A /* SynveilFileProviderExtension.swift */; };
 		A10000012C00000000000001 /* SynveilApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000001 /* SynveilApp.swift */; };
 		A10000012C00000000000002 /* BootstrapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000002 /* BootstrapView.swift */; };
 		A10000012C00000000000003 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000003 /* Assets.xcassets */; };
@@ -1252,6 +1253,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E05500000000000000000302 /* SynveilFileProviderExtension.swift in Sources */,
 				E0530000000000000000021D /* FileProviderFoundationTests.swift in Sources */,
 				E05400000000000000000301 /* FileProviderEnumerationTests.swift in Sources */,
 				E05500000000000000000301 /* FileProviderMaterializationTests.swift in Sources */,
