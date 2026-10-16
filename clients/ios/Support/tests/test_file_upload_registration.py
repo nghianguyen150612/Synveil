@@ -15,7 +15,7 @@ class FileUploadRegistrationTests(unittest.TestCase):
             r"isa = PBXSourcesBuildPhase;.*?files = \((.*?)\);", project, re.S
         )
         groups = re.findall(r"isa = PBXGroup;.*?children = \((.*?)\);", project, re.S)
-        self.assertEqual(len(source_phases), 2)
+        self.assertEqual(len(source_phases), 3)
 
         sources = [
             "Application/Transfer/AuthenticatedUploadRepository.swift",
@@ -51,8 +51,11 @@ class FileUploadRegistrationTests(unittest.TestCase):
             )
             self.assertIsNotNone(build, path)
             target = 1 if path.startswith("Tests/") else 0
-            self.assertIn(build.group(1), source_phases[target], path)
-            self.assertNotIn(build.group(1), source_phases[1 - target], path)
+            for phase_index, source_phase in enumerate(source_phases):
+                if phase_index == target:
+                    self.assertIn(build.group(1), source_phase, path)
+                else:
+                    self.assertNotIn(build.group(1), source_phase, path)
 
     def test_picker_is_single_file_and_controls_are_explicit(self):
         controls = (IOS / "Features/Transfer/FileUploadControls.swift").read_text()

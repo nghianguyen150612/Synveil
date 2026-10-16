@@ -41,12 +41,14 @@ class AuthenticationRecoverySafetyTests(unittest.TestCase):
     def test_new_files_are_registered_in_the_correct_xcode_targets(self):
         project = (IOS / "Synveil.xcodeproj/project.pbxproj").read_text()
         phases = re.findall(r"isa = PBXSourcesBuildPhase;.*?files = \((.*?)\);", project, re.S)
-        self.assertEqual(len(phases), 2)
+        self.assertEqual(len(phases), 3)
         for name in ["AuthenticationRecoveryPresentation.swift", "AuthenticationRecoveryView.swift"]:
             self.assertIn(f"{name} in Sources", phases[0])
             self.assertNotIn(f"{name} in Sources", phases[1])
+            self.assertNotIn(f"{name} in Sources", phases[2])
         self.assertIn("AuthenticationRecoveryTests.swift in Sources", phases[1])
         self.assertNotIn("AuthenticationRecoveryTests.swift in Sources", phases[0])
+        self.assertNotIn("AuthenticationRecoveryTests.swift in Sources", phases[2])
 
 
 if __name__ == "__main__":

@@ -99,6 +99,16 @@ Phase H: Hardening, Validation, & v0.1 Release Readiness
   * Production IPA release build setup.
 * **Validation**: Complete macOS CI test suite pass, clean security/privacy audit, testable v0.1 release artifact.
 
+## Owner-authorized post-baseline extensions
+
+The v0.1 release roadmap and feature claims remain defined by the product contract. After that
+baseline, the owner authorized a separate P053–P055 File Provider workstream. P053 creates an
+isolated, fail-closed `NSFileProviderReplicatedExtension` foundation; it does not provide
+production Apple Files integration or change v0.1 release eligibility. P054 may add authorized
+remote enumeration and metadata change propagation after its own authorization. P055 content
+materialization and Files-originated mutations remain subject to a separate safety design and
+roadmap confirmation. PhotoKit remains deferred to P056–P058.
+
 
 ## P048 implementation record
 
