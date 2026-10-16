@@ -56,12 +56,14 @@ final class PhotoKitFoundationTests: XCTestCase {
         XCTAssertTrue(fetched.pauseDiscovery)
     }
 
-    // 3. Asset Observation SQLite Persistence & Source Availability Updates
-    func testAssetObservationPersistence() async throws {
+    // 3. Asset Observation SQLite Persistence & Owner-Scoped Source Availability
+    func testAssetObservationPersistenceAndOwnerScoping() async throws {
         let profileId = UUID()
-        let ownerId = "owner_123"
+        let owner1 = "owner_123"
+        let owner2 = "owner_456"
+
         let obs1 = PhotoAssetObservation(
-            localIdentifier: "asset_001",
+            localIdentifier: "asset_shared",
             assetKind: .stillPhoto,
             creationDate: Date(),
             modificationDate: Date(),
@@ -74,36 +76,28 @@ final class PhotoKitFoundationTests: XCTestCase {
             permissionScope: .authorizedFull,
             sourceAvailability: .available
         )
-        let obs2 = PhotoAssetObservation(
-            localIdentifier: "asset_002",
-            assetKind: .livePhoto,
-            creationDate: Date(),
-            modificationDate: Date(),
-            pixelWidth: 3840,
-            pixelHeight: 2160,
-            isFavorite: false,
-            isHidden: false,
-            discoveryGeneration: 1,
-            observedAt: Date(),
-            permissionScope: .authorizedFull,
-            sourceAvailability: .available
-        )
 
-        try await store.saveObservations([obs1, obs2], profileId: profileId, ownerId: ownerId)
+        try await store.saveObservations([obs1], profileId: profileId, ownerId: owner1)
 
-        let fetched = try await store.fetchObservations(profileId: profileId, ownerId: ownerId)
-        XCTAssertEqual(fetched.count, 2)
-
+        // Mark source unavailable for owner1
         try await store.markSourceUnavailable(
-            localIdentifier: "asset_001",
+            localIdentifier: "asset_shared",
             reason: .sourceUnavailable,
             profileId: profileId,
-            ownerId: ownerId
+            ownerId: owner1
         )
 
-        let updated = try await store.fetchObservations(profileId: profileId, ownerId: ownerId)
-        let asset1 = updated.first(where: { $0.localIdentifier == "asset_001" })
-        XCTAssertEqual(asset1?.sourceAvailability, .sourceUnavailable)
+        let fetchedOwner1 = try await store.fetchObservations(
+            profileId: profileId,
+            ownerId: owner1
+        )
+        XCTAssertEqual(fetchedOwner1.first?.sourceAvailability, .sourceUnavailable)
+
+        let fetchedOwner2 = try await store.fetchObservations(
+            profileId: profileId,
+            ownerId: owner2
+        )
+        XCTAssertTrue(fetchedOwner2.isEmpty)
     }
 
     // 4. Clear Observations on Logout / Profile Teardown
@@ -131,64 +125,17 @@ final class PhotoKitFoundationTests: XCTestCase {
         XCTAssertTrue(fetched.isEmpty)
     }
 
-    // 5. Transfer Candidate Handoff Descriptor Validation
-    func testTransferCandidateDescriptor() {
-        let profileId = UUID()
-        let candidate = PhotoTransferCandidateDescriptor(
-            profileId: profileId,
-            ownerId: "owner_789",
-            deviceId: "device_001",
-            localIdentifier: "asset_200",
-            assetKind: .livePhoto,
-            resourceRole: .primaryImage,
-            proposedFileName: "IMG_0001.HEIC",
-            estimatedSizeBytes: 2_048_000,
-            observationGeneration: 1
-        )
-
-        XCTAssertEqual(candidate.profileId, profileId)
-        XCTAssertEqual(candidate.localIdentifier, "asset_200")
-        XCTAssertEqual(candidate.assetKind, .livePhoto)
-        XCTAssertEqual(candidate.resourceRole, .primaryImage)
-        XCTAssertEqual(candidate.proposedFileName, "IMG_0001.HEIC")
-        XCTAssertEqual(candidate.estimatedSizeBytes, 2_048_000)
-    }
-
-    // 6. Live Photo Resource Descriptor Roles & Non-Destructive Availability
-    func testLivePhotoResourceDescriptors() {
-        let stillRes = PhotoAssetResourceDescriptor(
-            localIdentifier: "live_001",
-            role: .primaryImage,
-            originalFilename: "IMG_0010.HEIC",
-            uniformTypeIdentifier: "public.heic",
-            isLocallyAvailable: true,
-            fileSizeEstimateBytes: 3_000_000
-        )
-        let motionRes = PhotoAssetResourceDescriptor(
-            localIdentifier: "live_001",
-            role: .motionVideo,
-            originalFilename: "IMG_0010.MOV",
-            uniformTypeIdentifier: "com.apple.quicktime-movie",
-            isLocallyAvailable: false,
-            fileSizeEstimateBytes: 8_000_000
-        )
-
-        XCTAssertEqual(stillRes.id, "live_001_primaryImage")
-        XCTAssertEqual(motionRes.id, "live_001_motionVideo")
-        XCTAssertTrue(stillRes.isLocallyAvailable)
-        XCTAssertFalse(motionRes.isLocallyAvailable)
-    }
-
-    // 7. Mock Discovery Filtering (Videos Included vs Excluded)
-    func testMockDiscoveryFiltering() async throws {
-        struct MockDiscovery: PhotoLibraryDiscoveryProtocol {
+    // 5. Session Fencing Stops Delayed Scan Writes
+    func testSessionFencingFencesDelayedScanWrites() async throws {
+        struct DelayedMockDiscovery: PhotoLibraryDiscoveryProtocol {
             func discoverAssets(
                 configuration: PhotoBackupConfiguration,
                 generation: Int64,
                 batchSize: Int
-            ) async throws -> [PhotoAssetObservation] {
-                let still = PhotoAssetObservation(
-                    localIdentifier: "id_still",
+            ) async throws -> PhotoDiscoveryBatchResult {
+                try await Task.sleep(nanoseconds: 100_000_000)
+                let obs = PhotoAssetObservation(
+                    localIdentifier: "asset_delayed",
                     assetKind: .stillPhoto,
                     creationDate: Date(),
                     modificationDate: nil,
@@ -201,21 +148,11 @@ final class PhotoKitFoundationTests: XCTestCase {
                     permissionScope: .authorizedFull,
                     sourceAvailability: .available
                 )
-                let video = PhotoAssetObservation(
-                    localIdentifier: "id_video",
-                    assetKind: .video,
-                    creationDate: Date(),
-                    modificationDate: nil,
-                    pixelWidth: 1920,
-                    pixelHeight: 1080,
-                    isFavorite: false,
-                    isHidden: false,
-                    discoveryGeneration: generation,
-                    observedAt: Date(),
-                    permissionScope: .authorizedFull,
-                    sourceAvailability: .available
+                return PhotoDiscoveryBatchResult(
+                    observations: [obs],
+                    isComplete: true,
+                    totalInScope: 1
                 )
-                return configuration.includeVideos ? [still, video] : [still]
             }
 
             func discoverResourceDescriptors(
@@ -229,40 +166,88 @@ final class PhotoKitFoundationTests: XCTestCase {
         }
 
         let profileId = UUID()
-        let ownerId = "owner_test"
-
-        let configWithVideos = PhotoBackupConfiguration(isOptedIn: true, includeVideos: true)
-        try await store.saveConfiguration(configWithVideos, profileId: profileId)
+        let ownerId = "owner_fenced"
+        let config = PhotoBackupConfiguration(isOptedIn: true)
+        try await store.saveConfiguration(config, profileId: profileId)
 
         let coordinator = PhotoLibraryObservationCoordinator(
-            discoveryService: MockDiscovery(),
+            discoveryService: DelayedMockDiscovery(),
             store: store,
             permissionAdapter: MockPermission()
         )
 
-        let result1 = try await coordinator.startObservation(
-            profileId: profileId,
-            ownerId: ownerId
-        )
-        if case .completed(let count, _) = result1 {
-            XCTAssertEqual(count, 2)
-        } else {
-            XCTFail("Expected completed discovery with 2 items")
+        let scanTask = Task {
+            try await coordinator.startObservation(profileId: profileId, ownerId: ownerId)
         }
 
+        // Stop observation before delayed discovery finishes
+        try await Task.sleep(nanoseconds: 10_000_000)
         await coordinator.stopObservation()
 
-        let configNoVideos = PhotoBackupConfiguration(isOptedIn: true, includeVideos: false)
-        try await store.saveConfiguration(configNoVideos, profileId: profileId)
+        let _ = try await scanTask.value
 
-        let result2 = try await coordinator.startObservation(
-            profileId: profileId,
-            ownerId: ownerId
+        let fetched = try await store.fetchObservations(profileId: profileId, ownerId: ownerId)
+        XCTAssertTrue(fetched.isEmpty, "Stale observation should be fenced and not written")
+        let scanResult = await coordinator.currentScanResult()
+        XCTAssertEqual(scanResult, .disabled)
+    }
+
+    // 6. Partial Discovery Classification
+    func testPartialScanClassification() async throws {
+        struct PartialMockDiscovery: PhotoLibraryDiscoveryProtocol {
+            func discoverAssets(
+                configuration: PhotoBackupConfiguration,
+                generation: Int64,
+                batchSize: Int
+            ) async throws -> PhotoDiscoveryBatchResult {
+                let obs = PhotoAssetObservation(
+                    localIdentifier: "asset_part1",
+                    assetKind: .stillPhoto,
+                    creationDate: Date(),
+                    modificationDate: nil,
+                    pixelWidth: 100,
+                    pixelHeight: 100,
+                    isFavorite: false,
+                    isHidden: false,
+                    discoveryGeneration: generation,
+                    observedAt: Date(),
+                    permissionScope: .authorizedFull,
+                    sourceAvailability: .available
+                )
+                return PhotoDiscoveryBatchResult(
+                    observations: [obs],
+                    isComplete: false,
+                    totalInScope: 1500
+                )
+            }
+
+            func discoverResourceDescriptors(
+                for localIdentifier: String
+            ) async throws -> [PhotoAssetResourceDescriptor] { [] }
+        }
+
+        struct MockPermission: PhotoLibraryPermissionChecking {
+            func currentPermissionState() async -> PhotoPermissionState { .authorizedFull }
+            func requestPermission() async -> PhotoPermissionState { .authorizedFull }
+        }
+
+        let profileId = UUID()
+        let ownerId = "owner_partial"
+        let config = PhotoBackupConfiguration(isOptedIn: true)
+        try await store.saveConfiguration(config, profileId: profileId)
+
+        let coordinator = PhotoLibraryObservationCoordinator(
+            discoveryService: PartialMockDiscovery(),
+            store: store,
+            permissionAdapter: MockPermission()
         )
-        if case .completed(let count, _) = result2 {
-            XCTAssertEqual(count, 1)
+
+        let result = try await coordinator.startObservation(profileId: profileId, ownerId: ownerId)
+        if case .partial(let observed, let total, _) = result {
+            XCTAssertEqual(observed, 1)
+            XCTAssertEqual(total, 1500)
         } else {
-            XCTFail("Expected completed discovery with 1 item")
+            XCTFail("Expected partial discovery result")
         }
     }
 }

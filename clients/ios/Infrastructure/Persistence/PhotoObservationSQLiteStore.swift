@@ -85,7 +85,8 @@ public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol, @
                     try self.performMarkSourceUnavailable(
                         localIdentifier: localIdentifier,
                         reason: reason,
-                        profileId: profileId
+                        profileId: profileId,
+                        ownerId: ownerId
                     )
                     continuation.resume()
                 } catch {
@@ -312,11 +313,12 @@ public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol, @
     private func performMarkSourceUnavailable(
         localIdentifier: String,
         reason: PhotoSourceAvailability,
-        profileId: UUID
+        profileId: UUID,
+        ownerId: String
     ) throws {
         let sql = """
             UPDATE photo_asset_observations SET source_availability=? \
-            WHERE local_identifier=? AND profile_id=?;
+            WHERE local_identifier=? AND profile_id=? AND owner_id=?;
             """
         var statement: OpaquePointer?
         if sqlite3_prepare_v2(db, sql, -1, &statement, nil) != SQLITE_OK {
@@ -334,6 +336,7 @@ public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol, @
         bindText(statement, index: 1, text: reason.rawValue)
         bindText(statement, index: 2, text: localIdentifier)
         bindText(statement, index: 3, text: profileId.uuidString)
+        bindText(statement, index: 4, text: ownerId)
 
         if sqlite3_step(statement) != SQLITE_DONE {
             throw NSError(

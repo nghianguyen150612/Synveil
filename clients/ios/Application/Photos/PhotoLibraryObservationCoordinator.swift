@@ -13,6 +13,8 @@ public final class PhotoLibraryObservationCoordinator: PhotoLibraryObservationCo
     private var activeOwnerId: String?
     private var isObserving = false
     private var currentGeneration: Int64 = 1
+    private var sessionEpoch: UInt64 = 0
+    private var activeScanTask: Task<Void, Never>?
     private var lastScanResult: PhotoDiscoveryScanResult = .disabled
 
     public init(
@@ -48,34 +50,63 @@ public final class PhotoLibraryObservationCoordinator: PhotoLibraryObservationCo
         }
 
         lock.lock()
+        self.sessionEpoch &+= 1
+        let capturedEpoch = self.sessionEpoch
         self.activeProfileId = profileId
         self.activeOwnerId = ownerId
         self.isObserving = true
         let gen = self.currentGeneration
         lock.unlock()
 
-        let observations = try await discoveryService.discoverAssets(
+        let batchResult = try await discoveryService.discoverAssets(
             configuration: config,
             generation: gen,
             batchSize: 1000
         )
 
-        try await store.saveObservations(observations, profileId: profileId, ownerId: ownerId)
+        lock.lock()
+        guard isObserving,
+            sessionEpoch == capturedEpoch,
+            activeProfileId == profileId,
+            activeOwnerId == ownerId
+        else {
+            lock.unlock()
+            return .disabled
+        }
+        lock.unlock()
 
-        let result = PhotoDiscoveryScanResult.completed(
-            totalObserved: observations.count,
-            generation: gen
+        try await store.saveObservations(
+            batchResult.observations,
+            profileId: profileId,
+            ownerId: ownerId
         )
 
+        let result: PhotoDiscoveryScanResult
+        if batchResult.isComplete {
+            result = .completed(totalObserved: batchResult.observations.count, generation: gen)
+        } else {
+            result = .partial(
+                observedSoFar: batchResult.observations.count,
+                totalInScope: batchResult.totalInScope,
+                generation: gen
+            )
+        }
+
         lock.lock()
+        guard isObserving,
+            sessionEpoch == capturedEpoch,
+            activeProfileId == profileId,
+            activeOwnerId == ownerId
+        else {
+            lock.unlock()
+            return .disabled
+        }
         self.lastScanResult = result
         lock.unlock()
 
         changeObserver.register { [weak self] in
             guard let self = self else { return }
-            Task {
-                await self.handleLibraryChange()
-            }
+            self.enqueueCoalescedChangeScan()
         }
 
         return result
@@ -84,11 +115,15 @@ public final class PhotoLibraryObservationCoordinator: PhotoLibraryObservationCo
     public func stopObservation() async {
         lock.lock()
         self.isObserving = false
+        self.sessionEpoch &+= 1
         self.activeProfileId = nil
         self.activeOwnerId = nil
         self.lastScanResult = .disabled
+        let currentTask = activeScanTask
+        self.activeScanTask = nil
         lock.unlock()
 
+        currentTask?.cancel()
         changeObserver.unregister()
     }
 
@@ -98,30 +133,95 @@ public final class PhotoLibraryObservationCoordinator: PhotoLibraryObservationCo
         return lastScanResult
     }
 
-    private func handleLibraryChange() async {
+    private func enqueueCoalescedChangeScan() {
         lock.lock()
-        guard isObserving, let profileId = activeProfileId, let ownerId = activeOwnerId else {
+        guard isObserving, activeScanTask == nil else {
+            lock.unlock()
+            return
+        }
+        let task = Task { [weak self] in
+            await self?.performCoalescedChangeScan()
+        }
+        self.activeScanTask = task
+        lock.unlock()
+    }
+
+    private func performCoalescedChangeScan() async {
+        defer {
+            lock.lock()
+            self.activeScanTask = nil
+            lock.unlock()
+        }
+
+        lock.lock()
+        guard isObserving,
+            let profileId = activeProfileId,
+            let ownerId = activeOwnerId
+        else {
             lock.unlock()
             return
         }
         currentGeneration += 1
         let gen = currentGeneration
+        let capturedEpoch = sessionEpoch
         lock.unlock()
 
         do {
             let config = try await store.fetchConfiguration(profileId: profileId)
-            let observations = try await discoveryService.discoverAssets(
+            let batchResult = try await discoveryService.discoverAssets(
                 configuration: config,
                 generation: gen,
                 batchSize: 1000
             )
-            try await store.saveObservations(observations, profileId: profileId, ownerId: ownerId)
 
             lock.lock()
-            self.lastScanResult = .completed(totalObserved: observations.count, generation: gen)
+            guard isObserving,
+                sessionEpoch == capturedEpoch,
+                activeProfileId == profileId,
+                activeOwnerId == ownerId
+            else {
+                lock.unlock()
+                return
+            }
+            lock.unlock()
+
+            try await store.saveObservations(
+                batchResult.observations,
+                profileId: profileId,
+                ownerId: ownerId
+            )
+
+            let result: PhotoDiscoveryScanResult
+            if batchResult.isComplete {
+                result = .completed(
+                    totalObserved: batchResult.observations.count,
+                    generation: gen
+                )
+            } else {
+                result = .partial(
+                    observedSoFar: batchResult.observations.count,
+                    totalInScope: batchResult.totalInScope,
+                    generation: gen
+                )
+            }
+
+            lock.lock()
+            guard isObserving,
+                sessionEpoch == capturedEpoch,
+                activeProfileId == profileId,
+                activeOwnerId == ownerId
+            else {
+                lock.unlock()
+                return
+            }
+            self.lastScanResult = result
             lock.unlock()
         } catch {
             lock.lock()
+            guard isObserving, sessionEpoch == capturedEpoch else {
+                lock.unlock()
+                return
+            }
             self.lastScanResult = .interrupted(reason: error.localizedDescription)
             lock.unlock()
         }

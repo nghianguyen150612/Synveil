@@ -1,5 +1,17 @@
 import Foundation
 
+public struct PhotoDiscoveryBatchResult: Sendable, Equatable {
+    public let observations: [PhotoAssetObservation]
+    public let isComplete: Bool
+    public let totalInScope: Int
+
+    public init(observations: [PhotoAssetObservation], isComplete: Bool, totalInScope: Int) {
+        self.observations = observations
+        self.isComplete = isComplete
+        self.totalInScope = totalInScope
+    }
+}
+
 public protocol PhotoLibraryPermissionChecking: Sendable {
     func currentPermissionState() async -> PhotoPermissionState
     func requestPermission() async -> PhotoPermissionState
@@ -10,7 +22,7 @@ public protocol PhotoLibraryDiscoveryProtocol: Sendable {
         configuration: PhotoBackupConfiguration,
         generation: Int64,
         batchSize: Int
-    ) async throws -> [PhotoAssetObservation]
+    ) async throws -> PhotoDiscoveryBatchResult
 
     func discoverResourceDescriptors(
         for localIdentifier: String

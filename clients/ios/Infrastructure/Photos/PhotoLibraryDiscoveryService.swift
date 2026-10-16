@@ -16,14 +16,14 @@ public final class PhotoLibraryDiscoveryService: PhotoLibraryDiscoveryProtocol,
         configuration: PhotoBackupConfiguration,
         generation: Int64,
         batchSize: Int = 500
-    ) async throws -> [PhotoAssetObservation] {
+    ) async throws -> PhotoDiscoveryBatchResult {
         guard configuration.isOptedIn && !configuration.pauseDiscovery else {
-            return []
+            return PhotoDiscoveryBatchResult(observations: [], isComplete: true, totalInScope: 0)
         }
 
         let permission = await permissionAdapter.currentPermissionState()
         guard permission.isAuthorized else {
-            return []
+            return PhotoDiscoveryBatchResult(observations: [], isComplete: false, totalInScope: 0)
         }
 
         let fetchOptions = PHFetchOptions()
@@ -40,10 +40,11 @@ public final class PhotoLibraryDiscoveryService: PhotoLibraryDiscoveryProtocol,
         }
 
         let fetchResult = PHAsset.fetchAssets(with: fetchOptions)
-        var observations: [PhotoAssetObservation] = []
         let totalCount = fetchResult.count
         let limit = batchSize > 0 ? min(totalCount, batchSize) : totalCount
+        let isComplete = (limit >= totalCount)
 
+        var observations: [PhotoAssetObservation] = []
         let now = Date()
 
         for idx in 0..<limit {
@@ -67,7 +68,11 @@ public final class PhotoLibraryDiscoveryService: PhotoLibraryDiscoveryProtocol,
             observations.append(observation)
         }
 
-        return observations
+        return PhotoDiscoveryBatchResult(
+            observations: observations,
+            isComplete: isComplete,
+            totalInScope: totalCount
+        )
     }
 
     public func discoverResourceDescriptors(
@@ -99,13 +104,14 @@ public final class PhotoLibraryDiscoveryService: PhotoLibraryDiscoveryProtocol,
                 role = .auxiliary
             }
 
+            // Local availability is unverified until P057 extraction; avoid undocumented KVC.
             let descriptor = PhotoAssetResourceDescriptor(
                 localIdentifier: localIdentifier,
                 role: role,
                 originalFilename: res.originalFilename,
                 uniformTypeIdentifier: res.uniformTypeIdentifier,
-                isLocallyAvailable: true,
-                fileSizeEstimateBytes: res.value(forKey: "fileSize") as? Int64
+                isLocallyAvailable: false,
+                fileSizeEstimateBytes: nil
             )
             descriptors.append(descriptor)
         }
