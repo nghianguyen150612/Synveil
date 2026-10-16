@@ -33,14 +33,19 @@ final class SynveilFileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         do {
             try checkCancellation()
             try reader.withView { view in
-                let initial = page == .initialPageSortedByName || page == .initialPageSortedByDate
+                let initial =
+                    page.rawValue == (NSFileProviderPage.initialPageSortedByName as Data)
+                    || page.rawValue == (NSFileProviderPage.initialPageSortedByDate as Data)
                 let batch = try view.page(
-                    container: container, token: initial ? nil : page.rawValue)
+                    container: container, token: initial ? nil : page.rawValue,
+                    ordering: page.rawValue == (NSFileProviderPage.initialPageSortedByDate as Data)
+                        ? "date" : "name")
                 let items = batch.items.map {
                     SynveilFileProviderItem(projected: $0, domain: view.manifest.domain)
                 }
                 try checkCancellation()
                 observer.didEnumerate(items)
+                try checkCancellation()
                 observer.finishEnumerating(upTo: batch.next.map { NSFileProviderPage($0) })
             }
         } catch { observer.finishEnumeratingWithError(FileProviderErrorMapper.map(error)) }
@@ -58,8 +63,10 @@ final class SynveilFileProviderEnumerator: NSObject, NSFileProviderEnumerator {
                 }
                 try checkCancellation()
                 observer.didUpdate(items)
+                try checkCancellation()
                 observer.didDeleteItems(
                     withIdentifiers: batch.deleted.map { NSFileProviderItemIdentifier($0) })
+                try checkCancellation()
                 observer.finishEnumeratingChanges(
                     upTo: NSFileProviderSyncAnchor(batch.anchor), moreComing: batch.moreComing)
             }

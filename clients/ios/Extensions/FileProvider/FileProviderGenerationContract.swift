@@ -55,7 +55,10 @@ struct FileProviderCursor: Codable {
     // 162 bytes: version, purpose, three 32-byte scope hashes, four big-endian UInt64s,
     // and a 32-byte checksum. Apple's NSFileProviderPage limit is 500 bytes.
     func encoded() throws -> Data {
-        var data = Data([UInt8(version), purpose == "page" ? 1 : 2])
+        var data = Data([
+            UInt8(version),
+            purpose == "page" ? 1 : purpose == "name" ? 3 : purpose == "date" ? 4 : 2,
+        ])
         for hex in [domain, owner, container] {
             guard hex.count == 64 else { throw FileProviderSynchronizationError.corrupt }
             var index = hex.startIndex
@@ -84,7 +87,7 @@ struct FileProviderCursor: Codable {
     static func decode(_ data: Data) throws -> Self {
         guard data.count == 162 else { throw FileProviderSynchronizationError.corrupt }
         let bytes = Array(data)
-        guard bytes[0] == 1, [1, 2].contains(bytes[1]),
+        guard bytes[0] == 1, [1, 2, 3, 4].contains(bytes[1]),
             Array(bytes.suffix(32)) == checksum(Data(bytes.prefix(130)))
         else { throw FileProviderSynchronizationError.corrupt }
         func hex(_ offset: Int) -> String {
@@ -95,7 +98,10 @@ struct FileProviderCursor: Codable {
         }
         guard number(122) <= UInt64(Int.max) else { throw FileProviderSynchronizationError.corrupt }
         return Self(
-            version: 1, purpose: bytes[1] == 1 ? "page" : "anchor", domain: hex(2),
+            version: 1,
+            purpose: bytes[1] == 1
+                ? "page" : bytes[1] == 3 ? "name" : bytes[1] == 4 ? "date" : "anchor",
+            domain: hex(2),
             owner: hex(34), authorization: number(98), container: hex(66),
             generation: number(106), target: number(114), offset: Int(number(122)))
     }

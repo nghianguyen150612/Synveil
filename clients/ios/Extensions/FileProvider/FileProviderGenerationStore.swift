@@ -27,6 +27,10 @@ struct FileProviderGenerationStore {
         guard capability.metadataPublicationEnabled, protectedDataAvailable() else {
             throw FileProviderSynchronizationError.unauthorized
         }
+        let pending = try container.url(for: ["generations", domainID, "unsettled"])
+        guard !FileManager.default.fileExists(atPath: pending.path) else {
+            throw FileProviderSynchronizationError.unavailable
+        }
         let url = try container.url(for: ["generations", domainID, "commit.json"])
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw FileProviderSynchronizationError.unauthorized
@@ -96,6 +100,7 @@ struct FileProviderGenerationStore {
         else { throw FileProviderSynchronizationError.incomplete }
         let directory = try container.generationDirectory(domainID: domain.rawValue)
         let commitURL = directory.appendingPathComponent("commit.json")
+        try recoverUnsettled(directory: directory)
         var previous: FileProviderGenerationManifest?
         var existingRecords: [FileProviderGenerationRecord] = []
         if FileManager.default.fileExists(atPath: commitURL.path) {
@@ -174,7 +179,7 @@ struct FileProviderGenerationStore {
         }
         try container.checkGenerationQuota(addingBytes: data.count)
         try fault("beforeCommit")
-        try write(data, to: commitURL)
+        try commitManifest(data, directory: directory)
         // A crash here leaves a fully usable commit. Compaction is always recoverable.
         try? compact(directory: directory, retaining: records)
     }
@@ -182,6 +187,8 @@ struct FileProviderGenerationStore {
     func revoke(domainID: String, state: FileProviderAuthorizationState) throws {
         guard state != .authorized else { throw FileProviderSynchronizationError.unauthorized }
         try withLease(domainID: domainID, writing: true) {
+            let directory = try container.generationDirectory(domainID: domainID)
+            try recoverUnsettled(directory: directory)
             let manifest = try readManifest(domainID: domainID)
             let replacement = FileProviderGenerationManifest(
                 schemaVersion: manifest.schemaVersion, domain: manifest.domain,
@@ -189,8 +196,8 @@ struct FileProviderGenerationStore {
                     domain: manifest.domain, state: state,
                     authorizationGeneration: manifest.authorization.authorizationGeneration),
                 records: manifest.records)
-            let url = try container.url(for: ["generations", domainID, "commit.json"])
-            try write(FileProviderGenerationCodec.encode(replacement), to: url)
+            try commitManifest(
+                FileProviderGenerationCodec.encode(replacement), directory: directory)
         }
     }
 
@@ -226,10 +233,69 @@ struct FileProviderGenerationStore {
         guard rename(staging.path, destination.path) == 0 else {
             throw FileProviderSynchronizationError.unavailable
         }
+        try fault("afterRename")
         let directoryFD = open(destination.deletingLastPathComponent().path, O_RDONLY | O_NOFOLLOW)
         guard directoryFD >= 0 else { throw FileProviderSynchronizationError.unavailable }
         defer { close(directoryFD) }
         guard fsync(directoryFD) == 0 else { throw FileProviderSynchronizationError.unavailable }
+    }
+
+    /// A durable unsettled marker fences visibility across rename/directory-fsync uncertainty.
+    /// The rollback file is durable before the marker. Recovery never guesses whether rename
+    /// survived: it restores the last acknowledged manifest before allowing another publication.
+    private func commitManifest(_ data: Data, directory: URL) throws {
+        let commit = directory.appendingPathComponent("commit.json")
+        let rollback = directory.appendingPathComponent("rollback.json")
+        let pending = directory.appendingPathComponent("unsettled")
+        let prior =
+            FileManager.default.fileExists(atPath: commit.path)
+            ? try readFile(commit, limit: FileProviderSharedContainer.maximumSnapshotBytes) : Data()
+        try container.checkGenerationQuota(addingBytes: prior.count + data.count + 1)
+        try write(prior, to: rollback)
+        // Until this write is durable commit.json is untouched, so a marker failure is safe.
+        try write(Data([1]), to: pending)
+        do {
+            try fault("manifestWillReplace")
+            try write(data, to: commit)
+            try fault("manifestDurable")
+            try FileManager.default.removeItem(at: pending)
+            try synchronizeDirectory(directory)
+        } catch {
+            // If rollback cannot be made durable (disk full, I/O failure), leave the marker and
+            // deny all reads. Never announce an anchor from an uncertain commit.
+            var recovery = self
+            recovery.fault = { _ in }
+            try? recovery.recoverUnsettled(directory: directory)
+            throw error
+        }
+    }
+
+    private func recoverUnsettled(directory: URL) throws {
+        let pending = directory.appendingPathComponent("unsettled")
+        _ = try container.url(for: ["generations", directory.lastPathComponent, "unsettled"])
+        guard FileManager.default.fileExists(atPath: pending.path) else { return }
+        let rollback = try container.url(for: [
+            "generations", directory.lastPathComponent, "rollback.json",
+        ])
+        let data = try readFile(rollback, limit: FileProviderSharedContainer.maximumSnapshotBytes)
+        let commit = directory.appendingPathComponent("commit.json")
+        if data.isEmpty {
+            if FileManager.default.fileExists(atPath: commit.path) {
+                try FileManager.default.removeItem(at: commit)
+            }
+            try synchronizeDirectory(directory)
+        } else {
+            try write(data, to: commit)
+        }
+        try FileManager.default.removeItem(at: pending)
+        try synchronizeDirectory(directory)
+    }
+
+    private func synchronizeDirectory(_ directory: URL) throws {
+        let fd = open(directory.path, O_RDONLY | O_NOFOLLOW)
+        guard fd >= 0 else { throw FileProviderSynchronizationError.unavailable }
+        defer { close(fd) }
+        guard fsync(fd) == 0 else { throw FileProviderSynchronizationError.unavailable }
     }
 
     private func compact(directory: URL, retaining records: [FileProviderGenerationRecord]) throws {

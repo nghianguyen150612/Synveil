@@ -50,6 +50,9 @@ final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExte
                 throw FileProviderSynchronizationError.cancelled
             }
             try reader.withView { view in
+                if identifier == .rootContainer {
+                    _ = try view.currentAnchor(container: FileProviderMetadataReader.root)
+                }
                 let item = identifier == .rootContainer ? nil : try view.lookup(identifier.rawValue)
                 guard lifecycle.canContinueRequest() else {
                     throw FileProviderSynchronizationError.cancelled

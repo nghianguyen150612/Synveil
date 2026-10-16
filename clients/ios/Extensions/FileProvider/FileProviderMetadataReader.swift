@@ -54,16 +54,40 @@ struct FileProviderMetadataView {
         }
     }
 
-    func page(container: String, token: Data?) throws -> FileProviderItemPage {
+    func page(container: String, token: Data?, ordering: String = "page") throws
+        -> FileProviderItemPage
+    {
         try validateContainer(container)
-        let cursor = try token.map { try checked($0, purpose: "page", container: container) }
+        let cursor = try token.map { data in
+            let decoded: FileProviderCursor
+            do { decoded = try FileProviderCursor.decode(data) } catch {
+                throw FileProviderSynchronizationError.pageExpired
+            }
+            guard ["page", "name", "date"].contains(decoded.purpose) else {
+                throw FileProviderSynchronizationError.pageExpired
+            }
+            return try checked(data, purpose: decoded.purpose, container: container)
+        }
+        let order = cursor?.purpose ?? ordering
+        guard ["page", "name", "date"].contains(order) else {
+            throw FileProviderSynchronizationError.pageExpired
+        }
         let generation = cursor?.generation ?? latest.generation
         guard let record = manifest.records.first(where: { $0.generation == generation }),
             cursor == nil || cursor?.target == generation,
             Set(record.libraries.map(\.libraryID)).isSubset(
                 of: Set(latest.libraries.map(\.libraryID)))
         else { throw FileProviderSynchronizationError.pageExpired }
-        let items = try children(record, container: container)
+        let items = try children(record, container: container).sorted { left, right in
+            if order == "name", left.displayName != right.displayName {
+                return left.displayName < right.displayName
+            }
+            if order == "date", left.contentModificationDate != right.contentModificationDate {
+                return (left.contentModificationDate ?? .distantPast)
+                    > (right.contentModificationDate ?? .distantPast)
+            }
+            return left.identity.rawValue < right.identity.rawValue
+        }
         let offset = cursor?.offset ?? 0
         guard offset <= items.count, offset % FileProviderMetadataReader.pageSize == 0 else {
             throw FileProviderSynchronizationError.pageExpired
@@ -71,7 +95,7 @@ struct FileProviderMetadataView {
         let end = min(offset + FileProviderMetadataReader.pageSize, items.count)
         let next =
             end < items.count
-            ? try makeCursor("page", container, generation, generation, end).encoded() : nil
+            ? try makeCursor(order, container, generation, generation, end).encoded() : nil
         return FileProviderItemPage(items: Array(items[offset..<end]), next: next)
     }
 
@@ -111,6 +135,8 @@ struct FileProviderMetadataView {
         }
         let old = Dictionary(uniqueKeysWithValues: oldItems.map { ($0.identity.rawValue, $0) })
         let new = Dictionary(uniqueKeysWithValues: newItems.map { ($0.identity.rawValue, $0) })
+        let globallyLive = Dictionary(
+            uniqueKeysWithValues: try liveItems(target).map { ($0.identity.rawValue, $0) })
         let ids = Set(old.keys).union(new.keys).filter { old[$0] != new[$0] }.sorted()
         guard cursor.offset <= ids.count,
             cursor.offset % FileProviderMetadataReader.pageSize == 0
@@ -122,7 +148,8 @@ struct FileProviderMetadataView {
             "anchor", container, more ? base.generation : target.generation,
             target.generation, more ? end : 0)
         return FileProviderChangePage(
-            updated: batch.compactMap { new[$0] }, deleted: batch.filter { new[$0] == nil },
+            updated: batch.compactMap { globallyLive[$0] },
+            deleted: batch.filter { globallyLive[$0] == nil },
             anchor: try next.encoded(), moreComing: more || target.generation < latest.generation)
     }
 
@@ -155,7 +182,7 @@ struct FileProviderMetadataView {
         -> FileProviderCursor
     {
         let invalid: FileProviderSynchronizationError =
-            purpose == "page" ? .pageExpired : .anchorExpired
+            purpose == "anchor" ? .anchorExpired : .pageExpired
         let cursor: FileProviderCursor
         do { cursor = try FileProviderCursor.decode(data) } catch { throw invalid }
         guard cursor.purpose == purpose,

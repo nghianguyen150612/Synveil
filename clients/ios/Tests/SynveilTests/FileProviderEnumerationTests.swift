@@ -266,7 +266,8 @@ final class FileProviderEnumerationTests: XCTestCase {
         XCTAssertEqual(change.updated.count, 2)
         XCTAssertTrue(change.deleted.isEmpty)
         XCTAssertEqual(change.updated.first?.identity, try snapshot(1, count: 1).items[2].identity)
-        XCTAssertEqual(try changes(folderAnchor, folder.rawValue).deleted.count, 1)
+        XCTAssertEqual(try changes(folderAnchor, folder.rawValue).updated.count, 1)
+        XCTAssertTrue(try changes(folderAnchor, folder.rawValue).deleted.isEmpty)
         XCTAssertEqual(try changes(rootAnchor, root.rawValue).updated.count, 2)
         try publish(3, [snapshot(3, omit: true)])
         XCTAssertEqual(try changes(change.anchor).deleted.count, 2)
@@ -402,13 +403,17 @@ final class FileProviderEnumerationTests: XCTestCase {
         let enumerator = SynveilFileProviderEnumerator(
             reader: reader, container: folder.rawValue, process: process)
         let observer = EnumerationRecorder()
-        enumerator.enumerateItems(for: observer, startingAt: .initialPageSortedByName)
+        enumerator.enumerateItems(
+            for: observer,
+            startingAt: NSFileProviderPage(NSFileProviderPage.initialPageSortedByName as Data))
         XCTAssertEqual(observer.items.count, 3)
         XCTAssertEqual(observer.completions, 1)
         XCTAssertNil(observer.error)
         enumerator.invalidate()
         let cancelled = EnumerationRecorder()
-        enumerator.enumerateItems(for: cancelled, startingAt: .initialPageSortedByName)
+        enumerator.enumerateItems(
+            for: cancelled,
+            startingAt: NSFileProviderPage(NSFileProviderPage.initialPageSortedByName as Data))
         XCTAssertEqual(cancelled.completions, 1)
         XCTAssertTrue(cancelled.items.isEmpty)
         XCTAssertEqual((cancelled.error as NSError?)?.code, NSUserCancelledError)
@@ -440,6 +445,118 @@ final class FileProviderEnumerationTests: XCTestCase {
         for (failure, expected) in mappings {
             XCTAssertEqual(FileProviderErrorMapper.map(failure).code, expected.rawValue)
         }
+    }
+
+    func testNativeNameAndDatePageOrderingIsPinnedInCursor() throws {
+        try publish(1, [snapshot(1, count: 205)])
+        let first = try reader.withView {
+            try $0.page(container: folder.rawValue, token: nil, ordering: "name")
+        }
+        XCTAssertEqual(first.items.map(\.displayName), first.items.map(\.displayName).sorted())
+        let token = try XCTUnwrap(first.next)
+        XCTAssertEqual(try FileProviderCursor.decode(token).purpose, "name")
+        let next = try reader.withView {
+            try $0.page(container: folder.rawValue, token: token, ordering: "date")
+        }
+        XCTAssertLessThanOrEqual(
+            try XCTUnwrap(first.items.last?.displayName),
+            try XCTUnwrap(next.items.first?.displayName))
+        let byDate = try reader.withView {
+            try $0.page(container: folder.rawValue, token: nil, ordering: "date")
+        }
+        XCTAssertEqual(try FileProviderCursor.decode(XCTUnwrap(byDate.next)).purpose, "date")
+    }
+
+    func testMoveUpdatesRemainLiveRegardlessOfParentCallbackOrder() throws {
+        try publish(1, [snapshot(1, count: 1)])
+        let oldParent = try anchor(folder.rawValue)
+        let newParent = try anchor(root.rawValue)
+        try publish(2, [snapshot(2, count: 1, moved: true)])
+        let leaving = try changes(oldParent, folder.rawValue)
+        let arriving = try changes(newParent, root.rawValue)
+        XCTAssertTrue(leaving.deleted.isEmpty)
+        XCTAssertTrue(arriving.deleted.isEmpty)
+        for batches in [[leaving, arriving], [arriving, leaving]] {
+            var simulatedFiles: [String: FileProviderProjectedItem] = [:]
+            for batch in batches {
+                for item in batch.updated { simulatedFiles[item.identity.rawValue] = item }
+                for id in batch.deleted { simulatedFiles[id] = nil }
+            }
+            XCTAssertEqual(simulatedFiles.count, 1)
+            XCTAssertEqual(simulatedFiles.values.first?.parentIdentity, root)
+        }
+    }
+
+    func testManifestRenameAndDirectorySyncUncertaintyRollsBack() throws {
+        try publish(1, [snapshot(1)])
+        var manifestStarted = false
+        store.fault = { point in
+            if point == "manifestWillReplace" { manifestStarted = true }
+            if manifestStarted && point == "afterRename" {
+                throw FileProviderSynchronizationError.unavailable
+            }
+        }
+        XCTAssertThrowsError(try publish(2, [snapshot(2, name: "new")]))
+        store.fault = { _ in }
+        XCTAssertEqual(try FileProviderCursor.decode(anchor()).generation, 1)
+        try publish(2, [snapshot(2)])
+        XCTAssertEqual(try FileProviderCursor.decode(anchor()).generation, 2)
+    }
+
+    func testCrashMarkerDeniesReadsUntilWriterRestoresDurableCommit() throws {
+        try publish(1, [snapshot(1)])
+        let location = try store.container.generationDirectory(domainID: domain.rawValue)
+        let data = try Data(contentsOf: location.appendingPathComponent("commit.json"))
+        try data.write(to: location.appendingPathComponent("rollback.json"))
+        try Data([1]).write(to: location.appendingPathComponent("unsettled"))
+        try Data([0]).write(to: location.appendingPathComponent("commit.json"))
+        XCTAssertThrowsError(try anchor())
+        try publish(2, [snapshot(2)])
+        XCTAssertEqual(try FileProviderCursor.decode(anchor()).generation, 2)
+    }
+
+    func testInvalidationDuringObserverDeliveryDoesNotAdvanceAnchor() throws {
+        try publish(1, [snapshot(1)])
+        let old = try anchor(folder.rawValue)
+        try publish(2, [snapshot(2, name: "rename")])
+        let process = FileProviderProcessLifecycle()
+        process.launch()
+        let enumerator = SynveilFileProviderEnumerator(
+            reader: reader, container: folder.rawValue, process: process)
+        let observer = ChangeRecorder()
+        observer.onDelivery = { enumerator.invalidate() }
+        enumerator.enumerateChanges(for: observer, from: NSFileProviderSyncAnchor(old))
+        XCTAssertEqual(observer.completions, 1)
+        XCTAssertNotNil(observer.error)
+        XCTAssertTrue(observer.deleted.isEmpty)
+        let other = SynveilFileProviderEnumerator(
+            reader: reader, container: folder.rawValue, process: process)
+        let items = EnumerationRecorder()
+        items.onDelivery = { process.invalidate() }
+        other.enumerateItems(
+            for: items,
+            startingAt: NSFileProviderPage(NSFileProviderPage.initialPageSortedByName as Data))
+        XCTAssertEqual(items.completions, 1)
+        XCTAssertNotNil(items.error)
+    }
+
+    func testPageCannotReuseLibraryRemovedFromCurrentCatalog() throws {
+        try publish(1, [snapshot(1, count: 205)])
+        let token = try XCTUnwrap(
+            reader.withView { try $0.page(container: folder.rawValue, token: nil).next })
+        try publish(2, [])
+        XCTAssertThrowsError(
+            try reader.withView { try $0.page(container: folder.rawValue, token: token) })
+    }
+
+    func testStagedDiskFullFailurePreservesPriorCommit() throws {
+        try publish(1, [snapshot(1)])
+        store.fault = {
+            if $0 == "fileDurable" { throw NSError(domain: NSPOSIXErrorDomain, code: Int(ENOSPC)) }
+        }
+        XCTAssertThrowsError(try publish(2, [snapshot(2)]))
+        store.fault = { _ in }
+        XCTAssertEqual(try FileProviderCursor.decode(anchor()).generation, 1)
     }
 
     @MainActor
@@ -506,7 +623,11 @@ private final class EnumerationRecorder: NSObject, NSFileProviderEnumerationObse
     var items: [NSFileProviderItem] = []
     var completions = 0
     var error: Error?
-    func didEnumerate(_ updatedItems: [NSFileProviderItem]) { items += updatedItems }
+    var onDelivery: (() -> Void)?
+    func didEnumerate(_ updatedItems: [NSFileProviderItem]) {
+        items += updatedItems
+        onDelivery?()
+    }
     func finishEnumerating(upTo nextPage: NSFileProviderPage?) { completions += 1 }
     func finishEnumeratingWithError(_ error: Error) {
         completions += 1
@@ -518,7 +639,8 @@ private final class ChangeRecorder: NSObject, NSFileProviderChangeObserver {
     var completions = 0
     var moreComing = false
     var error: Error?
-    func didUpdate(_ updatedItems: [NSFileProviderItem]) {}
+    var onDelivery: (() -> Void)?
+    func didUpdate(_ updatedItems: [NSFileProviderItem]) { onDelivery?() }
     func didDeleteItems(withIdentifiers identifiers: [NSFileProviderItemIdentifier]) {
         deleted += identifiers
     }
