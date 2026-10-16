@@ -5,7 +5,7 @@ import Foundation
 ///
 /// A domain groups all Libraries in a single v0.1 device session. Its visible identifier contains
 /// only a versioned digest, never an endpoint, account identifier, or credential value.
-struct FileProviderDomainIdentity: Hashable, Sendable {
+struct FileProviderDomainIdentity: Codable, Hashable, Sendable {
     private static let synveilIDPattern = try! NSRegularExpression(
         pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 

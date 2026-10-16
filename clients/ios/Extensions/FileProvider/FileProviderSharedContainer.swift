@@ -52,6 +52,14 @@ struct FileProviderSharedContainer {
         return result
     }
 
+    func domainIdentityURL(domainIdentifier: String) throws -> URL {
+        try url(for: ["metadata", domainIdentifier, "domain.json"])
+    }
+
+    func libraryCatalogURL(domain: FileProviderDomainIdentity) throws -> URL {
+        try url(for: ["metadata", domain.rawValue, "catalog.json"])
+    }
+
     func snapshotURL(
         domain: FileProviderDomainIdentity, libraryID: String
     ) throws -> URL {
@@ -60,6 +68,169 @@ struct FileProviderSharedContainer {
         }
         let libraryScope = FileProviderDomainIdentity.fingerprint(["synveil-library-v1", libraryID])
         return try url(for: ["metadata", domain.rawValue, "\(libraryScope).json"])
+    }
+
+    func changeJournalURL(
+        domain: FileProviderDomainIdentity, libraryID: String
+    ) throws -> URL {
+        guard !libraryID.isEmpty, libraryID.utf8.count <= 256 else {
+            throw FileProviderSharedContainerError.unsafePath
+        }
+        let libraryScope = FileProviderDomainIdentity.fingerprint(["synveil-library-v1", libraryID])
+        return try url(for: ["metadata", domain.rawValue, "\(libraryScope)-journal.json"])
+    }
+
+    func publishDomainIdentity(
+        _ domain: FileProviderDomainIdentity,
+        capability: FileProviderCapability = .production
+    ) throws {
+        guard capability.metadataPublicationEnabled else {
+            throw FileProviderSharedContainerError.publicationFailed
+        }
+        let data = try JSONEncoder().encode(domain)
+        let destination = try domainIdentityURL(domainIdentifier: domain.rawValue)
+        try writeDataAtomically(data, to: destination, prefix: ".domain-")
+    }
+
+    func readDomainIdentity(domainIdentifier: String) throws -> FileProviderDomainIdentity {
+        let destination = try domainIdentityURL(domainIdentifier: domainIdentifier)
+        let data = try Data(contentsOf: destination)
+        return try JSONDecoder().decode(FileProviderDomainIdentity.self, from: data)
+    }
+
+    func publishChangeJournal(
+        _ journal: FileProviderChangeJournal,
+        domain: FileProviderDomainIdentity,
+        libraryID: String,
+        capability: FileProviderCapability = .production
+    ) throws {
+        guard capability.metadataPublicationEnabled else {
+            throw FileProviderSharedContainerError.publicationFailed
+        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(journal)
+        let destination = try changeJournalURL(domain: domain, libraryID: libraryID)
+        try writeDataAtomically(data, to: destination, prefix: ".journal-")
+    }
+
+    func readChangeJournal(
+        domain: FileProviderDomainIdentity,
+        libraryID: String
+    ) throws -> FileProviderChangeJournal {
+        let destination = try changeJournalURL(domain: domain, libraryID: libraryID)
+        let data = try Data(contentsOf: destination)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(FileProviderChangeJournal.self, from: data)
+    }
+
+    private func writeDataAtomically(_ data: Data, to destination: URL, prefix: String) throws {
+        let root = try authorizedRoot()
+        let providerRoot = try directoryURL(root: root, components: Self.versionedRoot)
+        let metadataDirectory = destination.deletingLastPathComponent()
+        try enforceStorageQuota(providerRoot: providerRoot, addingBytes: data.count)
+
+        let staging = metadataDirectory.appendingPathComponent("\(prefix)\(UUID().uuidString).tmp")
+        do {
+            let attributes: [FileAttributeKey: Any] = [
+                .protectionKey: FileProtectionType.completeUntilFirstUserAuthentication,
+                .posixPermissions: 0o600,
+            ]
+            let created = fileManager.createFile(atPath: staging.path, contents: nil, attributes: attributes)
+            guard created else { throw FileProviderSharedContainerError.publicationFailed }
+            let handle = try FileHandle(forWritingTo: staging)
+            do {
+                try handle.write(contentsOf: data)
+                try handle.synchronize()
+                try handle.close()
+            } catch {
+                try? handle.close()
+                throw error
+            }
+            try rejectSymbolicLink(at: destination)
+            try beforeAtomicReplace()
+            if fileManager.fileExists(atPath: destination.path) {
+                _ = try fileManager.replaceItemAt(destination, withItemAt: staging, backupItemName: nil, options: [])
+            } else {
+                try fileManager.moveItem(at: staging, to: destination)
+            }
+        } catch let error as FileProviderSharedContainerError {
+            try? fileManager.removeItem(at: staging)
+            throw error
+        } catch {
+            try? fileManager.removeItem(at: staging)
+            throw FileProviderSharedContainerError.publicationFailed
+        }
+    }
+
+    func publishLibraryCatalog(
+        _ catalog: FileProviderLibraryCatalogSnapshot,
+        expectedDomain: FileProviderDomainIdentity,
+        expectedOwnerScopeFingerprint: String,
+        capability: FileProviderCapability = .production
+    ) throws {
+        guard capability.metadataPublicationEnabled else {
+            throw FileProviderSharedContainerError.publicationFailed
+        }
+        let validated = try catalog.validated(
+            expectedDomain: expectedDomain,
+            expectedOwnerScopeFingerprint: expectedOwnerScopeFingerprint
+        )
+        let data = try validated.encoded(
+            expectedDomain: expectedDomain,
+            expectedOwnerScopeFingerprint: expectedOwnerScopeFingerprint
+        )
+        guard data.count <= Self.maximumSnapshotBytes else {
+            throw FileProviderSharedContainerError.snapshotTooLarge
+        }
+        let destination = try libraryCatalogURL(domain: expectedDomain)
+        let root = try authorizedRoot()
+        let providerRoot = try directoryURL(root: root, components: Self.versionedRoot)
+        let metadataDirectory = try directoryURL(
+            root: root,
+            components: Self.versionedRoot + ["metadata", expectedDomain.rawValue]
+        )
+        try enforceStorageQuota(providerRoot: providerRoot, addingBytes: data.count)
+
+        let staging = metadataDirectory.appendingPathComponent(".catalog-\(UUID().uuidString).tmp")
+        do {
+            let attributes: [FileAttributeKey: Any] = [
+                .protectionKey: FileProtectionType.completeUntilFirstUserAuthentication,
+                .posixPermissions: 0o600,
+            ]
+            let stagingFileCreated = fileManager.createFile(
+                atPath: staging.path,
+                contents: nil,
+                attributes: attributes
+            )
+            guard stagingFileCreated else {
+                throw FileProviderSharedContainerError.publicationFailed
+            }
+            let handle = try FileHandle(forWritingTo: staging)
+            do {
+                try handle.write(contentsOf: data)
+                try handle.synchronize()
+                try handle.close()
+            } catch {
+                try? handle.close()
+                throw error
+            }
+            try rejectSymbolicLink(at: destination)
+            try beforeAtomicReplace()
+            if fileManager.fileExists(atPath: destination.path) {
+                _ = try fileManager.replaceItemAt(
+                    destination, withItemAt: staging, backupItemName: nil, options: [])
+            } else {
+                try fileManager.moveItem(at: staging, to: destination)
+            }
+        } catch let error as FileProviderSharedContainerError {
+            try? fileManager.removeItem(at: staging)
+            throw error
+        } catch {
+            try? fileManager.removeItem(at: staging)
+            throw FileProviderSharedContainerError.publicationFailed
+        }
     }
 
     func publishSnapshot(

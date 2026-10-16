@@ -50,10 +50,47 @@ enum FileProviderAuthorizationDecision: Equatable, Sendable {
     case denied(FileProviderAuthorizationDenial)
 }
 
-enum FileProviderAuthorizationBoundary {
+struct FileProviderAuthorizationBoundary: Sendable {
     /// Existing credentials remain in the host app's default access group.
     static let sharedKeychainAccessGroup: String? = nil
     static let extensionMayReadDeviceBearer = false
+
+    let domain: FileProviderDomainIdentity
+    let container: FileProviderSharedContainer
+    let capability: FileProviderCapability
+
+    init(
+        domain: FileProviderDomainIdentity,
+        container: FileProviderSharedContainer = FileProviderSharedContainer(),
+        capability: FileProviderCapability = .production
+    ) {
+        self.domain = domain
+        self.container = container
+        self.capability = capability
+    }
+
+    func validateAuthorization() throws -> FileProviderAuthorizationEvidence {
+        let authURL = try container.url(for: ["metadata", domain.rawValue, "authorization.json"])
+        guard let data = try? Data(contentsOf: authURL),
+              let evidence = try? JSONDecoder().decode(FileProviderAuthorizationEvidence.self, from: data)
+        else {
+            throw FileProviderErrorMapper.unavailable()
+        }
+
+        let decision = Self.evaluate(
+            evidence: evidence,
+            expectedDomain: domain,
+            protectedDataAvailable: true,
+            capability: capability
+        )
+
+        switch decision {
+        case .permittedForMetadataRead:
+            return evidence
+        case .denied:
+            throw FileProviderErrorMapper.unavailable()
+        }
+    }
 
     static func evaluate(
         evidence: FileProviderAuthorizationEvidence?,

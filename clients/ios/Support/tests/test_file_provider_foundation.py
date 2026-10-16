@@ -70,6 +70,11 @@ class FileProviderFoundationTests(unittest.TestCase):
             "FileProviderEnumerator.swift",
             "FileProviderLifecycle.swift",
             "SynveilFileProviderExtension.swift",
+            "SynveilFileProviderItem.swift",
+            "FileProviderLibraryCatalogContract.swift",
+            "FileProviderChangeJournal.swift",
+            "FileProviderPageToken.swift",
+            "FileProviderSignaler.swift",
         ]:
             self.assertIn(f"{filename} in Sources", extension_sources)
 
