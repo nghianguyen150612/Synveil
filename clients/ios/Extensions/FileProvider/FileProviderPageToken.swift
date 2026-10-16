@@ -1,7 +1,8 @@
 import FileProvider
 import Foundation
 
-/// Opaque, versioned page token encoding container scope, projection generation, cursor offset, and page size limit.
+/// Opaque, versioned page token encoding container scope, projection generation, cursor offset,
+/// and page size limit.
 struct FileProviderPageToken: Codable, Equatable, Sendable {
     static let currentVersion = 1
     static let defaultPageSize = 100
@@ -40,7 +41,7 @@ struct FileProviderPageToken: Codable, Equatable, Sendable {
         expectedContainerIdentifier: String,
         currentGeneration: UInt64
     ) throws -> FileProviderPageToken {
-        guard page != .initialPageBeforeWorkingSet, page != .workingSet else {
+        guard !page.rawValue.isEmpty else {
             throw FileProviderErrorMapper.unsupported()
         }
         let decoder = JSONDecoder()
@@ -52,14 +53,17 @@ struct FileProviderPageToken: Codable, Equatable, Sendable {
         }
 
         guard token.version == Self.currentVersion,
-              token.domainFingerprint == expectedDomain.fingerprint,
-              token.containerIdentifier == expectedContainerIdentifier
+            token.domainFingerprint == expectedDomain.fingerprint,
+            token.containerIdentifier == expectedContainerIdentifier
         else {
             throw FileProviderErrorMapper.unsupported()
         }
 
         guard token.projectionGeneration == currentGeneration else {
-            throw NSError(domain: NSFileProviderErrorDomain, code: NSFileProviderError.pageExpired.rawValue)
+            throw NSError(
+                domain: NSFileProviderErrorDomain,
+                code: NSFileProviderError.pageExpired.rawValue
+            )
         }
 
         return token

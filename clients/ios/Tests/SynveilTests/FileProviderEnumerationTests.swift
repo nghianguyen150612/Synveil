@@ -191,7 +191,8 @@ final class FileProviderEnumerationTests: XCTestCase {
         let folderID = try FileProviderItemIdentity.node(
             domain: domain, libraryID: Fixture.libraryID, nodeID: Fixture.folderNodeID)
         let newFileID = try FileProviderItemIdentity.node(
-            domain: domain, libraryID: Fixture.libraryID, nodeID: "018f1f5e-7b80-7000-8000-000000000099")
+            domain: domain, libraryID: Fixture.libraryID,
+            nodeID: "018f1f5e-7b80-7000-8000-000000000099")
         let version2 = try FileProviderVersionIdentity(
             domain: domain,
             libraryID: Fixture.libraryID,
@@ -232,7 +233,8 @@ final class FileProviderEnumerationTests: XCTestCase {
             capability: capability
         )
 
-        let journal = try container.readChangeJournal(domain: domain, libraryID: Fixture.libraryID)
+        let journal = try container.readChangeJournal(
+            domain: domain, libraryID: Fixture.libraryID)
         XCTAssertEqual(journal.entries.count, 1)
         XCTAssertEqual(journal.entries.first?.changeType, .addedOrUpdated)
         XCTAssertEqual(journal.entries.first?.item.identity.rawValue, newFileID.rawValue)
@@ -260,20 +262,30 @@ final class FileProviderEnumerationTests: XCTestCase {
             ownerScopeFingerprint: domain.ownerScopeFingerprint,
             projectionGeneration: 1,
             completeness: .complete,
-            libraries: [FileProviderLibraryCatalogEntry(libraryID: Fixture.libraryID, displayName: "Work Library")]
+            libraries: [
+                FileProviderLibraryCatalogEntry(
+                    libraryID: Fixture.libraryID, displayName: "Work Library")
+            ]
         )
-        try coordinator.publishLibraryCatalog(catalog: catalog, domain: domain, ownerScopeFingerprint: domain.ownerScopeFingerprint, capability: capability)
+        try coordinator.publishLibraryCatalog(
+            catalog: catalog, domain: domain,
+            ownerScopeFingerprint: domain.ownerScopeFingerprint, capability: capability)
 
         let snapshotGen1 = try validSnapshot(generation: 1)
-        try coordinator.publishSnapshot(snapshot: snapshotGen1, domain: domain, ownerScopeFingerprint: domain.ownerScopeFingerprint, capability: capability)
+        try coordinator.publishSnapshot(
+            snapshot: snapshotGen1, domain: domain,
+            ownerScopeFingerprint: domain.ownerScopeFingerprint, capability: capability)
 
-        let evidence = FileProviderAuthorizationEvidence(domain: domain, state: .authorized, authorizationGeneration: 1)
+        let evidence = FileProviderAuthorizationEvidence(
+            domain: domain, state: .authorized, authorizationGeneration: 1)
         let authURL = try container.url(for: ["metadata", domain.rawValue, "authorization.json"])
         let authData = try JSONEncoder().encode(evidence)
         try authData.write(to: authURL)
 
-        let boundary = FileProviderAuthorizationBoundary(domain: domain, container: container, capability: capability)
-        let libraryRootID = try FileProviderItemIdentity.libraryRoot(domain: domain, libraryID: Fixture.libraryID)
+        let boundary = FileProviderAuthorizationBoundary(
+            domain: domain, container: container, capability: capability)
+        let libraryRootID = try FileProviderItemIdentity.libraryRoot(
+            domain: domain, libraryID: Fixture.libraryID)
 
         let enumerator = FileProviderEnumerator(
             containerItemIdentifier: NSFileProviderItemIdentifier(libraryRootID.rawValue),
@@ -285,17 +297,43 @@ final class FileProviderEnumerationTests: XCTestCase {
         enumerator.currentSyncAnchor { anchor in initialAnchor = anchor }
         let firstAnchor = try XCTUnwrap(initialAnchor)
 
-        // Gen 2: publish a new snapshot with an added file
-        let folderID = try FileProviderItemIdentity.node(domain: domain, libraryID: Fixture.libraryID, nodeID: Fixture.folderNodeID)
-        let newFileID = try FileProviderItemIdentity.node(domain: domain, libraryID: Fixture.libraryID, nodeID: "018f1f5e-7b80-7000-8000-000000000099")
-        let version2 = try FileProviderVersionIdentity(domain: domain, libraryID: Fixture.libraryID, nodeID: "018f1f5e-7b80-7000-8000-000000000099", fileVersionID: "018f1f5e-7b80-7000-8000-000000000098")
+        let folderID = try FileProviderItemIdentity.node(
+            domain: domain, libraryID: Fixture.libraryID, nodeID: Fixture.folderNodeID)
+        let newFileID = try FileProviderItemIdentity.node(
+            domain: domain, libraryID: Fixture.libraryID,
+            nodeID: "018f1f5e-7b80-7000-8000-000000000099")
+        let version2 = try FileProviderVersionIdentity(
+            domain: domain, libraryID: Fixture.libraryID,
+            nodeID: "018f1f5e-7b80-7000-8000-000000000099",
+            fileVersionID: "018f1f5e-7b80-7000-8000-000000000098")
 
         var gen2Items = snapshotGen1.items
-        gen2Items.append(FileProviderProjectedItem(
-            identity: newFileID, parentIdentity: folderID, kind: .file, displayName: "added.txt", byteLength: 100, creationDate: Date(), contentModificationDate: Date(), fileVersionIdentity: version2, contentSHA256: "sha256:" + String(repeating: "d", count: 64), metadataRevision: "1", isTombstone: false, source: .serverConfirmed
-        ))
-        let snapshotGen2 = FileProviderMetadataSnapshot(domainIdentity: domain, ownerScopeFingerprint: domain.ownerScopeFingerprint, libraryID: Fixture.libraryID, projectionGeneration: 2, completeness: .complete, items: gen2Items)
-        try coordinator.publishSnapshot(snapshot: snapshotGen2, domain: domain, ownerScopeFingerprint: domain.ownerScopeFingerprint, capability: capability)
+        gen2Items.append(
+            FileProviderProjectedItem(
+                identity: newFileID,
+                parentIdentity: folderID,
+                kind: .file,
+                displayName: "added.txt",
+                byteLength: 100,
+                creationDate: Date(),
+                contentModificationDate: Date(),
+                fileVersionIdentity: version2,
+                contentSHA256: "sha256:" + String(repeating: "d", count: 64),
+                metadataRevision: "1",
+                isTombstone: false,
+                source: .serverConfirmed
+            ))
+        let snapshotGen2 = FileProviderMetadataSnapshot(
+            domainIdentity: domain,
+            ownerScopeFingerprint: domain.ownerScopeFingerprint,
+            libraryID: Fixture.libraryID,
+            projectionGeneration: 2,
+            completeness: .complete,
+            items: gen2Items
+        )
+        try coordinator.publishSnapshot(
+            snapshot: snapshotGen2, domain: domain,
+            ownerScopeFingerprint: domain.ownerScopeFingerprint, capability: capability)
 
         let changeObserver1 = FakeChangeObserver()
         enumerator.enumerateChanges(for: changeObserver1, from: firstAnchor)
@@ -304,7 +342,6 @@ final class FileProviderEnumerationTests: XCTestCase {
         XCTAssertEqual(changeObserver1.updatedItems.first?.filename, "added.txt")
         let secondAnchor = try XCTUnwrap(changeObserver1.upToAnchor)
 
-        // Gen 3: repeat enumerateChanges with secondAnchor - should produce 0 new changes and not throw syncAnchorExpired
         let changeObserver2 = FakeChangeObserver()
         enumerator.enumerateChanges(for: changeObserver2, from: secondAnchor)
 
@@ -334,7 +371,10 @@ final class FileProviderEnumerationTests: XCTestCase {
             ownerScopeFingerprint: domain.ownerScopeFingerprint,
             projectionGeneration: 1,
             completeness: .complete,
-            libraries: [FileProviderLibraryCatalogEntry(libraryID: Fixture.libraryID, displayName: "Work Library")]
+            libraries: [
+                FileProviderLibraryCatalogEntry(
+                    libraryID: Fixture.libraryID, displayName: "Work Library")
+            ]
         )
 
         try coordinator.publishLibraryCatalog(
@@ -361,8 +401,10 @@ final class FileProviderEnumerationTests: XCTestCase {
         let authData = try JSONEncoder().encode(evidence)
         try authData.write(to: authURL)
 
-        let boundary = FileProviderAuthorizationBoundary(domain: domain, container: container, capability: capability)
-        let folderID = try FileProviderItemIdentity.node(domain: domain, libraryID: Fixture.libraryID, nodeID: Fixture.folderNodeID)
+        let boundary = FileProviderAuthorizationBoundary(
+            domain: domain, container: container, capability: capability)
+        let folderID = try FileProviderItemIdentity.node(
+            domain: domain, libraryID: Fixture.libraryID, nodeID: Fixture.folderNodeID)
 
         let enumerator = FileProviderEnumerator(
             containerItemIdentifier: NSFileProviderItemIdentifier(folderID.rawValue),
@@ -371,7 +413,7 @@ final class FileProviderEnumerationTests: XCTestCase {
         )
 
         let observer = FakeEnumerationObserver()
-        enumerator.enumerateItems(for: observer, startingAt: .initialPageBeforeWorkingSet)
+        enumerator.enumerateItems(for: observer, startingAt: NSFileProviderPage(Data()))
 
         XCTAssertEqual(observer.enumeratedItems.count, 1)
         XCTAssertEqual(observer.enumeratedItems.first?.filename, "report.pdf")
@@ -379,7 +421,8 @@ final class FileProviderEnumerationTests: XCTestCase {
 
     func testSignalerCoalescing() {
         let signaler = FileProviderSignaler()
-        let nsDomain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(domain.rawValue), displayName: "Synveil")
+        let nsDomain = NSFileProviderDomain(
+            identifier: NSFileProviderDomainIdentifier(domain.rawValue), displayName: "Synveil")
         XCTAssertNoThrow(
             signaler.signalEnumerator(for: .rootContainer, domain: nsDomain)
         )

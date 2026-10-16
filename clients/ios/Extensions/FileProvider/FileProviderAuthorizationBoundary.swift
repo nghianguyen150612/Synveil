@@ -72,7 +72,8 @@ struct FileProviderAuthorizationBoundary: Sendable {
     func validateAuthorization() throws -> FileProviderAuthorizationEvidence {
         let authURL = try container.url(for: ["metadata", domain.rawValue, "authorization.json"])
         guard let data = try? Data(contentsOf: authURL),
-              let evidence = try? JSONDecoder().decode(FileProviderAuthorizationEvidence.self, from: data)
+            let evidence = try? JSONDecoder().decode(
+                FileProviderAuthorizationEvidence.self, from: data)
         else {
             throw FileProviderErrorMapper.unavailable()
         }

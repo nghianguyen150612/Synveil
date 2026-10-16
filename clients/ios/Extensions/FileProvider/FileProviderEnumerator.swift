@@ -26,12 +26,22 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
     ) {
         do {
             let auth = try boundary.validateAuthorization()
-            let domain = auth.domainIdentity
+            let domain = boundary.domain
 
             if containerItemIdentifier == .rootContainer {
-                try enumerateDomainRoot(observer: observer, page: page, domain: domain, auth: auth)
+                try enumerateDomainRoot(
+                    observer: observer,
+                    page: page,
+                    domain: domain,
+                    auth: auth
+                )
             } else {
-                try enumerateContainerItem(observer: observer, page: page, domain: domain, auth: auth)
+                try enumerateContainerItem(
+                    observer: observer,
+                    page: page,
+                    domain: domain,
+                    auth: auth
+                )
             }
         } catch {
             observer.finishEnumeratingWithError(error)
@@ -44,7 +54,7 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
     ) {
         do {
             let auth = try boundary.validateAuthorization()
-            let domain = auth.domainIdentity
+            let domain = boundary.domain
 
             let expectedLibraryID = try resolveContainerLibraryID(domain: domain, auth: auth)
 
@@ -59,18 +69,29 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
             var pendingDeletions: [NSFileProviderItemIdentifier] = []
 
             if let libID = expectedLibraryID {
-                if let journal = try? container.readChangeJournal(domain: domain, libraryID: libID) {
-                    if let minGen = journal.entries.map(\.generation).min(), token.generation < minGen - 1 {
-                        throw NSError(domain: NSFileProviderErrorDomain, code: NSFileProviderError.syncAnchorExpired.rawValue)
+                if let journal = try? container.readChangeJournal(
+                    domain: domain,
+                    libraryID: libID
+                ) {
+                    let generations = journal.entries.map { $0.generation }
+                    if let minGen = generations.min(), token.generation < minGen - 1 {
+                        throw NSError(
+                            domain: NSFileProviderErrorDomain,
+                            code: NSFileProviderError.syncAnchorExpired.rawValue
+                        )
                     }
                     for entry in journal.entries where entry.generation > token.generation {
                         if entry.generation > latestGeneration {
                             latestGeneration = entry.generation
                         }
                         if entry.changeType == .deleted || entry.item.isTombstone {
-                            pendingDeletions.append(NSFileProviderItemIdentifier(entry.item.identity.rawValue))
+                            pendingDeletions.append(
+                                NSFileProviderItemIdentifier(entry.item.identity.rawValue)
+                            )
                         } else {
-                            if let item = try? SynveilFileProviderItem(projectedItem: entry.item) {
+                            if let item = try? SynveilFileProviderItem(
+                                projectedItem: entry.item
+                            ) {
                                 pendingUpdates.append(item)
                             }
                         }
@@ -100,7 +121,7 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
     func currentSyncAnchor(completionHandler: @escaping (NSFileProviderSyncAnchor?) -> Void) {
         do {
             let auth = try boundary.validateAuthorization()
-            let domain = auth.domainIdentity
+            let domain = boundary.domain
 
             let expectedLibraryID = try resolveContainerLibraryID(domain: domain, auth: auth)
 
@@ -108,13 +129,23 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
             if containerItemIdentifier == .rootContainer {
                 let catalogURL = try container.libraryCatalogURL(domain: domain)
                 if let data = try? Data(contentsOf: catalogURL),
-                   let catalog = try? FileProviderLibraryCatalogSnapshot.decode(data, expectedDomain: domain, expectedOwnerScopeFingerprint: auth.ownerScopeFingerprint) {
+                    let catalog = try? FileProviderLibraryCatalogSnapshot.decode(
+                        data,
+                        expectedDomain: domain,
+                        expectedOwnerScopeFingerprint: auth.ownerScopeFingerprint
+                    )
+                {
                     currentGeneration = catalog.projectionGeneration
                 }
             } else if let libID = expectedLibraryID {
                 let snapshotURL = try container.snapshotURL(domain: domain, libraryID: libID)
                 if let data = try? Data(contentsOf: snapshotURL),
-                   let snapshot = try? FileProviderMetadataSnapshot.decode(data, expectedDomain: domain, expectedOwnerScopeFingerprint: auth.ownerScopeFingerprint) {
+                    let snapshot = try? FileProviderMetadataSnapshot.decode(
+                        data,
+                        expectedDomain: domain,
+                        expectedOwnerScopeFingerprint: auth.ownerScopeFingerprint
+                    )
+                {
                     currentGeneration = snapshot.projectionGeneration
                 }
             }
@@ -136,10 +167,14 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         domain: FileProviderDomainIdentity,
         auth: FileProviderAuthorizationEvidence
     ) throws -> String? {
-        guard containerItemIdentifier != .rootContainer && containerItemIdentifier != .workingSet else {
+        guard containerItemIdentifier != .rootContainer && containerItemIdentifier != .workingSet
+        else {
             return nil
         }
-        let parsedIdentity = try FileProviderItemIdentity(rawValue: containerItemIdentifier.rawValue, expectedDomain: domain)
+        let parsedIdentity = try FileProviderItemIdentity(
+            rawValue: containerItemIdentifier.rawValue,
+            expectedDomain: domain
+        )
         return try resolveLibraryID(parsedIdentity: parsedIdentity, domain: domain, auth: auth)
     }
 
@@ -162,7 +197,10 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         )
 
         let items: [NSFileProviderItem] = try catalog.libraries.map { entry in
-            let libIdentity = try FileProviderItemIdentity.libraryRoot(domain: domain, libraryID: entry.libraryID)
+            let libIdentity = try FileProviderItemIdentity.libraryRoot(
+                domain: domain,
+                libraryID: entry.libraryID
+            )
             let projected = FileProviderProjectedItem(
                 identity: libIdentity,
                 parentIdentity: FileProviderItemIdentity.domainRoot(domain: domain),
@@ -182,7 +220,7 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
 
         let offset: Int
         let pageSize = FileProviderPageToken.defaultPageSize
-        if page == .initialPageBeforeWorkingSet {
+        if page.rawValue.isEmpty {
             offset = 0
         } else {
             let pageToken = try FileProviderPageToken.fromNSFileProviderPage(
@@ -195,8 +233,10 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         }
 
         guard offset <= items.count else {
-            observer.finishEnumeratingWithError(NSError(domain: NSFileProviderErrorDomain, code: NSFileProviderError.pageExpired.rawValue))
-            return
+            throw NSError(
+                domain: NSFileProviderErrorDomain,
+                code: NSFileProviderError.pageExpired.rawValue
+            )
         }
 
         let slice = Array(items.dropFirst(offset).prefix(pageSize))
@@ -229,7 +269,11 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
             rawValue: containerItemIdentifier.rawValue,
             expectedDomain: domain
         )
-        let libraryID = try resolveLibraryID(parsedIdentity: parsedIdentity, domain: domain, auth: auth)
+        let libraryID = try resolveLibraryID(
+            parsedIdentity: parsedIdentity,
+            domain: domain,
+            auth: auth
+        )
 
         let snapshotURL = try container.snapshotURL(domain: domain, libraryID: libraryID)
         guard let data = try? Data(contentsOf: snapshotURL) else {
@@ -247,11 +291,13 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
             !item.isTombstone && item.parentIdentity?.rawValue == containerItemIdentifier.rawValue
         }
 
-        let nativeItems: [NSFileProviderItem] = try matchingItems.map { try SynveilFileProviderItem(projectedItem: $0) }
+        let nativeItems: [NSFileProviderItem] = try matchingItems.map {
+            try SynveilFileProviderItem(projectedItem: $0)
+        }
 
         let offset: Int
         let pageSize = FileProviderPageToken.defaultPageSize
-        if page == .initialPageBeforeWorkingSet {
+        if page.rawValue.isEmpty {
             offset = 0
         } else {
             let pageToken = try FileProviderPageToken.fromNSFileProviderPage(
@@ -264,8 +310,10 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         }
 
         guard offset <= nativeItems.count else {
-            observer.finishEnumeratingWithError(NSError(domain: NSFileProviderErrorDomain, code: NSFileProviderError.pageExpired.rawValue))
-            return
+            throw NSError(
+                domain: NSFileProviderErrorDomain,
+                code: NSFileProviderError.pageExpired.rawValue
+            )
         }
 
         let slice = Array(nativeItems.dropFirst(offset).prefix(pageSize))
@@ -303,13 +351,19 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
 
         let catalogURL = try container.libraryCatalogURL(domain: domain)
         guard let data = try? Data(contentsOf: catalogURL),
-              let catalog = try? FileProviderLibraryCatalogSnapshot.decode(data, expectedDomain: domain, expectedOwnerScopeFingerprint: auth.ownerScopeFingerprint)
+            let catalog = try? FileProviderLibraryCatalogSnapshot.decode(
+                data,
+                expectedDomain: domain,
+                expectedOwnerScopeFingerprint: auth.ownerScopeFingerprint
+            )
         else {
             throw FileProviderErrorMapper.unavailable()
         }
 
         for entry in catalog.libraries {
-            let scope = FileProviderDomainIdentity.fingerprint(["synveil-library-v1", entry.libraryID])
+            let scope = FileProviderDomainIdentity.fingerprint([
+                "synveil-library-v1", entry.libraryID,
+            ])
             if scope == libraryScope {
                 return entry.libraryID
             }

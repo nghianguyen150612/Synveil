@@ -30,7 +30,8 @@ final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExte
         guard let domainIdentity = parseDomainIdentity() else {
             throw FileProviderErrorMapper.unavailable()
         }
-        let boundary = FileProviderAuthorizationBoundary(domain: domainIdentity, container: container)
+        let boundary = FileProviderAuthorizationBoundary(
+            domain: domainIdentity, container: container)
         _ = try boundary.validateAuthorization()
         return FileProviderEnumerator(
             containerItemIdentifier: containerItemIdentifier,
@@ -48,7 +49,8 @@ final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExte
             guard let domainIdentity = parseDomainIdentity() else {
                 throw FileProviderErrorMapper.unavailable()
             }
-            let boundary = FileProviderAuthorizationBoundary(domain: domainIdentity, container: container)
+            let boundary = FileProviderAuthorizationBoundary(
+                domain: domainIdentity, container: container)
             let auth = try boundary.validateAuthorization()
 
             if identifier == .rootContainer {
@@ -75,9 +77,11 @@ final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExte
                     expectedDomain: domainIdentity
                 )
 
-                let libraryID = try resolveLibraryID(parsedIdentity: parsedIdentity, domain: domainIdentity, auth: auth)
+                let libraryID = try resolveLibraryID(
+                    parsedIdentity: parsedIdentity, domain: domainIdentity, auth: auth)
 
-                let snapshotURL = try container.snapshotURL(domain: domainIdentity, libraryID: libraryID)
+                let snapshotURL = try container.snapshotURL(
+                    domain: domainIdentity, libraryID: libraryID)
                 guard let data = try? Data(contentsOf: snapshotURL) else {
                     throw FileProviderErrorMapper.unavailable()
                 }
@@ -88,8 +92,15 @@ final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExte
                     expectedOwnerScopeFingerprint: auth.ownerScopeFingerprint
                 )
 
-                guard let matchingItem = snapshot.items.first(where: { $0.identity.rawValue == identifier.rawValue && !$0.isTombstone }) else {
-                    throw NSError(domain: NSFileProviderErrorDomain, code: NSFileProviderError.noSuchItem.rawValue)
+                guard
+                    let matchingItem = snapshot.items.first(where: {
+                        $0.identity.rawValue == identifier.rawValue && !$0.isTombstone
+                    })
+                else {
+                    throw NSError(
+                        domain: NSFileProviderErrorDomain,
+                        code: NSFileProviderError.noSuchItem.rawValue
+                    )
                 }
 
                 let item = try SynveilFileProviderItem(projectedItem: matchingItem)
@@ -166,13 +177,18 @@ final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExte
 
         let catalogURL = try container.libraryCatalogURL(domain: domain)
         guard let data = try? Data(contentsOf: catalogURL),
-              let catalog = try? FileProviderLibraryCatalogSnapshot.decode(data, expectedDomain: domain, expectedOwnerScopeFingerprint: auth.ownerScopeFingerprint)
+            let catalog = try? FileProviderLibraryCatalogSnapshot.decode(
+                data, expectedDomain: domain,
+                expectedOwnerScopeFingerprint: auth.ownerScopeFingerprint
+            )
         else {
             throw FileProviderErrorMapper.unavailable()
         }
 
         for entry in catalog.libraries {
-            let scope = FileProviderDomainIdentity.fingerprint(["synveil-library-v1", entry.libraryID])
+            let scope = FileProviderDomainIdentity.fingerprint([
+                "synveil-library-v1", entry.libraryID,
+            ])
             if scope == libraryScope {
                 return entry.libraryID
             }

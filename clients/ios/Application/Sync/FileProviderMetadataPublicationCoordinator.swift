@@ -25,7 +25,8 @@ struct FileProviderMetadataPublicationCoordinator {
         )
     }
 
-    /// Publishes a complete server-confirmed item snapshot for a specific library, updating the change journal.
+    /// Publishes a complete server-confirmed item snapshot for a specific library, updating the
+    /// change journal.
     func publishSnapshot(
         snapshot: FileProviderMetadataSnapshot,
         domain: FileProviderDomainIdentity,
@@ -34,20 +35,24 @@ struct FileProviderMetadataPublicationCoordinator {
     ) throws {
         try container.publishDomainIdentity(domain, capability: capability)
 
-        let previousSnapshot = try? FileProviderMetadataSnapshotStore(container: container).read(
-            domain: domain,
-            libraryID: snapshot.libraryID,
-            expectedOwnerScopeFingerprint: ownerScopeFingerprint
-        )
+        let previousSnapshot = try? FileProviderMetadataSnapshotStore(container: container)
+            .read(
+                domain: domain,
+                libraryID: snapshot.libraryID,
+                expectedOwnerScopeFingerprint: ownerScopeFingerprint
+            )
 
-        let newChanges = FileProviderChangeJournal.diff(previous: previousSnapshot, current: snapshot)
+        let newChanges = FileProviderChangeJournal.diff(
+            previous: previousSnapshot, current: snapshot)
 
-        let existingJournal = (try? container.readChangeJournal(domain: domain, libraryID: snapshot.libraryID))
+        let existingJournal =
+            (try? container.readChangeJournal(domain: domain, libraryID: snapshot.libraryID))
             ?? FileProviderChangeJournal(domain: domain, libraryID: snapshot.libraryID)
 
         var combinedEntries = existingJournal.entries + newChanges
         if combinedEntries.count > FileProviderChangeJournal.maxJournalEntries {
-            combinedEntries = Array(combinedEntries.suffix(FileProviderChangeJournal.maxJournalEntries))
+            combinedEntries = Array(
+                combinedEntries.suffix(FileProviderChangeJournal.maxJournalEntries))
         }
 
         let updatedJournal = FileProviderChangeJournal(
