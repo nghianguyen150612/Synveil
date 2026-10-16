@@ -320,27 +320,18 @@ final class FileProviderFoundationTests: XCTestCase {
             .denied(.protectedDataUnavailable))
     }
 
-    func testAuthorizationDeniesWrongCredentialGenerationLogoutRevocationAndAccountSwitch() {
-        let wrongCredential = FileProviderAuthorizationEvidence(
-            schemaVersion: 1,
-            domainIdentity: domain.rawValue,
-            ownerScopeFingerprint: domain.ownerScopeFingerprint,
-            credentialGenerationFingerprint: String(repeating: "0", count: 64),
-            state: .authorized,
-            authorizationGeneration: 5
-        )
+    func testAuthorizationDeniesWrongCredentialGenerationLogoutRevocationAndAccountSwitch() throws {
+        let authorizedEvidence = FileProviderAuthorizationEvidence(
+            domain: domain, state: .authorized, authorizationGeneration: 5)
+        let wrongCredential = try corruptedEvidence(
+            authorizedEvidence, replacing: "credentialGenerationFingerprint",
+            with: String(repeating: "0", count: 64))
         XCTAssertEqual(
             FileProviderAuthorizationBoundary.evaluate(
                 evidence: wrongCredential, expectedDomain: domain, protectedDataAvailable: true),
             .denied(.wrongCredentialGeneration))
-        let zeroGeneration = FileProviderAuthorizationEvidence(
-            schemaVersion: 1,
-            domainIdentity: domain.rawValue,
-            ownerScopeFingerprint: domain.ownerScopeFingerprint,
-            credentialGenerationFingerprint: domain.credentialGenerationFingerprint,
-            state: .authorized,
-            authorizationGeneration: 0
-        )
+        let zeroGeneration = try corruptedEvidence(
+            authorizedEvidence, replacing: "authorizationGeneration", with: 0)
         XCTAssertEqual(
             FileProviderAuthorizationBoundary.evaluate(
                 evidence: zeroGeneration, expectedDomain: domain, protectedDataAvailable: true),
@@ -565,7 +556,7 @@ final class FileProviderFoundationTests: XCTestCase {
                 domain: domain,
                 libraryID: Fixture.libraryID,
                 expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint),
-            first.validated(
+            try first.validated(
                 expectedDomain: domain,
                 expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint))
         let destination = try FileProviderSharedContainer(
@@ -611,6 +602,18 @@ final class FileProviderFoundationTests: XCTestCase {
             )
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+
+    private func corruptedEvidence(
+        _ evidence: FileProviderAuthorizationEvidence,
+        replacing key: String,
+        with replacement: Any
+    ) throws -> FileProviderAuthorizationEvidence {
+        let encoded = try JSONEncoder().encode(evidence)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object[key] = replacement
+        let corrupted = try JSONSerialization.data(withJSONObject: object)
+        return try JSONDecoder().decode(FileProviderAuthorizationEvidence.self, from: corrupted)
     }
 }
 
