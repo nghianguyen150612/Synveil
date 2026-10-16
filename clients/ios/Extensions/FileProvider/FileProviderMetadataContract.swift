@@ -239,9 +239,10 @@ struct FileProviderProjectedItem: Codable, Equatable, Sendable {
                 throw FileProviderMetadataContractError.invalidContentMetadata
             }
             if let digest = contentSHA256 {
-                guard digest.range(
+                let hasValidDigest = digest.range(
                     of: "^sha256:[0-9a-f]{64}$", options: .regularExpression
-                ) != nil else {
+                ) != nil
+                guard hasValidDigest else {
                     throw FileProviderMetadataContractError.invalidContentMetadata
                 }
             }

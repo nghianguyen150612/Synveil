@@ -57,8 +57,7 @@ struct FileProviderItemIdentity: Codable, Hashable, Sendable {
         expectedDomain: FileProviderDomainIdentity,
         expectedLibraryID: String? = nil
     ) throws {
-        let parts = rawValue
-            .split(separator: ".", omittingEmptySubsequences: false)
+        let parts = rawValue.split(separator: ".", omittingEmptySubsequences: false)
             .map(String.init)
         guard parts.count == 5, parts[0] == "sfpi1",
             let kind = Kind(rawValue: parts[1]), parts[2] == expectedDomain.fingerprint
@@ -124,10 +123,12 @@ struct FileProviderItemIdentity: Codable, Hashable, Sendable {
     }
 
     private static func decode(_ value: String) -> String? {
-        guard value.utf8.allSatisfy({
-            (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0)
-                || $0 == 45 || $0 == 95
-        }) else {
+        guard
+            value.utf8.allSatisfy({
+                (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0)
+                    || $0 == 45 || $0 == 95
+            })
+        else {
             return nil
         }
         var base64 = value.replacingOccurrences(of: "-", with: "+")

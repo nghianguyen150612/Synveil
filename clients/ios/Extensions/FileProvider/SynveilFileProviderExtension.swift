@@ -1,6 +1,10 @@
 import FileProvider
 import Foundation
 
+typealias FileProviderItemMutationCompletion = (
+    NSFileProviderItem?, NSFileProviderItemFields, Bool, (any Error)?
+) -> Void
+
 /// P053 framework entry point. It owns no app session, Keychain store, SQLite database, SwiftUI
 /// state, URLSession, transfer coordinator, or File Provider domain-registration behavior.
 final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
@@ -47,9 +51,7 @@ final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExte
         contents url: URL?,
         options: NSFileProviderCreateItemOptions = [],
         request: NSFileProviderRequest,
-        completionHandler: @escaping (
-            NSFileProviderItem?, NSFileProviderItemFields, Bool, (any Error)?
-        ) -> Void
+        completionHandler: @escaping FileProviderItemMutationCompletion
     ) -> Progress {
         completionHandler(nil, [], false, FileProviderErrorMapper.unsupported())
         return Self.completedProgress()
@@ -62,9 +64,7 @@ final class SynveilFileProviderExtension: NSObject, NSFileProviderReplicatedExte
         contents newContents: URL?,
         options: NSFileProviderModifyItemOptions = [],
         request: NSFileProviderRequest,
-        completionHandler: @escaping (
-            NSFileProviderItem?, NSFileProviderItemFields, Bool, (any Error)?
-        ) -> Void
+        completionHandler: @escaping FileProviderItemMutationCompletion
     ) -> Progress {
         completionHandler(nil, [], false, FileProviderErrorMapper.unsupported())
         return Self.completedProgress()

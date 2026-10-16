@@ -69,8 +69,9 @@ enum FileProviderAuthorizationBoundary {
         guard evidence.ownerScopeFingerprint == expectedDomain.ownerScopeFingerprint else {
             return .denied(.wrongOwnerScope)
         }
-        guard evidence.credentialGenerationFingerprint
-            == expectedDomain.credentialGenerationFingerprint
+        guard
+            evidence.credentialGenerationFingerprint
+                == expectedDomain.credentialGenerationFingerprint
         else {
             return .denied(.wrongCredentialGeneration)
         }
