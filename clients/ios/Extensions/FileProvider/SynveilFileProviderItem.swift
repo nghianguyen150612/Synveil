@@ -44,9 +44,12 @@ final class SynveilFileProviderItem: NSObject, NSFileProviderItem {
         guard let projected = projected, projected.kind == .file,
             let version = projected.fileVersionIdentity
         else { return false }
-        let generationStore = FileProviderGenerationStore(container: container)
+        let generationStore = FileProviderGenerationStore(
+            container: container,
+            capability: .production
+        )
         guard let manifest = try? generationStore.readManifest(domainID: domain.rawValue),
-            manifest.authorization.state == .authorized
+            manifest.authorization.state == FileProviderAuthorizationState.authorized
         else { return false }
         let contentStore = FileProviderContentStore(container: container)
         return (try? contentStore.verifyAndAccessContent(
