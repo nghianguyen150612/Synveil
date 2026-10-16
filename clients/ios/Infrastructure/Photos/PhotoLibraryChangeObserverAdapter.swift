@@ -1,7 +1,9 @@
 import Foundation
 import Photos
 
-public final class PhotoLibraryChangeObserverAdapter: NSObject, PHPhotoLibraryChangeObserver, @unchecked Sendable {
+public final class PhotoLibraryChangeObserverAdapter: NSObject, PHPhotoLibraryChangeObserver,
+    @unchecked Sendable
+{
     private let lock = NSLock()
     private var onChangeHandler: (@Sendable () -> Void)?
     private var isRegistered = false

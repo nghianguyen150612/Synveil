@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import Synveil
 
 final class PhotoKitFoundationTests: XCTestCase {
@@ -93,7 +94,12 @@ final class PhotoKitFoundationTests: XCTestCase {
         let fetched = try await store.fetchObservations(profileId: profileId, ownerId: ownerId)
         XCTAssertEqual(fetched.count, 2)
 
-        try await store.markSourceUnavailable(localIdentifier: "asset_001", reason: .sourceUnavailable, profileId: profileId, ownerId: ownerId)
+        try await store.markSourceUnavailable(
+            localIdentifier: "asset_001",
+            reason: .sourceUnavailable,
+            profileId: profileId,
+            ownerId: ownerId
+        )
 
         let updated = try await store.fetchObservations(profileId: profileId, ownerId: ownerId)
         let asset1 = updated.first(where: { $0.localIdentifier == "asset_001" })
@@ -176,7 +182,11 @@ final class PhotoKitFoundationTests: XCTestCase {
     // 7. Mock Discovery Filtering (Videos Included vs Excluded)
     func testMockDiscoveryFiltering() async throws {
         struct MockDiscovery: PhotoLibraryDiscoveryProtocol {
-            func discoverAssets(configuration: PhotoBackupConfiguration, generation: Int64, batchSize: Int) async throws -> [PhotoAssetObservation] {
+            func discoverAssets(
+                configuration: PhotoBackupConfiguration,
+                generation: Int64,
+                batchSize: Int
+            ) async throws -> [PhotoAssetObservation] {
                 let still = PhotoAssetObservation(
                     localIdentifier: "id_still",
                     assetKind: .stillPhoto,
@@ -208,7 +218,9 @@ final class PhotoKitFoundationTests: XCTestCase {
                 return configuration.includeVideos ? [still, video] : [still]
             }
 
-            func discoverResourceDescriptors(for localIdentifier: String) async throws -> [PhotoAssetResourceDescriptor] { [] }
+            func discoverResourceDescriptors(
+                for localIdentifier: String
+            ) async throws -> [PhotoAssetResourceDescriptor] { [] }
         }
 
         struct MockPermission: PhotoLibraryPermissionChecking {
@@ -228,7 +240,10 @@ final class PhotoKitFoundationTests: XCTestCase {
             permissionAdapter: MockPermission()
         )
 
-        let result1 = try await coordinator.startObservation(profileId: profileId, ownerId: ownerId)
+        let result1 = try await coordinator.startObservation(
+            profileId: profileId,
+            ownerId: ownerId
+        )
         if case .completed(let count, _) = result1 {
             XCTAssertEqual(count, 2)
         } else {
@@ -240,7 +255,10 @@ final class PhotoKitFoundationTests: XCTestCase {
         let configNoVideos = PhotoBackupConfiguration(isOptedIn: true, includeVideos: false)
         try await store.saveConfiguration(configNoVideos, profileId: profileId)
 
-        let result2 = try await coordinator.startObservation(profileId: profileId, ownerId: ownerId)
+        let result2 = try await coordinator.startObservation(
+            profileId: profileId,
+            ownerId: ownerId
+        )
         if case .completed(let count, _) = result2 {
             XCTAssertEqual(count, 1)
         } else {

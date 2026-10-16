@@ -1,7 +1,9 @@
 import Foundation
 import Photos
 
-public final class PhotoLibraryPermissionAdapter: PhotoLibraryPermissionChecking, @unchecked Sendable {
+public final class PhotoLibraryPermissionAdapter: PhotoLibraryPermissionChecking,
+    @unchecked Sendable
+{
     public init() {}
 
     public func currentPermissionState() async -> PhotoPermissionState {

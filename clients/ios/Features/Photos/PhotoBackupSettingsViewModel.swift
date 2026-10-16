@@ -79,7 +79,10 @@ public final class PhotoBackupSettingsViewModel {
         do {
             try await store.saveConfiguration(config, profileId: profileId)
             if isOptedIn && !pauseDiscovery {
-                let result = try await coordinator.startObservation(profileId: profileId, ownerId: ownerId)
+                let result = try await coordinator.startObservation(
+                    profileId: profileId,
+                    ownerId: ownerId
+                )
                 switch result {
                 case .completed(let count, _):
                     currentStatusText = "Discovery active (\(count) assets discovered)"

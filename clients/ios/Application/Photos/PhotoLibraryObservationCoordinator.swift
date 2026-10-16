@@ -1,6 +1,8 @@
 import Foundation
 
-public final class PhotoLibraryObservationCoordinator: PhotoLibraryObservationCoordinatorProtocol, @unchecked Sendable {
+public final class PhotoLibraryObservationCoordinator: PhotoLibraryObservationCoordinatorProtocol,
+    @unchecked Sendable
+{
     private let discoveryService: PhotoLibraryDiscoveryProtocol
     private let store: PhotoObservationStoreProtocol
     private let permissionAdapter: PhotoLibraryPermissionChecking
@@ -25,7 +27,10 @@ public final class PhotoLibraryObservationCoordinator: PhotoLibraryObservationCo
         self.changeObserver = changeObserver
     }
 
-    public func startObservation(profileId: UUID, ownerId: String) async throws -> PhotoDiscoveryScanResult {
+    public func startObservation(
+        profileId: UUID,
+        ownerId: String
+    ) async throws -> PhotoDiscoveryScanResult {
         let config = try await store.fetchConfiguration(profileId: profileId)
         guard config.isOptedIn && !config.pauseDiscovery else {
             lock.lock()
@@ -57,7 +62,10 @@ public final class PhotoLibraryObservationCoordinator: PhotoLibraryObservationCo
 
         try await store.saveObservations(observations, profileId: profileId, ownerId: ownerId)
 
-        let result = PhotoDiscoveryScanResult.completed(totalObserved: observations.count, generation: gen)
+        let result = PhotoDiscoveryScanResult.completed(
+            totalObserved: observations.count,
+            generation: gen
+        )
 
         lock.lock()
         self.lastScanResult = result

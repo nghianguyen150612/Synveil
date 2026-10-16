@@ -11,14 +11,20 @@ public struct PhotoBackupSettingsView: View {
         Form {
             Section(
                 header: Text("Camera Roll Discovery Opt-In"),
-                footer: Text("P056 prepares metadata discovery for camera roll media only. Content upload and automatic transfers remain completely disabled.")
+                footer: Text(
+                    "P056 prepares metadata discovery for camera roll media only. "
+                        + "Content upload and automatic transfers remain completely disabled."
+                )
             ) {
-                Toggle("Opt-In Camera Roll Discovery", isOn: Binding(
-                    get: { viewModel.isOptedIn },
-                    set: { newValue in
-                        Task { await viewModel.toggleOptIn(newValue) }
-                    }
-                ))
+                Toggle(
+                    "Opt-In Camera Roll Discovery",
+                    isOn: Binding(
+                        get: { viewModel.isOptedIn },
+                        set: { newValue in
+                            Task { await viewModel.toggleOptIn(newValue) }
+                        }
+                    )
+                )
                 .accessibilityIdentifier("photo_backup_opt_in_toggle")
 
                 HStack {
@@ -41,20 +47,26 @@ public struct PhotoBackupSettingsView: View {
 
             if viewModel.isOptedIn {
                 Section(header: Text("Discovery Settings")) {
-                    Toggle("Include Videos", isOn: Binding(
-                        get: { viewModel.includeVideos },
-                        set: { newValue in
-                            Task { await viewModel.updateIncludeVideos(newValue) }
-                        }
-                    ))
+                    Toggle(
+                        "Include Videos",
+                        isOn: Binding(
+                            get: { viewModel.includeVideos },
+                            set: { newValue in
+                                Task { await viewModel.updateIncludeVideos(newValue) }
+                            }
+                        )
+                    )
                     .accessibilityIdentifier("photo_backup_include_videos_toggle")
 
-                    Toggle("Pause Discovery", isOn: Binding(
-                        get: { viewModel.pauseDiscovery },
-                        set: { newValue in
-                            Task { await viewModel.togglePauseDiscovery(newValue) }
-                        }
-                    ))
+                    Toggle(
+                        "Pause Discovery",
+                        isOn: Binding(
+                            get: { viewModel.pauseDiscovery },
+                            set: { newValue in
+                                Task { await viewModel.togglePauseDiscovery(newValue) }
+                            }
+                        )
+                    )
                     .accessibilityIdentifier("photo_backup_pause_toggle")
                 }
 

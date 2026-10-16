@@ -1,10 +1,14 @@
 import Foundation
 import Photos
 
-public final class PhotoLibraryDiscoveryService: PhotoLibraryDiscoveryProtocol, @unchecked Sendable {
+public final class PhotoLibraryDiscoveryService: PhotoLibraryDiscoveryProtocol,
+    @unchecked Sendable
+{
     private let permissionAdapter: PhotoLibraryPermissionChecking
 
-    public init(permissionAdapter: PhotoLibraryPermissionChecking = PhotoLibraryPermissionAdapter()) {
+    public init(
+        permissionAdapter: PhotoLibraryPermissionChecking = PhotoLibraryPermissionAdapter()
+    ) {
         self.permissionAdapter = permissionAdapter
     }
 
@@ -27,7 +31,9 @@ public final class PhotoLibraryDiscoveryService: PhotoLibraryDiscoveryProtocol, 
 
         var predicates: [NSPredicate] = []
         if !configuration.includeVideos {
-            predicates.append(NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue))
+            predicates.append(
+                NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)
+            )
         }
         if !predicates.isEmpty {
             fetchOptions.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
@@ -67,7 +73,10 @@ public final class PhotoLibraryDiscoveryService: PhotoLibraryDiscoveryProtocol, 
     public func discoverResourceDescriptors(
         for localIdentifier: String
     ) async throws -> [PhotoAssetResourceDescriptor] {
-        let fetchResult = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil)
+        let fetchResult = PHAsset.fetchAssets(
+            withLocalIdentifiers: [localIdentifier],
+            options: nil
+        )
         guard let asset = fetchResult.firstObject else {
             return []
         }
