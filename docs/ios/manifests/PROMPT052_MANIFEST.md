@@ -11,8 +11,14 @@
   (`ios: add lifecycle-safe transfer recovery (P052)`).
 - Formatting correction: `ae205a27e052b667f7f7b0eb0b94ace56f4b82d2`
   (`fix(ios): format lifecycle recovery changes`).
-- Manifest checkpoint commit: will be visible in the final feature branch history;
-  the exact branch HEAD is recorded in the final report.
+- Accepted-PATCH lifecycle cancellation fix:
+  `9283cb16ad00b9a11989f2ce1169d2d551681804`
+  (`fix(ios): persist accepted patch before lifecycle stop`).
+- Recovery status label correction:
+  `5e1bb8a6abe237b5a83e5adaa89f838dc06473cb`
+  (`fix(ios): keep upload recovery label within native limit`).
+- Final manifest/test assertion commit and exact feature HEAD will be recorded
+  after the final native validation cycle.
 - PR #135: https://github.com/nghianguyen150612/Synveil/pull/135, open against
   `ios-app`; reviewer `ducminh231011` requested, no review submitted yet.
 - No merge or final integration SHA is claimed.
@@ -132,6 +138,26 @@ and foreground presentation/coordinators were not changed. No background
 download session, transfer grant API, or background transfer capability was
 added. SQLite remains v9; **no migration** was needed.
 
+### P051 deferred-scope contract
+
+- P043 foreground downloads, P044 verified preview/export, and P045 foreground
+  uploads remain available through their existing explicit actions.
+- P046 OS-managed background upload remains disabled. Legacy task/job identity,
+  source/chunk intent, saved authoritative offset, and uncertain outcomes remain
+  under the P051A closed capability and transport checks; startup does not
+  resume, PATCH, or status-read them.
+- P047 offline metadata inspection remains authorization-gated. P048 remains
+  explicit opt-in, bounded, metadata-only BGAppRefresh. P049 notification
+  eligibility and routing are unchanged. P050 conflict evidence remains
+  durable/read-only and no mutation is replayed.
+- P051 OS-managed background download remains unimplemented. No background
+  download session, transfer grant API, deployment security change, or security
+  approval is introduced by P052.
+- P051 live redirect/deployment proof, device validation, and independent
+  approval to reactivate background file transfers remain deferred. P052 does
+  not require those deferred capabilities to pass its foreground lifecycle
+  recovery gates.
+
 ## Deterministic XCTest coverage
 
 P052 adds these focused methods:
@@ -148,6 +174,11 @@ P052 adds these focused methods:
 strengthened to hold startup behind a deterministic gate while concurrent
 waiters arrive. Existing P001–P051 test files remain enabled.
 
+The first simulator attempt exposed an unbounded wait in the COMPLETE lifecycle
+test fixture. That fixture now uses a one-byte source and waits for either the
+COMPLETE gate or operation completion, so an early exit is reported immediately
+instead of hanging the suite.
+
 Existing deterministic suite coverage relevant to the requested fault matrix
 includes download reopen/checkpoint/corruption/version/logout cases in
 `FileDownloadRecoveryTests`, upload identity/offset/unknown-outcome/legacy-task
@@ -159,6 +190,40 @@ fencing in `NotificationNavigationTests`, and durable conflict preservation in
 `MetadataMutationFeatureTests`. Exact method-to-case coverage and exact simulator
 pass/fail/skip totals will be updated from the final P052 simulator run; no
 simulator result is inferred from P051.
+
+## Physical-device procedure (deferred)
+
+Status for every procedure below: `DEFERRED_PHYSICAL_DEVICE_NOT_AVAILABLE`.
+Run with a disposable test account/device, known fixture bytes, and a server-side
+request ledger. Before and after each step, record the durable state, operation
+identity, saved server offset, current session revision, and preview eligibility.
+Capture request counts and response classifications without bearer tokens,
+Keychain contents, private paths, or filenames. Each step must show that relaunch
+alone creates no transfer request; only an existing supported explicit action
+may do so.
+
+| Procedure | Steps and evidence to capture | Expected safe result |
+| --- | --- | --- |
+| Background during foreground download | Start a pinned-version download, record committed bytes, background Synveil while content is in flight, then reactivate and reopen that file. | No claim of continued foreground URLSession execution; only committed bytes remain; no automatic retry; explicit Resume revalidates the same FileVersion. |
+| Background during foreground upload | Start an upload and background during PATCH; record the server operation and final durable row after reactivation. | If response is lost, retain OUTCOME_UNKNOWN and the previous authoritative offset; if a response arrived, retain its returned offset; no next PATCH/COMPLETE until explicit recovery. |
+| Lock the iPhone | Repeat the download and upload cases, lock while each is active, then unlock and inspect protected-data availability and saved presentation. | No stale progress publication; protected data remains gated until available; no automatic transfer replay. |
+| Normal system termination | Start a transfer, background the app, allow the OS to terminate it under ordinary resource pressure, then cold-launch. Record whether termination was actually delivered or observed. | Durable evidence is sufficient without relying on a termination callback; no transfer starts on launch. If the OS does not terminate the app during the attempt, record it as not observed, not PASS. |
+| Cold relaunch | After normal termination, launch from the app icon with a valid session and navigate to the relevant item. | Saved transfer state is read locally; no file-content request or fabricated live progress; recovery action remains explicit. |
+| User force-quit | Begin a transfer, use the app switcher to force-quit, relaunch, and inspect the durable record and server ledger. | Force-quit is not treated as cancellation evidence or replay permission; no automatic content request. |
+| Protected-data changes | While a saved record exists, lock/unlock the device and observe protected-data availability callbacks and Keychain/storage reads. | Inaccessible data is shown as unavailable/authentication-required, never as an empty queue; retry only after the protected store is available. |
+| Network switching | Interrupt Wi-Fi/cellular while PATCH or download content is in flight, switch networks, reactivate, and compare server and SQLite offsets. | Preserve the prior authoritative offset when uncertain; do not duplicate the operation; require explicit Resume/status recovery. |
+| Account logout | Start a transfer, log out during a response, then inspect UI and durable evidence before signing into another account. | Old protected UI is cleared and callbacks are fenced; the former account's record cannot attach to the new session. |
+| Device credential revocation | Revoke the device credential server-side while a transfer is active, then reactivate and attempt only a local recovery inspection. | No request uses the revoked credential; present session/recovery-required state and retain scoped evidence under existing cleanup policy. |
+| Storage exhaustion | Fill the test device or app staging quota during a partial transfer, then inspect the typed storage result and saved checkpoint. | Show storage unavailable; retain last committed bytes and ownership; do not mark incomplete content verified or treat the read as empty. |
+| Notification-triggered launch | Schedule an eligible local completion notification, terminate the app, tap it, and observe restoration/navigation ordering. | Revalidate the current session and durable notification eligibility before routing; no transfer replay, confidential filename, or duplicate completion notification. |
+| P048 metadata refresh delivery | Explicitly opt in, allow the OS to deliver BGAppRefresh without a foreground scene, and inspect refresh/ACK and file-request ledgers. | Refresh remains bounded and metadata-only; no content request or transfer scheduling; expiration does not cancel unrelated foreground ownership. |
+| Repeated foreground/background transitions | Repeat active/inactive/background callbacks during one transfer, then inspect generation changes and request ledger. | Old callbacks cannot publish into the new generation; activation never replays a transfer. |
+
+Use a supported iOS version and retain the device model, OS build, timestamps,
+sanitized request ledger, SQLite readback, and UI/accessibility observations with
+the test record. Actual background scheduling and daemon behavior remain
+separately deferred; forcing a simulator callback does not satisfy this device
+procedure.
 
 ### Fault-injection map
 
@@ -193,30 +258,31 @@ simulator tests passed, failed, or skipped.
 
 ## Portable validation and native CI
 
-At source checkpoint `ae205a27e052b667f7f7b0eb0b94ace56f4b82d2`:
+Portable validation was rerun on the current workspace, including the P052
+recovery assertions, bounded gate behavior, and device procedure documentation:
 
 - `python3 clients/ios/Support/validate_ios_sources.py` — PASS.
 - `python3 -m unittest discover -s clients/ios/Support/tests` — PASS,
   **106 tests**.
-- `bash scripts/validate-docs.sh` — PASS before this manifest was added; rerun
-  after the final documentation update.
-- `git diff --check` — PASS before the final test/doc edits; rerun on the final
-  source head.
+- `bash scripts/validate-docs.sh` — PASS.
+- `git diff --check` — PASS.
 - Strict Swift format, Xcode build, and simulator tests are unavailable in this
   Linux workspace (`swift`, `swift-format`, and `xcodebuild` are not installed).
   GitHub Actions is required; this is not a substitute pass.
-- Workflow URLs on this source checkpoint (a later transfer cancellation edge
-  fix is being validated; these are not final-head evidence):
-  - iOS Static Validation: https://github.com/nghianguyen150612/Synveil/actions/runs/38838726236
-  - iOS Build: https://github.com/nghianguyen150612/Synveil/actions/runs/38838726232
-  - iOS Simulator Tests: https://github.com/nghianguyen150612/Synveil/actions/runs/38838726229
-  - iOS Rust Apple Build: https://github.com/nghianguyen150612/Synveil/actions/runs/38838726248
-- Required final-head workflows: iOS Static Validation, iOS Build, iOS Simulator
-  Tests, iOS Rust Apple Build. Exact-head URLs and results will be recorded when
-  those runs complete.
-- Full XCTest totals: pending exact-head iOS Simulator Tests.
-- Unrelated Rust/server/desktop workflow outcomes: pending and will be reported
-  separately if triggered; they do not replace an iOS gate.
+- Current pushed source checkpoint before the bounded test-gate correction:
+  `5e1bb8a6abe237b5a83e5adaa89f838dc06473cb`. Its iOS Static Validation (run
+  `38839104119`), iOS Build (`38839104106`), and iOS Rust Apple Build
+  (`38839104076`) passed. Simulator Tests run `38839104055` was cancelled while
+  `testLifecycleInterruptionDuringCompleteDoesNotReconcileAutomatically` was
+  blocked at its test gate. The captured log shows 564 completed tests passed,
+  0 failed, and that one test unfinished; the attempt has no full-suite totals
+  and is not a passing gate. Its artifact is
+  https://github.com/nghianguyen150612/Synveil/actions/runs/38839104055.
+- The four required workflows will be rerun on the final feature HEAD after the
+  bounded test-gate correction and manifest updates are committed. Final-head
+  URLs and XCTest pass/fail/skip totals will be recorded here.
+- Unrelated Rust/server/desktop workflow outcomes will be reported separately;
+  they do not replace or count as an iOS gate.
 
 ## Explicit permitted deferrals
 
@@ -230,13 +296,26 @@ At source checkpoint `ae205a27e052b667f7f7b0eb0b94ace56f4b82d2`:
 can be implemented and deterministically validated. They do not authorize
 background upload/download.
 
+## Open risks and limitations
+
+- An ordinary foreground URLSession task may stop when iOS backgrounds or
+  terminates the app. P052 preserves only durable checkpoints and requires an
+  explicit supported Resume or status-recovery action.
+- Protected-data and real OS scheduling/daemon behavior require the deferred
+  physical-device procedures above. No simulator result proves those behaviors.
+- P046 background uploads remain OFF and P051 background downloads remain
+  unimplemented. Reentry requires the separate deployment evidence, physical
+  validation, and independent security approval listed above.
+- Upload outcomes whose server response was not received remain uncertain until
+  a user explicitly invokes the existing reconciliation workflow; P052 does not
+  claim server progress from a local lifecycle event.
+
 ## PR, review, and integration state
 
 - PR number/URL: #135, https://github.com/nghianguyen150612/Synveil/pull/135.
 - PR state and review state: open; reviewer `ducminh231011` requested; no review
   submitted and no approval is claimed.
 - Merge SHA and final `ios-app` SHA: not available; no merge is claimed.
-- Next safe action: finish source review and portable checks, push the lifecycle
-  cancellation edge-case fix, and record all four required final-head workflow
-  results before merge review.
+- Next safe action: commit the bounded COMPLETE test gate and final manifest
+  updates, rerun all four iOS workflows on that exact head, and complete review.
 - P053: not started and not authorized.

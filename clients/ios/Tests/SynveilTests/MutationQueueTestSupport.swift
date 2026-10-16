@@ -220,15 +220,29 @@ final class QueueFaultInjector: @unchecked Sendable {
 
 actor QueueGate {
     private var reached = false
+    private var finished = false
     private var observers: [CheckedContinuation<Void, Never>] = []
+    private var arrivalOrFinishObservers: [CheckedContinuation<Bool, Never>] = []
     private var suspended: CheckedContinuation<Void, Never>?
     func arrive() async {
         reached = true
         observers.forEach { $0.resume() }
         observers.removeAll()
+        arrivalOrFinishObservers.forEach { $0.resume(returning: true) }
+        arrivalOrFinishObservers.removeAll()
         await withCheckedContinuation { suspended = $0 }
     }
     func wait() async { if !reached { await withCheckedContinuation { observers.append($0) } } }
+    func waitForArrivalOrFinish() async -> Bool {
+        if reached { return true }
+        if finished { return false }
+        return await withCheckedContinuation { arrivalOrFinishObservers.append($0) }
+    }
+    func finish() {
+        finished = true
+        arrivalOrFinishObservers.forEach { $0.resume(returning: reached) }
+        arrivalOrFinishObservers.removeAll()
+    }
     func release() {
         suspended?.resume()
         suspended = nil

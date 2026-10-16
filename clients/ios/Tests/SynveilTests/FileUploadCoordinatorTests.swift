@@ -50,6 +50,11 @@ final class FileUploadCoordinatorTests: XCTestCase {
         XCTAssertEqual(uncertain.state, .outcomeUnknown)
         XCTAssertTrue(uncertain.uncertain)
         XCTAssertEqual(uncertain.authoritativeOffset, 0)
+        let recoveryModel = FileUploadViewModel(
+            coordinator: coordinator, controller: fixture.controller,
+            library: fixture.scope.libraryId, libraryStatus: .active)
+        XCTAssertEqual(recoveryModel.statusLabel(for: uncertain), "Upload status uncertain")
+        XCTAssertTrue(recoveryModel.canResume(uncertain))
         XCTAssertEqual(scripted.finalOffset, UInt64(source.count))
         XCTAssertEqual(scripted.patchRequests.count, 1)
         XCTAssertEqual(scripted.statusCount, 0)
@@ -125,13 +130,14 @@ final class FileUploadCoordinatorTests: XCTestCase {
         let parent = try await NodeId.validated(queueUUID(2), using: QueueValidator())
         let sourceURL = FileManager.default.temporaryDirectory.appendingPathComponent(
             "SynveilUploadLifecycleComplete-" + UUID().uuidString + ".bin")
-        try Data().write(to: sourceURL)
+        let source = Data([0x2a])
+        try source.write(to: sourceURL)
         addTeardownBlock { try? FileManager.default.removeItem(at: sourceURL) }
 
         let gate = QueueGate()
         let scripted = UploadCoordinatorProvider(
             base: fixture.provider, library: fixture.scope.libraryId,
-            parent: parent, source: Data(), loseFirstCreate: false,
+            parent: parent, source: source, loseFirstCreate: false,
             partiallyAcceptFirstPatch: nil, loseCompletion: false,
             completionResponseGate: gate)
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -146,14 +152,20 @@ final class FileUploadCoordinatorTests: XCTestCase {
             identityGenerator: FixedUploadIDGenerator(value: queueUUID(703)))
 
         let operation = Task {
-            await coordinator.start(
+            let result = await coordinator.start(
                 selectedURL: sourceURL,
                 target: .createFile(
-                    library: fixture.scope.libraryId, parent: parent, name: "empty.bin"),
+                    library: fixture.scope.libraryId, parent: parent,
+                    name: "lifecycle-complete.bin"),
                 library: fixture.scope.libraryId, libraryStatus: .active,
                 progress: { _ in })
+            await gate.finish()
+            return result
         }
-        await gate.wait()
+        guard await gate.waitForArrivalOrFinish() else {
+            let result = await operation.value
+            return XCTFail("The upload ended before it reached COMPLETE: \(result)")
+        }
         coordinator.updateLifecycle(lifecycleGeneration: 1, isActive: false)
         await gate.release()
 
