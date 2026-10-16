@@ -125,10 +125,10 @@ struct FileProviderDomainRegistrationCoordinator: Sendable {
     static func classify(_ error: Error) -> FileProviderDomainOperationClassification {
         guard let error = error as? FileProviderDomainManagementError else { return .unknown }
         switch error {
-        case .registrationDisabled: .disabled
-        case .domainAlreadyRegistered: .alreadyRegistered
-        case .domainNotRegistered: .notRegistered
-        case .managementUnavailable: .unavailable
+        case .registrationDisabled: return .disabled
+        case .domainAlreadyRegistered: return .alreadyRegistered
+        case .domainNotRegistered: return .notRegistered
+        case .managementUnavailable: return .unavailable
         }
     }
 }
