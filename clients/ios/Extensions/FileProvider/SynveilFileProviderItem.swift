@@ -5,10 +5,19 @@ import UniformTypeIdentifiers
 final class SynveilFileProviderItem: NSObject, NSFileProviderItem {
     let projected: FileProviderProjectedItem?
     private let domain: FileProviderDomainIdentity
+    private let contentStore: FileProviderContentStore
+    private let authorizedGeneration: UInt64?
 
-    init(projected: FileProviderProjectedItem?, domain: FileProviderDomainIdentity) {
+    init(
+        projected: FileProviderProjectedItem?,
+        domain: FileProviderDomainIdentity,
+        contentStore: FileProviderContentStore = FileProviderContentStore(),
+        authorizedGeneration: UInt64? = nil
+    ) {
         self.projected = projected
         self.domain = domain
+        self.contentStore = contentStore
+        self.authorizedGeneration = authorizedGeneration
     }
 
     var itemIdentifier: NSFileProviderItemIdentifier {
@@ -35,16 +44,22 @@ final class SynveilFileProviderItem: NSObject, NSFileProviderItem {
         }
     }
     var isDownloaded: Bool {
+        // Never infer downloaded status from a manifest alone: it may outlive the object,
+        // be corrupt, or belong to an older authorization generation.
         guard let projected = projected, projected.kind == .file,
-            let version = projected.fileVersionIdentity
+            let version = projected.fileVersionIdentity,
+            let authorizedGeneration = authorizedGeneration
         else { return false }
-        let store = FileProviderContentStore()
-        let manifest = try? store.readManifest(
+        guard let result = try? contentStore.verifyAndAccessContent(
             domain: domain,
             fileVersionID: version.fileVersionID,
-            expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint
-        )
-        return manifest != nil
+            expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint,
+            expectedAuthorizationGeneration: authorizedGeneration
+        ) else { return false }
+        return result.manifest.nodeID == version.nodeID
+            && result.manifest.libraryID == version.libraryID
+            && result.manifest.expectedByteLength == projected.byteLength
+            && result.manifest.expectedSHA256 == projected.contentSHA256
     }
     var isMostRecentVersionDownloaded: Bool {
         isDownloaded
