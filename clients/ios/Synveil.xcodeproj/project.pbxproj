@@ -314,20 +314,20 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		F05600000000000000000001 /* PhotoPermissionState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Domain/Photos/PhotoPermissionState.swift"; sourceTree = "<group>"; };
-		F05600000000000000000002 /* PhotoAssetTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Domain/Photos/PhotoAssetTypes.swift"; sourceTree = "<group>"; };
-		F05600000000000000000003 /* PhotoObservationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Domain/Photos/PhotoObservationModels.swift"; sourceTree = "<group>"; };
-		F05600000000000000000004 /* PhotoBackupConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Domain/Photos/PhotoBackupConfiguration.swift"; sourceTree = "<group>"; };
-		F05600000000000000000005 /* PhotoServiceProtocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Domain/Photos/PhotoServiceProtocols.swift"; sourceTree = "<group>"; };
-		F05600000000000000000006 /* PhotoLibraryPermissionAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Infrastructure/Photos/PhotoLibraryPermissionAdapter.swift"; sourceTree = "<group>"; };
-		F05600000000000000000007 /* PhotoLibraryDiscoveryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Infrastructure/Photos/PhotoLibraryDiscoveryService.swift"; sourceTree = "<group>"; };
-		F05600000000000000000008 /* PhotoLibraryChangeObserverAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Infrastructure/Photos/PhotoLibraryChangeObserverAdapter.swift"; sourceTree = "<group>"; };
-		F05600000000000000000009 /* PhotoObservationSQLiteSchema.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Infrastructure/Persistence/PhotoObservationSQLiteSchema.swift"; sourceTree = "<group>"; };
-		F0560000000000000000000A /* PhotoObservationSQLiteStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Infrastructure/Persistence/PhotoObservationSQLiteStore.swift"; sourceTree = "<group>"; };
-		F0560000000000000000000B /* PhotoLibraryObservationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Application/Photos/PhotoLibraryObservationCoordinator.swift"; sourceTree = "<group>"; };
-		F0560000000000000000000C /* PhotoBackupSettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Features/Photos/PhotoBackupSettingsViewModel.swift"; sourceTree = "<group>"; };
-		F0560000000000000000000D /* PhotoBackupSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Features/Photos/PhotoBackupSettingsView.swift"; sourceTree = "<group>"; };
-		F0560000000000000000000E /* PhotoKitFoundationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Tests/SynveilTests/PhotoKitFoundationTests.swift"; sourceTree = "<group>"; };
+		F05600000000000000000001 /* PhotoPermissionState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Photos/PhotoPermissionState.swift; sourceTree = "<group>"; };
+		F05600000000000000000002 /* PhotoAssetTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Photos/PhotoAssetTypes.swift; sourceTree = "<group>"; };
+		F05600000000000000000003 /* PhotoObservationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Photos/PhotoObservationModels.swift; sourceTree = "<group>"; };
+		F05600000000000000000004 /* PhotoBackupConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Photos/PhotoBackupConfiguration.swift; sourceTree = "<group>"; };
+		F05600000000000000000005 /* PhotoServiceProtocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Photos/PhotoServiceProtocols.swift; sourceTree = "<group>"; };
+		F05600000000000000000006 /* PhotoLibraryPermissionAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Photos/PhotoLibraryPermissionAdapter.swift; sourceTree = "<group>"; };
+		F05600000000000000000007 /* PhotoLibraryDiscoveryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Photos/PhotoLibraryDiscoveryService.swift; sourceTree = "<group>"; };
+		F05600000000000000000008 /* PhotoLibraryChangeObserverAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Photos/PhotoLibraryChangeObserverAdapter.swift; sourceTree = "<group>"; };
+		F05600000000000000000009 /* PhotoObservationSQLiteSchema.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/PhotoObservationSQLiteSchema.swift; sourceTree = "<group>"; };
+		F0560000000000000000000A /* PhotoObservationSQLiteStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/PhotoObservationSQLiteStore.swift; sourceTree = "<group>"; };
+		F0560000000000000000000B /* PhotoLibraryObservationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Photos/PhotoLibraryObservationCoordinator.swift; sourceTree = "<group>"; };
+		F0560000000000000000000C /* PhotoBackupSettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Photos/PhotoBackupSettingsViewModel.swift; sourceTree = "<group>"; };
+		F0560000000000000000000D /* PhotoBackupSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Photos/PhotoBackupSettingsView.swift; sourceTree = "<group>"; };
+		F0560000000000000000000E /* PhotoKitFoundationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/PhotoKitFoundationTests.swift; sourceTree = "<group>"; };
 		A20000012C00000000000001 /* SynveilApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/SynveilApp.swift; sourceTree = "<group>"; };
 		A20000012C00000000000002 /* BootstrapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/BootstrapView.swift; sourceTree = "<group>"; };
 		A20000012C00000000000003 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Resources/Assets.xcassets; sourceTree = "<group>"; };
@@ -604,6 +604,20 @@
 		A40000012C00000000000001 = {
 			isa = PBXGroup;
 			children = (
+				F05600000000000000000001 /* PhotoPermissionState.swift */,
+				F05600000000000000000002 /* PhotoAssetTypes.swift */,
+				F05600000000000000000003 /* PhotoObservationModels.swift */,
+				F05600000000000000000004 /* PhotoBackupConfiguration.swift */,
+				F05600000000000000000005 /* PhotoServiceProtocols.swift */,
+				F05600000000000000000006 /* PhotoLibraryPermissionAdapter.swift */,
+				F05600000000000000000007 /* PhotoLibraryDiscoveryService.swift */,
+				F05600000000000000000008 /* PhotoLibraryChangeObserverAdapter.swift */,
+				F05600000000000000000009 /* PhotoObservationSQLiteSchema.swift */,
+				F0560000000000000000000A /* PhotoObservationSQLiteStore.swift */,
+				F0560000000000000000000B /* PhotoLibraryObservationCoordinator.swift */,
+				F0560000000000000000000C /* PhotoBackupSettingsViewModel.swift */,
+				F0560000000000000000000D /* PhotoBackupSettingsView.swift */,
+				F0560000000000000000000E /* PhotoKitFoundationTests.swift */,
 				ABCA2C67CA1F0A896F77500C /* LocalNotificationScheduler.swift */,
 				428F4A5A54D6FE89956DB72C /* NotificationViewTests.swift */,
 				9614A75B0F1C8683336D2C88 /* NotificationTestSupport.swift */,
