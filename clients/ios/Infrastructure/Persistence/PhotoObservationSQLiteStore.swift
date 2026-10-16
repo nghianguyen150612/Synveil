@@ -465,7 +465,7 @@ public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol, @
     }
 
     private func bindText(_ statement: OpaquePointer?, index: Int32, text: String) {
-        text.withCString { cString in
+        _ = text.withCString { cString in
             sqlite3_bind_text(statement, index, cString, -1, sqliteTransient)
         }
     }

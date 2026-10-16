@@ -92,13 +92,13 @@ public final class PhotoLibraryDiscoveryService: PhotoLibraryDiscoveryProtocol,
         for res in resources {
             let role: PhotoResourceRole
             switch res.type {
-            case .photo, .fullSizePhoto:
+            case .photo, .fullSizePhoto, .alternatePhoto, .photoProxy:
                 role = .primaryImage
             case .video, .fullSizeVideo:
                 role = asset.mediaSubtypes.contains(.photoLive) ? .motionVideo : .primaryVideo
-            case .pairedVideo:
+            case .pairedVideo, .fullSizePairedVideo, .adjustmentBasePairedVideo:
                 role = .motionVideo
-            case .adjustmentData, .adjustmentBasePhoto, .adjustmentBaseVideo:
+            case .adjustmentData, .adjustmentBasePhoto, .adjustmentBaseVideo, .audio:
                 role = .auxiliary
             @unknown default:
                 role = .auxiliary

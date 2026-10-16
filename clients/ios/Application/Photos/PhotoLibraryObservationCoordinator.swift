@@ -1,14 +1,11 @@
 import Foundation
 
-public final class PhotoLibraryObservationCoordinator: PhotoLibraryObservationCoordinatorProtocol,
-    @unchecked Sendable
-{
+public actor PhotoLibraryObservationCoordinator: PhotoLibraryObservationCoordinatorProtocol {
     private let discoveryService: PhotoLibraryDiscoveryProtocol
     private let store: PhotoObservationStoreProtocol
     private let permissionAdapter: PhotoLibraryPermissionChecking
     private let changeObserver: PhotoLibraryChangeObserverAdapter
 
-    private let lock = NSLock()
     private var activeProfileId: UUID?
     private var activeOwnerId: String?
     private var isObserving = false
@@ -35,28 +32,22 @@ public final class PhotoLibraryObservationCoordinator: PhotoLibraryObservationCo
     ) async throws -> PhotoDiscoveryScanResult {
         let config = try await store.fetchConfiguration(profileId: profileId)
         guard config.isOptedIn && !config.pauseDiscovery else {
-            lock.lock()
             self.lastScanResult = .disabled
-            lock.unlock()
             return .disabled
         }
 
         let permission = await permissionAdapter.currentPermissionState()
         guard permission.isAuthorized else {
-            lock.lock()
             self.lastScanResult = .permissionDenied(permission)
-            lock.unlock()
             return .permissionDenied(permission)
         }
 
-        lock.lock()
         self.sessionEpoch &+= 1
         let capturedEpoch = self.sessionEpoch
         self.activeProfileId = profileId
         self.activeOwnerId = ownerId
         self.isObserving = true
         let gen = self.currentGeneration
-        lock.unlock()
 
         let batchResult = try await discoveryService.discoverAssets(
             configuration: config,
@@ -64,16 +55,13 @@ public final class PhotoLibraryObservationCoordinator: PhotoLibraryObservationCo
             batchSize: 1000
         )
 
-        lock.lock()
         guard isObserving,
             sessionEpoch == capturedEpoch,
             activeProfileId == profileId,
             activeOwnerId == ownerId
         else {
-            lock.unlock()
             return .disabled
         }
-        lock.unlock()
 
         try await store.saveObservations(
             batchResult.observations,
@@ -92,28 +80,26 @@ public final class PhotoLibraryObservationCoordinator: PhotoLibraryObservationCo
             )
         }
 
-        lock.lock()
         guard isObserving,
             sessionEpoch == capturedEpoch,
             activeProfileId == profileId,
             activeOwnerId == ownerId
         else {
-            lock.unlock()
             return .disabled
         }
         self.lastScanResult = result
-        lock.unlock()
 
         changeObserver.register { [weak self] in
             guard let self = self else { return }
-            self.enqueueCoalescedChangeScan()
+            Task {
+                await self.enqueueCoalescedChangeScan()
+            }
         }
 
         return result
     }
 
     public func stopObservation() async {
-        lock.lock()
         self.isObserving = false
         self.sessionEpoch &+= 1
         self.activeProfileId = nil
@@ -121,50 +107,40 @@ public final class PhotoLibraryObservationCoordinator: PhotoLibraryObservationCo
         self.lastScanResult = .disabled
         let currentTask = activeScanTask
         self.activeScanTask = nil
-        lock.unlock()
 
         currentTask?.cancel()
         changeObserver.unregister()
     }
 
     public func currentScanResult() async -> PhotoDiscoveryScanResult {
-        lock.lock()
-        defer { lock.unlock() }
         return lastScanResult
     }
 
-    private func enqueueCoalescedChangeScan() {
-        lock.lock()
+    private func enqueueCoalescedChangeScan() async {
         guard isObserving, activeScanTask == nil else {
-            lock.unlock()
             return
         }
         let task = Task { [weak self] in
-            await self?.performCoalescedChangeScan()
+            guard let self = self else { return }
+            await self.performCoalescedChangeScan()
         }
         self.activeScanTask = task
-        lock.unlock()
     }
 
     private func performCoalescedChangeScan() async {
         defer {
-            lock.lock()
             self.activeScanTask = nil
-            lock.unlock()
         }
 
-        lock.lock()
         guard isObserving,
             let profileId = activeProfileId,
             let ownerId = activeOwnerId
         else {
-            lock.unlock()
             return
         }
         currentGeneration += 1
         let gen = currentGeneration
         let capturedEpoch = sessionEpoch
-        lock.unlock()
 
         do {
             let config = try await store.fetchConfiguration(profileId: profileId)
@@ -174,16 +150,13 @@ public final class PhotoLibraryObservationCoordinator: PhotoLibraryObservationCo
                 batchSize: 1000
             )
 
-            lock.lock()
             guard isObserving,
                 sessionEpoch == capturedEpoch,
                 activeProfileId == profileId,
                 activeOwnerId == ownerId
             else {
-                lock.unlock()
                 return
             }
-            lock.unlock()
 
             try await store.saveObservations(
                 batchResult.observations,
@@ -205,25 +178,19 @@ public final class PhotoLibraryObservationCoordinator: PhotoLibraryObservationCo
                 )
             }
 
-            lock.lock()
             guard isObserving,
                 sessionEpoch == capturedEpoch,
                 activeProfileId == profileId,
                 activeOwnerId == ownerId
             else {
-                lock.unlock()
                 return
             }
             self.lastScanResult = result
-            lock.unlock()
         } catch {
-            lock.lock()
             guard isObserving, sessionEpoch == capturedEpoch else {
-                lock.unlock()
                 return
             }
             self.lastScanResult = .interrupted(reason: error.localizedDescription)
-            lock.unlock()
         }
     }
 }
