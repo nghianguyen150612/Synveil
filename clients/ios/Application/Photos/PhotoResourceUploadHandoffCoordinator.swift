@@ -45,8 +45,9 @@ final class PhotoResourceUploadHandoffCoordinator {
                 context.deviceId.isEmpty == false
             else { throw PhotoResourceTransferFailure.staleAuthorization }
 
-            guard var record = try await store.extraction(
-                operationId: extractionId, authorization: context.authorization)
+            guard
+                var record = try await store.extraction(
+                    operationId: extractionId, authorization: context.authorization)
             else { throw PhotoResourceTransferFailure.ineligibleObservation }
             guard record.profileId == context.authorization.profileId,
                 record.ownerId == context.authorization.ownerId,
@@ -57,9 +58,10 @@ final class PhotoResourceUploadHandoffCoordinator {
 
             let observations = try await store.fetchObservations(
                 profileId: record.profileId, ownerId: record.ownerId)
-            guard let observation = observations.first(where: {
-                $0.localIdentifier == record.selection.localIdentifier
-            }), observation.discoveryGeneration == record.observationGeneration,
+            guard
+                let observation = observations.first(where: {
+                    $0.localIdentifier == record.selection.localIdentifier
+                }), observation.discoveryGeneration == record.observationGeneration,
                 observation.sourceAvailability == .available, !observation.isExcluded
             else { throw PhotoResourceTransferFailure.ineligibleObservation }
 
@@ -68,8 +70,10 @@ final class PhotoResourceUploadHandoffCoordinator {
             guard choices.contains(record.selection) else {
                 throw PhotoResourceTransferFailure.sourceUnavailable
             }
-            guard try await source.currentModificationDate(
-                for: record.selection.localIdentifier) == record.selection.sourceModificationDate
+            guard
+                try await source.currentModificationDate(
+                    for: record.selection.localIdentifier)
+                    == record.selection.sourceModificationDate
             else { throw PhotoResourceTransferFailure.sourceChanged }
 
             let verified = try await staging.verify(
@@ -156,8 +160,9 @@ final class PhotoResourceUploadHandoffCoordinator {
             guard let context = await contextProvider.currentContext(),
                 context.configuration.isOptedIn, !context.configuration.pauseDiscovery
             else { throw PhotoResourceTransferFailure.staleAuthorization }
-            guard let record = try await store.extraction(
-                operationId: extractionId, authorization: context.authorization),
+            guard
+                let record = try await store.extraction(
+                    operationId: extractionId, authorization: context.authorization),
                 record.deviceId == context.deviceId,
                 record.state == .handedOff,
                 record.relatedUploadOperationId == uploadOperationId
@@ -218,17 +223,19 @@ final class PhotoResourceUploadHandoffCoordinator {
         matching expected: PhotoTransferSessionContext
     ) async throws {
         try await validateCurrentContext(matching: expected)
-        guard let current = try await store.extraction(
-            operationId: record.operationId, authorization: expected.authorization),
+        guard
+            let current = try await store.extraction(
+                operationId: record.operationId, authorization: expected.authorization),
             current.state == .handoffPending,
             current.relatedUploadOperationId == record.relatedUploadOperationId,
             current.deviceId == expected.deviceId
         else { throw PhotoResourceTransferFailure.staleAuthorization }
         let observations = try await store.fetchObservations(
             profileId: current.profileId, ownerId: current.ownerId)
-        guard let observation = observations.first(where: {
-            $0.localIdentifier == current.selection.localIdentifier
-        }), observation.discoveryGeneration == current.observationGeneration,
+        guard
+            let observation = observations.first(where: {
+                $0.localIdentifier == current.selection.localIdentifier
+            }), observation.discoveryGeneration == current.observationGeneration,
             observation.sourceAvailability == .available, !observation.isExcluded
         else { throw PhotoResourceTransferFailure.ineligibleObservation }
         try await validateCurrentContext(matching: expected)

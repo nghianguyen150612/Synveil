@@ -58,9 +58,10 @@ public actor PhotoResourceExtractionCoordinator {
         }
         let observations = try await store.fetchObservations(
             profileId: context.authorization.profileId, ownerId: context.authorization.ownerId)
-        guard let current = observations.first(where: {
-            $0.localIdentifier == observation.localIdentifier
-        }), current.discoveryGeneration == observation.discoveryGeneration,
+        guard
+            let current = observations.first(where: {
+                $0.localIdentifier == observation.localIdentifier
+            }), current.discoveryGeneration == observation.discoveryGeneration,
             !current.isExcluded, current.sourceAvailability == .available
         else { throw PhotoResourceTransferFailure.ineligibleObservation }
         return try await source.selections(
@@ -155,9 +156,10 @@ public actor PhotoResourceExtractionCoordinator {
             let context = try await validate(intent)
             let observations = try await store.fetchObservations(
                 profileId: intent.profileId, ownerId: intent.ownerId)
-            guard let observation = observations.first(where: {
-                $0.localIdentifier == intent.selection.localIdentifier
-            }), observation.discoveryGeneration == intent.observationGeneration,
+            guard
+                let observation = observations.first(where: {
+                    $0.localIdentifier == intent.selection.localIdentifier
+                }), observation.discoveryGeneration == intent.observationGeneration,
                 !observation.isExcluded, observation.sourceAvailability == .available
             else { throw PhotoResourceTransferFailure.ineligibleObservation }
 
@@ -209,8 +211,10 @@ public actor PhotoResourceExtractionCoordinator {
                 verifying, expectedState: .extracting, authorization: intent.authorization)
             record = verifying
 
-            guard try await source.currentModificationDate(
-                for: intent.selection.localIdentifier) == intent.selection.sourceModificationDate
+            guard
+                try await source.currentModificationDate(
+                    for: intent.selection.localIdentifier)
+                    == intent.selection.sourceModificationDate
             else { throw PhotoResourceTransferFailure.sourceChanged }
             _ = try await validate(intent)
             try await validateObservation(intent)
@@ -276,9 +280,10 @@ public actor PhotoResourceExtractionCoordinator {
     private func validateObservation(_ intent: PhotoResourceExtractionIntent) async throws {
         let observations = try await store.fetchObservations(
             profileId: intent.profileId, ownerId: intent.ownerId)
-        guard let observation = observations.first(where: {
-            $0.localIdentifier == intent.selection.localIdentifier
-        }), observation.discoveryGeneration == intent.observationGeneration,
+        guard
+            let observation = observations.first(where: {
+                $0.localIdentifier == intent.selection.localIdentifier
+            }), observation.discoveryGeneration == intent.observationGeneration,
             !observation.isExcluded, observation.sourceAvailability == .available
         else { throw PhotoResourceTransferFailure.ineligibleObservation }
     }

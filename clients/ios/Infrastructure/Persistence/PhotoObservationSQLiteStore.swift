@@ -17,8 +17,10 @@ public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol, @
     private let fault: (@Sendable (PhotoObservationStoreFaultPoint) throws -> Void)?
 
     static func productionURL() throws -> URL {
-        guard let root = FileManager.default.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask).first
+        guard
+            let root = FileManager.default.urls(
+                for: .applicationSupportDirectory, in: .userDomainMask
+            ).first
         else {
             throw NSError(
                 domain: "PhotoObservationSQLiteStore", code: 99,
@@ -585,8 +587,9 @@ public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol, @
             guard try performAuthorizationIsCurrent(authorization) else {
                 throw PhotoResourceTransferFailure.staleAuthorization
             }
-            guard let existing = try performFetchExtraction(
-                operationId: record.operationId, authorization: authorization),
+            guard
+                let existing = try performFetchExtraction(
+                    operationId: record.operationId, authorization: authorization),
                 existing.state == expectedState, sameExtractionIdentity(existing, record)
             else { throw PhotoResourceTransferFailure.storageFailure }
             if [.verifiedReady, .handoffPending].contains(record.state) {
@@ -766,7 +769,8 @@ public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol, @
             guard value >= 0 else { throw photoStoreError(133, "Negative extraction length") }
             byteCount = UInt64(value)
         }
-        let sourceModificationDate = sqlite3_column_type(statement, 10) == SQLITE_NULL
+        let sourceModificationDate =
+            sqlite3_column_type(statement, 10) == SQLITE_NULL
             ? nil : Date(timeIntervalSince1970: sqlite3_column_double(statement, 10))
         let maximumResourceBytes = sqlite3_column_int64(statement, 13)
         let policyVersion = sqlite3_column_int64(statement, 12)
@@ -810,19 +814,31 @@ public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol, @
         from previous: PhotoResourceExtractionState, to next: PhotoResourceExtractionState
     ) -> Bool {
         let allowed: [PhotoResourceExtractionState: Set<PhotoResourceExtractionState>] = [
-            .discovered: [.eligible, .cancelled, .sourceUnavailable, .permissionRevoked,
-                .failedRecoverable, .failedTerminal],
-            .eligible: [.extracting, .cancelled, .sourceUnavailable, .permissionRevoked,
-                .failedRecoverable, .failedTerminal],
-            .extracting: [.verifying, .cancelled, .sourceUnavailable, .permissionRevoked,
-                .failedRecoverable, .failedTerminal],
-            .verifying: [.verifiedReady, .cancelled, .sourceUnavailable, .permissionRevoked,
-                .failedRecoverable, .failedTerminal],
+            .discovered: [
+                .eligible, .cancelled, .sourceUnavailable, .permissionRevoked,
+                .failedRecoverable, .failedTerminal,
+            ],
+            .eligible: [
+                .extracting, .cancelled, .sourceUnavailable, .permissionRevoked,
+                .failedRecoverable, .failedTerminal,
+            ],
+            .extracting: [
+                .verifying, .cancelled, .sourceUnavailable, .permissionRevoked,
+                .failedRecoverable, .failedTerminal,
+            ],
+            .verifying: [
+                .verifiedReady, .cancelled, .sourceUnavailable, .permissionRevoked,
+                .failedRecoverable, .failedTerminal,
+            ],
             .verifiedReady: [.handoffPending, .cancelled, .permissionRevoked, .failedTerminal],
-            .handoffPending: [.handedOff, .uploadedConfirmed, .permissionRevoked,
-                .failedRecoverable, .failedTerminal],
-            .handedOff: [.uploadedConfirmed, .permissionRevoked, .failedRecoverable,
-                .failedTerminal],
+            .handoffPending: [
+                .handedOff, .uploadedConfirmed, .permissionRevoked,
+                .failedRecoverable, .failedTerminal,
+            ],
+            .handedOff: [
+                .uploadedConfirmed, .permissionRevoked, .failedRecoverable,
+                .failedTerminal,
+            ],
             .failedRecoverable: [.eligible, .cancelled, .permissionRevoked, .failedTerminal],
         ]
         return allowed[previous]?.contains(next) == true
@@ -949,8 +965,11 @@ public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol, @
     }
 
     private func bindOptionalText(_ statement: OpaquePointer?, index: Int32, text: String?) {
-        if let text { bindText(statement, index: index, text: text) }
-        else { sqlite3_bind_null(statement, index) }
+        if let text {
+            bindText(statement, index: index, text: text)
+        } else {
+            sqlite3_bind_null(statement, index)
+        }
     }
 
     private func performSQL(_ sql: String) throws {

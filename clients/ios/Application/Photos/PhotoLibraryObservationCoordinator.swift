@@ -54,7 +54,8 @@ public actor PhotoLibraryObservationCoordinator: PhotoLibraryObservationCoordina
             authorization.profileId == profileId, authorization.ownerId == ownerId,
             authorization.sessionRevision == sessionRevision, isObserving
         {
-            let unchanged = lastObservedConfiguration == config
+            let unchanged =
+                lastObservedConfiguration == config
                 && lastObservedPermission == permission
                 && lastObservedChangeRevision == changeObserver.revision
             if unchanged { return lastScanResult }
@@ -316,8 +317,7 @@ public actor PhotoLibraryObservationCoordinator: PhotoLibraryObservationCoordina
     }
 
     private func advanceGeneration() {
-        if currentGeneration < Int64.max { currentGeneration += 1 }
-        else { currentGeneration = 1 }
+        if currentGeneration < Int64.max { currentGeneration += 1 } else { currentGeneration = 1 }
     }
 
     private func enqueueCoalescedChangeScan() async {

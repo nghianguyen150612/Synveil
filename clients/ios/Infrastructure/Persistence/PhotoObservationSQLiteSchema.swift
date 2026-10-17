@@ -81,8 +81,9 @@ public struct PhotoObservationSQLiteSchema {
     public static func createTables(db: OpaquePointer?) throws {
         guard let db else { throw schemaError(1, "Missing SQLite database") }
         var versionStatement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, "PRAGMA user_version;", -1, &versionStatement, nil)
-            == SQLITE_OK,
+        guard
+            sqlite3_prepare_v2(db, "PRAGMA user_version;", -1, &versionStatement, nil)
+                == SQLITE_OK,
             sqlite3_step(versionStatement) == SQLITE_ROW
         else { throw schemaError(2, "Failed to read PhotoKit schema version") }
         let version = sqlite3_column_int(versionStatement, 0)
@@ -108,7 +109,8 @@ public struct PhotoObservationSQLiteSchema {
     private static func execute(_ db: OpaquePointer, _ sql: String) throws {
         var errorMessage: UnsafeMutablePointer<CChar>?
         guard sqlite3_exec(db, sql, nil, nil, &errorMessage) == SQLITE_OK else {
-            let message = errorMessage.map { String(cString: $0) }
+            let message =
+                errorMessage.map { String(cString: $0) }
                 ?? "SQLite schema operation failed"
             sqlite3_free(errorMessage)
             throw schemaError(4, message)

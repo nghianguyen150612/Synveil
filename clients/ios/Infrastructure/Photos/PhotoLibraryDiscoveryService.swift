@@ -208,11 +208,15 @@ public final class PhotoLibraryDiscoveryService: PhotoLibraryDiscoveryProtocol,
         case .fullSizePhoto:
             return (.primaryImage, .edited)
         case .video, .adjustmentBaseVideo:
-            return (asset.mediaSubtypes.contains(.photoLive) ? .motionVideo : .primaryVideo,
-                .original)
+            return (
+                asset.mediaSubtypes.contains(.photoLive) ? .motionVideo : .primaryVideo,
+                .original
+            )
         case .fullSizeVideo:
-            return (asset.mediaSubtypes.contains(.photoLive) ? .motionVideo : .primaryVideo,
-                .edited)
+            return (
+                asset.mediaSubtypes.contains(.photoLive) ? .motionVideo : .primaryVideo,
+                .edited
+            )
         case .pairedVideo, .adjustmentBasePairedVideo:
             return (.motionVideo, .pairedMotion)
         case .fullSizePairedVideo:

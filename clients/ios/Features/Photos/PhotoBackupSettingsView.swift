@@ -188,15 +188,18 @@ public struct PhotoBackupSettingsView: View {
                                 .autocorrectionDisabled()
                                 .accessibilityIdentifier("photo_backup_destination_library")
                             TextField(
-                                "Parent directory ID", text: $viewModel.destinationParentIdentifier)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .accessibilityIdentifier("photo_backup_destination_parent")
+                                "Parent directory ID", text: $viewModel.destinationParentIdentifier
+                            )
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .accessibilityIdentifier("photo_backup_destination_parent")
                             TextField("New filename", text: $viewModel.destinationFilename)
                                 .accessibilityIdentifier("photo_backup_destination_filename")
-                            Button(record.state == .handoffPending
-                                ? "Continue foreground upload handoff"
-                                : "Upload selected verified asset") {
+                            Button(
+                                record.state == .handoffPending
+                                    ? "Continue foreground upload handoff"
+                                    : "Upload selected verified asset"
+                            ) {
                                 Task { await viewModel.uploadSelectedVerifiedAsset() }
                             }
                             .disabled(!viewModel.canUploadSelectedResource)

@@ -91,7 +91,8 @@ public final class PhotoBackupSettingsViewModel {
                     profileId: profileId, ownerId: ownerId)
             } else {
                 try await coordinator.stopObservation()
-                observations = config.isOptedIn
+                observations =
+                    config.isOptedIn
                     ? try await store.fetchObservations(profileId: profileId, ownerId: ownerId) : []
             }
             if let extractionCoordinator {
@@ -130,8 +131,10 @@ public final class PhotoBackupSettingsViewModel {
     }
 
     public func assetLabel(_ observation: PhotoAssetObservation) -> String {
-        let kind = observation.assetKind.rawValue.replacingOccurrences(of: "([A-Z])", with: " $1",
-            options: .regularExpression).capitalized
+        let kind = observation.assetKind.rawValue.replacingOccurrences(
+            of: "([A-Z])", with: " $1",
+            options: .regularExpression
+        ).capitalized
         if let date = observation.creationDate {
             return "\(kind) · \(date.formatted(date: .abbreviated, time: .shortened))"
         }
@@ -173,7 +176,8 @@ public final class PhotoBackupSettingsViewModel {
             UTType($0)?.preferredFilenameExtension
         }
         if destinationFilename.isEmpty {
-            destinationFilename = "Photo-\(Int(Date().timeIntervalSince1970))"
+            destinationFilename =
+                "Photo-\(Int(Date().timeIntervalSince1970))"
                 + (ext.map { ".\($0)" } ?? ".media")
         }
         failureReasonText = nil
@@ -265,7 +269,8 @@ public final class PhotoBackupSettingsViewModel {
                 uploadStatusText = nil
             }
             if let latest = try? await uploadHandoffCoordinator.currentExtraction(
-                extractionId: extractionRecord.operationId) {
+                extractionId: extractionRecord.operationId)
+            {
                 extractionRecord = latest
             }
         } catch let failure as PhotoResourceTransferFailure {
@@ -305,7 +310,8 @@ public final class PhotoBackupSettingsViewModel {
             case .failure(let failure): failureReasonText = message(for: failure)
             }
             if let latest = try? await uploadHandoffCoordinator.currentExtraction(
-                extractionId: record.operationId) {
+                extractionId: record.operationId)
+            {
                 extractionRecord = latest
             }
         } catch {
@@ -456,12 +462,14 @@ public final class PhotoBackupSettingsViewModel {
     private func updateUploadStatus(_ result: FileUploadResult) {
         switch result {
         case .completed(let record):
-            uploadStatusText = record.state == .committed
+            uploadStatusText =
+                record.state == .committed
                 ? "Uploaded and confirmed by the server." : Self.uploadLabel(for: record.state)
         case .scheduled(let record):
             uploadStatusText = Self.uploadLabel(for: record.state)
         case .stopped(let record, let failure):
-            uploadStatusText = record.map { Self.uploadLabel(for: $0.state) }
+            uploadStatusText =
+                record.map { Self.uploadLabel(for: $0.state) }
                 ?? "Foreground upload did not start."
             failureReasonText = String(describing: failure)
         }

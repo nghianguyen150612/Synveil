@@ -61,7 +61,8 @@ final class PhotoResourceTransferTests: XCTestCase {
         addTeardownBlock { try? FileManager.default.removeItem(at: root) }
         let shared = try DownloadStagingStore(
             root: root, freeBytes: { _ in DownloadPolicy.freeReserve - 1 })
-        let stage = PhotoResourceStagingCoordinator(uploadStaging: UploadStagingStore(shared: shared))
+        let stage = PhotoResourceStagingCoordinator(
+            uploadStaging: UploadStagingStore(shared: shared))
 
         do {
             _ = try await stage.begin(
@@ -126,7 +127,8 @@ final class PhotoResourceTransferTests: XCTestCase {
         }
     }
 
-    func testUnavailablePhotoKitSourcePreservesItsObservationAndDiscardsPartialBytes() async throws {
+    func testUnavailablePhotoKitSourcePreservesItsObservationAndDiscardsPartialBytes() async throws
+    {
         let fixture = try await queueFixture(self, initializeBase: false)
         let photoStore = try makePhotoStore()
         let authorization = PhotoAuthorizationSession(
@@ -224,7 +226,8 @@ final class PhotoResourceTransferTests: XCTestCase {
 
         do {
             try await photoStore.activateAuthorization(oldSession)
-            XCTFail("A delayed observation start must not reactivate a session invalidated by logout")
+            XCTFail(
+                "A delayed observation start must not reactivate a session invalidated by logout")
         } catch {
             XCTAssertEqual(error as? PhotoResourceTransferFailure, .staleAuthorization)
         }
@@ -233,11 +236,13 @@ final class PhotoResourceTransferTests: XCTestCase {
             profileId: profileId, ownerId: "activation-owner", sessionRevision: 13)
         try await photoStore.activateAuthorization(newSession)
         try await photoStore.commitObservations(
-            [PhotoAssetObservation(
-                localIdentifier: "fresh-session-asset", assetKind: .stillPhoto,
-                creationDate: nil, modificationDate: nil, pixelWidth: 1, pixelHeight: 1,
-                isFavorite: false, isHidden: false, discoveryGeneration: 1, observedAt: Date(),
-                permissionScope: .authorizedFull, sourceAvailability: .available)],
+            [
+                PhotoAssetObservation(
+                    localIdentifier: "fresh-session-asset", assetKind: .stillPhoto,
+                    creationDate: nil, modificationDate: nil, pixelWidth: 1, pixelHeight: 1,
+                    isFavorite: false, isHidden: false, discoveryGeneration: 1, observedAt: Date(),
+                    permissionScope: .authorizedFull, sourceAvailability: .available)
+            ],
             authorization: newSession)
         let observations = try await photoStore.fetchObservations(
             profileId: profileId, ownerId: "activation-owner")
@@ -529,9 +534,11 @@ private actor PagedPhotoDiscovery: PhotoLibraryDiscoveryProtocol {
         let isComplete = start + count == 1_001
         return PhotoDiscoveryBatchResult(
             observations: observations, isComplete: isComplete, totalInScope: 1_001,
-            continuation: isComplete ? nil : PhotoDiscoveryContinuation(
-                generation: generation, snapshotId: snapshotId,
-                nextOffset: start + count, totalInScope: 1_001))
+            continuation: isComplete
+                ? nil
+                : PhotoDiscoveryContinuation(
+                    generation: generation, snapshotId: snapshotId,
+                    nextOffset: start + count, totalInScope: 1_001))
     }
 
     func discoverResourceDescriptors(

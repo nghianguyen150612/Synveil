@@ -82,12 +82,14 @@ final class PhotoKitFoundationTests: XCTestCase {
         XCTAssertEqual(
             try queueRawScalar(
                 legacyURL,
-                "SELECT COUNT(*) FROM photo_asset_observations WHERE local_identifier = '\(localIdentifier)'"),
+                "SELECT COUNT(*) FROM photo_asset_observations WHERE local_identifier = '\(localIdentifier)'"
+            ),
             "1")
         XCTAssertEqual(
             try queueRawScalar(
                 legacyURL,
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'photo_resource_extractions'"),
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'photo_resource_extractions'"
+            ),
             "1")
         _ = migratedStore
     }

@@ -499,9 +499,13 @@ actor DownloadStagingStore {
         var changed = false
         for entry in try FileManager.default.contentsOfDirectory(atPath: root.path) {
             let suffix: String
-            if entry.hasSuffix(".photo.incomplete") { suffix = ".photo.incomplete" }
-            else if entry.hasSuffix(".photo") { suffix = ".photo" }
-            else { continue }
+            if entry.hasSuffix(".photo.incomplete") {
+                suffix = ".photo.incomplete"
+            } else if entry.hasSuffix(".photo") {
+                suffix = ".photo"
+            } else {
+                continue
+            }
             let id = String(entry.dropLast(suffix.count))
             guard UUID(uuidString: id)?.uuidString.lowercased() == id,
                 !stagingIds.contains(id)
@@ -1021,10 +1025,11 @@ actor DownloadStagingStore {
         id.rawValue + ".photo.incomplete"
     }
     private func inventoryKey(_ filename: String) -> String {
-        for suffix in [".upload.incomplete", ".photo.incomplete", ".upload", ".photo",
-            ".verified", ".part", ".bgchunk"]
-        where filename.hasSuffix(suffix)
-        {
+        for suffix in [
+            ".upload.incomplete", ".photo.incomplete", ".upload", ".photo",
+            ".verified", ".part", ".bgchunk",
+        ]
+        where filename.hasSuffix(suffix) {
             return String(filename.dropLast(suffix.count))
         }
         return (filename as NSString).deletingPathExtension

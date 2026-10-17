@@ -282,7 +282,8 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol,
                     id: stableOperationId, bridge: repository.bridge)
             {
                 guard existing.intent.target == target,
-                    expectedSourceContent == nil || existing.intent.expected == expectedSourceContent
+                    expectedSourceContent == nil
+                        || existing.intent.expected == expectedSourceContent
                 else { throw UploadFailure.duplicateOperation }
                 activeUploadId = existing.id
                 record = existing
