@@ -55,7 +55,10 @@ struct SynveilApp: App {
                 uploadCoordinator: container.uploadCoordinator,
                 fileExportCoordinator: container.fileExportCoordinator,
                 notifications: container.notifications,
-                notificationNavigation: container.notificationNavigation
+                notificationNavigation: container.notificationNavigation,
+                photoBackupSettingsFactory: {
+                    await container.makePhotoBackupSettingsViewModel()
+                }
             )
             .task {
                 await BackgroundUploadApplicationBootstrap.shared.waitForStartup()

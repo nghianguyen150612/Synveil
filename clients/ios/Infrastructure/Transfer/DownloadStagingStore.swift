@@ -11,6 +11,87 @@ enum DownloadFilesystemFault: Sendable {
     case create, write, synchronize, truncate, rename, afterRename, read, sourceCoordinate
 }
 
+final class PhotoResourceStageWriter: @unchecked Sendable {
+    private let lock = NSLock()
+    private let maximumBytes: UInt64
+    private let freeBytes: @Sendable (URL) throws -> UInt64
+    private let root: URL
+    private var descriptor: Int32
+    private var byteCount: UInt64 = 0
+    private var hasher = SHA256()
+    private var finished = false
+
+    fileprivate init(
+        descriptor: Int32, maximumBytes: UInt64, root: URL,
+        freeBytes: @escaping @Sendable (URL) throws -> UInt64
+    ) {
+        self.descriptor = descriptor
+        self.maximumBytes = maximumBytes
+        self.root = root
+        self.freeBytes = freeBytes
+    }
+
+    func append(_ data: Data) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !finished, descriptor >= 0, !data.isEmpty, data.count <= 256 * 1024 else {
+            throw PhotoResourceTransferFailure.resourceTooLarge
+        }
+        let amount = UInt64(data.count)
+        let next = byteCount.addingReportingOverflow(amount)
+        guard !next.overflow, next.partialValue <= maximumBytes else {
+            throw PhotoResourceTransferFailure.resourceTooLarge
+        }
+        let free: UInt64
+        do {
+            free = try freeBytes(root)
+        } catch DownloadFailure.insufficientStorage {
+            throw PhotoResourceTransferFailure.insufficientStorage
+        }
+        let required = amount.addingReportingOverflow(DownloadPolicy.freeReserve)
+        guard !required.overflow, free >= required.partialValue else {
+            throw PhotoResourceTransferFailure.insufficientStorage
+        }
+        try data.withUnsafeBytes { bytes in
+            var offset = 0
+            while offset < bytes.count {
+                let count = write(
+                    descriptor, bytes.baseAddress!.advanced(by: offset), bytes.count - offset)
+                if count < 0, errno == EINTR { continue }
+                guard count > 0 else { throw PhotoResourceTransferFailure.storageFailure }
+                offset += count
+            }
+        }
+        hasher.update(data: data)
+        byteCount = next.partialValue
+    }
+
+    fileprivate func finish() throws -> (byteCount: UInt64, sha256: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !finished, descriptor >= 0 else { throw PhotoResourceTransferFailure.storageFailure }
+        guard fsync(descriptor) == 0 else { throw PhotoResourceTransferFailure.storageFailure }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG,
+            info.st_nlink == 1, info.st_size >= 0, UInt64(info.st_size) == byteCount
+        else { throw PhotoResourceTransferFailure.integrityMismatch }
+        let digest = "sha256:" + hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        guard close(descriptor) == 0 else { throw PhotoResourceTransferFailure.storageFailure }
+        descriptor = -1
+        finished = true
+        return (byteCount, digest)
+    }
+
+    func abort() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard descriptor >= 0 else { return }
+        _ = close(descriptor)
+        descriptor = -1
+        finished = true
+    }
+}
+
 /// A single actor accounts for all private transfer files and reservations, including unknown
 /// future upload files. Paths are never inputs to content operations; openat/O_NOFOLLOW and
 /// fstat check actual descriptors. No memory buffer grows with the file length.
@@ -316,6 +397,139 @@ actor DownloadStagingStore {
         try synchronize(descriptor)
         try synchronize(directory)
         hashers[id] = SHA256()
+    }
+
+    func createPhotoResourceStage(
+        id: UploadOperationId, maximumBytes: UInt64,
+        durable: [DownloadStorageReservation]
+    ) throws -> PhotoResourceStageWriter {
+        guard maximumBytes > 0, maximumBytes <= DownloadPolicy.quota else {
+            throw PhotoResourceTransferFailure.resourceTooLarge
+        }
+        let downloadId = try DownloadOperationId(validating: id.rawValue)
+        do {
+            try reserve(
+                DownloadStorageReservation(operationId: downloadId, bytes: maximumBytes),
+                durable: durable)
+        } catch DownloadFailure.insufficientStorage {
+            throw PhotoResourceTransferFailure.insufficientStorage
+        } catch DownloadFailure.stagingQuotaExceeded {
+            throw PhotoResourceTransferFailure.stagingQuotaExceeded
+        }
+        let directory = try openDirectory()
+        defer { close(directory) }
+        let descriptor = openat(
+            directory, photoIncompleteName(downloadId),
+            O_CREAT | O_EXCL | O_RDWR | O_NOFOLLOW | O_NONBLOCK, 0o600)
+        guard descriptor >= 0 else { throw PhotoResourceTransferFailure.storageFailure }
+        let url = root.appendingPathComponent(photoIncompleteName(downloadId))
+        do {
+            try Self.protect(url, directory: false)
+            guard fsync(descriptor) == 0, fsync(directory) == 0 else {
+                throw PhotoResourceTransferFailure.storageFailure
+            }
+        } catch {
+            _ = close(descriptor)
+            _ = unlinkat(directory, photoIncompleteName(downloadId), 0)
+            reservations[downloadId] = nil
+            throw error
+        }
+        return PhotoResourceStageWriter(
+            descriptor: descriptor, maximumBytes: maximumBytes, root: root, freeBytes: freeBytes)
+    }
+
+    func publishPhotoResourceStage(
+        id: UploadOperationId, writer: PhotoResourceStageWriter
+    ) throws -> PhotoResourceVerifiedContent {
+        let content = try writer.finish()
+        guard content.byteCount > 0 else { throw PhotoResourceTransferFailure.emptyResource }
+        let downloadId = try DownloadOperationId(validating: id.rawValue)
+        let directory = try openDirectory()
+        defer { close(directory) }
+        let partial = photoIncompleteName(downloadId)
+        let final = photoName(downloadId)
+        let descriptor = openat(directory, partial, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard descriptor >= 0 else { throw PhotoResourceTransferFailure.storageFailure }
+        defer { close(descriptor) }
+        guard try length(descriptor) == content.byteCount,
+            digest(try hash(descriptor, count: content.byteCount)) == content.sha256
+        else { throw PhotoResourceTransferFailure.integrityMismatch }
+        try Self.protect(root.appendingPathComponent(partial), directory: false)
+        guard renameat(directory, partial, directory, final) == 0,
+            fsync(directory) == 0
+        else { throw PhotoResourceTransferFailure.storageFailure }
+        reservations[downloadId] = content.byteCount
+        return PhotoResourceVerifiedContent(
+            stagingId: id.rawValue,
+            url: root.appendingPathComponent(final),
+            byteCount: content.byteCount,
+            sha256: content.sha256)
+    }
+
+    func verifyPhotoResourceStage(
+        id: String, expectedByteCount: UInt64, expectedSHA256: String
+    ) throws -> PhotoResourceVerifiedContent {
+        let uploadId = try UploadOperationId(validating: id)
+        let downloadId = try DownloadOperationId(validating: uploadId.rawValue)
+        let directory = try openDirectory()
+        defer { close(directory) }
+        let filename = photoName(downloadId)
+        let descriptor = openat(directory, filename, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard descriptor >= 0 else { throw PhotoResourceTransferFailure.storageFailure }
+        defer { close(descriptor) }
+        guard try length(descriptor) == expectedByteCount,
+            digest(try hash(descriptor, count: expectedByteCount)) == expectedSHA256
+        else { throw PhotoResourceTransferFailure.integrityMismatch }
+        return PhotoResourceVerifiedContent(
+            stagingId: id, url: root.appendingPathComponent(filename),
+            byteCount: expectedByteCount, sha256: expectedSHA256)
+    }
+
+    func discardPhotoResourceStage(id: String) throws {
+        let uploadId = try UploadOperationId(validating: id)
+        let downloadId = try DownloadOperationId(validating: uploadId.rawValue)
+        let directory = try openDirectory()
+        defer { close(directory) }
+        for filename in [photoIncompleteName(downloadId), photoName(downloadId)] {
+            guard unlinkat(directory, filename, 0) == 0 || errno == ENOENT else {
+                throw PhotoResourceTransferFailure.storageFailure
+            }
+        }
+        try synchronize(directory)
+        reservations[downloadId] = nil
+    }
+
+    func reconcileOrphanPhotoResources(keeping stagingIds: Set<String>) throws {
+        for id in stagingIds {
+            guard UUID(uuidString: id)?.uuidString.lowercased() == id else {
+                throw PhotoResourceTransferFailure.storageFailure
+            }
+        }
+        let directory = try openDirectory()
+        defer { close(directory) }
+        var changed = false
+        for entry in try FileManager.default.contentsOfDirectory(atPath: root.path) {
+            let suffix: String
+            if entry.hasSuffix(".photo.incomplete") {
+                suffix = ".photo.incomplete"
+            } else if entry.hasSuffix(".photo") {
+                suffix = ".photo"
+            } else {
+                continue
+            }
+            let id = String(entry.dropLast(suffix.count))
+            guard UUID(uuidString: id)?.uuidString.lowercased() == id,
+                !stagingIds.contains(id)
+            else { continue }
+            guard unlinkat(directory, entry, 0) == 0 || errno == ENOENT else {
+                throw PhotoResourceTransferFailure.storageFailure
+            }
+            if let stagingId = try? DownloadOperationId(validating: id) {
+                reservations[stagingId] = nil
+            }
+            changed = true
+        }
+        if changed { try synchronize(directory) }
     }
 
     /// Imports one Files-provider document into the same quota-managed private staging root used
@@ -742,7 +956,7 @@ actor DownloadStagingStore {
                 throw error
             }
             close(descriptor)
-            let key = (file as NSString).deletingPathExtension
+            let key = inventoryKey(file)
             result[key] = try add(result[key] ?? 0, bytes)
         }
         return result
@@ -817,6 +1031,20 @@ actor DownloadStagingStore {
         id.rawValue + (verified ? ".verified" : ".part")
     }
     private func uploadName(_ id: DownloadOperationId) -> String { id.rawValue + ".upload" }
+    private func photoName(_ id: DownloadOperationId) -> String { id.rawValue + ".photo" }
+    private func photoIncompleteName(_ id: DownloadOperationId) -> String {
+        id.rawValue + ".photo.incomplete"
+    }
+    private func inventoryKey(_ filename: String) -> String {
+        for suffix in [
+            ".upload.incomplete", ".photo.incomplete", ".upload", ".photo",
+            ".verified", ".part", ".bgchunk",
+        ]
+        where filename.hasSuffix(suffix) {
+            return String(filename.dropLast(suffix.count))
+        }
+        return (filename as NSString).deletingPathExtension
+    }
     private func incompleteUploadName(_ id: DownloadOperationId) -> String {
         id.rawValue + ".upload.incomplete"
     }

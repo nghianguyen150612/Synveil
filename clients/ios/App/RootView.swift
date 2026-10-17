@@ -29,6 +29,7 @@ struct RootView: View {
     var fileExportCoordinator: VerifiedFileExportCoordinator? = nil
     var notifications: NotificationCoordinator? = nil
     var notificationNavigation: NotificationNavigationCoordinator? = nil
+    var photoBackupSettingsFactory: (@MainActor () async -> PhotoBackupSettingsViewModel?)? = nil
 
     var body: some View {
         switch sessionController.state {
@@ -68,6 +69,7 @@ struct RootView: View {
                 fileExportCoordinator: fileExportCoordinator,
                 notifications: notifications,
                 notificationNavigation: notificationNavigation,
+                photoBackupSettingsFactory: photoBackupSettingsFactory,
                 sessionController: sessionController
             )
             // A later authenticated lifecycle receives a fresh transient catalog and navigation stack.

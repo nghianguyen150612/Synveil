@@ -202,11 +202,16 @@ A partial group is visible with an honest warning and a retry path. Cleanup
 does not delete a successfully committed still image merely because its motion
 resource failed.
 
-## Future Apple PhotoKit client
+## iOS PhotoKit client
 
-The future Apple client is `PLANNED` around PhotoKit, URLSession background
-transfer, Keychain, Swift Concurrency, and platform-provided change
-observation. The server contract must account for these platform constraints:
+P056 adds opt-in PhotoKit metadata discovery and P057 implements explicit preparation of a
+selected local resource followed by a user-started foreground upload through the existing P045
+coordinator. The P057 native CI and review gates remain tracked by the [P057 manifest](../ios/manifests/PROMPT057_MANIFEST.md).
+Automatic camera-roll upload, background URLSession upload, silent iCloud retrieval, remote
+deletion, and server PhotoAsset binding remain disabled. The PhotoKit host app writes into the
+existing private transfer staging area and never stages media in the File Provider App Group.
+
+The server contract must continue to account for these platform constraints:
 
 - The user may grant full, limited, or later-revoked photo-library access. The
   client uploads only assets PhotoKit currently permits and represents limited
@@ -215,12 +220,8 @@ observation. The server contract must account for these platform constraints:
   after library restoration or OS changes. It is a reconciliation hint, not a
   permanent server identity.
 - The app cannot assume unrestricted filesystem paths or continuous
-  background execution. It persists transfer/session mappings before
-  scheduling and resumes after delayed callbacks, termination, network change,
-  or device reboot.
-- Background upload completion can arrive after credentials rotate or policy
-  pauses. The client reauthorizes/reconciles before binding, while already
-  committed bytes remain recoverable through the same idempotency identity.
+  background execution. P057 uses private app staging and the existing
+  foreground resumable upload path; background photo transfer is disabled.
 - Original resources are requested through platform APIs at appropriate
   quality. An optimized/local preview must not be mislabeled as the original.
 - iCloud-backed assets may require network retrieval by the OS and can be
@@ -229,8 +230,9 @@ observation. The server contract must account for these platform constraints:
 - Edits in the Apple library may yield adjusted resources. The client records
   whether it is uploading an original or an edited rendition; Synveil does not
   silently replace one with the other.
-- Live-photo still and motion resources upload independently and bind only
-  after both terminal outcomes are known.
+- Live Photo still and motion resources stage and upload independently. P057
+  does not claim group completion; binding requires a future reviewed server
+  contract.
 
 PhotoKit observation state is separate from the Synveil `SyncCursor` and
 `BackupSnapshot`. A local PhotoKit deletion can be:

@@ -107,7 +107,10 @@ isolated, fail-closed `NSFileProviderReplicatedExtension` foundation; it does no
 production Apple Files integration or change v0.1 release eligibility. P054 may add authorized
 remote enumeration and metadata change propagation after its own authorization. P055 content
 materialization and Files-originated mutations remain subject to a separate safety design and
-roadmap confirmation. PhotoKit remains deferred to P056–P058.
+roadmap confirmation. PhotoKit P056/P057 is a separate owner-authorized workstream. P056 adds
+metadata observation; P057 implements explicitly selected local resource preparation and
+foreground P045 upload, with native CI and review pending. Automatic camera-roll upload,
+background upload, silent iCloud retrieval, remote deletion, and P058 remain deferred.
 
 
 ## P048 implementation record

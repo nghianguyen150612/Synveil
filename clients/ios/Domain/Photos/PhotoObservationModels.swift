@@ -17,6 +17,22 @@ public struct PhotoAssetObservation: Codable, Sendable, Equatable, Identifiable 
     public let sourceAvailability: PhotoSourceAvailability
     public let isExcluded: Bool
 
+    public static func == (lhs: PhotoAssetObservation, rhs: PhotoAssetObservation) -> Bool {
+        lhs.localIdentifier == rhs.localIdentifier
+            && lhs.assetKind == rhs.assetKind
+            && photoTimestampValuesMatch(lhs.creationDate, rhs.creationDate)
+            && photoTimestampValuesMatch(lhs.modificationDate, rhs.modificationDate)
+            && lhs.pixelWidth == rhs.pixelWidth
+            && lhs.pixelHeight == rhs.pixelHeight
+            && lhs.isFavorite == rhs.isFavorite
+            && lhs.isHidden == rhs.isHidden
+            && lhs.discoveryGeneration == rhs.discoveryGeneration
+            && photoTimestampValuesMatch(lhs.observedAt, rhs.observedAt)
+            && lhs.permissionScope == rhs.permissionScope
+            && lhs.sourceAvailability == rhs.sourceAvailability
+            && lhs.isExcluded == rhs.isExcluded
+    }
+
     public init(
         localIdentifier: String,
         assetKind: PhotoAssetKind,
@@ -48,31 +64,51 @@ public struct PhotoAssetObservation: Codable, Sendable, Equatable, Identifiable 
     }
 }
 
+func photoTimestampValuesMatch(_ lhs: Date?, _ rhs: Date?) -> Bool {
+    switch (lhs, rhs) {
+    case (nil, nil): true
+    case let (lhs?, rhs?): lhs.timeIntervalSince1970 == rhs.timeIntervalSince1970
+    default: false
+    }
+}
+
 public struct PhotoAssetResourceDescriptor: Codable, Sendable, Equatable, Identifiable {
-    public var id: String { "\(localIdentifier)_\(role.rawValue)" }
+    public var id: String { "\(localIdentifier)_\(resourceIndex)_\(resourceType)" }
 
     public let localIdentifier: String
     public let role: PhotoResourceRole
+    public let resourceIndex: Int
+    public let resourceType: String
+    public let rendition: PhotoResourceRendition
     public let originalFilename: String?
     public let uniformTypeIdentifier: String?
-    public let isLocallyAvailable: Bool
+    public let availability: PhotoResourceAvailability
     public let fileSizeEstimateBytes: Int64?
+
+    public var isLocallyAvailable: Bool { availability == .localVerified }
 
     public init(
         localIdentifier: String,
         role: PhotoResourceRole,
+        resourceIndex: Int = 0,
+        resourceType: String = "unknown",
+        rendition: PhotoResourceRendition = .original,
         originalFilename: String?,
         uniformTypeIdentifier: String?,
-        isLocallyAvailable: Bool,
+        availability: PhotoResourceAvailability = .unknown,
         fileSizeEstimateBytes: Int64?
     ) {
         self.localIdentifier = localIdentifier
         self.role = role
+        self.resourceIndex = resourceIndex
+        self.resourceType = resourceType
+        self.rendition = rendition
         self.originalFilename = originalFilename
         self.uniformTypeIdentifier = uniformTypeIdentifier
-        self.isLocallyAvailable = isLocallyAvailable
+        self.availability = availability
         self.fileSizeEstimateBytes = fileSizeEstimateBytes
     }
+
 }
 
 public struct PhotoTransferCandidateDescriptor: Codable, Sendable, Equatable, Identifiable {

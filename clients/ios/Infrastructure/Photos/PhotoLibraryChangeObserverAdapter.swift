@@ -7,6 +7,7 @@ public final class PhotoLibraryChangeObserverAdapter: NSObject, PHPhotoLibraryCh
     private let lock = NSLock()
     private var onChangeHandler: (@Sendable () -> Void)?
     private var isRegistered = false
+    private var revisionValue: UInt64 = 0
 
     public override init() {
         super.init()
@@ -34,10 +35,17 @@ public final class PhotoLibraryChangeObserverAdapter: NSObject, PHPhotoLibraryCh
 
     public func photoLibraryDidChange(_ changeInstance: PHChange) {
         lock.lock()
+        revisionValue &+= 1
         let handler = onChangeHandler
         lock.unlock()
 
         handler?()
+    }
+
+    public var revision: UInt64 {
+        lock.lock()
+        defer { lock.unlock() }
+        return revisionValue
     }
 
     deinit {

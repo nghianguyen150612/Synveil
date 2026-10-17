@@ -577,11 +577,14 @@ State Transitions:
 
 ---
 
-## 24. PhotoKit Extension Boundary
+## 24. PhotoKit In-App Transfer Boundary
 
-* **Deferred Scope**: Reserved for P056–P058.
-* **Architecture Boundary**: Camera roll auto-backup will run as a background service task utilizing `PhotoKit` (`PHPhotoLibrary`).
-* **Shared Infrastructure**: Photo backup will enqueue upload jobs directly into the core `TransferEngineProtocol` without modifying the logical file browser models or views.
+* **P056 foundation**: Metadata discovery is opt-in, limited-library aware, bounded, and isolated in the versioned PhotoObservation SQLite store.
+* **P057 implementation**: A user selects a specific PhotoKit resource, prepares it through `PHAssetResourceManager.requestData` with network access disabled, and explicitly starts a foreground upload through the existing P045 `FileUploadCoordinator`.
+* **Shared storage and integrity**: The extraction adapter writes into the existing private P045 staging root, verifies byte length and streaming SHA-256, and binds READY/handoff transitions to the active PhotoKit authorization generation.
+* **Disabled behavior**: Metadata discovery alone never authorizes uploads. Automatic camera-roll transfer, background URLSession uploads, silent iCloud retrieval, remote deletion, and server PhotoAsset binding remain disabled. Live Photo still and motion resources have independent transfer states; group completion requires a future reviewed server contract.
+* **Extension isolation**: P056/P057 use the host app. `Extensions/PhotoKit/` remains a reservation; the host app does not create a PhotoKit extension target or use the File Provider App Group for media staging.
+* **Validation gate**: P057 native build, simulator tests, strict formatting, and the four required iOS workflows must pass on the feature HEAD before integration.
 
 ---
 
@@ -695,7 +698,7 @@ All developers and LLM agents working on the Synveil iOS client MUST obey these 
 * **P038–P047 (Transfers/Cache/Offline)**: Must implement the decoupled `TransferEngine` with 4 MiB resumable uploads and 512 MiB staging pressure limits.
 * **P048–P052 (Native iOS Experience)**: Must integrate `BGAppRefreshTask`, Quick Look, and Share Sheet.
 * **P053–P055 (File Provider)**: The owner-authorized post-baseline workstream uses `NSFileProviderReplicatedExtension` in an isolated target and a narrow App Group metadata projection. P053 foundations keep registration, network, content, mutations, Keychain sharing, and SQLite sharing disabled.
-* **P056–P058 (PhotoKit)**: Must build camera roll sync on top of the shared `TransferEngine`.
+* **P056–P058 (PhotoKit)**: P056 supplies opt-in metadata observation. P057 adds explicitly selected local resource staging and foreground P045 upload without a second transfer engine. P058 remains unauthorized and requires reviewed Live Photo group-binding and PhotoAsset contracts before those capabilities can be claimed.
 
 ## P054 read-only File Provider metadata synchronization
 
