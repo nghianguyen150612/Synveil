@@ -858,7 +858,7 @@ public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol, @
             && lhs.maximumResourceBytes == rhs.maximumResourceBytes
             && lhs.userInitiated == rhs.userInitiated
             && lhs.stagingId == rhs.stagingId
-            && lhs.createdAt == rhs.createdAt
+            && photoSourceDatesMatch(lhs.createdAt, rhs.createdAt)
     }
 
     private func performExtractionConsentIsCurrent(

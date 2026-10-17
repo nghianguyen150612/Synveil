@@ -6,6 +6,15 @@ import XCTest
 
 @MainActor
 final class PhotoResourceTransferTests: XCTestCase {
+    func testResourceSelectionIdentitySurvivesSQLiteTimestampRoundTrip() {
+        let sourceDate = Date()
+        let restoredDate = Date(timeIntervalSince1970: sourceDate.timeIntervalSince1970)
+
+        XCTAssertEqual(
+            makeSelection(sourceModificationDate: sourceDate),
+            makeSelection(sourceModificationDate: restoredDate))
+    }
+
     func testPhotoKitChunksBecomeVerifiedPrivateStage() async throws {
         let fixture = try await queueFixture(self, initializeBase: false)
         let photoStore = try makePhotoStore()
@@ -385,12 +394,14 @@ final class PhotoResourceTransferTests: XCTestCase {
         return PhotoResourceStagingCoordinator(uploadStaging: UploadStagingStore(shared: shared))
     }
 
-    private func makeSelection() -> PhotoResourceSelection {
+    private func makeSelection(
+        sourceModificationDate: Date? = Date(timeIntervalSince1970: 10)
+    ) -> PhotoResourceSelection {
         PhotoResourceSelection(
             localIdentifier: "device-asset-1", resourceIndex: 0, resourceType: "1",
             role: .primaryImage, rendition: .original,
             uniformTypeIdentifier: "public.jpeg",
-            sourceModificationDate: Date(timeIntervalSince1970: 10))
+            sourceModificationDate: sourceModificationDate)
     }
 
     private func makeObservation(

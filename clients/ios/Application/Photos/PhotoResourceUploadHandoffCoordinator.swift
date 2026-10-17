@@ -71,9 +71,10 @@ final class PhotoResourceUploadHandoffCoordinator {
                 throw PhotoResourceTransferFailure.sourceUnavailable
             }
             guard
-                try await source.currentModificationDate(
-                    for: record.selection.localIdentifier)
-                    == record.selection.sourceModificationDate
+                photoSourceDatesMatch(
+                    try await source.currentModificationDate(
+                        for: record.selection.localIdentifier),
+                    record.selection.sourceModificationDate)
             else { throw PhotoResourceTransferFailure.sourceChanged }
 
             let verified = try await staging.verify(
@@ -88,7 +89,8 @@ final class PhotoResourceUploadHandoffCoordinator {
             let currentModificationDate = try await source.currentModificationDate(
                 for: record.selection.localIdentifier)
             guard currentChoices.contains(record.selection),
-                currentModificationDate == record.selection.sourceModificationDate
+                photoSourceDatesMatch(
+                    currentModificationDate, record.selection.sourceModificationDate)
             else { throw PhotoResourceTransferFailure.sourceChanged }
             try await validateCurrentContext(matching: context)
 

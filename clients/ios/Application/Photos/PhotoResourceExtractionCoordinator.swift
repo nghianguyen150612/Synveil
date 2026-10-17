@@ -212,9 +212,10 @@ public actor PhotoResourceExtractionCoordinator {
             record = verifying
 
             guard
-                try await source.currentModificationDate(
-                    for: intent.selection.localIdentifier)
-                    == intent.selection.sourceModificationDate
+                photoSourceDatesMatch(
+                    try await source.currentModificationDate(
+                        for: intent.selection.localIdentifier),
+                    intent.selection.sourceModificationDate)
             else { throw PhotoResourceTransferFailure.sourceChanged }
             _ = try await validate(intent)
             try await validateObservation(intent)

@@ -42,7 +42,12 @@ final class PhotoResourceStageWriter: @unchecked Sendable {
         guard !next.overflow, next.partialValue <= maximumBytes else {
             throw PhotoResourceTransferFailure.resourceTooLarge
         }
-        let free = try freeBytes(root)
+        let free: UInt64
+        do {
+            free = try freeBytes(root)
+        } catch DownloadFailure.insufficientStorage {
+            throw PhotoResourceTransferFailure.insufficientStorage
+        }
         let required = amount.addingReportingOverflow(DownloadPolicy.freeReserve)
         guard !required.overflow, free >= required.partialValue else {
             throw PhotoResourceTransferFailure.insufficientStorage
@@ -402,9 +407,15 @@ actor DownloadStagingStore {
             throw PhotoResourceTransferFailure.resourceTooLarge
         }
         let downloadId = try DownloadOperationId(validating: id.rawValue)
-        try reserve(
-            DownloadStorageReservation(operationId: downloadId, bytes: maximumBytes),
-            durable: durable)
+        do {
+            try reserve(
+                DownloadStorageReservation(operationId: downloadId, bytes: maximumBytes),
+                durable: durable)
+        } catch DownloadFailure.insufficientStorage {
+            throw PhotoResourceTransferFailure.insufficientStorage
+        } catch DownloadFailure.stagingQuotaExceeded {
+            throw PhotoResourceTransferFailure.stagingQuotaExceeded
+        }
         let directory = try openDirectory()
         defer { close(directory) }
         let descriptor = openat(
