@@ -5,7 +5,8 @@
 - Verified starting `ios-app` baseline: `82e3e53eb690942089401c005c0c28c1f0bd6921` (merged P057 PR #141).
 - P055 PR #139 remains separate and unmerged; this branch does not include or change it.
 - Feature branch: `ios/p058-photokit-backup-orchestration`.
-- P058 changes are not merged. P059 has not started.
+- P058 PR #142 targets `ios-app` and remains open; it is not merged. P059 has not started.
+- Current feature code head: `e7ff5f165a6857baf66fa999d10ad56651ea166d`.
 - Completion decision: `IMPLEMENTED_PENDING_NATIVE_VALIDATION` while the required exact-HEAD Apple workflows and independent review are pending.
 
 ## Server capability audit
@@ -66,8 +67,8 @@ Portable validation and four native iOS workflow results will be recorded here a
 
 ## Review, CI, and deployment gates
 
-- Pull request: pending creation.
-- Independent reviewer: pending request.
+- Pull request: [#142](https://github.com/nghianguyen150612/Synveil/pull/142), open and not merged.
+- Independent reviewer: `ducminh231011` requested; review pending.
 - iOS Static Validation: pending exact-HEAD result.
 - iOS Build: pending exact-HEAD result.
 - iOS Simulator Tests: pending exact-HEAD result and XCTest totals.
