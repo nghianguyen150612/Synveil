@@ -1,6 +1,6 @@
 # PROMPT057 Manifest: PhotoKit Resource Extraction and Foreground Upload
 
-**Status:** Implemented on the feature branch; native iOS validation and review are pending.
+**Status:** Implemented on an open pull request; native iOS validation and independent review are pending.
 
 ## Repository and dependency status
 
@@ -8,8 +8,9 @@
 - Verified starting SHA and P056 merge: `b8744a079e2b73fb6ef6b37f24e4bdb538a43ed5` (PR #140).
 - P055: PR #139 remains open and unmerged. P057 does not use its File Provider sources.
 - Feature branch: `ios/p057-photokit-resource-transfer`.
-- Feature SHA: recorded after the final implementation commit.
-- PR and independent review: recorded after opening the single P057 pull request.
+- Implementation commit before this manifest status update: `253b5d34c266ab1b022f068c89e497f7a03c6eb7`.
+- Exact current feature head: tracked by [PR #141](https://github.com/nghianguyen150612/Synveil/pull/141) and reported in the completion record after final validation.
+- PR #141 targets `ios-app`; independent review was requested from `ducminh231011` and is pending.
 
 ## Resource selection and extraction
 
@@ -100,9 +101,11 @@ New deterministic XCTest coverage is registered in `PhotoResourceTransferTests.s
 
 The existing P001–P056 XCTest sources remain registered. The iOS source-registration and
 architecture validator passed. Portable validation passed with 120 support tests; docs
-validation and `git diff --check` also passed. The local execution environment does not contain
-`xcodebuild`, `swift`, or `swift-format`, so native build, simulator XCTest, strict formatting,
-and the four required iOS workflow results are pending GitHub CI on the final branch head.
+validation and `git diff --check` also passed. Strict `swift-format` lint passed using Swift
+6.2.2 in Docker. The local execution environment does not contain Xcode or `xcodebuild`, so
+native build and simulator XCTest totals depend on GitHub CI. The latest push has started all
+four required iOS workflows; the final run URLs and XCTest totals are recorded in PR #141 and
+the completion report. The stable live status page is the [PR checks tab](https://github.com/nghianguyen150612/Synveil/pull/141/checks).
 
 Physical iPhone and controlled live-upload validation are deferred with the exact states:
 
@@ -111,8 +114,8 @@ Physical iPhone and controlled live-upload validation are deferred with the exac
 
 ## Review, merge, and P058 prerequisites
 
-- Independent review: pending PR creation and reviewer assignment.
-- PR/merge status: pending; this branch has not been merged.
+- Independent review: requested from `ducminh231011`; awaiting submission.
+- PR/merge status: PR #141 is open and targets `ios-app`; not merged.
 - P058 prerequisites: reviewed server-side Live Photo group-binding contract, a separately
   consented iCloud retrieval policy if desired, and a reviewed PhotoAsset binding contract.
   Automatic camera-roll upload, background URLSession upload, remote deletion, and P058 work
