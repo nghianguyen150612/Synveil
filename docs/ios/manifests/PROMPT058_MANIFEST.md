@@ -6,8 +6,8 @@
 - P055 PR #139 remains separate and unmerged; this branch does not include or change it.
 - Feature branch: `ios/p058-photokit-backup-orchestration`.
 - P058 PR #142 targets `ios-app` and remains open; it is not merged. P059 has not started.
-- Current feature code head: `e7ff5f165a6857baf66fa999d10ad56651ea166d`.
-- Completion decision: `IMPLEMENTED_PENDING_NATIVE_VALIDATION` while the required exact-HEAD Apple workflows and independent review are pending.
+- Current feature code head: `9d740a265f20d5823cdaad3f82f8d93c7783351b` (the subsequent manifest-only commit does not change iOS source).
+- Completion decision: `IMPLEMENTED_PENDING_REVIEW_OR_MERGE`; all four required native iOS workflows passed on the final P058 source head, while independent review and merge remain pending.
 
 ## Server capability audit
 
@@ -63,16 +63,35 @@ PhotoAsset import, Live Photo server grouping, BackupSet association for P045 up
 
 Seven new XCTest cases cover automatic-off defaults and explicit consent, durable duplicate suppression versus changed source revision, durable end-of-scan cursors, all-or-nothing queue capacity, interrupted extraction lease recovery, preservation of the original P045 ID after unknown upload recovery, and queue adoption across authorization generations. The schema migration test now expects v3 and checks new queue/configuration tables. Existing P001–P057 test targets remain registered.
 
-Portable validation and four native iOS workflow results will be recorded here against the final pushed commit. Native XCTest totals must come from the exact P058 simulator run; P057 CI results are not reused. Physical-device, controlled live-upload, PhotoAsset-binding, and backup-retention deployment checks are not claimed.
+Portable validation passed on source commit `9d740a265f20d5823cdaad3f82f8d93c7783351b`:
+
+- `swift format lint --recursive --strict clients/ios` using Swift 6.2.2.
+- Swift frontend syntax parse for the changed Swift files.
+- `python3 clients/ios/Support/validate_ios_sources.py`.
+- `python3 -m unittest discover -s clients/ios/Support/tests` — 120 passed.
+- `bash scripts/validate-docs.sh`.
+- `git diff --check`.
+
+The four required native iOS workflows passed on that exact P058 source head; these are not reused P057 results:
+
+- [iOS Static Validation](https://github.com/nghianguyen150612/Synveil/actions/runs/39023609084) — PASS.
+- [iOS Build](https://github.com/nghianguyen150612/Synveil/actions/runs/39023609162) — PASS.
+- [iOS Simulator Tests](https://github.com/nghianguyen150612/Synveil/actions/runs/39023609082) — PASS: 2,021 XCTest cases; 2,019 succeeded, 2 skipped, 0 failed. All seven P058 queue tests passed, including authorization-generation adoption. The skipped tests require a Keychain entitlement or Data Protection attributes unavailable in the simulator.
+- [iOS Rust Apple Build](https://github.com/nghianguyen150612/Synveil/actions/runs/39023609141) — PASS.
+
+Other repository-wide workflows are tracked separately and remain open repository issues: [Rust CI](https://github.com/nghianguyen150612/Synveil/actions/runs/39023609105) failed in desktop/workspace, dependency-policy, and Clippy jobs; [Linux AppImage](https://github.com/nghianguyen150612/Synveil/actions/runs/39023609169) failed during artifact build/reproduction; [PostgreSQL 17 scheduled-maintenance](https://github.com/nghianguyen150612/Synveil/actions/runs/39023609070) failed in the Prompt 64–65 scheduler test. These workflows do not validate the iOS source changes. Linux DEB/RPM packaging run [39023609182](https://github.com/nghianguyen150612/Synveil/actions/runs/39023609182) was still running when recorded. None of these failures is represented as an iOS gate failure or changed by P058.
+
+Physical-device, controlled live-upload, PhotoAsset-binding, and backup-retention deployment checks are not claimed.
 
 ## Review, CI, and deployment gates
 
 - Pull request: [#142](https://github.com/nghianguyen150612/Synveil/pull/142), open and not merged.
 - Independent reviewer: `ducminh231011` requested; review pending.
-- iOS Static Validation: pending exact-HEAD result.
-- iOS Build: pending exact-HEAD result.
-- iOS Simulator Tests: pending exact-HEAD result and XCTest totals.
-- iOS Rust Apple Build: pending exact-HEAD result.
+- iOS Static Validation: PASS on source head `9d740a265f20d5823cdaad3f82f8d93c7783351b`; [run 39023609084](https://github.com/nghianguyen150612/Synveil/actions/runs/39023609084).
+- iOS Build: PASS on source head `9d740a265f20d5823cdaad3f82f8d93c7783351b`; [run 39023609162](https://github.com/nghianguyen150612/Synveil/actions/runs/39023609162).
+- iOS Simulator Tests: PASS on source head `9d740a265f20d5823cdaad3f82f8d93c7783351b`; [run 39023609082](https://github.com/nghianguyen150612/Synveil/actions/runs/39023609082), 2,019 passed, 2 skipped, 0 failed (2,021 total).
+- iOS Rust Apple Build: PASS on source head `9d740a265f20d5823cdaad3f82f8d93c7783351b`; [run 39023609141](https://github.com/nghianguyen150612/Synveil/actions/runs/39023609141).
+- Unrelated repository workflows remain tracked separately: Rust CI run 39023609105, Linux AppImage run 39023609169, and PostgreSQL 17 scheduled-maintenance run 39023609070 failed outside iOS; Linux DEB/RPM run 39023609182 was still in progress when recorded.
 - `DEFERRED_PHYSICAL_DEVICE_NOT_AVAILABLE`
 - `DEFERRED_LIVE_UPLOAD_DEPLOYMENT_NOT_AVAILABLE`
 - `DEFERRED_PHOTO_BINDING_SERVER_API_NOT_IMPLEMENTED`
