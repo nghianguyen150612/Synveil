@@ -8,7 +8,9 @@ enum PhotoObservationStoreFaultPoint: Sendable {
     case beforeExtractionTransitionCommit
 }
 
-public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol, @unchecked Sendable {
+public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol,
+    PhotoBackupQueueStoreProtocol, @unchecked Sendable
+{
     private let dbQueue: DispatchQueue
     private let authorizationBarrierLock = NSLock()
     private var db: OpaquePointer?
@@ -209,6 +211,158 @@ public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol, @
         }
     }
 
+    public func enqueueBackupCandidates(
+        _ candidates: [PhotoBackupCandidate], authorization: PhotoAuthorizationSession,
+        maximumPending: Int
+    ) async throws -> Int {
+        try await withCheckedThrowingContinuation { continuation in
+            dbQueue.async {
+                do {
+                    let count = try self.performEnqueueBackupCandidates(
+                        candidates, authorization: authorization,
+                        maximumPending: min(maximumPending, 1_000))
+                    continuation.resume(returning: count)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    public func backupDiscoveryCursor(
+        authorization: PhotoAuthorizationSession, deviceId: String, policyRevision: Int64,
+        scanGeneration: Int64
+    ) async throws -> String? {
+        try await withCheckedThrowingContinuation { continuation in
+            dbQueue.async {
+                do {
+                    let cursor = try self.performBackupDiscoveryCursor(
+                        authorization: authorization, deviceId: deviceId,
+                        policyRevision: policyRevision, scanGeneration: scanGeneration)
+                    continuation.resume(returning: cursor)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    public func saveBackupDiscoveryCursor(
+        _ localIdentifier: String?, authorization: PhotoAuthorizationSession,
+        deviceId: String, policyRevision: Int64, scanGeneration: Int64
+    ) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            dbQueue.async {
+                do {
+                    try self.performSaveBackupDiscoveryCursor(
+                        localIdentifier, authorization: authorization, deviceId: deviceId,
+                        policyRevision: policyRevision, scanGeneration: scanGeneration)
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    public func claimNextBackupCandidate(
+        authorization: PhotoAuthorizationSession, deviceId: String, claimId: UUID,
+        leaseUntil: Date, policyRevision: Int64
+    ) async throws -> PhotoBackupCandidate? {
+        try await withCheckedThrowingContinuation { continuation in
+            dbQueue.async {
+                do {
+                    let candidate = try self.performClaimNextBackupCandidate(
+                        authorization: authorization, deviceId: deviceId, claimId: claimId,
+                        leaseUntil: leaseUntil, policyRevision: policyRevision)
+                    continuation.resume(returning: candidate)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    public func transitionBackupCandidate(
+        _ candidate: PhotoBackupCandidate, expectedState: PhotoBackupQueueState,
+        authorization: PhotoAuthorizationSession
+    ) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            dbQueue.async {
+                do {
+                    try self.performTransitionBackupCandidate(
+                        candidate, expectedState: expectedState, authorization: authorization)
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    public func backupCandidates(
+        authorization: PhotoAuthorizationSession, limit: Int
+    ) async throws -> [PhotoBackupCandidate] {
+        try await withCheckedThrowingContinuation { continuation in
+            dbQueue.async {
+                do {
+                    let candidates = try self.performFetchBackupCandidates(
+                        authorization: authorization, limit: min(max(limit, 1), 1_000))
+                    continuation.resume(returning: candidates)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    public func adoptRecoverableBackupCandidates(
+        authorization: PhotoAuthorizationSession, deviceId: String
+    ) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            dbQueue.async {
+                do {
+                    try self.performAdoptRecoverableBackupCandidates(
+                        authorization: authorization, deviceId: deviceId)
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    public func backupQueueSummary(
+        authorization: PhotoAuthorizationSession
+    ) async throws -> PhotoBackupQueueSummary {
+        try await withCheckedThrowingContinuation { continuation in
+            dbQueue.async {
+                do {
+                    let summary = try self.performBackupQueueSummary(authorization: authorization)
+                    continuation.resume(returning: summary)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    public func recoverExpiredBackupClaims(
+        authorization: PhotoAuthorizationSession, before: Date
+    ) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            dbQueue.async {
+                do {
+                    try self.performRecoverExpiredBackupClaims(
+                        authorization: authorization, before: before)
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
     public func fetchObservations(
         profileId: UUID,
         ownerId: String
@@ -220,6 +374,25 @@ public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol, @
                         profileId: profileId,
                         ownerId: ownerId
                     )
+                    continuation.resume(returning: results)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    public func fetchObservationPage(
+        profileId: UUID, ownerId: String, scanGeneration: Int64,
+        after localIdentifier: String?, limit: Int
+    ) async throws -> [PhotoAssetObservation] {
+        try await withCheckedThrowingContinuation { continuation in
+            dbQueue.async {
+                do {
+                    let results = try self.performFetchObservationPage(
+                        profileId: profileId, ownerId: ownerId,
+                        scanGeneration: scanGeneration, after: localIdentifier,
+                        limit: min(max(limit, 1), 1_000))
                     continuation.resume(returning: results)
                 } catch {
                     continuation.resume(throwing: error)
@@ -294,6 +467,987 @@ public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol, @
     }
 
     // MARK: - Internal Database Actions
+
+    private func performEnqueueBackupCandidates(
+        _ candidates: [PhotoBackupCandidate], authorization: PhotoAuthorizationSession,
+        maximumPending: Int
+    ) throws -> Int {
+        guard maximumPending > 0, candidates.count <= 10_000 else {
+            throw photoStoreError(150, "Photo Backup queue batch is outside its bound")
+        }
+        try performSQL("BEGIN IMMEDIATE TRANSACTION;")
+        do {
+            guard try performAuthorizationIsCurrent(authorization) else {
+                throw PhotoResourceTransferFailure.staleAuthorization
+            }
+            let config = try performFetchConfiguration(profileId: authorization.profileId)
+            guard config.canAutomaticallyBackUpInForeground else {
+                throw PhotoResourceTransferFailure.configurationDisabled
+            }
+            guard let first = candidates.first else {
+                try performSQL("COMMIT;")
+                return 0
+            }
+            guard candidates.allSatisfy({ $0.deviceId == first.deviceId }) else {
+                throw PhotoResourceTransferFailure.staleAuthorization
+            }
+            try performPruneTerminalBackupCandidates(
+                authorization: authorization, deviceId: first.deviceId,
+                olderThan: Date().addingTimeInterval(-90 * 24 * 60 * 60))
+            var totalRows = try performBackupQueueTotalCount(
+                authorization: authorization, deviceId: first.deviceId)
+            var pending = try performBackupQueuePendingCount(
+                authorization: authorization, deviceId: first.deviceId)
+            let sql = """
+                INSERT INTO photo_backup_candidates (
+                    candidate_id, profile_id, owner_id, device_id, client_library_scope,
+                    local_identifier, source_revision, resource_index, resource_type,
+                    resource_role, rendition, uniform_type_identifier,
+                    source_modification_date, observation_generation, policy_revision,
+                    authorization_generation, destination_library_identifier,
+                    destination_parent_identifier, group_identity, state, attempt_count,
+                    retry_after, claim_id,
+                    claim_expires_at, claim_previous_state, extraction_operation_id,
+                    upload_operation_id, file_version_identifier, verified_byte_count,
+                    verified_sha256, photo_asset_identifier, backup_snapshot_identifier,
+                    backup_retention_confirmed_at, safe_failure, created_at, updated_at
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+                ON CONFLICT DO NOTHING;
+                """
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw photoStoreError(151, "Failed to prepare Photo Backup queue insertion")
+            }
+            defer { sqlite3_finalize(statement) }
+
+            var inserted = 0
+            for candidate in candidates {
+                guard candidate.profileId == authorization.profileId,
+                    candidate.ownerId == authorization.ownerId,
+                    candidate.authorizationGeneration == authorization.generation,
+                    candidate.localIdentifier == candidate.selection.localIdentifier,
+                    candidate.selection.resourceIndex >= 0,
+                    candidate.deviceId.isEmpty == false,
+                    candidate.clientLibraryScope.isEmpty == false,
+                    candidate.destinationLibraryIdentifier.isEmpty == false,
+                    candidate.destinationParentIdentifier.isEmpty == false,
+                    candidate.policyRevision == config.policyRevision
+                else { throw PhotoResourceTransferFailure.staleAuthorization }
+                guard config.targetLibraryIdentifier == candidate.destinationLibraryIdentifier,
+                    config.targetParentIdentifier == candidate.destinationParentIdentifier,
+                    try performCandidateObservationIsCurrent(candidate)
+                else { throw PhotoResourceTransferFailure.ineligibleObservation }
+
+                if try performRefreshExistingBackupCandidate(candidate) {
+                    pending = try performBackupQueuePendingCount(
+                        authorization: authorization, deviceId: candidate.deviceId)
+                    if pending > maximumPending {
+                        throw PhotoResourceTransferFailure.queueCapacityReached
+                    }
+                    continue
+                }
+                if try performHasUnresolvedCandidate(for: candidate) { continue }
+                sqlite3_reset(statement)
+                sqlite3_clear_bindings(statement)
+                bindBackupCandidate(candidate, to: statement)
+                guard sqlite3_step(statement) == SQLITE_DONE else {
+                    throw photoStoreError(152, "Failed to enqueue Photo Backup resource")
+                }
+                if sqlite3_changes(db) == 1 {
+                    inserted += 1
+                    pending += 1
+                    totalRows += 1
+                    if pending > maximumPending || totalRows > 50_000 {
+                        throw PhotoResourceTransferFailure.queueCapacityReached
+                    }
+                }
+            }
+            try performSQL("COMMIT;")
+            return inserted
+        } catch {
+            _ = sqlite3_exec(db, "ROLLBACK;", nil, nil, nil)
+            throw error
+        }
+    }
+
+    private func performClaimNextBackupCandidate(
+        authorization: PhotoAuthorizationSession, deviceId: String, claimId: UUID,
+        leaseUntil: Date, policyRevision: Int64
+    ) throws -> PhotoBackupCandidate? {
+        guard !deviceId.isEmpty, policyRevision > 0, leaseUntil > Date() else {
+            throw PhotoResourceTransferFailure.staleAuthorization
+        }
+        try performSQL("BEGIN IMMEDIATE TRANSACTION;")
+        do {
+            guard try performAuthorizationIsCurrent(authorization) else {
+                throw PhotoResourceTransferFailure.staleAuthorization
+            }
+            let config = try performFetchConfiguration(profileId: authorization.profileId)
+            guard config.canAutomaticallyBackUpInForeground,
+                config.policyRevision == policyRevision
+            else { throw PhotoResourceTransferFailure.configurationDisabled }
+            try performRecoverExpiredBackupClaims(
+                authorization: authorization, before: Date())
+            let selectSQL = """
+                SELECT \(backupCandidateColumnList)
+                FROM photo_backup_candidates
+                WHERE profile_id=? AND owner_id=? AND device_id=?
+                    AND authorization_generation=?
+                    AND ((policy_revision=? AND state IN ('QUEUED', 'VERIFIED_LOCALLY',
+                        'UPLOADING', 'RECONCILIATION_PENDING', 'FAILED_RECOVERABLE',
+                        'SOURCE_UNAVAILABLE'))
+                        OR (upload_operation_id IS NOT NULL
+                            AND state='RECONCILIATION_PENDING'))
+                    AND (retry_after IS NULL OR retry_after<=?)
+                ORDER BY CASE state
+                    WHEN 'RECONCILIATION_PENDING' THEN 0
+                    WHEN 'UPLOADING' THEN 0
+                    WHEN 'VERIFIED_LOCALLY' THEN 1
+                    ELSE 2 END,
+                    created_at ASC, candidate_id ASC
+                LIMIT 1;
+                """
+            var query: OpaquePointer?
+            guard sqlite3_prepare_v2(db, selectSQL, -1, &query, nil) == SQLITE_OK else {
+                throw photoStoreError(153, "Failed to prepare Photo Backup candidate claim")
+            }
+            defer { sqlite3_finalize(query) }
+            bindText(query, index: 1, text: authorization.profileId.uuidString)
+            bindText(query, index: 2, text: authorization.ownerId)
+            bindText(query, index: 3, text: deviceId)
+            bindText(query, index: 4, text: authorization.generation.uuidString)
+            sqlite3_bind_int64(query, 5, policyRevision)
+            sqlite3_bind_double(query, 6, Date().timeIntervalSince1970)
+            guard sqlite3_step(query) == SQLITE_ROW else {
+                try performSQL("COMMIT;")
+                return nil
+            }
+            let original = try decodeBackupCandidate(query)
+            let updated = original.replacing(
+                state: .claimed, claimId: claimId, claimExpiresAt: leaseUntil,
+                claimPreviousState: original.state,
+                attemptCount: original.attemptCount + 1)
+            let updateSQL = """
+                UPDATE photo_backup_candidates SET state='CLAIMED', attempt_count=attempt_count+1,
+                    claim_id=?,
+                    claim_expires_at=?, claim_previous_state=?, updated_at=?
+                WHERE candidate_id=? AND state=? AND authorization_generation=?;
+                """
+            var update: OpaquePointer?
+            guard sqlite3_prepare_v2(db, updateSQL, -1, &update, nil) == SQLITE_OK else {
+                throw photoStoreError(154, "Failed to prepare Photo Backup candidate lease")
+            }
+            defer { sqlite3_finalize(update) }
+            bindText(update, index: 1, text: claimId.uuidString)
+            sqlite3_bind_double(update, 2, leaseUntil.timeIntervalSince1970)
+            bindText(update, index: 3, text: original.state.rawValue)
+            sqlite3_bind_double(update, 4, Date().timeIntervalSince1970)
+            bindText(update, index: 5, text: original.candidateId.uuidString)
+            bindText(update, index: 6, text: original.state.rawValue)
+            bindText(update, index: 7, text: authorization.generation.uuidString)
+            guard sqlite3_step(update) == SQLITE_DONE, sqlite3_changes(db) == 1 else {
+                throw photoStoreError(155, "Photo Backup candidate lease was lost")
+            }
+            try performSQL("COMMIT;")
+            return updated
+        } catch {
+            _ = sqlite3_exec(db, "ROLLBACK;", nil, nil, nil)
+            throw error
+        }
+    }
+
+    private func performTransitionBackupCandidate(
+        _ candidate: PhotoBackupCandidate, expectedState: PhotoBackupQueueState,
+        authorization: PhotoAuthorizationSession
+    ) throws {
+        guard candidate.profileId == authorization.profileId,
+            candidate.ownerId == authorization.ownerId,
+            candidate.authorizationGeneration == authorization.generation,
+            allowedBackupCandidateTransition(from: expectedState, to: candidate.state),
+            candidate.claimId != nil || candidate.state == .queued
+        else { throw PhotoResourceTransferFailure.staleAuthorization }
+        try performSQL("BEGIN IMMEDIATE TRANSACTION;")
+        do {
+            guard try performAuthorizationIsCurrent(authorization) else {
+                throw PhotoResourceTransferFailure.staleAuthorization
+            }
+            guard
+                let current = try performFetchBackupCandidate(
+                    candidateId: candidate.candidateId, authorization: authorization),
+                current.state == expectedState,
+                sameBackupCandidateIdentity(current, candidate),
+                current.claimId == candidate.claimId
+            else { throw PhotoResourceTransferFailure.storageFailure }
+            if [.extracting, .verifiedLocally, .uploading].contains(candidate.state) {
+                let config = try performFetchConfiguration(profileId: authorization.profileId)
+                guard config.canAutomaticallyBackUpInForeground,
+                    config.policyRevision == candidate.policyRevision
+                else { throw PhotoResourceTransferFailure.configurationDisabled }
+            }
+            if candidate.state == .fileUploadedAwaitingPhotoBinding {
+                guard let uploadId = candidate.uploadOperationId,
+                    validUploadOperationId(uploadId),
+                    let byteCount = candidate.verifiedByteCount, byteCount > 0,
+                    isValidSHA256(candidate.verifiedSHA256),
+                    candidate.fileVersionIdentifier?.isEmpty == false
+                else { throw PhotoResourceTransferFailure.storageFailure }
+            }
+            if candidate.state == .photoBindingConfirmed {
+                guard candidate.photoAssetIdentifier?.isEmpty == false else {
+                    throw PhotoResourceTransferFailure.storageFailure
+                }
+            }
+            if candidate.state == .partial {
+                guard let uploadId = candidate.uploadOperationId,
+                    validUploadOperationId(uploadId),
+                    candidate.fileVersionIdentifier?.isEmpty == false,
+                    let byteCount = candidate.verifiedByteCount, byteCount > 0,
+                    isValidSHA256(candidate.verifiedSHA256)
+                else { throw PhotoResourceTransferFailure.storageFailure }
+            }
+            if candidate.state == .authoritativeBackupConfirmed {
+                guard candidate.photoAssetIdentifier?.isEmpty == false,
+                    candidate.backupSnapshotIdentifier?.isEmpty == false,
+                    candidate.backupRetentionConfirmedAt != nil
+                else { throw PhotoResourceTransferFailure.storageFailure }
+            }
+            let sql = """
+                UPDATE photo_backup_candidates SET
+                    state=?, claim_id=?, claim_expires_at=?, claim_previous_state=?,
+                    extraction_operation_id=?, upload_operation_id=?, file_version_identifier=?,
+                    verified_byte_count=?, verified_sha256=?, photo_asset_identifier=?,
+                    backup_snapshot_identifier=?, backup_retention_confirmed_at=?,
+                    attempt_count=?, retry_after=?, safe_failure=?, updated_at=?
+                WHERE candidate_id=? AND profile_id=? AND owner_id=?
+                    AND authorization_generation=? AND state=?
+                    AND COALESCE(claim_id, '')=COALESCE(?, '');
+                """
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw photoStoreError(156, "Failed to prepare Photo Backup state update")
+            }
+            defer { sqlite3_finalize(statement) }
+            bindText(statement, index: 1, text: candidate.state.rawValue)
+            bindOptionalText(statement, index: 2, text: candidate.claimId?.uuidString)
+            if let expiry = candidate.claimExpiresAt {
+                sqlite3_bind_double(statement, 3, expiry.timeIntervalSince1970)
+            } else {
+                sqlite3_bind_null(statement, 3)
+            }
+            bindOptionalText(statement, index: 4, text: candidate.claimPreviousState?.rawValue)
+            bindOptionalText(statement, index: 5, text: candidate.extractionOperationId?.uuidString)
+            bindOptionalText(statement, index: 6, text: candidate.uploadOperationId)
+            bindOptionalText(statement, index: 7, text: candidate.fileVersionIdentifier)
+            if let byteCount = candidate.verifiedByteCount {
+                guard byteCount <= UInt64(Int64.max) else {
+                    throw PhotoResourceTransferFailure.resourceTooLarge
+                }
+                sqlite3_bind_int64(statement, 8, Int64(byteCount))
+            } else {
+                sqlite3_bind_null(statement, 8)
+            }
+            bindOptionalText(statement, index: 9, text: candidate.verifiedSHA256)
+            bindOptionalText(statement, index: 10, text: candidate.photoAssetIdentifier)
+            bindOptionalText(statement, index: 11, text: candidate.backupSnapshotIdentifier)
+            if let confirmedAt = candidate.backupRetentionConfirmedAt {
+                sqlite3_bind_double(statement, 12, confirmedAt.timeIntervalSince1970)
+            } else {
+                sqlite3_bind_null(statement, 12)
+            }
+            sqlite3_bind_int(statement, 13, Int32(candidate.attemptCount))
+            if let retryAfter = candidate.retryAfter {
+                sqlite3_bind_double(statement, 14, retryAfter.timeIntervalSince1970)
+            } else {
+                sqlite3_bind_null(statement, 14)
+            }
+            bindOptionalText(statement, index: 15, text: candidate.safeFailure?.rawValue)
+            sqlite3_bind_double(statement, 16, candidate.updatedAt.timeIntervalSince1970)
+            bindText(statement, index: 17, text: candidate.candidateId.uuidString)
+            bindText(statement, index: 18, text: authorization.profileId.uuidString)
+            bindText(statement, index: 19, text: authorization.ownerId)
+            bindText(statement, index: 20, text: authorization.generation.uuidString)
+            bindText(statement, index: 21, text: expectedState.rawValue)
+            bindOptionalText(statement, index: 22, text: candidate.claimId?.uuidString)
+            guard sqlite3_step(statement) == SQLITE_DONE, sqlite3_changes(db) == 1 else {
+                throw photoStoreError(157, "Photo Backup candidate changed before commit")
+            }
+            try performSQL("COMMIT;")
+        } catch {
+            _ = sqlite3_exec(db, "ROLLBACK;", nil, nil, nil)
+            throw error
+        }
+    }
+
+    private func performFetchBackupCandidates(
+        authorization: PhotoAuthorizationSession, limit: Int
+    ) throws -> [PhotoBackupCandidate] {
+        guard try performAuthorizationIsCurrent(authorization) else {
+            throw PhotoResourceTransferFailure.staleAuthorization
+        }
+        let sql = """
+            SELECT \(backupCandidateColumnList) FROM photo_backup_candidates
+            WHERE profile_id=? AND owner_id=? AND authorization_generation=?
+            ORDER BY created_at DESC, candidate_id DESC LIMIT ?;
+            """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw photoStoreError(158, "Failed to prepare Photo Backup candidate inventory")
+        }
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, index: 1, text: authorization.profileId.uuidString)
+        bindText(statement, index: 2, text: authorization.ownerId)
+        bindText(statement, index: 3, text: authorization.generation.uuidString)
+        sqlite3_bind_int(statement, 4, Int32(limit))
+        var result: [PhotoBackupCandidate] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            result.append(try decodeBackupCandidate(statement))
+        }
+        return result
+    }
+
+    private func performBackupQueueSummary(
+        authorization: PhotoAuthorizationSession
+    ) throws -> PhotoBackupQueueSummary {
+        guard try performAuthorizationIsCurrent(authorization) else {
+            throw PhotoResourceTransferFailure.staleAuthorization
+        }
+        let sql = """
+            SELECT state, COUNT(*) FROM photo_backup_candidates
+            WHERE profile_id=? AND owner_id=? AND authorization_generation=?
+            GROUP BY state;
+            """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw photoStoreError(159, "Failed to prepare Photo Backup queue summary")
+        }
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, index: 1, text: authorization.profileId.uuidString)
+        bindText(statement, index: 2, text: authorization.ownerId)
+        bindText(statement, index: 3, text: authorization.generation.uuidString)
+        var counts: [PhotoBackupQueueState: Int] = [:]
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let raw = sqlite3_column_text(statement, 0),
+                let state = PhotoBackupQueueState(rawValue: String(cString: raw))
+            else { continue }
+            counts[state] = Int(sqlite3_column_int64(statement, 1))
+        }
+        return PhotoBackupQueueSummary(counts: counts)
+    }
+
+    private func performAdoptRecoverableBackupCandidates(
+        authorization: PhotoAuthorizationSession, deviceId: String
+    ) throws {
+        guard !deviceId.isEmpty, try performAuthorizationIsCurrent(authorization) else {
+            throw PhotoResourceTransferFailure.staleAuthorization
+        }
+        try performSQL("BEGIN IMMEDIATE TRANSACTION;")
+        do {
+            guard try performAuthorizationIsCurrent(authorization) else {
+                throw PhotoResourceTransferFailure.staleAuthorization
+            }
+            let config = try performFetchConfiguration(profileId: authorization.profileId)
+            let sql = """
+                UPDATE photo_backup_candidates SET
+                    authorization_generation=?,
+                    state=CASE
+                        WHEN upload_operation_id IS NOT NULL
+                            AND state IN ('CLAIMED', 'EXTRACTING', 'VERIFIED_LOCALLY', 'UPLOADING')
+                            THEN 'RECONCILIATION_PENDING'
+                        WHEN upload_operation_id IS NULL
+                            AND state IN ('CLAIMED', 'EXTRACTING', 'VERIFIED_LOCALLY')
+                            THEN 'QUEUED'
+                        ELSE state END,
+                    extraction_operation_id=CASE WHEN upload_operation_id IS NULL
+                        THEN NULL ELSE extraction_operation_id END,
+                    verified_byte_count=CASE WHEN upload_operation_id IS NULL
+                        THEN NULL ELSE verified_byte_count END,
+                    verified_sha256=CASE WHEN upload_operation_id IS NULL
+                        THEN NULL ELSE verified_sha256 END,
+                    claim_id=NULL, claim_expires_at=NULL, claim_previous_state=NULL,
+                    retry_after=CASE WHEN upload_operation_id IS NOT NULL
+                            AND state IN ('CLAIMED', 'EXTRACTING', 'VERIFIED_LOCALLY', 'UPLOADING')
+                        THEN ? ELSE retry_after END,
+                    safe_failure=CASE WHEN upload_operation_id IS NOT NULL
+                            AND state IN ('CLAIMED', 'EXTRACTING', 'VERIFIED_LOCALLY', 'UPLOADING')
+                        THEN 'uploadOutcomeUnknown'
+                        WHEN upload_operation_id IS NULL
+                            AND state IN ('CLAIMED', 'EXTRACTING', 'VERIFIED_LOCALLY')
+                        THEN 'policyChanged' ELSE safe_failure END,
+                    updated_at=?
+                WHERE profile_id=? AND owner_id=? AND device_id=?
+                    AND authorization_generation<>?
+                    AND ((upload_operation_id IS NOT NULL AND state IN (
+                            'CLAIMED', 'EXTRACTING', 'VERIFIED_LOCALLY', 'UPLOADING',
+                            'RECONCILIATION_PENDING', 'FILE_UPLOADED_AWAITING_PHOTO_BINDING',
+                            'PHOTO_BINDING_CONFIRMED', 'AWAITING_BACKUP_RETENTION_PROOF',
+                            'AUTHORITATIVE_BACKUP_CONFIRMED', 'PARTIAL', 'FAILED_RECOVERABLE'))
+                        OR (upload_operation_id IS NULL AND policy_revision=?
+                            AND destination_library_identifier IS ?
+                            AND destination_parent_identifier IS ?
+                            AND state IN ('QUEUED', 'ELIGIBLE', 'CLAIMED', 'EXTRACTING',
+                                'VERIFIED_LOCALLY', 'FAILED_RECOVERABLE', 'SOURCE_UNAVAILABLE')));
+                """
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw photoStoreError(187, "Failed to prepare Photo Backup queue adoption")
+            }
+            defer { sqlite3_finalize(statement) }
+            bindText(statement, index: 1, text: authorization.generation.uuidString)
+            // Reconcile the existing P045 operation immediately after authorization adoption.
+            sqlite3_bind_double(statement, 2, Date().timeIntervalSince1970)
+            sqlite3_bind_double(statement, 3, Date().timeIntervalSince1970)
+            bindText(statement, index: 4, text: authorization.profileId.uuidString)
+            bindText(statement, index: 5, text: authorization.ownerId)
+            bindText(statement, index: 6, text: deviceId)
+            bindText(statement, index: 7, text: authorization.generation.uuidString)
+            sqlite3_bind_int64(statement, 8, config.policyRevision)
+            bindOptionalText(statement, index: 9, text: config.targetLibraryIdentifier)
+            bindOptionalText(statement, index: 10, text: config.targetParentIdentifier)
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                throw photoStoreError(188, "Failed to adopt recoverable Photo Backup candidates")
+            }
+            try performSQL("COMMIT;")
+        } catch {
+            _ = sqlite3_exec(db, "ROLLBACK;", nil, nil, nil)
+            throw error
+        }
+    }
+
+    private func performRecoverExpiredBackupClaims(
+        authorization: PhotoAuthorizationSession, before: Date
+    ) throws {
+        guard try performAuthorizationIsCurrent(authorization) else {
+            throw PhotoResourceTransferFailure.staleAuthorization
+        }
+        let sql = """
+            UPDATE photo_backup_candidates SET
+                state=CASE
+                    WHEN state='CLAIMED' AND claim_previous_state='EXTRACTING' THEN 'QUEUED'
+                    WHEN state='CLAIMED' THEN COALESCE(claim_previous_state, 'QUEUED')
+                    WHEN state='EXTRACTING' THEN 'QUEUED'
+                    WHEN state='UPLOADING' THEN 'RECONCILIATION_PENDING'
+                    ELSE state END,
+                claim_id=NULL, claim_expires_at=NULL, claim_previous_state=NULL,
+                retry_after=CASE WHEN state IN ('UPLOADING', 'RECONCILIATION_PENDING')
+                    THEN ? ELSE retry_after END,
+                safe_failure=CASE WHEN state='UPLOADING' THEN 'uploadOutcomeUnknown'
+                    WHEN state='EXTRACTING' THEN 'stagingCorrupt' ELSE safe_failure END,
+                updated_at=?
+            WHERE profile_id=? AND owner_id=? AND authorization_generation=?
+                AND state IN ('CLAIMED', 'EXTRACTING', 'VERIFIED_LOCALLY', 'UPLOADING',
+                    'RECONCILIATION_PENDING') AND claim_expires_at<=?;
+            """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw photoStoreError(160, "Failed to prepare expired Photo Backup claim recovery")
+        }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_double(statement, 1, Date().timeIntervalSince1970)
+        sqlite3_bind_double(statement, 2, Date().addingTimeInterval(30).timeIntervalSince1970)
+        bindText(statement, index: 3, text: authorization.profileId.uuidString)
+        bindText(statement, index: 4, text: authorization.ownerId)
+        bindText(statement, index: 5, text: authorization.generation.uuidString)
+        sqlite3_bind_double(statement, 6, before.timeIntervalSince1970)
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw photoStoreError(161, "Failed to recover expired Photo Backup claims")
+        }
+    }
+
+    private func performBackupDiscoveryCursor(
+        authorization: PhotoAuthorizationSession, deviceId: String, policyRevision: Int64,
+        scanGeneration: Int64
+    ) throws -> String? {
+        guard try performAuthorizationIsCurrent(authorization) else {
+            throw PhotoResourceTransferFailure.staleAuthorization
+        }
+        let sql = """
+            SELECT last_local_identifier FROM photo_backup_scan_cursors
+            WHERE profile_id=? AND owner_id=? AND device_id=?
+                AND authorization_generation=? AND policy_revision=? AND scan_generation=?
+            LIMIT 1;
+            """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw photoStoreError(178, "Failed to prepare Photo Backup scan cursor read")
+        }
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, index: 1, text: authorization.profileId.uuidString)
+        bindText(statement, index: 2, text: authorization.ownerId)
+        bindText(statement, index: 3, text: deviceId)
+        bindText(statement, index: 4, text: authorization.generation.uuidString)
+        sqlite3_bind_int64(statement, 5, policyRevision)
+        sqlite3_bind_int64(statement, 6, scanGeneration)
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return nullableString(statement, 0)
+    }
+
+    private func performSaveBackupDiscoveryCursor(
+        _ localIdentifier: String?, authorization: PhotoAuthorizationSession,
+        deviceId: String, policyRevision: Int64, scanGeneration: Int64
+    ) throws {
+        guard try performAuthorizationIsCurrent(authorization), !deviceId.isEmpty,
+            policyRevision > 0, scanGeneration > 0
+        else { throw PhotoResourceTransferFailure.staleAuthorization }
+        if let localIdentifier {
+            let sql = """
+                INSERT INTO photo_backup_scan_cursors (
+                    profile_id, owner_id, device_id, authorization_generation,
+                    policy_revision, scan_generation, last_local_identifier, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(profile_id, owner_id, device_id, authorization_generation,
+                    policy_revision) DO UPDATE SET
+                    scan_generation=excluded.scan_generation,
+                    last_local_identifier=excluded.last_local_identifier,
+                    updated_at=excluded.updated_at;
+                """
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw photoStoreError(179, "Failed to prepare Photo Backup scan cursor write")
+            }
+            defer { sqlite3_finalize(statement) }
+            bindText(statement, index: 1, text: authorization.profileId.uuidString)
+            bindText(statement, index: 2, text: authorization.ownerId)
+            bindText(statement, index: 3, text: deviceId)
+            bindText(statement, index: 4, text: authorization.generation.uuidString)
+            sqlite3_bind_int64(statement, 5, policyRevision)
+            sqlite3_bind_int64(statement, 6, scanGeneration)
+            bindText(statement, index: 7, text: localIdentifier)
+            sqlite3_bind_double(statement, 8, Date().timeIntervalSince1970)
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                throw photoStoreError(180, "Failed to persist Photo Backup scan cursor")
+            }
+        } else {
+            let sql = """
+                DELETE FROM photo_backup_scan_cursors
+                WHERE profile_id=? AND owner_id=? AND device_id=?
+                    AND authorization_generation=? AND policy_revision=?;
+                """
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw photoStoreError(181, "Failed to prepare Photo Backup cursor reset")
+            }
+            defer { sqlite3_finalize(statement) }
+            bindText(statement, index: 1, text: authorization.profileId.uuidString)
+            bindText(statement, index: 2, text: authorization.ownerId)
+            bindText(statement, index: 3, text: deviceId)
+            bindText(statement, index: 4, text: authorization.generation.uuidString)
+            sqlite3_bind_int64(statement, 5, policyRevision)
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                throw photoStoreError(182, "Failed to reset Photo Backup scan cursor")
+            }
+        }
+    }
+
+    private func performBackupQueuePendingCount(
+        authorization: PhotoAuthorizationSession, deviceId: String
+    ) throws -> Int {
+        let sql = """
+            SELECT COUNT(*) FROM photo_backup_candidates
+            WHERE profile_id=? AND owner_id=? AND device_id=?
+                AND authorization_generation=?
+                AND state IN ('QUEUED', 'CLAIMED', 'EXTRACTING', 'VERIFIED_LOCALLY',
+                    'UPLOADING', 'RECONCILIATION_PENDING', 'FAILED_RECOVERABLE',
+                    'SOURCE_UNAVAILABLE');
+            """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw photoStoreError(162, "Failed to count Photo Backup queue candidates")
+        }
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, index: 1, text: authorization.profileId.uuidString)
+        bindText(statement, index: 2, text: authorization.ownerId)
+        bindText(statement, index: 3, text: deviceId)
+        bindText(statement, index: 4, text: authorization.generation.uuidString)
+        guard sqlite3_step(statement) == SQLITE_ROW else { return 0 }
+        return Int(sqlite3_column_int64(statement, 0))
+    }
+
+    private func performBackupQueueTotalCount(
+        authorization: PhotoAuthorizationSession, deviceId: String
+    ) throws -> Int {
+        let sql = """
+            SELECT COUNT(*) FROM photo_backup_candidates
+            WHERE profile_id=? AND owner_id=? AND device_id=?;
+            """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw photoStoreError(185, "Failed to count retained Photo Backup queue rows")
+        }
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, index: 1, text: authorization.profileId.uuidString)
+        bindText(statement, index: 2, text: authorization.ownerId)
+        bindText(statement, index: 3, text: deviceId)
+        guard sqlite3_step(statement) == SQLITE_ROW else { return 0 }
+        return Int(sqlite3_column_int64(statement, 0))
+    }
+
+    private func performPruneTerminalBackupCandidates(
+        authorization: PhotoAuthorizationSession, deviceId: String, olderThan cutoff: Date
+    ) throws {
+        let sql = """
+            DELETE FROM photo_backup_candidates
+            WHERE profile_id=? AND owner_id=? AND device_id=?
+                AND upload_operation_id IS NULL AND file_version_identifier IS NULL
+                AND state IN ('FAILED_TERMINAL', 'CANCELLED') AND updated_at<?;
+            """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw photoStoreError(186, "Failed to prepare bounded Photo Backup queue cleanup")
+        }
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, index: 1, text: authorization.profileId.uuidString)
+        bindText(statement, index: 2, text: authorization.ownerId)
+        bindText(statement, index: 3, text: deviceId)
+        sqlite3_bind_double(statement, 4, cutoff.timeIntervalSince1970)
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw photoStoreError(187, "Failed to prune terminal Photo Backup queue rows")
+        }
+    }
+
+    private func performCandidateObservationIsCurrent(_ candidate: PhotoBackupCandidate) throws
+        -> Bool
+    {
+        let sql = """
+            SELECT local_identifier, asset_kind, creation_date, modification_date,
+                pixel_width, pixel_height, is_favorite, is_hidden, discovery_generation,
+                observed_at, permission_scope, source_availability, is_excluded
+            FROM photo_asset_observations
+            WHERE local_identifier=? AND profile_id=? AND owner_id=?
+                AND discovery_generation=? AND source_availability='available'
+                AND is_excluded=0 LIMIT 1;
+            """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw photoStoreError(163, "Failed to prepare Photo Backup source eligibility check")
+        }
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, index: 1, text: candidate.localIdentifier)
+        bindText(statement, index: 2, text: candidate.profileId.uuidString)
+        bindText(statement, index: 3, text: candidate.ownerId)
+        sqlite3_bind_int64(statement, 4, candidate.observationGeneration)
+        guard sqlite3_step(statement) == SQLITE_ROW else { return false }
+        let current = try decodePhotoObservation(statement)
+        return current.permissionScope.rawValue == candidate.clientLibraryScope
+            && PhotoBackupCandidate.sourceRevision(for: current) == candidate.sourceRevision
+    }
+
+    private func performRefreshExistingBackupCandidate(
+        _ candidate: PhotoBackupCandidate
+    ) throws -> Bool {
+        let sql = """
+            SELECT candidate_id, state, upload_operation_id, retry_after
+            FROM photo_backup_candidates
+            WHERE profile_id=? AND owner_id=? AND device_id=? AND client_library_scope=?
+                AND local_identifier=? AND source_revision=? AND resource_index=?
+                AND resource_type=? AND resource_role=? AND rendition=?
+                AND authorization_generation=? AND policy_revision=? LIMIT 1;
+            """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw photoStoreError(170, "Failed to prepare Photo Backup duplicate lookup")
+        }
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, index: 1, text: candidate.profileId.uuidString)
+        bindText(statement, index: 2, text: candidate.ownerId)
+        bindText(statement, index: 3, text: candidate.deviceId)
+        bindText(statement, index: 4, text: candidate.clientLibraryScope)
+        bindText(statement, index: 5, text: candidate.localIdentifier)
+        bindText(statement, index: 6, text: candidate.sourceRevision)
+        sqlite3_bind_int64(statement, 7, Int64(candidate.selection.resourceIndex))
+        bindText(statement, index: 8, text: candidate.selection.resourceType)
+        bindText(statement, index: 9, text: candidate.selection.role.rawValue)
+        bindText(statement, index: 10, text: candidate.selection.rendition.rawValue)
+        bindText(statement, index: 11, text: candidate.authorizationGeneration.uuidString)
+        sqlite3_bind_int64(statement, 12, candidate.policyRevision)
+        guard sqlite3_step(statement) == SQLITE_ROW else { return false }
+        guard let stateRaw = sqlite3_column_text(statement, 1),
+            let state = PhotoBackupQueueState(rawValue: String(cString: stateRaw))
+        else { throw photoStoreError(171, "Invalid duplicate Photo Backup candidate") }
+        let uploadOperationId = nullableString(statement, 2)
+        let retryAfter =
+            sqlite3_column_type(statement, 3) == SQLITE_NULL
+            ? nil : Date(timeIntervalSince1970: sqlite3_column_double(statement, 3))
+        guard [.queued, .failedRecoverable, .sourceUnavailable].contains(state),
+            uploadOperationId == nil,
+            let idRaw = sqlite3_column_text(statement, 0),
+            let id = UUID(uuidString: String(cString: idRaw))
+        else { return true }
+        let sourceRetryIsPending =
+            state == .sourceUnavailable
+            && retryAfter.map { $0 > Date() } == true
+
+        let updateSQL = """
+            UPDATE photo_backup_candidates SET
+                state=CASE WHEN state='SOURCE_UNAVAILABLE' AND ?=0
+                    THEN 'QUEUED' ELSE state END,
+                observation_generation=?,
+                retry_after=CASE WHEN state='SOURCE_UNAVAILABLE' AND ?=0
+                    THEN NULL ELSE retry_after END,
+                safe_failure=CASE WHEN state='SOURCE_UNAVAILABLE' AND ?=0
+                    THEN NULL ELSE safe_failure END,
+                updated_at=?
+            WHERE candidate_id=? AND state=? AND upload_operation_id IS NULL;
+            """
+        var update: OpaquePointer?
+        guard sqlite3_prepare_v2(db, updateSQL, -1, &update, nil) == SQLITE_OK else {
+            throw photoStoreError(172, "Failed to prepare Photo Backup duplicate refresh")
+        }
+        defer { sqlite3_finalize(update) }
+        sqlite3_bind_int(update, 1, sourceRetryIsPending ? 1 : 0)
+        sqlite3_bind_int64(update, 2, candidate.observationGeneration)
+        sqlite3_bind_int(update, 3, sourceRetryIsPending ? 1 : 0)
+        sqlite3_bind_int(update, 4, sourceRetryIsPending ? 1 : 0)
+        sqlite3_bind_double(update, 5, Date().timeIntervalSince1970)
+        bindText(update, index: 6, text: id.uuidString)
+        bindText(update, index: 7, text: state.rawValue)
+        guard sqlite3_step(update) == SQLITE_DONE else {
+            throw photoStoreError(173, "Failed to refresh Photo Backup observation generation")
+        }
+        return true
+    }
+
+    private func performHasUnresolvedCandidate(for candidate: PhotoBackupCandidate) throws -> Bool {
+        let sql = """
+            SELECT 1 FROM photo_backup_candidates
+            WHERE profile_id=? AND owner_id=? AND device_id=?
+                AND client_library_scope=? AND local_identifier=? AND source_revision=?
+                AND resource_index=? AND resource_type=? AND resource_role=? AND rendition=?
+                AND authorization_generation=?
+                AND state IN ('CLAIMED', 'EXTRACTING', 'VERIFIED_LOCALLY', 'UPLOADING',
+                    'RECONCILIATION_PENDING', 'FILE_UPLOADED_AWAITING_PHOTO_BINDING',
+                    'PHOTO_BINDING_CONFIRMED', 'AWAITING_BACKUP_RETENTION_PROOF',
+                    'AUTHORITATIVE_BACKUP_CONFIRMED');
+            """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw photoStoreError(164, "Failed to prepare unresolved Photo Backup identity check")
+        }
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, index: 1, text: candidate.profileId.uuidString)
+        bindText(statement, index: 2, text: candidate.ownerId)
+        bindText(statement, index: 3, text: candidate.deviceId)
+        bindText(statement, index: 4, text: candidate.clientLibraryScope)
+        bindText(statement, index: 5, text: candidate.localIdentifier)
+        bindText(statement, index: 6, text: candidate.sourceRevision)
+        sqlite3_bind_int64(statement, 7, Int64(candidate.selection.resourceIndex))
+        bindText(statement, index: 8, text: candidate.selection.resourceType)
+        bindText(statement, index: 9, text: candidate.selection.role.rawValue)
+        bindText(statement, index: 10, text: candidate.selection.rendition.rawValue)
+        bindText(statement, index: 11, text: candidate.authorizationGeneration.uuidString)
+        return sqlite3_step(statement) == SQLITE_ROW
+    }
+
+    private func performFetchBackupCandidate(
+        candidateId: UUID, authorization: PhotoAuthorizationSession
+    ) throws -> PhotoBackupCandidate? {
+        let sql = """
+            SELECT \(backupCandidateColumnList) FROM photo_backup_candidates
+            WHERE candidate_id=? AND profile_id=? AND owner_id=? AND authorization_generation=?;
+            """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw photoStoreError(165, "Failed to prepare Photo Backup candidate read")
+        }
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, index: 1, text: candidateId.uuidString)
+        bindText(statement, index: 2, text: authorization.profileId.uuidString)
+        bindText(statement, index: 3, text: authorization.ownerId)
+        bindText(statement, index: 4, text: authorization.generation.uuidString)
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return try decodeBackupCandidate(statement)
+    }
+
+    private func bindBackupCandidate(
+        _ candidate: PhotoBackupCandidate, to statement: OpaquePointer?
+    ) {
+        bindText(statement, index: 1, text: candidate.candidateId.uuidString)
+        bindText(statement, index: 2, text: candidate.profileId.uuidString)
+        bindText(statement, index: 3, text: candidate.ownerId)
+        bindText(statement, index: 4, text: candidate.deviceId)
+        bindText(statement, index: 5, text: candidate.clientLibraryScope)
+        bindText(statement, index: 6, text: candidate.localIdentifier)
+        bindText(statement, index: 7, text: candidate.sourceRevision)
+        sqlite3_bind_int64(statement, 8, Int64(candidate.selection.resourceIndex))
+        bindText(statement, index: 9, text: candidate.selection.resourceType)
+        bindText(statement, index: 10, text: candidate.selection.role.rawValue)
+        bindText(statement, index: 11, text: candidate.selection.rendition.rawValue)
+        bindOptionalText(statement, index: 12, text: candidate.selection.uniformTypeIdentifier)
+        if let date = candidate.selection.sourceModificationDate {
+            sqlite3_bind_double(statement, 13, date.timeIntervalSince1970)
+        } else {
+            sqlite3_bind_null(statement, 13)
+        }
+        sqlite3_bind_int64(statement, 14, candidate.observationGeneration)
+        sqlite3_bind_int64(statement, 15, candidate.policyRevision)
+        bindText(statement, index: 16, text: candidate.authorizationGeneration.uuidString)
+        bindText(statement, index: 17, text: candidate.destinationLibraryIdentifier)
+        bindText(statement, index: 18, text: candidate.destinationParentIdentifier)
+        bindOptionalText(statement, index: 19, text: candidate.groupIdentity)
+        bindText(statement, index: 20, text: candidate.state.rawValue)
+        sqlite3_bind_int(statement, 21, Int32(candidate.attemptCount))
+        if let retryAfter = candidate.retryAfter {
+            sqlite3_bind_double(statement, 22, retryAfter.timeIntervalSince1970)
+        } else {
+            sqlite3_bind_null(statement, 22)
+        }
+        bindOptionalText(statement, index: 23, text: candidate.claimId?.uuidString)
+        if let date = candidate.claimExpiresAt {
+            sqlite3_bind_double(statement, 24, date.timeIntervalSince1970)
+        } else {
+            sqlite3_bind_null(statement, 24)
+        }
+        bindOptionalText(statement, index: 25, text: candidate.claimPreviousState?.rawValue)
+        bindOptionalText(statement, index: 26, text: candidate.extractionOperationId?.uuidString)
+        bindOptionalText(statement, index: 27, text: candidate.uploadOperationId)
+        bindOptionalText(statement, index: 28, text: candidate.fileVersionIdentifier)
+        if let bytes = candidate.verifiedByteCount {
+            sqlite3_bind_int64(statement, 29, Int64(bytes))
+        } else {
+            sqlite3_bind_null(statement, 29)
+        }
+        bindOptionalText(statement, index: 30, text: candidate.verifiedSHA256)
+        bindOptionalText(statement, index: 31, text: candidate.photoAssetIdentifier)
+        bindOptionalText(statement, index: 32, text: candidate.backupSnapshotIdentifier)
+        if let confirmedAt = candidate.backupRetentionConfirmedAt {
+            sqlite3_bind_double(statement, 33, confirmedAt.timeIntervalSince1970)
+        } else {
+            sqlite3_bind_null(statement, 33)
+        }
+        bindOptionalText(statement, index: 34, text: candidate.safeFailure?.rawValue)
+        sqlite3_bind_double(statement, 35, candidate.createdAt.timeIntervalSince1970)
+        sqlite3_bind_double(statement, 36, candidate.updatedAt.timeIntervalSince1970)
+    }
+
+    private func decodeBackupCandidate(_ statement: OpaquePointer?) throws
+        -> PhotoBackupCandidate
+    {
+        func string(_ index: Int32) throws -> String {
+            guard let value = sqlite3_column_text(statement, index) else {
+                throw photoStoreError(166, "Corrupt Photo Backup candidate")
+            }
+            return String(cString: value)
+        }
+        func uuid(_ index: Int32) throws -> UUID {
+            guard let value = UUID(uuidString: try string(index)) else {
+                throw photoStoreError(167, "Invalid Photo Backup candidate identity")
+            }
+            return value
+        }
+        guard let role = PhotoResourceRole(rawValue: try string(9)),
+            let rendition = PhotoResourceRendition(rawValue: try string(10)),
+            let state = PhotoBackupQueueState(rawValue: try string(19))
+        else { throw photoStoreError(168, "Invalid Photo Backup candidate state") }
+        let resourceIndex = sqlite3_column_int64(statement, 7)
+        let byteCountValue = sqlite3_column_int64(statement, 28)
+        guard resourceIndex >= 0, byteCountValue >= 0 else {
+            throw photoStoreError(169, "Invalid Photo Backup candidate size")
+        }
+        let selection = PhotoResourceSelection(
+            localIdentifier: try string(5), resourceIndex: Int(resourceIndex),
+            resourceType: try string(8), role: role, rendition: rendition,
+            uniformTypeIdentifier: nullableString(statement, 11),
+            sourceModificationDate: sqlite3_column_type(statement, 12) == SQLITE_NULL
+                ? nil : Date(timeIntervalSince1970: sqlite3_column_double(statement, 12)))
+        return PhotoBackupCandidate(
+            candidateId: try uuid(0), profileId: try uuid(1), ownerId: try string(2),
+            deviceId: try string(3), clientLibraryScope: try string(4),
+            localIdentifier: try string(5), sourceRevision: try string(6),
+            selection: selection, observationGeneration: sqlite3_column_int64(statement, 13),
+            policyRevision: sqlite3_column_int64(statement, 14),
+            authorizationGeneration: try uuid(15),
+            destinationLibraryIdentifier: try string(16),
+            destinationParentIdentifier: try string(17),
+            groupIdentity: nullableString(statement, 18),
+            state: state, attemptCount: Int(sqlite3_column_int(statement, 20)),
+            retryAfter: sqlite3_column_type(statement, 21) == SQLITE_NULL
+                ? nil : Date(timeIntervalSince1970: sqlite3_column_double(statement, 21)),
+            claimId: nullableString(statement, 22).flatMap(UUID.init(uuidString:)),
+            claimExpiresAt: sqlite3_column_type(statement, 23) == SQLITE_NULL
+                ? nil : Date(timeIntervalSince1970: sqlite3_column_double(statement, 23)),
+            claimPreviousState: nullableString(statement, 24).flatMap(
+                PhotoBackupQueueState.init(rawValue:)),
+            extractionOperationId: nullableString(statement, 25).flatMap(UUID.init(uuidString:)),
+            uploadOperationId: nullableString(statement, 26),
+            fileVersionIdentifier: nullableString(statement, 27),
+            verifiedByteCount: sqlite3_column_type(statement, 28) == SQLITE_NULL
+                ? nil : UInt64(byteCountValue),
+            verifiedSHA256: nullableString(statement, 29),
+            photoAssetIdentifier: nullableString(statement, 30),
+            backupSnapshotIdentifier: nullableString(statement, 31),
+            backupRetentionConfirmedAt: sqlite3_column_type(statement, 32) == SQLITE_NULL
+                ? nil : Date(timeIntervalSince1970: sqlite3_column_double(statement, 32)),
+            safeFailure: nullableString(statement, 33).flatMap(
+                PhotoBackupSafeFailure.init(rawValue:)),
+            createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 34)),
+            updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 35)))
+    }
+
+    private func sameBackupCandidateIdentity(
+        _ lhs: PhotoBackupCandidate, _ rhs: PhotoBackupCandidate
+    ) -> Bool {
+        lhs.candidateId == rhs.candidateId && lhs.profileId == rhs.profileId
+            && lhs.ownerId == rhs.ownerId && lhs.deviceId == rhs.deviceId
+            && lhs.clientLibraryScope == rhs.clientLibraryScope
+            && lhs.localIdentifier == rhs.localIdentifier
+            && lhs.sourceRevision == rhs.sourceRevision && lhs.selection == rhs.selection
+            && lhs.policyRevision == rhs.policyRevision
+            && lhs.authorizationGeneration == rhs.authorizationGeneration
+            && lhs.destinationLibraryIdentifier == rhs.destinationLibraryIdentifier
+            && lhs.destinationParentIdentifier == rhs.destinationParentIdentifier
+            && lhs.groupIdentity == rhs.groupIdentity
+    }
+
+    private func allowedBackupCandidateTransition(
+        from previous: PhotoBackupQueueState, to next: PhotoBackupQueueState
+    ) -> Bool {
+        let allowed: [PhotoBackupQueueState: Set<PhotoBackupQueueState>] = [
+            .queued: [
+                .claimed, .cancelled, .sourceUnavailable, .failedRecoverable, .failedTerminal,
+            ],
+            .eligible: [.claimed, .cancelled, .failedRecoverable, .failedTerminal],
+            .claimed: [
+                .queued, .extracting, .verifiedLocally, .uploading, .reconciliationPending,
+                .sourceUnavailable, .failedRecoverable, .failedTerminal, .cancelled,
+            ],
+            .extracting: [
+                .verifiedLocally, .queued, .sourceUnavailable, .failedRecoverable, .failedTerminal,
+            ],
+            .verifiedLocally: [.claimed, .uploading, .failedRecoverable, .failedTerminal],
+            .uploading: [
+                .reconciliationPending, .fileUploadedAwaitingPhotoBinding,
+                .failedRecoverable, .failedTerminal,
+            ],
+            .reconciliationPending: [
+                .claimed, .uploading, .fileUploadedAwaitingPhotoBinding,
+                .failedRecoverable, .failedTerminal, .reconciliationPending,
+            ],
+            .fileUploadedAwaitingPhotoBinding: [
+                .photoBindingConfirmed, .awaitingBackupRetentionProof,
+                .failedRecoverable, .partial,
+            ],
+            .photoBindingConfirmed: [.awaitingBackupRetentionProof, .authoritativeBackupConfirmed],
+            .awaitingBackupRetentionProof: [.authoritativeBackupConfirmed, .failedRecoverable],
+            .failedRecoverable: [.claimed, .queued, .failedTerminal, .sourceUnavailable],
+        ]
+        return allowed[previous]?.contains(next) == true
+    }
+
+    private var backupCandidateColumnList: String {
+        "candidate_id, profile_id, owner_id, device_id, client_library_scope, local_identifier, "
+            + "source_revision, resource_index, resource_type, resource_role, rendition, "
+            + "uniform_type_identifier, source_modification_date, observation_generation, "
+            + "policy_revision, authorization_generation, destination_library_identifier, "
+            + "destination_parent_identifier, group_identity, state, attempt_count, retry_after, "
+            + "claim_id, claim_expires_at, claim_previous_state, extraction_operation_id, "
+            + "upload_operation_id, "
+            + "file_version_identifier, verified_byte_count, verified_sha256, "
+            + "photo_asset_identifier, backup_snapshot_identifier, "
+            + "backup_retention_confirmed_at, safe_failure, "
+            + "created_at, updated_at"
+    }
 
     private func performSaveObservations(
         _ observations: [PhotoAssetObservation],
@@ -499,7 +1653,6 @@ public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol, @
     ) throws -> PhotoResourceExtractionRecord {
         guard intent.authorization.profileId == intent.profileId,
             intent.authorization.ownerId == intent.ownerId,
-            intent.userInitiated,
             intent.policyVersion > 0,
             intent.maximumResourceBytes > 0,
             intent.maximumResourceBytes <= UInt64(Int64.max),
@@ -526,6 +1679,12 @@ public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol, @
         do {
             guard try performAuthorizationIsCurrent(intent.authorization) else {
                 throw PhotoResourceTransferFailure.staleAuthorization
+            }
+            if !intent.userInitiated {
+                let policy = try performFetchConfiguration(profileId: intent.profileId)
+                guard policy.canAutomaticallyBackUpInForeground,
+                    policy.policyRevision == Int64(intent.policyVersion)
+                else { throw PhotoResourceTransferFailure.configurationDisabled }
             }
             try ensureNoUnresolvedExtraction(for: intent)
             let sql = """
@@ -571,7 +1730,7 @@ public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol, @
         ].contains(record.state)
         guard record.profileId == authorization.profileId,
             record.ownerId == authorization.ownerId,
-            record.userInitiated, record.policyVersion > 0,
+            record.policyVersion > 0,
             record.maximumResourceBytes > 0,
             allowedExtractionTransition(from: expectedState, to: record.state),
             !requiresContent
@@ -776,8 +1935,7 @@ public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol, @
         let policyVersion = sqlite3_column_int64(statement, 12)
         let resourceIndex = sqlite3_column_int64(statement, 5)
         let userInitiated = sqlite3_column_int(statement, 14) == 1
-        guard maximumResourceBytes > 0, policyVersion > 0, resourceIndex >= 0,
-            userInitiated
+        guard maximumResourceBytes > 0, policyVersion > 0, resourceIndex >= 0
         else {
             throw photoStoreError(137, "Invalid stored PhotoKit extraction policy")
         }
@@ -865,7 +2023,10 @@ public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol, @
         _ record: PhotoResourceExtractionRecord
     ) throws -> Bool {
         let sql = """
-            SELECT is_opted_in, include_videos, pause_discovery
+            SELECT is_opted_in, include_videos, pause_discovery,
+                automatic_foreground_backup_enabled, automatic_backup_consent_confirmed,
+                pause_automatic_backup, policy_revision, target_library_identifier,
+                target_parent_identifier
             FROM photo_backup_configurations WHERE profile_id=?;
             """
         var statement: OpaquePointer?
@@ -879,7 +2040,15 @@ public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol, @
             sqlite3_column_int(statement, 2) == 0
         else { return false }
         let includesVideos = sqlite3_column_int(statement, 1) == 1
-        return includesVideos || ![.primaryVideo, .motionVideo].contains(record.selection.role)
+        guard includesVideos || ![.primaryVideo, .motionVideo].contains(record.selection.role)
+        else { return false }
+        guard !record.userInitiated else { return true }
+        return sqlite3_column_int(statement, 3) == 1
+            && sqlite3_column_int(statement, 4) == 1
+            && sqlite3_column_int(statement, 5) == 0
+            && sqlite3_column_int64(statement, 6) == Int64(record.policyVersion)
+            && nullableString(statement, 7)?.isEmpty == false
+            && nullableString(statement, 8)?.isEmpty == false
     }
 
     private func performExtractionObservationIsCurrent(
@@ -1002,7 +2171,8 @@ public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol, @
             SELECT local_identifier, asset_kind, creation_date, modification_date, \
             pixel_width, pixel_height, is_favorite, is_hidden, discovery_generation, \
             observed_at, permission_scope, source_availability, is_excluded \
-            FROM photo_asset_observations WHERE profile_id=? AND owner_id=?;
+            FROM photo_asset_observations WHERE profile_id=? AND owner_id=?
+            ORDER BY local_identifier ASC;
             """
         var statement: OpaquePointer?
         if sqlite3_prepare_v2(db, sql, -1, &statement, nil) != SQLITE_OK {
@@ -1023,56 +2193,72 @@ public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol, @
 
         var observations: [PhotoAssetObservation] = []
         while sqlite3_step(statement) == SQLITE_ROW {
-            guard let locIdC = sqlite3_column_text(statement, 0),
-                let kindC = sqlite3_column_text(statement, 1),
-                let scopeC = sqlite3_column_text(statement, 10),
-                let sourceAvailC = sqlite3_column_text(statement, 11)
-            else {
-                continue
-            }
-
-            let localIdentifier = String(cString: locIdC)
-            let kind = PhotoAssetKind(rawValue: String(cString: kindC)) ?? .unknown
-            let scope =
-                PhotoPermissionState(rawValue: String(cString: scopeC)) ?? .unknownFutureStatus
-            let sourceAvail =
-                PhotoSourceAvailability(rawValue: String(cString: sourceAvailC))
-                ?? .sourceUnavailable
-
-            let creationDate: Date? =
-                sqlite3_column_type(statement, 2) != SQLITE_NULL
-                ? Date(timeIntervalSince1970: sqlite3_column_double(statement, 2)) : nil
-            let modificationDate: Date? =
-                sqlite3_column_type(statement, 3) != SQLITE_NULL
-                ? Date(timeIntervalSince1970: sqlite3_column_double(statement, 3)) : nil
-
-            let pixelWidth = Int(sqlite3_column_int(statement, 4))
-            let pixelHeight = Int(sqlite3_column_int(statement, 5))
-            let isFavorite = sqlite3_column_int(statement, 6) != 0
-            let isHidden = sqlite3_column_int(statement, 7) != 0
-            let generation = sqlite3_column_int64(statement, 8)
-            let observedAt = Date(timeIntervalSince1970: sqlite3_column_double(statement, 9))
-            let isExcluded = sqlite3_column_int(statement, 12) != 0
-
-            let obs = PhotoAssetObservation(
-                localIdentifier: localIdentifier,
-                assetKind: kind,
-                creationDate: creationDate,
-                modificationDate: modificationDate,
-                pixelWidth: pixelWidth,
-                pixelHeight: pixelHeight,
-                isFavorite: isFavorite,
-                isHidden: isHidden,
-                discoveryGeneration: generation,
-                observedAt: observedAt,
-                permissionScope: scope,
-                sourceAvailability: sourceAvail,
-                isExcluded: isExcluded
-            )
-            observations.append(obs)
+            observations.append(try decodePhotoObservation(statement))
         }
 
         return observations
+    }
+
+    private func performFetchObservationPage(
+        profileId: UUID, ownerId: String, scanGeneration: Int64,
+        after localIdentifier: String?, limit: Int
+    ) throws -> [PhotoAssetObservation] {
+        let hasCursor = localIdentifier != nil
+        let predicate = hasCursor ? "AND local_identifier > ?" : ""
+        let sql = """
+            SELECT local_identifier, asset_kind, creation_date, modification_date,
+                pixel_width, pixel_height, is_favorite, is_hidden, discovery_generation,
+                observed_at, permission_scope, source_availability, is_excluded
+            FROM photo_asset_observations
+            WHERE profile_id=? AND owner_id=? AND discovery_generation=? \(predicate)
+            ORDER BY local_identifier ASC LIMIT ?;
+            """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw photoStoreError(183, "Failed to prepare paged PhotoKit observation read")
+        }
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, index: 1, text: profileId.uuidString)
+        bindText(statement, index: 2, text: ownerId)
+        sqlite3_bind_int64(statement, 3, scanGeneration)
+        if let localIdentifier {
+            bindText(statement, index: 4, text: localIdentifier)
+            sqlite3_bind_int(statement, 5, Int32(limit))
+        } else {
+            sqlite3_bind_int(statement, 4, Int32(limit))
+        }
+        var observations: [PhotoAssetObservation] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            observations.append(try decodePhotoObservation(statement))
+        }
+        return observations
+    }
+
+    private func decodePhotoObservation(_ statement: OpaquePointer?) throws
+        -> PhotoAssetObservation
+    {
+        guard let localIdentifier = nullableString(statement, 0),
+            let kindRaw = nullableString(statement, 1),
+            let scopeRaw = nullableString(statement, 10),
+            let sourceRaw = nullableString(statement, 11)
+        else { throw photoStoreError(184, "Corrupt PhotoKit observation row") }
+        let kind = PhotoAssetKind(rawValue: kindRaw) ?? .unknown
+        let scope = PhotoPermissionState(rawValue: scopeRaw) ?? .unknownFutureStatus
+        let source = PhotoSourceAvailability(rawValue: sourceRaw) ?? .sourceUnavailable
+        return PhotoAssetObservation(
+            localIdentifier: localIdentifier, assetKind: kind,
+            creationDate: sqlite3_column_type(statement, 2) == SQLITE_NULL
+                ? nil : Date(timeIntervalSince1970: sqlite3_column_double(statement, 2)),
+            modificationDate: sqlite3_column_type(statement, 3) == SQLITE_NULL
+                ? nil : Date(timeIntervalSince1970: sqlite3_column_double(statement, 3)),
+            pixelWidth: Int(sqlite3_column_int(statement, 4)),
+            pixelHeight: Int(sqlite3_column_int(statement, 5)),
+            isFavorite: sqlite3_column_int(statement, 6) != 0,
+            isHidden: sqlite3_column_int(statement, 7) != 0,
+            discoveryGeneration: sqlite3_column_int64(statement, 8),
+            observedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 9)),
+            permissionScope: scope, sourceAvailability: source,
+            isExcluded: sqlite3_column_int(statement, 12) != 0)
     }
 
     private func performMarkSourceUnavailable(
@@ -1119,52 +2305,152 @@ public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol, @
         _ config: PhotoBackupConfiguration,
         profileId: UUID
     ) throws {
-        let sql = """
-            INSERT INTO photo_backup_configurations (
-                profile_id, is_opted_in, scope, include_videos, pause_discovery, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(profile_id) DO UPDATE SET
-                is_opted_in=excluded.is_opted_in,
-                scope=excluded.scope,
-                include_videos=excluded.include_videos,
-                pause_discovery=excluded.pause_discovery,
-                updated_at=excluded.updated_at;
-            """
-        var statement: OpaquePointer?
-        if sqlite3_prepare_v2(db, sql, -1, &statement, nil) != SQLITE_OK {
-            throw NSError(
-                domain: "PhotoObservationSQLiteStore",
-                code: 106,
-                userInfo: [
-                    NSLocalizedDescriptionKey:
-                        "Failed to prepare save config query"
-                ]
-            )
+        guard config.maximumResourceSizeBytes > 0,
+            config.maximumResourceSizeBytes <= UInt64(Int64.max),
+            config.maximumConcurrentOperations == 1,
+            !config.automaticForegroundBackupEnabled
+                || config.automaticBackupConsentConfirmed
+                    && config.discoveryEnabled
+                    && config.targetLibraryIdentifier?.isEmpty == false
+                    && config.targetParentIdentifier?.isEmpty == false
+        else {
+            throw photoStoreError(
+                174, "Photo Backup policy is incomplete or not explicitly confirmed")
         }
-        defer { sqlite3_finalize(statement) }
+        try performSQL("BEGIN IMMEDIATE TRANSACTION;")
+        do {
+            let old = try performFetchConfiguration(profileId: profileId)
+            let hasExistingRow = try performConfigurationExists(profileId: profileId)
+            let routingPolicyChanged =
+                hasExistingRow
+                && (old.discoveryEnabled != config.discoveryEnabled
+                    || old.scope != config.scope
+                    || old.includeStillImages != config.includeStillImages
+                    || old.includeVideos != config.includeVideos
+                    || old.includeLivePhotos != config.includeLivePhotos
+                    || old.renditionPolicy != config.renditionPolicy
+                    || old.targetLibraryIdentifier != config.targetLibraryIdentifier
+                    || old.targetParentIdentifier != config.targetParentIdentifier
+                    || old.networkRestriction != config.networkRestriction
+                    || old.allowCellularTransfer != config.allowCellularTransfer
+                    || old.respectLowDataMode != config.respectLowDataMode
+                    || old.maximumResourceSizeBytes != config.maximumResourceSizeBytes)
+            let nextRevision =
+                hasExistingRow
+                ? (routingPolicyChanged ? old.policyRevision &+ 1 : old.policyRevision)
+                : max(config.policyRevision, 1)
+            let persisted = config.replacingPolicyRevision(max(nextRevision, 1))
+            if routingPolicyChanged {
+                let fenceSQL = """
+                    UPDATE photo_backup_candidates SET state='FAILED_TERMINAL', claim_id=NULL,
+                        claim_expires_at=NULL, claim_previous_state=NULL,
+                        safe_failure='policyChanged', updated_at=?
+                    WHERE profile_id=? AND policy_revision<? AND upload_operation_id IS NULL
+                        AND state IN ('QUEUED', 'CLAIMED', 'EXTRACTING', 'VERIFIED_LOCALLY',
+                            'FAILED_RECOVERABLE');
+                    """
+                var fence: OpaquePointer?
+                guard sqlite3_prepare_v2(db, fenceSQL, -1, &fence, nil) == SQLITE_OK else {
+                    throw photoStoreError(175, "Failed to fence stale Photo Backup candidates")
+                }
+                defer { sqlite3_finalize(fence) }
+                sqlite3_bind_double(fence, 1, Date().timeIntervalSince1970)
+                bindText(fence, index: 2, text: profileId.uuidString)
+                sqlite3_bind_int64(fence, 3, persisted.policyRevision)
+                guard sqlite3_step(fence) == SQLITE_DONE else {
+                    throw photoStoreError(176, "Failed to fence stale Photo Backup work")
+                }
+            }
+            let sql = """
+                INSERT INTO photo_backup_configurations (
+                    profile_id, is_opted_in, scope, include_videos, pause_discovery,
+                    include_still_images, include_live_photos, rendition_policy,
+                    target_library_identifier, target_parent_identifier, network_restriction,
+                    allow_cellular_transfer, respect_low_data_mode, maximum_resource_size_bytes,
+                    maximum_concurrent_operations, automatic_foreground_backup_enabled,
+                    automatic_backup_consent_confirmed, pause_automatic_backup, policy_revision,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(profile_id) DO UPDATE SET
+                    is_opted_in=excluded.is_opted_in,
+                    scope=excluded.scope,
+                    include_videos=excluded.include_videos,
+                    pause_discovery=excluded.pause_discovery,
+                    include_still_images=excluded.include_still_images,
+                    include_live_photos=excluded.include_live_photos,
+                    rendition_policy=excluded.rendition_policy,
+                    target_library_identifier=excluded.target_library_identifier,
+                    target_parent_identifier=excluded.target_parent_identifier,
+                    network_restriction=excluded.network_restriction,
+                    allow_cellular_transfer=excluded.allow_cellular_transfer,
+                    respect_low_data_mode=excluded.respect_low_data_mode,
+                    maximum_resource_size_bytes=excluded.maximum_resource_size_bytes,
+                    maximum_concurrent_operations=excluded.maximum_concurrent_operations,
+                    automatic_foreground_backup_enabled=excluded.automatic_foreground_backup_enabled,
+                    automatic_backup_consent_confirmed=excluded.automatic_backup_consent_confirmed,
+                    pause_automatic_backup=excluded.pause_automatic_backup,
+                    policy_revision=excluded.policy_revision,
+                    updated_at=excluded.updated_at;
+                """
+            var statement: OpaquePointer?
+            if sqlite3_prepare_v2(db, sql, -1, &statement, nil) != SQLITE_OK {
+                throw NSError(
+                    domain: "PhotoObservationSQLiteStore",
+                    code: 106,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "Failed to prepare save config query"
+                    ]
+                )
+            }
+            defer { sqlite3_finalize(statement) }
 
-        bindText(statement, index: 1, text: profileId.uuidString)
-        sqlite3_bind_int(statement, 2, config.isOptedIn ? 1 : 0)
-        bindText(statement, index: 3, text: config.scope.rawValue)
-        sqlite3_bind_int(statement, 4, config.includeVideos ? 1 : 0)
-        sqlite3_bind_int(statement, 5, config.pauseDiscovery ? 1 : 0)
-        sqlite3_bind_double(statement, 6, Date().timeIntervalSince1970)
+            bindText(statement, index: 1, text: profileId.uuidString)
+            sqlite3_bind_int(statement, 2, persisted.discoveryEnabled ? 1 : 0)
+            bindText(statement, index: 3, text: persisted.scope.rawValue)
+            sqlite3_bind_int(statement, 4, persisted.includeVideos ? 1 : 0)
+            sqlite3_bind_int(statement, 5, persisted.pauseDiscovery ? 1 : 0)
+            sqlite3_bind_int(statement, 6, persisted.includeStillImages ? 1 : 0)
+            sqlite3_bind_int(statement, 7, persisted.includeLivePhotos ? 1 : 0)
+            bindText(statement, index: 8, text: persisted.renditionPolicy.rawValue)
+            bindOptionalText(statement, index: 9, text: persisted.targetLibraryIdentifier)
+            bindOptionalText(statement, index: 10, text: persisted.targetParentIdentifier)
+            bindText(statement, index: 11, text: persisted.networkRestriction.rawValue)
+            sqlite3_bind_int(statement, 12, persisted.allowCellularTransfer ? 1 : 0)
+            sqlite3_bind_int(statement, 13, persisted.respectLowDataMode ? 1 : 0)
+            sqlite3_bind_int64(statement, 14, Int64(persisted.maximumResourceSizeBytes))
+            sqlite3_bind_int(statement, 15, Int32(persisted.maximumConcurrentOperations))
+            sqlite3_bind_int(statement, 16, persisted.automaticForegroundBackupEnabled ? 1 : 0)
+            sqlite3_bind_int(statement, 17, persisted.automaticBackupConsentConfirmed ? 1 : 0)
+            sqlite3_bind_int(statement, 18, persisted.pauseAutomaticBackup ? 1 : 0)
+            sqlite3_bind_int64(statement, 19, persisted.policyRevision)
+            sqlite3_bind_double(statement, 20, Date().timeIntervalSince1970)
 
-        if sqlite3_step(statement) != SQLITE_DONE {
-            throw NSError(
-                domain: "PhotoObservationSQLiteStore",
-                code: 107,
-                userInfo: [
-                    NSLocalizedDescriptionKey:
-                        "Failed to save configuration"
-                ]
-            )
+            if sqlite3_step(statement) != SQLITE_DONE {
+                throw NSError(
+                    domain: "PhotoObservationSQLiteStore",
+                    code: 107,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "Failed to save configuration"
+                    ]
+                )
+            }
+            try performSQL("COMMIT;")
+        } catch {
+            _ = sqlite3_exec(db, "ROLLBACK;", nil, nil, nil)
+            throw error
         }
     }
 
     private func performFetchConfiguration(profileId: UUID) throws -> PhotoBackupConfiguration {
         let sql = """
-            SELECT is_opted_in, scope, include_videos, pause_discovery \
+            SELECT is_opted_in, scope, include_videos, pause_discovery,
+                include_still_images, include_live_photos, rendition_policy,
+                target_library_identifier, target_parent_identifier, network_restriction,
+                allow_cellular_transfer, respect_low_data_mode, maximum_resource_size_bytes,
+                maximum_concurrent_operations, automatic_foreground_backup_enabled,
+                automatic_backup_consent_confirmed, pause_automatic_backup, policy_revision
             FROM photo_backup_configurations WHERE profile_id=?;
             """
         var statement: OpaquePointer?
@@ -1188,16 +2474,52 @@ public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol, @
             let scope = PhotoBackupScope(rawValue: scopeRaw) ?? .allAuthorized
             let includeVideos = sqlite3_column_int(statement, 2) != 0
             let pauseDiscovery = sqlite3_column_int(statement, 3) != 0
+            let includeStillImages = sqlite3_column_int(statement, 4) != 0
+            let includeLivePhotos = sqlite3_column_int(statement, 5) != 0
+            let renditionPolicy =
+                PhotoBackupRenditionPolicy(
+                    rawValue: String(cString: sqlite3_column_text(statement, 6))) ?? .originalOnly
+            let networkRestriction =
+                PhotoBackupNetworkRestriction(
+                    rawValue: String(cString: sqlite3_column_text(statement, 9))) ?? .wifiOnly
+            let maximumResourceSize = sqlite3_column_int64(statement, 12)
+            let maximumConcurrent = sqlite3_column_int(statement, 13)
+            let policyRevision = sqlite3_column_int64(statement, 17)
 
             return PhotoBackupConfiguration(
                 isOptedIn: isOptedIn,
                 scope: scope,
+                includeStillImages: includeStillImages,
                 includeVideos: includeVideos,
-                pauseDiscovery: pauseDiscovery
-            )
+                includeLivePhotos: includeLivePhotos,
+                renditionPolicy: renditionPolicy,
+                targetLibraryIdentifier: nullableString(statement, 7),
+                targetParentIdentifier: nullableString(statement, 8),
+                networkRestriction: networkRestriction,
+                allowCellularTransfer: sqlite3_column_int(statement, 10) != 0,
+                respectLowDataMode: sqlite3_column_int(statement, 11) != 0,
+                maximumResourceSizeBytes: maximumResourceSize > 0
+                    ? UInt64(maximumResourceSize) : 536_870_912,
+                maximumConcurrentOperations: Int(maximumConcurrent),
+                automaticForegroundBackupEnabled: sqlite3_column_int(statement, 14) != 0,
+                automaticBackupConsentConfirmed: sqlite3_column_int(statement, 15) != 0,
+                pauseAutomaticBackup: sqlite3_column_int(statement, 16) != 0,
+                policyRevision: max(policyRevision, 1),
+                pauseDiscovery: pauseDiscovery)
         } else {
             return PhotoBackupConfiguration()
         }
+    }
+
+    private func performConfigurationExists(profileId: UUID) throws -> Bool {
+        let sql = "SELECT 1 FROM photo_backup_configurations WHERE profile_id=? LIMIT 1;"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw photoStoreError(177, "Failed to prepare Photo Backup configuration lookup")
+        }
+        defer { sqlite3_finalize(statement) }
+        bindText(statement, index: 1, text: profileId.uuidString)
+        return sqlite3_step(statement) == SQLITE_ROW
     }
 
     private func performClearObservations(profileId: UUID) throws {

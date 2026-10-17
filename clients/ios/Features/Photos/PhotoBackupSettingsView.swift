@@ -29,6 +29,7 @@ struct PhotoBackupSettingsDestination: View {
 
 public struct PhotoBackupSettingsView: View {
     @Bindable public var viewModel: PhotoBackupSettingsViewModel
+    @State private var showingAutomaticBackupConfirmation = false
 
     public init(viewModel: PhotoBackupSettingsViewModel) {
         self.viewModel = viewModel
@@ -40,8 +41,8 @@ public struct PhotoBackupSettingsView: View {
                 header: Text("Camera Roll Discovery Opt-In"),
                 footer: Text(
                     "Discovery reads media metadata. Preparing a selected original and uploading "
-                        + "it are separate user actions. Automatic upload, iCloud retrieval, and "
-                        + "background transfer remain off."
+                        + "it are separate from discovery. Automatic foreground backup has its "
+                        + "own opt-in. iCloud retrieval and background transfer remain off."
                 )
             ) {
                 Toggle(
@@ -70,6 +71,163 @@ public struct PhotoBackupSettingsView: View {
                         Text("Grant Photos Permission")
                     }
                     .accessibilityIdentifier("grant_photos_permission_button")
+                }
+            }
+
+            Section(
+                header: Text("Automatic Foreground Backup"),
+                footer: Text(
+                    "Automatic uploads run only while Synveil is authenticated and active in the "
+                        + "foreground. Background upload and silent iCloud retrieval are disabled."
+                )
+            ) {
+                Toggle(
+                    "Automatic foreground backup",
+                    isOn: Binding(
+                        get: { viewModel.automaticForegroundBackupEnabled },
+                        set: { enabled in
+                            if enabled {
+                                showingAutomaticBackupConfirmation = true
+                            } else {
+                                Task { await viewModel.disableAutomaticForegroundBackup() }
+                            }
+                        }
+                    )
+                )
+                .accessibilityIdentifier("photo_backup_automatic_toggle")
+
+                Picker(
+                    "Target Library",
+                    selection: Binding(
+                        get: { viewModel.destinationLibraryIdentifier },
+                        set: { identifier in
+                            Task { await viewModel.updateTargetLibrary(identifier) }
+                        }
+                    )
+                ) {
+                    Text("Choose an active Library").tag("")
+                    ForEach(viewModel.availableLibraries, id: \.id.rawValue) { library in
+                        Text(library.name).tag(library.id.rawValue)
+                    }
+                }
+                .accessibilityIdentifier("photo_backup_target_library_picker")
+
+                Picker(
+                    "Destination directory",
+                    selection: Binding(
+                        get: { viewModel.destinationParentIdentifier },
+                        set: { identifier in Task { await viewModel.updateTargetParent(identifier) }
+                        }
+                    )
+                ) {
+                    Text("Choose a destination").tag("")
+                    ForEach(viewModel.availableParentChoices) { parent in
+                        Text(parent.name).tag(parent.id)
+                    }
+                }
+                .disabled(viewModel.selectedTargetLibrary == nil)
+                .accessibilityIdentifier("photo_backup_target_parent_picker")
+
+                Toggle(
+                    "Include still photos",
+                    isOn: Binding(
+                        get: { viewModel.includeStillImages },
+                        set: { value in Task { await viewModel.updateIncludeStillImages(value) } }
+                    )
+                )
+                .accessibilityIdentifier("photo_backup_include_stills_toggle")
+                Toggle(
+                    "Include videos",
+                    isOn: Binding(
+                        get: { viewModel.includeVideos },
+                        set: { value in Task { await viewModel.updateIncludeVideos(value) } }
+                    )
+                )
+                .accessibilityIdentifier("photo_backup_include_videos_auto_toggle")
+                Toggle(
+                    "Include Live Photos",
+                    isOn: Binding(
+                        get: { viewModel.includeLivePhotos },
+                        set: { value in Task { await viewModel.updateIncludeLivePhotos(value) } }
+                    )
+                )
+                .accessibilityIdentifier("photo_backup_include_live_photos_toggle")
+
+                Picker(
+                    "Rendition",
+                    selection: Binding(
+                        get: { viewModel.renditionPolicy },
+                        set: { value in Task { await viewModel.updateRenditionPolicy(value) } }
+                    )
+                ) {
+                    Text("Original only").tag(PhotoBackupRenditionPolicy.originalOnly)
+                    Text("Original and edited").tag(PhotoBackupRenditionPolicy.originalAndEdited)
+                }
+                .accessibilityIdentifier("photo_backup_rendition_picker")
+
+                Picker(
+                    "Network",
+                    selection: Binding(
+                        get: { viewModel.networkRestriction },
+                        set: { value in Task { await viewModel.updateNetworkRestriction(value) } }
+                    )
+                ) {
+                    Text("Wi-Fi only").tag(PhotoBackupNetworkRestriction.wifiOnly)
+                    Text("Wi-Fi and cellular").tag(PhotoBackupNetworkRestriction.wifiAndCellular)
+                }
+                .accessibilityIdentifier("photo_backup_network_picker")
+
+                if viewModel.networkRestriction == .wifiAndCellular {
+                    Toggle(
+                        "Allow cellular transfer",
+                        isOn: Binding(
+                            get: { viewModel.allowCellularTransfer },
+                            set: { value in Task { await viewModel.updateCellularPermission(value) }
+                            }
+                        )
+                    )
+                    .accessibilityIdentifier("photo_backup_cellular_toggle")
+                }
+                Toggle(
+                    "Pause in Low Data Mode",
+                    isOn: Binding(
+                        get: { viewModel.respectLowDataMode },
+                        set: { value in Task { await viewModel.updateLowDataModePreference(value) }
+                        }
+                    )
+                )
+                .accessibilityIdentifier("photo_backup_low_data_toggle")
+                Picker(
+                    "Maximum resource size",
+                    selection: Binding(
+                        get: { viewModel.maximumResourceSizeBytes },
+                        set: { value in Task { await viewModel.updateMaximumResourceSize(value) } }
+                    )
+                ) {
+                    Text("128 MB").tag(UInt64(134_217_728))
+                    Text("512 MB").tag(UInt64(536_870_912))
+                    Text("1 GB").tag(UInt64(1_073_741_824))
+                }
+                .accessibilityIdentifier("photo_backup_maximum_resource_size_picker")
+
+                Toggle(
+                    "Pause automatic backup",
+                    isOn: Binding(
+                        get: { viewModel.pauseAutomaticBackup },
+                        set: { value in Task { await viewModel.togglePauseAutomaticBackup(value) } }
+                    )
+                )
+                .disabled(!viewModel.automaticBackupConsentConfirmed)
+                .accessibilityIdentifier("photo_backup_pause_automatic_toggle")
+
+                if !viewModel.availableLibraries.isEmpty,
+                    viewModel.selectedTargetLibrary == nil
+                {
+                    Text("Select an active Library and destination before enabling uploads.")
+                        .foregroundStyle(.secondary)
+                } else if viewModel.availableLibraries.isEmpty {
+                    Text("No active Synveil Library is available for this account.")
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -103,6 +261,67 @@ public struct PhotoBackupSettingsView: View {
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .accessibilityIdentifier("photo_backup_status_text")
+                }
+
+                Section(
+                    header: Text("Backup Activity"),
+                    footer: Text(
+                        "A canonical file upload is not proof of PhotoAsset binding or retained "
+                            + "backup. Remote deletion is never inferred from PhotoKit changes."
+                    )
+                ) {
+                    LabeledContent(
+                        "Eligible", value: "\(viewModel.queueSummary.count(for: .eligible))")
+                    LabeledContent("Queued", value: "\(viewModel.queueSummary.queuedCount)")
+                    LabeledContent("Extracting", value: "\(viewModel.queueSummary.extractingCount)")
+                    LabeledContent("Uploading", value: "\(viewModel.queueSummary.uploadingCount)")
+                    LabeledContent(
+                        "Files uploaded to Synveil",
+                        value: "\(viewModel.queueSummary.canonicalFileUploadedCount)")
+                    LabeledContent(
+                        "Awaiting PhotoAsset binding",
+                        value: "\(viewModel.queueSummary.uploadedAwaitingBindingCount)")
+                    LabeledContent(
+                        "Backup confirmed", value: "\(viewModel.queueSummary.backupConfirmedCount)")
+                    LabeledContent("Partial", value: "\(viewModel.queueSummary.partialCount)")
+                    LabeledContent("Failed", value: "\(viewModel.queueSummary.failedCount)")
+                    LabeledContent(
+                        "Source unavailable", value: "\(viewModel.queueSummary.unavailableCount)")
+                    Text("Worker: \(viewModel.automaticWorkerStatusText)")
+                        .font(.caption)
+                    Text("PhotoAsset binding: \(viewModel.photoBindingAvailability.rawValue)")
+                        .font(.caption)
+                    Text("Backup retention: \(viewModel.photoRetentionAvailability.rawValue)")
+                        .font(.caption)
+                    if !viewModel.livePhotoGroups.isEmpty {
+                        Text("Live Photo groups")
+                            .font(.headline)
+                        ForEach(viewModel.livePhotoGroups) { group in
+                            VStack(alignment: .leading) {
+                                Text(group.state.rawValue)
+                                Text(
+                                    "Still: \(group.stillState?.rawValue ?? "pending") · Motion: "
+                                        + "\(group.motionState?.rawValue ?? "pending")"
+                                )
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            }
+                            .accessibilityElement(children: .combine)
+                        }
+                    }
+                    Button("Refresh backup activity") {
+                        Task { await viewModel.refreshQueueSummary() }
+                    }
+                    .accessibilityIdentifier("photo_backup_refresh_activity_button")
+                    if viewModel.automaticForegroundBackupEnabled,
+                        viewModel.automaticBackupConsentConfirmed,
+                        !viewModel.pauseAutomaticBackup
+                    {
+                        Button("Run one foreground backup pass") {
+                            Task { await viewModel.runAutomaticBackupPass() }
+                        }
+                        .accessibilityIdentifier("photo_backup_run_once_button")
+                    }
                 }
 
                 Section(
@@ -246,6 +465,18 @@ public struct PhotoBackupSettingsView: View {
             }
         }
         .navigationTitle("Photo Backup")
+        .confirmationDialog(
+            "Enable automatic foreground backup?",
+            isPresented: $showingAutomaticBackupConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Enable Automatic Backup") {
+                Task { await viewModel.enableAutomaticForegroundBackupAfterConfirmation() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(viewModel.automaticBackupConfirmationDescription)
+        }
         .task {
             await viewModel.loadSettings()
         }

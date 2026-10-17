@@ -78,7 +78,7 @@ final class PhotoKitFoundationTests: XCTestCase {
         try queueRawSQL(legacyURL, "PRAGMA user_version = 1")
 
         let migratedStore = try PhotoObservationSQLiteStore(databaseURL: legacyURL)
-        XCTAssertEqual(try queueRawScalar(legacyURL, "PRAGMA user_version"), "2")
+        XCTAssertEqual(try queueRawScalar(legacyURL, "PRAGMA user_version"), "3")
         XCTAssertEqual(
             try queueRawScalar(
                 legacyURL,
@@ -89,6 +89,18 @@ final class PhotoKitFoundationTests: XCTestCase {
             try queueRawScalar(
                 legacyURL,
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'photo_resource_extractions'"
+            ),
+            "1")
+        XCTAssertEqual(
+            try queueRawScalar(
+                legacyURL,
+                "SELECT COUNT(*) FROM pragma_table_info('photo_backup_configurations') WHERE name='automatic_foreground_backup_enabled'"
+            ),
+            "1")
+        XCTAssertEqual(
+            try queueRawScalar(
+                legacyURL,
+                "SELECT COUNT(*) FROM pragma_table_info('photo_backup_candidates') WHERE name='file_version_identifier'"
             ),
             "1")
         _ = migratedStore

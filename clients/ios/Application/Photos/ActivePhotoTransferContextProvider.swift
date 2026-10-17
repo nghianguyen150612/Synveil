@@ -1,7 +1,9 @@
 import Foundation
 
 @MainActor
-final class ActivePhotoTransferContextProvider: PhotoTransferContextProviding {
+final class ActivePhotoTransferContextProvider: PhotoTransferContextProviding,
+    PhotoBackupAuthenticatedIdentityProviding
+{
     private let sessionController: SessionController
     private let credentialSink: SecureCredentialSinkProtocol
     private let observationCoordinator: PhotoLibraryObservationCoordinator
@@ -44,6 +46,26 @@ final class ActivePhotoTransferContextProvider: PhotoTransferContextProviding {
                 authorization: authorization,
                 deviceId: session.record.deviceId,
                 configuration: configuration)
+        } catch {
+            return nil
+        }
+    }
+
+    func currentIdentity() async -> PhotoBackupAuthenticatedIdentity? {
+        guard sessionController.state == .authenticated,
+            let endpoint = sessionController.serverEndpoint
+        else { return nil }
+        let revision = sessionController.lifecycleRevision
+        do {
+            let session = try await credentialSink.load(expectedServerEndpoint: endpoint)
+            guard let profileId = UUID(uuidString: session.record.ownerUserId),
+                sessionController.state == .authenticated,
+                sessionController.lifecycleRevision == revision,
+                sessionController.serverEndpoint == endpoint
+            else { return nil }
+            return PhotoBackupAuthenticatedIdentity(
+                profileId: profileId, ownerId: session.record.ownerUserId,
+                deviceId: session.record.deviceId, sessionRevision: revision)
         } catch {
             return nil
         }

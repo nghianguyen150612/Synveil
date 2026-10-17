@@ -8,6 +8,7 @@ enum FileUploadResult: Sendable {
 
 @MainActor
 protocol PhotoForegroundUploadCoordinatorProtocol {
+    var hasActiveForegroundOperation: Bool { get }
     func start(
         selectedURL: URL, target: UploadTarget?, library: LibraryId,
         parent: NodeId?, libraryStatus: LibraryStatus, backgroundEnabled: Bool,
@@ -19,6 +20,9 @@ protocol PhotoForegroundUploadCoordinatorProtocol {
         backgroundEnabled: Bool,
         progress: @escaping @MainActor (UploadProgress) -> Void
     ) async -> FileUploadResult
+    func reconcileExisting(
+        id: UploadOperationId, library: LibraryId
+    ) async -> Result<UploadRecord, UploadFailure>
     func pauseUserTransfer() async throws
     func pauseUserTransfer(id: UploadOperationId) async throws
 }
@@ -55,6 +59,8 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol,
     private var generation: UInt64 = 0
     private(set) var lifecycleGeneration: UInt64 = 0
     var notificationObservation: (@MainActor (UploadRecord) -> Void)?
+
+    var hasActiveForegroundOperation: Bool { active != nil }
 
     init(
         repository: AuthenticatedUploadRepository, database: MutationQueueSQLiteStore,
@@ -136,6 +142,12 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol,
             return .failure(.duplicateOperation)
         }
         return result
+    }
+
+    func reconcileExisting(
+        id: UploadOperationId, library: LibraryId
+    ) async -> Result<UploadRecord, UploadFailure> {
+        await checkServerStatus(id: id, library: library)
     }
 
     func abort(

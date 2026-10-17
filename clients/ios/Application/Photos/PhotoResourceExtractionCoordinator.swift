@@ -89,6 +89,31 @@ public actor PhotoResourceExtractionCoordinator {
         return try await prepare(intent)
     }
 
+    public func prepareAutomaticSelection(
+        operationId: UUID = UUID(),
+        selection: PhotoResourceSelection,
+        observationGeneration: Int64,
+        policyRevision: Int64
+    ) async throws -> PhotoResourceExtractionRecord {
+        guard let context = await contextProvider.currentContext(),
+            context.configuration.canAutomaticallyBackUpInForeground,
+            context.configuration.policyRevision == policyRevision,
+            policyRevision <= Int64(Int.max)
+        else { throw PhotoResourceTransferFailure.configurationDisabled }
+        let intent = PhotoResourceExtractionIntent(
+            operationId: operationId,
+            profileId: context.authorization.profileId,
+            ownerId: context.authorization.ownerId,
+            deviceId: context.deviceId,
+            selection: selection,
+            observationGeneration: observationGeneration,
+            authorization: context.authorization,
+            policyVersion: Int(policyRevision),
+            maximumResourceBytes: context.configuration.maximumResourceSizeBytes,
+            userInitiated: false)
+        return try await prepare(intent)
+    }
+
     public func cancelPreparation(operationId: UUID) {
         operations[operationId]?.cancel()
     }
@@ -150,7 +175,7 @@ public actor PhotoResourceExtractionCoordinator {
         let stagingId = UploadOperationId()
         do {
             try Task.checkCancellation()
-            guard intent.userInitiated else {
+            guard intent.userInitiated || contextAllowsAutomatic(intent) else {
                 throw PhotoResourceTransferFailure.configurationDisabled
             }
             let context = try await validate(intent)
@@ -162,6 +187,13 @@ public actor PhotoResourceExtractionCoordinator {
                 }), observation.discoveryGeneration == intent.observationGeneration,
                 !observation.isExcluded, observation.sourceAvailability == .available
             else { throw PhotoResourceTransferFailure.ineligibleObservation }
+
+            if !intent.userInitiated {
+                try validateAutomaticEligibility(
+                    selection: intent.selection, observation: observation,
+                    configuration: context.configuration,
+                    policyRevision: Int64(intent.policyVersion))
+            }
 
             let choices = try await source.selections(
                 for: intent.selection.localIdentifier, includingEditedRenditions: true)
@@ -274,8 +306,51 @@ public actor PhotoResourceExtractionCoordinator {
         guard context.configuration.isOptedIn, !context.configuration.pauseDiscovery else {
             throw PhotoResourceTransferFailure.configurationDisabled
         }
+        if !intent.userInitiated {
+            guard context.configuration.canAutomaticallyBackUpInForeground,
+                context.configuration.policyRevision == Int64(intent.policyVersion)
+            else { throw PhotoResourceTransferFailure.configurationDisabled }
+        }
         try validateVideoPolicy(intent.selection, configuration: context.configuration)
         return context
+    }
+
+    private func contextAllowsAutomatic(_ intent: PhotoResourceExtractionIntent) -> Bool {
+        guard !intent.userInitiated else { return true }
+        return intent.policyVersion > 0
+    }
+
+    private func validateAutomaticEligibility(
+        selection: PhotoResourceSelection,
+        observation: PhotoAssetObservation,
+        configuration: PhotoBackupConfiguration,
+        policyRevision: Int64
+    ) throws {
+        guard configuration.canAutomaticallyBackUpInForeground,
+            configuration.policyRevision == policyRevision
+        else { throw PhotoResourceTransferFailure.configurationDisabled }
+        guard selection.role != .auxiliary else {
+            throw PhotoResourceTransferFailure.unsupportedResource
+        }
+        if observation.assetKind == .livePhoto && !configuration.includeLivePhotos {
+            throw PhotoResourceTransferFailure.configurationDisabled
+        }
+        if selection.role == .primaryImage && !configuration.includeStillImages
+            && observation.assetKind != .livePhoto
+        {
+            throw PhotoResourceTransferFailure.configurationDisabled
+        }
+        if selection.role == .primaryVideo && !configuration.includeVideos {
+            throw PhotoResourceTransferFailure.configurationDisabled
+        }
+        if selection.role == .motionVideo && !configuration.includeLivePhotos {
+            throw PhotoResourceTransferFailure.configurationDisabled
+        }
+        if configuration.renditionPolicy == .originalOnly,
+            ![.original, .pairedMotion].contains(selection.rendition)
+        {
+            throw PhotoResourceTransferFailure.configurationDisabled
+        }
     }
 
     private func validateObservation(_ intent: PhotoResourceExtractionIntent) async throws {
