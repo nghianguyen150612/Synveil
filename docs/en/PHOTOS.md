@@ -21,7 +21,7 @@ storage model.
 
 ## Scope and status
 
-The following are `PLANNED`:
+The following server-side Photos capabilities are `PLANNED`:
 
 - original image and video preservation;
 - automatic import from supported clients;
@@ -31,7 +31,7 @@ The following are `PLANNED`:
 - exact-duplicate suggestions;
 - deterministic metadata search and optional AI-enriched search;
 - source-device/import and backup state; and
-- future PhotoKit/background-transfer integration.
+- production PhotoAsset import binding, Live Photo group binding, and backup-manifest association.
 
 The following are `EXPERIMENTAL` until separate privacy and quality gates pass:
 
@@ -204,12 +204,22 @@ resource failed.
 
 ## iOS PhotoKit client
 
-P056 adds opt-in PhotoKit metadata discovery and P057 implements explicit preparation of a
-selected local resource followed by a user-started foreground upload through the existing P045
-coordinator. The P057 native CI and review gates remain tracked by the [P057 manifest](../ios/manifests/PROMPT057_MANIFEST.md).
-Automatic camera-roll upload, background URLSession upload, silent iCloud retrieval, remote
-deletion, and server PhotoAsset binding remain disabled. The PhotoKit host app writes into the
-existing private transfer staging area and never stages media in the File Provider App Group.
+P056 adds opt-in PhotoKit metadata discovery. P057 adds explicit preparation of a selected local
+resource and a user-started foreground upload through the existing P045 coordinator. P058 adds a
+separate, default-off automatic foreground policy, a bounded owner/device-scoped SQLite candidate
+queue, and a finite worker that reuses P057 staging and P045 upload/reconciliation. The worker
+only runs while the authenticated app is active, rechecks PhotoKit permission and the selected
+Library/directory, and never enables background URLSession transfer. See the
+[P058 manifest](../ios/manifests/PROMPT058_MANIFEST.md) for implementation and validation state.
+
+Automatic upload is not PhotoAsset import. The current API confirms canonical FileVersion uploads,
+but the Photos server contract does not expose PhotoAsset, PhotoResource, or Live Photo binding,
+nor does it link a P045 FileVersion to a BackupSnapshot. The client therefore reports
+`FILE_UPLOADED_AWAITING_PHOTO_BINDING`; it does not claim a retained backup. The existing generic
+backup APIs manage BackupSets and immutable snapshot manifests, but there is no verified operation
+that associates this photo upload with a set or proves its retention. The PhotoKit host app writes
+into the existing private transfer staging area and never stages media in the File Provider App
+Group.
 
 The server contract must continue to account for these platform constraints:
 
@@ -225,17 +235,20 @@ The server contract must continue to account for these platform constraints:
 - Original resources are requested through platform APIs at appropriate
   quality. An optimized/local preview must not be mislabeled as the original.
 - iCloud-backed assets may require network retrieval by the OS and can be
-  temporarily unavailable. Synveil reports `SOURCE_UNAVAILABLE` and retries
-  under policy rather than treating absence as deletion.
+  temporarily unavailable. P057/P058 keep PhotoKit network retrieval disabled,
+  report `SOURCE_UNAVAILABLE`, and use bounded foreground retries rather than
+  treating absence as deletion.
 - Edits in the Apple library may yield adjusted resources. The client records
   whether it is uploading an original or an edited rendition; Synveil does not
   silently replace one with the other.
-- Live Photo still and motion resources stage and upload independently. P057
-  does not claim group completion; binding requires a future reviewed server
-  contract.
+- Live Photo still and motion resources stage and upload independently with
+  separate queue states and checksums. P058 reports partial or unbound groups;
+  group completion requires a future reviewed server binding contract.
 
 PhotoKit observation state is separate from the Synveil `SyncCursor` and
-`BackupSnapshot`. A local PhotoKit deletion can be:
+`BackupSnapshot`. P058's local queue is also separate from backup authority: a
+P045 FileVersion commit is displayed as an uploaded file, not as a retained
+photo backup. A local PhotoKit deletion can be:
 
 - a new source observation under photo-backup policy, preserving server history;
 - an explicit user-issued Synveil delete under two-way policy; or

@@ -6,6 +6,266 @@ import XCTest
 
 @MainActor
 final class PhotoResourceTransferTests: XCTestCase {
+    func testAutomaticBackupDefaultsOffAndRequiresExplicitConsent() async throws {
+        let photoStore = try makePhotoStore()
+        let profileId = UUID()
+        let defaults = try await photoStore.fetchConfiguration(profileId: profileId)
+        XCTAssertFalse(defaults.discoveryEnabled)
+        XCTAssertFalse(defaults.automaticForegroundBackupEnabled)
+        XCTAssertFalse(defaults.automaticBackupConsentConfirmed)
+        XCTAssertEqual(defaults.maximumConcurrentOperations, 1)
+
+        let incomplete = PhotoBackupConfiguration(
+            discoveryEnabled: true,
+            targetLibraryIdentifier: "library",
+            targetParentIdentifier: "parent",
+            automaticForegroundBackupEnabled: true,
+            automaticBackupConsentConfirmed: false)
+        do {
+            try await photoStore.saveConfiguration(incomplete, profileId: profileId)
+            XCTFail("Automatic backup must require an independent explicit confirmation")
+        } catch {}
+
+        let confirmed = PhotoBackupConfiguration(
+            discoveryEnabled: true,
+            targetLibraryIdentifier: "library",
+            targetParentIdentifier: "parent",
+            automaticForegroundBackupEnabled: true,
+            automaticBackupConsentConfirmed: true)
+        try await photoStore.saveConfiguration(confirmed, profileId: profileId)
+        let saved = try await photoStore.fetchConfiguration(profileId: profileId)
+        XCTAssertTrue(saved.canAutomaticallyBackUpInForeground)
+        XCTAssertEqual(saved.policyRevision, 1)
+    }
+
+    func testDurableQueueDeduplicatesCallbacksButKeepsNewSourceRevision() async throws {
+        let photoStore = try makePhotoStore()
+        let authorization = PhotoAuthorizationSession(
+            profileId: UUID(), ownerId: "queue-owner")
+        let selection = makeSelection()
+        let observation = makeObservation(selection: selection, generation: 4)
+        let config = activeAutomaticConfiguration()
+        try await photoStore.activateAuthorization(authorization)
+        try await photoStore.saveConfiguration(config, profileId: authorization.profileId)
+        try await photoStore.commitObservations([observation], authorization: authorization)
+        let candidate = makeCandidate(
+            authorization: authorization, observation: observation, selection: selection,
+            configuration: config, deviceId: "queue-device")
+
+        let firstInsert = try await photoStore.enqueueBackupCandidates(
+            [candidate], authorization: authorization, maximumPending: 100)
+        let duplicateInsert = try await photoStore.enqueueBackupCandidates(
+            [candidate], authorization: authorization, maximumPending: 100)
+        let originalCandidates = try await photoStore.backupCandidates(
+            authorization: authorization, limit: 100)
+        XCTAssertEqual(firstInsert, 1)
+        XCTAssertEqual(duplicateInsert, 0)
+        XCTAssertEqual(originalCandidates.count, 1)
+
+        let revisedSelection = makeSelection(
+            sourceModificationDate: Date(timeIntervalSince1970: 20))
+        let revisedObservation = makeObservation(selection: revisedSelection, generation: 5)
+        try await photoStore.commitObservations([revisedObservation], authorization: authorization)
+        let revised = makeCandidate(
+            authorization: authorization, observation: revisedObservation,
+            selection: revisedSelection, configuration: config, deviceId: "queue-device")
+        let revisedInsert = try await photoStore.enqueueBackupCandidates(
+            [revised], authorization: authorization, maximumPending: 100)
+        XCTAssertEqual(revisedInsert, 1)
+        let candidates = try await photoStore.backupCandidates(
+            authorization: authorization, limit: 100)
+        XCTAssertEqual(candidates.count, 2)
+        XCTAssertEqual(Set(candidates.map(\.sourceRevision)).count, 2)
+    }
+
+    func testCompletedDiscoveryCursorRemainsAtEndForSameScanGeneration() async throws {
+        let photoStore = try makePhotoStore()
+        let authorization = PhotoAuthorizationSession(
+            profileId: UUID(), ownerId: "cursor-owner")
+        let config = activeAutomaticConfiguration()
+        try await photoStore.activateAuthorization(authorization)
+        try await photoStore.saveConfiguration(config, profileId: authorization.profileId)
+
+        try await photoStore.saveBackupDiscoveryCursor(
+            "last-local-identifier", authorization: authorization, deviceId: "cursor-device",
+            policyRevision: config.policyRevision, scanGeneration: 41)
+        let firstCursor = try await photoStore.backupDiscoveryCursor(
+            authorization: authorization, deviceId: "cursor-device",
+            policyRevision: config.policyRevision, scanGeneration: 41)
+        let page = try await photoStore.fetchObservationPage(
+            profileId: authorization.profileId, ownerId: authorization.ownerId,
+            scanGeneration: 41, after: firstCursor, limit: 500)
+        let resumedCursor = try await photoStore.backupDiscoveryCursor(
+            authorization: authorization, deviceId: "cursor-device",
+            policyRevision: config.policyRevision, scanGeneration: 41)
+
+        XCTAssertEqual(firstCursor, "last-local-identifier")
+        XCTAssertTrue(page.isEmpty)
+        XCTAssertEqual(resumedCursor, "last-local-identifier")
+    }
+
+    func testQueueCapacityRejectsWholeCandidateBatchWithoutAdvancingWork() async throws {
+        let photoStore = try makePhotoStore()
+        let authorization = PhotoAuthorizationSession(
+            profileId: UUID(), ownerId: "capacity-owner")
+        let selection = makeSelection()
+        let observation = makeObservation(selection: selection, generation: 10)
+        let config = activeAutomaticConfiguration()
+        try await photoStore.activateAuthorization(authorization)
+        try await photoStore.saveConfiguration(config, profileId: authorization.profileId)
+        try await photoStore.commitObservations([observation], authorization: authorization)
+        let first = makeCandidate(
+            authorization: authorization, observation: observation, selection: selection,
+            configuration: config, deviceId: "capacity-device")
+        let secondSelection = PhotoResourceSelection(
+            localIdentifier: selection.localIdentifier, resourceIndex: 1,
+            resourceType: selection.resourceType, role: selection.role,
+            rendition: selection.rendition, uniformTypeIdentifier: selection.uniformTypeIdentifier,
+            sourceModificationDate: selection.sourceModificationDate)
+        let second = makeCandidate(
+            authorization: authorization, observation: observation, selection: secondSelection,
+            configuration: config, deviceId: "capacity-device")
+
+        do {
+            _ = try await photoStore.enqueueBackupCandidates(
+                [first, second], authorization: authorization, maximumPending: 1)
+            XCTFail("A partially accepted candidate batch must not commit at queue capacity")
+        } catch let failure as PhotoResourceTransferFailure {
+            XCTAssertEqual(failure, .queueCapacityReached)
+        }
+        let rejectedCandidates = try await photoStore.backupCandidates(
+            authorization: authorization, limit: 10)
+        XCTAssertTrue(rejectedCandidates.isEmpty)
+
+        let retry = try await photoStore.enqueueBackupCandidates(
+            [first], authorization: authorization, maximumPending: 1)
+        XCTAssertEqual(retry, 1)
+    }
+
+    func testQueueLeaseRecoveryReturnsInterruptedExtractionToQueue() async throws {
+        let photoStore = try makePhotoStore()
+        let authorization = PhotoAuthorizationSession(
+            profileId: UUID(), ownerId: "lease-owner")
+        let selection = makeSelection()
+        let observation = makeObservation(selection: selection, generation: 6)
+        let config = activeAutomaticConfiguration()
+        try await photoStore.activateAuthorization(authorization)
+        try await photoStore.saveConfiguration(config, profileId: authorization.profileId)
+        try await photoStore.commitObservations([observation], authorization: authorization)
+        let candidate = makeCandidate(
+            authorization: authorization, observation: observation, selection: selection,
+            configuration: config, deviceId: "lease-device")
+        _ = try await photoStore.enqueueBackupCandidates(
+            [candidate], authorization: authorization, maximumPending: 100)
+        let expiry = Date().addingTimeInterval(60)
+        let claimResult = try await photoStore.claimNextBackupCandidate(
+            authorization: authorization, deviceId: "lease-device", claimId: UUID(),
+            leaseUntil: expiry, policyRevision: config.policyRevision)
+        let claimed = try XCTUnwrap(claimResult)
+        let extracting = claimed.replacing(
+            state: .extracting, claimId: claimed.claimId,
+            claimExpiresAt: claimed.claimExpiresAt,
+            claimPreviousState: claimed.claimPreviousState)
+        try await photoStore.transitionBackupCandidate(
+            extracting, expectedState: .claimed, authorization: authorization)
+
+        try await photoStore.recoverExpiredBackupClaims(
+            authorization: authorization, before: expiry.addingTimeInterval(1))
+        let recovered = try await photoStore.backupCandidates(
+            authorization: authorization, limit: 100)
+        XCTAssertEqual(recovered.first?.state, .queued)
+        XCTAssertEqual(recovered.first?.safeFailure, .stagingCorrupt)
+        XCTAssertNil(recovered.first?.claimId)
+    }
+
+    func testUnknownUploadLeaseRecoveryPreservesOriginalP045Identity() async throws {
+        let photoStore = try makePhotoStore()
+        let authorization = PhotoAuthorizationSession(
+            profileId: UUID(), ownerId: "upload-lease-owner")
+        let selection = makeSelection()
+        let observation = makeObservation(selection: selection, generation: 7)
+        let config = activeAutomaticConfiguration()
+        try await photoStore.activateAuthorization(authorization)
+        try await photoStore.saveConfiguration(config, profileId: authorization.profileId)
+        try await photoStore.commitObservations([observation], authorization: authorization)
+        let candidate = makeCandidate(
+            authorization: authorization, observation: observation, selection: selection,
+            configuration: config, deviceId: "upload-lease-device")
+        _ = try await photoStore.enqueueBackupCandidates(
+            [candidate], authorization: authorization, maximumPending: 100)
+        let expiry = Date().addingTimeInterval(60)
+        let claimResult = try await photoStore.claimNextBackupCandidate(
+            authorization: authorization, deviceId: "upload-lease-device", claimId: UUID(),
+            leaseUntil: expiry, policyRevision: config.policyRevision)
+        let claimed = try XCTUnwrap(claimResult)
+        let uploadId = UploadOperationId()
+        let uploading = claimed.replacing(
+            state: .uploading, claimId: claimed.claimId,
+            claimExpiresAt: claimed.claimExpiresAt,
+            claimPreviousState: claimed.claimPreviousState,
+            extractionOperationId: UUID(), uploadOperationId: uploadId.rawValue)
+        try await photoStore.transitionBackupCandidate(
+            uploading, expectedState: .claimed, authorization: authorization)
+
+        try await photoStore.recoverExpiredBackupClaims(
+            authorization: authorization, before: expiry.addingTimeInterval(1))
+        let recovered = try await photoStore.backupCandidates(
+            authorization: authorization, limit: 100)
+        XCTAssertEqual(recovered.first?.state, .reconciliationPending)
+        XCTAssertEqual(recovered.first?.uploadOperationId, uploadId.rawValue)
+        XCTAssertEqual(recovered.first?.safeFailure, .uploadOutcomeUnknown)
+    }
+
+    func testQueueAdoptionReconcilesExactUploadAfterAuthorizationGenerationChanges() async throws {
+        let photoStore = try makePhotoStore()
+        let profileId = UUID()
+        let oldAuthorization = PhotoAuthorizationSession(
+            profileId: profileId, ownerId: "restart-owner", sessionRevision: 3)
+        let selection = makeSelection()
+        let observation = makeObservation(selection: selection, generation: 8)
+        let config = activeAutomaticConfiguration()
+        try await photoStore.activateAuthorization(oldAuthorization)
+        try await photoStore.saveConfiguration(config, profileId: profileId)
+        try await photoStore.commitObservations([observation], authorization: oldAuthorization)
+        let candidate = makeCandidate(
+            authorization: oldAuthorization, observation: observation, selection: selection,
+            configuration: config, deviceId: "restart-device")
+        _ = try await photoStore.enqueueBackupCandidates(
+            [candidate], authorization: oldAuthorization, maximumPending: 100)
+        let claimResult = try await photoStore.claimNextBackupCandidate(
+            authorization: oldAuthorization, deviceId: "restart-device", claimId: UUID(),
+            leaseUntil: Date().addingTimeInterval(60), policyRevision: config.policyRevision)
+        let claimed = try XCTUnwrap(claimResult)
+        let uploadId = UploadOperationId()
+        let uploading = claimed.replacing(
+            state: .uploading, claimId: claimed.claimId,
+            claimExpiresAt: claimed.claimExpiresAt,
+            claimPreviousState: claimed.claimPreviousState,
+            uploadOperationId: uploadId.rawValue, verifiedByteCount: 4,
+            verifiedSHA256: digest(Data([1, 2, 3, 4])))
+        try await photoStore.transitionBackupCandidate(
+            uploading, expectedState: .claimed, authorization: oldAuthorization)
+
+        let newAuthorization = PhotoAuthorizationSession(
+            profileId: profileId, ownerId: "restart-owner", sessionRevision: 4)
+        try await photoStore.activateAuthorization(newAuthorization)
+        try await photoStore.adoptRecoverableBackupCandidates(
+            authorization: newAuthorization, deviceId: "restart-device")
+
+        let adoptedCandidates = try await photoStore.backupCandidates(
+            authorization: newAuthorization, limit: 10)
+        let adopted = try XCTUnwrap(adoptedCandidates.first)
+        XCTAssertEqual(adopted.authorizationGeneration, newAuthorization.generation)
+        XCTAssertEqual(adopted.state, .reconciliationPending)
+        XCTAssertEqual(adopted.uploadOperationId, uploadId.rawValue)
+        XCTAssertEqual(adopted.destinationLibraryIdentifier, "library-for-tests")
+
+        let recoveredClaim = try await photoStore.claimNextBackupCandidate(
+            authorization: newAuthorization, deviceId: "restart-device", claimId: UUID(),
+            leaseUntil: Date().addingTimeInterval(60), policyRevision: config.policyRevision)
+        XCTAssertEqual(recoveredClaim?.uploadOperationId, uploadId.rawValue)
+    }
+
     func testResourceSelectionIdentitySurvivesSQLiteTimestampRoundTrip() {
         let sourceDate = Date()
         let restoredDate = Date(timeIntervalSince1970: sourceDate.timeIntervalSince1970)
@@ -415,6 +675,34 @@ final class PhotoResourceTransferTests: XCTestCase {
             permissionScope: .authorizedFull, sourceAvailability: .available)
     }
 
+    private func activeAutomaticConfiguration() -> PhotoBackupConfiguration {
+        PhotoBackupConfiguration(
+            discoveryEnabled: true,
+            targetLibraryIdentifier: "library-for-tests",
+            targetParentIdentifier: "parent-for-tests",
+            automaticForegroundBackupEnabled: true,
+            automaticBackupConsentConfirmed: true)
+    }
+
+    private func makeCandidate(
+        authorization: PhotoAuthorizationSession,
+        observation: PhotoAssetObservation,
+        selection: PhotoResourceSelection,
+        configuration: PhotoBackupConfiguration,
+        deviceId: String
+    ) -> PhotoBackupCandidate {
+        PhotoBackupCandidate(
+            profileId: authorization.profileId, ownerId: authorization.ownerId,
+            deviceId: deviceId, clientLibraryScope: observation.permissionScope.rawValue,
+            localIdentifier: observation.localIdentifier,
+            sourceRevision: PhotoBackupCandidate.sourceRevision(for: observation),
+            selection: selection, observationGeneration: observation.discoveryGeneration,
+            policyRevision: configuration.policyRevision,
+            authorizationGeneration: authorization.generation,
+            destinationLibraryIdentifier: configuration.targetLibraryIdentifier ?? "",
+            destinationParentIdentifier: configuration.targetParentIdentifier ?? "")
+    }
+
     private func digest(_ data: Data) -> String {
         "sha256:" + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
@@ -487,6 +775,7 @@ private final class FixedPhotoTransferContextProvider: PhotoTransferContextProvi
 @MainActor
 private final class ForegroundUploadSpy: PhotoForegroundUploadCoordinatorProtocol {
     private(set) var startCount = 0
+    var hasActiveForegroundOperation = false
     private(set) var targets: [UploadTarget] = []
     private(set) var expectedContents: [UploadExpectedContent] = []
     private(set) var backgroundPolicies: [Bool] = []
@@ -511,6 +800,9 @@ private final class ForegroundUploadSpy: PhotoForegroundUploadCoordinatorProtoco
         id: UploadOperationId, library: LibraryId, libraryStatus: LibraryStatus,
         backgroundEnabled: Bool, progress: @escaping @MainActor (UploadProgress) -> Void
     ) async -> FileUploadResult { .stopped(nil, .cancelled) }
+    func reconcileExisting(
+        id: UploadOperationId, library: LibraryId
+    ) async -> Result<UploadRecord, UploadFailure> { .failure(.invalidMetadata) }
     func pauseUserTransfer() async throws {}
     func pauseUserTransfer(id: UploadOperationId) async throws {}
 }

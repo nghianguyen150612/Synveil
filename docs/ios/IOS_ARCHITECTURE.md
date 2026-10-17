@@ -579,12 +579,13 @@ State Transitions:
 
 ## 24. PhotoKit In-App Transfer Boundary
 
-* **P056 foundation**: Metadata discovery is opt-in, limited-library aware, bounded, and isolated in the versioned PhotoObservation SQLite store.
-* **P057 implementation**: A user selects a specific PhotoKit resource, prepares it through `PHAssetResourceManager.requestData` with network access disabled, and explicitly starts a foreground upload through the existing P045 `FileUploadCoordinator`.
-* **Shared storage and integrity**: The extraction adapter writes into the existing private P045 staging root, verifies byte length and streaming SHA-256, and binds READY/handoff transitions to the active PhotoKit authorization generation.
-* **Disabled behavior**: Metadata discovery alone never authorizes uploads. Automatic camera-roll transfer, background URLSession uploads, silent iCloud retrieval, remote deletion, and server PhotoAsset binding remain disabled. Live Photo still and motion resources have independent transfer states; group completion requires a future reviewed server contract.
-* **Extension isolation**: P056/P057 use the host app. `Extensions/PhotoKit/` remains a reservation; the host app does not create a PhotoKit extension target or use the File Provider App Group for media staging.
-* **Validation gate**: P057 native build, simulator tests, strict formatting, and the four required iOS workflows must pass on the feature HEAD before integration.
+* **P056 discovery**: PhotoKit metadata discovery is opt-in, limited-library aware, page bounded, and isolated in the versioned PhotoObservation SQLite store.
+* **P057 transfer**: Explicitly selected resources stream through `PHAssetResourceManager.requestData` with network access disabled, are staged privately and verified by byte length and SHA-256, then use the existing P045 `FileUploadCoordinator`.
+* **P058 foreground orchestration**: A separate default-off consent controls a durable owner/device/profile-scoped candidate queue. One bounded worker claims work only while authenticated and active, revalidates permission, policy, destination, and network, and reuses P057 extraction and exact P045 operation IDs. Queue leases recover after process interruption, retries use bounded backoff, and one active transfer is allowed.
+* **Authority boundary**: A confirmed P045 FileVersion is recorded as `FILE_UPLOADED_AWAITING_PHOTO_BINDING`. The repository has no verified PhotoAsset/PhotoResource/Live Photo import-binding contract or operation linking these uploads to a BackupSnapshot. The client must not report a retained photo backup without those server proofs.
+* **Still disabled**: Background URLSession media transfer, background auto-upload scheduling, silent iCloud retrieval, remote deletion, and guessed server binding remain disabled. Live Photo still and motion resources retain independent state; an uploaded group remains unbound until authoritative evidence exists.
+* **Extension isolation**: P056–P058 use the host app. `Extensions/PhotoKit/` remains a reservation; the host app does not create a PhotoKit extension target or use the File Provider App Group for media staging.
+* **Validation gate**: P058 native build, simulator tests, strict formatting, independent review, and the four required iOS workflows must pass on the final feature HEAD before integration. Physical-device and live-deployment qualification are separate gates.
 
 ---
 
@@ -698,7 +699,7 @@ All developers and LLM agents working on the Synveil iOS client MUST obey these 
 * **P038–P047 (Transfers/Cache/Offline)**: Must implement the decoupled `TransferEngine` with 4 MiB resumable uploads and 512 MiB staging pressure limits.
 * **P048–P052 (Native iOS Experience)**: Must integrate `BGAppRefreshTask`, Quick Look, and Share Sheet.
 * **P053–P055 (File Provider)**: The owner-authorized post-baseline workstream uses `NSFileProviderReplicatedExtension` in an isolated target and a narrow App Group metadata projection. P053 foundations keep registration, network, content, mutations, Keychain sharing, and SQLite sharing disabled.
-* **P056–P058 (PhotoKit)**: P056 supplies opt-in metadata observation. P057 adds explicitly selected local resource staging and foreground P045 upload without a second transfer engine. P058 remains unauthorized and requires reviewed Live Photo group-binding and PhotoAsset contracts before those capabilities can be claimed.
+* **P056–P058 (PhotoKit)**: P056 supplies opt-in metadata observation. P057 adds explicitly selected local resource staging and foreground P045 upload without a second transfer engine. P058 adds opt-in bounded foreground orchestration with a durable queue, P045 reconciliation, and fail-closed PhotoAsset/BackupSnapshot boundaries. Background transfer, remote deletion, PhotoAsset binding, and retention claims remain disabled or unavailable until their independent security and server-contract gates pass.
 
 ## P054 read-only File Provider metadata synchronization
 
