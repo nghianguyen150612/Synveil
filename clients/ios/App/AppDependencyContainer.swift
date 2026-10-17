@@ -103,10 +103,10 @@ public final class AppDependencyContainer {
                 store: photoObservationStore,
                 extractionCoordinator: photoResourceExtractionCoordinator,
                 uploadHandoffCoordinator: photoUploadHandoffCoordinator,
-                foregroundWorker: photoBackupForegroundWorker,
                 rustBridge: rustBridge,
                 libraryCatalog: libraryCatalog,
                 nodeRepository: nodeRepository,
+                foregroundWorker: photoBackupForegroundWorker,
                 sessionRevision: revision)
         } catch {
             return nil
