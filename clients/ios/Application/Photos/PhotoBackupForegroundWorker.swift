@@ -622,9 +622,9 @@ final class PhotoBackupForegroundWorker {
             let confirmed = candidate.replacing(
                 state: .fileUploadedAwaitingPhotoBinding,
                 claimId: candidate.claimId, claimExpiresAt: nil, claimPreviousState: nil,
+                retryAfter: nil, preserveRetryAfter: false,
                 fileVersionIdentifier: completion.fileVersionId.rawValue,
-                safeFailure: .photoBindingUnavailable, retryAfter: nil,
-                preserveRetryAfter: false)
+                safeFailure: .photoBindingUnavailable)
             do {
                 try await store.transitionBackupCandidate(
                     confirmed, expectedState: .uploading,
@@ -725,7 +725,7 @@ final class PhotoBackupForegroundWorker {
                 id: uploadId, library: target.library.id,
                 libraryStatus: target.library.status, backgroundEnabled: false,
                 progress: { _ in })
-            await recordUploadResult(result, candidate: uploading, context: context)
+            await recordUploadResult(.success(result), candidate: uploading, context: context)
         } catch is CancellationError {
             try? await releaseClaim(
                 currentCandidate, to: .reconciliationPending,
@@ -755,8 +755,9 @@ final class PhotoBackupForegroundWorker {
         let confirmed = candidate.replacing(
             state: .fileUploadedAwaitingPhotoBinding, claimId: candidate.claimId,
             claimExpiresAt: nil, claimPreviousState: nil,
+            retryAfter: nil, preserveRetryAfter: false,
             fileVersionIdentifier: completion.fileVersionId.rawValue,
-            retryAfter: nil, preserveRetryAfter: false, safeFailure: .photoBindingUnavailable)
+            safeFailure: .photoBindingUnavailable)
         do {
             try await store.transitionBackupCandidate(
                 confirmed, expectedState: .reconciliationPending,
@@ -829,8 +830,8 @@ final class PhotoBackupForegroundWorker {
     ) -> UploadRecord? {
         guard case .success(let outcome) = result else { return nil }
         switch outcome {
-        case .completed(let record), .scheduled(let record): record
-        case .stopped(let record, _): record
+        case .completed(let record), .scheduled(let record): return record
+        case .stopped(let record, _): return record
         }
     }
 
