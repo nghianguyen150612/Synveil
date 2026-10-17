@@ -896,7 +896,8 @@ public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol,
             }
             defer { sqlite3_finalize(statement) }
             bindText(statement, index: 1, text: authorization.generation.uuidString)
-            sqlite3_bind_double(statement, 2, Date().addingTimeInterval(30).timeIntervalSince1970)
+            // Reconcile the existing P045 operation immediately after authorization adoption.
+            sqlite3_bind_double(statement, 2, Date().timeIntervalSince1970)
             sqlite3_bind_double(statement, 3, Date().timeIntervalSince1970)
             bindText(statement, index: 4, text: authorization.profileId.uuidString)
             bindText(statement, index: 5, text: authorization.ownerId)
