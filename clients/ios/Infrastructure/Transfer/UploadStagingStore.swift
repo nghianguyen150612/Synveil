@@ -15,6 +15,35 @@ actor UploadStagingStore {
             from: selectedURL, stagingId: stagingId, durable: durableReservations)
     }
 
+    func createPhotoResourceStage(
+        stagingId: UploadOperationId, maximumBytes: UInt64,
+        durableReservations: [DownloadStorageReservation]
+    ) async throws -> PhotoResourceStageWriter {
+        try await shared.createPhotoResourceStage(
+            id: stagingId, maximumBytes: maximumBytes, durable: durableReservations)
+    }
+
+    func publishPhotoResourceStage(
+        stagingId: UploadOperationId, writer: PhotoResourceStageWriter
+    ) async throws -> PhotoResourceVerifiedContent {
+        try await shared.publishPhotoResourceStage(id: stagingId, writer: writer)
+    }
+
+    func verifyPhotoResourceStage(
+        stagingId: String, expectedByteCount: UInt64, expectedSHA256: String
+    ) async throws -> PhotoResourceVerifiedContent {
+        try await shared.verifyPhotoResourceStage(
+            id: stagingId, expectedByteCount: expectedByteCount, expectedSHA256: expectedSHA256)
+    }
+
+    func discardPhotoResourceStage(stagingId: String) async {
+        try? await shared.discardPhotoResourceStage(id: stagingId)
+    }
+
+    func reconcileOrphanPhotoResources(keeping stagingIds: Set<String>) async throws {
+        try await shared.reconcileOrphanPhotoResources(keeping: stagingIds)
+    }
+
     func verify(_ record: UploadRecord) async throws {
         guard !record.stagingReleased else { throw UploadFailure.stagingMissing }
         try await shared.verifyUploadSource(

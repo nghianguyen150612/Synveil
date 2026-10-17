@@ -49,30 +49,42 @@ public struct PhotoAssetObservation: Codable, Sendable, Equatable, Identifiable 
 }
 
 public struct PhotoAssetResourceDescriptor: Codable, Sendable, Equatable, Identifiable {
-    public var id: String { "\(localIdentifier)_\(role.rawValue)" }
+    public var id: String { "\(localIdentifier)_\(resourceIndex)_\(resourceType)" }
 
     public let localIdentifier: String
     public let role: PhotoResourceRole
+    public let resourceIndex: Int
+    public let resourceType: String
+    public let rendition: PhotoResourceRendition
     public let originalFilename: String?
     public let uniformTypeIdentifier: String?
-    public let isLocallyAvailable: Bool
+    public let availability: PhotoResourceAvailability
     public let fileSizeEstimateBytes: Int64?
+
+    public var isLocallyAvailable: Bool { availability == .localVerified }
 
     public init(
         localIdentifier: String,
         role: PhotoResourceRole,
+        resourceIndex: Int = 0,
+        resourceType: String = "unknown",
+        rendition: PhotoResourceRendition = .original,
         originalFilename: String?,
         uniformTypeIdentifier: String?,
-        isLocallyAvailable: Bool,
+        availability: PhotoResourceAvailability = .unknown,
         fileSizeEstimateBytes: Int64?
     ) {
         self.localIdentifier = localIdentifier
         self.role = role
+        self.resourceIndex = resourceIndex
+        self.resourceType = resourceType
+        self.rendition = rendition
         self.originalFilename = originalFilename
         self.uniformTypeIdentifier = uniformTypeIdentifier
-        self.isLocallyAvailable = isLocallyAvailable
+        self.availability = availability
         self.fileSizeEstimateBytes = fileSizeEstimateBytes
     }
+
 }
 
 public struct PhotoTransferCandidateDescriptor: Codable, Sendable, Equatable, Identifiable {

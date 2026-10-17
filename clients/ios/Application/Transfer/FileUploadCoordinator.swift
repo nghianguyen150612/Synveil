@@ -6,6 +6,23 @@ enum FileUploadResult: Sendable {
     case stopped(UploadRecord?, UploadFailure)
 }
 
+@MainActor
+protocol PhotoForegroundUploadCoordinatorProtocol {
+    func start(
+        selectedURL: URL, target: UploadTarget?, library: LibraryId,
+        parent: NodeId?, libraryStatus: LibraryStatus, backgroundEnabled: Bool,
+        stableOperationId: UploadOperationId?, expectedSourceContent: UploadExpectedContent?,
+        progress: @escaping @MainActor (UploadProgress) -> Void
+    ) async -> FileUploadResult
+    func resume(
+        id: UploadOperationId, library: LibraryId, libraryStatus: LibraryStatus,
+        backgroundEnabled: Bool,
+        progress: @escaping @MainActor (UploadProgress) -> Void
+    ) async -> FileUploadResult
+    func pauseUserTransfer() async throws
+    func pauseUserTransfer(id: UploadOperationId) async throws
+}
+
 private enum UploadActionResult: Sendable {
     case transfer(FileUploadResult)
     case record(Result<UploadRecord, UploadFailure>)
@@ -21,7 +38,9 @@ protocol FileUploadActivityReaderProtocol {
 }
 
 @MainActor
-final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
+final class FileUploadCoordinator: FileUploadActivityReaderProtocol,
+    PhotoForegroundUploadCoordinatorProtocol
+{
     private let repository: AuthenticatedUploadRepository
     private let database: MutationQueueSQLiteStore
     private let staging: UploadStagingStore
@@ -53,6 +72,8 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
     func start(
         selectedURL: URL, target: UploadTarget? = nil, library: LibraryId,
         parent: NodeId? = nil, libraryStatus: LibraryStatus, backgroundEnabled: Bool = false,
+        stableOperationId: UploadOperationId? = nil,
+        expectedSourceContent: UploadExpectedContent? = nil,
         progress: @escaping @MainActor (UploadProgress) -> Void
     ) async -> FileUploadResult {
         guard active == nil else { return .stopped(nil, .duplicateOperation) }
@@ -71,6 +92,8 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
                         await executeStart(
                             selectedURL: selectedURL, target: resolvedTarget,
                             libraryStatus: libraryStatus, backgroundEnabled: backgroundEnabled,
+                            stableOperationId: stableOperationId,
+                            expectedSourceContent: expectedSourceContent,
                             generation: captured, progress: progress))
                 }, failureResult: { .transfer(.stopped(nil, $0)) })
         else {
@@ -192,6 +215,14 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
         if let id, let background { try await background.pause(id) }
     }
 
+    func pauseUserTransfer(id: UploadOperationId) async throws {
+        guard activeUploadId == nil || activeUploadId == id else {
+            throw UploadFailure.duplicateOperation
+        }
+        if activeUploadId == id { active?.cancel() }
+        if let background { try await background.pause(id) }
+    }
+
     func invalidateSession() {
         background?.invalidateSession()
         generation &+= 1
@@ -226,7 +257,8 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
 
     private func executeStart(
         selectedURL: URL, target: UploadTarget, libraryStatus: LibraryStatus,
-        backgroundEnabled: Bool, generation captured: UInt64,
+        backgroundEnabled: Bool, stableOperationId: UploadOperationId?,
+        expectedSourceContent: UploadExpectedContent?, generation captured: UInt64,
         progress: @escaping @MainActor (UploadProgress) -> Void
     ) async -> FileUploadResult {
         var record: UploadRecord?
@@ -244,13 +276,38 @@ final class FileUploadCoordinator: FileUploadActivityReaderProtocol {
             session = current
             let scope = try await repository.preflight(target, session: current)
             try await database.bindSession(scope: scope, credentialId: current.credentialIdentifier)
-            let operationId = UploadOperationId()
+            if let stableOperationId,
+                let existing = try await database.upload(
+                    scope: scope, credentialId: current.credentialIdentifier,
+                    id: stableOperationId, bridge: repository.bridge)
+            {
+                guard existing.intent.target == target,
+                    expectedSourceContent == nil || existing.intent.expected == expectedSourceContent
+                else { throw UploadFailure.duplicateOperation }
+                activeUploadId = existing.id
+                record = existing
+                if existing.state == .committed { return .completed(existing) }
+                guard existing.state.canResume, !existing.stagingReleased else {
+                    throw UploadFailure.duplicateOperation
+                }
+                try await staging.verify(existing)
+                try await fence(current, captured)
+                progress(UploadProgress(existing))
+                return await continueUpload(
+                    existing, session: current, generation: captured, progress: progress,
+                    createIfNeeded: existing.serverSessionId == nil,
+                    backgroundEnabled: backgroundEnabled)
+            }
+            let operationId = stableOperationId ?? UploadOperationId()
             activeUploadId = operationId
             let stagingId = UploadOperationId()
             stagedId = stagingId
             let reservations = try await database.downloadReservations()
             let expected = try await staging.importSelectedFile(
                 selectedURL, stagingId: stagingId, durableReservations: reservations)
+            guard expectedSourceContent == nil || expected == expectedSourceContent else {
+                throw UploadFailure.integrityMismatch
+            }
             try await fence(current, captured)
             let intent = try await UploadIntent.prepare(
                 target: target, expected: expected,

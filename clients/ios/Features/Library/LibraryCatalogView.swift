@@ -16,6 +16,7 @@ struct LibraryCatalogView: View {
     private let syncCheckpointService: (any SyncCheckpointPreparationProtocol)?
     private let notifications: NotificationCoordinator?
     private let notificationNavigation: NotificationNavigationCoordinator?
+    private let photoBackupSettingsFactory: (@MainActor () async -> PhotoBackupSettingsViewModel?)?
 
     @State private var viewModel: LibraryCatalogViewModel
     @State private var isShowingLogoutConfirmation = false
@@ -37,6 +38,7 @@ struct LibraryCatalogView: View {
         fileExportCoordinator: VerifiedFileExportCoordinator? = nil,
         notifications: NotificationCoordinator? = nil,
         notificationNavigation: NotificationNavigationCoordinator? = nil,
+        photoBackupSettingsFactory: (@MainActor () async -> PhotoBackupSettingsViewModel?)? = nil,
         sessionController: SessionController
     ) {
         self.sessionController = sessionController
@@ -53,6 +55,7 @@ struct LibraryCatalogView: View {
         self.fileExportCoordinator = fileExportCoordinator
         self.notifications = notifications
         self.notificationNavigation = notificationNavigation
+        self.photoBackupSettingsFactory = photoBackupSettingsFactory
         _viewModel = State(
             initialValue: LibraryCatalogViewModel(
                 repository: repository,
@@ -76,6 +79,12 @@ struct LibraryCatalogView: View {
                                 Form {
                                     NavigationLink("Background Sync") {
                                         BackgroundSyncSettingsView(scheduler: .shared)
+                                    }
+                                    if let photoBackupSettingsFactory {
+                                        NavigationLink("Photo Backup") {
+                                            PhotoBackupSettingsDestination(
+                                                factory: photoBackupSettingsFactory)
+                                        }
                                     }
                                     if let notifications {
                                         NavigationLink("Local Notifications") {

@@ -49,6 +49,11 @@ public final class AppDependencyContainer {
     private(set) var rebaselineCoordinator: RebaselineCoordinator?
     private(set) var downloadCoordinator: FileDownloadCoordinator?
     private(set) var uploadCoordinator: FileUploadCoordinator?
+    private(set) var photoObservationStore: PhotoObservationSQLiteStore?
+    private(set) var photoObservationCoordinator: PhotoLibraryObservationCoordinator?
+    private(set) var photoResourceExtractionCoordinator: PhotoResourceExtractionCoordinator?
+    private(set) var photoUploadHandoffCoordinator: PhotoResourceUploadHandoffCoordinator?
+    private var photoTransferContextProvider: ActivePhotoTransferContextProvider?
     private var backgroundCancellationTransport: URLSessionBackgroundUploadTransport?
     private(set) var fileExportCoordinator: VerifiedFileExportCoordinator?
     private(set) var syncAckService: SyncAckService?
@@ -70,6 +75,37 @@ public final class AppDependencyContainer {
             await prepareApplicationSession()
             notificationStartupReady = true
             await consumeNotificationIntent()
+        }
+    }
+
+    func makePhotoBackupSettingsViewModel() async -> PhotoBackupSettingsViewModel? {
+        guard sessionController.state == .authenticated,
+            let endpoint = sessionController.serverEndpoint,
+            let credentialSink, let rustBridge, let libraryCatalog,
+            let photoObservationStore, let photoObservationCoordinator,
+            let photoResourceExtractionCoordinator, let photoUploadHandoffCoordinator
+        else { return nil }
+        let revision = sessionController.lifecycleRevision
+        do {
+            let session = try await credentialSink.load(expectedServerEndpoint: endpoint)
+            guard sessionController.state == .authenticated,
+                sessionController.lifecycleRevision == revision,
+                sessionController.serverEndpoint == endpoint,
+                let profileId = UUID(uuidString: session.record.ownerUserId)
+            else { return nil }
+            return PhotoBackupSettingsViewModel(
+                profileId: profileId,
+                ownerId: session.record.ownerUserId,
+                permissionAdapter: PhotoLibraryPermissionAdapter(),
+                coordinator: photoObservationCoordinator,
+                store: photoObservationStore,
+                extractionCoordinator: photoResourceExtractionCoordinator,
+                uploadHandoffCoordinator: photoUploadHandoffCoordinator,
+                rustBridge: rustBridge,
+                libraryCatalog: libraryCatalog,
+                sessionRevision: revision)
+        } catch {
+            return nil
         }
     }
 
@@ -515,6 +551,55 @@ public final class AppDependencyContainer {
                         repository: uploadRepository,
                         database: database, staging: uploadStaging, identityGenerator: bridge,
                         background: backgroundUploads)
+                    do {
+                        guard let activeUploads = uploadCoordinator else {
+                            throw PhotoResourceTransferFailure.storageFailure
+                        }
+                        let photoStore = try await Task.detached {
+                            try PhotoObservationSQLiteStore(
+                                databaseURL: PhotoObservationSQLiteStore.productionURL())
+                        }.value
+                        let photoPermission = PhotoLibraryPermissionAdapter()
+                        let photoObservation = PhotoLibraryObservationCoordinator(
+                            discoveryService: PhotoLibraryDiscoveryService(
+                                permissionAdapter: photoPermission),
+                            store: photoStore,
+                            permissionAdapter: photoPermission)
+                        let photoContext = ActivePhotoTransferContextProvider(
+                            sessionController: sessionController,
+                            credentialSink: store,
+                            observationCoordinator: photoObservation,
+                            store: photoStore)
+                        let photoStaging = PhotoResourceStagingCoordinator(
+                            uploadStaging: uploadStaging)
+                        let photoSource = PhotoKitResourceExtractionSource(
+                            permissionAdapter: photoPermission)
+                        let photoExtraction = PhotoResourceExtractionCoordinator(
+                            source: photoSource,
+                            permissionAdapter: photoPermission,
+                            contextProvider: photoContext,
+                            store: photoStore,
+                            staging: photoStaging,
+                            mutationStore: database)
+                        let photoHandoff = PhotoResourceUploadHandoffCoordinator(
+                            source: photoSource,
+                            permissionAdapter: photoPermission,
+                            contextProvider: photoContext,
+                            store: photoStore,
+                            staging: photoStaging,
+                            uploads: activeUploads)
+                        self.photoObservationStore = photoStore
+                        self.photoObservationCoordinator = photoObservation
+                        self.photoResourceExtractionCoordinator = photoExtraction
+                        self.photoUploadHandoffCoordinator = photoHandoff
+                        self.photoTransferContextProvider = photoContext
+                    } catch {
+                        photoObservationStore = nil
+                        photoObservationCoordinator = nil
+                        photoResourceExtractionCoordinator = nil
+                        photoUploadHandoffCoordinator = nil
+                        photoTransferContextProvider = nil
+                    }
                     if let downloadCoordinator {
                         fileExportCoordinator = VerifiedFileExportCoordinator(
                             downloads: downloadCoordinator)
@@ -562,9 +647,12 @@ public final class AppDependencyContainer {
                 let notifications = notifications
                 sessionController.installMutationSessionInvalidator {
                     [
-                        weak queue, weak composedMetadataMutationService, weak composedRebaseline,
-                        weak downloads, weak uploads, weak exports, weak notifications
+                        weak self, weak queue, weak composedMetadataMutationService,
+                        weak composedRebaseline, weak downloads, weak uploads, weak exports,
+                        weak notifications
                     ] in
+                    _ = self?.photoObservationStore?.revokeCurrentAuthorizationSynchronously(
+                        throughSessionRevision: self?.sessionController.lifecycleRevision ?? 0)
                     downloads?.invalidateSession()
                     uploads?.invalidateSession()
                     exports?.invalidateSession()
@@ -572,6 +660,12 @@ public final class AppDependencyContainer {
                     queue?.invalidateSession()
                     composedRebaseline?.invalidateSession()
                     composedMetadataMutationService?.invalidateSession()
+                    Task { [weak self] in
+                        if let photos = self?.photoObservationCoordinator {
+                            try? await photos.stopObservation()
+                        }
+                        await self?.photoResourceExtractionCoordinator?.cancelAllPreparations()
+                    }
                     BGAppRefreshScheduler.shared.invalidate(disable: true)
                 }
             } catch {

@@ -21,6 +21,77 @@ final class PhotoKitFoundationTests: XCTestCase {
         try super.tearDownWithError()
     }
 
+    func testPhotoObservationSchemaMigratesVersionOneWithoutLosingObservations() throws {
+        let legacyURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("photo_v1_migration_\(UUID().uuidString).sqlite")
+        addTeardownBlock { try? FileManager.default.removeItem(at: legacyURL) }
+        let profileId = "11111111-1111-4111-8111-111111111111"
+        let ownerId = "legacy-photo-owner"
+        let localIdentifier = "legacy-photo-asset"
+
+        try queueRawSQL(
+            legacyURL,
+            """
+            CREATE TABLE photo_asset_observations (
+                local_identifier TEXT NOT NULL,
+                profile_id TEXT NOT NULL,
+                owner_id TEXT NOT NULL,
+                asset_kind TEXT NOT NULL,
+                creation_date DOUBLE,
+                modification_date DOUBLE,
+                pixel_width INTEGER NOT NULL,
+                pixel_height INTEGER NOT NULL,
+                is_favorite INTEGER NOT NULL,
+                is_hidden INTEGER NOT NULL,
+                discovery_generation INTEGER NOT NULL,
+                observed_at DOUBLE NOT NULL,
+                permission_scope TEXT NOT NULL,
+                source_availability TEXT NOT NULL,
+                is_excluded INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (local_identifier, profile_id)
+            )
+            """)
+        try queueRawSQL(
+            legacyURL,
+            """
+            CREATE TABLE photo_backup_configurations (
+                profile_id TEXT PRIMARY KEY,
+                is_opted_in INTEGER NOT NULL,
+                scope TEXT NOT NULL,
+                include_videos INTEGER NOT NULL,
+                pause_discovery INTEGER NOT NULL,
+                updated_at DOUBLE NOT NULL
+            )
+            """)
+        try queueRawSQL(
+            legacyURL,
+            """
+            INSERT INTO photo_asset_observations (
+                local_identifier, profile_id, owner_id, asset_kind, pixel_width,
+                pixel_height, is_favorite, is_hidden, discovery_generation,
+                observed_at, permission_scope, source_availability, is_excluded
+            ) VALUES (
+                '\(localIdentifier)', '\(profileId)', '\(ownerId)', 'stillPhoto',
+                1920, 1080, 1, 0, 7, 1234.5, 'authorizedLimited', 'available', 0
+            )
+            """)
+        try queueRawSQL(legacyURL, "PRAGMA user_version = 1")
+
+        let migratedStore = try PhotoObservationSQLiteStore(databaseURL: legacyURL)
+        XCTAssertEqual(try queueRawScalar(legacyURL, "PRAGMA user_version"), "2")
+        XCTAssertEqual(
+            try queueRawScalar(
+                legacyURL,
+                "SELECT COUNT(*) FROM photo_asset_observations WHERE local_identifier = '\(localIdentifier)'"),
+            "1")
+        XCTAssertEqual(
+            try queueRawScalar(
+                legacyURL,
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'photo_resource_extractions'"),
+            "1")
+        _ = migratedStore
+    }
+
     // 1. Full & Limited Permission Mapping
     func testPermissionStateMapping() {
         XCTAssertTrue(PhotoPermissionState.authorizedFull.isAuthorized)
@@ -77,7 +148,9 @@ final class PhotoKitFoundationTests: XCTestCase {
             sourceAvailability: .available
         )
 
-        try await store.saveObservations([obs1], profileId: profileId, ownerId: owner1)
+        let authorization = PhotoAuthorizationSession(profileId: profileId, ownerId: owner1)
+        try await store.activateAuthorization(authorization)
+        try await store.commitObservations([obs1], authorization: authorization)
 
         // Mark source unavailable for owner1
         try await store.markSourceUnavailable(
@@ -118,7 +191,9 @@ final class PhotoKitFoundationTests: XCTestCase {
             permissionScope: .authorizedFull,
             sourceAvailability: .available
         )
-        try await store.saveObservations([obs], profileId: profileId, ownerId: ownerId)
+        let authorization = PhotoAuthorizationSession(profileId: profileId, ownerId: ownerId)
+        try await store.activateAuthorization(authorization)
+        try await store.commitObservations([obs], authorization: authorization)
 
         try await store.clearObservations(profileId: profileId)
         let fetched = try await store.fetchObservations(profileId: profileId, ownerId: ownerId)
@@ -182,7 +257,7 @@ final class PhotoKitFoundationTests: XCTestCase {
 
         // Stop observation before delayed discovery finishes
         try await Task.sleep(nanoseconds: 10_000_000)
-        await coordinator.stopObservation()
+        try await coordinator.stopObservation()
 
         let _ = try await scanTask.value
 

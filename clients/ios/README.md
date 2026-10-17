@@ -68,7 +68,7 @@ clients/ios/
 │   ├── Transfers/                     # Resumable 4 MiB upload & streaming download engine
 │   └── RustBridge/                    # Swift adapter wrapping narrow Rust FFI boundary
 ├── Extensions/                        # Deferred Apple Platform Extensions
-│   └── README.md                      # FileProvider (P053) & PhotoKit (P056) reservations
+│   └── README.md                      # File Provider isolation; PhotoKit stays in the host app
 ├── Resources/                         # Application Resources & Asset Catalogs
 │   ├── Assets.xcassets/               # AppIcon and AccentColor asset catalog
 │   └── README.md                      # Asset catalogs, String catalogs, Info.plist
@@ -147,7 +147,7 @@ python3 scripts/validate_ios_rust_artifact.py
 | `Application/` | Use-case coordinators (`SessionController`, `SyncCoordinator`, `TransferCoordinator`, `BackgroundSyncScheduler`). UI-independent orchestration. |
 | `Domain/` | Pure Swift domain entities, value objects, domain error taxonomy, and service protocol contracts (`HTTPTransportProtocol`, `CredentialVaultProtocol`, `LocalCacheStoreProtocol`, `RustBridgeProtocol`). |
 | `Infrastructure/` | Concrete service implementations using Apple frameworks (`URLSession`, `Security`, `FileManager`, `GRDB`) and Rust FFI adapter. |
-| `Extensions/` | Platform extensions reservation: `FileProvider/` (`NSFileProviderExtension` in P053) and `PhotoKit/` camera roll sync (in P056). |
+| `Extensions/` | Platform extension isolation: File Provider P053 foundation; no PhotoKit extension target (P056/P057 run in the host app). |
 | `Resources/` | Asset catalogs (`Assets.xcassets`), String localizations (`Localizable.xcstrings`), privacy usage keys (`Info.plist`). |
 | `Tests/` | Unit test suites, service integration tests with in-memory SQLite/URLProtocol mocks, architecture boundary tests, test doubles (`Mocks/`). |
 | `Support/` | Build support scripts, static source validator (`validate_ios_sources.py`), and reference configurations. |
