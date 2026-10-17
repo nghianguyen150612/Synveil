@@ -17,6 +17,22 @@ public struct PhotoAssetObservation: Codable, Sendable, Equatable, Identifiable 
     public let sourceAvailability: PhotoSourceAvailability
     public let isExcluded: Bool
 
+    public static func == (lhs: PhotoAssetObservation, rhs: PhotoAssetObservation) -> Bool {
+        lhs.localIdentifier == rhs.localIdentifier
+            && lhs.assetKind == rhs.assetKind
+            && photoTimestampValuesMatch(lhs.creationDate, rhs.creationDate)
+            && photoTimestampValuesMatch(lhs.modificationDate, rhs.modificationDate)
+            && lhs.pixelWidth == rhs.pixelWidth
+            && lhs.pixelHeight == rhs.pixelHeight
+            && lhs.isFavorite == rhs.isFavorite
+            && lhs.isHidden == rhs.isHidden
+            && lhs.discoveryGeneration == rhs.discoveryGeneration
+            && photoTimestampValuesMatch(lhs.observedAt, rhs.observedAt)
+            && lhs.permissionScope == rhs.permissionScope
+            && lhs.sourceAvailability == rhs.sourceAvailability
+            && lhs.isExcluded == rhs.isExcluded
+    }
+
     public init(
         localIdentifier: String,
         assetKind: PhotoAssetKind,
@@ -45,6 +61,14 @@ public struct PhotoAssetObservation: Codable, Sendable, Equatable, Identifiable 
         self.permissionScope = permissionScope
         self.sourceAvailability = sourceAvailability
         self.isExcluded = isExcluded
+    }
+}
+
+func photoTimestampValuesMatch(_ lhs: Date?, _ rhs: Date?) -> Bool {
+    switch (lhs, rhs) {
+    case (nil, nil): true
+    case let (lhs?, rhs?): lhs.timeIntervalSince1970 == rhs.timeIntervalSince1970
+    default: false
     }
 }
 

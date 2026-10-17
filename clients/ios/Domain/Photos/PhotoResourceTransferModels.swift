@@ -52,7 +52,7 @@ public struct PhotoResourceSelection: Sendable, Equatable, Codable, Identifiable
             && lhs.role == rhs.role
             && lhs.rendition == rhs.rendition
             && lhs.uniformTypeIdentifier == rhs.uniformTypeIdentifier
-            && photoSourceDatesMatch(lhs.sourceModificationDate, rhs.sourceModificationDate)
+            && photoTimestampValuesMatch(lhs.sourceModificationDate, rhs.sourceModificationDate)
     }
 
     public init(
@@ -71,14 +71,6 @@ public struct PhotoResourceSelection: Sendable, Equatable, Codable, Identifiable
         self.rendition = rendition
         self.uniformTypeIdentifier = uniformTypeIdentifier
         self.sourceModificationDate = sourceModificationDate
-    }
-}
-
-func photoSourceDatesMatch(_ lhs: Date?, _ rhs: Date?) -> Bool {
-    switch (lhs, rhs) {
-    case (nil, nil): true
-    case let (lhs?, rhs?): lhs.timeIntervalSince1970 == rhs.timeIntervalSince1970
-    default: false
     }
 }
 

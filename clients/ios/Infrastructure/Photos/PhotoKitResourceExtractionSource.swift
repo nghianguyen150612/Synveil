@@ -62,7 +62,8 @@ public final class PhotoKitResourceExtractionSource: PhotoResourceExtractionSour
         guard let asset = fetchAsset(selection.localIdentifier) else {
             throw PhotoResourceTransferFailure.sourceUnavailable
         }
-        guard photoSourceDatesMatch(asset.modificationDate, selection.sourceModificationDate) else {
+        guard photoTimestampValuesMatch(asset.modificationDate, selection.sourceModificationDate)
+        else {
             throw PhotoResourceTransferFailure.sourceChanged
         }
         let resources = PHAssetResource.assetResources(for: asset)

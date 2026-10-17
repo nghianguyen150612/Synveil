@@ -71,7 +71,7 @@ final class PhotoResourceUploadHandoffCoordinator {
                 throw PhotoResourceTransferFailure.sourceUnavailable
             }
             guard
-                photoSourceDatesMatch(
+                photoTimestampValuesMatch(
                     try await source.currentModificationDate(
                         for: record.selection.localIdentifier),
                     record.selection.sourceModificationDate)
@@ -89,7 +89,7 @@ final class PhotoResourceUploadHandoffCoordinator {
             let currentModificationDate = try await source.currentModificationDate(
                 for: record.selection.localIdentifier)
             guard currentChoices.contains(record.selection),
-                photoSourceDatesMatch(
+                photoTimestampValuesMatch(
                     currentModificationDate, record.selection.sourceModificationDate)
             else { throw PhotoResourceTransferFailure.sourceChanged }
             try await validateCurrentContext(matching: context)
