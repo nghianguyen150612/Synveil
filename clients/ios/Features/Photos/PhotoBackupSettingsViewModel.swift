@@ -100,7 +100,7 @@ public final class PhotoBackupSettingsViewModel {
                 if let records = try? await extractionCoordinator.recentExtractions(),
                     let latest = records.first
                 {
-                    extractionRecord = latest
+                    self.extractionRecord = latest
                     uploadStatusText = label(for: latest.state)
                 }
             }
@@ -271,7 +271,7 @@ public final class PhotoBackupSettingsViewModel {
             if let latest = try? await uploadHandoffCoordinator.currentExtraction(
                 extractionId: extractionRecord.operationId)
             {
-                extractionRecord = latest
+                self.extractionRecord = latest
             }
         } catch let failure as PhotoResourceTransferFailure {
             failureReasonText = message(for: failure)
@@ -312,7 +312,7 @@ public final class PhotoBackupSettingsViewModel {
             if let latest = try? await uploadHandoffCoordinator.currentExtraction(
                 extractionId: record.operationId)
             {
-                extractionRecord = latest
+                self.extractionRecord = latest
             }
         } catch {
             failureReasonText = "The saved foreground upload could not be resumed."

@@ -114,6 +114,7 @@ final class PhotoResourceUploadHandoffCoordinator {
                 selectedURL: verified.url,
                 target: target,
                 library: target.library,
+                parent: target.parent,
                 libraryStatus: libraryStatus,
                 backgroundEnabled: false,
                 stableOperationId: uploadOperationId,
@@ -171,7 +172,7 @@ final class PhotoResourceUploadHandoffCoordinator {
             let result = await uploads.resume(
                 id: uploadId, library: library, libraryStatus: libraryStatus,
                 backgroundEnabled: false, progress: progress)
-            if let record = committedRecord(from: result) {
+            if committedRecord(from: result) != nil {
                 let confirmed = record.replacing(state: .uploadedConfirmed)
                 try await store.transitionExtraction(
                     confirmed, expectedState: .handedOff,
