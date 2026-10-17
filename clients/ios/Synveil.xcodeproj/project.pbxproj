@@ -278,12 +278,19 @@
 		E05400000000000000000106 /* FileProviderErrorMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000107 /* FileProviderErrorMapper.swift */; };
 		E05400000000000000000107 /* FileProviderEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000108 /* FileProviderEnumerator.swift */; };
 		E05400000000000000000108 /* FileProviderMetadataPublicationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000006 /* FileProviderMetadataPublicationCoordinator.swift */; };
+		E05500000000000000000101 /* FileProviderContentManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05500000000000000000001 /* FileProviderContentManifest.swift */; };
+		E05500000000000000000102 /* FileProviderContentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05500000000000000000002 /* FileProviderContentStore.swift */; };
+		E05500000000000000000103 /* FileProviderVerifiedContentSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05500000000000000000003 /* FileProviderVerifiedContentSource.swift */; };
+		E05500000000000000000104 /* FileProviderVerifiedContentPublicationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05500000000000000000004 /* FileProviderVerifiedContentPublicationCoordinator.swift */; };
+		E05500000000000000000201 /* FileProviderContentManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05500000000000000000001 /* FileProviderContentManifest.swift */; };
+		E05500000000000000000202 /* FileProviderContentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05500000000000000000002 /* FileProviderContentStore.swift */; };
 		E05400000000000000000201 /* FileProviderGenerationContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000001 /* FileProviderGenerationContract.swift */; };
 		E05400000000000000000202 /* FileProviderGenerationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000002 /* FileProviderGenerationStore.swift */; };
 		E05400000000000000000203 /* FileProviderMetadataReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000003 /* FileProviderMetadataReader.swift */; };
 		E05400000000000000000204 /* FileProviderMetadataSignaling.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000004 /* FileProviderMetadataSignaling.swift */; };
 		E05400000000000000000205 /* SynveilFileProviderItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000005 /* SynveilFileProviderItem.swift */; };
 		E05400000000000000000301 /* FileProviderEnumerationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000007 /* FileProviderEnumerationTests.swift */; };
+		E05500000000000000000301 /* FileProviderMaterializationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05500000000000000000005 /* FileProviderMaterializationTests.swift */; };
 		E05400000000000000000109 /* FileProviderContainerSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000008 /* FileProviderContainerSnapshot.swift */; };
 		E05400000000000000000209 /* FileProviderContainerSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000008 /* FileProviderContainerSnapshot.swift */; };
 /* End PBXBuildFile section */
@@ -589,7 +596,12 @@
 		F05400000000000000000005 /* SynveilFileProviderItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SynveilFileProviderItem.swift; sourceTree = "<group>"; };
 		F05400000000000000000006 /* FileProviderMetadataPublicationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/FileProvider/FileProviderMetadataPublicationCoordinator.swift; sourceTree = "<group>"; };
 		F05400000000000000000007 /* FileProviderEnumerationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/FileProviderEnumerationTests.swift; sourceTree = "<group>"; };
+		F05500000000000000000005 /* FileProviderMaterializationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/FileProviderMaterializationTests.swift; sourceTree = "<group>"; };
 		F05400000000000000000008 /* FileProviderContainerSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderContainerSnapshot.swift; sourceTree = "<group>"; };
+		F05500000000000000000001 /* FileProviderContentManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderContentManifest.swift; sourceTree = "<group>"; };
+		F05500000000000000000002 /* FileProviderContentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderContentStore.swift; sourceTree = "<group>"; };
+		F05500000000000000000003 /* FileProviderVerifiedContentSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/FileProvider/FileProviderVerifiedContentSource.swift; sourceTree = "<group>"; };
+		F05500000000000000000004 /* FileProviderVerifiedContentPublicationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/FileProvider/FileProviderVerifiedContentPublicationCoordinator.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -725,6 +737,8 @@
 				A40000012C00000000000003 /* Resources */,
 				F0530000000000000000010E /* FileProvider */,
 				F05400000000000000000006 /* FileProviderMetadataPublicationCoordinator.swift */,
+				F05500000000000000000003 /* FileProviderVerifiedContentSource.swift */,
+				F05500000000000000000004 /* FileProviderVerifiedContentPublicationCoordinator.swift */,
 				F05300000000000000000112 /* Synveil.entitlements */,
 				F05300000000000000000110 /* FileProvider.framework */,
 				B40000012C00000000000001 /* Tests */,
@@ -928,6 +942,7 @@
 			children = (
 				F05300000000000000000111 /* FileProviderFoundationTests.swift */,
 				F05400000000000000000007 /* FileProviderEnumerationTests.swift */,
+				F05500000000000000000005 /* FileProviderMaterializationTests.swift */,
 				B14500000000000000000001 /* FileUploadTests.swift */,
 				B14500000000000000000002 /* FileUploadStorageTests.swift */,
 				B14500000000000000000003 /* FileUploadViewTests.swift */,
@@ -986,6 +1001,8 @@
 			isa = PBXGroup;
 			children = (
 				F0530000000000000000010A /* SynveilFileProviderExtension.swift */,
+				F05500000000000000000001 /* FileProviderContentManifest.swift */,
+				F05500000000000000000002 /* FileProviderContentStore.swift */,
 				F05400000000000000000008 /* FileProviderContainerSnapshot.swift */,
 				F05400000000000000000005 /* SynveilFileProviderItem.swift */,
 				F05400000000000000000004 /* FileProviderMetadataSignaling.swift */,
@@ -1155,6 +1172,10 @@
 				E05300000000000000000205 /* FileProviderSharedContainer.swift in Sources */,
 				E05300000000000000000206 /* FileProviderMetadataContract.swift in Sources */,
 				E05300000000000000000207 /* FileProviderLifecycle.swift in Sources */,
+				E05500000000000000000101 /* FileProviderContentManifest.swift in Sources */,
+				E05500000000000000000102 /* FileProviderContentStore.swift in Sources */,
+				E05500000000000000000103 /* FileProviderVerifiedContentSource.swift in Sources */,
+				E05500000000000000000104 /* FileProviderVerifiedContentPublicationCoordinator.swift in Sources */,
 				E05400000000000000000109 /* FileProviderContainerSnapshot.swift in Sources */,
 				E05400000000000000000108 /* FileProviderMetadataPublicationCoordinator.swift in Sources */,
 				E05400000000000000000107 /* FileProviderEnumerator.swift in Sources */,
@@ -1317,6 +1338,7 @@
 				E05700000000000000000007 /* PhotoResourceTransferTests.swift in Sources */,
 				E0530000000000000000021D /* FileProviderFoundationTests.swift in Sources */,
 				E05400000000000000000301 /* FileProviderEnumerationTests.swift in Sources */,
+				E05500000000000000000301 /* FileProviderMaterializationTests.swift in Sources */,
 				953A24380218678BF0AEFD09 /* NotificationViewTests.swift in Sources */,
 				17263C898E90BF6CEFCA2B59 /* NotificationTestSupport.swift in Sources */,
 				AD45EB5BB3B0C570B404CA4E /* NotificationPersistenceTests.swift in Sources */,
@@ -1409,6 +1431,8 @@
 				E05300000000000000000217 /* FileProviderErrorMapper.swift in Sources */,
 				E05300000000000000000218 /* FileProviderEnumerator.swift in Sources */,
 				E05300000000000000000219 /* FileProviderLifecycle.swift in Sources */,
+				E05500000000000000000201 /* FileProviderContentManifest.swift in Sources */,
+				E05500000000000000000202 /* FileProviderContentStore.swift in Sources */,
 				E05400000000000000000209 /* FileProviderContainerSnapshot.swift in Sources */,
 				E05400000000000000000205 /* SynveilFileProviderItem.swift in Sources */,
 				E05400000000000000000204 /* FileProviderMetadataSignaling.swift in Sources */,

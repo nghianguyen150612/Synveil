@@ -23,7 +23,7 @@ class FileProviderEnumerationContracts(unittest.TestCase):
         self.assertIn("NSFileProviderReplicatedExtension", source)
         self.assertIn("SynveilFileProviderEnumerator(", source)
         self.assertIn("view.lookup(identifier.rawValue)", source)
-        self.assertIn("completionHandler(nil, nil, FileProviderErrorMapper.unavailable())", source)
+        self.assertIn("FileProviderErrorMapper.map(error)", source)
         self.assertEqual(source.count("FileProviderErrorMapper.unsupported()"), 3)
 
     def test_extension_never_imports_host_data_or_session_owners(self):

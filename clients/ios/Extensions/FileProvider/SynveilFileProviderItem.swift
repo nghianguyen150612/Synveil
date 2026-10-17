@@ -5,10 +5,16 @@ import UniformTypeIdentifiers
 final class SynveilFileProviderItem: NSObject, NSFileProviderItem {
     let projected: FileProviderProjectedItem?
     private let domain: FileProviderDomainIdentity
+    private let container: FileProviderSharedContainer
 
-    init(projected: FileProviderProjectedItem?, domain: FileProviderDomainIdentity) {
+    init(
+        projected: FileProviderProjectedItem?,
+        domain: FileProviderDomainIdentity,
+        container: FileProviderSharedContainer = FileProviderSharedContainer()
+    ) {
         self.projected = projected
         self.domain = domain
+        self.container = container
     }
 
     var itemIdentifier: NSFileProviderItemIdentifier {
@@ -26,10 +32,36 @@ final class SynveilFileProviderItem: NSObject, NSFileProviderItem {
     var creationDate: Date? { projected?.creationDate }
     var contentModificationDate: Date? { projected?.contentModificationDate }
     var capabilities: NSFileProviderItemCapabilities {
-        projected?.kind == .file ? [] : [.allowsContentEnumerating]
+        guard let projected = projected else { return [.allowsContentEnumerating] }
+        switch projected.kind {
+        case .file:
+            return projected.fileVersionIdentity != nil ? [.allowsReading] : []
+        case .folder, .libraryRoot:
+            return [.allowsContentEnumerating]
+        }
     }
-    var isDownloaded: Bool { false }
-    var isMostRecentVersionDownloaded: Bool { false }
+    var isDownloaded: Bool {
+        guard let projected = projected, projected.kind == .file,
+            let version = projected.fileVersionIdentity
+        else { return false }
+        let generationStore = FileProviderGenerationStore(
+            container: container,
+            capability: .production
+        )
+        guard let manifest = try? generationStore.readManifest(domainID: domain.rawValue),
+            manifest.authorization.state == FileProviderAuthorizationState.authorized
+        else { return false }
+        let contentStore = FileProviderContentStore(container: container)
+        return (try? contentStore.verifyAndAccessContent(
+            domain: domain,
+            fileVersionID: version.fileVersionID,
+            expectedOwnerScopeFingerprint: domain.ownerScopeFingerprint,
+            expectedAuthorizationGeneration: manifest.authorization.authorizationGeneration
+        )) != nil
+    }
+    var isMostRecentVersionDownloaded: Bool {
+        isDownloaded
+    }
     var itemVersion: NSFileProviderItemVersion {
         // Empty components mean unknown. Never substitute local dates or fabricated revisions.
         let version = try? FileProviderItemVersionContract(
