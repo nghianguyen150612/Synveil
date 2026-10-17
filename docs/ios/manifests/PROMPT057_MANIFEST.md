@@ -1,6 +1,6 @@
 # PROMPT057 Manifest: PhotoKit Resource Extraction and Foreground Upload
 
-**Status:** Implemented on an open pull request; native iOS validation and independent review are pending.
+**Status:** Implemented on open PR #141. Native workflow results and independent review status are tracked on the pull request and in the completion report.
 
 ## Repository and dependency status
 
@@ -8,7 +8,7 @@
 - Verified starting SHA and P056 merge: `b8744a079e2b73fb6ef6b37f24e4bdb538a43ed5` (PR #140).
 - P055: PR #139 remains open and unmerged. P057 does not use its File Provider sources.
 - Feature branch: `ios/p057-photokit-resource-transfer`.
-- Implementation commit before this manifest status update: `253b5d34c266ab1b022f068c89e497f7a03c6eb7`.
+- Final source-fix commit before this manifest status update: `58169d3c3472a87b2e16f34f68f51e66c6553f59`.
 - Exact current feature head: tracked by [PR #141](https://github.com/nghianguyen150612/Synveil/pull/141) and reported in the completion record after final validation.
 - PR #141 targets `ios-app`; independent review was requested from `ducminh231011` and is pending.
 
