@@ -28,7 +28,7 @@ public final class PhotoObservationSQLiteStore: PhotoObservationStoreProtocol, @
             .appendingPathComponent("photo-observations.sqlite")
     }
 
-    public init(
+    init(
         databaseURL: URL,
         fault: (@Sendable (PhotoObservationStoreFaultPoint) throws -> Void)? = nil
     ) throws {
