@@ -16,22 +16,22 @@ final class PhotoResourceTransferTests: XCTestCase {
         XCTAssertEqual(defaults.maximumConcurrentOperations, 1)
 
         let incomplete = PhotoBackupConfiguration(
-            discoveryEnabled: true,
             targetLibraryIdentifier: "library",
             targetParentIdentifier: "parent",
             automaticForegroundBackupEnabled: true,
-            automaticBackupConsentConfirmed: false)
+            automaticBackupConsentConfirmed: false,
+            discoveryEnabled: true)
         do {
             try await photoStore.saveConfiguration(incomplete, profileId: profileId)
             XCTFail("Automatic backup must require an independent explicit confirmation")
         } catch {}
 
         let confirmed = PhotoBackupConfiguration(
-            discoveryEnabled: true,
             targetLibraryIdentifier: "library",
             targetParentIdentifier: "parent",
             automaticForegroundBackupEnabled: true,
-            automaticBackupConsentConfirmed: true)
+            automaticBackupConsentConfirmed: true,
+            discoveryEnabled: true)
         try await photoStore.saveConfiguration(confirmed, profileId: profileId)
         let saved = try await photoStore.fetchConfiguration(profileId: profileId)
         XCTAssertTrue(saved.canAutomaticallyBackUpInForeground)
@@ -677,11 +677,11 @@ final class PhotoResourceTransferTests: XCTestCase {
 
     private func activeAutomaticConfiguration() -> PhotoBackupConfiguration {
         PhotoBackupConfiguration(
-            discoveryEnabled: true,
             targetLibraryIdentifier: "library-for-tests",
             targetParentIdentifier: "parent-for-tests",
             automaticForegroundBackupEnabled: true,
-            automaticBackupConsentConfirmed: true)
+            automaticBackupConsentConfirmed: true,
+            discoveryEnabled: true)
     }
 
     private func makeCandidate(
