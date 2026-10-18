@@ -321,6 +321,61 @@ async fn count_for_set(pool: &PgPool, table: &str, backup_set_id: BackupSetId) -
         .unwrap()
 }
 
+async fn assert_claim_state_chain(fixture: &Fixture) {
+    // Each activation advances at most one canonical state. A concurrent
+    // batch can therefore produce a contiguous prefix of up to three claim
+    // receipts for one run, but never duplicate or skip a state.
+    let claims: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT expected_state, resulting_state
+         FROM backup_scheduled_maintenance_claims
+         WHERE backup_set_id = $1
+         ORDER BY CASE expected_state
+             WHEN 'CREATED' THEN 1
+             WHEN 'SNAPSHOT_CAPTURED' THEN 2
+             WHEN 'EXPIRY_PLANNED' THEN 3
+         END",
+    )
+    .bind(fixture.backup_set_id.into_uuid())
+    .fetch_all(&fixture.db.inspection)
+    .await
+    .unwrap();
+    assert!(
+        (1..=3).contains(&claims.len()),
+        "unexpected claim count: {claims:?}"
+    );
+    let mut expected_state = "CREATED";
+    for (index, (claim_state, resulting_state)) in claims.iter().enumerate() {
+        assert_eq!(
+            claim_state, expected_state,
+            "claim states must be contiguous"
+        );
+        let next_state = match claim_state.as_str() {
+            "CREATED" => "SNAPSHOT_CAPTURED",
+            "SNAPSHOT_CAPTURED" => "EXPIRY_PLANNED",
+            "EXPIRY_PLANNED" => "COMPLETED",
+            _ => panic!("unexpected claim state: {claim_state}"),
+        };
+        if let Some(resulting_state) = resulting_state {
+            assert_eq!(resulting_state, next_state);
+            expected_state = next_state;
+        } else {
+            assert_eq!(
+                index + 1,
+                claims.len(),
+                "only the final claim may be incomplete"
+            );
+            expected_state = claim_state;
+        }
+    }
+    let run_state: String =
+        sqlx::query_scalar("SELECT state FROM backup_maintenance_runs WHERE backup_set_id = $1")
+            .bind(fixture.backup_set_id.into_uuid())
+            .fetch_one(&fixture.db.inspection)
+            .await
+            .unwrap();
+    assert_eq!(run_state, expected_state);
+}
+
 // 1. Service invokes canonical binary — covered by unit-file validation test
 //    `scheduled_maintenance_lifecycle_units::service_execstart_is_canonical_one_shot_binary`.
 //    This DB test proves that simulated service activation invokes exactly the
@@ -866,15 +921,7 @@ async fn lifecycle_concurrent_12_callers_zero_deadlocks_and_no_duplicates() {
         .await,
         1
     );
-    assert_eq!(
-        count_for_set(
-            &fixture.db.inspection,
-            "backup_scheduled_maintenance_claims",
-            fixture.backup_set_id
-        )
-        .await,
-        1
-    );
+    assert_claim_state_chain(&fixture).await;
     // No duplicate child effect: exactly one snapshot for the capture operation.
     let svc = BackupService::new(fixture.pool());
     let runs = svc
@@ -1036,11 +1083,39 @@ async fn lifecycle_overlapping_systemd_sameunit_and_multiprocess_safety() {
         ok, 12,
         "all overlapping activations must succeed without deadlock"
     );
-    // Exactly one claim, one handoff, one run: durable convergence, fencing intact.
+    // One occurrence, one handoff, one run, and one canonical snapshot effect.
     assert_eq!(
         count_for_set(
             &fixture.db.inspection,
-            "backup_scheduled_maintenance_claims",
+            "backup_schedule_occurrences",
+            fixture.backup_set_id
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        count_for_set(
+            &fixture.db.inspection,
+            "backup_schedule_occurrence_handoffs",
+            fixture.backup_set_id
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        count_for_set(
+            &fixture.db.inspection,
+            "backup_maintenance_runs",
+            fixture.backup_set_id
+        )
+        .await,
+        1
+    );
+    assert_claim_state_chain(&fixture).await;
+    assert_eq!(
+        count_for_set(
+            &fixture.db.inspection,
+            "backup_snapshots",
             fixture.backup_set_id
         )
         .await,
