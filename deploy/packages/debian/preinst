@@ -13,7 +13,7 @@ case "${1:-}" in
         # sources stop before unpack. No --force-downgrade escape exists.
         if [ "$old" != '@SYNVEIL_DEB_VERSION@' ]; then
             approved=0
-            # shellcheck disable=SC2041 # Empty policy compiles as '' so the loop admits no upgrade source.
+            # shellcheck disable=SC2043 # Empty policy compiles as '' so the loop admits no upgrade source.
             for source in @SYNVEIL_DEB_UPGRADE_SOURCES@; do
                 [ "$old" != "$source" ] || approved=1
             done
