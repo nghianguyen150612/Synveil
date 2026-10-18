@@ -317,13 +317,13 @@ describe('restore workflow', () => {
         retryable: false,
       }))
     })
-    expect(await screen.findByRole('heading', { name: 'Sign in' })).toHaveFocus()
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Sign in' })).toHaveFocus())
     fireEvent.change(screen.getByLabelText('Login identifier'), { target: { value: 'alice' } })
     fireEvent.change(screen.getByLabelText('Login key'), { target: { value: 'alice-key' } })
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'password' } })
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }))
 
-    expect(await screen.findByRole('heading', { name: 'Review restore plan' })).toHaveFocus()
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Review restore plan' })).toHaveFocus())
     expect(getPlan).toHaveBeenCalled()
     expect(createPlan).not.toHaveBeenCalled()
     expect(executePlan).not.toHaveBeenCalled()
