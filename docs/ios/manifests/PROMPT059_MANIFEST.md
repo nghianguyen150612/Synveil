@@ -161,3 +161,16 @@ failures; those are not iOS checks and are not evidence against the P058 iOS sou
 
 P059 records parity categories and correction evidence only. It does not declare v0.1 release
 readiness, sign or package an application, change P055's open state, or begin P060.
+
+
+## P059 audit closeout supplement (owner-directed)
+
+P059's two required standalone audit artifacts have been added:
+- `docs/ios/IOS_V0_1_PARITY_MATRIX.md` — 42 source-backed capability rows: 18 PASS, 12 IOS_EQUIVALENT, 6 NOT_APPLICABLE, 4 INTENTIONALLY_DEFERRED and **2 BLOCKED**.
+- `docs/ios/IOS_V0_1_PARITY_AUDIT_REPORT.md` — findings, source/test evidence, security posture and P060 release blockers.
+
+**Release-parity status remains limited:** CAP-13 labeled server profiles and multi-profile switching are not implemented; they remain BLOCKED until developed or an explicit owner-approved scope revision is recorded. This documentation completion does not waive feature gaps or establish physical-device / production-release readiness.
+
+**Commit history policy:** P059 integration to `ios-app` must use a true Git merge commit (GitHub `merge` method), not squash or rebase, preserving P059 and prior iOS commits. Future `ios-app` integration into `main` must likewise use a history-preserving merge commit only after P060 release authorization.
+
+**Native CI:** The original source commit `373ae476d7045d8cbfb709b256085e6442a69163` passed four iOS gates; final documentation-head workflows must be checked independently. No independent GitHub review is claimed. P060 production release requires its own tests and acceptance.
