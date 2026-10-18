@@ -618,8 +618,8 @@ describe('restore workflow', () => {
     renderRestore(planPath(), backupApi, fileApi)
 
     expect(await screen.findByRole('heading', { name: 'Finish this restore' })).toBeInTheDocument()
+    expect(await screen.findByText('Confirming destination details…')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Retry safely' })).not.toBeInTheDocument()
-    expect(screen.getByText('Confirming destination details…')).toBeInTheDocument()
     resolveDestination()
     await waitFor(() => expect(screen.getByRole('button', { name: 'Retry safely' })).toBeEnabled())
     expect(backupApi.getBackupRestorePlan).toHaveBeenCalled()
