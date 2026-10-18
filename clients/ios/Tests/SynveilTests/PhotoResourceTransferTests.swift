@@ -439,13 +439,17 @@ final class PhotoResourceTransferTests: XCTestCase {
     func testLogoutQueuedBehindSQLiteCommitBecomesAnEffectiveWriteBarrier() async throws {
         let reachedCommit = DispatchSemaphore(value: 0)
         let allowCommit = DispatchSemaphore(value: 0)
+        // Keep the transaction gated until the assertion observes the revocation barrier.
+        // A wall-clock timeout here can expire while a loaded simulator is scheduling the test,
+        // letting the commit finish before revocation starts and making the assertion flaky.
+        defer { allowCommit.signal() }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(
             "photo_commit_fence_\(UUID().uuidString).sqlite")
         addTeardownBlock { try? FileManager.default.removeItem(at: url) }
         let photoStore = try PhotoObservationSQLiteStore(databaseURL: url) { point in
             guard point == .beforeObservationCommit else { return }
             reachedCommit.signal()
-            _ = allowCommit.wait(timeout: .now() + 5)
+            allowCommit.wait()
         }
         let authorization = PhotoAuthorizationSession(profileId: UUID(), ownerId: "commit-owner")
         try await photoStore.activateAuthorization(authorization)
