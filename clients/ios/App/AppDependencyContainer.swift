@@ -53,6 +53,7 @@ public final class AppDependencyContainer {
     private(set) var photoObservationCoordinator: PhotoLibraryObservationCoordinator?
     private(set) var photoResourceExtractionCoordinator: PhotoResourceExtractionCoordinator?
     private(set) var photoUploadHandoffCoordinator: PhotoResourceUploadHandoffCoordinator?
+    private(set) var photoBackupForegroundWorker: PhotoBackupForegroundWorker?
     private var photoTransferContextProvider: ActivePhotoTransferContextProvider?
     private var backgroundCancellationTransport: URLSessionBackgroundUploadTransport?
     private(set) var fileExportCoordinator: VerifiedFileExportCoordinator?
@@ -83,7 +84,8 @@ public final class AppDependencyContainer {
             let endpoint = sessionController.serverEndpoint,
             let credentialSink, let rustBridge, let libraryCatalog,
             let photoObservationStore, let photoObservationCoordinator,
-            let photoResourceExtractionCoordinator, let photoUploadHandoffCoordinator
+            let photoResourceExtractionCoordinator, let photoUploadHandoffCoordinator,
+            let photoBackupForegroundWorker, let nodeRepository
         else { return nil }
         let revision = sessionController.lifecycleRevision
         do {
@@ -103,6 +105,8 @@ public final class AppDependencyContainer {
                 uploadHandoffCoordinator: photoUploadHandoffCoordinator,
                 rustBridge: rustBridge,
                 libraryCatalog: libraryCatalog,
+                nodeRepository: nodeRepository,
+                foregroundWorker: photoBackupForegroundWorker,
                 sessionRevision: revision)
         } catch {
             return nil
@@ -111,6 +115,7 @@ public final class AppDependencyContainer {
 
     func receiveLifecycle(_ phase: AppLifecyclePhase) {
         lifecycleRecovery.receive(phase) { [weak self] generation, isActive in
+            self?.photoBackupForegroundWorker?.updateLifecycle(isActive: isActive)
             self?.downloadCoordinator?.updateLifecycle(
                 lifecycleGeneration: generation, isActive: isActive)
             self?.uploadCoordinator?.updateLifecycle(
@@ -120,6 +125,7 @@ public final class AppDependencyContainer {
 
     private func synchronizeTransferLifecycle() {
         let isActive = lifecycleRecovery.phase == .active
+        photoBackupForegroundWorker?.updateLifecycle(isActive: isActive)
         downloadCoordinator?.updateLifecycle(
             lifecycleGeneration: lifecycleRecovery.generation, isActive: isActive)
         uploadCoordinator?.updateLifecycle(
@@ -588,6 +594,24 @@ public final class AppDependencyContainer {
                             store: photoStore,
                             staging: photoStaging,
                             uploads: activeUploads)
+                        if let libraryCatalog, let nodeRepository, let rustBridge {
+                            let worker = PhotoBackupForegroundWorker(
+                                observations: photoObservation,
+                                store: photoStore,
+                                extraction: photoExtraction,
+                                handoff: photoHandoff,
+                                contextProvider: photoContext,
+                                identityProvider: photoContext,
+                                permission: photoPermission,
+                                network: PhotoBackupNetworkPathMonitor(),
+                                libraryCatalog: libraryCatalog,
+                                nodeRepository: nodeRepository,
+                                bridge: rustBridge,
+                                uploads: activeUploads)
+                            self.photoBackupForegroundWorker = worker
+                            worker.updateLifecycle(
+                                isActive: self.lifecycleRecovery.phase == .active)
+                        }
                         self.photoObservationStore = photoStore
                         self.photoObservationCoordinator = photoObservation
                         self.photoResourceExtractionCoordinator = photoExtraction
@@ -598,6 +622,7 @@ public final class AppDependencyContainer {
                         photoObservationCoordinator = nil
                         photoResourceExtractionCoordinator = nil
                         photoUploadHandoffCoordinator = nil
+                        photoBackupForegroundWorker = nil
                         photoTransferContextProvider = nil
                     }
                     if let downloadCoordinator {
@@ -651,6 +676,7 @@ public final class AppDependencyContainer {
                         weak composedRebaseline, weak downloads, weak uploads, weak exports,
                         weak notifications
                     ] in
+                    self?.photoBackupForegroundWorker?.invalidateSession()
                     _ = self?.photoObservationStore?.revokeCurrentAuthorizationSynchronously(
                         throughSessionRevision: self?.sessionController.lifecycleRevision ?? 0)
                     downloads?.invalidateSession()

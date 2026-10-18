@@ -55,6 +55,7 @@ final class PhotoResourceUploadHandoffCoordinator {
                 [.verifiedReady, .handoffPending].contains(record.state),
                 let byteCount = record.byteCount, let sha256 = record.sha256
             else { throw PhotoResourceTransferFailure.ineligibleObservation }
+            try validateTransferPolicy(record, configuration: context.configuration)
 
             let observations = try await store.fetchObservations(
                 profileId: record.profileId, ownerId: record.ownerId)
@@ -92,7 +93,7 @@ final class PhotoResourceUploadHandoffCoordinator {
                 photoTimestampValuesMatch(
                     currentModificationDate, record.selection.sourceModificationDate)
             else { throw PhotoResourceTransferFailure.sourceChanged }
-            try await validateCurrentContext(matching: context)
+            try await validateCurrentContext(matching: context, record: record)
 
             let uploadOperationId: UploadOperationId
             if let existing = record.relatedUploadOperationId {
@@ -170,7 +171,21 @@ final class PhotoResourceUploadHandoffCoordinator {
                 record.state == .handedOff,
                 record.relatedUploadOperationId == uploadOperationId
             else { throw PhotoResourceTransferFailure.ineligibleObservation }
+            try validateTransferPolicy(record, configuration: context.configuration)
+            try await validateCurrentContext(matching: context, record: record)
             let uploadId = try UploadOperationId(validating: uploadOperationId)
+            let reconciled = await uploads.reconcileExisting(id: uploadId, library: library)
+            if case .success(let saved) = reconciled,
+                saved.state == .committed, saved.completion != nil
+            {
+                if record.state != .uploadedConfirmed {
+                    let confirmed = record.replacing(state: .uploadedConfirmed)
+                    try await store.transitionExtraction(
+                        confirmed, expectedState: record.state,
+                        authorization: context.authorization)
+                }
+                return .success(.completed(saved))
+            }
             let result = await uploads.resume(
                 id: uploadId, library: library, libraryStatus: libraryStatus,
                 backgroundEnabled: false, progress: progress)
@@ -183,6 +198,71 @@ final class PhotoResourceUploadHandoffCoordinator {
             return .success(result)
         } catch {
             if let failure = error as? PhotoResourceTransferFailure { return .failure(failure) }
+            return .failure(.storageFailure)
+        }
+    }
+
+    func resumeAutomaticCandidate(
+        _ candidate: PhotoBackupCandidate,
+        extractionId: UUID,
+        target: UploadTarget,
+        libraryStatus: LibraryStatus,
+        progress: @escaping @MainActor (UploadProgress) -> Void
+    ) async -> Result<FileUploadResult, PhotoResourceTransferFailure> {
+        do {
+            guard await permissionAdapter.currentPermissionState().isAuthorized,
+                let context = await contextProvider.currentContext(),
+                context.deviceId == candidate.deviceId,
+                context.authorization.profileId == candidate.profileId,
+                context.authorization.ownerId == candidate.ownerId,
+                context.authorization.generation == candidate.authorizationGeneration,
+                context.configuration.canAutomaticallyBackUpInForeground,
+                context.configuration.policyRevision == candidate.policyRevision
+            else { throw PhotoResourceTransferFailure.staleAuthorization }
+            guard
+                let extraction = try await store.extraction(
+                    operationId: extractionId, authorization: context.authorization),
+                extraction.deviceId == candidate.deviceId,
+                extraction.relatedUploadOperationId == candidate.uploadOperationId,
+                [.handoffPending, .handedOff, .uploadedConfirmed].contains(extraction.state)
+            else { throw PhotoResourceTransferFailure.ineligibleObservation }
+            try validateTransferPolicy(extraction, configuration: context.configuration)
+            let uploadId = try UploadOperationId(
+                validating: candidate.uploadOperationId ?? "")
+            try await validateCurrentContext(matching: context, record: extraction)
+
+            let reconciled = await uploads.reconcileExisting(
+                id: uploadId, library: target.library)
+            if case .success(let saved) = reconciled,
+                saved.state == .committed, saved.completion != nil
+            {
+                if extraction.state != .uploadedConfirmed {
+                    let confirmed = extraction.replacing(state: .uploadedConfirmed)
+                    try await store.transitionExtraction(
+                        confirmed, expectedState: extraction.state,
+                        authorization: context.authorization)
+                }
+                return .success(.completed(saved))
+            }
+
+            if extraction.state == .handoffPending {
+                return await uploadSelected(
+                    extractionId: extractionId, target: target, libraryStatus: libraryStatus,
+                    progress: progress)
+            }
+            let result = await uploads.resume(
+                id: uploadId, library: target.library, libraryStatus: libraryStatus,
+                backgroundEnabled: false, progress: progress)
+            if committedRecord(from: result) != nil, extraction.state != .uploadedConfirmed {
+                let confirmed = extraction.replacing(state: .uploadedConfirmed)
+                try await store.transitionExtraction(
+                    confirmed, expectedState: extraction.state,
+                    authorization: context.authorization)
+            }
+            return .success(result)
+        } catch let failure as PhotoResourceTransferFailure {
+            return .failure(failure)
+        } catch {
             return .failure(.storageFailure)
         }
     }
@@ -208,7 +288,8 @@ final class PhotoResourceUploadHandoffCoordinator {
     }
 
     private func validateCurrentContext(
-        matching expected: PhotoTransferSessionContext
+        matching expected: PhotoTransferSessionContext,
+        record: PhotoResourceExtractionRecord? = nil
     ) async throws {
         guard await permissionAdapter.currentPermissionState().isAuthorized else {
             throw PhotoResourceTransferFailure.permissionDenied
@@ -219,13 +300,27 @@ final class PhotoResourceUploadHandoffCoordinator {
             current.configuration == expected.configuration,
             current.configuration.isOptedIn, !current.configuration.pauseDiscovery
         else { throw PhotoResourceTransferFailure.staleAuthorization }
+        if let record { try validateTransferPolicy(record, configuration: current.configuration) }
+    }
+
+    private func validateTransferPolicy(
+        _ record: PhotoResourceExtractionRecord, configuration: PhotoBackupConfiguration
+    ) throws {
+        guard configuration.discoveryEnabled, !configuration.pauseDiscovery else {
+            throw PhotoResourceTransferFailure.configurationDisabled
+        }
+        if !record.userInitiated {
+            guard configuration.canAutomaticallyBackUpInForeground,
+                configuration.policyRevision == Int64(record.policyVersion)
+            else { throw PhotoResourceTransferFailure.configurationDisabled }
+        }
     }
 
     private func validateHandoffEligibility(
         _ record: PhotoResourceExtractionRecord,
         matching expected: PhotoTransferSessionContext
     ) async throws {
-        try await validateCurrentContext(matching: expected)
+        try await validateCurrentContext(matching: expected, record: record)
         guard
             let current = try await store.extraction(
                 operationId: record.operationId, authorization: expected.authorization),
@@ -241,7 +336,7 @@ final class PhotoResourceUploadHandoffCoordinator {
             }), observation.discoveryGeneration == current.observationGeneration,
             observation.sourceAvailability == .available, !observation.isExcluded
         else { throw PhotoResourceTransferFailure.ineligibleObservation }
-        try await validateCurrentContext(matching: expected)
+        try await validateCurrentContext(matching: expected, record: record)
     }
 
     private func committedRecord(from result: FileUploadResult) -> UploadRecord? {

@@ -28,6 +28,10 @@
 		E05700000000000000000005 /* PhotoResourceStagingCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05700000000000000000005 /* PhotoResourceStagingCoordinator.swift */; };
 		E05700000000000000000006 /* PhotoResourceUploadHandoffCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05700000000000000000006 /* PhotoResourceUploadHandoffCoordinator.swift */; };
 		E05700000000000000000007 /* PhotoResourceTransferTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05700000000000000000007 /* PhotoResourceTransferTests.swift */; };
+		E05800000000000000000001 /* PhotoBackupForegroundWorker.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05800000000000000000001 /* PhotoBackupForegroundWorker.swift */; };
+		E05800000000000000000002 /* PhotoBackupQueueModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05800000000000000000002 /* PhotoBackupQueueModels.swift */; };
+		E05800000000000000000003 /* PhotoBackupNetworkPathMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05800000000000000000003 /* PhotoBackupNetworkPathMonitor.swift */; };
+		E05800000000000000000004 /* Network.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F05800000000000000000004 /* Network.framework */; };
 		A10000012C00000000000001 /* SynveilApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000001 /* SynveilApp.swift */; };
 		A10000012C00000000000002 /* BootstrapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000002 /* BootstrapView.swift */; };
 		A10000012C00000000000003 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000003 /* Assets.xcassets */; };
@@ -342,6 +346,10 @@
 		F05700000000000000000005 /* PhotoResourceStagingCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Photos/PhotoResourceStagingCoordinator.swift; sourceTree = "<group>"; };
 		F05700000000000000000006 /* PhotoResourceUploadHandoffCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Photos/PhotoResourceUploadHandoffCoordinator.swift; sourceTree = "<group>"; };
 		F05700000000000000000007 /* PhotoResourceTransferTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/PhotoResourceTransferTests.swift; sourceTree = "<group>"; };
+		F05800000000000000000001 /* PhotoBackupForegroundWorker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Photos/PhotoBackupForegroundWorker.swift; sourceTree = "<group>"; };
+		F05800000000000000000002 /* PhotoBackupQueueModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Photos/PhotoBackupQueueModels.swift; sourceTree = "<group>"; };
+		F05800000000000000000003 /* PhotoBackupNetworkPathMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Photos/PhotoBackupNetworkPathMonitor.swift; sourceTree = "<group>"; };
+		F05800000000000000000004 /* Network.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Network.framework; path = System/Library/Frameworks/Network.framework; sourceTree = SDKROOT; };
 		A20000012C00000000000001 /* SynveilApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/SynveilApp.swift; sourceTree = "<group>"; };
 		A20000012C00000000000002 /* BootstrapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/BootstrapView.swift; sourceTree = "<group>"; };
 		A20000012C00000000000003 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Resources/Assets.xcassets; sourceTree = "<group>"; };
@@ -598,6 +606,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				B04400000000000000000004 /* QuickLook.framework in Frameworks */,
+				E05800000000000000000004 /* Network.framework in Frameworks */,
 				A10000012C00000000000038 /* Security.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -639,6 +648,10 @@
 				F05700000000000000000004 /* PhotoResourceExtractionCoordinator.swift */,
 				F05700000000000000000005 /* PhotoResourceStagingCoordinator.swift */,
 				F05700000000000000000006 /* PhotoResourceUploadHandoffCoordinator.swift */,
+				F05800000000000000000001 /* PhotoBackupForegroundWorker.swift */,
+				F05800000000000000000002 /* PhotoBackupQueueModels.swift */,
+				F05800000000000000000003 /* PhotoBackupNetworkPathMonitor.swift */,
+				F05800000000000000000004 /* Network.framework */,
 				ABCA2C67CA1F0A896F77500C /* LocalNotificationScheduler.swift */,
 				428F4A5A54D6FE89956DB72C /* NotificationViewTests.swift */,
 				9614A75B0F1C8683336D2C88 /* NotificationTestSupport.swift */,
@@ -1148,6 +1161,9 @@
 				E05700000000000000000004 /* PhotoResourceExtractionCoordinator.swift in Sources */,
 				E05700000000000000000005 /* PhotoResourceStagingCoordinator.swift in Sources */,
 				E05700000000000000000006 /* PhotoResourceUploadHandoffCoordinator.swift in Sources */,
+				E05800000000000000000001 /* PhotoBackupForegroundWorker.swift in Sources */,
+				E05800000000000000000002 /* PhotoBackupQueueModels.swift in Sources */,
+				E05800000000000000000003 /* PhotoBackupNetworkPathMonitor.swift in Sources */,
 				E05300000000000000000201 /* FileProviderDomainIdentity.swift in Sources */,
 				E05300000000000000000202 /* FileProviderItemIdentity.swift in Sources */,
 				E05300000000000000000203 /* FileProviderCapability.swift in Sources */,

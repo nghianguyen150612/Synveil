@@ -285,6 +285,7 @@ public enum PhotoResourceTransferFailure: String, Error, Sendable, Equatable {
     case configurationDisabled
     case extractionAlreadyInProgress
     case existingUnresolvedOperation
+    case queueCapacityReached
     case cancelled
     case storageFailure
 }

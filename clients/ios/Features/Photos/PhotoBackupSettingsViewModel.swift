@@ -2,12 +2,35 @@ import Foundation
 import Observation
 import UniformTypeIdentifiers
 
+public struct PhotoBackupDestinationParent: Identifiable, Sendable, Equatable {
+    public let id: String
+    public let name: String
+    public let isLibraryRoot: Bool
+
+    public init(id: String, name: String, isLibraryRoot: Bool = false) {
+        self.id = id
+        self.name = name
+        self.isLibraryRoot = isLibraryRoot
+    }
+}
+
 @Observable
 @MainActor
 public final class PhotoBackupSettingsViewModel {
     public var isOptedIn: Bool = false
     public var scope: PhotoBackupScope = .allAuthorized
+    public var includeStillImages: Bool = true
     public var includeVideos: Bool = true
+    public var includeLivePhotos: Bool = true
+    public var renditionPolicy: PhotoBackupRenditionPolicy = .originalOnly
+    public var networkRestriction: PhotoBackupNetworkRestriction = .wifiOnly
+    public var allowCellularTransfer: Bool = false
+    public var respectLowDataMode: Bool = true
+    public var maximumResourceSizeBytes: UInt64 = 536_870_912
+    public var automaticForegroundBackupEnabled: Bool = false
+    public var automaticBackupConsentConfirmed: Bool = false
+    public var pauseAutomaticBackup: Bool = false
+    public private(set) var policyRevision: Int64 = 1
     public var pauseDiscovery: Bool = false
     public var permissionState: PhotoPermissionState = .notDetermined
     public var currentStatusText: String = "Disabled"
@@ -17,6 +40,14 @@ public final class PhotoBackupSettingsViewModel {
     public private(set) var selectedAssetIdentifier: String?
     public private(set) var selectedResource: PhotoResourceSelection?
     public private(set) var extractionRecord: PhotoResourceExtractionRecord?
+    public private(set) var queueSummary = PhotoBackupQueueSummary()
+    public private(set) var livePhotoGroups: [PhotoBackupLivePhotoGroupEvidence] = []
+    public private(set) var availableLibraries: [Library] = []
+    public private(set) var availableParentChoices: [PhotoBackupDestinationParent] = []
+    public private(set) var photoBindingAvailability: PhotoImportBindingAvailability =
+        .unavailableServerContract
+    public private(set) var photoRetentionAvailability: PhotoBackupRetentionAvailability =
+        .unavailableServerContract
     public private(set) var uploadStatusText: String?
     public private(set) var failureReasonText: String?
     public var destinationLibraryIdentifier = ""
@@ -30,12 +61,18 @@ public final class PhotoBackupSettingsViewModel {
     private let uploadHandoffCoordinator: PhotoResourceUploadHandoffCoordinator?
     private let rustBridge: (any RustBridgeProtocol)?
     private let libraryCatalog: (any LibraryCatalogRepositoryProtocol)?
+    private let nodeRepository: (any NodeRepositoryProtocol)?
+    private let foregroundWorker: PhotoBackupForegroundWorker?
     private let profileId: UUID
     private let ownerId: String
     private let sessionRevision: UInt64
     private var activeExtractionId: UUID?
 
     public var isPreparing: Bool { activeExtractionId != nil }
+    public var automaticWorkerStatusText: String {
+        guard let foregroundWorker else { return "Foreground worker unavailable" }
+        return String(describing: foregroundWorker.lastRunState)
+    }
     public var canPrepareSelectedResource: Bool {
         extractionCoordinator != nil && selectedResource != nil && !isProcessing
     }
@@ -57,6 +94,8 @@ public final class PhotoBackupSettingsViewModel {
         uploadHandoffCoordinator: PhotoResourceUploadHandoffCoordinator? = nil,
         rustBridge: (any RustBridgeProtocol)? = nil,
         libraryCatalog: (any LibraryCatalogRepositoryProtocol)? = nil,
+        nodeRepository: (any NodeRepositoryProtocol)? = nil,
+        foregroundWorker: PhotoBackupForegroundWorker? = nil,
         sessionRevision: UInt64 = 0
     ) {
         self.profileId = profileId
@@ -68,6 +107,8 @@ public final class PhotoBackupSettingsViewModel {
         self.uploadHandoffCoordinator = uploadHandoffCoordinator
         self.rustBridge = rustBridge
         self.libraryCatalog = libraryCatalog
+        self.nodeRepository = nodeRepository
+        self.foregroundWorker = foregroundWorker
         self.sessionRevision = sessionRevision
     }
 
@@ -80,8 +121,22 @@ public final class PhotoBackupSettingsViewModel {
             let config = try await store.fetchConfiguration(profileId: profileId)
             self.isOptedIn = config.isOptedIn
             self.scope = config.scope
+            self.includeStillImages = config.includeStillImages
             self.includeVideos = config.includeVideos
+            self.includeLivePhotos = config.includeLivePhotos
+            self.renditionPolicy = config.renditionPolicy
+            self.networkRestriction = config.networkRestriction
+            self.allowCellularTransfer = config.allowCellularTransfer
+            self.respectLowDataMode = config.respectLowDataMode
+            self.maximumResourceSizeBytes = config.maximumResourceSizeBytes
+            self.automaticForegroundBackupEnabled = config.automaticForegroundBackupEnabled
+            self.automaticBackupConsentConfirmed = config.automaticBackupConsentConfirmed
+            self.pauseAutomaticBackup = config.pauseAutomaticBackup
+            self.policyRevision = config.policyRevision
             self.pauseDiscovery = config.pauseDiscovery
+            self.destinationLibraryIdentifier = config.targetLibraryIdentifier ?? ""
+            self.destinationParentIdentifier = config.targetParentIdentifier ?? ""
+            await refreshDestinationChoices()
             if config.isOptedIn && !config.pauseDiscovery && permissionState.isAuthorized {
                 let result = try await coordinator.startObservation(
                     profileId: profileId, ownerId: ownerId,
@@ -104,6 +159,7 @@ public final class PhotoBackupSettingsViewModel {
                     uploadStatusText = label(for: latest.state)
                 }
             }
+            await refreshQueueSummary()
             if !config.isOptedIn || config.pauseDiscovery || !permissionState.isAuthorized {
                 updateStatusText()
             }
@@ -119,6 +175,123 @@ public final class PhotoBackupSettingsViewModel {
         } else {
             updateStatusText()
         }
+    }
+
+    public var selectedTargetLibrary: Library? {
+        availableLibraries.first { $0.id.rawValue == destinationLibraryIdentifier }
+    }
+
+    public var selectedTargetParent: PhotoBackupDestinationParent? {
+        availableParentChoices.first { $0.id == destinationParentIdentifier }
+    }
+
+    public var automaticBackupConfirmationDescription: String {
+        let libraryName = selectedTargetLibrary?.name ?? "the selected Synveil Library"
+        let parentName = selectedTargetParent?.name ?? "the selected destination directory"
+        let media = [includeStillImages ? "photos" : nil, includeVideos ? "videos" : nil]
+            .compactMap { $0 }.joined(separator: " and ")
+        let livePhotoCopy =
+            includeLivePhotos
+            ? " Live Photos are uploaded as separate still and motion resources." : ""
+        return
+            "Synveil will upload eligible \(media.isEmpty ? "media" : media) to \(libraryName), in \(parentName), only while the authenticated app is active.\(livePhotoCopy) Uploaded files may remain unbound to a PhotoAsset until the server supports import binding."
+    }
+
+    public func refreshDestinationChoices() async {
+        guard let libraryCatalog else {
+            availableLibraries = []
+            availableParentChoices = []
+            return
+        }
+        if case .loaded(let libraries) = await libraryCatalog.listLibraries() {
+            availableLibraries = libraries.filter { $0.status == .active }
+        } else {
+            availableLibraries = []
+        }
+        guard let library = selectedTargetLibrary, let nodeRepository else {
+            availableParentChoices = []
+            return
+        }
+        var choices = [
+            PhotoBackupDestinationParent(
+                id: library.rootNodeId.rawValue, name: "\(library.name) root", isLibraryRoot: true)
+        ]
+        if case .loaded(let nodes) = await nodeRepository.listChildren(
+            libraryId: library.id, parent: .libraryRoot(rootNodeId: library.rootNodeId))
+        {
+            choices.append(
+                contentsOf: nodes.filter {
+                    $0.kind == .directory && $0.state == .active
+                }.map { PhotoBackupDestinationParent(id: $0.id.rawValue, name: $0.name) })
+        }
+        availableParentChoices = choices
+        if !choices.contains(where: { $0.id == destinationParentIdentifier }) {
+            destinationParentIdentifier = ""
+        }
+    }
+
+    public func updateTargetLibrary(_ identifier: String) async {
+        guard
+            identifier.isEmpty
+                || availableLibraries.contains(where: { $0.id.rawValue == identifier })
+        else { return }
+        guard destinationLibraryIdentifier != identifier else { return }
+        destinationLibraryIdentifier = identifier
+        destinationParentIdentifier = ""
+        automaticForegroundBackupEnabled = false
+        automaticBackupConsentConfirmed = false
+        await refreshDestinationChoices()
+        await saveAndSyncCoordinator()
+    }
+
+    public func updateTargetParent(_ identifier: String) async {
+        guard availableParentChoices.contains(where: { $0.id == identifier }) else { return }
+        guard destinationParentIdentifier != identifier else { return }
+        destinationParentIdentifier = identifier
+        automaticForegroundBackupEnabled = false
+        automaticBackupConsentConfirmed = false
+        await saveAndSyncCoordinator()
+    }
+
+    public func enableAutomaticForegroundBackupAfterConfirmation() async {
+        guard isOptedIn, !pauseDiscovery, permissionState.isAuthorized,
+            selectedTargetLibrary != nil, selectedTargetParent != nil
+        else {
+            failureReasonText =
+                "Choose an active Library and destination directory, then enable PhotoKit discovery first."
+            return
+        }
+        automaticForegroundBackupEnabled = true
+        automaticBackupConsentConfirmed = true
+        pauseAutomaticBackup = false
+        _ = await saveAndSyncCoordinator()
+    }
+
+    public func disableAutomaticForegroundBackup() async {
+        automaticForegroundBackupEnabled = false
+        automaticBackupConsentConfirmed = false
+        _ = await saveAndSyncCoordinator()
+    }
+
+    public func togglePauseAutomaticBackup(_ pause: Bool) async {
+        pauseAutomaticBackup = pause
+        _ = await saveAndSyncCoordinator()
+    }
+
+    public func refreshQueueSummary() async {
+        guard let foregroundWorker else { return }
+        queueSummary = await foregroundWorker.queueSummary()
+        livePhotoGroups = await foregroundWorker.livePhotoGroupEvidence()
+        photoBindingAvailability = foregroundWorker.bindingAvailability
+        photoRetentionAvailability = foregroundWorker.retentionAvailability
+    }
+
+    public func runAutomaticBackupPass() async {
+        guard automaticForegroundBackupEnabled, automaticBackupConsentConfirmed,
+            !pauseAutomaticBackup, let foregroundWorker
+        else { return }
+        await foregroundWorker.runBoundedPassNow()
+        await refreshQueueSummary()
     }
 
     public func selectAsset(_ localIdentifier: String?) {
@@ -332,28 +505,96 @@ public final class PhotoBackupSettingsViewModel {
 
     public func toggleOptIn(_ enabled: Bool) async {
         isOptedIn = enabled
-        await saveAndSyncCoordinator()
+        if !enabled {
+            automaticForegroundBackupEnabled = false
+            automaticBackupConsentConfirmed = false
+        }
+        _ = await saveAndSyncCoordinator()
     }
 
     public func updateIncludeVideos(_ include: Bool) async {
         includeVideos = include
-        await saveAndSyncCoordinator()
+        requireRenewedAutomaticConsent()
+        _ = await saveAndSyncCoordinator()
+    }
+
+    public func updateIncludeStillImages(_ include: Bool) async {
+        includeStillImages = include
+        requireRenewedAutomaticConsent()
+        _ = await saveAndSyncCoordinator()
+    }
+
+    public func updateIncludeLivePhotos(_ include: Bool) async {
+        includeLivePhotos = include
+        requireRenewedAutomaticConsent()
+        _ = await saveAndSyncCoordinator()
+    }
+
+    public func updateRenditionPolicy(_ policy: PhotoBackupRenditionPolicy) async {
+        renditionPolicy = policy
+        requireRenewedAutomaticConsent()
+        _ = await saveAndSyncCoordinator()
+    }
+
+    public func updateNetworkRestriction(_ restriction: PhotoBackupNetworkRestriction) async {
+        networkRestriction = restriction
+        if restriction == .wifiOnly { allowCellularTransfer = false }
+        requireRenewedAutomaticConsent()
+        _ = await saveAndSyncCoordinator()
+    }
+
+    public func updateMaximumResourceSize(_ bytes: UInt64) async {
+        maximumResourceSizeBytes = min(max(bytes, 1), 1_073_741_824)
+        requireRenewedAutomaticConsent()
+        _ = await saveAndSyncCoordinator()
+    }
+
+    public func updateLowDataModePreference(_ enabled: Bool) async {
+        respectLowDataMode = enabled
+        _ = await saveAndSyncCoordinator()
+    }
+
+    public func updateCellularPermission(_ enabled: Bool) async {
+        allowCellularTransfer = enabled && networkRestriction == .wifiAndCellular
+        requireRenewedAutomaticConsent()
+        _ = await saveAndSyncCoordinator()
     }
 
     public func togglePauseDiscovery(_ pause: Bool) async {
         pauseDiscovery = pause
-        await saveAndSyncCoordinator()
+        _ = await saveAndSyncCoordinator()
     }
 
-    private func saveAndSyncCoordinator() async {
+    @discardableResult
+    private func saveAndSyncCoordinator() async -> Bool {
         let config = PhotoBackupConfiguration(
             isOptedIn: isOptedIn,
             scope: scope,
+            includeStillImages: includeStillImages,
             includeVideos: includeVideos,
+            includeLivePhotos: includeLivePhotos,
+            renditionPolicy: renditionPolicy,
+            targetLibraryIdentifier: destinationLibraryIdentifier.isEmpty
+                ? nil : destinationLibraryIdentifier,
+            targetParentIdentifier: destinationParentIdentifier.isEmpty
+                ? nil : destinationParentIdentifier,
+            networkRestriction: networkRestriction,
+            allowCellularTransfer: allowCellularTransfer,
+            respectLowDataMode: respectLowDataMode,
+            maximumResourceSizeBytes: maximumResourceSizeBytes,
+            maximumConcurrentOperations: 1,
+            automaticForegroundBackupEnabled: automaticForegroundBackupEnabled,
+            automaticBackupConsentConfirmed: automaticBackupConsentConfirmed,
+            pauseAutomaticBackup: pauseAutomaticBackup,
+            policyRevision: policyRevision,
             pauseDiscovery: pauseDiscovery
         )
         do {
             try await store.saveConfiguration(config, profileId: profileId)
+            let persisted = try await store.fetchConfiguration(profileId: profileId)
+            policyRevision = persisted.policyRevision
+            foregroundWorker?.policyDidChange(
+                automaticEnabled: persisted.canAutomaticallyBackUpInForeground)
             if isOptedIn && !pauseDiscovery {
                 let result = try await coordinator.startObservation(
                     profileId: profileId,
@@ -367,9 +608,17 @@ public final class PhotoBackupSettingsViewModel {
                 try await coordinator.stopObservation()
                 updateStatusText()
             }
+            return true
         } catch {
             currentStatusText = "Error updating settings"
+            return false
         }
+    }
+
+    private func requireRenewedAutomaticConsent() {
+        guard automaticForegroundBackupEnabled || automaticBackupConsentConfirmed else { return }
+        automaticForegroundBackupEnabled = false
+        automaticBackupConsentConfirmed = false
     }
 
     private func updateStatusText() {
@@ -454,6 +703,8 @@ public final class PhotoBackupSettingsViewModel {
             "Another original resource is being prepared. Wait for it to finish first."
         case .existingUnresolvedOperation:
             "This resource already has an unresolved operation. Resume it before preparing another copy."
+        case .queueCapacityReached:
+            "The automatic backup queue is full. Existing work will continue when capacity is available."
         case .cancelled: "Preparation was cancelled."
         case .storageFailure: "Private staging or durable state could not be saved."
         }
