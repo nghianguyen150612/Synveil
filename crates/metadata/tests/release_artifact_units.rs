@@ -114,6 +114,30 @@ fn artifact_unit_1_same_source_produces_stable_artifact_metadata() {
 }
 
 #[test]
+fn artifact_unit_9_linux_manifest_has_the_closed_release_binary_inventory() {
+    let builder = read(repo_root().join("deploy/packages/build.sh"));
+    let validator = read(validator());
+    let expected = [
+        "target/release/synveil-scheduled-maintenance-once",
+        "target/release/synveil-client",
+        "target/release/synveil-desktop",
+        "target/release/synveil-host-helper",
+    ];
+
+    for path in expected {
+        assert!(builder.contains(path), "producer omits {path}");
+        assert!(
+            validator.contains(&format!("'{path}'")),
+            "validator omits {path}"
+        );
+    }
+    assert!(validator.contains("declare -A seen_paths=()"));
+    assert!(validator.contains("unexpected Linux release artifact"));
+    assert!(validator.contains("duplicate Linux release artifact"));
+    assert!(validator.contains("${#expected_paths[@]}"));
+}
+
+#[test]
 fn artifact_unit_2_hash_comparison_detects_intentional_modification() {
     let Some(manifest_path) = linux_manifest() else {
         eprintln!("SKIP ARTIFACT-UNIT-2: Linux release manifest is absent");
@@ -377,8 +401,8 @@ fn artifact_unit_5_manifest_matches_generated_artifacts() {
             .skip(marker_line + 1)
             .filter(|line| line.split_whitespace().count() == 4)
             .count(),
-        3,
-        "Linux manifest must describe maintenance, client, and desktop binaries"
+        4,
+        "Linux manifest must describe maintenance, client, desktop, and Host helper binaries"
     );
 }
 

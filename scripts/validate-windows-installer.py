@@ -147,8 +147,17 @@ def main() -> int:
         require(required in installed_test, f"installed runtime verification: {required}")
     for evidence in ("synthetic_standard_user", "administrator_member", "installer_elevated", "integrity_sid", "RegistryView]::Registry64", "RegistryView]::Registry32", "machine PATH changed", "Synveil service created", "Synveil scheduled task created", "PER_USER_ACL_FAILURE", "second uninstaller", "state_preservation"):
         require(evidence in per_user_test, f"P025 per-user evidence: {evidence}")
-    for evidence in ("SetPassword", "-Credential", "-LoadUserProfile", "WaitForExit(300000)", ".Delete('user'", "Remove-CimInstance", "::add-mask::"):
+    for evidence in ("SetPassword", "-Credential", "-LoadUserProfile", "WaitForExit(300000)",
+                     "Get-LocalUser -Name $user", "Remove-LocalUser", "Remove-CimInstance", "::add-mask::"):
         require(evidence in per_user_invoker, f"P025 disposable-account harness: {evidence}")
+    account_create = per_user_invoker.index("$account = $computer.Create('user',$user)")
+    account_commit = per_user_invoker.index("$account.SetInfo()", account_create)
+    account_password = per_user_invoker.index("$account.SetPassword($password)", account_commit)
+    password_commit = per_user_invoker.index("$account.SetInfo()", account_password)
+    require(account_create < account_commit < account_password < password_commit,
+            "P025 account must be committed to SAM before setting its password")
+    require(".Delete('user'" not in per_user_invoker,
+            "P025 cleanup must not fail when an account was not committed")
     for evidence in ("Inspect compiled Setup execution level", "requestedExecutionLevel", "asInvoker", "invoke-windows-standard-user-test.ps1", "windows-per-user-evidence"):
         require(evidence in workflow, f"P025 hosted workflow evidence: {evidence}")
     for evidence in (r"\Synveil\BackgroundClient\profile-", "InteractiveToken", "LeastPrivilege", "<LogonTrigger>",

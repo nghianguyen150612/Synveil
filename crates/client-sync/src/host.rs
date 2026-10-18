@@ -4832,6 +4832,8 @@ mod tests {
         );
         fixture.restore_root();
         host.shutdown().await.expect("root-loss host shutdown");
+        drop(observer);
+        drop(source);
         fixture.close().await;
     }
 

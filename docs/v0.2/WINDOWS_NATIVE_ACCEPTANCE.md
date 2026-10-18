@@ -11,7 +11,13 @@ inputs, requires byte equality, and uploads the second (identical) file as the
 sole candidate. `p028-candidate.json` binds its source commit, Cargo version,
 byte size, SHA-256, release-manifest SHA-256, Inno Setup 6.7.3, Qt 6.8.3, MSVC
 tools identity, and Windows version/build/architecture. Consumers verify both
-the candidate digest and source commit after artifact transfer.
+the candidate digest and source commit after artifact transfer. The upload also
+includes lifecycle fixtures under `target/p027-fixture-*`, so Actions preserves
+the shared `windows-installer/` path inside the artifact. The consumer reads the
+candidate and release manifest from that directory, checks the manifest digest
+recorded in the candidate identity, and binds the Setup hash, size, platform,
+architecture, role, product version, and source commit to the manifest before
+running acceptance.
 
 ## Clean machine and topology
 

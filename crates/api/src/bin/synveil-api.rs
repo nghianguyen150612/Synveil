@@ -119,30 +119,29 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let listener = TcpListener::bind(bind_address).await?;
     tracing::info!(address = %listener.local_addr()?, "Synveil API listening");
     let mut application = router(state);
-    if let Some(config) = managed_config {
-        if let NetworkConfiguration::Preparing(network)
-        | NetworkConfiguration::Configured(network) = &config.network
-        {
-            let server_id = axum::http::HeaderValue::from_str(&config.server_installation_id)?;
-            let network_id =
-                axum::http::HeaderValue::from_str(network.network_integration_id.as_str())?;
-            application = application.layer(axum::middleware::from_fn(
-                move |request: axum::extract::Request, next: axum::middleware::Next| {
-                    let server_id = server_id.clone();
-                    let network_id = network_id.clone();
-                    async move {
-                        let mut response = next.run(request).await;
-                        response
-                            .headers_mut()
-                            .insert("x-synveil-server-installation", server_id);
-                        response
-                            .headers_mut()
-                            .insert("x-synveil-network-integration", network_id);
-                        response
-                    }
-                },
-            ));
-        }
+    if let Some(config) = managed_config
+        && let NetworkConfiguration::Preparing(network) | NetworkConfiguration::Configured(network) =
+            &config.network
+    {
+        let server_id = axum::http::HeaderValue::from_str(&config.server_installation_id)?;
+        let network_id =
+            axum::http::HeaderValue::from_str(network.network_integration_id.as_str())?;
+        application = application.layer(axum::middleware::from_fn(
+            move |request: axum::extract::Request, next: axum::middleware::Next| {
+                let server_id = server_id.clone();
+                let network_id = network_id.clone();
+                async move {
+                    let mut response = next.run(request).await;
+                    response
+                        .headers_mut()
+                        .insert("x-synveil-server-installation", server_id);
+                    response
+                        .headers_mut()
+                        .insert("x-synveil-network-integration", network_id);
+                    response
+                }
+            },
+        ));
     }
     axum::serve(listener, application)
         .with_graceful_shutdown(shutdown_signal())

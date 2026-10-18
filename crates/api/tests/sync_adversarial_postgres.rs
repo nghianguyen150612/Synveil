@@ -31,13 +31,13 @@ use synveil_api::{ApiState, CookieConfig, RebaselineTokenKey, StaticReadiness, r
 use synveil_auth::{PasswordHasherConfig, PasswordParameters, SessionConfig};
 use synveil_client_sync::{
     CanonicalBaseUrl, ClientSyncError, EngineConfig, FilesystemLocalReplica, HttpClientConfig,
-    HttpEnrollmentClient, HttpSyncRemote, InboundSyncEngine, LocalFingerprint, LocalNode,
-    LocalStateConfig, LocalStateStore, ManagedRelativePath, ManualChangeWatcher, ObservationConfig,
-    OutboundIntent, OutboundIntentKind, OutboundObservationEngine, OutboundSubmissionEngine,
-    OutboundSubmissionOutcome, RebaselineApplier, RebaselineConvergenceCoordinator,
-    RebaselineConvergenceOutcome, RebaselineSnapshotRemote, ReplicaScope, ServerProfile,
-    SyncConflictKind, SyncConflictResolution, SyncConflictStatus, SyncOutcome, WatchHint,
-    WatchHintKind,
+    HttpEnrollmentClient, HttpSyncRemote, InboundSyncEngine, LOCAL_SCHEMA_VERSION,
+    LocalFingerprint, LocalNode, LocalStateConfig, LocalStateStore, ManagedRelativePath,
+    ManualChangeWatcher, ObservationConfig, OutboundIntent, OutboundIntentKind,
+    OutboundObservationEngine, OutboundSubmissionEngine, OutboundSubmissionOutcome,
+    RebaselineApplier, RebaselineConvergenceCoordinator, RebaselineConvergenceOutcome,
+    RebaselineSnapshotRemote, ReplicaScope, ServerProfile, SyncConflictKind,
+    SyncConflictResolution, SyncConflictStatus, SyncOutcome, WatchHint, WatchHintKind,
 };
 use synveil_core::{
     DedupDomainId, DeviceId, EnrollmentSecret, Library, LibraryId, LogicalName, Node, NodeId,
@@ -992,7 +992,11 @@ async fn live_pg17_adversarial_crash_restart_handoff() {
             .await
             .unwrap(),
     );
-    assert_eq!(state_b.schema_version().await.unwrap(), 7);
+    assert_eq!(
+        state_b.schema_version().await.unwrap(),
+        LOCAL_SCHEMA_VERSION,
+        "restart must migrate the persisted local state to the current schema"
+    );
     let (candidates, handoffs) = sqlite_counts(&state_b, library.id()).await;
     // S10: new remote base active, handoff pending, inbound fenced, outbound unchanged.
     assert_eq!(
