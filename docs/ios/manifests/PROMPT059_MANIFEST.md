@@ -35,7 +35,7 @@ tests, and the merged milestone evidence recorded through P058:
 | Inbound feed, transactional application, signed ACK, and rebaseline recovery | P039–P047; device-scoped sync services and SQLite transaction boundaries | These operations use the current `/devices/{device_id}/libraries/{library_id}/changes` route family. |
 | Default-off opportunistic metadata refresh | P048 merged through PR #131; `BGAppRefreshTask` coordinator/scheduler | Bounded to eligible work. iOS controls delivery; completion of a batch does not mean all libraries are current. |
 | Notification and sync preferences | P049–P050 | Local notification and settings behavior is implemented; APNs wakeups are not claimed. |
-| P056–P058 PhotoKit host-app flow | P056–P058 merged through P058 PR #142 | Opt-in discovery, private resource preparation, and foreground P045 upload orchestration are implemented. This is post-baseline work, not proof of a backed-up PhotoAsset. |
+| P056–P058 PhotoKit host-app flow | P056–P058 merged through P058 PR #142 | Opt-in discovery, private resource preparation, and foreground P045 upload orchestration are implemented. This was separately authorized outside the original Android v0.1 parity inventory; it is not proof of a backed-up PhotoAsset. |
 
 ### Valid iOS-native equivalents
 
@@ -65,10 +65,10 @@ scheduling, Low Power Mode gating, and Wi-Fi-only or Wi-Fi/cellular eligibility.
   #139 remains unmerged and excluded.
 - Authenticated background upload/download remains disabled under the P051 redirect security gate.
   Foreground P045 uploads and P043 downloads remain available.
-- PhotoKit P056–P058 is a separately authorized, post-baseline host-app feature. The current server
-  has no verified PhotoAsset, PhotoResource, or Live Photo import binding and no proof connecting
-  these uploads to a BackupSnapshot or retention record. `FileVersion` upload completion alone is
-  not backup completion under ADR-007.
+- PhotoKit P056–P058 is a separately authorized host-app feature outside the original Android v0.1
+  parity inventory. The current server has no verified PhotoAsset, PhotoResource, or Live Photo
+  import binding and no proof connecting these uploads to a BackupSnapshot or retention record.
+  `FileVersion` upload completion alone is not backup completion under ADR-007.
 - APNs remote wakeups and guaranteed periodic background execution are not implemented.
 - Multi-profile switching remains a product decision; P059 does not expand that scope.
 
@@ -80,7 +80,8 @@ scheduling, Low Power Mode gating, and Wi-Fi-only or Wi-Fi/cellular eligibility.
    rules: HTTPS by default, optional debug numeric loopback HTTP, origin-only paths, no userinfo,
    query or fragment (including empty delimiters), whitespace or backslashes, malformed ports, or
    origins over 2,048 UTF-8 bytes. Numeric-looking malformed IPv4 hosts are rejected. The transport
-   default follows the same `#if DEBUG` policy. Regression coverage was added for these cases.
+   default follows the same `#if DEBUG` policy. Bracketed IPv6 loopback is unwrapped for the numeric
+   loopback policy check. Regression coverage was added for these cases.
 2. **Debug-only transfer difference remains explicit.** iOS foreground raw upload and content
    download transports require HTTPS even for debug loopback. This is stricter than Android's debug
    loopback transport exception and does not affect production HTTPS parity; the existing iOS
@@ -119,10 +120,38 @@ scheduling, Low Power Mode gating, and Wi-Fi-only or Wi-Fi/cellular eligibility.
 
 ### macOS CI and device evidence
 
-P059 exact-head iOS Static Validation, iOS Build, iOS Rust Apple Build, and iOS Simulator Tests
-must be recorded after branch push. This Linux workspace has no Swift/Xcode toolchain and cannot
-claim native compilation. Physical-device validation remains `NOT_AVAILABLE`; no signed archive or
-release-readiness claim is made here.
+P059 source commit `373ae476d7045d8cbfb709b256085e6442a69163` passed all four iOS workflows:
+
+| Workflow | Result | Evidence |
+| --- | --- | --- |
+| iOS Static Validation | Passed | [Run 39093259832](https://github.com/nghianguyen150612/Synveil/actions/runs/39093259832) |
+| iOS Build | Passed | [Run 39093259817](https://github.com/nghianguyen150612/Synveil/actions/runs/39093259817) |
+| iOS Rust Apple Build | Passed | [Run 39093259786](https://github.com/nghianguyen150612/Synveil/actions/runs/39093259786) |
+| iOS Simulator Tests | Passed: 2,024 passed, 2 skipped, 0 failed | [Run 39093259808](https://github.com/nghianguyen150612/Synveil/actions/runs/39093259808); iPhone 17 Pro, iOS 26.5 simulator runtime |
+
+The first simulator run exposed four regressions: IPv6 loopback host brackets were not normalized
+for the debug policy check, two expected routes still assumed old base paths, and one download
+fixture registered a URL with a duplicate slash. These were corrected in `373ae47`; the final
+simulator run passed all non-skipped tests. The two skips remain the existing simulator cases that
+require entitlements or Data Protection behavior unavailable in Simulator.
+
+The Linux workspace has no Swift/Xcode toolchain, so native validation is the GitHub evidence above.
+Physical-device validation remains `NOT_AVAILABLE`; there is no signed archive or release-readiness
+claim.
+
+### Repository-wide non-iOS checks
+
+At the P059 source head, `Rust CI` and `Linux AppImage` failed outside the iOS target. Rust CI
+reported desktop/shared-workspace failures, including a Linux test invoking unsupported
+`systemd-tmpfiles --dry-run`, macOS client-control tests, and dependency-policy failures for
+`rustls 0.23.45` advisories RUSTSEC-2026-0346 through RUSTSEC-2026-0349. The affected HTTP stack is
+in `crates/client-sync`; `crates/ios-ffi` depends only on `synveil-core`, so these advisories are not
+in the iOS Rust artifact. Linux AppImage failed its artifact scan because it found a `/home/` build
+path. See [Rust CI run 39093259762](https://github.com/nghianguyen150612/Synveil/actions/runs/39093259762)
+and [AppImage run 39093260005](https://github.com/nghianguyen150612/Synveil/actions/runs/39093260005).
+
+The P059 Linux DEB/RPM and PostgreSQL scheduled-maintenance workflows were still running when this
+manifest was updated. They do not gate the four iOS workflows.
 
 PR #142's four iOS workflows passed on the P058 source head. Its unrelated repository checks also
 included Linux packaging, broad Rust workspace/desktop, and PostgreSQL scheduled-maintenance
