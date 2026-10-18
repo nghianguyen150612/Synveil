@@ -134,9 +134,9 @@ jobs:
   desktop-windows-native:
     name: Native desktop UI (Windows Qt 6)
     runs-on: windows-latest
-    # Hosted Windows reached the clean release rebuild after 30 minutes with
-    # the runtime ZIP audit and packaged-shell smoke still pending.
-    timeout-minutes: 60
+    # Exact-head run #39156222060 reached the runtime ZIP audit after the clean
+    # release rebuild but hit the 60-minute job limit before ZIP smoke checks.
+    timeout-minutes: 90
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
