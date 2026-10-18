@@ -151,6 +151,9 @@ def main() -> int:
             "P025 packaged desktop smoke must use the shipped Windows plugin with software rendering")
     require("$env:QT_QPA_PLATFORM='offscreen'" not in per_user_test,
             "P025 packaged Windows runtime does not ship the Qt offscreen plugin")
+    require("SYNVEIL_CLIENT_CONFIG" in per_user_test
+            and per_user_test.index("'client probe'") < per_user_test.index("'desktop smoke'"),
+            "P025 missing-profile client probe must precede the first-run desktop smoke")
     for evidence in ("synthetic_standard_user", "administrator_member", "installer_elevated", "integrity_sid", "RegistryView]::Registry64", "RegistryView]::Registry32", "machine PATH changed", "Synveil service created", "Synveil scheduled task created", "PER_USER_ACL_FAILURE", "second uninstaller", "state_preservation"):
         require(evidence in per_user_test, f"P025 per-user evidence: {evidence}")
     for evidence in ("[Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)",

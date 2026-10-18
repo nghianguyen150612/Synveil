@@ -157,14 +157,19 @@ $broadWrite = @($acl.Access | Where-Object {
 })
 Assert-True ($broadWrite.Count -eq 0) 'PER_USER_ACL_FAILURE: broad local-user principal can write package root'
 
-foreach ($name in @('QT_ROOT_DIR','QT_PLUGIN_PATH','QML2_IMPORT_PATH','QML_IMPORT_PATH')) { Remove-Item "Env:$name" -ErrorAction SilentlyContinue }
-$env:QT_QPA_PLATFORM='windows'; $env:QT_QUICK_BACKEND='software'; $env:QT_DEBUG_PLUGINS='1'; $env:PATH="$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem"
+foreach ($name in @('QT_ROOT_DIR','QT_PLUGIN_PATH','QT_QPA_PLATFORM_PLUGIN_PATH','QT_QPA_PLATFORM','QT_QUICK_BACKEND','QML2_IMPORT_PATH','QML_IMPORT_PATH','SYNVEIL_CLIENT_CONFIG')) { Remove-Item "Env:$name" -ErrorAction SilentlyContinue }
+$env:PATH="$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem"
+# Probe the installed client before the desktop's first-run smoke creates its
+# canonical profile manifest. With no profile, the client must exit 78 rather
+# than initialize or run an empty background process.
+$env:QT_DEBUG_PLUGINS='0'
+Invoke-Bounded (Join-Path $root 'synveil-client.exe') @() $unrelatedCwd 78 'client probe' (Join-Path $logRoot 'client.stdout.log') (Join-Path $logRoot 'client.stderr.log')
+$env:QT_QPA_PLATFORM='windows'; $env:QT_QUICK_BACKEND='software'; $env:QT_DEBUG_PLUGINS='1'
 $desktopOut=Join-Path $logRoot 'desktop.stdout.log'; $desktopErr=Join-Path $logRoot 'desktop.stderr.log'
 Invoke-Bounded (Join-Path $root 'synveil-desktop.exe') @('--qml-smoke-test') $unrelatedCwd 0 'desktop smoke' $desktopOut $desktopErr
 $diagnostics = Get-Content $desktopErr -Raw
 Assert-True ($diagnostics -notmatch [regex]::Escape($RepositoryRoot) -and $diagnostics -notmatch 'hostedtoolcache.*Qt') 'PER_USER_RUNTIME_FAILURE: desktop used checkout/Qt SDK path'
 $env:QT_DEBUG_PLUGINS='0'
-Invoke-Bounded (Join-Path $root 'synveil-client.exe') @() $unrelatedCwd 78 'client probe' (Join-Path $logRoot 'client.stdout.log') (Join-Path $logRoot 'client.stderr.log')
 Assert-True ([Environment]::GetEnvironmentVariable('Path','Machine') -ceq $machinePathBefore) 'PER_USER_MUTATION_FAILURE: machine PATH changed'
 Assert-True ([Environment]::GetEnvironmentVariable('Path','User') -ceq $userPathBefore) 'PER_USER_MUTATION_FAILURE: user PATH changed'
 Assert-True ((Get-SynveilServiceCount) -eq $servicesBefore) 'PER_USER_MUTATION_FAILURE: Synveil service created'
