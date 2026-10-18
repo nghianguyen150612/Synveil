@@ -40,8 +40,10 @@ final class ServerEndpointTests: XCTestCase {
     }
 
     func testRootSlashNormalizationAndWhitespaceRejection() throws {
-        XCTAssertEqual(try ServerEndpoint(validating: "https://example.com/").urlString,
-                       "https://example.com/")
+        XCTAssertEqual(
+            try ServerEndpoint(validating: "https://example.com/").urlString,
+            "https://example.com/"
+        )
         for value in [" https://example.com", "https://example.com ", "https://example.com\n"] {
             XCTAssertThrowsError(try ServerEndpoint(validating: value))
         }
@@ -123,28 +125,44 @@ final class ServerEndpointTests: XCTestCase {
     }
 
     func testHTTPRequiresExplicitDebugPolicyAndNumericLoopback() {
-        XCTAssertThrowsError(try ServerEndpoint(
-            validating: "http://127.0.0.1", allowLoopbackTestHTTP: false)) { error in
-                XCTAssertEqual(error as? EndpointValidationError, .httpsRequired)
-            }
+        XCTAssertThrowsError(
+            try ServerEndpoint(
+                validating: "http://127.0.0.1", allowLoopbackTestHTTP: false
+            )
+        ) { error in
+            XCTAssertEqual(error as? EndpointValidationError, .httpsRequired)
+        }
 
-        for value in ["http://localhost", "http://192.168.1.10", "http://10.0.0.1"] {
-            XCTAssertThrowsError(try ServerEndpoint(
-                validating: value, allowLoopbackTestHTTP: true)) { error in
-                    XCTAssertEqual(error as? EndpointValidationError, .loopbackHTTPNotAllowed)
-                }
+        for value in [
+            "http://localhost",
+            "http://192.168.1.10",
+            "http://10.0.0.1",
+        ] {
+            XCTAssertThrowsError(
+                try ServerEndpoint(validating: value, allowLoopbackTestHTTP: true)
+            ) { error in
+                XCTAssertEqual(error as? EndpointValidationError, .loopbackHTTPNotAllowed)
+            }
         }
     }
 
     func testRejectsMalformedAndOutOfRangePorts() {
-        for value in ["https://example.com:", "https://example.com:0",
-                      "https://example.com:65536", "https://example.com:abc"] {
+        for value in [
+            "https://example.com:",
+            "https://example.com:0",
+            "https://example.com:65536",
+            "https://example.com:abc",
+        ] {
             XCTAssertThrowsError(try ServerEndpoint(validating: value))
         }
     }
 
     func testRejectsMalformedNumericIPv4Hosts() {
-        for value in ["https://999.999.999.999", "https://127.1", "https://127.0.0.1."] {
+        for value in [
+            "https://999.999.999.999",
+            "https://127.1",
+            "https://127.0.0.1.",
+        ] {
             XCTAssertThrowsError(try ServerEndpoint(validating: value))
         }
     }

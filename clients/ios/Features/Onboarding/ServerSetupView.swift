@@ -60,8 +60,8 @@ public struct ServerSetupView: View {
                         "Use HTTPS. Debug builds also allow http://127.0.0.1 or http://[::1] "
                             + "for local testing."
                     )
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
                 }
 
                 // MARK: - Validation Error Feedback

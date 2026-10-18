@@ -157,15 +157,17 @@ public struct ServerEndpoint: Equatable, Hashable, Sendable, CustomStringConvert
             host.allSatisfy({ $0.isNumber || $0 == "." })
         else { return }
         let octets = host.split(separator: ".", omittingEmptySubsequences: false)
-        guard octets.count == 4,
-            octets.allSatisfy({ octet in
-                !octet.isEmpty && octet.unicodeScalars.allSatisfy {
-                    (48...57).contains($0.value)
-                } && Int(String(octet)).map { (0...255).contains($0) } == true
-            })
-        else {
+        guard octets.count == 4, octets.allSatisfy(Self.isValidIPv4Octet) else {
             throw EndpointValidationError.invalidHost
         }
+    }
+
+    private static func isValidIPv4Octet(_ octet: Substring) -> Bool {
+        guard !octet.isEmpty,
+            octet.utf8.allSatisfy({ (48...57).contains($0) }),
+            let value = Int(String(octet))
+        else { return false }
+        return (0...255).contains(value)
     }
 
     private static func validateAuthorityAndPort(_ rawValue: String) throws {
