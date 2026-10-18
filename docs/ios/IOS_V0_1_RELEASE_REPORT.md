@@ -1,9 +1,16 @@
 # Synveil iOS v0.1 Release Report
 
-**Decision: `BLOCKED_RELEASE`**  
-**Decision date:** 2026-10-18  
-**Release candidate:** P060 on `ios/p060-final-release-gate`  
-**Source revision:** P060 source changes are documentation-only; the iOS source remains based on `40080e3e7ed17bafb4f5ee89b8637b1954bc626a` until the P060 PR result is recorded below.
+**Decision: `BLOCKED_RELEASE`**
+
+**Decision date:** 2026-10-18
+
+**Release candidate:** P060 on `ios/p060-final-release-gate`
+
+**P060 PR head:** `e55a19fbbc95c54cd3c1a1fc2d29b7bcf8e77f92`
+
+**`ios-app` integration merge:** `8aba5f7ac90e7e56440f3c0542d7b0f86415cd8e` (PR #144; merge commit)
+
+**App source base:** `40080e3e7ed17bafb4f5ee89b8637b1954bc626a`; P060 changed release documentation/metadata only.
 
 ## Executive decision
 
@@ -30,7 +37,6 @@ The P059 capability totals remain unchanged because P060 did not implement or re
 | Live authenticated-server acceptance is missing | Mocked transport tests cannot prove enrollment, revocation, authorization, or transfer behavior against the authorized service. | No authorized live fixture or authenticated session was available in this task environment. | Provide an approved Synveil test server and execute the documented authenticated scenarios without logging credentials or private payloads. |
 | Signed archive and TestFlight prerequisites are missing | An unsigned simulator build is not distributable. | Host is Linux x86_64 with no `xcodebuild`, signing identity, provisioning profile, or App Store Connect credentials available to this task. No archive or IPA was produced. | Use macOS/Xcode with an approved Apple team, signing assets, bundle registration, and App Store Connect access; validate the exported IPA before TestFlight upload. |
 | Release version/build metadata and privacy-manifest review are incomplete | Distribution settings must be explicit and reviewed for the submitted archive. | The checked-in project declares iOS 17.0 and bundle IDs, but no `MARKETING_VERSION` or `CURRENT_PROJECT_VERSION` setting or `PrivacyInfo.xcprivacy` file was found in the inspected iOS project paths. | Set release version/build values, review required privacy declarations for collected APIs/data, inspect the generated archive's Info.plist and entitlements, and rerun static checks. |
-| P060 CI and independent review are required for integration | A local documentation check does not replace the four native macOS gates or repository review protections. | P060-specific run URLs and PR/review state are recorded in the [P060 manifest](manifests/PROMPT060_MANIFEST.md) when available. Branch-protection details were not readable through the available GitHub API credential. | Require successful P060 checks and satisfy the repository's normal review/protection rules before merging into `ios-app`. |
 
 ## P060 implementation scope and parity
 
@@ -40,16 +46,45 @@ P060 updates release documentation and the client README/roadmap only. It does n
 
 ## CI and reproducibility
 
-The P059 historical evidence is not reused as P060 evidence. The P060 manifest records each fresh run against the P060 PR head, including exact workflow URLs and simulator test counts. Linux-local checks and failures are also listed separately from macOS-only gates.
+All four mandatory iOS workflows passed on P060 PR head `e55a19f` (PR #144). The Simulator Tests run recorded 2,024 passed, 2 skipped, and 0 failed. These results are fresh P060 evidence; P059 results were not reused.
 
-The four required native workflows are:
+| Required workflow | Result | P060 run |
+|---|---|---|
+| iOS Static Validation | PASS | [39101765939](https://github.com/nghianguyen150612/Synveil/actions/runs/39101765939) |
+| iOS Build | PASS | [39101765842](https://github.com/nghianguyen150612/Synveil/actions/runs/39101765842) |
+| iOS Rust Apple Build | PASS | [39101765925](https://github.com/nghianguyen150612/Synveil/actions/runs/39101765925) |
+| iOS Simulator Tests | PASS — 2,024 passed, 2 skipped, 0 failed | [39101765997](https://github.com/nghianguyen150612/Synveil/actions/runs/39101765997) |
 
-1. iOS Static Validation
-2. iOS Build
-3. iOS Rust Apple Build
-4. iOS Simulator Tests
+The PR runs used a clean GitHub-hosted `macos-26-arm64` runner (macOS 26.6.2), Xcode 26.6 build 17F113, Swift 6.3.3, and iOS Simulator SDK 26.5. The simulator suite selected an iPhone 17 Pro simulator on iOS 26.5. The app and test targets used `CODE_SIGNING_ALLOWED=NO`. Simulator results do not count as physical-device acceptance.
 
-The Xcode workflows use clean GitHub-hosted macOS checkouts and their commands are defined in `.github/workflows/ios-*.yml`. On this Linux task host, `xcodebuild`, `swift`, `swift-format`, `cargo`, and `rustc` are unavailable. A clean macOS CI run is therefore required for native reproducibility. Simulator results do not count as physical-device acceptance.
+The exact unsigned simulator build command was:
+
+```bash
+xcodebuild \
+  -project clients/ios/Synveil.xcodeproj \
+  -scheme Synveil \
+  -configuration Debug \
+  -sdk iphonesimulator \
+  CODE_SIGNING_ALLOWED=NO \
+  -derivedDataPath "$RUNNER_TEMP/SynveilDerivedData" \
+  build
+```
+
+The temporary app bundle was `$RUNNER_TEMP/SynveilDerivedData/Build/Products/Debug-iphonesimulator/Synveil.app`; it was not exported or uploaded as a release product. The simulator test result bundle was `$RUNNER_TEMP/SynveilTests.xcresult` and was uploaded as `ios-simulator-test-results` with seven-day retention. The Rust Apple workflow passed and uploaded `synveil-ios-rust-staticlibs` from `target/ios-rust-artifacts/` with 14-day retention. That artifact cross-compiles `aarch64-apple-ios`, `aarch64-apple-ios-sim`, and `x86_64-apple-ios`; it does not establish physical-device runtime.
+
+This Linux task host had Python 3 and GitHub CLI but no `xcodebuild`, `swift`, `swift-format`, `cargo`, or `rustc`. Local native builds and physical-device checks were therefore not run.
+
+### Repository-wide failures
+
+The full repository workflows were not reported as green. Their results and classifications are recorded in the [P060 manifest](manifests/PROMPT060_MANIFEST.md): Rust CI, Linux AppImage, Linux DEB/RPM, and PostgreSQL scheduled maintenance failed outside the iOS client checks. The four required iOS workflows above passed.
+
+## Source-level correctness and security review
+
+- Authentication review covered one-time enrollment exchange, DeviceBearer authorization, Keychain persistence/restoration, revocation, and local logout cleanup. Existing XCTest coverage includes enrollment, session restoration, Keychain, logout, and stale-session handling. The Keychain implementation uses `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`; no Secure Enclave claim is made.
+- Transfer and durability review covered foreground resumable uploads, authoritative server-offset reconciliation, download length/digest verification, redirect rejection, revision/idempotency preconditions, private staging, and SQLite queue persistence. The simulator suite passed upload, download, queue, recovery, sync, and interrupted-state tests. No live authenticated server was available, so server acceptance remains unexecuted.
+- Rust/Swift FFI review covered ABI version/status mapping, length-delimited buffers, allocation/release ownership, bounded pointer handling, and panic containment. The bridge denies unsafe code by default and confines it to documented C ABI operations; ABI, memory, and concurrency XCTest suites ran in Simulator CI. Apple-target compilation is cross-compilation, not device runtime validation.
+- UX/lifecycle review covered onboarding and recovery surfaces, permission state handling, background/foreground transitions, notifications, file import/export, accessibility labels, and Dynamic Type test coverage. Actual VoiceOver, permission, storage-pressure, and Data Protection behavior still require the physical-device matrix.
+- The P060 tracked-file scan found no signing artifacts. A narrow production Swift logging scan found no `print`, `NSLog`, or `debugPrint` use and no token-bearing log call; the only bearer-shaped literal found was a synthetic `sve1_testtoken123` fixture under XCTest.
 
 ## Security assessment
 
@@ -100,4 +135,4 @@ The initial TestFlight cohort should be internal testers on the supported iOS ra
 
 ## Final recommendation
 
-Keep the release blocked. Complete profile isolation and migration, run all required P060 engineering checks, execute the physical-device and authorized-server acceptance matrix, finish version/privacy/signing setup, and obtain required independent review before considering TestFlight. Do not integrate `ios-app` into `main` while these release gates remain open.
+Keep the release blocked. Implement and test profile isolation/migration, execute the physical-device and authorized-server acceptance matrix, finish version/privacy/signing setup, and satisfy release review requirements before considering TestFlight. Do not integrate `ios-app` into `main` while these release gates remain open.
