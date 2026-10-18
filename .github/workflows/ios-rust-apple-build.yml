@@ -1,0 +1,91 @@
+name: iOS Rust Apple Build
+
+on:
+  push:
+    paths:
+      - "crates/ios-ffi/**"
+      - "crates/core/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "scripts/check-ios-rust.sh"
+      - "scripts/build-ios-rust-artifacts.sh"
+      - "scripts/generate-ios-rust-header.sh"
+      - "scripts/validate_ios_rust_artifact.py"
+      - "clients/ios/**"
+      - ".github/workflows/ios-rust-apple-build.yml"
+  pull_request:
+    paths:
+      - "crates/ios-ffi/**"
+      - "crates/core/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "scripts/check-ios-rust.sh"
+      - "scripts/build-ios-rust-artifacts.sh"
+      - "scripts/generate-ios-rust-header.sh"
+      - "scripts/validate_ios_rust_artifact.py"
+      - "clients/ios/**"
+      - ".github/workflows/ios-rust-apple-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-rust-apple-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-apple-build:
+    name: Rust Apple Target Build
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Print environment diagnostics
+        run: |
+          echo "=== macOS Environment ==="
+          sw_vers
+          echo ""
+          echo "=== Xcode Version ==="
+          xcodebuild -version
+          echo ""
+          echo "=== Rust Diagnostic Info ==="
+          rustc --version
+          rustup --version
+
+      - name: Run iOS Rust Apple Target Verification Script
+        run: |
+          chmod +x scripts/check-ios-rust.sh
+          ./scripts/check-ios-rust.sh
+
+      - name: Verify C Header Alignment against Rust Exports
+        run: |
+          chmod +x scripts/generate-ios-rust-header.sh
+          ./scripts/generate-ios-rust-header.sh --check
+
+      - name: Build & Stage iOS Rust Apple Release Artifacts
+        run: |
+          chmod +x scripts/build-ios-rust-artifacts.sh
+          ./scripts/build-ios-rust-artifacts.sh
+
+      - name: Validate Staged Artifact Bundle Integrity
+        run: |
+          chmod +x scripts/validate_ios_rust_artifact.py
+          python3 scripts/validate_ios_rust_artifact.py --staging-dir target/ios-rust-artifacts
+
+      - name: List Staged Files Before Upload
+        run: |
+          echo "=== Staged Artifact Root Contents ==="
+          ls -laR target/ios-rust-artifacts
+
+      - name: Upload Rust Apple Static Libraries Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: synveil-ios-rust-staticlibs
+          path: target/ios-rust-artifacts/
+          if-no-files-found: error
+          retention-days: 14

@@ -107,6 +107,9 @@ pub fn router(state: ApiState) -> Router {
             state.clone(),
             auth::require_inbound_authentication,
         ))
+        .layer(axum::middleware::from_fn(
+            middleware::reject_content_redirect,
+        ))
         .with_state(state.clone());
     let protected_versions = Router::new()
         .route("/nodes/{node_id}/versions", get(versions::list_versions))
@@ -380,6 +383,9 @@ pub fn router(state: ApiState) -> Router {
         .layer(from_fn_with_state(
             state.clone(),
             auth::require_inbound_authentication,
+        ))
+        .layer(axum::middleware::from_fn(
+            middleware::reject_transfer_redirect,
         ))
         .with_state(state.clone());
     let protected_device_enrollment = Router::new()

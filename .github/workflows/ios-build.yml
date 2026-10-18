@@ -1,0 +1,102 @@
+name: iOS Build
+
+on:
+  push:
+    paths:
+      - "clients/ios/**"
+      - "crates/ios-ffi/**"
+      - "crates/core/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "scripts/build-ios-rust-artifacts.sh"
+      - "scripts/prepare-ios-rust-xcode.sh"
+      - "scripts/generate-ios-rust-header.sh"
+      - "scripts/validate_ios_rust_artifact.py"
+      - ".github/workflows/ios-build.yml"
+  pull_request:
+    paths:
+      - "clients/ios/**"
+      - "crates/ios-ffi/**"
+      - "crates/core/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "scripts/build-ios-rust-artifacts.sh"
+      - "scripts/prepare-ios-rust-xcode.sh"
+      - "scripts/generate-ios-rust-header.sh"
+      - "scripts/validate_ios_rust_artifact.py"
+      - ".github/workflows/ios-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Xcode Simulator Build
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Print environment diagnostics
+        run: |
+          echo "=== Host Environment ==="
+          sw_vers
+          echo ""
+          echo "=== Xcode Toolchain ==="
+          xcodebuild -version
+          echo ""
+          echo "=== Swift Compiler ==="
+          swift --version
+          echo ""
+          echo "=== iOS Simulator SDK ==="
+          xcrun --sdk iphonesimulator --show-sdk-version
+          echo ""
+          echo "=== Available Xcode Installations ==="
+          ls -ld /Applications/Xcode*.app 2>/dev/null || true
+
+      - name: Prepare Rust Static Libraries for Xcode
+        run: |
+          chmod +x scripts/prepare-ios-rust-xcode.sh
+          ./scripts/prepare-ios-rust-xcode.sh
+
+      - name: Build Xcode Project
+        run: |
+          xcodebuild \
+            -project clients/ios/Synveil.xcodeproj \
+            -scheme Synveil \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            CODE_SIGNING_ALLOWED=NO \
+            -derivedDataPath "$RUNNER_TEMP/SynveilDerivedData" \
+            build
+
+      - name: Verify embedded File Provider extension product
+        run: |
+          APP_PATH="$RUNNER_TEMP/SynveilDerivedData/Build/Products/Debug-iphonesimulator/Synveil.app"
+          APPEX_PATH="$APP_PATH/PlugIns/SynveilFileProviderExtension.appex"
+          test -d "$APPEX_PATH"
+          python3 - "$APPEX_PATH/Info.plist" <<'PY'
+          import plistlib
+          import sys
+
+          with open(sys.argv[1], "rb") as stream:
+              info = plistlib.load(stream)
+          extension = info["NSExtension"]
+          assert info["CFBundleIdentifier"] == "com.synveil.ios.fileprovider"
+          assert extension["NSExtensionPointIdentifier"] == "com.apple.fileprovider-nonui"
+          assert extension["NSExtensionPrincipalClass"] == (
+              "SynveilFileProviderExtension.SynveilFileProviderExtension"
+          )
+          assert extension["NSExtensionAttributes"][
+              "NSExtensionFileProviderDocumentGroup"
+          ] == "group.com.synveil.ios"
+          print("Embedded File Provider extension metadata verified")
+          PY

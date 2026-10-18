@@ -266,6 +266,8 @@ documented retry horizon. Cleanup of their bytes is a separate idempotent job.
 
 ## API blueprint
 
+> **Current API notice:** The multipart `/api/v1/uploads` routes described in this historical blueprint are superseded. Current Android and iOS clients use `POST /api/v1/upload-sessions`, `PATCH`/`GET /api/v1/upload-sessions/{upload_session_id}`, and `/complete` or `/abort`. The authoritative current request and response contract is [api/openapi.yaml](../../api/openapi.yaml).
+
 All routes require an authenticated principal and authorization scoped to the
 target library. Device credentials also require upload/sync scopes. Public
 object IDs and storage handles are never accepted as destination authority.
