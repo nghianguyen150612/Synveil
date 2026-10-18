@@ -217,6 +217,10 @@ def main() -> int:
         require(evidence in lifecycle_test, f"P027 standard-user profile environment: {evidence}")
     require(lifecycle_test.index("P027_PROFILE_PATH_FAILURE") < lifecycle_test.index("$root = Join-Path"),
             "P027 profile paths are validated before deriving installer paths")
+    require("function Wait-ForRemovedPath" in lifecycle_test
+            and lifecycle_test.count("Wait-ForRemovedPath $root") == 3
+            and "bounded second-phase cleanup" in lifecycle_test,
+            "P027 waits for bounded Inno second-phase removal after each uninstall")
     for evidence in ("Interrupt-UpgradeAfterOwnedPayloadCopy", "NewerLicenseHash",
                      "LIFECYCLE_INTERRUPTION_FAILURE", "process_termination='forced'",
                      "prior_manifest_and_registration_matched"):

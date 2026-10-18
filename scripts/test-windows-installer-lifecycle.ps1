@@ -61,6 +61,17 @@ $startMenu = Join-Path $roamingAppData 'Microsoft\Windows\Start Menu\Programs\Sy
 $desktop = Join-Path $desktopRoot 'Synveil.lnk'
 
 function Assert-True([bool]$Condition, [string]$Message) { if (!$Condition) { throw $Message } }
+function Wait-ForRemovedPath([string]$Path, [string]$Name) {
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds(10)
+    while (Test-Path -LiteralPath $Path) {
+        if ([DateTimeOffset]::UtcNow -ge $deadline) {
+            $remaining = @(Get-ChildItem -LiteralPath $Path -Force -Recurse -ErrorAction SilentlyContinue |
+                Select-Object -First 20 -ExpandProperty FullName)
+            throw "LIFECYCLE_UNINSTALL_FAILURE: $Name remains after bounded second-phase cleanup; entries=$($remaining -join ', ')"
+        }
+        Start-Sleep -Milliseconds 100
+    }
+}
 function Invoke-Setup([string]$Path, [string[]]$Extra, [int]$Expected, [string]$Name) {
     $arguments = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/LAUNCH=0') + $Extra + @(('/LOG=' + (Join-Path $logRoot "$Name.log")))
     $process = Start-Process -FilePath $Path -ArgumentList $arguments -WorkingDirectory $env:TEMP -PassThru
@@ -157,7 +168,8 @@ Assert-True ((Snapshot-State) -ceq $stateBefore) 'LIFECYCLE_REPAIR_FAILURE: dura
 Invoke-RegisteredUninstall 'uninstall-production'
 Assert-True (Test-Path $unknown -PathType Leaf) 'LIFECYCLE_UNINSTALL_FAILURE: unknown adjacent file removed'
 Assert-True ((Snapshot-State) -ceq $stateBefore) 'LIFECYCLE_UNINSTALL_FAILURE: durable state changed'
-Remove-Item -LiteralPath $unknown; Remove-Item -LiteralPath $root -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $unknown
+Wait-ForRemovedPath $root 'uninstall-production'
 
 # Real Setup execution with isolated numeric fixture identities; never release artifacts.
 Invoke-Setup $OlderFixtureSetup @('/STARTUP=0','/DESKTOPICON=1') 0 'install-fixture-old'
@@ -188,10 +200,12 @@ Assert-True ((Manifest-Hashes | ConvertTo-Json -Compress) -ceq $beforeDowngrade)
 Assert-True ((Snapshot-State) -ceq $stateBefore) 'LIFECYCLE_DOWNGRADE_FAILURE: state changed'
 Invoke-RegisteredUninstall 'uninstall-fixture'
 Assert-True ((Test-Path $unknown) -and ((Snapshot-State) -ceq $stateBefore)) 'LIFECYCLE_UNINSTALL_FAILURE: preserved data changed'
-Remove-Item -LiteralPath $unknown; Remove-Item -LiteralPath $root -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $unknown
+Wait-ForRemovedPath $root 'uninstall-fixture'
 Invoke-Setup $Setup @('/STARTUP=0','/DESKTOPICON=0') 0 'reinstall-production'
 $null = Manifest-Hashes
 Invoke-RegisteredUninstall 'uninstall-reinstalled'
+Wait-ForRemovedPath $root 'uninstall-reinstalled'
 
 $evidence = [ordered]@{
     schema_version=1; source_commit=$env:GITHUB_SHA; artifact_sha256=(Get-FileHash $Setup -Algorithm SHA256).Hash.ToLowerInvariant()
