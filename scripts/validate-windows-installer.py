@@ -150,6 +150,10 @@ def main() -> int:
     for evidence in ("SetPassword", "-Credential", "-LoadUserProfile", "WaitForExit(300000)",
                      "Get-LocalUser -Name $user", "Remove-LocalUser", "Remove-CimInstance", "::add-mask::"):
         require(evidence in per_user_invoker, f"P025 disposable-account harness: {evidence}")
+    account_prefix = "synveil_p025_"
+    require(f"$user = '{account_prefix}'" in per_user_invoker and ".Substring(0,7)" in per_user_invoker,
+            "P025 disposable local account name stays within the 20-character SAM limit")
+    require(len(account_prefix) + 7 <= 20, "P025 generated local account name length")
     account_create = per_user_invoker.index("$account = $computer.Create('user',$user)")
     account_commit = per_user_invoker.index("$account.SetInfo()", account_create)
     account_password = per_user_invoker.index("$account.SetPassword($password)", account_commit)
