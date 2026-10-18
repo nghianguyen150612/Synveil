@@ -84,6 +84,28 @@ pub(crate) async fn request_context(mut request: Request, next: Next) -> Respons
     response
 }
 
+/// Reject redirect responses created by API handlers on authenticated upload routes. This cannot
+/// constrain an external reverse proxy that redirects before the request reaches Axum.
+pub(crate) async fn reject_transfer_redirect(request: Request, next: Next) -> Response {
+    let response = next.run(request).await;
+    reject_redirect_response(response, false)
+}
+
+/// Content reads may return the documented conditional `304`; every other 3xx is prohibited.
+pub(crate) async fn reject_content_redirect(request: Request, next: Next) -> Response {
+    let response = next.run(request).await;
+    reject_redirect_response(response, true)
+}
+
+fn reject_redirect_response(response: Response, allow_not_modified: bool) -> Response {
+    if response.status().is_redirection()
+        && !(allow_not_modified && response.status() == StatusCode::NOT_MODIFIED)
+    {
+        return ApiError::TransferRedirectProhibited.into_response();
+    }
+    response
+}
+
 async fn normalize_error_response(response: Response, request_id: &RequestId) -> Response {
     let status = response.status();
     let response = if status == StatusCode::PAYLOAD_TOO_LARGE {
@@ -130,4 +152,120 @@ fn error_with_request_id(error: ApiError, request_id: &RequestId) -> Response {
         HeaderValue::from_str(request_id.as_str()).expect("validated request id is a header value"),
     );
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::{
+        Router,
+        body::Body,
+        http::{HeaderValue, Method, Request, StatusCode},
+        middleware::from_fn,
+        response::IntoResponse,
+        routing::{any, get},
+    };
+    use tower::ServiceExt;
+
+    use super::{reject_content_redirect, reject_transfer_redirect};
+
+    #[tokio::test]
+    async fn prohibited_redirect_statuses_become_non_redirect_api_errors() {
+        let fixtures = [
+            (
+                StatusCode::MOVED_PERMANENTLY,
+                Method::GET,
+                "https://api.example/api/v1/versions/version/content/",
+            ),
+            (
+                StatusCode::FOUND,
+                Method::GET,
+                "https://redirect.invalid/login",
+            ),
+            (
+                StatusCode::SEE_OTHER,
+                Method::GET,
+                "https://redirect.invalid/second-hop",
+            ),
+            (
+                StatusCode::TEMPORARY_REDIRECT,
+                Method::PATCH,
+                "http://redirect.invalid:8080/collect",
+            ),
+            (
+                StatusCode::PERMANENT_REDIRECT,
+                Method::PATCH,
+                "https://storage.invalid/object/opaque",
+            ),
+            (
+                StatusCode::NOT_MODIFIED,
+                Method::PATCH,
+                "https://api.example/upload",
+            ),
+        ];
+        for (status, method, location) in fixtures {
+            let app = Router::new()
+                .route(
+                    "/",
+                    any(move || async move {
+                        let mut response = status.into_response();
+                        response.headers_mut().insert(
+                            axum::http::header::LOCATION,
+                            HeaderValue::from_bytes(location.as_bytes())
+                                .expect("fixture Location is valid"),
+                        );
+                        response
+                    }),
+                )
+                .layer(from_fn(reject_transfer_redirect));
+            let body = if method == Method::PATCH {
+                Body::from("SYNTHETIC-UPLOAD-SENTINEL")
+            } else {
+                Body::empty()
+            };
+            let request = Request::builder()
+                .method(method)
+                .uri("/")
+                .header("authorization", "Bearer SYNTHETIC-TEST-CREDENTIAL")
+                .body(body)
+                .expect("controlled request should be valid");
+            let response = app
+                .oneshot(request)
+                .await
+                .expect("controlled transfer response should complete");
+            assert_eq!(
+                response.status(),
+                StatusCode::BAD_GATEWAY,
+                "{status} {location}"
+            );
+            assert!(
+                !response
+                    .headers()
+                    .contains_key(axum::http::header::LOCATION)
+            );
+            let bytes = axum::body::to_bytes(response.into_body(), 16 * 1024)
+                .await
+                .expect("bounded error body");
+            let body = String::from_utf8(bytes.to_vec()).expect("API error is UTF-8");
+            assert!(!body.contains("SYNTHETIC-UPLOAD-SENTINEL"));
+            assert!(!body.contains(location));
+            let value: serde_json::Value =
+                serde_json::from_str(&body).expect("structured API error");
+            assert_eq!(
+                value["error"]["code"], "transfer_redirect_prohibited",
+                "{status}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn content_not_modified_is_not_treated_as_a_redirect() {
+        let app = Router::new()
+            .route("/", get(|| async { StatusCode::NOT_MODIFIED }))
+            .layer(from_fn(reject_content_redirect));
+        let response = app
+            .oneshot(axum::http::Request::new(Body::empty()))
+            .await
+            .expect("conditional response should complete");
+        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+    }
 }

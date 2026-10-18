@@ -2646,7 +2646,9 @@ paths:
         malformed, and unsatisfiable ranges return `416` with
         `Content-Range: bytes */length`. `If-None-Match` is evaluated from
         immutable SHA-256 metadata before opening the byte stream. This safe
-        read does not require a CSRF header.
+        read does not require a CSRF header. The API handler never redirects;
+        an unexpected handler-generated 3xx other than the documented 304 is
+        converted to 502. This rule does not control an operator-managed proxy.
       x-synveil-auth-classes: [BROWSER_SESSION, DEVICE_CREDENTIAL]
       x-synveil-device-auth: Same authenticated Device on scoped routes; active owner, Device and credential checked on every request. Mixed Cookie and Authorization are rejected. Private/no-store for device responses and errors.
       security:
@@ -2728,6 +2730,8 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '500':
           $ref: '#/components/responses/InternalError'
+        '502':
+          $ref: '#/components/responses/TransferRedirectProhibited'
   /api/v1/versions/{version_id}/content:
     get:
       tags: [Downloads]
@@ -2743,7 +2747,9 @@ paths:
         malformed, and unsatisfiable ranges return `416` with
         `Content-Range: bytes */length`. `If-None-Match` is evaluated from
         immutable SHA-256 metadata before opening the byte stream. This safe
-        read does not require a CSRF header.
+        read does not require a CSRF header. The API handler never redirects;
+        an unexpected handler-generated 3xx other than the documented 304 is
+        converted to 502. This rule does not control an operator-managed proxy.
       x-synveil-auth-classes: [BROWSER_SESSION, DEVICE_CREDENTIAL]
       x-synveil-device-auth: Same authenticated Device on scoped routes; active owner, Device and credential checked on every request. Mixed Cookie and Authorization are rejected. Private/no-store for device responses and errors.
       security:
@@ -2825,6 +2831,8 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '500':
           $ref: '#/components/responses/InternalError'
+        '502':
+          $ref: '#/components/responses/TransferRedirectProhibited'
   /api/v1/upload-sessions:
     post:
       tags: [Uploads]
@@ -2842,7 +2850,10 @@ paths:
         accepted from the client. Browser cookie authority requires CSRF on
         this state-changing route; authenticated device bearer authority does
         not. Object keys, replica identifiers, staging handles, and physical
-        paths are never returned.
+        paths are never returned. A `Location` header in the 201 response
+        identifies the created resource; it is not a redirect. Transfer routes
+        do not redirect, and an unexpected handler-generated 3xx is converted
+        to 502. Operator-managed proxies remain outside this application rule.
       security:
         - BrowserSession: []
         - DeviceBearer: []
@@ -2884,6 +2895,8 @@ paths:
           $ref: '#/components/responses/CapacityUnavailable'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '502':
+          $ref: '#/components/responses/TransferRedirectProhibited'
   /api/v1/upload-sessions/{upload_session_id}:
     get:
       tags: [Uploads]
@@ -2895,7 +2908,8 @@ paths:
         Return the owner-scoped upload projection and Upload-Offset header.
         Clients use this operation after any ambiguous PATCH outcome and resume
         from received_bytes. Browser sessions and device bearers are both
-        accepted; this safe read does not require a CSRF header.
+        accepted; this safe read does not require a CSRF header. The route does
+        not redirect; an unexpected handler-generated 3xx is converted to 502.
       security:
         - BrowserSession: []
         - DeviceBearer: []
@@ -2923,6 +2937,8 @@ paths:
           $ref: '#/components/responses/UploadNotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '502':
+          $ref: '#/components/responses/TransferRedirectProhibited'
     patch:
       tags: [Uploads]
       operationId: appendUploadChunk
@@ -2942,7 +2958,8 @@ paths:
         status, accept its Upload-Offset/received_bytes value as canonical, and
         resume from there. Never replay blindly or increment progress locally.
         Browser cookie authority requires CSRF; authenticated device bearer
-        authority does not use CSRF.
+        authority does not use CSRF. The route returns 204 on success and does
+        not redirect; an unexpected handler-generated 3xx is converted to 502.
       security:
         - BrowserSession: []
         - DeviceBearer: []
@@ -2988,6 +3005,8 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '507':
           $ref: '#/components/responses/CapacityUnavailable'
+        '502':
+          $ref: '#/components/responses/TransferRedirectProhibited'
   /api/v1/upload-sessions/{upload_session_id}/complete:
     post:
       tags: [Uploads]
@@ -3001,7 +3020,8 @@ paths:
         promotion, rechecks REPLACE_CONTENT revision, and returns the same
         canonical completion on a successful retry. Browser cookie authority
         requires CSRF; authenticated device bearer authority does not. HTTP code does not write
-        object, FileVersion, or replica rows directly.
+        object, FileVersion, or replica rows directly. The route does not
+        redirect; an unexpected handler-generated 3xx is converted to 502.
       security:
         - BrowserSession: []
         - DeviceBearer: []
@@ -3036,6 +3056,8 @@ paths:
           $ref: '#/components/responses/UploadPreconditionFailed'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '502':
+          $ref: '#/components/responses/TransferRedirectProhibited'
   /api/v1/upload-sessions/{upload_session_id}/abort:
     post:
       tags: [Uploads]
@@ -3047,7 +3069,8 @@ paths:
         Request abort through the owner-scoped upload service. A repeat is safe.
         Browser cookie authority requires CSRF; authenticated device bearer
         authority does not. API code never removes staging files or committed
-        recoverable content.
+        recoverable content. The route does not redirect; an unexpected
+        handler-generated 3xx is converted to 502.
       security:
         - BrowserSession: []
         - DeviceBearer: []
@@ -3078,6 +3101,8 @@ paths:
           $ref: '#/components/responses/UploadNotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+        '502':
+          $ref: '#/components/responses/TransferRedirectProhibited'
   /api/v1/libraries/{library_id}/rebaseline-snapshots:
     post:
       tags: [Synchronization]
@@ -4481,6 +4506,20 @@ components:
           $ref: '#/components/headers/XRequestId'
         Retry-After:
           $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    TransferRedirectProhibited:
+      description: The API handler rejected an unexpected redirect response on an authenticated transfer route. Reverse-proxy redirects are outside the API process and must be prevented by deployment configuration.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Cache-Control:
+          description: Transfer error responses are not cacheable; content routes use private, no-store and upload routes use no-store.
+          schema:
+            type: string
+            enum: [no-store, 'private, no-store']
       content:
         application/json:
           schema:

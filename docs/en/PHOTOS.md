@@ -1,10 +1,13 @@
 # Photos architecture
 
-Status: **PLANNED subsystem blueprint**
+Status: **Server Photos subsystem planned; native iOS PhotoKit client work exists after v0.1**
 
 Synveil Photos is a replaceable media projection over canonical files. It is
-not an independent storage silo and this document does not claim an
-implementation exists. Originals use the same upload, integrity, version,
+not an independent storage silo. The iOS host app implements opt-in PhotoKit
+discovery and foreground resource upload orchestration in P056–P058, but those
+uploads are ordinary FileVersions and are not yet bound to PhotoAsset or backup
+retention evidence. The server-side Photos subsystem described here remains
+planned. Originals use the same upload, integrity, version,
 authorization, retention, and object-store contracts as every other file.
 
 Canonical entity fields are defined in [DOMAIN_MODEL.md](DOMAIN_MODEL.md); API
@@ -14,14 +17,14 @@ sync, and backup behavior remain governed by [STORAGE.md](STORAGE.md),
 
 Photos client projections follow the platform contract: Windows, macOS, Linux
 Desktop, and Linux Server are first-class host boundaries where the relevant
-client or import workflow is supported; Android, iPhone, and iPad remain future
-mobile targets with explicit background-transfer and photo-library capability
-negotiation. No mobile or OS-specific behavior changes the canonical server
-storage model.
+client or import workflow is supported. The iOS host app has the P056–P058
+PhotoKit discovery and foreground upload flow; Android/iPad and server-side
+PhotoAsset bindings remain separate product work. No mobile or OS-specific
+behavior changes the canonical server storage model.
 
 ## Scope and status
 
-The following are `PLANNED`:
+The following server-side Photos capabilities are `PLANNED`:
 
 - original image and video preservation;
 - automatic import from supported clients;
@@ -31,7 +34,7 @@ The following are `PLANNED`:
 - exact-duplicate suggestions;
 - deterministic metadata search and optional AI-enriched search;
 - source-device/import and backup state; and
-- future PhotoKit/background-transfer integration.
+- production PhotoAsset import binding, Live Photo group binding, and backup-manifest association for the iOS foreground uploads.
 
 The following are `EXPERIMENTAL` until separate privacy and quality gates pass:
 
@@ -202,11 +205,26 @@ A partial group is visible with an honest warning and a retry path. Cleanup
 does not delete a successfully committed still image merely because its motion
 resource failed.
 
-## Future Apple PhotoKit client
+## iOS PhotoKit client
 
-The future Apple client is `PLANNED` around PhotoKit, URLSession background
-transfer, Keychain, Swift Concurrency, and platform-provided change
-observation. The server contract must account for these platform constraints:
+P056 adds opt-in PhotoKit metadata discovery. P057 adds explicit preparation of a selected local
+resource and a user-started foreground upload through the existing P045 coordinator. P058 adds a
+separate, default-off automatic foreground policy, a bounded owner/device-scoped SQLite candidate
+queue, and a finite worker that reuses P057 staging and P045 upload/reconciliation. The worker
+only runs while the authenticated app is active, rechecks PhotoKit permission and the selected
+Library/directory, and never enables background URLSession transfer. See the
+[P058 manifest](../ios/manifests/PROMPT058_MANIFEST.md) for implementation and validation state.
+
+Automatic upload is not PhotoAsset import. The current API confirms canonical FileVersion uploads,
+but the Photos server contract does not expose PhotoAsset, PhotoResource, or Live Photo binding,
+nor does it link a P045 FileVersion to a BackupSnapshot. The client therefore reports
+`FILE_UPLOADED_AWAITING_PHOTO_BINDING`; it does not claim a retained backup. The existing generic
+backup APIs manage BackupSets and immutable snapshot manifests, but there is no verified operation
+that associates this photo upload with a set or proves its retention. The PhotoKit host app writes
+into the existing private transfer staging area and never stages media in the File Provider App
+Group.
+
+The server contract must continue to account for these platform constraints:
 
 - The user may grant full, limited, or later-revoked photo-library access. The
   client uploads only assets PhotoKit currently permits and represents limited
@@ -215,25 +233,25 @@ observation. The server contract must account for these platform constraints:
   after library restoration or OS changes. It is a reconciliation hint, not a
   permanent server identity.
 - The app cannot assume unrestricted filesystem paths or continuous
-  background execution. It persists transfer/session mappings before
-  scheduling and resumes after delayed callbacks, termination, network change,
-  or device reboot.
-- Background upload completion can arrive after credentials rotate or policy
-  pauses. The client reauthorizes/reconciles before binding, while already
-  committed bytes remain recoverable through the same idempotency identity.
+  background execution. P057 uses private app staging and the existing
+  foreground resumable upload path; background photo transfer is disabled.
 - Original resources are requested through platform APIs at appropriate
   quality. An optimized/local preview must not be mislabeled as the original.
 - iCloud-backed assets may require network retrieval by the OS and can be
-  temporarily unavailable. Synveil reports `SOURCE_UNAVAILABLE` and retries
-  under policy rather than treating absence as deletion.
+  temporarily unavailable. P057/P058 keep PhotoKit network retrieval disabled,
+  report `SOURCE_UNAVAILABLE`, and use bounded foreground retries rather than
+  treating absence as deletion.
 - Edits in the Apple library may yield adjusted resources. The client records
   whether it is uploading an original or an edited rendition; Synveil does not
   silently replace one with the other.
-- Live-photo still and motion resources upload independently and bind only
-  after both terminal outcomes are known.
+- Live Photo still and motion resources stage and upload independently with
+  separate queue states and checksums. P058 reports partial or unbound groups;
+  group completion requires a future reviewed server binding contract.
 
 PhotoKit observation state is separate from the Synveil `SyncCursor` and
-`BackupSnapshot`. A local PhotoKit deletion can be:
+`BackupSnapshot`. P058's local queue is also separate from backup authority: a
+P045 FileVersion commit is displayed as an uploaded file, not as a retained
+photo backup. A local PhotoKit deletion can be:
 
 - a new source observation under photo-backup policy, preserving server history;
 - an explicit user-issued Synveil delete under two-way policy; or

@@ -1,0 +1,1830 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		E05600000000000000000001 /* PhotoPermissionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05600000000000000000001 /* PhotoPermissionState.swift */; };
+		E05600000000000000000002 /* PhotoAssetTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05600000000000000000002 /* PhotoAssetTypes.swift */; };
+		E05600000000000000000003 /* PhotoObservationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05600000000000000000003 /* PhotoObservationModels.swift */; };
+		E05600000000000000000004 /* PhotoBackupConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05600000000000000000004 /* PhotoBackupConfiguration.swift */; };
+		E05600000000000000000005 /* PhotoServiceProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05600000000000000000005 /* PhotoServiceProtocols.swift */; };
+		E05600000000000000000006 /* PhotoLibraryPermissionAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05600000000000000000006 /* PhotoLibraryPermissionAdapter.swift */; };
+		E05600000000000000000007 /* PhotoLibraryDiscoveryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05600000000000000000007 /* PhotoLibraryDiscoveryService.swift */; };
+		E05600000000000000000008 /* PhotoLibraryChangeObserverAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05600000000000000000008 /* PhotoLibraryChangeObserverAdapter.swift */; };
+		E05600000000000000000009 /* PhotoObservationSQLiteSchema.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05600000000000000000009 /* PhotoObservationSQLiteSchema.swift */; };
+		E0560000000000000000000A /* PhotoObservationSQLiteStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0560000000000000000000A /* PhotoObservationSQLiteStore.swift */; };
+		E0560000000000000000000B /* PhotoLibraryObservationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0560000000000000000000B /* PhotoLibraryObservationCoordinator.swift */; };
+		E0560000000000000000000C /* PhotoBackupSettingsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0560000000000000000000C /* PhotoBackupSettingsViewModel.swift */; };
+		E0560000000000000000000D /* PhotoBackupSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0560000000000000000000D /* PhotoBackupSettingsView.swift */; };
+		E0560000000000000000000E /* PhotoKitFoundationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0560000000000000000000E /* PhotoKitFoundationTests.swift */; };
+		E05700000000000000000001 /* PhotoResourceTransferModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05700000000000000000001 /* PhotoResourceTransferModels.swift */; };
+		E05700000000000000000002 /* PhotoKitResourceExtractionSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05700000000000000000002 /* PhotoKitResourceExtractionSource.swift */; };
+		E05700000000000000000003 /* ActivePhotoTransferContextProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05700000000000000000003 /* ActivePhotoTransferContextProvider.swift */; };
+		E05700000000000000000004 /* PhotoResourceExtractionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05700000000000000000004 /* PhotoResourceExtractionCoordinator.swift */; };
+		E05700000000000000000005 /* PhotoResourceStagingCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05700000000000000000005 /* PhotoResourceStagingCoordinator.swift */; };
+		E05700000000000000000006 /* PhotoResourceUploadHandoffCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05700000000000000000006 /* PhotoResourceUploadHandoffCoordinator.swift */; };
+		E05700000000000000000007 /* PhotoResourceTransferTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05700000000000000000007 /* PhotoResourceTransferTests.swift */; };
+		E05800000000000000000001 /* PhotoBackupForegroundWorker.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05800000000000000000001 /* PhotoBackupForegroundWorker.swift */; };
+		E05800000000000000000002 /* PhotoBackupQueueModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05800000000000000000002 /* PhotoBackupQueueModels.swift */; };
+		E05800000000000000000003 /* PhotoBackupNetworkPathMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05800000000000000000003 /* PhotoBackupNetworkPathMonitor.swift */; };
+		E05800000000000000000004 /* Network.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F05800000000000000000004 /* Network.framework */; };
+		A10000012C00000000000001 /* SynveilApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000001 /* SynveilApp.swift */; };
+		A10000012C00000000000002 /* BootstrapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000002 /* BootstrapView.swift */; };
+		A10000012C00000000000003 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000003 /* Assets.xcassets */; };
+		A10000012C00000000000004 /* AppDependencyContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000005 /* AppDependencyContainer.swift */; };
+		A10000012C00000000000005 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000006 /* RootView.swift */; };
+		A10000012C00000000000011 /* EndpointValidationError.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000011 /* EndpointValidationError.swift */; };
+		A10000012C00000000000012 /* ServerEndpoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000012 /* ServerEndpoint.swift */; };
+		A10000012C00000000000013 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000013 /* AppEnvironment.swift */; };
+		A10000012C00000000000014 /* AppConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000014 /* AppConfiguration.swift */; };
+		A10000012C00000000000015 /* HTTPMethod.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000015 /* HTTPMethod.swift */; };
+		A10000012C00000000000016 /* HTTPTransportRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000016 /* HTTPTransportRequest.swift */; };
+		A10000012C00000000000017 /* HTTPTransportResponse.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000017 /* HTTPTransportResponse.swift */; };
+		A10000012C00000000000018 /* HTTPTransportProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000018 /* HTTPTransportProtocol.swift */; };
+		A10000012C00000000000019 /* RustBridgeAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000019 /* RustBridgeAdapter.swift */; };
+		A10000012C0000000000001A /* RustBridgeStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000001A /* RustBridgeStatus.swift */; };
+		A10000012C0000000000001B /* RustBridgeError.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000001B /* RustBridgeError.swift */; };
+		A10000012C0000000000001C /* RustBridgeExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000001C /* RustBridgeExecutor.swift */; };
+		A10000012C0000000000001D /* RustBridgeAsyncAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000001D /* RustBridgeAsyncAdapter.swift */; };
+		A10000012C0000000000001E /* RustBridgeProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000001E /* RustBridgeProtocol.swift */; };
+		A10000012C0000000000001F /* AppStartupState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000001F /* AppStartupState.swift */; };
+		A10000012C00000000000020 /* SessionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000020 /* SessionController.swift */; };
+		B10000012C00000000000001 /* SynveilBootstrapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000001 /* SynveilBootstrapTests.swift */; };
+		B10000012C00000000000011 /* ServerEndpointTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000011 /* ServerEndpointTests.swift */; };
+		B10000012C00000000000012 /* AppConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000012 /* AppConfigurationTests.swift */; };
+		B10000012C00000000000013 /* HTTPTransportContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000013 /* HTTPTransportContractTests.swift */; };
+		B10000012C00000000000014 /* RustBridgeABITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000014 /* RustBridgeABITests.swift */; };
+		B10000012C00000000000015 /* RustBridgeErrorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000015 /* RustBridgeErrorTests.swift */; };
+		B10000012C00000000000016 /* RustBridgeMemoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000016 /* RustBridgeMemoryTests.swift */; };
+		B10000012C00000000000017 /* RustBridgeConcurrencyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000017 /* RustBridgeConcurrencyTests.swift */; };
+		B10000012C00000000000018 /* RustBridgeProtocolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000018 /* RustBridgeProtocolTests.swift */; };
+		B10000012C00000000000019 /* SessionControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000019 /* SessionControllerTests.swift */; };
+		B10000012C0000000000001A /* RootViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000001A /* RootViewTests.swift */; };
+		A10000012C00000000000021 /* ServerSetupViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000021 /* ServerSetupViewModel.swift */; };
+		A10000012C00000000000022 /* ServerSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000022 /* ServerSetupView.swift */; };
+		A10000012C00000000000023 /* SynveilTransportError.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000023 /* SynveilTransportError.swift */; };
+		A10000012C00000000000024 /* ServerProbeResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000024 /* ServerProbeResult.swift */; };
+		A10000012C00000000000025 /* ServerValidationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000025 /* ServerValidationService.swift */; };
+		A10000012C00000000000026 /* URLSessionHTTPTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000026 /* URLSessionHTTPTransport.swift */; };
+		A10000012C00000000000027 /* ServerValidationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000027 /* ServerValidationViewModel.swift */; };
+		A10000012C00000000000028 /* ServerValidationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000028 /* ServerValidationView.swift */; };
+		B10000012C0000000000001B /* ServerSetupViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000001B /* ServerSetupViewModelTests.swift */; };
+		B10000012C0000000000001C /* ServerReachabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000001C /* ServerReachabilityTests.swift */; };
+		A10000012C00000000000029 /* EnrollmentToken.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000029 /* EnrollmentToken.swift */; };
+		A10000012C0000000000002A /* DeviceCredential.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000002A /* DeviceCredential.swift */; };
+		A10000012C0000000000002B /* DeviceCredentialRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000002B /* DeviceCredentialRecord.swift */; };
+		A10000012C0000000000002C /* EnrollmentExchangeResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000002C /* EnrollmentExchangeResult.swift */; };
+		A10000012C0000000000002D /* EnrollmentState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000002D /* EnrollmentState.swift */; };
+		A10000012C0000000000002E /* ExchangeDeviceEnrollmentRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000002E /* ExchangeDeviceEnrollmentRequest.swift */; };
+		A10000012C0000000000002F /* DeviceCredentialResponseDTO.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000002F /* DeviceCredentialResponseDTO.swift */; };
+		A10000012C00000000000030 /* SecureCredentialSinkProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000030 /* SecureCredentialSinkProtocol.swift */; };
+		A10000012C00000000000031 /* EnrollmentExchangeServiceProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000031 /* EnrollmentExchangeServiceProtocol.swift */; };
+		A10000012C00000000000032 /* EnrollmentExchangeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000032 /* EnrollmentExchangeService.swift */; };
+		A10000012C00000000000033 /* EnrollmentViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000033 /* EnrollmentViewModel.swift */; };
+		A10000012C00000000000034 /* EnrollmentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000034 /* EnrollmentView.swift */; };
+		A10000012C00000000000035 /* EnrollmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000035 /* EnrollmentTests.swift */; };
+		A10000012C00000000000036 /* DeviceCredentialSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000036 /* DeviceCredentialSession.swift */; };
+		A10000012C00000000000037 /* KeychainCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000037 /* KeychainCredentialStore.swift */; };
+		A10000012C00000000000038 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000038 /* Security.framework */; };
+		A10000012C00000000000039 /* SessionRestorationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000039 /* SessionRestorationService.swift */; };
+		A10000012C0000000000003A /* AuthenticatedSessionValidationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000003A /* AuthenticatedSessionValidationService.swift */; };
+		A10000012C0000000000003B /* SessionLogoutService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000003B /* SessionLogoutService.swift */; };
+		B10000012C0000000000001D /* KeychainCredentialStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000001D /* KeychainCredentialStoreTests.swift */; };
+		B10000012C0000000000001E /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000038 /* Security.framework */; };
+		B10000012C0000000000001F /* SessionRestorationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000001F /* SessionRestorationTests.swift */; };
+		B10000012C00000000000020 /* SessionLogoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000020 /* SessionLogoutTests.swift */; };
+		A10000012C0000000000003C /* AuthenticationRecoveryPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000003C /* AuthenticationRecoveryPresentation.swift */; };
+		A10000012C0000000000003D /* AuthenticationRecoveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000003D /* AuthenticationRecoveryView.swift */; };
+		B10000012C00000000000021 /* AuthenticationRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000021 /* AuthenticationRecoveryTests.swift */; };
+		A10000012C0000000000003E /* LibraryModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000003E /* LibraryModels.swift */; };
+		A10000012C0000000000003F /* LibraryResponseDTO.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000003F /* LibraryResponseDTO.swift */; };
+		A10000012C00000000000040 /* AuthenticatedLibraryRequestProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000040 /* AuthenticatedLibraryRequestProvider.swift */; };
+		A10000012C00000000000041 /* AuthenticatedLibraryCatalogRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000041 /* AuthenticatedLibraryCatalogRepository.swift */; };
+		A10000012C00000000000042 /* LibraryCatalogViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000042 /* LibraryCatalogViewModel.swift */; };
+		A10000012C00000000000043 /* LibraryCatalogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000043 /* LibraryCatalogView.swift */; };
+		B10000012C00000000000022 /* LibraryCatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000022 /* LibraryCatalogTests.swift */; };
+		B10000012C00000000000023 /* LibraryCatalogViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000023 /* LibraryCatalogViewModelTests.swift */; };
+		B10000012C00000000000024 /* LibraryCatalogViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000024 /* LibraryCatalogViewTests.swift */; };
+		A10000012C00000000000044 /* NodeModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000044 /* NodeModels.swift */; };
+		A10000012C00000000000045 /* NodeResponseDTO.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000045 /* NodeResponseDTO.swift */; };
+		A10000012C00000000000046 /* AuthenticatedNodeRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000046 /* AuthenticatedNodeRepository.swift */; };
+		B10000012C00000000000025 /* NodeBrowserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000025 /* NodeBrowserTests.swift */; };
+		A10000012C00000000000047 /* NodeBrowserViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000047 /* NodeBrowserViewModel.swift */; };
+		A10000012C00000000000048 /* NodeBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000048 /* NodeBrowserView.swift */; };
+		B10000012C00000000000026 /* NodeBrowserViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000026 /* NodeBrowserViewModelTests.swift */; };
+		B10000012C00000000000027 /* NodeBrowserViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000027 /* NodeBrowserViewTests.swift */; };
+		A10000012C00000000000049 /* NodeFileDetailsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000049 /* NodeFileDetailsViewModel.swift */; };
+		A10000012C00000000000050 /* NodeFileDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000050 /* NodeFileDetailsView.swift */; };
+		B10000012C00000000000028 /* NodeFileDetailsViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000028 /* NodeFileDetailsViewModelTests.swift */; };
+		A10000012C00000000000051 /* ClientMutationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000051 /* ClientMutationModels.swift */; };
+		A10000012C00000000000052 /* ClientMutationResponseDTO.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000052 /* ClientMutationResponseDTO.swift */; };
+		A10000012C00000000000053 /* AuthenticatedClientMutationRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000053 /* AuthenticatedClientMutationRepository.swift */; };
+		B10000012C00000000000029 /* ClientMutationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000029 /* ClientMutationTests.swift */; };
+		A10000012C00000000000054 /* SyncCheckpointModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000054 /* SyncCheckpointModels.swift */; };
+		A10000012C00000000000055 /* MutationQueueModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000055 /* MutationQueueModels.swift */; };
+		A10000012C00000000000056 /* SyncCheckpointResponseDTO.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000056 /* SyncCheckpointResponseDTO.swift */; };
+		A10000012C00000000000057 /* MutationPersistenceCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000057 /* MutationPersistenceCodec.swift */; };
+		A10000012C00000000000058 /* SyncCheckpointService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000058 /* SyncCheckpointService.swift */; };
+		A10000012C00000000000059 /* DurableMutationQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000059 /* DurableMutationQueue.swift */; };
+		A10000012C0000000000005B /* MutationDrainCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000005B /* MutationDrainCoordinator.swift */; };
+		A10000012C0000000000005A /* MutationQueueSQLiteStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C0000000000005A /* MutationQueueSQLiteStore.swift */; };
+		A10000012C00000000000060 /* MetadataMutationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000060 /* MetadataMutationService.swift */; };
+		A10000012C00000000000061 /* MetadataMutationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000061 /* MetadataMutationViewModel.swift */; };
+		A10000012C00000000000062 /* MetadataMutationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000062 /* MetadataMutationView.swift */; };
+		A10000012C00000000000063 /* OfflineNodeBrowserService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000012C00000000000063 /* OfflineNodeBrowserService.swift */; };
+		B10000012C00000000000063 /* OfflineNodeBrowserServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000063 /* OfflineNodeBrowserServiceTests.swift */; };
+		B10000012C00000000000030 /* MetadataMutationFeatureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C00000000000030 /* MetadataMutationFeatureTests.swift */; };
+		B10000012C0000000000002A /* MutationQueueTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000002A /* MutationQueueTestSupport.swift */; };
+		B10000012C0000000000002B /* MutationQueueSQLiteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000002B /* MutationQueueSQLiteTests.swift */; };
+		B10000012C0000000000002F /* MutationRecoverySQLiteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000002F /* MutationRecoverySQLiteTests.swift */; };
+		B10000012C0000000000002C /* SyncCheckpointTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000002C /* SyncCheckpointTests.swift */; };
+		B10000012C0000000000002D /* DurableMutationQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000002D /* DurableMutationQueueTests.swift */; };
+		B10000012C0000000000002E /* MutationDrainCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000012C0000000000002E /* MutationDrainCoordinatorTests.swift */; };
+		A893D82F975D12132C1A3E46 /* SyncFeedModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 265EE87233579198D3DA626B /* SyncFeedModels.swift */; };
+		2A84DAF617D2CE3541C8A1F4 /* SyncFeedResponseDTO.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56D2AF75CC46AC4FB8233D9B /* SyncFeedResponseDTO.swift */; };
+		02C472AB88F669F505A8F5F6 /* SyncFeedService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A36E2B84BD8A0E0672444A6 /* SyncFeedService.swift */; };
+		4369C59B22E6BC7681FCF978 /* SyncAckService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0423AAA62F4F6BC6A7BBA61D /* SyncAckService.swift */; };
+		1E657CCF51E5E6BDDA7CBF01 /* SyncFeedTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D34F3CB4D50E8EE1331253A /* SyncFeedTestSupport.swift */; };
+		BC8B716A1238DA8A95F897C2 /* SyncFeedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2CF54A2FD4A7EBC9DCB1279 /* SyncFeedTests.swift */; };
+		05D3BA7FCCAFDBEA2384E9BD /* InboundSyncSQLiteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8616BD8EB6E80FB92015D2C9 /* InboundSyncSQLiteTests.swift */; };
+		3A555D0FF12FB7A3FA7F01DB /* SyncAckTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F703B8ECE495228C01537310 /* SyncAckTests.swift */; };
+		7B19636046484489C14D7C2F /* NodeProjectionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1506A7EE877F6A1827A67672 /* NodeProjectionModels.swift */; };
+		FD44FB35A49E0C68CD67C5C4 /* SyncNodeMaterializer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18D1B89EE80A793C0E5A43F5 /* SyncNodeMaterializer.swift */; };
+		0DEDF02A860B07D14316B6A0 /* SyncFeedApplicationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B62A620E14AACDAE05C1A491 /* SyncFeedApplicationService.swift */; };
+		A48DAAE05140A903FF7B835B /* NodeProjectionSQLiteSchema.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C2B605C452792053A247DF6 /* NodeProjectionSQLiteSchema.swift */; };
+		D867AE8CC0B3FD2AE8F93058 /* CommittedSQLiteSyncProjectionStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2470ECCC03C9F9EF448B81DC /* CommittedSQLiteSyncProjectionStorage.swift */; };
+		DDB310164E7571A9C70D2834 /* SQLiteNodeProjectionRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 045E037D95FD1DB835C55948 /* SQLiteNodeProjectionRepository.swift */; };
+		5287C3BC7E31C799FB658427 /* NodeProjectionTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6D744BBB2507CD761006ECA /* NodeProjectionTestSupport.swift */; };
+		D2503E9F2CD21E9E90345D16 /* NodeProjectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D8A32CED97CF1B91273DF7A /* NodeProjectionTests.swift */; };
+		E10E3AD3CAF0E4A257F7AAB8 /* NodeProjectionSQLiteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FBD63B5BE62328C2FF4A716 /* NodeProjectionSQLiteTests.swift */; };
+		91B9621F10A5C61D7BB234AF /* CommittedProjectionAckTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0617D440657E182F0461976 /* CommittedProjectionAckTests.swift */; };
+		7E67E9AFCA0F1625006117C2 /* InboundSyncModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BC1C985AD6B117F8D90753B /* InboundSyncModels.swift */; };
+		9D37C8EFFEAE03382E52A9AD /* InboundSyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CEF6D936D5C97440AB34212 /* InboundSyncCoordinator.swift */; };
+		B434156B38347EB11B0CD572 /* SyncStatusViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1816EB6C8D07DBA8C70C6D69 /* SyncStatusViewModel.swift */; };
+		9FF6AD1290B03F7D24833EC7 /* SyncStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 703A4772C1E48412091F9DFA /* SyncStatusView.swift */; };
+		AFCB14A0E5AFBD5BF6BCBAD0 /* InboundSyncTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACC470B3EFFFF0DD1C6EE70 /* InboundSyncTestSupport.swift */; };
+		A46B19C83C6DB753DAC2D25A /* InboundSyncCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C05935A31E1D6A3CD9111DF9 /* InboundSyncCoordinatorTests.swift */; };
+		407BCF57189B040188F9B622 /* InboundSyncRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16EEBD2222FE64206514A30F /* InboundSyncRecoveryTests.swift */; };
+		48B5C46A84D00167AEB0F06C /* InboundSyncRaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C08D8E26A94145FC6362A2C9 /* InboundSyncRaceTests.swift */; };
+		1D9E4EB06644AB6B7D438164 /* SyncStatusViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FB2DF3EA7D3D3FE25CB4EB2 /* SyncStatusViewModelTests.swift */; };
+		2D43E305C9221A8036E964E9 /* RebaselineCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFD9B7F299C222C9EEAA40CA /* RebaselineCoordinator.swift */; };
+		BAE576A2CD088EC953F9A2E7 /* RebaselineModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FD41238F3993337F6412F34 /* RebaselineModels.swift */; };
+		48D1EA7F55D3CB79967CC2D5 /* RebaselineResponseDTO.swift in Sources */ = {isa = PBXBuildFile; fileRef = 588BDD6E4DBAB1BD7D244905 /* RebaselineResponseDTO.swift */; };
+		1BABABA9F5B389C1F9089B5A /* SnapshotNodeInformationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8D39932E16668D07EBEBBAA /* SnapshotNodeInformationView.swift */; };
+		D40456C4F77C60F13C7A0882 /* RebaselineProgressView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 963FE3B7E9B4442A09E3774A /* RebaselineProgressView.swift */; };
+		4B5F96B3BB2CFA641A63B94B /* RebaselineViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 748071FD61D4A0F5C552D930 /* RebaselineViewModel.swift */; };
+		A8A7F509357EDF4286DCCE5A /* RebaselineSQLiteSchema.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D9D19510F1D0C3C99DC28C8 /* RebaselineSQLiteSchema.swift */; };
+		82562F2B90CD8C77A3A3C4DA /* RebaselineManifestTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1708FBE19416AD871E9362A /* RebaselineManifestTests.swift */; };
+		0C253BFB5EA4EBB6DD9F001B /* RebaselineRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3693670952CA52DF939D8B6F /* RebaselineRecoveryTests.swift */; };
+		E81DE4EE7F3B1FD661A9A681 /* RebaselineSQLiteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4668B9789833FF0BC08A675 /* RebaselineSQLiteTests.swift */; };
+		49B85EE43E37438039DD658E /* RebaselineTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48A50FE4074DC3FE80E150B7 /* RebaselineTestSupport.swift */; };
+		230FAECB95595FDE5642408A /* RebaselineTransportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC2DF63C5E99FBCF162759DA /* RebaselineTransportTests.swift */; };
+		ACA99412EB8AD67421091948 /* RebaselineViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2216F53B7F46969E3706CD88 /* RebaselineViewModelTests.swift */; };
+		433B09D447BCBB851F7484DA /* FileDownloadCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E06C3376C533FC0637467BB0 /* FileDownloadCoordinator.swift */; };
+		334AA7DD8DAD4EAA7C123062 /* DownloadModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68F7F2EA0993343912CC6BAC /* DownloadModels.swift */; };
+		6244B49895C6060BCBB3694A /* FileDownloadControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA533E0BAC4CDA064AF3543A /* FileDownloadControls.swift */; };
+		4E7124B99B7B3675F727120F /* FileDownloadViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4652379DBFD84AF77265A9B7 /* FileDownloadViewModel.swift */; };
+		D16DC63CF88D5ACE30EED0FC /* FileDownloadSQLiteSchema.swift in Sources */ = {isa = PBXBuildFile; fileRef = 006D173DB468FE1DC723C87E /* FileDownloadSQLiteSchema.swift */; };
+		59B9F6D8B03068D82508F17A /* DownloadStagingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06CEACE1A31500BDFE8757D5 /* DownloadStagingStore.swift */; };
+		48870372D42C044B5999633E /* FileDownloadMetadataTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05C741B7BFA922610FD7B6F8 /* FileDownloadMetadataTests.swift */; };
+		8654FE8DD73862829FC19D69 /* FileDownloadRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 489608E1168B757870E4810F /* FileDownloadRecoveryTests.swift */; };
+		A183246AC0DEF510AA54ECDC /* FileDownloadStorageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6175B6AD63FFCA57CE2D9EF /* FileDownloadStorageTests.swift */; };
+		3DDBE8DBD579F13243BE7833 /* FileDownloadTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = F048EBC5B64ADE5F36AF11FD /* FileDownloadTestSupport.swift */; };
+		A4D8517B66C974D0A3609777 /* FileDownloadTransportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 684D9961DEEB79F122D0D932 /* FileDownloadTransportTests.swift */; };
+		7DF7A439FA000652A9A2D5C2 /* FileDownloadViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F3BE8AEB820E1DB56833850 /* FileDownloadViewTests.swift */; };
+		83820A564E3A52541BBF9582 /* FileVersionResponseDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3962B8ACF4A77E1DBF3F383 /* FileVersionResponseDecoder.swift */; };
+		51EA7CAA728AE32CA30FFF44 /* URLSessionFileContentTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1DAFC3C7BFFB910A07D552B /* URLSessionFileContentTransport.swift */; };
+		B04400000000000000000001 /* VerifiedFileExportCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04400000000000000000001 /* VerifiedFileExportCoordinator.swift */; };
+		B04400000000000000000002 /* FileExportPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04400000000000000000002 /* FileExportPresentation.swift */; };
+		B04400000000000000000003 /* VerifiedFileExportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04400000000000000000003 /* VerifiedFileExportTests.swift */; };
+		B04400000000000000000004 /* QuickLook.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F04400000000000000000004 /* QuickLook.framework */; };
+		A04500000000000000000001 /* UploadModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14500000000000000000001 /* UploadModels.swift */; };
+		A04500000000000000000002 /* UploadSessionDTO.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14500000000000000000002 /* UploadSessionDTO.swift */; };
+		A04500000000000000000003 /* AuthenticatedUploadRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14500000000000000000003 /* AuthenticatedUploadRepository.swift */; };
+		A04500000000000000000004 /* FileUploadCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14500000000000000000004 /* FileUploadCoordinator.swift */; };
+		A04500000000000000000005 /* URLSessionRawUploadTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14500000000000000000005 /* URLSessionRawUploadTransport.swift */; };
+		A04500000000000000000006 /* FileUploadSQLiteSchema.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14500000000000000000006 /* FileUploadSQLiteSchema.swift */; };
+		A04500000000000000000007 /* UploadStagingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14500000000000000000007 /* UploadStagingStore.swift */; };
+		A04500000000000000000008 /* FileUploadViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14500000000000000000008 /* FileUploadViewModel.swift */; };
+		A04500000000000000000009 /* FileUploadControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14500000000000000000009 /* FileUploadControls.swift */; };
+		B04500000000000000000001 /* FileUploadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B14500000000000000000001 /* FileUploadTests.swift */; };
+		B04500000000000000000002 /* FileUploadStorageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B14500000000000000000002 /* FileUploadStorageTests.swift */; };
+		B04500000000000000000003 /* FileUploadViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B14500000000000000000003 /* FileUploadViewTests.swift */; };
+		B04500000000000000000004 /* FileUploadCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B14500000000000000000004 /* FileUploadCoordinatorTests.swift */; };
+		A04600000000000000000001 /* BackgroundUploadAppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14600000000000000000001 /* BackgroundUploadAppDelegate.swift */; };
+		A04600000000000000000002 /* BackgroundUploadModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14600000000000000000002 /* BackgroundUploadModels.swift */; };
+		A04600000000000000000003 /* URLSessionBackgroundUploadTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14600000000000000000003 /* URLSessionBackgroundUploadTransport.swift */; };
+		A04600000000000000000004 /* BackgroundUploadSQLiteSchema.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14600000000000000000004 /* BackgroundUploadSQLiteSchema.swift */; };
+		A04600000000000000000005 /* BackgroundUploadCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14600000000000000000005 /* BackgroundUploadCoordinator.swift */; };
+		B04600000000000000000001 /* BackgroundUploadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B14600000000000000000001 /* BackgroundUploadTests.swift */; };
+		96E2C0F9285597AF0932C920 /* SavedMetadataInspectionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F31907F25107A94AB4B6A8E1 /* SavedMetadataInspectionService.swift */; };
+		65973F21CDAFEB954ECCBBE0 /* ClientRecoveryPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BC94AA66A9ECC8E87A1ED9A /* ClientRecoveryPresentation.swift */; };
+		D30AE43D86CB8AD2E74D42B8 /* ClientRecoveryNotice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6558A9B854C1C7BA499D83F2 /* ClientRecoveryNotice.swift */; };
+		25DDAEF8DA40A5DCC5701E49 /* SavedMetadataInspectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1947D2701B9728AC34DE5E28 /* SavedMetadataInspectionView.swift */; };
+		191FD69399B150CB423A33DA /* ClientRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F1E19F9428AF1DF73E9BFDF /* ClientRecoveryTests.swift */; };
+		3D1141A213B67791E01B0163 /* SavedMetadataInspectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A853EF3DEF7C73656541699 /* SavedMetadataInspectionTests.swift */; };
+		9FC19B71304E7DF3E9C74BEE /* SessionAuthorizationEvidence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 946AD1158EBB2121EFFAF371 /* SessionAuthorizationEvidence.swift */; };
+		A393EB4A824619F6C99DBAB7 /* SessionAuthorizationSQLiteSchema.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A7E05B094D52716E1A53F2D /* SessionAuthorizationSQLiteSchema.swift */; };
+		3092856C33A86A7D4CD4A19A /* SessionAuthorizationEvidenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F26B1BBC83859745335440A /* SessionAuthorizationEvidenceTests.swift */; };
+		621F9FCE06DC3CB31244D879 /* BackgroundSyncModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 279B180822365E045C50222F /* BackgroundSyncModels.swift */; };
+		DC44AFBB4394AC293CC8FEC4 /* BackgroundSyncPolicyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8BECB1B2CD31A5E8B85868E /* BackgroundSyncPolicyStore.swift */; };
+		384A432C08F6D89E83423720 /* BackgroundSyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 335283A52D12E164B78B0242 /* BackgroundSyncCoordinator.swift */; };
+		640E14D5416D4A3F8FC695A7 /* BackgroundSyncWork.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBFA5A4BEFBF16E2476E9859 /* BackgroundSyncWork.swift */; };
+		279E1D71A30CA107CF37C8CE /* BGAppRefreshScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09CF4B332ED918E7544A9422 /* BGAppRefreshScheduler.swift */; };
+		A1D68830F0EEEEF3CB0B65EB /* BackgroundSyncHTTPTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 203769543FF1B3B3D3C78604 /* BackgroundSyncHTTPTransport.swift */; };
+		399F2ABC8AFAB50C30A04203 /* BackgroundSyncSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6C037BA9750328950167AB7 /* BackgroundSyncSettingsView.swift */; };
+		E513911B291BA5B75A19A224 /* BackgroundSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCD8D14E315C816297696D9D /* BackgroundSyncTests.swift */; };
+		C82A408E185025C846D0A7E4 /* BackgroundSyncSafetyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60BCE18634BF3EE4464F65D3 /* BackgroundSyncSafetyTests.swift */; };
+		97DFD8DA590166F1A1D27854 /* NotificationAuthority.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BA064361A552A8A8E35F119 /* NotificationAuthority.swift */; };
+		89127D31A5FC8A15E191FF1A /* NotificationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A711BF77725FBC9886D0C16 /* NotificationCoordinator.swift */; };
+		819E1E5B54323CDB2CB78A2B /* NotificationEventClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0BB30B991322B4AC1D795A5 /* NotificationEventClassifier.swift */; };
+		8D33183A1422DA8AB6F92916 /* NotificationNavigationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B6102408BF43F0912EE6B22 /* NotificationNavigationCoordinator.swift */; };
+		8800483D0DDB5C98A1875CEE /* NotificationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4469203EB5D5C8B5F3BDC76 /* NotificationModels.swift */; };
+		F2E07BEE91E2B996FB6B6838 /* NotificationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA1546827CAF8807D0F2C78C /* NotificationSettingsView.swift */; };
+		1B5BD3628469B277BC4724F7 /* NotificationDeliveryLedger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AE8511FABF9B0710730E88F /* NotificationDeliveryLedger.swift */; };
+		20338AFE1E8E69BCFE6FB01D /* NotificationPolicyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E2182A4A0FE2C0C0FF1D236 /* NotificationPolicyStore.swift */; };
+		F9D7274E58A5B65920B630E6 /* NotificationCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA148338BF8371B6D1B1B561 /* NotificationCoordinatorTests.swift */; };
+		62E87867D4B9EF01D179F7AB /* NotificationEligibilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14E92E245522CB34A8673D97 /* NotificationEligibilityTests.swift */; };
+		B7E668E842F199232619A86A /* NotificationNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFBBE07F34D6F54E77E9AE81 /* NotificationNavigationTests.swift */; };
+		AD45EB5BB3B0C570B404CA4E /* NotificationPersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CC578BD3F030978744DFBFA /* NotificationPersistenceTests.swift */; };
+		17263C898E90BF6CEFCA2B59 /* NotificationTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9614A75B0F1C8683336D2C88 /* NotificationTestSupport.swift */; };
+		953A24380218678BF0AEFD09 /* NotificationViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 428F4A5A54D6FE89956DB72C /* NotificationViewTests.swift */; };
+		C82802687338F9AAC0B19F35 /* LocalNotificationScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCA2C67CA1F0A896F77500C /* LocalNotificationScheduler.swift */; };
+		E05300000000000000000201 /* FileProviderDomainIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000101 /* FileProviderDomainIdentity.swift */; };
+		E05300000000000000000202 /* FileProviderItemIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000102 /* FileProviderItemIdentity.swift */; };
+		E05300000000000000000203 /* FileProviderCapability.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000103 /* FileProviderCapability.swift */; };
+		E05300000000000000000204 /* FileProviderAuthorizationBoundary.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000104 /* FileProviderAuthorizationBoundary.swift */; };
+		E05300000000000000000205 /* FileProviderSharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000105 /* FileProviderSharedContainer.swift */; };
+		E05300000000000000000206 /* FileProviderMetadataContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000106 /* FileProviderMetadataContract.swift */; };
+		E05300000000000000000207 /* FileProviderLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000109 /* FileProviderLifecycle.swift */; };
+		E05300000000000000000211 /* FileProviderDomainIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000101 /* FileProviderDomainIdentity.swift */; };
+		E05300000000000000000212 /* FileProviderItemIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000102 /* FileProviderItemIdentity.swift */; };
+		E05300000000000000000213 /* FileProviderCapability.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000103 /* FileProviderCapability.swift */; };
+		E05300000000000000000214 /* FileProviderAuthorizationBoundary.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000104 /* FileProviderAuthorizationBoundary.swift */; };
+		E05300000000000000000215 /* FileProviderSharedContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000105 /* FileProviderSharedContainer.swift */; };
+		E05300000000000000000216 /* FileProviderMetadataContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000106 /* FileProviderMetadataContract.swift */; };
+		E05300000000000000000217 /* FileProviderErrorMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000107 /* FileProviderErrorMapper.swift */; };
+		E05300000000000000000218 /* FileProviderEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000108 /* FileProviderEnumerator.swift */; };
+		E05300000000000000000219 /* FileProviderLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000109 /* FileProviderLifecycle.swift */; };
+		E0530000000000000000021A /* SynveilFileProviderExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0530000000000000000010A /* SynveilFileProviderExtension.swift */; };
+		E0530000000000000000021B /* FileProvider.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F05300000000000000000110 /* FileProvider.framework */; };
+		E0530000000000000000021C /* SynveilFileProviderExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = F0530000000000000000010F /* SynveilFileProviderExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		E0530000000000000000021D /* FileProviderFoundationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000111 /* FileProviderFoundationTests.swift */; };
+		E05400000000000000000101 /* FileProviderGenerationContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000001 /* FileProviderGenerationContract.swift */; };
+		E05400000000000000000102 /* FileProviderGenerationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000002 /* FileProviderGenerationStore.swift */; };
+		E05400000000000000000103 /* FileProviderMetadataReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000003 /* FileProviderMetadataReader.swift */; };
+		E05400000000000000000104 /* FileProviderMetadataSignaling.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000004 /* FileProviderMetadataSignaling.swift */; };
+		E05400000000000000000105 /* SynveilFileProviderItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000005 /* SynveilFileProviderItem.swift */; };
+		E05400000000000000000106 /* FileProviderErrorMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000107 /* FileProviderErrorMapper.swift */; };
+		E05400000000000000000107 /* FileProviderEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05300000000000000000108 /* FileProviderEnumerator.swift */; };
+		E05400000000000000000108 /* FileProviderMetadataPublicationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000006 /* FileProviderMetadataPublicationCoordinator.swift */; };
+		E05400000000000000000201 /* FileProviderGenerationContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000001 /* FileProviderGenerationContract.swift */; };
+		E05400000000000000000202 /* FileProviderGenerationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000002 /* FileProviderGenerationStore.swift */; };
+		E05400000000000000000203 /* FileProviderMetadataReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000003 /* FileProviderMetadataReader.swift */; };
+		E05400000000000000000204 /* FileProviderMetadataSignaling.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000004 /* FileProviderMetadataSignaling.swift */; };
+		E05400000000000000000205 /* SynveilFileProviderItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000005 /* SynveilFileProviderItem.swift */; };
+		E05400000000000000000301 /* FileProviderEnumerationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000007 /* FileProviderEnumerationTests.swift */; };
+		E05400000000000000000109 /* FileProviderContainerSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000008 /* FileProviderContainerSnapshot.swift */; };
+		E05400000000000000000209 /* FileProviderContainerSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = F05400000000000000000008 /* FileProviderContainerSnapshot.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		B60000012C00000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A60000012C00000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A50000012C00000000000001;
+			remoteInfo = Synveil;
+		};
+		D05300000000000000000309 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A60000012C00000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D05300000000000000000301;
+			remoteInfo = SynveilFileProviderExtension;
+		};
+
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		D05300000000000000000302 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				E0530000000000000000021C /* SynveilFileProviderExtension.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		F05600000000000000000001 /* PhotoPermissionState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Photos/PhotoPermissionState.swift; sourceTree = "<group>"; };
+		F05600000000000000000002 /* PhotoAssetTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Photos/PhotoAssetTypes.swift; sourceTree = "<group>"; };
+		F05600000000000000000003 /* PhotoObservationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Photos/PhotoObservationModels.swift; sourceTree = "<group>"; };
+		F05600000000000000000004 /* PhotoBackupConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Photos/PhotoBackupConfiguration.swift; sourceTree = "<group>"; };
+		F05600000000000000000005 /* PhotoServiceProtocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Photos/PhotoServiceProtocols.swift; sourceTree = "<group>"; };
+		F05600000000000000000006 /* PhotoLibraryPermissionAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Photos/PhotoLibraryPermissionAdapter.swift; sourceTree = "<group>"; };
+		F05600000000000000000007 /* PhotoLibraryDiscoveryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Photos/PhotoLibraryDiscoveryService.swift; sourceTree = "<group>"; };
+		F05600000000000000000008 /* PhotoLibraryChangeObserverAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Photos/PhotoLibraryChangeObserverAdapter.swift; sourceTree = "<group>"; };
+		F05600000000000000000009 /* PhotoObservationSQLiteSchema.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/PhotoObservationSQLiteSchema.swift; sourceTree = "<group>"; };
+		F0560000000000000000000A /* PhotoObservationSQLiteStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/PhotoObservationSQLiteStore.swift; sourceTree = "<group>"; };
+		F0560000000000000000000B /* PhotoLibraryObservationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Photos/PhotoLibraryObservationCoordinator.swift; sourceTree = "<group>"; };
+		F0560000000000000000000C /* PhotoBackupSettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Photos/PhotoBackupSettingsViewModel.swift; sourceTree = "<group>"; };
+		F0560000000000000000000D /* PhotoBackupSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Photos/PhotoBackupSettingsView.swift; sourceTree = "<group>"; };
+		F0560000000000000000000E /* PhotoKitFoundationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/PhotoKitFoundationTests.swift; sourceTree = "<group>"; };
+		F05700000000000000000001 /* PhotoResourceTransferModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Photos/PhotoResourceTransferModels.swift; sourceTree = "<group>"; };
+		F05700000000000000000002 /* PhotoKitResourceExtractionSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Photos/PhotoKitResourceExtractionSource.swift; sourceTree = "<group>"; };
+		F05700000000000000000003 /* ActivePhotoTransferContextProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Photos/ActivePhotoTransferContextProvider.swift; sourceTree = "<group>"; };
+		F05700000000000000000004 /* PhotoResourceExtractionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Photos/PhotoResourceExtractionCoordinator.swift; sourceTree = "<group>"; };
+		F05700000000000000000005 /* PhotoResourceStagingCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Photos/PhotoResourceStagingCoordinator.swift; sourceTree = "<group>"; };
+		F05700000000000000000006 /* PhotoResourceUploadHandoffCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Photos/PhotoResourceUploadHandoffCoordinator.swift; sourceTree = "<group>"; };
+		F05700000000000000000007 /* PhotoResourceTransferTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/PhotoResourceTransferTests.swift; sourceTree = "<group>"; };
+		F05800000000000000000001 /* PhotoBackupForegroundWorker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Photos/PhotoBackupForegroundWorker.swift; sourceTree = "<group>"; };
+		F05800000000000000000002 /* PhotoBackupQueueModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Photos/PhotoBackupQueueModels.swift; sourceTree = "<group>"; };
+		F05800000000000000000003 /* PhotoBackupNetworkPathMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Photos/PhotoBackupNetworkPathMonitor.swift; sourceTree = "<group>"; };
+		F05800000000000000000004 /* Network.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Network.framework; path = System/Library/Frameworks/Network.framework; sourceTree = SDKROOT; };
+		A20000012C00000000000001 /* SynveilApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/SynveilApp.swift; sourceTree = "<group>"; };
+		A20000012C00000000000002 /* BootstrapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/BootstrapView.swift; sourceTree = "<group>"; };
+		A20000012C00000000000003 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Resources/Assets.xcassets; sourceTree = "<group>"; };
+		A20000012C00000000000004 /* Synveil.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Synveil.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000012C00000000000005 /* AppDependencyContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/AppDependencyContainer.swift; sourceTree = "<group>"; };
+		A20000012C00000000000006 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/RootView.swift; sourceTree = "<group>"; };
+		A20000012C00000000000011 /* EndpointValidationError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Configuration/EndpointValidationError.swift; sourceTree = "<group>"; };
+		A20000012C00000000000012 /* ServerEndpoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Configuration/ServerEndpoint.swift; sourceTree = "<group>"; };
+		A20000012C00000000000013 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Configuration/AppEnvironment.swift; sourceTree = "<group>"; };
+		A20000012C00000000000014 /* AppConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Configuration/AppConfiguration.swift; sourceTree = "<group>"; };
+		A20000012C00000000000015 /* HTTPMethod.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Transport/HTTPMethod.swift; sourceTree = "<group>"; };
+		A20000012C00000000000016 /* HTTPTransportRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Transport/HTTPTransportRequest.swift; sourceTree = "<group>"; };
+		A20000012C00000000000017 /* HTTPTransportResponse.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Transport/HTTPTransportResponse.swift; sourceTree = "<group>"; };
+		A20000012C00000000000018 /* HTTPTransportProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Transport/HTTPTransportProtocol.swift; sourceTree = "<group>"; };
+		A20000012C00000000000019 /* RustBridgeAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/RustBridge/RustBridgeAdapter.swift; sourceTree = "<group>"; };
+		A20000012C0000000000001A /* RustBridgeStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/RustBridge/RustBridgeStatus.swift; sourceTree = "<group>"; };
+		A20000012C0000000000001B /* RustBridgeError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/RustBridge/RustBridgeError.swift; sourceTree = "<group>"; };
+		A20000012C0000000000001C /* RustBridgeExecutor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/RustBridge/RustBridgeExecutor.swift; sourceTree = "<group>"; };
+		A20000012C0000000000001D /* RustBridgeAsyncAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/RustBridge/RustBridgeAsyncAdapter.swift; sourceTree = "<group>"; };
+		A20000012C0000000000001E /* RustBridgeProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Services/RustBridgeProtocol.swift; sourceTree = "<group>"; };
+		A20000012C0000000000001F /* AppStartupState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Session/AppStartupState.swift; sourceTree = "<group>"; };
+		A20000012C00000000000020 /* SessionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Session/SessionController.swift; sourceTree = "<group>"; };
+		B20000012C00000000000001 /* SynveilBootstrapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SynveilBootstrapTests.swift; sourceTree = "<group>"; };
+		B20000012C00000000000011 /* ServerEndpointTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/ServerEndpointTests.swift; sourceTree = "<group>"; };
+		B20000012C00000000000012 /* AppConfigurationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/AppConfigurationTests.swift; sourceTree = "<group>"; };
+		B20000012C00000000000013 /* HTTPTransportContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/HTTPTransportContractTests.swift; sourceTree = "<group>"; };
+		B20000012C00000000000014 /* RustBridgeABITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RustBridgeABITests.swift; sourceTree = "<group>"; };
+		B20000012C00000000000015 /* RustBridgeErrorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RustBridgeErrorTests.swift; sourceTree = "<group>"; };
+		B20000012C00000000000016 /* RustBridgeMemoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RustBridgeMemoryTests.swift; sourceTree = "<group>"; };
+		B20000012C00000000000017 /* RustBridgeConcurrencyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RustBridgeConcurrencyTests.swift; sourceTree = "<group>"; };
+		B20000012C00000000000018 /* RustBridgeProtocolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RustBridgeProtocolTests.swift; sourceTree = "<group>"; };
+		B20000012C00000000000019 /* SessionControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SessionControllerTests.swift; sourceTree = "<group>"; };
+		B20000012C0000000000001A /* RootViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RootViewTests.swift; sourceTree = "<group>"; };
+		B20000012C00000000000002 /* SynveilTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SynveilTests.xctest; sourceTree = "<group>"; };
+		A20000012C00000000000021 /* ServerSetupViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Onboarding/ServerSetupViewModel.swift; sourceTree = "<group>"; };
+		A20000012C00000000000022 /* ServerSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Onboarding/ServerSetupView.swift; sourceTree = "<group>"; };
+		A20000012C00000000000023 /* SynveilTransportError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Transport/SynveilTransportError.swift; sourceTree = "<group>"; };
+		A20000012C00000000000024 /* ServerProbeResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Transport/ServerProbeResult.swift; sourceTree = "<group>"; };
+		A20000012C00000000000025 /* ServerValidationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Transport/ServerValidationService.swift; sourceTree = "<group>"; };
+		A20000012C00000000000026 /* URLSessionHTTPTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Network/URLSessionHTTPTransport.swift; sourceTree = "<group>"; };
+		A20000012C00000000000027 /* ServerValidationViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Onboarding/ServerValidationViewModel.swift; sourceTree = "<group>"; };
+		A20000012C00000000000028 /* ServerValidationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Onboarding/ServerValidationView.swift; sourceTree = "<group>"; };
+		B20000012C0000000000001B /* ServerSetupViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/ServerSetupViewModelTests.swift; sourceTree = "<group>"; };
+		B20000012C0000000000001C /* ServerReachabilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/ServerReachabilityTests.swift; sourceTree = "<group>"; };
+		A20000012C00000000000029 /* EnrollmentToken.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Enrollment/EnrollmentToken.swift; sourceTree = "<group>"; };
+		A20000012C0000000000002A /* DeviceCredential.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Enrollment/DeviceCredential.swift; sourceTree = "<group>"; };
+		A20000012C0000000000002B /* DeviceCredentialRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Enrollment/DeviceCredentialRecord.swift; sourceTree = "<group>"; };
+		A20000012C0000000000002C /* EnrollmentExchangeResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Enrollment/EnrollmentExchangeResult.swift; sourceTree = "<group>"; };
+		A20000012C0000000000002D /* EnrollmentState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Enrollment/EnrollmentState.swift; sourceTree = "<group>"; };
+		A20000012C0000000000002E /* ExchangeDeviceEnrollmentRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Enrollment/ExchangeDeviceEnrollmentRequest.swift; sourceTree = "<group>"; };
+		A20000012C0000000000002F /* DeviceCredentialResponseDTO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Enrollment/DeviceCredentialResponseDTO.swift; sourceTree = "<group>"; };
+		A20000012C00000000000030 /* SecureCredentialSinkProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Services/SecureCredentialSinkProtocol.swift; sourceTree = "<group>"; };
+		A20000012C00000000000031 /* EnrollmentExchangeServiceProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Enrollment/EnrollmentExchangeServiceProtocol.swift; sourceTree = "<group>"; };
+		A20000012C00000000000032 /* EnrollmentExchangeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Enrollment/EnrollmentExchangeService.swift; sourceTree = "<group>"; };
+		A20000012C00000000000033 /* EnrollmentViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Onboarding/EnrollmentViewModel.swift; sourceTree = "<group>"; };
+		A20000012C00000000000034 /* EnrollmentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Onboarding/EnrollmentView.swift; sourceTree = "<group>"; };
+		A20000012C00000000000035 /* EnrollmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/EnrollmentTests.swift; sourceTree = "<group>"; };
+		A20000012C00000000000036 /* DeviceCredentialSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Enrollment/DeviceCredentialSession.swift; sourceTree = "<group>"; };
+		A20000012C00000000000037 /* KeychainCredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Security/KeychainCredentialStore.swift; sourceTree = "<group>"; };
+		A20000012C00000000000038 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		A20000012C00000000000039 /* SessionRestorationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Session/SessionRestorationService.swift; sourceTree = "<group>"; };
+		A20000012C0000000000003A /* AuthenticatedSessionValidationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Services/Transport/AuthenticatedSessionValidationService.swift; sourceTree = "<group>"; };
+		A20000012C0000000000003B /* SessionLogoutService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Session/SessionLogoutService.swift; sourceTree = "<group>"; };
+		B20000012C0000000000001F /* SessionRestorationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SessionRestorationTests.swift; sourceTree = "<group>"; };
+		B20000012C00000000000020 /* SessionLogoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SessionLogoutTests.swift; sourceTree = "<group>"; };
+		B20000012C0000000000001D /* KeychainCredentialStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/KeychainCredentialStoreTests.swift; sourceTree = "<group>"; };
+		A20000012C0000000000003C /* AuthenticationRecoveryPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Authentication/AuthenticationRecoveryPresentation.swift; sourceTree = "<group>"; };
+		A20000012C0000000000003D /* AuthenticationRecoveryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Authentication/AuthenticationRecoveryView.swift; sourceTree = "<group>"; };
+		B20000012C00000000000021 /* AuthenticationRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/AuthenticationRecoveryTests.swift; sourceTree = "<group>"; };
+		A20000012C0000000000003E /* LibraryModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Library/LibraryModels.swift; sourceTree = "<group>"; };
+		A20000012C0000000000003F /* LibraryResponseDTO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Library/LibraryResponseDTO.swift; sourceTree = "<group>"; };
+		A20000012C00000000000040 /* AuthenticatedLibraryRequestProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Library/AuthenticatedLibraryRequestProvider.swift; sourceTree = "<group>"; };
+		A20000012C00000000000041 /* AuthenticatedLibraryCatalogRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Library/AuthenticatedLibraryCatalogRepository.swift; sourceTree = "<group>"; };
+		A20000012C00000000000042 /* LibraryCatalogViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Library/LibraryCatalogViewModel.swift; sourceTree = "<group>"; };
+		A20000012C00000000000043 /* LibraryCatalogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Library/LibraryCatalogView.swift; sourceTree = "<group>"; };
+		B20000012C00000000000022 /* LibraryCatalogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/LibraryCatalogTests.swift; sourceTree = "<group>"; };
+		B20000012C00000000000023 /* LibraryCatalogViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/LibraryCatalogViewModelTests.swift; sourceTree = "<group>"; };
+		B20000012C00000000000024 /* LibraryCatalogViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/LibraryCatalogViewTests.swift; sourceTree = "<group>"; };
+		A20000012C00000000000044 /* NodeModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Node/NodeModels.swift; sourceTree = "<group>"; };
+		A20000012C00000000000045 /* NodeResponseDTO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Node/NodeResponseDTO.swift; sourceTree = "<group>"; };
+		A20000012C00000000000046 /* AuthenticatedNodeRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Node/AuthenticatedNodeRepository.swift; sourceTree = "<group>"; };
+		B20000012C00000000000025 /* NodeBrowserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NodeBrowserTests.swift; sourceTree = "<group>"; };
+		A20000012C00000000000047 /* NodeBrowserViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Node/NodeBrowserViewModel.swift; sourceTree = "<group>"; };
+		A20000012C00000000000048 /* NodeBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Node/NodeBrowserView.swift; sourceTree = "<group>"; };
+		B20000012C00000000000026 /* NodeBrowserViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NodeBrowserViewModelTests.swift; sourceTree = "<group>"; };
+		B20000012C00000000000027 /* NodeBrowserViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NodeBrowserViewTests.swift; sourceTree = "<group>"; };
+		A20000012C00000000000049 /* NodeFileDetailsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Node/NodeFileDetailsViewModel.swift; sourceTree = "<group>"; };
+		A20000012C00000000000050 /* NodeFileDetailsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Node/NodeFileDetailsView.swift; sourceTree = "<group>"; };
+		B20000012C00000000000028 /* NodeFileDetailsViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NodeFileDetailsViewModelTests.swift; sourceTree = "<group>"; };
+		A20000012C00000000000051 /* ClientMutationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Mutation/ClientMutationModels.swift; sourceTree = "<group>"; };
+		A20000012C00000000000052 /* ClientMutationResponseDTO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Mutation/ClientMutationResponseDTO.swift; sourceTree = "<group>"; };
+		A20000012C00000000000053 /* AuthenticatedClientMutationRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Mutation/AuthenticatedClientMutationRepository.swift; sourceTree = "<group>"; };
+		B20000012C00000000000029 /* ClientMutationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/ClientMutationTests.swift; sourceTree = "<group>"; };
+		A20000012C00000000000054 /* SyncCheckpointModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Mutation/SyncCheckpointModels.swift; sourceTree = "<group>"; };
+		A20000012C00000000000055 /* MutationQueueModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Mutation/MutationQueueModels.swift; sourceTree = "<group>"; };
+		A20000012C00000000000056 /* SyncCheckpointResponseDTO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Mutation/SyncCheckpointResponseDTO.swift; sourceTree = "<group>"; };
+		A20000012C00000000000057 /* MutationPersistenceCodec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Mutation/MutationPersistenceCodec.swift; sourceTree = "<group>"; };
+		A20000012C00000000000058 /* SyncCheckpointService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Mutation/SyncCheckpointService.swift; sourceTree = "<group>"; };
+		A20000012C00000000000059 /* DurableMutationQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Mutation/DurableMutationQueue.swift; sourceTree = "<group>"; };
+		A20000012C0000000000005B /* MutationDrainCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Mutation/MutationDrainCoordinator.swift; sourceTree = "<group>"; };
+		A20000012C0000000000005A /* MutationQueueSQLiteStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/MutationQueueSQLiteStore.swift; sourceTree = "<group>"; };
+		A20000012C00000000000060 /* MetadataMutationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Mutation/MetadataMutationService.swift; sourceTree = "<group>"; };
+		A20000012C00000000000061 /* MetadataMutationViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Mutation/MetadataMutationViewModel.swift; sourceTree = "<group>"; };
+		A20000012C00000000000062 /* MetadataMutationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Mutation/MetadataMutationView.swift; sourceTree = "<group>"; };
+		A20000012C00000000000063 /* OfflineNodeBrowserService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Node/OfflineNodeBrowserService.swift; sourceTree = "<group>"; };
+		B20000012C00000000000063 /* OfflineNodeBrowserServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/OfflineNodeBrowserServiceTests.swift; sourceTree = "<group>"; };
+		B20000012C00000000000030 /* MetadataMutationFeatureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/MetadataMutationFeatureTests.swift; sourceTree = "<group>"; };
+		B20000012C0000000000002A /* MutationQueueTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/MutationQueueTestSupport.swift; sourceTree = "<group>"; };
+		B20000012C0000000000002B /* MutationQueueSQLiteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/MutationQueueSQLiteTests.swift; sourceTree = "<group>"; };
+		B20000012C0000000000002F /* MutationRecoverySQLiteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/MutationRecoverySQLiteTests.swift; sourceTree = "<group>"; };
+		B20000012C0000000000002C /* SyncCheckpointTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SyncCheckpointTests.swift; sourceTree = "<group>"; };
+		B20000012C0000000000002D /* DurableMutationQueueTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/DurableMutationQueueTests.swift; sourceTree = "<group>"; };
+		B20000012C0000000000002E /* MutationDrainCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/MutationDrainCoordinatorTests.swift; sourceTree = "<group>"; };
+		265EE87233579198D3DA626B /* SyncFeedModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Sync/SyncFeedModels.swift; sourceTree = "<group>"; };
+		56D2AF75CC46AC4FB8233D9B /* SyncFeedResponseDTO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Sync/SyncFeedResponseDTO.swift; sourceTree = "<group>"; };
+		3A36E2B84BD8A0E0672444A6 /* SyncFeedService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Sync/SyncFeedService.swift; sourceTree = "<group>"; };
+		0423AAA62F4F6BC6A7BBA61D /* SyncAckService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Sync/SyncAckService.swift; sourceTree = "<group>"; };
+		2D34F3CB4D50E8EE1331253A /* SyncFeedTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SyncFeedTestSupport.swift; sourceTree = "<group>"; };
+		D2CF54A2FD4A7EBC9DCB1279 /* SyncFeedTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SyncFeedTests.swift; sourceTree = "<group>"; };
+		8616BD8EB6E80FB92015D2C9 /* InboundSyncSQLiteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/InboundSyncSQLiteTests.swift; sourceTree = "<group>"; };
+		F703B8ECE495228C01537310 /* SyncAckTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SyncAckTests.swift; sourceTree = "<group>"; };
+		1506A7EE877F6A1827A67672 /* NodeProjectionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Sync/NodeProjectionModels.swift; sourceTree = SOURCE_ROOT; };
+		18D1B89EE80A793C0E5A43F5 /* SyncNodeMaterializer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Sync/SyncNodeMaterializer.swift; sourceTree = SOURCE_ROOT; };
+		B62A620E14AACDAE05C1A491 /* SyncFeedApplicationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Sync/SyncFeedApplicationService.swift; sourceTree = SOURCE_ROOT; };
+		9C2B605C452792053A247DF6 /* NodeProjectionSQLiteSchema.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/NodeProjectionSQLiteSchema.swift; sourceTree = SOURCE_ROOT; };
+		2470ECCC03C9F9EF448B81DC /* CommittedSQLiteSyncProjectionStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/CommittedSQLiteSyncProjectionStorage.swift; sourceTree = SOURCE_ROOT; };
+		045E037D95FD1DB835C55948 /* SQLiteNodeProjectionRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/SQLiteNodeProjectionRepository.swift; sourceTree = SOURCE_ROOT; };
+		D6D744BBB2507CD761006ECA /* NodeProjectionTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NodeProjectionTestSupport.swift; sourceTree = SOURCE_ROOT; };
+		2D8A32CED97CF1B91273DF7A /* NodeProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NodeProjectionTests.swift; sourceTree = SOURCE_ROOT; };
+		9FBD63B5BE62328C2FF4A716 /* NodeProjectionSQLiteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NodeProjectionSQLiteTests.swift; sourceTree = SOURCE_ROOT; };
+		F0617D440657E182F0461976 /* CommittedProjectionAckTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/CommittedProjectionAckTests.swift; sourceTree = SOURCE_ROOT; };
+		0BC1C985AD6B117F8D90753B /* InboundSyncModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Sync/InboundSyncModels.swift; sourceTree = SOURCE_ROOT; };
+		0CEF6D936D5C97440AB34212 /* InboundSyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Sync/InboundSyncCoordinator.swift; sourceTree = SOURCE_ROOT; };
+		1816EB6C8D07DBA8C70C6D69 /* SyncStatusViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Sync/SyncStatusViewModel.swift; sourceTree = SOURCE_ROOT; };
+		703A4772C1E48412091F9DFA /* SyncStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Sync/SyncStatusView.swift; sourceTree = SOURCE_ROOT; };
+		5ACC470B3EFFFF0DD1C6EE70 /* InboundSyncTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/InboundSyncTestSupport.swift; sourceTree = SOURCE_ROOT; };
+		C05935A31E1D6A3CD9111DF9 /* InboundSyncCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/InboundSyncCoordinatorTests.swift; sourceTree = SOURCE_ROOT; };
+		16EEBD2222FE64206514A30F /* InboundSyncRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/InboundSyncRecoveryTests.swift; sourceTree = SOURCE_ROOT; };
+		C08D8E26A94145FC6362A2C9 /* InboundSyncRaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/InboundSyncRaceTests.swift; sourceTree = SOURCE_ROOT; };
+		5FB2DF3EA7D3D3FE25CB4EB2 /* SyncStatusViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SyncStatusViewModelTests.swift; sourceTree = SOURCE_ROOT; };
+		EFD9B7F299C222C9EEAA40CA /* RebaselineCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Sync/RebaselineCoordinator.swift; sourceTree = SOURCE_ROOT; };
+		9FD41238F3993337F6412F34 /* RebaselineModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Sync/RebaselineModels.swift; sourceTree = SOURCE_ROOT; };
+		588BDD6E4DBAB1BD7D244905 /* RebaselineResponseDTO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Sync/RebaselineResponseDTO.swift; sourceTree = SOURCE_ROOT; };
+		F8D39932E16668D07EBEBBAA /* SnapshotNodeInformationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Node/SnapshotNodeInformationView.swift; sourceTree = SOURCE_ROOT; };
+		963FE3B7E9B4442A09E3774A /* RebaselineProgressView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Sync/RebaselineProgressView.swift; sourceTree = SOURCE_ROOT; };
+		748071FD61D4A0F5C552D930 /* RebaselineViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Sync/RebaselineViewModel.swift; sourceTree = SOURCE_ROOT; };
+		0D9D19510F1D0C3C99DC28C8 /* RebaselineSQLiteSchema.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/RebaselineSQLiteSchema.swift; sourceTree = SOURCE_ROOT; };
+		B1708FBE19416AD871E9362A /* RebaselineManifestTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RebaselineManifestTests.swift; sourceTree = SOURCE_ROOT; };
+		3693670952CA52DF939D8B6F /* RebaselineRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RebaselineRecoveryTests.swift; sourceTree = SOURCE_ROOT; };
+		E4668B9789833FF0BC08A675 /* RebaselineSQLiteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RebaselineSQLiteTests.swift; sourceTree = SOURCE_ROOT; };
+		48A50FE4074DC3FE80E150B7 /* RebaselineTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RebaselineTestSupport.swift; sourceTree = SOURCE_ROOT; };
+		CC2DF63C5E99FBCF162759DA /* RebaselineTransportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RebaselineTransportTests.swift; sourceTree = SOURCE_ROOT; };
+		2216F53B7F46969E3706CD88 /* RebaselineViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/RebaselineViewModelTests.swift; sourceTree = SOURCE_ROOT; };
+		E06C3376C533FC0637467BB0 /* FileDownloadCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Transfer/FileDownloadCoordinator.swift; sourceTree = SOURCE_ROOT; };
+		68F7F2EA0993343912CC6BAC /* DownloadModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Transfer/DownloadModels.swift; sourceTree = SOURCE_ROOT; };
+		DA533E0BAC4CDA064AF3543A /* FileDownloadControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Transfer/FileDownloadControls.swift; sourceTree = SOURCE_ROOT; };
+		4652379DBFD84AF77265A9B7 /* FileDownloadViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Transfer/FileDownloadViewModel.swift; sourceTree = SOURCE_ROOT; };
+		006D173DB468FE1DC723C87E /* FileDownloadSQLiteSchema.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/FileDownloadSQLiteSchema.swift; sourceTree = SOURCE_ROOT; };
+		06CEACE1A31500BDFE8757D5 /* DownloadStagingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Transfer/DownloadStagingStore.swift; sourceTree = SOURCE_ROOT; };
+		05C741B7BFA922610FD7B6F8 /* FileDownloadMetadataTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/FileDownloadMetadataTests.swift; sourceTree = SOURCE_ROOT; };
+		489608E1168B757870E4810F /* FileDownloadRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/FileDownloadRecoveryTests.swift; sourceTree = SOURCE_ROOT; };
+		A6175B6AD63FFCA57CE2D9EF /* FileDownloadStorageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/FileDownloadStorageTests.swift; sourceTree = SOURCE_ROOT; };
+		F048EBC5B64ADE5F36AF11FD /* FileDownloadTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/FileDownloadTestSupport.swift; sourceTree = SOURCE_ROOT; };
+		684D9961DEEB79F122D0D932 /* FileDownloadTransportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/FileDownloadTransportTests.swift; sourceTree = SOURCE_ROOT; };
+		4F3BE8AEB820E1DB56833850 /* FileDownloadViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/FileDownloadViewTests.swift; sourceTree = SOURCE_ROOT; };
+		B3962B8ACF4A77E1DBF3F383 /* FileVersionResponseDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Transfer/FileVersionResponseDecoder.swift; sourceTree = SOURCE_ROOT; };
+		C1DAFC3C7BFFB910A07D552B /* URLSessionFileContentTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Network/URLSessionFileContentTransport.swift; sourceTree = SOURCE_ROOT; };
+		F04400000000000000000001 /* VerifiedFileExportCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Transfer/VerifiedFileExportCoordinator.swift; sourceTree = SOURCE_ROOT; };
+		F04400000000000000000002 /* FileExportPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Transfer/FileExportPresentation.swift; sourceTree = SOURCE_ROOT; };
+		F04400000000000000000003 /* VerifiedFileExportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/VerifiedFileExportTests.swift; sourceTree = SOURCE_ROOT; };
+		F04400000000000000000004 /* QuickLook.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuickLook.framework; path = System/Library/Frameworks/QuickLook.framework; sourceTree = SDKROOT; };
+		A14500000000000000000001 /* UploadModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Transfer/UploadModels.swift; sourceTree = SOURCE_ROOT; };
+		A14500000000000000000002 /* UploadSessionDTO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Transfer/UploadSessionDTO.swift; sourceTree = SOURCE_ROOT; };
+		A14500000000000000000003 /* AuthenticatedUploadRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Transfer/AuthenticatedUploadRepository.swift; sourceTree = SOURCE_ROOT; };
+		A14500000000000000000004 /* FileUploadCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Transfer/FileUploadCoordinator.swift; sourceTree = SOURCE_ROOT; };
+		A14500000000000000000005 /* URLSessionRawUploadTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Network/URLSessionRawUploadTransport.swift; sourceTree = SOURCE_ROOT; };
+		A14500000000000000000006 /* FileUploadSQLiteSchema.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/FileUploadSQLiteSchema.swift; sourceTree = SOURCE_ROOT; };
+		A14500000000000000000007 /* UploadStagingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Transfer/UploadStagingStore.swift; sourceTree = SOURCE_ROOT; };
+		A14500000000000000000008 /* FileUploadViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Transfer/FileUploadViewModel.swift; sourceTree = SOURCE_ROOT; };
+		A14500000000000000000009 /* FileUploadControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Transfer/FileUploadControls.swift; sourceTree = SOURCE_ROOT; };
+		B14500000000000000000001 /* FileUploadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/FileUploadTests.swift; sourceTree = SOURCE_ROOT; };
+		B14500000000000000000002 /* FileUploadStorageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/FileUploadStorageTests.swift; sourceTree = SOURCE_ROOT; };
+		B14500000000000000000003 /* FileUploadViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/FileUploadViewTests.swift; sourceTree = SOURCE_ROOT; };
+		B14500000000000000000004 /* FileUploadCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/FileUploadCoordinatorTests.swift; sourceTree = SOURCE_ROOT; };
+		A14600000000000000000001 /* BackgroundUploadAppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/BackgroundUploadAppDelegate.swift; sourceTree = SOURCE_ROOT; };
+		A14600000000000000000002 /* BackgroundUploadModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Transfer/BackgroundUploadModels.swift; sourceTree = SOURCE_ROOT; };
+		A14600000000000000000003 /* URLSessionBackgroundUploadTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Network/URLSessionBackgroundUploadTransport.swift; sourceTree = SOURCE_ROOT; };
+		A14600000000000000000004 /* BackgroundUploadSQLiteSchema.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/BackgroundUploadSQLiteSchema.swift; sourceTree = SOURCE_ROOT; };
+		A14600000000000000000005 /* BackgroundUploadCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Transfer/BackgroundUploadCoordinator.swift; sourceTree = SOURCE_ROOT; };
+		B14600000000000000000001 /* BackgroundUploadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/BackgroundUploadTests.swift; sourceTree = SOURCE_ROOT; };
+		F31907F25107A94AB4B6A8E1 /* SavedMetadataInspectionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Session/SavedMetadataInspectionService.swift; sourceTree = SOURCE_ROOT; };
+		0BC94AA66A9ECC8E87A1ED9A /* ClientRecoveryPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Recovery/ClientRecoveryPresentation.swift; sourceTree = SOURCE_ROOT; };
+		6558A9B854C1C7BA499D83F2 /* ClientRecoveryNotice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Recovery/ClientRecoveryNotice.swift; sourceTree = SOURCE_ROOT; };
+		1947D2701B9728AC34DE5E28 /* SavedMetadataInspectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Node/SavedMetadataInspectionView.swift; sourceTree = SOURCE_ROOT; };
+		9F1E19F9428AF1DF73E9BFDF /* ClientRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/ClientRecoveryTests.swift; sourceTree = SOURCE_ROOT; };
+		4A853EF3DEF7C73656541699 /* SavedMetadataInspectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SavedMetadataInspectionTests.swift; sourceTree = SOURCE_ROOT; };
+		946AD1158EBB2121EFFAF371 /* SessionAuthorizationEvidence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Session/SessionAuthorizationEvidence.swift; sourceTree = SOURCE_ROOT; };
+		4A7E05B094D52716E1A53F2D /* SessionAuthorizationSQLiteSchema.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/SessionAuthorizationSQLiteSchema.swift; sourceTree = SOURCE_ROOT; };
+		7F26B1BBC83859745335440A /* SessionAuthorizationEvidenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/SessionAuthorizationEvidenceTests.swift; sourceTree = SOURCE_ROOT; };
+		279B180822365E045C50222F /* BackgroundSyncModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Sync/BackgroundSyncModels.swift; sourceTree = "<group>"; };
+		A8BECB1B2CD31A5E8B85868E /* BackgroundSyncPolicyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/BackgroundSyncPolicyStore.swift; sourceTree = "<group>"; };
+		335283A52D12E164B78B0242 /* BackgroundSyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Sync/BackgroundSyncCoordinator.swift; sourceTree = "<group>"; };
+		BBFA5A4BEFBF16E2476E9859 /* BackgroundSyncWork.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Sync/BackgroundSyncWork.swift; sourceTree = "<group>"; };
+		09CF4B332ED918E7544A9422 /* BGAppRefreshScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/BGAppRefreshScheduler.swift; sourceTree = "<group>"; };
+		203769543FF1B3B3D3C78604 /* BackgroundSyncHTTPTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Network/BackgroundSyncHTTPTransport.swift; sourceTree = "<group>"; };
+		F6C037BA9750328950167AB7 /* BackgroundSyncSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Sync/BackgroundSyncSettingsView.swift; sourceTree = "<group>"; };
+		DCD8D14E315C816297696D9D /* BackgroundSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/BackgroundSyncTests.swift; sourceTree = "<group>"; };
+		60BCE18634BF3EE4464F65D3 /* BackgroundSyncSafetyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/BackgroundSyncSafetyTests.swift; sourceTree = "<group>"; };
+		1BA064361A552A8A8E35F119 /* NotificationAuthority.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Notifications/NotificationAuthority.swift; sourceTree = "<group>"; };
+		0A711BF77725FBC9886D0C16 /* NotificationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Notifications/NotificationCoordinator.swift; sourceTree = "<group>"; };
+		E0BB30B991322B4AC1D795A5 /* NotificationEventClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Notifications/NotificationEventClassifier.swift; sourceTree = "<group>"; };
+		2B6102408BF43F0912EE6B22 /* NotificationNavigationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/Notifications/NotificationNavigationCoordinator.swift; sourceTree = "<group>"; };
+		A4469203EB5D5C8B5F3BDC76 /* NotificationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Domain/Notifications/NotificationModels.swift; sourceTree = "<group>"; };
+		FA1546827CAF8807D0F2C78C /* NotificationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Notifications/NotificationSettingsView.swift; sourceTree = "<group>"; };
+		8AE8511FABF9B0710730E88F /* NotificationDeliveryLedger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/NotificationDeliveryLedger.swift; sourceTree = "<group>"; };
+		5E2182A4A0FE2C0C0FF1D236 /* NotificationPolicyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Persistence/NotificationPolicyStore.swift; sourceTree = "<group>"; };
+		CA148338BF8371B6D1B1B561 /* NotificationCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NotificationCoordinatorTests.swift; sourceTree = "<group>"; };
+		14E92E245522CB34A8673D97 /* NotificationEligibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NotificationEligibilityTests.swift; sourceTree = "<group>"; };
+		FFBBE07F34D6F54E77E9AE81 /* NotificationNavigationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NotificationNavigationTests.swift; sourceTree = "<group>"; };
+		4CC578BD3F030978744DFBFA /* NotificationPersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NotificationPersistenceTests.swift; sourceTree = "<group>"; };
+		9614A75B0F1C8683336D2C88 /* NotificationTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NotificationTestSupport.swift; sourceTree = "<group>"; };
+		428F4A5A54D6FE89956DB72C /* NotificationViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/NotificationViewTests.swift; sourceTree = "<group>"; };
+		ABCA2C67CA1F0A896F77500C /* LocalNotificationScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Infrastructure/Notifications/LocalNotificationScheduler.swift; sourceTree = "<group>"; };
+		F05300000000000000000101 /* FileProviderDomainIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderDomainIdentity.swift; sourceTree = "<group>"; };
+		F05300000000000000000102 /* FileProviderItemIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderItemIdentity.swift; sourceTree = "<group>"; };
+		F05300000000000000000103 /* FileProviderCapability.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderCapability.swift; sourceTree = "<group>"; };
+		F05300000000000000000104 /* FileProviderAuthorizationBoundary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderAuthorizationBoundary.swift; sourceTree = "<group>"; };
+		F05300000000000000000105 /* FileProviderSharedContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderSharedContainer.swift; sourceTree = "<group>"; };
+		F05300000000000000000106 /* FileProviderMetadataContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderMetadataContract.swift; sourceTree = "<group>"; };
+		F05300000000000000000107 /* FileProviderErrorMapper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderErrorMapper.swift; sourceTree = "<group>"; };
+		F05300000000000000000108 /* FileProviderEnumerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderEnumerator.swift; sourceTree = "<group>"; };
+		F05300000000000000000109 /* FileProviderLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderLifecycle.swift; sourceTree = "<group>"; };
+		F0530000000000000000010A /* SynveilFileProviderExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SynveilFileProviderExtension.swift; sourceTree = "<group>"; };
+		F0530000000000000000010B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		F0530000000000000000010C /* FileProvider.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FileProvider.entitlements; sourceTree = "<group>"; };
+		F0530000000000000000010D /* FileProvider README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		F0530000000000000000010F /* SynveilFileProviderExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SynveilFileProviderExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		F05300000000000000000110 /* FileProvider.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = FileProvider.framework; path = System/Library/Frameworks/FileProvider.framework; sourceTree = SDKROOT; };
+		F05300000000000000000111 /* FileProviderFoundationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/FileProviderFoundationTests.swift; sourceTree = "<group>"; };
+		F05300000000000000000112 /* Synveil.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App/Synveil.entitlements; sourceTree = "<group>"; };
+		F05400000000000000000001 /* FileProviderGenerationContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderGenerationContract.swift; sourceTree = "<group>"; };
+		F05400000000000000000002 /* FileProviderGenerationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderGenerationStore.swift; sourceTree = "<group>"; };
+		F05400000000000000000003 /* FileProviderMetadataReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderMetadataReader.swift; sourceTree = "<group>"; };
+		F05400000000000000000004 /* FileProviderMetadataSignaling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderMetadataSignaling.swift; sourceTree = "<group>"; };
+		F05400000000000000000005 /* SynveilFileProviderItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SynveilFileProviderItem.swift; sourceTree = "<group>"; };
+		F05400000000000000000006 /* FileProviderMetadataPublicationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Application/FileProvider/FileProviderMetadataPublicationCoordinator.swift; sourceTree = "<group>"; };
+		F05400000000000000000007 /* FileProviderEnumerationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/SynveilTests/FileProviderEnumerationTests.swift; sourceTree = "<group>"; };
+		F05400000000000000000008 /* FileProviderContainerSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderContainerSnapshot.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A30000012C00000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B04400000000000000000004 /* QuickLook.framework in Frameworks */,
+				E05800000000000000000004 /* Network.framework in Frameworks */,
+				A10000012C00000000000038 /* Security.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B30000012C00000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B10000012C0000000000001E /* Security.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D05300000000000000000304 /* FileProvider Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (E0530000000000000000021B /* FileProvider.framework in Frameworks */,); runOnlyForDeploymentPostprocessing = 0; };
+
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A40000012C00000000000001 = {
+			isa = PBXGroup;
+			children = (
+				F05600000000000000000001 /* PhotoPermissionState.swift */,
+				F05600000000000000000002 /* PhotoAssetTypes.swift */,
+				F05600000000000000000003 /* PhotoObservationModels.swift */,
+				F05600000000000000000004 /* PhotoBackupConfiguration.swift */,
+				F05600000000000000000005 /* PhotoServiceProtocols.swift */,
+				F05600000000000000000006 /* PhotoLibraryPermissionAdapter.swift */,
+				F05600000000000000000007 /* PhotoLibraryDiscoveryService.swift */,
+				F05600000000000000000008 /* PhotoLibraryChangeObserverAdapter.swift */,
+				F05600000000000000000009 /* PhotoObservationSQLiteSchema.swift */,
+				F0560000000000000000000A /* PhotoObservationSQLiteStore.swift */,
+				F0560000000000000000000B /* PhotoLibraryObservationCoordinator.swift */,
+				F0560000000000000000000C /* PhotoBackupSettingsViewModel.swift */,
+				F0560000000000000000000D /* PhotoBackupSettingsView.swift */,
+				F0560000000000000000000E /* PhotoKitFoundationTests.swift */,
+				F05700000000000000000007 /* PhotoResourceTransferTests.swift */,
+				F05700000000000000000001 /* PhotoResourceTransferModels.swift */,
+				F05700000000000000000002 /* PhotoKitResourceExtractionSource.swift */,
+				F05700000000000000000003 /* ActivePhotoTransferContextProvider.swift */,
+				F05700000000000000000004 /* PhotoResourceExtractionCoordinator.swift */,
+				F05700000000000000000005 /* PhotoResourceStagingCoordinator.swift */,
+				F05700000000000000000006 /* PhotoResourceUploadHandoffCoordinator.swift */,
+				F05800000000000000000001 /* PhotoBackupForegroundWorker.swift */,
+				F05800000000000000000002 /* PhotoBackupQueueModels.swift */,
+				F05800000000000000000003 /* PhotoBackupNetworkPathMonitor.swift */,
+				F05800000000000000000004 /* Network.framework */,
+				ABCA2C67CA1F0A896F77500C /* LocalNotificationScheduler.swift */,
+				428F4A5A54D6FE89956DB72C /* NotificationViewTests.swift */,
+				9614A75B0F1C8683336D2C88 /* NotificationTestSupport.swift */,
+				4CC578BD3F030978744DFBFA /* NotificationPersistenceTests.swift */,
+				FFBBE07F34D6F54E77E9AE81 /* NotificationNavigationTests.swift */,
+				14E92E245522CB34A8673D97 /* NotificationEligibilityTests.swift */,
+				CA148338BF8371B6D1B1B561 /* NotificationCoordinatorTests.swift */,
+				5E2182A4A0FE2C0C0FF1D236 /* NotificationPolicyStore.swift */,
+				8AE8511FABF9B0710730E88F /* NotificationDeliveryLedger.swift */,
+				FA1546827CAF8807D0F2C78C /* NotificationSettingsView.swift */,
+				A4469203EB5D5C8B5F3BDC76 /* NotificationModels.swift */,
+				2B6102408BF43F0912EE6B22 /* NotificationNavigationCoordinator.swift */,
+				E0BB30B991322B4AC1D795A5 /* NotificationEventClassifier.swift */,
+				0A711BF77725FBC9886D0C16 /* NotificationCoordinator.swift */,
+				1BA064361A552A8A8E35F119 /* NotificationAuthority.swift */,
+				60BCE18634BF3EE4464F65D3 /* BackgroundSyncSafetyTests.swift */,
+				DCD8D14E315C816297696D9D /* BackgroundSyncTests.swift */,
+				F6C037BA9750328950167AB7 /* BackgroundSyncSettingsView.swift */,
+				203769543FF1B3B3D3C78604 /* BackgroundSyncHTTPTransport.swift */,
+				09CF4B332ED918E7544A9422 /* BGAppRefreshScheduler.swift */,
+				BBFA5A4BEFBF16E2476E9859 /* BackgroundSyncWork.swift */,
+				335283A52D12E164B78B0242 /* BackgroundSyncCoordinator.swift */,
+				A8BECB1B2CD31A5E8B85868E /* BackgroundSyncPolicyStore.swift */,
+				279B180822365E045C50222F /* BackgroundSyncModels.swift */,
+				7F26B1BBC83859745335440A /* SessionAuthorizationEvidenceTests.swift */,
+				4A7E05B094D52716E1A53F2D /* SessionAuthorizationSQLiteSchema.swift */,
+				946AD1158EBB2121EFFAF371 /* SessionAuthorizationEvidence.swift */,
+				4A853EF3DEF7C73656541699 /* SavedMetadataInspectionTests.swift */,
+				9F1E19F9428AF1DF73E9BFDF /* ClientRecoveryTests.swift */,
+				1947D2701B9728AC34DE5E28 /* SavedMetadataInspectionView.swift */,
+				6558A9B854C1C7BA499D83F2 /* ClientRecoveryNotice.swift */,
+				0BC94AA66A9ECC8E87A1ED9A /* ClientRecoveryPresentation.swift */,
+				F31907F25107A94AB4B6A8E1 /* SavedMetadataInspectionService.swift */,
+				A14500000000000000000001 /* UploadModels.swift */,
+				A14500000000000000000002 /* UploadSessionDTO.swift */,
+				A14500000000000000000003 /* AuthenticatedUploadRepository.swift */,
+				A14500000000000000000004 /* FileUploadCoordinator.swift */,
+				A14500000000000000000005 /* URLSessionRawUploadTransport.swift */,
+				A14500000000000000000006 /* FileUploadSQLiteSchema.swift */,
+				A14500000000000000000007 /* UploadStagingStore.swift */,
+				A14500000000000000000008 /* FileUploadViewModel.swift */,
+				A14500000000000000000009 /* FileUploadControls.swift */,
+				A14600000000000000000005 /* BackgroundUploadCoordinator.swift */,
+				A14600000000000000000004 /* BackgroundUploadSQLiteSchema.swift */,
+				A14600000000000000000003 /* URLSessionBackgroundUploadTransport.swift */,
+				A14600000000000000000002 /* BackgroundUploadModels.swift */,
+				A14600000000000000000001 /* BackgroundUploadAppDelegate.swift */,
+				F04400000000000000000001 /* VerifiedFileExportCoordinator.swift */,
+				F04400000000000000000002 /* FileExportPresentation.swift */,
+				F04400000000000000000003 /* VerifiedFileExportTests.swift */,
+				F04400000000000000000004 /* QuickLook.framework */,
+				C1DAFC3C7BFFB910A07D552B /* URLSessionFileContentTransport.swift */,
+				B3962B8ACF4A77E1DBF3F383 /* FileVersionResponseDecoder.swift */,
+				4F3BE8AEB820E1DB56833850 /* FileDownloadViewTests.swift */,
+				684D9961DEEB79F122D0D932 /* FileDownloadTransportTests.swift */,
+				F048EBC5B64ADE5F36AF11FD /* FileDownloadTestSupport.swift */,
+				A6175B6AD63FFCA57CE2D9EF /* FileDownloadStorageTests.swift */,
+				489608E1168B757870E4810F /* FileDownloadRecoveryTests.swift */,
+				05C741B7BFA922610FD7B6F8 /* FileDownloadMetadataTests.swift */,
+				06CEACE1A31500BDFE8757D5 /* DownloadStagingStore.swift */,
+				006D173DB468FE1DC723C87E /* FileDownloadSQLiteSchema.swift */,
+				4652379DBFD84AF77265A9B7 /* FileDownloadViewModel.swift */,
+				DA533E0BAC4CDA064AF3543A /* FileDownloadControls.swift */,
+				68F7F2EA0993343912CC6BAC /* DownloadModels.swift */,
+				E06C3376C533FC0637467BB0 /* FileDownloadCoordinator.swift */,
+				EFD9B7F299C222C9EEAA40CA /* RebaselineCoordinator.swift */,
+				9FD41238F3993337F6412F34 /* RebaselineModels.swift */,
+				588BDD6E4DBAB1BD7D244905 /* RebaselineResponseDTO.swift */,
+				F8D39932E16668D07EBEBBAA /* SnapshotNodeInformationView.swift */,
+				963FE3B7E9B4442A09E3774A /* RebaselineProgressView.swift */,
+				748071FD61D4A0F5C552D930 /* RebaselineViewModel.swift */,
+				0D9D19510F1D0C3C99DC28C8 /* RebaselineSQLiteSchema.swift */,
+				B1708FBE19416AD871E9362A /* RebaselineManifestTests.swift */,
+				3693670952CA52DF939D8B6F /* RebaselineRecoveryTests.swift */,
+				E4668B9789833FF0BC08A675 /* RebaselineSQLiteTests.swift */,
+				48A50FE4074DC3FE80E150B7 /* RebaselineTestSupport.swift */,
+				CC2DF63C5E99FBCF162759DA /* RebaselineTransportTests.swift */,
+				2216F53B7F46969E3706CD88 /* RebaselineViewModelTests.swift */,
+				A40000012C00000000000002 /* App */,
+				A40000012C00000000000015 /* Features */,
+				A40000012C00000000000011 /* Domain */,
+				A40000012C00000000000012 /* Application */,
+				A40000012C00000000000013 /* Infrastructure */,
+				A40000012C00000000000003 /* Resources */,
+				F0530000000000000000010E /* FileProvider */,
+				F05400000000000000000006 /* FileProviderMetadataPublicationCoordinator.swift */,
+				F05300000000000000000112 /* Synveil.entitlements */,
+				F05300000000000000000110 /* FileProvider.framework */,
+				B40000012C00000000000001 /* Tests */,
+				A40000012C00000000000004 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+				A40000012C00000000000015 /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				703A4772C1E48412091F9DFA /* SyncStatusView.swift */,
+				1816EB6C8D07DBA8C70C6D69 /* SyncStatusViewModel.swift */,
+				0CEF6D936D5C97440AB34212 /* InboundSyncCoordinator.swift */,
+				0BC1C985AD6B117F8D90753B /* InboundSyncModels.swift */,
+				045E037D95FD1DB835C55948 /* SQLiteNodeProjectionRepository.swift */,
+				2470ECCC03C9F9EF448B81DC /* CommittedSQLiteSyncProjectionStorage.swift */,
+				9C2B605C452792053A247DF6 /* NodeProjectionSQLiteSchema.swift */,
+				B62A620E14AACDAE05C1A491 /* SyncFeedApplicationService.swift */,
+				18D1B89EE80A793C0E5A43F5 /* SyncNodeMaterializer.swift */,
+				1506A7EE877F6A1827A67672 /* NodeProjectionModels.swift */,
+				A20000012C00000000000053 /* AuthenticatedClientMutationRepository.swift */,
+				A20000012C00000000000052 /* ClientMutationResponseDTO.swift */,
+				A20000012C00000000000051 /* ClientMutationModels.swift */,
+				A20000012C0000000000003D /* AuthenticationRecoveryView.swift */,
+				A20000012C0000000000003C /* AuthenticationRecoveryPresentation.swift */,
+				A40000012C00000000000017 /* Library */,
+				A40000012C00000000000018 /* Node */,
+				A40000012C0000000000001B /* Mutation */,
+				A40000012C00000000000016 /* Onboarding */,
+			);
+			name = Features;
+			sourceTree = "<group>";
+		};
+		A40000012C0000000000001B /* Mutation */ = {
+			isa = PBXGroup;
+			children = (
+				A20000012C00000000000061 /* MetadataMutationViewModel.swift */,
+				A20000012C00000000000062 /* MetadataMutationView.swift */,
+			);
+			name = Mutation;
+			sourceTree = "<group>";
+		};
+		A40000012C00000000000017 /* Library */ = {
+			isa = PBXGroup;
+			children = (
+				A20000012C00000000000042 /* LibraryCatalogViewModel.swift */,
+				A20000012C00000000000043 /* LibraryCatalogView.swift */,
+			);
+			name = Library;
+			sourceTree = "<group>";
+		};
+		A40000012C00000000000018 /* Node */ = {
+			isa = PBXGroup;
+			children = (
+				A20000012C00000000000047 /* NodeBrowserViewModel.swift */,
+				A20000012C00000000000048 /* NodeBrowserView.swift */,
+				A20000012C00000000000050 /* NodeFileDetailsView.swift */,
+				A20000012C00000000000049 /* NodeFileDetailsViewModel.swift */,
+			);
+			name = Node;
+			sourceTree = "<group>";
+		};
+		A40000012C00000000000016 /* Onboarding */ = {
+			isa = PBXGroup;
+			children = (
+				A20000012C00000000000021 /* ServerSetupViewModel.swift */,
+				A20000012C00000000000022 /* ServerSetupView.swift */,
+				A20000012C00000000000027 /* ServerValidationViewModel.swift */,
+				A20000012C00000000000028 /* ServerValidationView.swift */,
+				A20000012C00000000000033 /* EnrollmentViewModel.swift */,
+				A20000012C00000000000034 /* EnrollmentView.swift */,
+			);
+			name = Onboarding;
+			sourceTree = "<group>";
+		};
+		A40000012C00000000000002 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				A20000012C00000000000001 /* SynveilApp.swift */,
+				A20000012C00000000000002 /* BootstrapView.swift */,
+				A20000012C00000000000005 /* AppDependencyContainer.swift */,
+				A20000012C00000000000006 /* RootView.swift */,
+			);
+			name = App;
+			sourceTree = "<group>";
+		};
+		A40000012C00000000000011 /* Domain */ = {
+			isa = PBXGroup;
+			children = (
+				56D2AF75CC46AC4FB8233D9B /* SyncFeedResponseDTO.swift */,
+				265EE87233579198D3DA626B /* SyncFeedModels.swift */,
+				A20000012C00000000000057 /* MutationPersistenceCodec.swift */,
+				A20000012C00000000000056 /* SyncCheckpointResponseDTO.swift */,
+				A20000012C00000000000055 /* MutationQueueModels.swift */,
+				A20000012C00000000000054 /* SyncCheckpointModels.swift */,
+				A20000012C0000000000003F /* LibraryResponseDTO.swift */,
+				A20000012C0000000000003E /* LibraryModels.swift */,
+				A20000012C00000000000011 /* EndpointValidationError.swift */,
+				A20000012C00000000000012 /* ServerEndpoint.swift */,
+				A20000012C00000000000015 /* HTTPMethod.swift */,
+				A20000012C00000000000016 /* HTTPTransportRequest.swift */,
+				A20000012C00000000000017 /* HTTPTransportResponse.swift */,
+				A20000012C00000000000018 /* HTTPTransportProtocol.swift */,
+				A20000012C00000000000023 /* SynveilTransportError.swift */,
+				A20000012C00000000000024 /* ServerProbeResult.swift */,
+				A20000012C0000000000003A /* AuthenticatedSessionValidationService.swift */,
+				A20000012C00000000000029 /* EnrollmentToken.swift */,
+				A20000012C0000000000002A /* DeviceCredential.swift */,
+				A20000012C0000000000002B /* DeviceCredentialRecord.swift */,
+				A20000012C00000000000036 /* DeviceCredentialSession.swift */,
+				A20000012C0000000000002C /* EnrollmentExchangeResult.swift */,
+				A20000012C0000000000002D /* EnrollmentState.swift */,
+				A20000012C0000000000002E /* ExchangeDeviceEnrollmentRequest.swift */,
+				A20000012C0000000000002F /* DeviceCredentialResponseDTO.swift */,
+				A20000012C00000000000031 /* EnrollmentExchangeServiceProtocol.swift */,
+				A20000012C00000000000032 /* EnrollmentExchangeService.swift */,
+				A20000012C00000000000025 /* ServerValidationService.swift */,
+			);
+			name = Domain;
+			sourceTree = "<group>";
+		};
+		A40000012C00000000000012 /* Application */ = {
+			isa = PBXGroup;
+			children = (
+				0423AAA62F4F6BC6A7BBA61D /* SyncAckService.swift */,
+				3A36E2B84BD8A0E0672444A6 /* SyncFeedService.swift */,
+				A20000012C00000000000059 /* DurableMutationQueue.swift */,
+				A20000012C00000000000060 /* MetadataMutationService.swift */,
+				A20000012C0000000000005B /* MutationDrainCoordinator.swift */,
+				A20000012C00000000000058 /* SyncCheckpointService.swift */,
+				A20000012C00000000000044 /* NodeModels.swift */,
+				A20000012C00000000000045 /* NodeResponseDTO.swift */,
+				A20000012C00000000000046 /* AuthenticatedNodeRepository.swift */,
+				A20000012C00000000000063 /* OfflineNodeBrowserService.swift */,
+				A20000012C00000000000041 /* AuthenticatedLibraryCatalogRepository.swift */,
+				A20000012C00000000000040 /* AuthenticatedLibraryRequestProvider.swift */,
+				A20000012C00000000000013 /* AppEnvironment.swift */,
+				A20000012C00000000000014 /* AppConfiguration.swift */,
+				A20000012C0000000000001F /* AppStartupState.swift */,
+				A20000012C00000000000020 /* SessionController.swift */,
+				A20000012C00000000000039 /* SessionRestorationService.swift */,
+				A20000012C0000000000003B /* SessionLogoutService.swift */,
+				A20000012C0000000000001E /* RustBridgeProtocol.swift */,
+				A20000012C00000000000030 /* SecureCredentialSinkProtocol.swift */,
+			);
+			name = Application;
+			sourceTree = "<group>";
+		};
+		A40000012C00000000000013 /* Infrastructure */ = {
+			isa = PBXGroup;
+			children = (
+				A20000012C0000000000005A /* MutationQueueSQLiteStore.swift */,
+				A40000012C00000000000014 /* RustBridge */,
+				A20000012C00000000000026 /* URLSessionHTTPTransport.swift */,
+				A20000012C00000000000037 /* KeychainCredentialStore.swift */,
+			);
+			name = Infrastructure;
+			sourceTree = "<group>";
+		};
+		A40000012C00000000000014 /* RustBridge */ = {
+			isa = PBXGroup;
+			children = (
+				A20000012C00000000000019 /* RustBridgeAdapter.swift */,
+				A20000012C0000000000001A /* RustBridgeStatus.swift */,
+				A20000012C0000000000001B /* RustBridgeError.swift */,
+				A20000012C0000000000001C /* RustBridgeExecutor.swift */,
+				A20000012C0000000000001D /* RustBridgeAsyncAdapter.swift */,
+			);
+			name = RustBridge;
+			sourceTree = "<group>";
+		};
+		A40000012C00000000000003 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				A20000012C00000000000003 /* Assets.xcassets */,
+			);
+			name = Resources;
+			sourceTree = "<group>";
+		};
+		A40000012C00000000000004 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A20000012C00000000000004 /* Synveil.app */,
+				B20000012C00000000000002 /* SynveilTests.xctest */,
+				F0530000000000000000010F /* SynveilFileProviderExtension.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		B40000012C00000000000001 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				B20000012C00000000000021 /* AuthenticationRecoveryTests.swift */,
+				B40000012C00000000000002 /* SynveilTests */,
+			);
+			name = Tests;
+			sourceTree = "<group>";
+		};
+		B40000012C00000000000002 /* SynveilTests */ = {
+			isa = PBXGroup;
+			children = (
+				F05300000000000000000111 /* FileProviderFoundationTests.swift */,
+				F05400000000000000000007 /* FileProviderEnumerationTests.swift */,
+				B14500000000000000000001 /* FileUploadTests.swift */,
+				B14500000000000000000002 /* FileUploadStorageTests.swift */,
+				B14500000000000000000003 /* FileUploadViewTests.swift */,
+				B14500000000000000000004 /* FileUploadCoordinatorTests.swift */,
+				B14600000000000000000001 /* BackgroundUploadTests.swift */,
+				5FB2DF3EA7D3D3FE25CB4EB2 /* SyncStatusViewModelTests.swift */,
+				C08D8E26A94145FC6362A2C9 /* InboundSyncRaceTests.swift */,
+				16EEBD2222FE64206514A30F /* InboundSyncRecoveryTests.swift */,
+				C05935A31E1D6A3CD9111DF9 /* InboundSyncCoordinatorTests.swift */,
+				5ACC470B3EFFFF0DD1C6EE70 /* InboundSyncTestSupport.swift */,
+				F0617D440657E182F0461976 /* CommittedProjectionAckTests.swift */,
+				9FBD63B5BE62328C2FF4A716 /* NodeProjectionSQLiteTests.swift */,
+				2D8A32CED97CF1B91273DF7A /* NodeProjectionTests.swift */,
+				D6D744BBB2507CD761006ECA /* NodeProjectionTestSupport.swift */,
+				F703B8ECE495228C01537310 /* SyncAckTests.swift */,
+				8616BD8EB6E80FB92015D2C9 /* InboundSyncSQLiteTests.swift */,
+				D2CF54A2FD4A7EBC9DCB1279 /* SyncFeedTests.swift */,
+				2D34F3CB4D50E8EE1331253A /* SyncFeedTestSupport.swift */,
+				B20000012C0000000000002D /* DurableMutationQueueTests.swift */,
+				B20000012C0000000000002E /* MutationDrainCoordinatorTests.swift */,
+				B20000012C0000000000002C /* SyncCheckpointTests.swift */,
+				B20000012C0000000000002B /* MutationQueueSQLiteTests.swift */,
+				B20000012C0000000000002F /* MutationRecoverySQLiteTests.swift */,
+				B20000012C0000000000002A /* MutationQueueTestSupport.swift */,
+				B20000012C00000000000029 /* ClientMutationTests.swift */,
+				B20000012C00000000000023 /* LibraryCatalogViewModelTests.swift */,
+				B20000012C00000000000024 /* LibraryCatalogViewTests.swift */,
+				B20000012C00000000000025 /* NodeBrowserTests.swift */,
+				B20000012C00000000000026 /* NodeBrowserViewModelTests.swift */,
+				B20000012C00000000000027 /* NodeBrowserViewTests.swift */,
+				B20000012C00000000000028 /* NodeFileDetailsViewModelTests.swift */,
+				B20000012C00000000000063 /* OfflineNodeBrowserServiceTests.swift */,
+				B20000012C00000000000022 /* LibraryCatalogTests.swift */,
+				B20000012C00000000000001 /* SynveilBootstrapTests.swift */,
+				B20000012C00000000000011 /* ServerEndpointTests.swift */,
+				B20000012C00000000000012 /* AppConfigurationTests.swift */,
+				B20000012C00000000000013 /* HTTPTransportContractTests.swift */,
+				B20000012C00000000000014 /* RustBridgeABITests.swift */,
+				B20000012C00000000000015 /* RustBridgeErrorTests.swift */,
+				B20000012C00000000000016 /* RustBridgeMemoryTests.swift */,
+				B20000012C00000000000017 /* RustBridgeConcurrencyTests.swift */,
+				B20000012C00000000000018 /* RustBridgeProtocolTests.swift */,
+				B20000012C00000000000019 /* SessionControllerTests.swift */,
+				B20000012C0000000000001A /* RootViewTests.swift */,
+				B20000012C0000000000001B /* ServerSetupViewModelTests.swift */,
+				B20000012C0000000000001C /* ServerReachabilityTests.swift */,
+				A20000012C00000000000035 /* EnrollmentTests.swift */,
+				B20000012C0000000000001D /* KeychainCredentialStoreTests.swift */,
+				B20000012C0000000000001F /* SessionRestorationTests.swift */,
+				B20000012C00000000000020 /* SessionLogoutTests.swift */,
+			);
+			name = SynveilTests;
+			sourceTree = "<group>";
+		};
+		F0530000000000000000010E /* FileProvider */ = {
+			isa = PBXGroup;
+			children = (
+				F0530000000000000000010A /* SynveilFileProviderExtension.swift */,
+				F05400000000000000000008 /* FileProviderContainerSnapshot.swift */,
+				F05400000000000000000005 /* SynveilFileProviderItem.swift */,
+				F05400000000000000000004 /* FileProviderMetadataSignaling.swift */,
+				F05400000000000000000003 /* FileProviderMetadataReader.swift */,
+				F05400000000000000000002 /* FileProviderGenerationStore.swift */,
+				F05400000000000000000001 /* FileProviderGenerationContract.swift */,
+				F05300000000000000000101 /* FileProviderDomainIdentity.swift */,
+				F05300000000000000000102 /* FileProviderItemIdentity.swift */,
+				F05300000000000000000103 /* FileProviderCapability.swift */,
+				F05300000000000000000104 /* FileProviderAuthorizationBoundary.swift */,
+				F05300000000000000000105 /* FileProviderSharedContainer.swift */,
+				F05300000000000000000106 /* FileProviderMetadataContract.swift */,
+				F05300000000000000000107 /* FileProviderErrorMapper.swift */,
+				F05300000000000000000108 /* FileProviderEnumerator.swift */,
+				F05300000000000000000109 /* FileProviderLifecycle.swift */,
+				F0530000000000000000010B /* Info.plist */,
+				F0530000000000000000010C /* FileProvider.entitlements */,
+				F0530000000000000000010D /* README.md */,
+			);
+			path = Extensions/FileProvider;
+			sourceTree = "<group>";
+		};
+
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A50000012C00000000000001 /* Synveil */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA0000012C00000000000002 /* Build configuration list for PBXNativeTarget "Synveil" */;
+			buildPhases = (
+				A80000012C00000000000001 /* Sources */,
+				A30000012C00000000000001 /* Frameworks */,
+				A70000012C00000000000001 /* Resources */,
+				D05300000000000000000302 /* Embed App Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D0530000000000000000030A /* PBXTargetDependency */,
+			);
+			name = Synveil;
+			productName = Synveil;
+			productReference = A20000012C00000000000004 /* Synveil.app */;
+			productType = "com.apple.product-type.application";
+		};
+		B50000012C00000000000001 /* SynveilTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BA0000012C00000000000001 /* Build configuration list for PBXNativeTarget "SynveilTests" */;
+			buildPhases = (
+				B80000012C00000000000001 /* Sources */,
+				B30000012C00000000000001 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B70000012C00000000000001 /* PBXTargetDependency */,
+			);
+			name = SynveilTests;
+			productName = SynveilTests;
+			productReference = B20000012C00000000000002 /* SynveilTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		D05300000000000000000301 /* SynveilFileProviderExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D05300000000000000000306 /* Build configuration list for PBXNativeTarget "SynveilFileProviderExtension" */;
+			buildPhases = (
+				D05300000000000000000303 /* FileProvider Sources */,
+				D05300000000000000000304 /* FileProvider Frameworks */,
+				D05300000000000000000305 /* FileProvider Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SynveilFileProviderExtension;
+			productName = SynveilFileProviderExtension;
+			productReference = F0530000000000000000010F /* SynveilFileProviderExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A60000012C00000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1540;
+				LastUpgradeCheck = 1540;
+				TargetAttributes = {
+					A50000012C00000000000001 = {
+						CreatedOnToolsVersion = 15.4;
+						SystemCapabilities = {
+							com.apple.BackgroundModes = { enabled = 1; };
+						};
+					};
+					D05300000000000000000301 = {
+						CreatedOnToolsVersion = 15.4;
+					};
+					B50000012C00000000000001 = {
+						CreatedOnToolsVersion = 15.4;
+						TestTargetID = A50000012C00000000000001;
+					};
+				};
+			};
+			buildConfigurationList = AA0000012C00000000000001 /* Build configuration list for PBXProject "Synveil" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A40000012C00000000000001;
+			productRefGroup = A40000012C00000000000004 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A50000012C00000000000001 /* Synveil */,
+				D05300000000000000000301 /* SynveilFileProviderExtension */,
+				B50000012C00000000000001 /* SynveilTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A70000012C00000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000012C00000000000003 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D05300000000000000000305 /* FileProvider Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A80000012C00000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E05600000000000000000001 /* PhotoPermissionState.swift in Sources */,
+				E05600000000000000000002 /* PhotoAssetTypes.swift in Sources */,
+				E05600000000000000000003 /* PhotoObservationModels.swift in Sources */,
+				E05600000000000000000004 /* PhotoBackupConfiguration.swift in Sources */,
+				E05600000000000000000005 /* PhotoServiceProtocols.swift in Sources */,
+				E05600000000000000000006 /* PhotoLibraryPermissionAdapter.swift in Sources */,
+				E05600000000000000000007 /* PhotoLibraryDiscoveryService.swift in Sources */,
+				E05600000000000000000008 /* PhotoLibraryChangeObserverAdapter.swift in Sources */,
+				E05600000000000000000009 /* PhotoObservationSQLiteSchema.swift in Sources */,
+				E0560000000000000000000A /* PhotoObservationSQLiteStore.swift in Sources */,
+				E0560000000000000000000B /* PhotoLibraryObservationCoordinator.swift in Sources */,
+				E0560000000000000000000C /* PhotoBackupSettingsViewModel.swift in Sources */,
+				E0560000000000000000000D /* PhotoBackupSettingsView.swift in Sources */,
+				E05700000000000000000001 /* PhotoResourceTransferModels.swift in Sources */,
+				E05700000000000000000002 /* PhotoKitResourceExtractionSource.swift in Sources */,
+				E05700000000000000000003 /* ActivePhotoTransferContextProvider.swift in Sources */,
+				E05700000000000000000004 /* PhotoResourceExtractionCoordinator.swift in Sources */,
+				E05700000000000000000005 /* PhotoResourceStagingCoordinator.swift in Sources */,
+				E05700000000000000000006 /* PhotoResourceUploadHandoffCoordinator.swift in Sources */,
+				E05800000000000000000001 /* PhotoBackupForegroundWorker.swift in Sources */,
+				E05800000000000000000002 /* PhotoBackupQueueModels.swift in Sources */,
+				E05800000000000000000003 /* PhotoBackupNetworkPathMonitor.swift in Sources */,
+				E05300000000000000000201 /* FileProviderDomainIdentity.swift in Sources */,
+				E05300000000000000000202 /* FileProviderItemIdentity.swift in Sources */,
+				E05300000000000000000203 /* FileProviderCapability.swift in Sources */,
+				E05300000000000000000204 /* FileProviderAuthorizationBoundary.swift in Sources */,
+				E05300000000000000000205 /* FileProviderSharedContainer.swift in Sources */,
+				E05300000000000000000206 /* FileProviderMetadataContract.swift in Sources */,
+				E05300000000000000000207 /* FileProviderLifecycle.swift in Sources */,
+				E05400000000000000000109 /* FileProviderContainerSnapshot.swift in Sources */,
+				E05400000000000000000108 /* FileProviderMetadataPublicationCoordinator.swift in Sources */,
+				E05400000000000000000107 /* FileProviderEnumerator.swift in Sources */,
+				E05400000000000000000106 /* FileProviderErrorMapper.swift in Sources */,
+				E05400000000000000000105 /* SynveilFileProviderItem.swift in Sources */,
+				E05400000000000000000104 /* FileProviderMetadataSignaling.swift in Sources */,
+				E05400000000000000000103 /* FileProviderMetadataReader.swift in Sources */,
+				E05400000000000000000102 /* FileProviderGenerationStore.swift in Sources */,
+				E05400000000000000000101 /* FileProviderGenerationContract.swift in Sources */,
+				C82802687338F9AAC0B19F35 /* LocalNotificationScheduler.swift in Sources */,
+				20338AFE1E8E69BCFE6FB01D /* NotificationPolicyStore.swift in Sources */,
+				1B5BD3628469B277BC4724F7 /* NotificationDeliveryLedger.swift in Sources */,
+				F2E07BEE91E2B996FB6B6838 /* NotificationSettingsView.swift in Sources */,
+				8800483D0DDB5C98A1875CEE /* NotificationModels.swift in Sources */,
+				8D33183A1422DA8AB6F92916 /* NotificationNavigationCoordinator.swift in Sources */,
+				819E1E5B54323CDB2CB78A2B /* NotificationEventClassifier.swift in Sources */,
+				89127D31A5FC8A15E191FF1A /* NotificationCoordinator.swift in Sources */,
+				97DFD8DA590166F1A1D27854 /* NotificationAuthority.swift in Sources */,
+				399F2ABC8AFAB50C30A04203 /* BackgroundSyncSettingsView.swift in Sources */,
+				A1D68830F0EEEEF3CB0B65EB /* BackgroundSyncHTTPTransport.swift in Sources */,
+				279E1D71A30CA107CF37C8CE /* BGAppRefreshScheduler.swift in Sources */,
+				640E14D5416D4A3F8FC695A7 /* BackgroundSyncWork.swift in Sources */,
+				384A432C08F6D89E83423720 /* BackgroundSyncCoordinator.swift in Sources */,
+				DC44AFBB4394AC293CC8FEC4 /* BackgroundSyncPolicyStore.swift in Sources */,
+				621F9FCE06DC3CB31244D879 /* BackgroundSyncModels.swift in Sources */,
+				A393EB4A824619F6C99DBAB7 /* SessionAuthorizationSQLiteSchema.swift in Sources */,
+				9FC19B71304E7DF3E9C74BEE /* SessionAuthorizationEvidence.swift in Sources */,
+				25DDAEF8DA40A5DCC5701E49 /* SavedMetadataInspectionView.swift in Sources */,
+				D30AE43D86CB8AD2E74D42B8 /* ClientRecoveryNotice.swift in Sources */,
+				65973F21CDAFEB954ECCBBE0 /* ClientRecoveryPresentation.swift in Sources */,
+				96E2C0F9285597AF0932C920 /* SavedMetadataInspectionService.swift in Sources */,
+				A04500000000000000000001 /* UploadModels.swift in Sources */,
+				A04500000000000000000002 /* UploadSessionDTO.swift in Sources */,
+				A04500000000000000000003 /* AuthenticatedUploadRepository.swift in Sources */,
+				A04500000000000000000004 /* FileUploadCoordinator.swift in Sources */,
+				A04500000000000000000005 /* URLSessionRawUploadTransport.swift in Sources */,
+				A04500000000000000000006 /* FileUploadSQLiteSchema.swift in Sources */,
+				A04500000000000000000007 /* UploadStagingStore.swift in Sources */,
+				A04500000000000000000008 /* FileUploadViewModel.swift in Sources */,
+				A04500000000000000000009 /* FileUploadControls.swift in Sources */,
+				A04600000000000000000005 /* BackgroundUploadCoordinator.swift in Sources */,
+				A04600000000000000000004 /* BackgroundUploadSQLiteSchema.swift in Sources */,
+				A04600000000000000000003 /* URLSessionBackgroundUploadTransport.swift in Sources */,
+				A04600000000000000000002 /* BackgroundUploadModels.swift in Sources */,
+				A04600000000000000000001 /* BackgroundUploadAppDelegate.swift in Sources */,
+				B04400000000000000000001 /* VerifiedFileExportCoordinator.swift in Sources */,
+				B04400000000000000000002 /* FileExportPresentation.swift in Sources */,
+				51EA7CAA728AE32CA30FFF44 /* URLSessionFileContentTransport.swift in Sources */,
+				83820A564E3A52541BBF9582 /* FileVersionResponseDecoder.swift in Sources */,
+				59B9F6D8B03068D82508F17A /* DownloadStagingStore.swift in Sources */,
+				D16DC63CF88D5ACE30EED0FC /* FileDownloadSQLiteSchema.swift in Sources */,
+				4E7124B99B7B3675F727120F /* FileDownloadViewModel.swift in Sources */,
+				6244B49895C6060BCBB3694A /* FileDownloadControls.swift in Sources */,
+				334AA7DD8DAD4EAA7C123062 /* DownloadModels.swift in Sources */,
+				433B09D447BCBB851F7484DA /* FileDownloadCoordinator.swift in Sources */,
+				2D43E305C9221A8036E964E9 /* RebaselineCoordinator.swift in Sources */,
+				BAE576A2CD088EC953F9A2E7 /* RebaselineModels.swift in Sources */,
+				48D1EA7F55D3CB79967CC2D5 /* RebaselineResponseDTO.swift in Sources */,
+				1BABABA9F5B389C1F9089B5A /* SnapshotNodeInformationView.swift in Sources */,
+				D40456C4F77C60F13C7A0882 /* RebaselineProgressView.swift in Sources */,
+				4B5F96B3BB2CFA641A63B94B /* RebaselineViewModel.swift in Sources */,
+				A8A7F509357EDF4286DCCE5A /* RebaselineSQLiteSchema.swift in Sources */,
+				9FF6AD1290B03F7D24833EC7 /* SyncStatusView.swift in Sources */,
+				B434156B38347EB11B0CD572 /* SyncStatusViewModel.swift in Sources */,
+				9D37C8EFFEAE03382E52A9AD /* InboundSyncCoordinator.swift in Sources */,
+				7E67E9AFCA0F1625006117C2 /* InboundSyncModels.swift in Sources */,
+				DDB310164E7571A9C70D2834 /* SQLiteNodeProjectionRepository.swift in Sources */,
+				D867AE8CC0B3FD2AE8F93058 /* CommittedSQLiteSyncProjectionStorage.swift in Sources */,
+				A48DAAE05140A903FF7B835B /* NodeProjectionSQLiteSchema.swift in Sources */,
+				0DEDF02A860B07D14316B6A0 /* SyncFeedApplicationService.swift in Sources */,
+				FD44FB35A49E0C68CD67C5C4 /* SyncNodeMaterializer.swift in Sources */,
+				7B19636046484489C14D7C2F /* NodeProjectionModels.swift in Sources */,
+				4369C59B22E6BC7681FCF978 /* SyncAckService.swift in Sources */,
+				02C472AB88F669F505A8F5F6 /* SyncFeedService.swift in Sources */,
+				2A84DAF617D2CE3541C8A1F4 /* SyncFeedResponseDTO.swift in Sources */,
+				A893D82F975D12132C1A3E46 /* SyncFeedModels.swift in Sources */,
+				A10000012C0000000000005A /* MutationQueueSQLiteStore.swift in Sources */,
+				A10000012C00000000000059 /* DurableMutationQueue.swift in Sources */,
+				A10000012C00000000000060 /* MetadataMutationService.swift in Sources */,
+				A10000012C0000000000005B /* MutationDrainCoordinator.swift in Sources */,
+				A10000012C00000000000058 /* SyncCheckpointService.swift in Sources */,
+				A10000012C00000000000057 /* MutationPersistenceCodec.swift in Sources */,
+				A10000012C00000000000056 /* SyncCheckpointResponseDTO.swift in Sources */,
+				A10000012C00000000000055 /* MutationQueueModels.swift in Sources */,
+				A10000012C00000000000054 /* SyncCheckpointModels.swift in Sources */,
+				A10000012C00000000000053 /* AuthenticatedClientMutationRepository.swift in Sources */,
+				A10000012C00000000000052 /* ClientMutationResponseDTO.swift in Sources */,
+				A10000012C00000000000051 /* ClientMutationModels.swift in Sources */,
+				A10000012C00000000000043 /* LibraryCatalogView.swift in Sources */,
+				A10000012C00000000000042 /* LibraryCatalogViewModel.swift in Sources */,
+				A10000012C00000000000044 /* NodeModels.swift in Sources */,
+				A10000012C00000000000045 /* NodeResponseDTO.swift in Sources */,
+				A10000012C00000000000046 /* AuthenticatedNodeRepository.swift in Sources */,
+				A10000012C00000000000063 /* OfflineNodeBrowserService.swift in Sources */,
+				A10000012C00000000000047 /* NodeBrowserViewModel.swift in Sources */,
+				A10000012C00000000000048 /* NodeBrowserView.swift in Sources */,
+				A10000012C00000000000050 /* NodeFileDetailsView.swift in Sources */,
+				A10000012C00000000000049 /* NodeFileDetailsViewModel.swift in Sources */,
+				A10000012C00000000000061 /* MetadataMutationViewModel.swift in Sources */,
+				A10000012C00000000000062 /* MetadataMutationView.swift in Sources */,
+				A10000012C00000000000041 /* AuthenticatedLibraryCatalogRepository.swift in Sources */,
+				A10000012C00000000000040 /* AuthenticatedLibraryRequestProvider.swift in Sources */,
+				A10000012C0000000000003F /* LibraryResponseDTO.swift in Sources */,
+				A10000012C0000000000003E /* LibraryModels.swift in Sources */,
+				A10000012C0000000000003D /* AuthenticationRecoveryView.swift in Sources */,
+				A10000012C0000000000003C /* AuthenticationRecoveryPresentation.swift in Sources */,
+				A10000012C00000000000001 /* SynveilApp.swift in Sources */,
+				A10000012C00000000000002 /* BootstrapView.swift in Sources */,
+				A10000012C00000000000004 /* AppDependencyContainer.swift in Sources */,
+				A10000012C00000000000005 /* RootView.swift in Sources */,
+				A10000012C00000000000011 /* EndpointValidationError.swift in Sources */,
+				A10000012C00000000000012 /* ServerEndpoint.swift in Sources */,
+				A10000012C00000000000013 /* AppEnvironment.swift in Sources */,
+				A10000012C00000000000014 /* AppConfiguration.swift in Sources */,
+				A10000012C00000000000015 /* HTTPMethod.swift in Sources */,
+				A10000012C00000000000016 /* HTTPTransportRequest.swift in Sources */,
+				A10000012C00000000000017 /* HTTPTransportResponse.swift in Sources */,
+				A10000012C00000000000018 /* HTTPTransportProtocol.swift in Sources */,
+				A10000012C00000000000019 /* RustBridgeAdapter.swift in Sources */,
+				A10000012C0000000000001A /* RustBridgeStatus.swift in Sources */,
+				A10000012C0000000000001B /* RustBridgeError.swift in Sources */,
+				A10000012C0000000000001C /* RustBridgeExecutor.swift in Sources */,
+				A10000012C0000000000001D /* RustBridgeAsyncAdapter.swift in Sources */,
+				A10000012C0000000000001E /* RustBridgeProtocol.swift in Sources */,
+				A10000012C0000000000001F /* AppStartupState.swift in Sources */,
+				A10000012C00000000000020 /* SessionController.swift in Sources */,
+				A10000012C00000000000039 /* SessionRestorationService.swift in Sources */,
+				A10000012C0000000000003B /* SessionLogoutService.swift in Sources */,
+				A10000012C00000000000021 /* ServerSetupViewModel.swift in Sources */,
+				A10000012C00000000000022 /* ServerSetupView.swift in Sources */,
+				A10000012C00000000000023 /* SynveilTransportError.swift in Sources */,
+				A10000012C00000000000024 /* ServerProbeResult.swift in Sources */,
+				A10000012C00000000000025 /* ServerValidationService.swift in Sources */,
+				A10000012C0000000000003A /* AuthenticatedSessionValidationService.swift in Sources */,
+				A10000012C00000000000026 /* URLSessionHTTPTransport.swift in Sources */,
+				A10000012C00000000000027 /* ServerValidationViewModel.swift in Sources */,
+				A10000012C00000000000028 /* ServerValidationView.swift in Sources */,
+				A10000012C00000000000029 /* EnrollmentToken.swift in Sources */,
+				A10000012C0000000000002A /* DeviceCredential.swift in Sources */,
+				A10000012C0000000000002B /* DeviceCredentialRecord.swift in Sources */,
+				A10000012C00000000000036 /* DeviceCredentialSession.swift in Sources */,
+				A10000012C0000000000002C /* EnrollmentExchangeResult.swift in Sources */,
+				A10000012C0000000000002D /* EnrollmentState.swift in Sources */,
+				A10000012C0000000000002E /* ExchangeDeviceEnrollmentRequest.swift in Sources */,
+				A10000012C0000000000002F /* DeviceCredentialResponseDTO.swift in Sources */,
+				A10000012C00000000000030 /* SecureCredentialSinkProtocol.swift in Sources */,
+				A10000012C00000000000031 /* EnrollmentExchangeServiceProtocol.swift in Sources */,
+				A10000012C00000000000032 /* EnrollmentExchangeService.swift in Sources */,
+				A10000012C00000000000033 /* EnrollmentViewModel.swift in Sources */,
+				A10000012C00000000000034 /* EnrollmentView.swift in Sources */,
+				A10000012C00000000000037 /* KeychainCredentialStore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B80000012C00000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E0560000000000000000000E /* PhotoKitFoundationTests.swift in Sources */,
+				E05700000000000000000007 /* PhotoResourceTransferTests.swift in Sources */,
+				E0530000000000000000021D /* FileProviderFoundationTests.swift in Sources */,
+				E05400000000000000000301 /* FileProviderEnumerationTests.swift in Sources */,
+				953A24380218678BF0AEFD09 /* NotificationViewTests.swift in Sources */,
+				17263C898E90BF6CEFCA2B59 /* NotificationTestSupport.swift in Sources */,
+				AD45EB5BB3B0C570B404CA4E /* NotificationPersistenceTests.swift in Sources */,
+				B7E668E842F199232619A86A /* NotificationNavigationTests.swift in Sources */,
+				62E87867D4B9EF01D179F7AB /* NotificationEligibilityTests.swift in Sources */,
+				F9D7274E58A5B65920B630E6 /* NotificationCoordinatorTests.swift in Sources */,
+				C82A408E185025C846D0A7E4 /* BackgroundSyncSafetyTests.swift in Sources */,
+				E513911B291BA5B75A19A224 /* BackgroundSyncTests.swift in Sources */,
+				3092856C33A86A7D4CD4A19A /* SessionAuthorizationEvidenceTests.swift in Sources */,
+				3D1141A213B67791E01B0163 /* SavedMetadataInspectionTests.swift in Sources */,
+				191FD69399B150CB423A33DA /* ClientRecoveryTests.swift in Sources */,
+				B04500000000000000000001 /* FileUploadTests.swift in Sources */,
+				B04500000000000000000002 /* FileUploadStorageTests.swift in Sources */,
+				B04500000000000000000003 /* FileUploadViewTests.swift in Sources */,
+				B04500000000000000000004 /* FileUploadCoordinatorTests.swift in Sources */,
+				B04600000000000000000001 /* BackgroundUploadTests.swift in Sources */,
+				B04400000000000000000003 /* VerifiedFileExportTests.swift in Sources */,
+				7DF7A439FA000652A9A2D5C2 /* FileDownloadViewTests.swift in Sources */,
+				A4D8517B66C974D0A3609777 /* FileDownloadTransportTests.swift in Sources */,
+				3DDBE8DBD579F13243BE7833 /* FileDownloadTestSupport.swift in Sources */,
+				A183246AC0DEF510AA54ECDC /* FileDownloadStorageTests.swift in Sources */,
+				8654FE8DD73862829FC19D69 /* FileDownloadRecoveryTests.swift in Sources */,
+				48870372D42C044B5999633E /* FileDownloadMetadataTests.swift in Sources */,
+				82562F2B90CD8C77A3A3C4DA /* RebaselineManifestTests.swift in Sources */,
+				0C253BFB5EA4EBB6DD9F001B /* RebaselineRecoveryTests.swift in Sources */,
+				E81DE4EE7F3B1FD661A9A681 /* RebaselineSQLiteTests.swift in Sources */,
+				49B85EE43E37438039DD658E /* RebaselineTestSupport.swift in Sources */,
+				230FAECB95595FDE5642408A /* RebaselineTransportTests.swift in Sources */,
+				ACA99412EB8AD67421091948 /* RebaselineViewModelTests.swift in Sources */,
+				1D9E4EB06644AB6B7D438164 /* SyncStatusViewModelTests.swift in Sources */,
+				48B5C46A84D00167AEB0F06C /* InboundSyncRaceTests.swift in Sources */,
+				407BCF57189B040188F9B622 /* InboundSyncRecoveryTests.swift in Sources */,
+				A46B19C83C6DB753DAC2D25A /* InboundSyncCoordinatorTests.swift in Sources */,
+				AFCB14A0E5AFBD5BF6BCBAD0 /* InboundSyncTestSupport.swift in Sources */,
+				91B9621F10A5C61D7BB234AF /* CommittedProjectionAckTests.swift in Sources */,
+				E10E3AD3CAF0E4A257F7AAB8 /* NodeProjectionSQLiteTests.swift in Sources */,
+				D2503E9F2CD21E9E90345D16 /* NodeProjectionTests.swift in Sources */,
+				5287C3BC7E31C799FB658427 /* NodeProjectionTestSupport.swift in Sources */,
+				3A555D0FF12FB7A3FA7F01DB /* SyncAckTests.swift in Sources */,
+				05D3BA7FCCAFDBEA2384E9BD /* InboundSyncSQLiteTests.swift in Sources */,
+				BC8B716A1238DA8A95F897C2 /* SyncFeedTests.swift in Sources */,
+				1E657CCF51E5E6BDDA7CBF01 /* SyncFeedTestSupport.swift in Sources */,
+				B10000012C0000000000002D /* DurableMutationQueueTests.swift in Sources */,
+				B10000012C00000000000030 /* MetadataMutationFeatureTests.swift in Sources */,
+				B10000012C0000000000002E /* MutationDrainCoordinatorTests.swift in Sources */,
+				B10000012C0000000000002C /* SyncCheckpointTests.swift in Sources */,
+				B10000012C0000000000002B /* MutationQueueSQLiteTests.swift in Sources */,
+				B10000012C0000000000002F /* MutationRecoverySQLiteTests.swift in Sources */,
+				B10000012C0000000000002A /* MutationQueueTestSupport.swift in Sources */,
+				B10000012C00000000000029 /* ClientMutationTests.swift in Sources */,
+				B10000012C00000000000023 /* LibraryCatalogViewModelTests.swift in Sources */,
+				B10000012C00000000000024 /* LibraryCatalogViewTests.swift in Sources */,
+				B10000012C00000000000025 /* NodeBrowserTests.swift in Sources */,
+				B10000012C00000000000026 /* NodeBrowserViewModelTests.swift in Sources */,
+				B10000012C00000000000027 /* NodeBrowserViewTests.swift in Sources */,
+				B10000012C00000000000028 /* NodeFileDetailsViewModelTests.swift in Sources */,
+				B10000012C00000000000063 /* OfflineNodeBrowserServiceTests.swift in Sources */,
+				B10000012C00000000000022 /* LibraryCatalogTests.swift in Sources */,
+				B10000012C00000000000021 /* AuthenticationRecoveryTests.swift in Sources */,
+				B10000012C00000000000001 /* SynveilBootstrapTests.swift in Sources */,
+				B10000012C00000000000011 /* ServerEndpointTests.swift in Sources */,
+				B10000012C00000000000012 /* AppConfigurationTests.swift in Sources */,
+				B10000012C00000000000013 /* HTTPTransportContractTests.swift in Sources */,
+				B10000012C00000000000014 /* RustBridgeABITests.swift in Sources */,
+				B10000012C00000000000015 /* RustBridgeErrorTests.swift in Sources */,
+				B10000012C00000000000016 /* RustBridgeMemoryTests.swift in Sources */,
+				B10000012C00000000000017 /* RustBridgeConcurrencyTests.swift in Sources */,
+				B10000012C00000000000018 /* RustBridgeProtocolTests.swift in Sources */,
+				B10000012C00000000000019 /* SessionControllerTests.swift in Sources */,
+				B10000012C0000000000001A /* RootViewTests.swift in Sources */,
+				B10000012C0000000000001B /* ServerSetupViewModelTests.swift in Sources */,
+				B10000012C0000000000001C /* ServerReachabilityTests.swift in Sources */,
+				A10000012C00000000000035 /* EnrollmentTests.swift in Sources */,
+				B10000012C0000000000001D /* KeychainCredentialStoreTests.swift in Sources */,
+				B10000012C0000000000001F /* SessionRestorationTests.swift in Sources */,
+				B10000012C00000000000020 /* SessionLogoutTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D05300000000000000000303 /* FileProvider Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E05300000000000000000211 /* FileProviderDomainIdentity.swift in Sources */,
+				E05300000000000000000212 /* FileProviderItemIdentity.swift in Sources */,
+				E05300000000000000000213 /* FileProviderCapability.swift in Sources */,
+				E05300000000000000000214 /* FileProviderAuthorizationBoundary.swift in Sources */,
+				E05300000000000000000215 /* FileProviderSharedContainer.swift in Sources */,
+				E05300000000000000000216 /* FileProviderMetadataContract.swift in Sources */,
+				E05300000000000000000217 /* FileProviderErrorMapper.swift in Sources */,
+				E05300000000000000000218 /* FileProviderEnumerator.swift in Sources */,
+				E05300000000000000000219 /* FileProviderLifecycle.swift in Sources */,
+				E05400000000000000000209 /* FileProviderContainerSnapshot.swift in Sources */,
+				E05400000000000000000205 /* SynveilFileProviderItem.swift in Sources */,
+				E05400000000000000000204 /* FileProviderMetadataSignaling.swift in Sources */,
+				E05400000000000000000203 /* FileProviderMetadataReader.swift in Sources */,
+				E05400000000000000000202 /* FileProviderGenerationStore.swift in Sources */,
+				E05400000000000000000201 /* FileProviderGenerationContract.swift in Sources */,
+				E0530000000000000000021A /* SynveilFileProviderExtension.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B70000012C00000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A50000012C00000000000001 /* Synveil */;
+			targetProxy = B60000012C00000000000001 /* PBXContainerItemProxy */;
+		};
+		D0530000000000000000030A /* Synveil File Provider target dependency */ = {isa = PBXTargetDependency; target = D05300000000000000000301 /* SynveilFileProviderExtension */; targetProxy = D05300000000000000000309 /* PBXContainerItemProxy */; };
+
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		A90000012C00000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+			};
+			name = Debug;
+		};
+		A90000012C00000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		A90000012C00000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = App/Synveil.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = App/BackgroundSyncInfo.plist;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Infrastructure/RustBridge/Generated",
+				);
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../../target/ios-rust-artifacts/device/arm64",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../../target/ios-rust-artifacts/simulator/universal",
+					"$(SRCROOT)/../../target/ios-rust-artifacts/simulator/arm64",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lsynveil_ios_ffi",
+					"-lsqlite3",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.synveil.ios;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Infrastructure/RustBridge/Raw",
+				);
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A90000012C00000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = App/Synveil.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = App/BackgroundSyncInfo.plist;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Infrastructure/RustBridge/Generated",
+				);
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../../target/ios-rust-artifacts/device/arm64",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../../target/ios-rust-artifacts/simulator/universal",
+					"$(SRCROOT)/../../target/ios-rust-artifacts/simulator/arm64",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lsynveil_ios_ffi",
+					"-lsqlite3",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.synveil.ios;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Infrastructure/RustBridge/Raw",
+				);
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		B90000012C00000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Infrastructure/RustBridge/Generated",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../../target/ios-rust-artifacts/device/arm64",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../../target/ios-rust-artifacts/simulator/universal",
+					"$(SRCROOT)/../../target/ios-rust-artifacts/simulator/arm64",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lsynveil_ios_ffi",
+					"-lsqlite3",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.synveil.ios.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Infrastructure/RustBridge/Raw",
+				);
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Synveil.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Synveil";
+			};
+			name = Debug;
+		};
+		B90000012C00000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Infrastructure/RustBridge/Generated",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../../target/ios-rust-artifacts/device/arm64",
+				);
+				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../../target/ios-rust-artifacts/simulator/universal",
+					"$(SRCROOT)/../../target/ios-rust-artifacts/simulator/arm64",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lsynveil_ios_ffi",
+					"-lsqlite3",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.synveil.ios.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_INCLUDE_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Infrastructure/RustBridge/Raw",
+				);
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Synveil.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Synveil";
+			};
+			name = Release;
+		};
+		D05300000000000000000307 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Extensions/FileProvider/FileProvider.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Extensions/FileProvider/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks",);
+				PRODUCT_BUNDLE_IDENTIFIER = com.synveil.ios.fileprovider;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		D05300000000000000000308 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Extensions/FileProvider/FileProvider.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Extensions/FileProvider/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks",);
+				PRODUCT_BUNDLE_IDENTIFIER = com.synveil.ios.fileprovider;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		AA0000012C00000000000001 /* Build configuration list for PBXProject "Synveil" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A90000012C00000000000001 /* Debug */,
+				A90000012C00000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AA0000012C00000000000002 /* Build configuration list for PBXNativeTarget "Synveil" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A90000012C00000000000003 /* Debug */,
+				A90000012C00000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		BA0000012C00000000000001 /* Build configuration list for PBXNativeTarget "SynveilTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B90000012C00000000000001 /* Debug */,
+				B90000012C00000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		D05300000000000000000306 /* Build configuration list for PBXNativeTarget "SynveilFileProviderExtension" */ = {isa = XCConfigurationList; buildConfigurations = (D05300000000000000000307 /* Debug */, D05300000000000000000308 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+
+/* End XCConfigurationList section */
+	};
+	rootObject = A60000012C00000000000001 /* Project object */;
+}

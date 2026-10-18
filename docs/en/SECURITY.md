@@ -192,6 +192,13 @@ flowchart TB
   socket, private ports, explicit volume ownership, secret-file permissions,
   coordinated external backup and restore rehearsal.
 
+Authenticated transfer requests cross an additional edge boundary because
+iOS background URLSession follows redirects without the app's redirect-decision
+callback. The API rejects handler-generated transfer redirects, but this does
+not constrain operator-managed Caddy/proxy/CDN behavior. See the [authenticated
+transfer redirect contract](AUTHENTICATED_TRANSFER_SECURITY.md) for the P046
+PATCH body risk, deployment checks, and current fail-closed capability state.
+
 ## Security invariants
 
 1. A UUIDv7, object ID, storage key, node ID, repository ID, cursor or ordinary

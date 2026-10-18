@@ -1,0 +1,13 @@
+[package]
+name = "synveil-ios-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Dedicated thin C ABI bridge crate for the Synveil iOS client."
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+synveil-core.workspace = true
