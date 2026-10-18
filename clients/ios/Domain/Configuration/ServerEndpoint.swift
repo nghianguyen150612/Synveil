@@ -98,7 +98,8 @@ public struct ServerEndpoint: Equatable, Hashable, Sendable, CustomStringConvert
         guard let rawHost = components.host, !rawHost.isEmpty else {
             throw EndpointValidationError.missingHost
         }
-        let hostLower = rawHost.lowercased()
+        let hostComponent = rawHost.lowercased()
+        let hostLower = Self.unbracketedHost(hostComponent)
         try Self.validateNumericIPv4Host(hostLower)
 
         // Prohibited components check
@@ -137,7 +138,7 @@ public struct ServerEndpoint: Equatable, Hashable, Sendable, CustomStringConvert
         // Reconstruct canonical URLComponents
         var normalizedComponents = URLComponents()
         normalizedComponents.scheme = schemeLower
-        normalizedComponents.host = hostLower
+        normalizedComponents.host = hostComponent
         normalizedComponents.port = components.port
         normalizedComponents.path = normalizedPath
 
@@ -150,6 +151,11 @@ public struct ServerEndpoint: Equatable, Hashable, Sendable, CustomStringConvert
 
     private static func isNumericLoopback(_ host: String) -> Bool {
         host == "127.0.0.1" || host == "::1"
+    }
+
+    private static func unbracketedHost(_ host: String) -> String {
+        guard host.first == "[", host.last == "]" else { return host }
+        return String(host.dropFirst().dropLast())
     }
 
     private static func validateNumericIPv4Host(_ host: String) throws {

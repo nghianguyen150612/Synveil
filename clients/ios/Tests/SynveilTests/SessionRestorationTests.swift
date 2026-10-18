@@ -233,7 +233,7 @@ final class SessionRestorationTests: XCTestCase {
         XCTAssertEqual(request.url.scheme, "https")
         XCTAssertEqual(request.url.host, "sync.synveil.example")
         XCTAssertEqual(request.url.port, 8443)
-        XCTAssertEqual(request.url.path, "/vault/api/v1/libraries")
+        XCTAssertEqual(request.url.path, "/api/v1/libraries")
         XCTAssertEqual(request.method, .get)
         XCTAssertNil(request.body)
         let requestCount = await transport.requestCount()

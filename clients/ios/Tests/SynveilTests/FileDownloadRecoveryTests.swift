@@ -37,10 +37,13 @@ final class FileDownloadRecoveryTests: XCTestCase {
         _ = try downloadCapability(await downloadRun(f))
         let requests = await f.content.requests()
         let request = try XCTUnwrap(requests.first)
+        let expectedPath = [
+            "api", "v1", "versions", f.version.rawValue, "content",
+        ].joined(separator: "/")
         XCTAssertEqual(
             request.url.absoluteString,
-            f.queue.scope.serverEndpoint.urlString + "/api/v1/versions/" + f.version.rawValue
-                + "/content")
+            f.queue.scope.serverEndpoint.urlString + expectedPath
+        )
         XCTAssertEqual(request.headers["Authorization"], "Bearer " + queueBearer)
         XCTAssertEqual(request.headers["Accept"], "application/octet-stream")
         XCTAssertEqual(request.headers["Accept-Encoding"], "identity")

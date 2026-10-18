@@ -241,7 +241,7 @@ final class FileDownloadTransportTests: XCTestCase {
         object["data"] = resource
         await f.metadata.setVersion(try queueHTTP(object))
         let contentURL = URL(
-            string: f.queue.scope.serverEndpoint.urlString + "/api/v1/versions/"
+            string: f.queue.scope.serverEndpoint.urlString + "api/v1/versions/"
                 + f.version.rawValue + "/content")!
         DownloadURLProtocol.registry.set(
             DownloadURLFixture(
